@@ -8,6 +8,28 @@ import ReportAnalysisView from './ReportAnalysisView'
 
 const DIALECTS = ['ORACLE', 'MYSQL', 'MARIADB', 'SQL_SERVER']
 
+/**
+ * Reports are uploaded under a database name (e.g. "Orders DB") with one or more files each --
+ * AWR snapshots for Oracle, a MySQL performance report, a SQL Server DMV/Query Store export, or
+ * several time-spaced snapshots of any of those. There's no separate "group" row in the backend
+ * (UploadedReport is flat, one row per file) -- the group is the shared name prefix that
+ * handleUpload writes as "<database name> — <file.name>" for multi-file uploads. This groups the
+ * flat list back into that shape for display so a customer sees "Orders DB (2 files)" rather than
+ * two unrelated-looking rows.
+ */
+function groupByDatabase(reports: UploadedReport[]): { database: string; dialect: string; reports: UploadedReport[] }[] {
+  const groups = new Map<string, { database: string; dialect: string; reports: UploadedReport[] }>()
+  for (const r of reports) {
+    const sepIndex = r.name.indexOf(' — ')
+    const database = sepIndex === -1 ? r.name : r.name.slice(0, sepIndex)
+    const key = database + ' ' + r.dialect
+    if (!groups.has(key)) groups.set(key, { database, dialect: r.dialect, reports: [] })
+    groups.get(key)!.reports.push(r)
+  }
+  return [...groups.values()].sort((a, b) =>
+    Math.max(...b.reports.map((r) => +new Date(r.uploadedAt))) - Math.max(...a.reports.map((r) => +new Date(r.uploadedAt))))
+}
+
 export default function Reports() {
   const [reports, setReports] = useState<UploadedReport[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -85,40 +107,52 @@ export default function Reports() {
       <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 20 }}>
         For customers who won't share a live connect string: upload a performance/workload report
         instead -- an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query
-        Store export -- and get an LLM-assisted migration read on it. Upload several at once (e.g.
-        one per system, or several snapshots over time) and select multiple below for one combined
-        analysis. This is a different kind of signal than the Connections flow: there's no live
-        database to query, so findings here come from a model reading the report's text, not
-        deterministic catalog scans. Treat it as a starting point, not a final assessment.
+        Store export -- and get an LLM-assisted migration read on it. Name each upload after the
+        source database (e.g. "Orders DB") and attach as many files as you have for it -- several
+        AWR/DMV snapshots over time, one per system -- they're grouped together below under that
+        name. Select any files (from one database or several) for one combined analysis. This is a
+        different kind of signal than the Connections flow: there's no live database to query, so
+        findings here come from a model reading the report's text, not deterministic catalog scans.
+        Treat it as a starting point, not a final assessment.
       </p>
 
       <div className="panel" style={{ marginBottom: 16 }}>
         {reports.length === 0 && <p style={{ color: 'var(--muted)' }}>No reports uploaded yet.</p>}
-        {reports.map((r) => (
-          <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              <input
-                type="checkbox"
-                checked={selected.has(r.id)}
-                onChange={() => toggleSelected(r.id)}
-                style={{ marginTop: 4 }}
-              />
-              <div>
-                <Link to={`/reports/${r.id}`} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>
-                  {r.name}
-                </Link>
-                <span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase', background: 'var(--accent-soft)', color: 'var(--accent-strong)', borderRadius: 5, padding: '3px 7px', marginLeft: 8 }}>
-                  {r.dialect.toLowerCase().replace('_', ' ')}
-                </span>
-                <div style={{ color: 'var(--muted)', fontSize: 13 }}>
-                  {r.filename} · {(r.textLength / 1024).toFixed(1)} KB · uploaded {new Date(r.uploadedAt).toLocaleString()}
-                  {r.analyzedAt && <> · analyzed</>}
-                </div>
-              </div>
+        {groupByDatabase(reports).map((group) => (
+          <div key={group.database + ' ' + group.dialect} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <strong style={{ fontSize: 15 }}>{group.database}</strong>
+              <span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase', background: 'var(--accent-soft)', color: 'var(--accent-strong)', borderRadius: 5, padding: '3px 7px' }}>
+                {group.dialect.toLowerCase().replace('_', ' ')}
+              </span>
+              <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>
+                {group.reports.length} file{group.reports.length === 1 ? '' : 's'}
+              </span>
             </div>
-            <button onClick={() => handleDelete(r.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer', flexShrink: 0 }}>
-              Delete
-            </button>
+            {group.reports.map((r) => (
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0 4px 4px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(r.id)}
+                    onChange={() => toggleSelected(r.id)}
+                    style={{ marginTop: 4 }}
+                  />
+                  <div>
+                    <Link to={`/reports/${r.id}`} style={{ color: 'var(--accent)', fontWeight: 500, textDecoration: 'none', fontSize: 13.5 }}>
+                      {r.filename}
+                    </Link>
+                    <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
+                      {(r.textLength / 1024).toFixed(1)} KB · uploaded {new Date(r.uploadedAt).toLocaleString()}
+                      {r.analyzedAt && <> · analyzed</>}
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => handleDelete(r.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer', flexShrink: 0 }}>
+                  Delete
+                </button>
+              </div>
+            ))}
           </div>
         ))}
       </div>
@@ -135,8 +169,8 @@ export default function Reports() {
       {showForm && (
         <form className="panel" onSubmit={handleUpload} style={{ marginBottom: 20 }}>
           <div className="field">
-            <label htmlFor="name">Name {files.length > 1 && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(prefix — each file's own name is appended)</span>}</label>
-            <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Claims DB" />
+            <label htmlFor="name">Database name {files.length > 1 && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(groups these {files.length} files together)</span>}</label>
+            <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Orders DB" />
           </div>
           <div className="field">
             <label htmlFor="dialect">Source database</label>

@@ -32,7 +32,7 @@ export default function Login() {
             <div className={styles.brandMark} />
             <div>
               <p className={styles.title}>Polygres Advisor</p>
-              <p className={styles.subtitle}>Oracle → Postgres migration assessment</p>
+              <p className={styles.subtitle}>Postgres migration advisor</p>
             </div>
           </div>
 
