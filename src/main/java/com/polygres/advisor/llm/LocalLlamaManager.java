@@ -1,23 +1,33 @@
 package com.polygres.advisor.llm;
 
 import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Process-wide singleton {@link LocalLlamaProcess} manager -- at most one local model running at a
- * time (a laptop-class CPU-only sidecar isn't meant to juggle several), reused across calls as
- * long as the requested model path doesn't change; a changed model path stops the old process and
- * starts the new one. This is the layer {@link LlmProviderFactory} calls for {@link
- * LlmProviderType#LOCAL} -- callers never talk to {@link LocalLlamaProcess} directly.
+ * Process-wide {@link LocalLlamaProcess} manager -- one running sidecar per distinct model path,
+ * reused across calls, keyed by {@code modelPath}. Originally a single-process singleton (only one
+ * local model at a time), upgraded once PRIMARY and JUDGE became independently configurable: with
+ * Judge deliberately meant to run a genuinely different model than Primary (see {@link
+ * LlmJudge}'s javadoc), a single-process design would stop and restart a full model load on
+ * *every* summarize call as the two roles alternated -- correct but needlessly slow (each llama.cpp
+ * cold start is many seconds). Running both concurrently, each on its own port, means a Judge-
+ * enabled summarize call only pays each model's startup cost once, not twice per call.
+ *
+ * <p>This is the layer {@link LlmProviderFactory} calls for {@link LlmProviderType#LOCAL} --
+ * callers never talk to {@link LocalLlamaProcess} directly.
  */
 public final class LocalLlamaManager {
 
-    private static volatile LocalLlamaProcess current;
-    private static volatile String currentModelPath;
-    private static final int PORT = Integer.parseInt(System.getenv().getOrDefault("POLYGRES_LLM_LOCAL_PORT", "8091"));
+    private static final Map<String, LocalLlamaProcess> processes = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> ports = new ConcurrentHashMap<>();
+    private static final AtomicInteger nextPort = new AtomicInteger(
+        Integer.parseInt(System.getenv().getOrDefault("POLYGRES_LLM_LOCAL_PORT", "8091")));
 
     private LocalLlamaManager() {}
 
-    /** @return the port the running (or freshly started) local server is listening on */
+    /** @return the port the running (or freshly started) local server for this model is listening on */
     public static synchronized int ensureRunning(String serverPath, String modelPath) throws IOException {
         if (serverPath == null || serverPath.isBlank()) {
             throw new IllegalStateException("No llama-server binary configured -- set POLYGRES_LLM_LOCAL_SERVER_PATH "
@@ -27,14 +37,14 @@ public final class LocalLlamaManager {
             throw new IllegalStateException("No local model path configured -- set it on the LLM configuration page.");
         }
 
-        if (current != null && current.isAlive() && modelPath.equals(currentModelPath)) {
-            return current.port();
+        LocalLlamaProcess existing = processes.get(modelPath);
+        if (existing != null && existing.isAlive()) {
+            return existing.port();
         }
-        if (current != null) {
-            current.close();
-        }
-        current = LocalLlamaProcess.start(serverPath, modelPath, PORT);
-        currentModelPath = modelPath;
-        return current.port();
+
+        int port = ports.computeIfAbsent(modelPath, k -> nextPort.getAndIncrement());
+        LocalLlamaProcess started = LocalLlamaProcess.start(serverPath, modelPath, port);
+        processes.put(modelPath, started);
+        return started.port();
     }
 }
