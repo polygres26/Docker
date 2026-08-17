@@ -185,13 +185,14 @@ export async function runConnectionWorkload(id: string): Promise<WorkloadResult>
 // --- LLM configuration ---
 
 export type LlmRole = 'primary' | 'judge'
-export type LlmProviderType = 'builtin' | 'external'
+export type LlmProviderType = 'local' | 'builtin' | 'external'
 
 export interface LlmSettings {
   role: 'PRIMARY' | 'JUDGE'
-  providerType: 'BUILTIN' | 'EXTERNAL'
+  providerType: 'LOCAL' | 'BUILTIN' | 'EXTERNAL'
   apiKey: null // never sent back by the server
   baseUrl: string | null
+  modelPath: string | null
   model: string | null
   enabled: boolean
   updatedAt: string | null
@@ -205,6 +206,7 @@ export async function saveLlmSettings(role: LlmRole, settings: {
   providerType: LlmProviderType
   apiKey?: string
   baseUrl?: string
+  modelPath?: string
   model: string
   enabled: boolean
 }): Promise<LlmSettings> {

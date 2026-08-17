@@ -12,11 +12,13 @@ export default function LlmSettings() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 24 }}>
         Polygres Advisor's LLM-backed features (PL/SQL summarization, workload classification) use
-        the <strong>Primary</strong> model below. <strong>Judge</strong> is optional: a second,
-        independently-configured model that reviews Primary's PL/SQL summaries for accuracy before
-        you see them -- useful because a genuinely different model catches more real mistakes than
-        the same model checking its own work. Judge only reviews summarization, not the high-volume
-        workload classification, to keep cost proportional to what's actually at stake.
+        the <strong>Primary</strong> model below -- <strong>Local</strong> by default, so it works
+        out of the box with no API key and no data leaving this machine. <strong>Judge</strong> is
+        optional: a second, independently-configured model that reviews Primary's PL/SQL summaries
+        for accuracy before you see them -- useful because a genuinely different model catches more
+        real mistakes than the same model checking its own work. Judge only reviews summarization,
+        not the high-volume workload classification, to keep cost proportional to what's actually
+        at stake.
       </p>
 
       <RoleCard
@@ -39,9 +41,10 @@ export default function LlmSettings() {
 function RoleCard({
   role, title, description, showEnabledToggle,
 }: { role: LlmRole; title: string; description: string; showEnabledToggle: boolean }) {
-  const [providerType, setProviderType] = useState<LlmProviderType>('builtin')
+  const [providerType, setProviderType] = useState<LlmProviderType>('local')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [modelPath, setModelPath] = useState('')
   const [model, setModel] = useState('')
   const [enabled, setEnabled] = useState(role === 'primary')
   const [hasStoredKey, setHasStoredKey] = useState(false)
@@ -54,6 +57,7 @@ function RoleCard({
     getLlmSettings(role).then((s) => {
       setProviderType(s.providerType.toLowerCase() as LlmProviderType)
       setBaseUrl(s.baseUrl ?? '')
+      setModelPath(s.modelPath ?? '')
       setModel(s.model ?? '')
       setEnabled(s.enabled)
       setUpdatedAt(s.updatedAt)
@@ -65,7 +69,7 @@ function RoleCard({
     e.preventDefault()
     setSaving(true); setError(null); setStatus(null)
     try {
-      await saveLlmSettings(role, { providerType, apiKey, baseUrl, model, enabled })
+      await saveLlmSettings(role, { providerType, apiKey, baseUrl, modelPath, model, enabled })
       setStatus('Saved.')
       setApiKey('')
       if (providerType === 'external' && apiKey) setHasStoredKey(true)
@@ -89,7 +93,11 @@ function RoleCard({
       </div>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>{description}</p>
 
-      <div style={{ display: 'flex', gap: 16, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
+          <input type="radio" checked={providerType === 'local'} onChange={() => setProviderType('local')} />
+          Local (llama.cpp)
+        </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
           <input type="radio" checked={providerType === 'builtin'} onChange={() => setProviderType('builtin')} />
           Built-in (Claude)
@@ -99,6 +107,23 @@ function RoleCard({
           External (OpenAI-compatible)
         </label>
       </div>
+
+      {providerType === 'local' && (
+        <div className="field">
+          <label htmlFor={`${role}-modelPath`}>Model file path (.gguf)</label>
+          <input
+            id={`${role}-modelPath`}
+            value={modelPath}
+            onChange={(e) => setModelPath(e.target.value)}
+            placeholder="/path/to/model.gguf"
+          />
+          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+            No API key, no network call leaves this machine. Runs via a locally-managed llama-server
+            sidecar -- needs llama-server installed (on PATH, or set POLYGRES_LLM_LOCAL_SERVER_PATH)
+            and a .gguf model file at the path above.
+          </p>
+        </div>
+      )}
 
       {providerType === 'external' && (
         <>
@@ -124,15 +149,17 @@ function RoleCard({
         </>
       )}
 
-      <div className="field">
-        <label htmlFor={`${role}-model`}>Model</label>
-        <input
-          id={`${role}-model`}
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder={providerType === 'builtin' ? 'e.g. claude-sonnet-5' : 'e.g. gpt-4.1'}
-        />
-      </div>
+      {providerType !== 'local' && (
+        <div className="field">
+          <label htmlFor={`${role}-model`}>Model</label>
+          <input
+            id={`${role}-model`}
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={providerType === 'builtin' ? 'e.g. claude-sonnet-5' : 'e.g. gpt-4.1'}
+          />
+        </div>
+      )}
 
       {error && <p style={{ color: 'var(--hard)', fontSize: 13 }}>{error}</p>}
       {status && <p style={{ color: 'var(--accent)', fontSize: 13 }}>{status}</p>}

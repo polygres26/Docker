@@ -24,6 +24,7 @@ public class LlmSettingsRoute implements RouteHandler {
         String providerType;
         String apiKey;
         String baseUrl;
+        String modelPath;
         String model;
         boolean enabled;
     }
@@ -56,10 +57,10 @@ public class LlmSettingsRoute implements RouteHandler {
             try {
                 providerType = LlmProviderType.valueOf(form.providerType.toUpperCase());
             } catch (IllegalArgumentException e) {
-                writeError(response, 400, "Unknown providerType: " + form.providerType + " (expected builtin or external).");
+                writeError(response, 400, "Unknown providerType: " + form.providerType + " (expected local, builtin, or external).");
                 return;
             }
-            var saved = store.save(role, providerType, form.apiKey, form.baseUrl, form.model, form.enabled);
+            var saved = store.save(role, providerType, form.apiKey, form.baseUrl, form.modelPath, form.model, form.enabled);
             writeJson(response, 200, saved.redacted());
             return;
         }

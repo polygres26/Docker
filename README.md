@@ -47,17 +47,26 @@ src/main/java/com/polygres/advisor/
   llm/       LLM/SLM layer -- explicitly downstream of catalog + workload capture, never
              feeds back into MigrationScorer's deterministic score. Configurable per the app's
              LLM configuration page (own rail item, app-wide, not scoped to a connection):
-               - LlmRole (PRIMARY / JUDGE) + LlmProviderType (BUILTIN / EXTERNAL): PRIMARY does
-                 the actual work; JUDGE is an optional, independently-configured second model
-                 that reviews PRIMARY's PL/SQL summaries -- see LlmJudge's javadoc for why it's
-                 scoped to summarization only, not every LLM call.
+               - LlmRole (PRIMARY / JUDGE) + LlmProviderType (LOCAL / BUILTIN / EXTERNAL):
+                 PRIMARY does the actual work; JUDGE is an optional, independently-configured
+                 second model that reviews PRIMARY's PL/SQL summaries -- see LlmJudge's javadoc
+                 for why it's scoped to summarization only, not every LLM call. LOCAL is the
+                 default for a fresh install -- no API key, nothing leaves the machine.
                - LlmSettingsStore: persists both roles' config (provider type, API key, base
-                 URL, model, enabled) in the same embedded HSQLDB store as connections.
+                 URL, local model path, model, enabled) in the same embedded HSQLDB store as
+                 connections.
+               - LocalLlamaProcess/LocalLlamaManager (LOCAL): manages a llama-server sidecar
+                 process -- CPU-only, bound to 127.0.0.1 -- ported from Omnigate's
+                 com.omnigate.assistant.LocalLlamaProcess. At most one local model running at a
+                 time; a changed model path restarts it. The server binary is found via
+                 POLYGRES_LLM_LOCAL_SERVER_PATH or PATH; the model file (a .gguf) is set on the
+                 LLM configuration page, same "operator-provided, nothing bundled or
+                 auto-downloaded" posture Omnigate takes with its own local Qwen/Gemma sidecars.
                - ClaudeLlmProvider (BUILTIN -- server's own ANTHROPIC_API_KEY) and
-                 OpenAiCompatibleLlmProvider (EXTERNAL -- user-supplied key + base URL, covers
-                 OpenAI/Azure OpenAI/Ollama/vLLM/etc., anything speaking the chat-completions
-                 shape) both implement LlmProvider; LlmProviderFactory resolves an LlmSettings
-                 row into a concrete provider + model.
+                 OpenAiCompatibleLlmProvider (EXTERNAL, and also what LOCAL talks to once its
+                 sidecar is up, since llama-server exposes the same OpenAI-compatible
+                 /v1/chat/completions shape) both implement LlmProvider; LlmProviderFactory
+                 resolves an LlmSettings row into a concrete provider + model.
                - PlsqlSummarizer: deep-reasoning PL/SQL intent + portability-risk summary, one
                  object at a time (Oracle-only today), using PRIMARY (and JUDGE, if enabled).
                - SqlWorkloadClassifier: high-volume, cheap classification of captured SQL into
