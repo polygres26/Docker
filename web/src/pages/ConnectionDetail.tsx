@@ -34,7 +34,15 @@ export default function ConnectionDetail() {
         ← Connections
       </button>
       <h1 style={{ marginBottom: 2, fontSize: 22 }}>{connection?.name ?? 'Connection detail'}</h1>
-      {connection && <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 13, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{connection.jdbcUrl}</p>}
+      {connection && (
+        <p style={{
+          color: 'var(--muted)', marginTop: 0, fontSize: 13,
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+          wordBreak: 'break-all', overflowWrap: 'anywhere',
+        }}>
+          {connection.jdbcUrl}
+        </p>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {(['findings', 'objects', 'workload', 'parameters'] as Tab[]).map((t) => (

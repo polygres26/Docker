@@ -42,12 +42,24 @@ export default function Connections() {
       <div className="panel" style={{ marginBottom: 20, maxWidth: 640 }}>
         {connections.length === 0 && <p style={{ color: 'var(--muted)' }}>No connections yet.</p>}
         {connections.map((c) => (
-          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-            <div>
+          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <Link to={`/connections/${c.id}`} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{c.name}</Link>
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>{c.jdbcUrl}</div>
+              {/* Full JDBC URL can run well past the panel width (SQL Server's "database=...;encrypt=...;" style
+                  strings especially) -- truncate with an ellipsis here and rely on the connection detail page
+                  (linked via the name above, and via clicking this text too) to show it in full, wrapped. */}
+              <Link
+                to={`/connections/${c.id}`}
+                title={c.jdbcUrl}
+                style={{
+                  display: 'block', color: 'var(--muted)', fontSize: 13, textDecoration: 'none',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                {c.jdbcUrl}
+              </Link>
             </div>
-            <button onClick={() => handleDelete(c.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer' }}>
+            <button onClick={() => handleDelete(c.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer', flexShrink: 0 }}>
               Delete
             </button>
           </div>
