@@ -1,0 +1,10 @@
+target/
+dependency-reduced-pom.xml
+*.class
+
+web/node_modules/
+web/dist/
+web/.oxlintrc.json.bak
+
+.DS_Store
+*.log
