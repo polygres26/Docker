@@ -9,6 +9,7 @@ import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.RollupStage;
 import com.polygres.wire.core.RouterStage;
 import com.polygres.wire.core.StatsCollectorStage;
+import com.polygres.wire.grpc.PolyWireGrpcServer;
 import com.polygres.wire.http.admin.MetricsServer;
 import com.polygres.wire.mywire.MySqlWireSessionHandler;
 import com.polygres.wire.orawire.session.SessionHandler;
@@ -28,6 +29,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLServerSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,6 +82,37 @@ import org.slf4j.LoggerFactory;
  * original {@code sqlText}, so what actually matters here is that {@code RollupStage} runs first so
  * its accelerated, much-cheaper query is what a cache entry (if any) would otherwise have avoided
  * recomputing anyway — either stage can independently short-circuit the rest of the pipeline.
+ *
+ * <p>Fourth pass — TLS. All four client-facing frontends (orawire, pgwire, mywire, gRPC) now
+ * support TLS, backed by one shared PKCS12 keystore ({@code POLYWIRE_TLS_KEYSTORE}/
+ * {@code POLYWIRE_TLS_KEYSTORE_PASSWORD}, ported from Omnigate's Oracle-only {@code ORAPG_TLS_*}
+ * and renamed for consistency). orawire's TCPS listener is a straight port of Omnigate's
+ * {@code ProxyServer} TLS handling: a second, TLS-only {@code ServerSocket} (built via
+ * {@link TlsSupport#buildTlsFactory}) accepting the exact same {@link SessionHandler}, since TLS
+ * is a full-socket wrap done before any protocol bytes — no session-handler code needs to know
+ * about TLS at all. <b>pgwire and mywire are both different on purpose</b>: real Postgres wire
+ * protocol v3 has its own in-band {@code SSLRequest} negotiation (every real client/driver,
+ * including {@code psql sslmode=require}, speaks it on the <em>same</em> port a plaintext client
+ * uses), and MySQL's protocol has an equivalent {@code CLIENT_SSL} capability-flag negotiation
+ * (spoken by e.g. {@code pymysql}'s {@code ssl=} option). An earlier version of this change gave
+ * both a separate always-TLS listener port instead (matching orawire's raw-full-socket-wrap
+ * pattern) — live-testing with real {@code psql} and {@code pymysql} clients showed that doesn't
+ * work for either: both protocols' real client libraries always perform their plaintext
+ * negotiation handshake first, regardless of which port they're pointed at, so a
+ * raw-TLS-from-byte-zero port is never what a real client actually sends. {@code
+ * PgWireSessionHandler}/{@code MySqlWireSessionHandler} instead answer their protocol's own
+ * negotiation message and upgrade the socket in place via {@code SSLSocketFactory} when TLS is
+ * configured — see {@code PgWireSessionHandler#readStartupMessage}'s and {@code
+ * MySqlWireSessionHandler#performHandshake}'s javadoc. There are deliberately no separate
+ * {@code POLYWIRE_PGWIRE_TLS_PORT}/{@code POLYWIRE_MYWIRE_TLS_PORT} listeners in {@code Main} as
+ * a result; both protocols' single plain-looking ports transparently serve plaintext and (when
+ * {@code POLYWIRE_TLS_KEYSTORE} is set) TLS clients, exactly like real Postgres/MySQL servers.
+ * gRPC ({@code PolyWireGrpcServer}) is
+ * started here for the first time at all (it was never wired into {@code Main} before this pass)
+ * on {@code POLYWIRE_GRPC_PORT} (default 7070, unchanged), plus a second TLS listener on
+ * {@code POLYWIRE_GRPC_TLS_PORT} (default 17071) built from the same shared keystore via a
+ * {@code KeyManagerFactory} handed straight to Netty's {@code SslContextBuilder} — no PEM
+ * extraction or temp files needed, see {@link TlsSupport} and {@link PolyWireGrpcServer}.
  */
 public final class Main {
 
@@ -190,6 +224,29 @@ public final class Main {
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
         ExecutorService listenerExecutor = Executors.newCachedThreadPool();
 
+        // gRPC: not wired into Main at all before this pass (see class javadoc). Started
+        // unconditionally on POLYWIRE_GRPC_PORT (plaintext); a second TLS listener on
+        // POLYWIRE_GRPC_TLS_PORT is added only when a keystore is configured.
+        PolyWireGrpcServer grpcServer = new PolyWireGrpcServer(options, pipelineStages, backendRegistry);
+        grpcServer.start();
+        log.info("polywire listening for gRPC on port {}", options.grpcPort());
+
+        SSLServerSocketFactory tlsFactory = null;
+        if (options.tlsEnabled()) {
+            tlsFactory = TlsSupport.buildTlsFactory(options);
+            log.info("TLS enabled (POLYWIRE_TLS_KEYSTORE={}): orawire TCPS on {}, pgwire+mywire negotiate TLS "
+                            + "in-band on their existing plain ports ({}, {})",
+                    options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
+
+            final SSLServerSocketFactory finalTlsFactory = tlsFactory;
+            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, finalTlsFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor));
+
+            grpcServer.startTls();
+            log.info("polywire listening for gRPC TLS on port {}", options.grpcTlsPort());
+        } else {
+            log.info("TLS disabled (set POLYWIRE_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
+        }
+
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor);
@@ -248,6 +305,27 @@ public final class Main {
             }
         } catch (IOException e) {
             log.error("Oracle wire listener on port {} failed", options.listenPort(), e);
+        }
+    }
+
+    /**
+     * TCPS: same session handler as {@link #acceptOraWireLoop}, just fed by an
+     * {@code SSLServerSocket} instead of a plain one — TLS is a full-socket wrap done before any
+     * TNS bytes are exchanged (ported from Omnigate's {@code ProxyServer}), so no protocol-
+     * specific TLS code is needed here or in {@link SessionHandler} itself.
+     */
+    private static void acceptOraWireTlsLoop(ServerOptions options, SSLServerSocketFactory tlsFactory,
+            PgBackendPool backendPool, List<PipelineStage> pipelineStages, BackendRegistry backendRegistry,
+            ExecutorService sessionExecutor) {
+        try (SSLServerSocket serverSocket = (SSLServerSocket) tlsFactory.createServerSocket(options.tlsPort())) {
+            log.info("polywire listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
+                    options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry));
+            }
+        } catch (IOException e) {
+            log.error("Oracle wire TCPS listener on port {} failed", options.tlsPort(), e);
         }
     }
 

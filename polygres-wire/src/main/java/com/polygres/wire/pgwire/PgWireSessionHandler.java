@@ -7,11 +7,13 @@ import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.server.ServerOptions;
+import com.polygres.wire.server.TlsSupport;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -20,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -88,6 +93,10 @@ public final class PgWireSessionHandler implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(PgWireSessionHandler.class);
 
     private final Socket clientSocket;
+    // Reassigned to the SSLSocket layer if the client negotiates SSLRequest (see readStartupMessage) --
+    // tracked here (rather than threaded through every method signature) purely so run()'s cleanup
+    // closes whichever socket is actually live, TLS-upgraded or not.
+    private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
     // RTT optimization (ARCHITECTURE.md §11): built once per session (this class is already
@@ -125,20 +134,26 @@ public final class PgWireSessionHandler implements Runnable {
 
     @Override
     public void run() {
-        try (Socket socket = clientSocket) {
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+        activeSocket = clientSocket;
+        try {
+            DataInputStream in = new DataInputStream(activeSocket.getInputStream());
+            DataOutputStream out = new DataOutputStream(activeSocket.getOutputStream());
 
-            String username = performStartup(in, out);
-            if (username == null) {
+            StartupStreams startup = performStartup(in, out);
+            if (startup == null) {
                 return; // auth failed or client bailed after SSL negotiation
             }
-            queryLoop(in, out);
+            queryLoop(startup.in(), startup.out());
         } catch (java.io.EOFException e) {
             // client disconnected mid-message; not worth logging as a warning
         } catch (Exception e) {
             log.warn("pgwire session terminated: {}", e.getMessage(), e);
         } finally {
+            try {
+                activeSocket.close(); // closes the TLS layer (if any) and the underlying socket
+            } catch (IOException ignoredOnSessionTeardown) {
+                // closing on the way out -- nothing left to report this to
+            }
             try {
                 routingExecutor.endTransaction(false); // a client that disconnects mid-transaction rolls back -- real Postgres does the same on connection loss, and this is what actually releases any routed connections beginTransaction() opened
             } catch (SQLException ignoredOnSessionTeardown) {
@@ -224,11 +239,18 @@ public final class PgWireSessionHandler implements Runnable {
 
     // ---- startup + auth --------------------------------------------------
 
-    private String performStartup(DataInputStream in, DataOutputStream out) throws IOException {
-        Map<String, String> params = readStartupMessage(in, out);
-        if (params == null) {
+    /** Bundles the (possibly TLS-upgraded) streams a caller must switch to after {@link #performStartup}. */
+    private record StartupStreams(DataInputStream in, DataOutputStream out) {
+    }
+
+    private StartupStreams performStartup(DataInputStream in, DataOutputStream out) throws IOException {
+        StartupMessage startup = readStartupMessage(in, out);
+        if (startup == null) {
             return null;
         }
+        in = startup.in();
+        out = startup.out();
+        Map<String, String> params = startup.params();
         String username = params.getOrDefault("user", "");
 
         PgMessages.writeAuthCleartextPassword(out);
@@ -253,16 +275,60 @@ public final class PgWireSessionHandler implements Runnable {
         PgMessages.writeBackendKeyData(out);
         PgMessages.writeReadyForQuery(out, 'I');
         out.flush();
-        return username;
+        return new StartupStreams(in, out);
     }
 
-    /** Returns startup params, or null if the connection ended during SSL/GSS negotiation or startup. */
-    private Map<String, String> readStartupMessage(DataInputStream in, DataOutputStream out) throws IOException {
+    private record StartupMessage(DataInputStream in, DataOutputStream out, Map<String, String> params) {
+    }
+
+    /**
+     * Returns the startup params (and the streams to keep using -- TLS-upgraded if the client sent
+     * {@code SSLRequest} and {@link ServerOptions#tlsEnabled()}), or {@code null} if the connection
+     * ended during SSL/GSS negotiation or startup.
+     *
+     * <p>{@code SSLRequest} handling: real Postgres wire protocol v3 negotiates TLS in-band on the
+     * same port a plaintext client also uses -- the client sends an {@code SSLRequest} startup
+     * packet before anything else, the server replies a single {@code 'S'} (yes) or {@code 'N'} (no)
+     * byte, and on {@code 'S'} both sides immediately begin a TLS handshake using the very socket
+     * the plaintext bytes were just exchanged over. This is what a real {@code psql
+     * sslmode=require} client actually speaks, so it's implemented here directly (upgrading this
+     * session's socket in place via {@code SSLSocketFactory.createSocket(Socket, ...)} in server
+     * mode) rather than only standing up a separate always-TLS listener port the way orawire/mywire
+     * do -- unlike them, pgwire has its own real, well-documented in-protocol negotiation that real
+     * clients expect on the standard port, and skipping it would mean {@code sslmode=require}
+     * against the plain pgwire port simply fails for every real Postgres client/driver out there.
+     * When TLS isn't configured ({@code POLYWIRE_TLS_KEYSTORE} unset), the reply is {@code 'N'},
+     * exactly as before this change -- a plaintext-only client is completely unaffected.
+     */
+    private StartupMessage readStartupMessage(DataInputStream in, DataOutputStream out) throws IOException {
         while (true) {
             int len = in.readInt();
             int code = in.readInt();
-            if (code == PgMessages.SSL_REQUEST_CODE || code == PgMessages.GSSENC_REQUEST_CODE) {
-                out.writeByte('N'); // "no" to SSL/GSS — plaintext only for now
+            if (code == PgMessages.SSL_REQUEST_CODE) {
+                if (options.tlsEnabled()) {
+                    out.writeByte('S');
+                    out.flush();
+                    try {
+                        SSLContext sslContext = SSLContext.getInstance("TLS");
+                        sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
+                        SSLSocketFactory factory = sslContext.getSocketFactory();
+                        SSLSocket sslSocket = (SSLSocket) factory.createSocket(activeSocket, null, activeSocket.getPort(), true);
+                        sslSocket.setUseClientMode(false);
+                        sslSocket.startHandshake();
+                        activeSocket = sslSocket;
+                        in = new DataInputStream(sslSocket.getInputStream());
+                        out = new DataOutputStream(sslSocket.getOutputStream());
+                    } catch (GeneralSecurityException e) {
+                        throw new IOException("pgwire TLS upgrade failed", e);
+                    }
+                } else {
+                    out.writeByte('N'); // "no" to SSL -- plaintext only, matches pre-TLS behavior
+                    out.flush();
+                }
+                continue;
+            }
+            if (code == PgMessages.GSSENC_REQUEST_CODE) {
+                out.writeByte('N'); // GSS encryption still unsupported
                 out.flush();
                 continue;
             }
@@ -271,7 +337,7 @@ public final class PgWireSessionHandler implements Runnable {
             }
             byte[] rest = new byte[len - 8];
             in.readFully(rest);
-            return parseStartupParams(rest);
+            return new StartupMessage(in, out, parseStartupParams(rest));
         }
     }
 

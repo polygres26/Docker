@@ -16,15 +16,22 @@ final class MySqlMessages {
     static final int CLIENT_SECURE_CONNECTION = 0x00008000;
     static final int CLIENT_PLUGIN_AUTH = 0x00080000;
     static final int CLIENT_CONNECT_WITH_DB = 0x00000008;
+    // MySQL protocol's own in-band TLS flag: advertised in the server's initial Handshake packet
+    // (below) only when TLS is actually configured; a client that wants TLS then sets this same
+    // bit on a partial "SSLRequest" packet (capability flags + charset only, no username/auth --
+    // see MySqlWireSessionHandler#performHandshake) before starting the TLS handshake in place on
+    // the same socket, mirroring pgwire's SSLRequest and real Postgres/MySQL server behavior.
+    static final int CLIENT_SSL = 0x00000800;
 
-    static byte[] handshakeV10(long connectionId, byte[] scramble) {
+    static byte[] handshakeV10(long connectionId, byte[] scramble, boolean tlsSupported) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         b.write(10); // protocol version
         MySqlPacket.writeNulString(b, "8.0.34-polywire");
         MySqlPacket.writeFixedInt(b, connectionId, 4);
         b.write(scramble, 0, 8); // auth-plugin-data-part-1
         b.write(0); // filler
-        int capabilities = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_WITH_DB;
+        int capabilities = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_WITH_DB
+                | (tlsSupported ? CLIENT_SSL : 0);
         MySqlPacket.writeFixedInt(b, capabilities & 0xFFFF, 2); // capability flags (lower)
         b.write(0x21); // character set: utf8_general_ci
         MySqlPacket.writeFixedInt(b, 0x0002, 2); // status flags: SERVER_STATUS_AUTOCOMMIT

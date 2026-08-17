@@ -8,17 +8,22 @@ import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
 import com.polygres.wire.pgwire.PgConnections;
 import com.polygres.wire.server.ServerOptions;
+import com.polygres.wire.server.TlsSupport;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +42,9 @@ public final class MySqlWireSessionHandler implements Runnable {
     private static final AtomicLong NEXT_CONNECTION_ID = new AtomicLong(1);
 
     private final Socket clientSocket;
+    // Reassigned to the SSLSocket layer if the client negotiates CLIENT_SSL (see performHandshake) --
+    // tracked here purely so run()'s cleanup closes whichever socket is actually live.
+    private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
     // RTT optimization (ARCHITECTURE.md §11) — same reasoning as PgWireSessionHandler's identical
@@ -54,32 +62,77 @@ public final class MySqlWireSessionHandler implements Runnable {
 
     @Override
     public void run() {
-        try (Socket socket = clientSocket) {
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            OutputStream out = socket.getOutputStream();
+        activeSocket = clientSocket;
+        try {
+            DataInputStream in = new DataInputStream(activeSocket.getInputStream());
+            OutputStream out = activeSocket.getOutputStream();
             MySqlPacket packets = new MySqlPacket();
 
-            String username = performHandshake(in, out, packets);
-            if (username == null) {
+            HandshakeStreams handshake = performHandshake(in, out, packets);
+            if (handshake == null) {
                 return; // auth failed
             }
-            queryLoop(in, out, packets);
+            queryLoop(handshake.in(), handshake.out(), packets);
         } catch (java.io.EOFException e) {
             // client disconnected mid-message; not worth logging as a warning
         } catch (Exception e) {
             log.warn("mywire session terminated: {}", e.getMessage(), e);
+        } finally {
+            try {
+                activeSocket.close(); // closes the TLS layer (if any) and the underlying socket
+            } catch (IOException ignoredOnSessionTeardown) {
+                // closing on the way out -- nothing left to report this to
+            }
         }
     }
 
     // ---- handshake + auth --------------------------------------------------
 
-    private String performHandshake(DataInputStream in, OutputStream out, MySqlPacket packets) throws IOException {
+    /** Bundles the (possibly TLS-upgraded) streams a caller must switch to after {@link #performHandshake}. */
+    private record HandshakeStreams(DataInputStream in, OutputStream out) {
+    }
+
+    /**
+     * MySQL protocol's own in-band TLS negotiation (mirrors {@code PgWireSessionHandler}'s
+     * {@code SSLRequest} handling — see that class's javadoc for the general rationale). The
+     * server's initial Handshake packet advertises {@code CLIENT_SSL} only when
+     * {@link ServerOptions#tlsEnabled()}; a real client that wants TLS (e.g. {@code pymysql}
+     * with an {@code ssl=} context) responds with a partial "SSLRequest" packet — capability
+     * flags (with {@code CLIENT_SSL} set) + max packet size + charset + 23 reserved bytes, no
+     * username/auth-response yet — then immediately starts a TLS handshake on the same socket.
+     * Detected here by checking the {@code CLIENT_SSL} bit on the very first response packet;
+     * when set, the socket is upgraded in place via {@code SSLSocketFactory} and the *real*
+     * handshake-response packet (username, auth bytes, etc.) is read fresh over the new TLS
+     * streams, exactly as the protocol spec describes. A client that never sets the bit (or a
+     * deployment with no keystore configured, so the flag was never advertised) proceeds exactly
+     * as before this change — the plain port is unaffected.
+     */
+    private HandshakeStreams performHandshake(DataInputStream in, OutputStream out, MySqlPacket packets) throws IOException {
         byte[] scramble = new byte[20];
         new SecureRandom().nextBytes(scramble);
         long connectionId = NEXT_CONNECTION_ID.getAndIncrement();
-        packets.writePayload(out, MySqlMessages.handshakeV10(connectionId, scramble));
+        packets.writePayload(out, MySqlMessages.handshakeV10(connectionId, scramble, options.tlsEnabled()));
 
         byte[] response = packets.readPayload(in);
+        int clientCapabilities = (response[0] & 0xFF) | ((response[1] & 0xFF) << 8)
+                | ((response[2] & 0xFF) << 16) | ((response[3] & 0xFF) << 24);
+        if (options.tlsEnabled() && (clientCapabilities & MySqlMessages.CLIENT_SSL) != 0) {
+            try {
+                SSLContext sslContext = SSLContext.getInstance("TLS");
+                sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
+                SSLSocketFactory factory = sslContext.getSocketFactory();
+                SSLSocket sslSocket = (SSLSocket) factory.createSocket(activeSocket, null, activeSocket.getPort(), true);
+                sslSocket.setUseClientMode(false);
+                sslSocket.startHandshake();
+                activeSocket = sslSocket;
+                in = new DataInputStream(sslSocket.getInputStream());
+                out = sslSocket.getOutputStream();
+            } catch (GeneralSecurityException e) {
+                throw new IOException("mywire TLS upgrade failed", e);
+            }
+            response = packets.readPayload(in); // real HandshakeResponse41, now over TLS
+        }
+
         int[] pos = {0};
         pos[0] += 4; // client capability flags
         pos[0] += 4; // max packet size
@@ -99,7 +152,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         }
 
         packets.writePayload(out, MySqlMessages.okPacket(0));
-        return username;
+        return new HandshakeStreams(in, out);
     }
 
     // ---- COM_QUERY loop ------------------------------------------------

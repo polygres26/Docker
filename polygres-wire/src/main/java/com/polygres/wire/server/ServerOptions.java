@@ -39,6 +39,7 @@ public final class ServerOptions {
     private final int pgStandbyPort;
     private final boolean tlsEnabled;
     private final int tlsPort;
+    private final int grpcTlsPort;
     private final String tlsKeystorePath;
     private final String tlsKeystorePassword;
     private final boolean dualExecEnabled;
@@ -59,7 +60,8 @@ public final class ServerOptions {
 
     private ServerOptions(int listenPort, int pgWireListenPort, int myWireListenPort, int grpcPort, int httpPort, int httpsPort, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             String pgStandbyHost, int pgStandbyPort,
-            boolean tlsEnabled, int tlsPort, String tlsKeystorePath, String tlsKeystorePassword,
+            boolean tlsEnabled, int tlsPort, int grpcTlsPort,
+            String tlsKeystorePath, String tlsKeystorePassword,
             boolean dualExecEnabled, DualExecAuthority dualExecAuthority, boolean dualExecRequireBoth, boolean dualExecXaEnabled,
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
@@ -79,6 +81,7 @@ public final class ServerOptions {
         this.pgStandbyPort = pgStandbyPort;
         this.tlsEnabled = tlsEnabled;
         this.tlsPort = tlsPort;
+        this.grpcTlsPort = grpcTlsPort;
         this.tlsKeystorePath = tlsKeystorePath;
         this.tlsKeystorePassword = tlsKeystorePassword;
         this.dualExecEnabled = dualExecEnabled;
@@ -100,10 +103,21 @@ public final class ServerOptions {
 
     public static ServerOptions parse(String[] args) {
         // TODO: replace with real CLI parsing; hardcoded defaults for local dev only.
-        String keystorePath = System.getenv("ORAPG_TLS_KEYSTORE");
+        // One shared keystore backs TLS for all four client-facing frontends (orawire TCPS,
+        // pgwire, mywire, gRPC) -- renamed from Omnigate's ORAPG_TLS_* to POLYWIRE_TLS_* for
+        // consistency with everything else already renamed in this port. orawire gets a second,
+        // TLS-only listener port alongside its existing plain-TCP one (same design Omnigate uses
+        // for Oracle TCPS); gRPC gets the same treatment now that it's actually started (it wasn't
+        // wired into Main at all before this). pgwire and mywire are both different: each
+        // negotiates TLS in-band on its existing plain port (Postgres's real SSLRequest handshake,
+        // MySQL's real CLIENT_SSL capability-flag handshake) instead of a separate port -- see
+        // Main's class javadoc and PgWireSessionHandler/MySqlWireSessionHandler's own javadoc for
+        // why (a dedicated always-TLS port doesn't work for either protocol's real clients).
+        String keystorePath = System.getenv("POLYWIRE_TLS_KEYSTORE");
         boolean tlsEnabled = keystorePath != null && !keystorePath.isBlank();
-        int tlsPort = parseIntEnv("ORAPG_TLS_PORT", 2484);
-        String keystorePassword = System.getenv("ORAPG_TLS_KEYSTORE_PASSWORD");
+        int tlsPort = parseIntEnv("POLYWIRE_TLS_PORT", 2484);
+        int grpcTlsPort = parseIntEnv("POLYWIRE_GRPC_TLS_PORT", 17071);
+        String keystorePassword = System.getenv("POLYWIRE_TLS_KEYSTORE_PASSWORD");
 
         boolean dualExecEnabled = parseBoolEnv("ORAPG_DUAL_EXEC_ENABLED", false);
         DualExecAuthority dualExecAuthority = "oracle".equalsIgnoreCase(
@@ -164,7 +178,7 @@ public final class ServerOptions {
 
         return new ServerOptions(orawireListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
                 pgStandbyHost, pgStandbyPort,
-                tlsEnabled, tlsPort, keystorePath, keystorePassword,
+                tlsEnabled, tlsPort, grpcTlsPort, keystorePath, keystorePassword,
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
@@ -239,6 +253,10 @@ public final class ServerOptions {
 
     public int tlsPort() {
         return tlsPort;
+    }
+
+    public int grpcTlsPort() {
+        return grpcTlsPort;
     }
 
     public String tlsKeystorePath() {
