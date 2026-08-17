@@ -69,7 +69,24 @@ public final class PolyWireCluster {
                 }
             }
         }
+        return start(seeds.isEmpty() ? List.of("127.0.0.1:47500") : seeds);
+    }
 
+    /**
+     * Starts a single-node embedded Ignite instance with no seed nodes configured, bypassing the
+     * {@code POLYWIRE_CLUSTER_ENABLED} env-var gate — for {@code Main} to use when a cache table
+     * was configured ({@code POLYWIRE_CACHE_TABLES}) but full multi-node clustering wasn't opted
+     * into. {@link CacheStage} needs somewhere to put entries either way; this gets it one without
+     * requiring an operator to also flip on cluster membership they don't want.
+     */
+    public static PolyWireCluster startSingleNodeForCacheOnly() {
+        // TcpDiscoveryVmIpFinder's non-shared mode requires at least one registered address even
+        // for a lone node — "127.0.0.1:47500" is Ignite's own documented default discovery port
+        // for exactly this single-node case.
+        return start(List.of("127.0.0.1:47500"));
+    }
+
+    private static PolyWireCluster start(List<String> seeds) {
         TcpDiscoveryVmIpFinder ipFinder = new TcpDiscoveryVmIpFinder();
         ipFinder.setAddresses(seeds);
         TcpDiscoverySpi discoverySpi = new TcpDiscoverySpi();
