@@ -3,8 +3,8 @@ package com.polygres.advisor.http;
 import com.google.gson.Gson;
 import com.polygres.advisor.catalog.CatalogProfiler;
 import com.polygres.advisor.catalog.CatalogSnapshot;
-import com.polygres.advisor.catalog.OracleCatalogProfiler;
 import com.polygres.advisor.core.BackendTarget;
+import com.polygres.advisor.core.DialectSupport;
 import com.polygres.advisor.core.SourceDialect;
 import com.polygres.advisor.score.MigrationScorer;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,9 +19,10 @@ import java.util.Map;
  * MVP scan hits); a long-running/async job model is a natural next step once real customer
  * schemas make single-request scans too slow for an HTTP round trip.
  *
- * <p>Only {@link SourceDialect#ORACLE} is wired up today, per the project sequencing decision
- * (Oracle first, then MariaDB/MySQL) -- other dialects get a 501 with an explicit message rather
- * than silently failing.
+ * <p>Dispatches to the right {@link CatalogProfiler} via {@link DialectSupport} -- Oracle,
+ * MySQL/MariaDB, and SQL Server are all wired up; an unrecognized dialect (or Postgres, which is
+ * a migration *target*, never a source) gets a 501 with an explicit message rather than silently
+ * falling back to a default implementation.
  */
 public class ScanRoute implements RouteHandler {
 
@@ -45,15 +46,15 @@ public class ScanRoute implements RouteHandler {
             scanRequest.jdbcUrl, scanRequest.user, scanRequest.password);
 
         SourceDialect dialect = target.dialect();
-        if (dialect != SourceDialect.ORACLE) {
-            writeError(response, 501, "Only Oracle scans are supported today. "
-                + "MariaDB/MySQL support is next on the roadmap -- see README.md.");
+        if (dialect == null || dialect == SourceDialect.POSTGRES) {
+            writeError(response, 501, "Unrecognized or unsupported source dialect for jdbcUrl: " + scanRequest.jdbcUrl);
             return;
         }
 
-        CatalogProfiler profiler = new OracleCatalogProfiler();
+        CatalogProfiler profiler;
         CatalogSnapshot snapshot;
         try {
+            profiler = DialectSupport.profilerFor(dialect);
             snapshot = profiler.profile(target);
         } catch (Exception e) {
             writeError(response, 502, "Could not connect or profile the source database: " + e.getMessage());

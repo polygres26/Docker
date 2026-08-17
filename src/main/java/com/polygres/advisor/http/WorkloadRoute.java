@@ -2,11 +2,11 @@ package com.polygres.advisor.http;
 
 import com.google.gson.Gson;
 import com.polygres.advisor.core.BackendTarget;
+import com.polygres.advisor.core.DialectSupport;
 import com.polygres.advisor.core.SourceDialect;
 import com.polygres.advisor.llm.ClaudeLlmProvider;
 import com.polygres.advisor.llm.SqlWorkloadClassifier;
 import com.polygres.advisor.workload.CapturedStatement;
-import com.polygres.advisor.workload.OracleWorkloadCapture;
 import com.polygres.advisor.workload.WorkloadCapture;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -43,14 +43,15 @@ public class WorkloadRoute implements RouteHandler {
             scanRequest.name != null ? scanRequest.name : "workload-" + System.currentTimeMillis(),
             scanRequest.jdbcUrl, scanRequest.user, scanRequest.password);
 
-        if (target.dialect() != SourceDialect.ORACLE) {
-            writeError(response, 501, "Only Oracle workload capture is supported today.");
+        SourceDialect dialect = target.dialect();
+        if (dialect == null || dialect == SourceDialect.POSTGRES) {
+            writeError(response, 501, "Unrecognized or unsupported source dialect for jdbcUrl: " + scanRequest.jdbcUrl);
             return;
         }
 
         List<CapturedStatement> statements;
         try {
-            statements = new OracleWorkloadCapture().capture(target, 200);
+            statements = DialectSupport.workloadCaptureFor(dialect).capture(target, 200);
         } catch (Exception e) {
             writeError(response, 502, "Could not capture workload: " + e.getMessage());
             return;

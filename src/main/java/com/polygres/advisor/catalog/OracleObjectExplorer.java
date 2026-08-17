@@ -17,7 +17,9 @@ import java.util.Map;
  * snapshot for scoring). This returns actual object names and column detail for browsing, not
  * counts for scoring.
  */
-public class OracleObjectExplorer {
+public class OracleObjectExplorer implements ObjectExplorer {
+
+    @Override
 
     /** Object name -> object type, grouped for a tree view. Scoped to USER_OBJECTS (the connecting schema only). */
     public Map<String, List<String>> listObjects(BackendTarget target) throws SQLException {
@@ -36,8 +38,7 @@ public class OracleObjectExplorer {
         return byType;
     }
 
-    public record ColumnDetail(String name, String dataType, boolean nullable, String defaultValue) {}
-
+    @Override
     public List<ColumnDetail> describeTable(BackendTarget target, String tableName) throws SQLException {
         List<ColumnDetail> columns = new ArrayList<>();
         try (Connection connection = target.open();
@@ -69,6 +70,7 @@ public class OracleObjectExplorer {
     }
 
     /** Full source for PACKAGE, PACKAGE BODY, PROCEDURE, FUNCTION, or TRIGGER -- delegates to the same query {@link OracleCatalogProfiler#fetchSource} uses. */
+    @Override
     public String fetchSource(BackendTarget target, String objectName, String objectType) throws SQLException {
         return new OracleCatalogProfiler().fetchSource(target, objectName, objectType);
     }

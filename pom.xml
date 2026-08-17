@@ -32,6 +32,7 @@
     <ojdbc.version>23.5.0.24.07</ojdbc.version>
     <mysql.version>9.1.0</mysql.version>
     <mariadb.version>3.5.1</mariadb.version>
+    <mssql.version>12.8.1.jre11</mssql.version>
     <junit.version>5.11.3</junit.version>
   </properties>
 
@@ -95,6 +96,11 @@
       <artifactId>mariadb-java-client</artifactId>
       <version>${mariadb.version}</version>
     </dependency>
+    <dependency>
+      <groupId>com.microsoft.sqlserver</groupId>
+      <artifactId>mssql-jdbc</artifactId>
+      <version>${mssql.version}</version>
+    </dependency>
     <!-- Postgres: migration target -->
     <dependency>
       <groupId>org.postgresql</groupId>
@@ -141,6 +147,22 @@
                      "No suitable driver" for the rest. -->
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
               </transformers>
+              <filters>
+                <!-- mssql-jdbc ships a signed jar; merging its class files into this shaded jar
+                     without dropping the signature files leaves a manifest whose recorded digests
+                     no longer match the merged content, so the JVM refuses to load ANY class at
+                     startup ("Invalid signature file digest"), found live the moment SQL Server
+                     support was added. Every other dependency here is unsigned, so this filter is
+                     a no-op for them. -->
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
             </configuration>
           </execution>
         </executions>

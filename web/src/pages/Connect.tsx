@@ -33,8 +33,8 @@ export default function Connect() {
     <div className="app-shell">
       <h1>Polygres Advisor</h1>
       <p style={{ color: 'var(--muted)' }}>
-        Connect to a source database to assess Postgres-migration difficulty. Oracle 19c is
-        supported today; MariaDB/MySQL is next.
+        Connect to a source database to assess Postgres-migration difficulty. Oracle, MySQL/MariaDB,
+        and SQL Server are all supported.
       </p>
 
       <form className="panel" onSubmit={handleScan}>

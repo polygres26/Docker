@@ -28,6 +28,9 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         if (url.startsWith("jdbc:postgresql:")) {
             return SourceDialect.POSTGRES;
         }
+        if (url.startsWith("jdbc:sqlserver:")) {
+            return SourceDialect.SQL_SERVER;
+        }
         return null;
     }
 

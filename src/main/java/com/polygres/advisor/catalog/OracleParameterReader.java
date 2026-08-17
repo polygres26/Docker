@@ -15,10 +15,9 @@ import java.util.List;
  * read-only schema account may not have it, so callers should treat a permissions failure here as
  * "parameters unavailable," not a hard error.
  */
-public class OracleParameterReader {
+public class OracleParameterReader implements ParameterReader {
 
-    public record ParameterInfo(String name, String value, String defaultValue, boolean isDefault, String description) {}
-
+    @Override
     public List<ParameterInfo> listParameters(BackendTarget target) throws SQLException {
         List<ParameterInfo> params = new ArrayList<>();
         try (Connection connection = target.open();
