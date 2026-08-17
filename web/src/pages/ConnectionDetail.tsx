@@ -24,12 +24,12 @@ export default function ConnectionDetail() {
   }, [id])
 
   return (
-    <div className="app-shell" style={{ maxWidth: 1100 }}>
-      <button onClick={() => navigate('/connections')} style={{ marginBottom: 16, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer' }}>
+    <div style={{ maxWidth: 1100 }}>
+      <button onClick={() => navigate('/connections')} style={{ marginBottom: 16, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 13 }}>
         ← Connections
       </button>
-      <h1 style={{ marginBottom: 2 }}>{connection?.name ?? 'Connection detail'}</h1>
-      {connection && <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 14 }}>{connection.jdbcUrl}</p>}
+      <h1 style={{ marginBottom: 2, fontSize: 22 }}>{connection?.name ?? 'Connection detail'}</h1>
+      {connection && <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 13, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{connection.jdbcUrl}</p>}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {(['findings', 'objects', 'parameters'] as Tab[]).map((t) => (
@@ -60,22 +60,17 @@ export default function ConnectionDetail() {
 
 // --- Findings ---------------------------------------------------------
 
-function severityColor(points: number): string {
-  if (points >= 15) return 'var(--hard)'
-  if (points >= 5) return 'var(--medium)'
-  return 'var(--easy)'
+/** Soft-background + solid-text badge, matching Omnigate's badgePass/badgeWarn/badgeFail pattern (Admin.module.css) rather than a solid fill with dark text. */
+function severityStyle(points: number): { bg: string; fg: string; label: string } {
+  if (points >= 15) return { bg: 'var(--hard-soft)', fg: 'var(--hard)', label: 'High' }
+  if (points >= 5) return { bg: 'var(--medium-soft)', fg: 'var(--medium)', label: 'Medium' }
+  return { bg: 'var(--easy-soft)', fg: 'var(--easy)', label: 'Low' }
 }
 
-function severityLabel(points: number): string {
-  if (points >= 15) return 'High'
-  if (points >= 5) return 'Medium'
-  return 'Low'
-}
-
-function tierColor(tier: string): string {
-  if (tier.startsWith('EASY')) return 'var(--easy)'
-  if (tier.startsWith('MEDIUM')) return 'var(--medium)'
-  return 'var(--hard)'
+function tierStyle(tier: string): { bg: string; fg: string } {
+  if (tier.startsWith('EASY')) return { bg: 'var(--easy-soft)', fg: 'var(--accent-strong)' }
+  if (tier.startsWith('MEDIUM')) return { bg: 'var(--medium-soft)', fg: 'var(--medium)' }
+  return { bg: 'var(--hard-soft)', fg: 'var(--hard)' }
 }
 
 function formatMicros(micros: number): string {
@@ -132,7 +127,7 @@ function FindingsTab({ id }: { id: string }) {
       <div className="panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
           <div>
-            <span className="tier-badge" style={{ background: tierColor(score.tier), color: '#111' }}>
+            <span className="tier-badge" style={{ background: tierStyle(score.tier).bg, color: tierStyle(score.tier).fg }}>
               {score.tier.split(' -- ')[0]}
             </span>
             <p style={{ marginTop: 10, marginBottom: 4, maxWidth: 560 }}>{score.tier.split(' -- ')[1]}</p>
@@ -201,10 +196,10 @@ function FindingsTab({ id }: { id: string }) {
           {sortedFindings.map((f, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
               <span style={{
-                background: severityColor(f.points), color: '#111', fontSize: 11, fontWeight: 700,
+                background: severityStyle(f.points).bg, color: severityStyle(f.points).fg, fontSize: 11, fontWeight: 650,
                 borderRadius: 999, padding: '3px 10px', flexShrink: 0, width: 64, textAlign: 'center',
               }}>
-                {severityLabel(f.points)}
+                {severityStyle(f.points).label}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600 }}>{f.feature} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>× {f.count}</span></div>

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { checkSession } from './api/client'
+import Layout from './Layout'
 import Login from './pages/Login'
 import Connections from './pages/Connections'
 import ConnectionDetail from './pages/ConnectionDetail'
 import Connect from './pages/Connect'
 import Report from './pages/Report'
 
-/** Gate: redirects to /login unless a valid admin session cookie is present. Checked once per mount via GET /api/session (never triggers a 401 itself). */
+/** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'authed' | 'anon'>('checking')
 
@@ -17,7 +18,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (status === 'checking') return null
   if (status === 'anon') return <Navigate to="/login" replace />
-  return <>{children}</>
+  return <Layout>{children}</Layout>
 }
 
 export default function App() {

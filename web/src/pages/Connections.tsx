@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { type Connection, createConnection, deleteConnection, listConnections, logout } from '../api/client'
+import { Link } from 'react-router-dom'
+import { type Connection, createConnection, deleteConnection, listConnections } from '../api/client'
 
 export default function Connections() {
-  const navigate = useNavigate()
   const [connections, setConnections] = useState<Connection[]>([])
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
@@ -36,21 +35,11 @@ export default function Connections() {
     await refresh()
   }
 
-  async function handleLogout() {
-    await logout()
-    navigate('/login')
-  }
-
   return (
-    <div className="app-shell">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h1>Connections</h1>
-        <button onClick={handleLogout} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>
-          Sign out
-        </button>
-      </div>
+    <div>
+      <h1 style={{ fontSize: 22, marginBottom: 20 }}>Connections</h1>
 
-      <div className="panel" style={{ marginBottom: 20 }}>
+      <div className="panel" style={{ marginBottom: 20, maxWidth: 640 }}>
         {connections.length === 0 && <p style={{ color: 'var(--muted)' }}>No connections yet.</p>}
         {connections.map((c) => (
           <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
