@@ -40,8 +40,15 @@ public final class SizingCalculator {
         // 60% headroom: index rebuilds during migration, WAL, autovacuum bloat, and near-term growth
         // all add up fast -- sizing storage at exactly today's data size is a common under-provisioning mistake.
         int storageGB = (int) Math.ceil(Math.max(20, dataSizeGB * 1.6));
-        rationale.add(String.format("Storage: %.1f GB of source data x1.6 headroom (index rebuilds, WAL, "
-            + "autovacuum bloat, near-term growth) = %d GB.", dataSizeGB, storageGB));
+        // Below ~0.05 GB, "%.1f GB" rounds to "0.0 GB" and makes "0.0 GB x1.6 = 20 GB" read like a math
+        // error instead of what it actually is (a real but tiny measured size, floored up to the 20 GB
+        // minimum) -- show MB instead so the number stays legible at that scale.
+        String dataSizeLabel = dataSizeGB < 0.05 && dataSizeGB > 0
+            ? String.format("%.0f MB", dataSizeGB * 1024)
+            : String.format("%.1f GB", dataSizeGB);
+        rationale.add(String.format("Storage: %s of source data x1.6 headroom (index rebuilds, WAL, "
+            + "autovacuum bloat, near-term growth), floored at a %d GB minimum = %d GB.",
+            dataSizeLabel, 20, storageGB));
 
         // --- Workload volume -> baseline vCPU tier ---------------------------------------------
         int vCpus;
