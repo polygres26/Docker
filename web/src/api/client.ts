@@ -114,6 +114,15 @@ export async function getObjectDetail(id: string, type: string, name: string): P
   return api(`/api/connections/${id}/objects/detail?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`)
 }
 
+export interface SummarizeResult {
+  summary: string
+  judge?: { approved: boolean; explanation: string }
+}
+
+export async function summarizeObject(id: string, type: string, name: string): Promise<SummarizeResult> {
+  return api(`/api/connections/${id}/summarize?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`, { method: 'POST' })
+}
+
 export interface ParameterInfo {
   name: string
   value: string

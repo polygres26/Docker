@@ -5,6 +5,7 @@ import {
   type Connection,
   type FindingsResult,
   type ParameterInfo,
+  type SummarizeResult,
   type WorkloadResult,
   getConnection,
   getObjectDetail,
@@ -12,6 +13,7 @@ import {
   getParameters,
   runConnectionFindings,
   runConnectionWorkload,
+  summarizeObject,
 } from '../api/client'
 
 type Tab = 'findings' | 'objects' | 'workload' | 'parameters'
@@ -440,6 +442,9 @@ function ObjectsTab({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<{ type: string; name: string } | null>(null)
   const [detail, setDetail] = useState<{ columns?: unknown[]; source?: string } | null>(null)
+  const [summarizing, setSummarizing] = useState(false)
+  const [summary, setSummary] = useState<SummarizeResult | null>(null)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   useEffect(() => {
     getObjects(id).then(setObjects).catch((e) => setError(String(e.message ?? e)))
@@ -448,10 +453,24 @@ function ObjectsTab({ id }: { id: string }) {
   async function select(type: string, name: string) {
     setSelected({ type, name })
     setDetail(null)
+    setSummary(null)
+    setSummaryError(null)
     try {
       setDetail(await getObjectDetail(id, type, name))
     } catch (e) {
       setDetail({ source: `Error: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+
+  async function handleSummarize() {
+    if (!selected) return
+    setSummarizing(true); setSummaryError(null); setSummary(null)
+    try {
+      setSummary(await summarizeObject(id, selected.type, selected.name))
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSummarizing(false)
     }
   }
 
@@ -505,9 +524,37 @@ function ObjectsTab({ id }: { id: string }) {
               </table>
             )}
             {detail?.source !== undefined && (
-              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, background: 'var(--bg)', padding: 12, borderRadius: 8, maxHeight: 480, overflowY: 'auto' }}>
-                {detail.source || '(empty)'}
-              </pre>
+              <>
+                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, background: 'var(--bg)', padding: 12, borderRadius: 8, maxHeight: 320, overflowY: 'auto' }}>
+                  {detail.source || '(empty)'}
+                </pre>
+                {detail.source && (
+                  <button className="primary" onClick={handleSummarize} disabled={summarizing} style={{ marginTop: 12 }}>
+                    {summarizing ? 'Summarizing…' : 'Summarize with LLM'}
+                  </button>
+                )}
+                {summaryError && <p style={{ color: 'var(--hard)', marginTop: 10, fontSize: 13 }}>{summaryError}</p>}
+                {summary && (
+                  <div style={{ marginTop: 16 }}>
+                    {summary.judge && (
+                      <div style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 10,
+                        background: summary.judge.approved ? 'var(--easy-soft)' : 'var(--medium-soft)',
+                        color: summary.judge.approved ? 'var(--accent-strong)' : 'var(--medium)',
+                        borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 650,
+                      }}>
+                        Judge: {summary.judge.approved ? 'Approved' : 'Flagged'}
+                      </div>
+                    )}
+                    {summary.judge && !summary.judge.approved && (
+                      <p style={{ fontSize: 13, color: 'var(--medium)', marginTop: 0, marginBottom: 10 }}>{summary.judge.explanation}</p>
+                    )}
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                      {summary.summary}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

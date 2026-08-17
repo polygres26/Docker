@@ -1,11 +1,14 @@
 package com.polygres.advisor.http;
 
 import com.google.gson.Gson;
+import com.polygres.advisor.catalog.OracleCatalogProfiler;
 import com.polygres.advisor.core.BackendTarget;
 import com.polygres.advisor.core.ConnectionRecord;
 import com.polygres.advisor.core.ConnectionStore;
 import com.polygres.advisor.core.DialectSupport;
 import com.polygres.advisor.core.SourceDialect;
+import com.polygres.advisor.llm.LlmSettingsStore;
+import com.polygres.advisor.llm.PlsqlSummarizer;
 import com.polygres.advisor.score.MigrationScorer;
 import com.polygres.advisor.workload.WorkloadSummary;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,12 +40,16 @@ import java.util.Optional;
  * POST   /api/connections/{id}/workload                run WorkloadCapture
  * POST   /api/connections/{id}/findings                 scan + workload in one round trip --
  *                                                        backs the "Findings" dashboard tab
+ * POST   /api/connections/{id}/summarize                ?type=PACKAGE&amp;name=FOO -> PlsqlSummarizer
+ *                                                        (PRIMARY + optional JUDGE review),
+ *                                                        Oracle only today
  * </pre>
  */
 public class ConnectionsRoute implements RouteHandler {
 
     private static final Gson GSON = new Gson();
     private final ConnectionStore store = new ConnectionStore();
+    private final LlmSettingsStore llmSettingsStore = new LlmSettingsStore();
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -68,6 +75,8 @@ public class ConnectionsRoute implements RouteHandler {
                 runWorkload(parts[3], response); return;
             } else if (parts.length == 5 && "findings".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
                 runFindings(parts[3], response); return;
+            } else if (parts.length == 5 && "summarize".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
+                runSummarize(parts[3], request, response); return;
             } else if (parts.length == 6 && "objects".equals(parts[4]) && "detail".equals(parts[5]) && "GET".equalsIgnoreCase(method)) {
                 objectDetail(parts[3], request, response); return;
             }
@@ -175,6 +184,36 @@ public class ConnectionsRoute implements RouteHandler {
             body.put("workload", DialectSupport.workloadCaptureFor(target.dialect()).capture(target, 100));
         } catch (Exception e) {
             body.put("workloadError", "Workload capture unavailable: " + e.getMessage());
+        }
+        writeJson(response, 200, body);
+    }
+
+    /**
+     * PL/SQL summarization for one named object, using this connection's stored credentials and
+     * whatever PRIMARY/JUDGE LLM is configured on the LLM configuration page. Oracle-only today
+     * (same as {@link SummarizeRoute}) -- {@link PlsqlSummarizer} is PL/SQL-specific; a MySQL/SQL
+     * Server routine-source summarizer is a natural follow-up once one exists.
+     */
+    private void runSummarize(String id, HttpServletRequest request, HttpServletResponse response) throws Exception {
+        BackendTarget target = requireTarget(id, response);
+        if (target == null) return;
+        if (target.dialect() != SourceDialect.ORACLE) {
+            writeError(response, 501, "PL/SQL summarization is only supported for Oracle today.");
+            return;
+        }
+        String type = request.getParameter("type");
+        String name = request.getParameter("name");
+        if (type == null || name == null) { writeError(response, 400, "type and name query params are required."); return; }
+
+        PlsqlSummarizer summarizer = new PlsqlSummarizer(llmSettingsStore, new OracleCatalogProfiler());
+        PlsqlSummarizer.Result result = summarizer.summarize(target, name, type);
+
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("summary", result.summary());
+        if (result.judgeVerdict() != null) {
+            body.put("judge", Map.of(
+                "approved", result.judgeVerdict().approved(),
+                "explanation", result.judgeVerdict().explanation()));
         }
         writeJson(response, 200, body);
     }
