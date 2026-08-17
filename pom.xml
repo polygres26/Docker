@@ -102,6 +102,15 @@
       <version>42.7.4</version>
     </dependency>
 
+    <!-- Embedded control-plane store: connections + app state. Pure-Java, no native driver
+         (unlike sqlite-jdbc), so it needs nothing beyond this jar to run; same reasoning
+         Omnigate's ConfigStore leans on a plain JDBC connection rather than a bespoke format. -->
+    <dependency>
+      <groupId>org.hsqldb</groupId>
+      <artifactId>hsqldb</artifactId>
+      <version>2.7.3</version>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -126,6 +135,11 @@
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>com.polygres.advisor.http.AdvisorHttpServer</mainClass>
                 </transformer>
+                <!-- Merges every dependency's META-INF/services/java.sql.Driver (Oracle, MySQL,
+                     MariaDB, Postgres, HSQLDB all self-register this way); without this, the
+                     shaded jar keeps only one driver's registration and DriverManager throws
+                     "No suitable driver" for the rest. -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
               </transformers>
             </configuration>
           </execution>

@@ -1,7 +1,13 @@
 package com.polygres.advisor.http;
 
+import com.polygres.advisor.http.auth.AdminAuth;
+import com.polygres.advisor.http.auth.AuthGuard;
+import com.polygres.advisor.http.auth.LoginRoute;
+import com.polygres.advisor.http.auth.LogoutRoute;
+import com.polygres.advisor.http.auth.SessionRoute;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.eclipse.jetty.server.Request;
@@ -12,9 +18,16 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Embedded HTTP server for the Advisor API. Same raw-Handler-API-plus-route-table shape as
- * Omnigate's {@code com.omnigate.http.OmniGateHttpServer} (~/Projects/Omnigate) -- one process
- * wide handler dispatching by exact path, which is all a handful of routes needs; expand to a
- * real router/servlet setup only if the route count grows enough to justify it.
+ * Omnigate's {@code com.omnigate.http.OmniGateHttpServer} -- one process-wide handler dispatching
+ * by path, which is all this route count needs.
+ *
+ * <p>Routing is exact-match-first, then longest-registered-prefix -- {@code /api/connections} is
+ * registered once and owns everything under it ({@link ConnectionsRoute} does its own path
+ * parsing for the id/sub-resource shape, see its javadoc), rather than every id/sub-path
+ * combination needing its own table entry.
+ *
+ * <p>Everything except {@code /api/health}, {@code /api/login}, and {@code /api/session} requires
+ * a valid admin session (see {@link AuthGuard}) -- this is an admin tool, not a public API.
  */
 public class AdvisorHttpServer extends AbstractHandler {
 
@@ -23,19 +36,26 @@ public class AdvisorHttpServer extends AbstractHandler {
     private final Map<String, RouteHandler> routes = new LinkedHashMap<>();
 
     public AdvisorHttpServer() {
-        routes.put("/api/scan", new ScanRoute());
-        routes.put("/api/workload", new WorkloadRoute());
-        routes.put("/api/summarize", new SummarizeRoute());
+        AdminAuth auth = new AdminAuth();
+
         routes.put("/api/health", (req, res) -> {
             res.setContentType("application/json");
             res.getWriter().write("{\"status\":\"ok\"}");
         });
+        routes.put("/api/login", new LoginRoute(auth));
+        routes.put("/api/session", new SessionRoute(auth));
+        routes.put("/api/logout", AuthGuard.require(auth, new LogoutRoute(auth)));
+
+        routes.put("/api/scan", AuthGuard.require(auth, new ScanRoute()));
+        routes.put("/api/workload", AuthGuard.require(auth, new WorkloadRoute()));
+        routes.put("/api/summarize", AuthGuard.require(auth, new SummarizeRoute()));
+        routes.put("/api/connections", AuthGuard.require(auth, new ConnectionsRoute()));
     }
 
     @Override
     public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
             throws java.io.IOException {
-        RouteHandler handler = routes.get(target);
+        RouteHandler handler = resolve(target);
         if (handler == null) {
             response.setStatus(404);
             baseRequest.setHandled(true);
@@ -48,6 +68,17 @@ public class AdvisorHttpServer extends AbstractHandler {
             response.setStatus(500);
         }
         baseRequest.setHandled(true);
+    }
+
+    /** Exact match first; otherwise the longest registered path that {@code target} starts with as a path segment (not just a string prefix). */
+    private RouteHandler resolve(String target) {
+        RouteHandler exact = routes.get(target);
+        if (exact != null) return exact;
+        return routes.entrySet().stream()
+            .filter(e -> target.startsWith(e.getKey() + "/"))
+            .max(Comparator.comparingInt(e -> e.getKey().length()))
+            .map(Map.Entry::getValue)
+            .orElse(null);
     }
 
     public static void main(String[] args) throws Exception {

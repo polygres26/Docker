@@ -17,6 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code maximumPoolSize} is kept small -- Advisor does read-only catalog/workload scans, not
  * high-throughput OLTP traffic, so a handful of connections per target is enough headroom for
  * profiler queries to run in parallel without hammering a production source.
+
+ *
+ * <p>Deliberately does NOT set Hikari's pool-wide {@code readOnly} here (even though every real
+ * source-database pool only ever gets read-only borrows) -- this same registry also backs
+ * {@link ConnectionStore}'s embedded HSQLDB control-plane pool, which needs to write. Read-only
+ * enforcement for source scans happens per-connection in {@link BackendTarget#open}, not pool-wide.
  */
 public final class BackendConnectionPools {
 
@@ -43,7 +49,6 @@ public final class BackendConnectionPools {
         config.setMinimumIdle(0);
         config.setMaximumPoolSize(4);
         config.setConnectionTimeout(15_000);
-        config.setReadOnly(true);
         return new HikariDataSource(config);
     }
 }

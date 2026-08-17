@@ -1,12 +1,34 @@
-import { Route, Routes } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { checkSession } from './api/client'
+import Login from './pages/Login'
+import Connections from './pages/Connections'
+import ConnectionDetail from './pages/ConnectionDetail'
 import Connect from './pages/Connect'
 import Report from './pages/Report'
+
+/** Gate: redirects to /login unless a valid admin session cookie is present. Checked once per mount via GET /api/session (never triggers a 401 itself). */
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<'checking' | 'authed' | 'anon'>('checking')
+
+  useEffect(() => {
+    checkSession().then((ok) => setStatus(ok ? 'authed' : 'anon')).catch(() => setStatus('anon'))
+  }, [])
+
+  if (status === 'checking') return null
+  if (status === 'anon') return <Navigate to="/login" replace />
+  return <>{children}</>
+}
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Connect />} />
-      <Route path="/report" element={<Report />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/connections" element={<RequireAuth><Connections /></RequireAuth>} />
+      <Route path="/connections/:id" element={<RequireAuth><ConnectionDetail /></RequireAuth>} />
+      <Route path="/quick-scan" element={<RequireAuth><Connect /></RequireAuth>} />
+      <Route path="/report" element={<RequireAuth><Report /></RequireAuth>} />
+      <Route path="/" element={<Navigate to="/connections" replace />} />
     </Routes>
   )
 }
