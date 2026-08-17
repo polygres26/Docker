@@ -275,3 +275,7 @@ export interface ReportAnalysis {
 export async function analyzeReport(id: string): Promise<ReportAnalysis> {
   return api(`/api/reports/${id}/analyze`, { method: 'POST' })
 }
+
+export async function analyzeReportsBatch(ids: string[]): Promise<ReportAnalysis> {
+  return api('/api/reports/analyze-batch', { method: 'POST', body: JSON.stringify({ ids }) })
+}

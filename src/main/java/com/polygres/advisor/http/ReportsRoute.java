@@ -30,6 +30,10 @@ import java.util.Optional;
  * GET    /api/reports/{id}                   get one (includes cached analysis, if any)
  * DELETE /api/reports/{id}                   delete (removes the on-disk text too)
  * POST   /api/reports/{id}/analyze           run/re-run ReportAnalyzer, cache + return the result
+ * POST   /api/reports/analyze-batch           body {"ids": [...]} -> one combined analysis across
+ *                                             several uploaded reports (see ReportAnalyzer#analyzeMultiple);
+ *                                             not cached against any single report row, since it
+ *                                             spans several
  * </pre>
  *
  * Upload is a raw-body POST (not multipart) deliberately -- the browser reads the file as an
@@ -51,6 +55,8 @@ public class ReportsRoute implements RouteHandler {
             if (parts.length == 3) {
                 if ("GET".equalsIgnoreCase(method)) { list(response); return; }
                 if ("POST".equalsIgnoreCase(method)) { upload(request, response); return; }
+            } else if (parts.length == 4 && "analyze-batch".equals(parts[3]) && "POST".equalsIgnoreCase(method)) {
+                analyzeBatch(request, response); return;
             } else if (parts.length == 4) {
                 String id = parts[3];
                 if ("GET".equalsIgnoreCase(method)) { getOne(id, response); return; }
@@ -107,6 +113,29 @@ public class ReportsRoute implements RouteHandler {
         store.saveAnalysis(id, analysisJson);
 
         writeJson(response, 200, analysis);
+    }
+
+    private void analyzeBatch(HttpServletRequest request, HttpServletResponse response) throws Exception {
+        BatchRequest form = GSON.fromJson(request.getReader(), BatchRequest.class);
+        if (form == null || form.ids == null || form.ids.length == 0) {
+            writeError(response, 400, "ids (a non-empty array) is required.");
+            return;
+        }
+
+        java.util.List<ReportAnalyzer.ReportInput> inputs = new java.util.ArrayList<>();
+        for (String id : form.ids) {
+            Optional<UploadedReport> reportOpt = store.get(id);
+            if (reportOpt.isEmpty()) { writeError(response, 404, "Report not found: " + id); return; }
+            UploadedReport report = reportOpt.get();
+            inputs.add(new ReportAnalyzer.ReportInput(report.name, report.dialect, store.getText(id)));
+        }
+
+        ReportAnalyzer.Analysis analysis = new ReportAnalyzer(llmSettingsStore).analyzeMultiple(inputs);
+        writeJson(response, 200, analysis);
+    }
+
+    private static class BatchRequest {
+        String[] ids;
     }
 
     private byte[] readAll(InputStream in) throws IOException {

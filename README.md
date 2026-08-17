@@ -114,10 +114,17 @@ Uploaded reports (com.polygres.advisor.uploads.ReportStore, com.polygres.advisor
   - Report text/metadata persisted the same way connections are (embedded HSQLDB for metadata +
     cached analysis JSON; raw extracted text on disk under ~/.polygres/reports/<id>.txt, kept out
     of the database row since a real AWR export can run to several MB).
+  - Multiple reports, one combined analysis: upload several files in one action (e.g. one per
+    system, or several snapshots of the same system over time), select any subset on the list
+    page, and ReportAnalyzer#analyzeMultiple synthesizes one assessment across all of them --
+    each report gets its own labeled section and its own share of the prompt budget (not just
+    the first report eating the whole budget). Combined analyses aren't cached against any
+    single report row, since they span several; re-running is cheap enough to just regenerate.
 
 web/         React + TS + Vite SPA: Login -> Connections (list/create/delete) ->
              ConnectionDetail (Findings / Objects / Workload / Parameters tabs), and Reports
-             (list/upload -> ReportDetail with Analyze/Re-analyze) as a parallel top-level flow.
+             (multi-file upload, per-report or multi-select combined analysis via the shared
+             ReportAnalysisView component) as a parallel top-level flow.
              The original ad-hoc Connect -> Report flow still exists at /quick-scan for a
              one-off scan without saving a connection.
 ```

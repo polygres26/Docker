@@ -19,11 +19,13 @@ import com.google.gson.JsonSyntaxException;
 public class ReportAnalyzer {
 
     private static final String SYSTEM_PROMPT = """
-        You are analyzing a database performance/workload report (this may be an Oracle AWR
-        report, a MySQL performance report, or a SQL Server DMV/Query Store export) for a
-        Postgres-migration assessment tool. The customer has NOT given live database access --
-        this report is the only signal available, so be explicit about uncertainty rather than
-        inventing detail the report doesn't support.
+        You are analyzing one or more database performance/workload reports (these may include
+        Oracle AWR reports, MySQL performance reports, or SQL Server DMV/Query Store exports,
+        each marked with its own "=== Report ===" section header) for a Postgres-migration
+        assessment tool. The customer has NOT given live database access -- these reports are the
+        only signal available, so be explicit about uncertainty rather than inventing detail the
+        reports don't support. When multiple reports are given, synthesize one combined
+        assessment rather than repeating each report's findings separately.
 
         Extract what you can find and respond with ONLY a JSON object (no other text, no markdown
         fences) in exactly this shape:
@@ -56,16 +58,40 @@ public class ReportAnalyzer {
         java.util.List<String> caveats, LlmJudge.Verdict judgeVerdict
     ) {}
 
+    /** One report the caller wants analyzed -- used both for a single upload and for {@link #analyzeMultiple}. */
+    public record ReportInput(String name, String dialect, String text) {}
+
     public Analysis analyze(String dialect, String reportText) throws Exception {
+        return analyzeMultiple(java.util.List.of(new ReportInput(null, dialect, reportText)));
+    }
+
+    /**
+     * Combines several uploaded reports into one analysis -- e.g. a customer who uploaded an AWR
+     * snapshot alongside a separate workload export for the same system, or several AWR snapshots
+     * taken at different times. Each report gets its own labeled section and its own share of the
+     * total prompt budget (rather than the first report alone eating the whole budget), so the
+     * model sees a representative slice of every report, not just the first.
+     */
+    public Analysis analyzeMultiple(java.util.List<ReportInput> reports) throws Exception {
         var primary = LlmProviderFactory.resolve(settingsStore.get(LlmRole.PRIMARY));
 
-        // Reports (especially AWR HTML dumps) can be huge; keep the prompt within a sane budget
-        // rather than failing outright on a multi-MB file -- the report's most information-dense
-        // sections (top SQL, wait events) are conventionally near the top, so a straightforward
-        // head-truncation is a reasonable first-pass tradeoff.
-        String truncated = reportText.length() > 60_000 ? reportText.substring(0, 60_000) : reportText;
+        // Reports (especially AWR HTML dumps) can be huge; keep the combined prompt within a sane
+        // budget rather than failing outright on a multi-MB file -- a report's most
+        // information-dense sections (top SQL, wait events) are conventionally near the top, so
+        // per-report head-truncation is a reasonable first-pass tradeoff.
+        int perReportBudget = Math.max(5_000, 60_000 / Math.max(1, reports.size()));
+        StringBuilder combined = new StringBuilder();
+        String dialectLabel = reports.stream().map(ReportInput::dialect).distinct().reduce((a, b) -> a + " + " + b).orElse("UNKNOWN");
+        for (ReportInput r : reports) {
+            combined.append("=== Report");
+            if (r.name() != null) combined.append(": ").append(r.name());
+            combined.append(" (declared dialect: ").append(r.dialect()).append(") ===\n");
+            combined.append(r.text().length() > perReportBudget ? r.text().substring(0, perReportBudget) : r.text());
+            combined.append("\n\n");
+        }
+        String truncated = combined.toString();
 
-        String userPrompt = "Report dialect (as declared at upload time): " + dialect + "\n\n" + truncated;
+        String userPrompt = "Report dialect(s) (as declared at upload time): " + dialectLabel + "\n\n" + truncated;
         String response = primary.provider().complete(primary.model(), SYSTEM_PROMPT, userPrompt);
         RawAnalysis raw = parseJson(response);
 
