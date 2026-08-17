@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  type CapturedStatement,
   type Connection,
   type FindingsResult,
   type ParameterInfo,
+  type WorkloadResult,
   getConnection,
   getObjectDetail,
   getObjects,
   getParameters,
   runConnectionFindings,
+  runConnectionWorkload,
 } from '../api/client'
 
-type Tab = 'findings' | 'objects' | 'parameters'
+type Tab = 'findings' | 'objects' | 'workload' | 'parameters'
 
 export default function ConnectionDetail() {
   const { id } = useParams<{ id: string }>()
@@ -32,7 +35,7 @@ export default function ConnectionDetail() {
       {connection && <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 13, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{connection.jdbcUrl}</p>}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['findings', 'objects', 'parameters'] as Tab[]).map((t) => (
+        {(['findings', 'objects', 'workload', 'parameters'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -51,8 +54,9 @@ export default function ConnectionDetail() {
         ))}
       </div>
 
-      {id && tab === 'findings' && <FindingsTab id={id} />}
+      {id && tab === 'findings' && <FindingsTab id={id} onSeeWorkload={() => setTab('workload')} />}
       {id && tab === 'objects' && <ObjectsTab id={id} />}
+      {id && tab === 'workload' && <WorkloadTab id={id} />}
       {id && tab === 'parameters' && <ParametersTab id={id} />}
     </div>
   )
@@ -80,7 +84,7 @@ function formatMicros(micros: number): string {
   return `${(ms / 1000).toFixed(2)} s`
 }
 
-function FindingsTab({ id }: { id: string }) {
+function FindingsTab({ id, onSeeWorkload }: { id: string; onSeeWorkload: () => void }) {
   const [result, setResult] = useState<FindingsResult | null>(null)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null)
@@ -211,23 +215,212 @@ function FindingsTab({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Workload captured */}
+      {/* Workload captured -- compact pointer; the full summary/stats/table live in the Workload tab */}
       <div className="panel">
-        <h3 style={{ marginTop: 0 }}>Workload captured</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>Workload captured</h3>
+          <button className="btn-ghost-link" onClick={onSeeWorkload} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 12px', color: 'var(--accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+            View workload →
+          </button>
+        </div>
         {workloadError && <p style={{ color: 'var(--medium)' }}>{workloadError}</p>}
         {!workloadError && sortedWorkload.length === 0 && <p style={{ color: 'var(--muted)' }}>No cached SQL captured.</p>}
         {sortedWorkload.length > 0 && (
+          <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 0 }}>
+            {sortedWorkload.length} statement{sortedWorkload.length === 1 ? '' : 's'} captured from V$SQL, top by elapsed time:{' '}
+            <span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>
+              {sortedWorkload[0].sqlText.slice(0, 60)}{sortedWorkload[0].sqlText.length > 60 ? '…' : ''}
+            </span>{' '}
+            ({formatMicros(sortedWorkload[0].elapsedTimeMicros)})
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- Workload -------------------------------------------------------------
+
+type SortKey = 'elapsedTimeMicros' | 'cpuTimeMicros' | 'bufferGets' | 'diskReads' | 'executions' | 'avgElapsed'
+
+const SORT_LABELS: Record<SortKey, string> = {
+  elapsedTimeMicros: 'Elapsed Time',
+  cpuTimeMicros: 'CPU Time',
+  bufferGets: 'Buffer Gets',
+  diskReads: 'Disk Reads',
+  executions: 'Executions',
+  avgElapsed: 'Avg Elapsed / Exec',
+}
+
+function avgElapsed(s: CapturedStatement): number {
+  return s.executions === 0 ? 0 : s.elapsedTimeMicros / s.executions
+}
+
+function WorkloadTab({ id }: { id: string }) {
+  const [result, setResult] = useState<WorkloadResult | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('elapsedTimeMicros')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  async function run() {
+    setLoading(true); setError(null)
+    try {
+      setResult(await runConnectionWorkload(id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { run() }, [id])
+
+  if (loading) {
+    return (
+      <div className="panel" style={{ textAlign: 'center', padding: 48 }}>
+        <p style={{ color: 'var(--muted)' }}>Capturing V$SQL snapshot…</p>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="panel" style={{ borderColor: 'var(--hard)' }}>
+        <p style={{ color: 'var(--hard)' }}>{error}</p>
+        <button className="primary" onClick={run} style={{ marginTop: 12 }}>Retry</button>
+      </div>
+    )
+  }
+  if (!result) return null
+
+  const { statements, summary } = result
+
+  function sortValue(s: CapturedStatement): number {
+    return sortKey === 'avgElapsed' ? avgElapsed(s) : s[sortKey]
+  }
+
+  const filtered = statements.filter((s) =>
+    s.sqlText.toLowerCase().includes(filter.toLowerCase()) ||
+    (s.module ?? '').toLowerCase().includes(filter.toLowerCase()))
+  const sorted = [...filtered].sort((a, b) => (sortValue(a) - sortValue(b)) * (sortDir === 'desc' ? -1 : 1))
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))
+    } else {
+      setSortKey(key); setSortDir('desc')
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Summary, in the source database's own vocabulary -- same terms an AWR/Statspack report uses */}
+      <div className="panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+          <h3 style={{ margin: 0 }}>Workload summary</h3>
+          <button className="primary" onClick={run}>Re-capture</button>
+        </div>
+        <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>
+          Point-in-time snapshot of Oracle's shared-pool cursor cache (V$SQL), scoped to this connection's schema.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginTop: 12 }}>
+          {[
+            ['Distinct SQL Statements', summary.distinctStatements.toLocaleString()],
+            ['Executions', summary.totalExecutions.toLocaleString()],
+            ['Elapsed Time', formatMicros(summary.totalElapsedTimeMicros)],
+            ['CPU Time', formatMicros(summary.totalCpuTimeMicros)],
+            ['Buffer Gets', summary.totalBufferGets.toLocaleString()],
+            ['Disk Reads', summary.totalDiskReads.toLocaleString()],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ fontSize: 19, fontWeight: 700, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{value}</div>
+              <div style={{ color: 'var(--muted)', fontSize: 11.5 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {summary.topByElapsedTime && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Top SQL by Elapsed Time</h3>
+          <p style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 13, background: 'var(--bg)', padding: 12, borderRadius: 8, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
+            {summary.topByElapsedTime.sqlText}
+          </p>
+          <div style={{ display: 'flex', gap: 20, fontSize: 13, color: 'var(--muted)', flexWrap: 'wrap' }}>
+            <span>SQL_ID: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.sqlId}</strong></span>
+            <span>Elapsed: <strong style={{ color: 'var(--text)' }}>{formatMicros(summary.topByElapsedTime.elapsedTimeMicros)}</strong></span>
+            <span>Executions: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.executions.toLocaleString()}</strong></span>
+            <span>Module: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.module || '—'}</strong></span>
+          </div>
+        </div>
+      )}
+
+      {Object.keys(summary.topModules).length > 0 && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Workload by module</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {Object.entries(summary.topModules).map(([module, count]) => (
+              <span key={module} style={{ background: 'var(--accent-soft)', color: 'var(--accent-strong)', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 600 }}>
+                {module} <span style={{ fontWeight: 400, opacity: 0.8 }}>× {count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Full per-statement statistics -- every application SQL captured, sortable/filterable */}
+      <div className="panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+          <h3 style={{ margin: 0 }}>All application SQL &amp; statistics</h3>
+          <input
+            placeholder="Filter by SQL text or module…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', color: 'var(--text)', fontSize: 13, minWidth: 240 }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+            <button
+              key={key}
+              onClick={() => toggleSort(key)}
+              style={{
+                fontSize: 12, padding: '5px 10px', borderRadius: 999,
+                border: '1px solid var(--border)',
+                background: sortKey === key ? 'var(--accent)' : 'none',
+                color: sortKey === key ? '#fff' : 'var(--muted)',
+                cursor: 'pointer',
+              }}
+            >
+              {SORT_LABELS[key]} {sortKey === key ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+            </button>
+          ))}
+        </div>
+
+        {sorted.length === 0 && <p style={{ color: 'var(--muted)' }}>No statements match.</p>}
+        {sorted.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
             <table>
-              <thead><tr><th>SQL</th><th>Executions</th><th>Elapsed</th><th>Module</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>SQL_ID</th><th>SQL Text</th><th>Executions</th><th>Elapsed Time</th>
+                  <th>CPU Time</th><th>Buffer Gets</th><th>Disk Reads</th><th>Avg Elapsed / Exec</th><th>Module</th>
+                </tr>
+              </thead>
               <tbody>
-                {sortedWorkload.map((s) => (
+                {sorted.map((s) => (
                   <tr key={s.sqlId}>
-                    <td style={{ maxWidth: 480, fontFamily: 'monospace', fontSize: 12 }} title={s.sqlText}>
-                      {s.sqlText.length > 100 ? s.sqlText.slice(0, 100) + '…' : s.sqlText}
+                    <td style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 11.5, color: 'var(--muted)' }}>{s.sqlId}</td>
+                    <td style={{ maxWidth: 360, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 12 }} title={s.sqlText}>
+                      {s.sqlText.length > 90 ? s.sqlText.slice(0, 90) + '…' : s.sqlText}
                     </td>
                     <td>{s.executions.toLocaleString()}</td>
                     <td>{formatMicros(s.elapsedTimeMicros)}</td>
+                    <td>{formatMicros(s.cpuTimeMicros)}</td>
+                    <td>{s.bufferGets.toLocaleString()}</td>
+                    <td>{s.diskReads.toLocaleString()}</td>
+                    <td>{formatMicros(avgElapsed(s))}</td>
                     <td style={{ color: 'var(--muted)' }}>{s.module || '—'}</td>
                   </tr>
                 ))}

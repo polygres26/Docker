@@ -10,6 +10,7 @@ import com.polygres.advisor.core.ConnectionStore;
 import com.polygres.advisor.core.SourceDialect;
 import com.polygres.advisor.score.MigrationScorer;
 import com.polygres.advisor.workload.OracleWorkloadCapture;
+import com.polygres.advisor.workload.WorkloadSummary;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -151,7 +152,8 @@ public class ConnectionsRoute implements RouteHandler {
     private void runWorkload(String id, HttpServletResponse response) throws Exception {
         BackendTarget target = requireOracleTarget(id, response);
         if (target == null) return;
-        writeJson(response, 200, Map.of("statements", new OracleWorkloadCapture().capture(target, 200)));
+        var statements = new OracleWorkloadCapture().capture(target, 300);
+        writeJson(response, 200, Map.of("statements", statements, "summary", WorkloadSummary.summarize(statements)));
     }
 
     /**

@@ -34,6 +34,9 @@ src/main/java/com/polygres/advisor/
   http/      Embedded Jetty server (AdvisorHttpServer): admin/connections API + ad-hoc scan/
              workload/summarize routes. Same raw-Handler route-table pattern Omnigate's
              OmniGateHttpServer uses.
+  workload/WorkloadSummary.java: roll-up over a capture (distinct statements, total executions/
+             elapsed/CPU time/buffer gets/disk reads, top modules, top-by-elapsed-time) in the
+             source database's own vocabulary -- what the UI's Workload tab summary leads with.
   http/auth/ Single-admin-account session auth (AdminAuth/AuthGuard) -- POLYGRES_ADMIN_USER /
              POLYGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
              see AdminAuth javadoc for the tradeoff and what Omnigate's fuller admin auth looks

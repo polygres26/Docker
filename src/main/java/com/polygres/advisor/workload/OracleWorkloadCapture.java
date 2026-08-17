@@ -25,7 +25,8 @@ import java.util.List;
 public class OracleWorkloadCapture implements WorkloadCapture {
 
     private static final String QUERY = """
-        SELECT sql_id, sql_fulltext, executions, elapsed_time, parsing_schema_name, module
+        SELECT sql_id, sql_fulltext, executions, elapsed_time, cpu_time, buffer_gets,
+               disk_reads, rows_processed, parse_calls, parsing_schema_name, module
         FROM v$sql
         WHERE parsing_schema_name = USER
           AND command_type IS NOT NULL
@@ -46,6 +47,11 @@ public class OracleWorkloadCapture implements WorkloadCapture {
                         rs.getString("sql_fulltext"),
                         rs.getLong("executions"),
                         rs.getLong("elapsed_time"),
+                        rs.getLong("cpu_time"),
+                        rs.getLong("buffer_gets"),
+                        rs.getLong("disk_reads"),
+                        rs.getLong("rows_processed"),
+                        rs.getLong("parse_calls"),
                         rs.getString("parsing_schema_name"),
                         rs.getString("module")
                     ));

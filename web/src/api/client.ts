@@ -135,6 +135,11 @@ export interface CapturedStatement {
   sqlText: string
   executions: number
   elapsedTimeMicros: number
+  cpuTimeMicros: number
+  bufferGets: number
+  diskReads: number
+  rowsProcessed: number
+  parseCalls: number
   parsingSchema: string
   module: string | null
 }
@@ -146,4 +151,24 @@ export interface FindingsResult extends ScanResult {
 
 export async function runConnectionFindings(id: string): Promise<FindingsResult> {
   return api(`/api/connections/${id}/findings`, { method: 'POST' })
+}
+
+export interface WorkloadSummary {
+  distinctStatements: number
+  totalExecutions: number
+  totalElapsedTimeMicros: number
+  totalCpuTimeMicros: number
+  totalBufferGets: number
+  totalDiskReads: number
+  topModules: Record<string, number>
+  topByElapsedTime: CapturedStatement | null
+}
+
+export interface WorkloadResult {
+  statements: CapturedStatement[]
+  summary: WorkloadSummary
+}
+
+export async function runConnectionWorkload(id: string): Promise<WorkloadResult> {
+  return api(`/api/connections/${id}/workload`, { method: 'POST' })
 }
