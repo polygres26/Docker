@@ -1,0 +1,71 @@
+version: "3.8"
+
+# Real source-database containers to test the Advisor against -- one per dialect it supports.
+# Not part of the app's own runtime; `docker compose -f docker-compose.test.yml up -d` and point
+# Connections at these. Oracle takes several minutes to initialize on first boot (real DB creation,
+# not a canned image); MySQL/MariaDB/SQL Server are ready in under a minute.
+
+services:
+  oracle:
+    # Same free-tier real Oracle image Omnigate's own test infra uses (ARCHITECTURE.md 13.1) --
+    # not a stub. First boot creates the database from scratch (5-10 min); subsequent starts are fast.
+    image: container-registry.oracle.com/database/free:latest
+    environment:
+      ORACLE_PWD: TestPass123
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'select 1 from dual;' | sqlplus -s system/TestPass123@//localhost:1521/FREE"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: TestPass123
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: TestPass123
+    ports:
+      - "3306:3306"
+    command: --performance-schema=ON # needed for MySqlWorkloadCapture
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: TestPass123
+      MARIADB_DATABASE: testdb
+      MARIADB_USER: appuser
+      MARIADB_PASSWORD: TestPass123
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: TestPass123!
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  oracle-data:
