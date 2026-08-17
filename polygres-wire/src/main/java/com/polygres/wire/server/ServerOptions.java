@@ -142,8 +142,9 @@ public final class ServerOptions {
         String mysqlUser = System.getenv("ORAPG_MYSQL_USER");
         String mysqlPassword = System.getenv("ORAPG_MYSQL_PASSWORD");
 
-        int pgWireListenPort = parseIntEnv("POLYWIRE_PGWIRE_PORT", 5433);
-        int myWireListenPort = parseIntEnv("POLYWIRE_MYWIRE_PORT", 3306);
+        int pgWireListenPort = parseIntEnv("POLYWIRE_PGWIRE_PORT", 15432);
+        int myWireListenPort = parseIntEnv("POLYWIRE_MYWIRE_PORT", 13306);
+        int orawireListenPort = parseIntEnv("POLYWIRE_ORAWIRE_PORT", 11521);
         int grpcPort = parseIntEnv("POLYWIRE_GRPC_PORT", 7070);
         int httpPort = parseIntEnv("POLYWIRE_HTTP_PORT", 8080);
         // Reuses the same keystore as the Oracle TCPS listener (ORAPG_TLS_KEYSTORE) — one cert
@@ -161,7 +162,7 @@ public final class ServerOptions {
         String pgStandbyHost = System.getenv("ORAPG_PG_STANDBY_HOST");
         int pgStandbyPort = parseIntEnv("ORAPG_PG_STANDBY_PORT", pgPort);
 
-        return new ServerOptions(1521, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+        return new ServerOptions(orawireListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, keystorePath, keystorePassword,
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
