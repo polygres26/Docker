@@ -104,16 +104,9 @@ export default function Reports() {
   return (
     <div style={{ maxWidth: 780 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Reports</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 20 }}>
-        For customers who won't share a live connect string: upload a performance/workload report
-        instead -- an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query
-        Store export -- and get an LLM-assisted migration read on it. Name each upload after the
-        source database (e.g. "Orders DB") and attach as many files as you have for it -- several
-        AWR/DMV snapshots over time, one per system -- they're grouped together below under that
-        name. Select any files (from one database or several) for one combined analysis. This is a
-        different kind of signal than the Connections flow: there's no live database to query, so
-        findings here come from a model reading the report's text, not deterministic catalog scans.
-        Treat it as a starting point, not a final assessment.
+      {/* Why this page exists, in one line -- not a walkthrough of every field below. */}
+      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
+        For customers who won't share a live connect string: upload an AWR/performance/DMV report instead, named after its source database, for an LLM-assisted migration read.
       </p>
 
       <div className="panel" style={{ marginBottom: 16 }}>

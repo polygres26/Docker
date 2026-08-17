@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.polygres.advisor.llm.LlmProviderType;
 import com.polygres.advisor.llm.LlmRole;
 import com.polygres.advisor.llm.LlmSettingsStore;
+import com.polygres.advisor.llm.LocalModelPresets;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -14,6 +15,10 @@ import java.util.Map;
  * ({@code primary} or {@code judge}); PUT saves it. Backs the LLM configuration page (its own rail
  * item, separate from per-connection settings -- this is app-wide config, not scoped to one
  * source database).
+ *
+ * <p>{@code GET /api/llm-settings/local-presets} is the one non-role-scoped route here -- returns
+ * the two {@link LocalModelPresets} (Qwen/Gemma) so the UI can offer a simple switch instead of a
+ * raw file-path field. Handled first since "local-presets" would otherwise be misparsed as a role.
  */
 public class LlmSettingsRoute implements RouteHandler {
 
@@ -34,6 +39,12 @@ public class LlmSettingsRoute implements RouteHandler {
         String[] parts = request.getRequestURI().split("\\?")[0].split("/");
         // /api/llm-settings/{role} -> ["", "api", "llm-settings", role]
         if (parts.length != 4) { response.setStatus(404); return; }
+
+        if ("local-presets".equals(parts[3])) {
+            if (!"GET".equalsIgnoreCase(request.getMethod())) { response.setStatus(405); return; }
+            writeJson(response, 200, Map.of("qwen", LocalModelPresets.qwen(), "gemma", LocalModelPresets.gemma()));
+            return;
+        }
 
         LlmRole role;
         try {

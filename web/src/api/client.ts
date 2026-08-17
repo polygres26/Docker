@@ -213,6 +213,15 @@ export async function saveLlmSettings(role: LlmRole, settings: {
   return api(`/api/llm-settings/${role}`, { method: 'PUT', body: JSON.stringify(settings) })
 }
 
+export interface LocalModelPreset {
+  label: string
+  modelPath: string
+}
+
+export async function getLocalModelPresets(): Promise<{ qwen: LocalModelPreset; gemma: LocalModelPreset }> {
+  return api('/api/llm-settings/local-presets')
+}
+
 // --- Uploaded reports (no live connection) ---
 
 export interface UploadedReport {

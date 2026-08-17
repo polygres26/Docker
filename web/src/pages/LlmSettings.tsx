@@ -2,48 +2,53 @@ import { useEffect, useState } from 'react'
 import {
   type LlmProviderType,
   type LlmRole,
+  type LocalModelPreset,
   getLlmSettings,
+  getLocalModelPresets,
   saveLlmSettings,
 } from '../api/client'
 
 export default function LlmSettings() {
+  const [presets, setPresets] = useState<{ qwen: LocalModelPreset; gemma: LocalModelPreset } | null>(null)
+
+  useEffect(() => { getLocalModelPresets().then(setPresets).catch(() => {}) }, [])
+
   return (
     <div style={{ maxWidth: 640 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 24 }}>
-        Polygres Advisor's LLM-backed features (PL/SQL summarization, workload classification) use
-        the <strong>Primary</strong> model below -- <strong>Local</strong> by default, so it works
-        out of the box with no API key and no data leaving this machine. <strong>Judge</strong> is
-        optional: a second, independently-configured model that reviews Primary's PL/SQL summaries
-        for accuracy before you see them -- useful because a genuinely different model catches more
-        real mistakes than the same model checking its own work. Judge only reviews summarization,
-        not the high-volume workload classification, to keep cost proportional to what's actually
-        at stake.
+      {/* Primary does the work; Judge is an optional second opinion -- kept to one sentence each on the cards below, not spelled out again here. */}
+      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
+        Primary and Judge can each independently use the built-in local model (Qwen or Gemma) or an OpenAI API key.
       </p>
 
       <RoleCard
         role="primary"
         title="Primary"
-        description="Does the actual work: PL/SQL summarization and workload classification."
+        description="Does the work: PL/SQL summarization and workload classification."
         showEnabledToggle={false}
+        presets={presets}
       />
       <div style={{ height: 20 }} />
       <RoleCard
         role="judge"
         title="Judge (optional)"
-        description="Reviews Primary's PL/SQL summaries for completeness and accuracy. Point it at a different model or provider than Primary for the best results."
+        description="Second opinion on Primary's summaries -- use a different model than Primary for the best results."
         showEnabledToggle={true}
+        presets={presets}
       />
     </div>
   )
 }
 
 function RoleCard({
-  role, title, description, showEnabledToggle,
-}: { role: LlmRole; title: string; description: string; showEnabledToggle: boolean }) {
+  role, title, description, showEnabledToggle, presets,
+}: {
+  role: LlmRole; title: string; description: string; showEnabledToggle: boolean
+  presets: { qwen: LocalModelPreset; gemma: LocalModelPreset } | null
+}) {
   const [providerType, setProviderType] = useState<LlmProviderType>('local')
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
+  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
   const [modelPath, setModelPath] = useState('')
   const [model, setModel] = useState('')
   const [enabled, setEnabled] = useState(role === 'primary')
@@ -55,8 +60,12 @@ function RoleCard({
 
   useEffect(() => {
     getLlmSettings(role).then((s) => {
-      setProviderType(s.providerType.toLowerCase() as LlmProviderType)
-      setBaseUrl(s.baseUrl ?? '')
+      // BUILTIN (server-side Claude) is a legacy provider type -- no longer offered on this page,
+      // but a role saved with it before this change still needs somewhere to land; local is the
+      // safer default now that Claude isn't a selectable choice here.
+      const type = s.providerType.toLowerCase() as LlmProviderType
+      setProviderType(type === 'builtin' ? 'local' : type)
+      setBaseUrl(s.baseUrl || 'https://api.openai.com/v1')
       setModelPath(s.modelPath ?? '')
       setModel(s.model ?? '')
       setEnabled(s.enabled)
@@ -64,6 +73,11 @@ function RoleCard({
       setHasStoredKey(s.providerType === 'EXTERNAL' && !!s.updatedAt)
     }).catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [role])
+
+  function chooseLocalModel(preset: LocalModelPreset) {
+    setModelPath(preset.modelPath)
+    setModel(preset.label)
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -96,31 +110,38 @@ function RoleCard({
       <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
           <input type="radio" checked={providerType === 'local'} onChange={() => setProviderType('local')} />
-          Local (llama.cpp)
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-          <input type="radio" checked={providerType === 'builtin'} onChange={() => setProviderType('builtin')} />
-          Built-in (Claude)
+          Local
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
           <input type="radio" checked={providerType === 'external'} onChange={() => setProviderType('external')} />
-          External (OpenAI-compatible)
+          OpenAI API
         </label>
       </div>
 
-      {providerType === 'local' && (
+      {providerType === 'local' && presets && (
         <div className="field">
-          <label htmlFor={`${role}-modelPath`}>Model file path (.gguf)</label>
-          <input
-            id={`${role}-modelPath`}
-            value={modelPath}
-            onChange={(e) => setModelPath(e.target.value)}
-            placeholder="/path/to/model.gguf"
-          />
-          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
-            No API key, no network call leaves this machine. Runs via a locally-managed llama-server
-            sidecar -- needs llama-server installed (on PATH, or set POLYGRES_LLM_LOCAL_SERVER_PATH)
-            and a .gguf model file at the path above.
+          <label>Model</label>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {[presets.qwen, presets.gemma].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => chooseLocalModel(preset)}
+                style={{
+                  flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                  border: modelPath === preset.modelPath ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  background: modelPath === preset.modelPath ? 'var(--accent-soft)' : 'var(--bg)',
+                  color: 'var(--text)', fontSize: 14, fontWeight: modelPath === preset.modelPath ? 600 : 400,
+                  textAlign: 'left',
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          {/* One line on what "local" means -- not the full sidecar-process/PATH explanation, that's implementation detail, not decision-relevant. */}
+          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+            Runs on this machine -- no API key, nothing sent over the network.
           </p>
         </div>
       )}
@@ -138,7 +159,7 @@ function RoleCard({
             />
           </div>
           <div className="field">
-            <label htmlFor={`${role}-baseUrl`}>Base URL</label>
+            <label htmlFor={`${role}-baseUrl`}>Base URL <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(change only for Azure OpenAI or a compatible endpoint)</span></label>
             <input
               id={`${role}-baseUrl`}
               value={baseUrl}
@@ -146,19 +167,16 @@ function RoleCard({
               placeholder="https://api.openai.com/v1"
             />
           </div>
+          <div className="field">
+            <label htmlFor={`${role}-model`}>Model</label>
+            <input
+              id={`${role}-model`}
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="e.g. gpt-4.1"
+            />
+          </div>
         </>
-      )}
-
-      {providerType !== 'local' && (
-        <div className="field">
-          <label htmlFor={`${role}-model`}>Model</label>
-          <input
-            id={`${role}-model`}
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder={providerType === 'builtin' ? 'e.g. claude-sonnet-5' : 'e.g. gpt-4.1'}
-          />
-        </div>
       )}
 
       {error && <p style={{ color: 'var(--hard)', fontSize: 13 }}>{error}</p>}
