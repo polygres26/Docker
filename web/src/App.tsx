@@ -10,6 +10,7 @@ import Report from './pages/Report'
 import LlmSettings from './pages/LlmSettings'
 import Reports from './pages/Reports'
 import ReportDetail from './pages/ReportDetail'
+import Sizing from './pages/Sizing'
 
 /** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/llm-settings" element={<RequireAuth><LlmSettings /></RequireAuth>} />
       <Route path="/reports" element={<RequireAuth><Reports /></RequireAuth>} />
       <Route path="/reports/:id" element={<RequireAuth><ReportDetail /></RequireAuth>} />
+      <Route path="/sizing" element={<RequireAuth><Sizing /></RequireAuth>} />
       <Route path="/quick-scan" element={<RequireAuth><Connect /></RequireAuth>} />
       <Route path="/report" element={<RequireAuth><Report /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/connections" replace />} />

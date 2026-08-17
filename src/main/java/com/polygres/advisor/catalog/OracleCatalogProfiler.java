@@ -60,9 +60,19 @@ public class OracleCatalogProfiler implements CatalogProfiler {
             profileTriggers(statement, snapshot);
             profileScheduledJobs(statement, snapshot);
             profileSourceText(statement, snapshot);
+            profileSchemaSize(statement, snapshot);
         }
 
         return snapshot;
+    }
+
+    /** USER_SEGMENTS.BYTES covers actual allocated space (tables, indexes, LOBs, ...) for the connecting schema -- needs no elevated grant, unlike DBA_SEGMENTS. */
+    private void profileSchemaSize(Statement statement, CatalogSnapshot snapshot) {
+        try (ResultSet rs = statement.executeQuery("SELECT NVL(SUM(BYTES), 0) FROM USER_SEGMENTS")) {
+            if (rs.next()) snapshot.schemaSizeBytes = rs.getLong(1);
+        } catch (SQLException e) {
+            snapshot.warnings.add("Could not read USER_SEGMENTS -- schema size unavailable for sizing.");
+        }
     }
 
     private void profileVersion(Statement statement, CatalogSnapshot snapshot) {

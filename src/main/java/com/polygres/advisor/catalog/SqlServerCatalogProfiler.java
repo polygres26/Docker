@@ -43,6 +43,7 @@ public class SqlServerCatalogProfiler implements CatalogProfiler {
 
             profileScheduledJobs(connection, statement, snapshot);
             profileSourceText(statement, snapshot);
+            profileSchemaSize(statement, snapshot);
         }
 
         return snapshot;
@@ -57,6 +58,16 @@ public class SqlServerCatalogProfiler implements CatalogProfiler {
     }
 
     /** SQL Server Agent jobs live in msdb, a separate database -- the connecting login may not have access to it. */
+    /** sys.dm_db_partition_stats covers the current database's own allocated pages -- no cross-database/instance-wide grant needed, unlike sp_spaceused's server-wide variants. */
+    private void profileSchemaSize(Statement statement, CatalogSnapshot snapshot) {
+        try (ResultSet rs = statement.executeQuery(
+                "SELECT SUM(used_page_count) * 8 * 1024 FROM sys.dm_db_partition_stats")) {
+            if (rs.next()) snapshot.schemaSizeBytes = rs.getLong(1);
+        } catch (SQLException e) {
+            snapshot.warnings.add("Could not read sys.dm_db_partition_stats -- schema size unavailable for sizing.");
+        }
+    }
+
     private void profileScheduledJobs(Connection connection, Statement statement, CatalogSnapshot snapshot) {
         try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM msdb.dbo.sysjobs")) {
             if (rs.next()) {

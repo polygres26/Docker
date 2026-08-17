@@ -1,4 +1,4 @@
-import { Cpu, Database, FileUp, LogOut } from 'lucide-react'
+import { Cpu, Database, FileUp, Gauge, LogOut } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
@@ -6,9 +6,10 @@ import styles from './Layout.module.css'
 /**
  * Shell for every authenticated route -- icon-only dark nav rail + a breadcrumb top bar, same
  * shape as Omnigate's AdminLayout (~/Projects/Omnigate/web/src/pages/admin/AdminLayout.tsx).
- * Three nav destinations: Connections (per-database work, live connect strings), Reports
- * (upload-a-report on-ramp for customers who won't share a live connect string), and LLM
- * configuration (app-wide, not scoped to either).
+ * Four nav destinations: Connections (per-database work, live connect strings), Reports
+ * (upload-a-report on-ramp for customers who won't share a live connect string), Sizing
+ * (Postgres instance sizing built from either), and LLM configuration (app-wide, not scoped to
+ * any of the above).
  */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -38,6 +39,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <FileUp size={19} strokeWidth={1.8} />
             <span className={styles.railTip}>Reports</span>
+          </NavLink>
+          <NavLink
+            to="/sizing"
+            title="Sizing"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Gauge size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Sizing</span>
           </NavLink>
           <NavLink
             to="/llm-settings"

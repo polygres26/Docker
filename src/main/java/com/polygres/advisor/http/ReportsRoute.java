@@ -3,6 +3,8 @@ package com.polygres.advisor.http;
 import com.google.gson.Gson;
 import com.polygres.advisor.llm.LlmSettingsStore;
 import com.polygres.advisor.llm.ReportAnalyzer;
+import com.polygres.advisor.sizing.SizingCalculator;
+import com.polygres.advisor.sizing.SizingInput;
 import com.polygres.advisor.uploads.HtmlTextExtractor;
 import com.polygres.advisor.uploads.ReportStore;
 import com.polygres.advisor.uploads.UploadedReport;
@@ -34,6 +36,9 @@ import java.util.Optional;
  *                                             several uploaded reports (see ReportAnalyzer#analyzeMultiple);
  *                                             not cached against any single report row, since it
  *                                             spans several
+ * POST   /api/reports/sizing                   body {"ids": [...]} -> SizingCalculator recommendation
+ *                                             built from the combined analysis's sizingSignals
+ *                                             (CPU/memory/data-size, when the report(s) stated them)
  * </pre>
  *
  * Upload is a raw-body POST (not multipart) deliberately -- the browser reads the file as an
@@ -57,6 +62,8 @@ public class ReportsRoute implements RouteHandler {
                 if ("POST".equalsIgnoreCase(method)) { upload(request, response); return; }
             } else if (parts.length == 4 && "analyze-batch".equals(parts[3]) && "POST".equalsIgnoreCase(method)) {
                 analyzeBatch(request, response); return;
+            } else if (parts.length == 4 && "sizing".equals(parts[3]) && "POST".equalsIgnoreCase(method)) {
+                sizing(request, response); return;
             } else if (parts.length == 4) {
                 String id = parts[3];
                 if ("GET".equalsIgnoreCase(method)) { getOne(id, response); return; }
@@ -132,6 +139,35 @@ public class ReportsRoute implements RouteHandler {
 
         ReportAnalyzer.Analysis analysis = new ReportAnalyzer(llmSettingsStore).analyzeMultiple(inputs);
         writeJson(response, 200, analysis);
+    }
+
+    private void sizing(HttpServletRequest request, HttpServletResponse response) throws Exception {
+        BatchRequest form = GSON.fromJson(request.getReader(), BatchRequest.class);
+        if (form == null || form.ids == null || form.ids.length == 0) {
+            writeError(response, 400, "ids (a non-empty array) is required.");
+            return;
+        }
+
+        java.util.List<ReportAnalyzer.ReportInput> inputs = new java.util.ArrayList<>();
+        String sourceLabel = null;
+        for (String id : form.ids) {
+            Optional<UploadedReport> reportOpt = store.get(id);
+            if (reportOpt.isEmpty()) { writeError(response, 404, "Report not found: " + id); return; }
+            UploadedReport report = reportOpt.get();
+            if (sourceLabel == null) sourceLabel = report.name;
+            inputs.add(new ReportAnalyzer.ReportInput(report.name, report.dialect, store.getText(id)));
+        }
+
+        ReportAnalyzer.Analysis analysis = new ReportAnalyzer(llmSettingsStore).analyzeMultiple(inputs);
+        var signals = analysis.sizingSignals();
+
+        SizingInput sizingInput = new SizingInput(
+            sourceLabel == null ? "Uploaded report(s)" : sourceLabel,
+            0, 0, 0, 0, 0, 0, // no live workload/schema-size numbers from a static report
+            signals == null ? null : signals.cpuCores(),
+            signals == null ? null : signals.memoryGB(),
+            signals == null ? null : signals.dataSizeGB());
+        writeJson(response, 200, SizingCalculator.calculate(sizingInput));
     }
 
     private static class BatchRequest {

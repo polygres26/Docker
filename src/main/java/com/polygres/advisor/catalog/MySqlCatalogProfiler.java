@@ -65,6 +65,7 @@ public class MySqlCatalogProfiler implements CatalogProfiler {
 
             profileEngineMix(statement, snapshot);
             profileSourceText(statement, snapshot);
+            profileSchemaSize(statement, snapshot);
         }
 
         if (snapshot.scheduledJobCount > 0) {
@@ -84,6 +85,15 @@ public class MySqlCatalogProfiler implements CatalogProfiler {
     }
 
     /** MyISAM/MEMORY/ARCHIVE/FEDERATED tables carry real migration risk (no transactions, no FKs, or no direct Postgres equivalent at all) -- surfaced via builtinPackageUsage's generic "count by category" shape so MigrationScorer can weight them without a MySQL-specific field. */
+    private void profileSchemaSize(Statement statement, CatalogSnapshot snapshot) {
+        try (ResultSet rs = statement.executeQuery(
+                "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = DATABASE()")) {
+            if (rs.next()) snapshot.schemaSizeBytes = rs.getLong(1);
+        } catch (SQLException e) {
+            snapshot.warnings.add("Could not read information_schema.tables size columns -- schema size unavailable for sizing.");
+        }
+    }
+
     private void profileEngineMix(Statement statement, CatalogSnapshot snapshot) throws SQLException {
         try (ResultSet rs = statement.executeQuery(
                 "SELECT engine, COUNT(*) AS cnt FROM information_schema.tables "

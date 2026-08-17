@@ -11,6 +11,8 @@ import com.polygres.advisor.llm.LlmSettingsStore;
 import com.polygres.advisor.llm.PlsqlSummarizer;
 import com.polygres.advisor.report.FindingsReportGenerator;
 import com.polygres.advisor.score.MigrationScorer;
+import com.polygres.advisor.sizing.SizingCalculator;
+import com.polygres.advisor.sizing.SizingInput;
 import com.polygres.advisor.workload.WorkloadSummary;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -47,6 +49,8 @@ import java.util.Optional;
  * GET    /api/connections/{id}/report                   live-generated Findings PDF ("Download
  *                                                        report") -- re-scans on every request,
  *                                                        never a cached copy from an earlier visit
+ * POST   /api/connections/{id}/sizing                    live schema-size + workload scan ->
+ *                                                        SizingCalculator recommendation
  * </pre>
  */
 public class ConnectionsRoute implements RouteHandler {
@@ -83,6 +87,8 @@ public class ConnectionsRoute implements RouteHandler {
                 runSummarize(parts[3], request, response); return;
             } else if (parts.length == 5 && "report".equals(parts[4]) && "GET".equalsIgnoreCase(method)) {
                 downloadReport(parts[3], response); return;
+            } else if (parts.length == 5 && "sizing".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
+                runSizing(parts[3], response); return;
             } else if (parts.length == 6 && "objects".equals(parts[4]) && "detail".equals(parts[5]) && "GET".equalsIgnoreCase(method)) {
                 objectDetail(parts[3], request, response); return;
             }
@@ -247,6 +253,41 @@ public class ConnectionsRoute implements RouteHandler {
         response.setContentLength(pdf.length);
         response.getOutputStream().write(pdf);
         response.getOutputStream().flush();
+    }
+
+    /**
+     * Postgres instance sizing for this connection: a fresh catalog scan for schema size (storage
+     * sizing) plus a fresh workload capture for CPU/logical-IO/physical-IO magnitude (vCPU/memory/
+     * IOPS sizing) feed {@link SizingCalculator}. Workload capture is best-effort here, same
+     * reasoning as {@link #runFindings} -- a locked-down account still gets a storage-only
+     * recommendation rather than the whole request failing.
+     */
+    private void runSizing(String id, HttpServletResponse response) throws Exception {
+        BackendTarget target = requireTarget(id, response);
+        if (target == null) return;
+        Optional<ConnectionRecord> recordOpt = store.get(id);
+        String sourceLabel = recordOpt.map(r -> r.name).orElse(id);
+
+        var snapshot = DialectSupport.profilerFor(target.dialect()).profile(target);
+
+        long totalExec = 0, totalElapsed = 0, totalCpu = 0, totalBufferGets = 0, totalDiskReads = 0;
+        try {
+            var statements = DialectSupport.workloadCaptureFor(target.dialect()).capture(target, 300);
+            for (var s : statements) {
+                totalExec += s.executions();
+                totalElapsed += s.elapsedTimeMicros();
+                totalCpu += s.cpuTimeMicros();
+                totalBufferGets += s.bufferGets();
+                totalDiskReads += s.diskReads();
+            }
+        } catch (Exception ignored) {
+            // Workload capture needs a higher privilege tier than the catalog scan on every
+            // dialect -- degrade to storage-only sizing rather than failing the whole request.
+        }
+
+        SizingInput input = new SizingInput(sourceLabel, snapshot.schemaSizeBytes,
+            totalExec, totalElapsed, totalCpu, totalBufferGets, totalDiskReads, null, null, null);
+        writeJson(response, 200, SizingCalculator.calculate(input));
     }
 
     /** {@code null} on 404 (already written); throws {@link UnsupportedOperationException} for a dialect Advisor can't recognize at all -- {@link #handle} turns that into a 501. */

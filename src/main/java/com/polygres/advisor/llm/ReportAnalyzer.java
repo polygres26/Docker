@@ -15,6 +15,12 @@ import com.google.gson.JsonSyntaxException;
  * <p>Uses the PRIMARY LLM (and JUDGE, if configured -- same "second opinion on things a human will
  * act on" reasoning as {@link PlsqlSummarizer}, since a wrong reading of a report is exactly the
  * kind of mistake worth catching before a migration plan is built on it).
+ *
+ * <p>Also extracts {@code sizingSignals} when the report states them directly (AWR reports
+ * conventionally list CPU count and Memory(GB) in their header) -- this is what feeds
+ * {@link com.polygres.advisor.sizing.SizingCalculator} for the report-based sizing flow, the same
+ * role {@code CatalogSnapshot.schemaSizeBytes}/{@code WorkloadSummary} play for the connection-
+ * based one.
  */
 public class ReportAnalyzer {
 
@@ -39,8 +45,15 @@ public class ReportAnalyzer {
           "topWorkload": [
             {"description": "<what this SQL/statement does, in plain language>", "detail": "<execution count / elapsed time / whatever resource stats the report shows>"}
           ],
-          "caveats": ["<anything you could not determine from this report, or where you're inferring rather than reading directly>"]
+          "caveats": ["<anything you could not determine from this report, or where you're inferring rather than reading directly>"],
+          "sizingSignals": {
+            "cpuCores": <integer CPU core count if the report states it directly, else null>,
+            "memoryGB": <integer RAM in GB if the report states it directly, else null>,
+            "dataSizeGB": <numeric database/schema size in GB if the report states it directly, else null>
+          }
         }
+        Only fill in sizingSignals fields the report actually states -- do not estimate or infer
+        them from indirect evidence; leave them null if genuinely absent.
         """;
 
     private final LlmSettingsStore settingsStore;
@@ -52,10 +65,11 @@ public class ReportAnalyzer {
 
     public record Finding(String feature, String severity, String note) {}
     public record WorkloadItem(String description, String detail) {}
+    public record SizingSignals(Integer cpuCores, Integer memoryGB, Double dataSizeGB) {}
     public record Analysis(
         String sourceVersion, String tier, String tierReason,
         java.util.List<Finding> findings, java.util.List<WorkloadItem> topWorkload,
-        java.util.List<String> caveats, LlmJudge.Verdict judgeVerdict
+        java.util.List<String> caveats, SizingSignals sizingSignals, LlmJudge.Verdict judgeVerdict
     ) {}
 
     /** One report the caller wants analyzed -- used both for a single upload and for {@link #analyzeMultiple}. */
@@ -107,6 +121,7 @@ public class ReportAnalyzer {
             raw.findings == null ? java.util.List.of() : raw.findings,
             raw.topWorkload == null ? java.util.List.of() : raw.topWorkload,
             raw.caveats == null ? java.util.List.of() : raw.caveats,
+            raw.sizingSignals,
             verdict);
     }
 
@@ -135,5 +150,6 @@ public class ReportAnalyzer {
         java.util.List<Finding> findings;
         java.util.List<WorkloadItem> topWorkload;
         java.util.List<String> caveats;
+        SizingSignals sizingSignals;
     }
 }

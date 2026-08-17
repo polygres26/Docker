@@ -59,10 +59,14 @@ src/main/java/com/polygres/advisor/
                - LlmSettingsStore: persists both roles' config (provider type, API key, base
                  URL, local model path, model, enabled) in the same embedded HSQLDB store as
                  connections.
-               - LocalLlamaProcess/LocalLlamaManager (LOCAL): manages a llama-server sidecar
-                 process -- CPU-only, bound to 127.0.0.1 -- ported from Omnigate's
-                 com.omnigate.assistant.LocalLlamaProcess. At most one local model running at a
-                 time; a changed model path restarts it. The server binary is found via
+               - LocalLlamaProcess/LocalLlamaManager (LOCAL): manages llama-server sidecar
+                 processes -- CPU-only, bound to 127.0.0.1 -- ported from Omnigate's
+                 com.omnigate.assistant.LocalLlamaProcess. LocalLlamaManager runs one process per
+                 distinct model path concurrently (Map<modelPath, LocalLlamaProcess>, each on its
+                 own auto-assigned port starting at POLYGRES_LLM_LOCAL_PORT) rather than a single
+                 shared process -- so PRIMARY and JUDGE can run genuinely different local models
+                 (e.g. Qwen + Gemma) at the same time without thrashing restarts on every call.
+                 The server binary is found via
                  POLYGRES_LLM_LOCAL_SERVER_PATH or PATH; the model file (a .gguf) is set on the
                  LLM configuration page, same "operator-provided, nothing bundled or
                  auto-downloaded" posture Omnigate takes with its own local Qwen/Gemma sidecars.
@@ -92,6 +96,21 @@ src/main/java/com/polygres/advisor/
              POLYGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
              see AdminAuth javadoc for the tradeoff and what Omnigate's fuller admin auth looks
              like if this needs to grow into that later.
+  sizing/    SizingCalculator -- a rules-of-thumb Postgres instance-shape recommender (vCPUs,
+             memory, storage, storage IOPS, max_connections), explicitly NOT a substitute for
+             real load testing. Same "auditable, not a black box" philosophy as MigrationScorer:
+             every number comes with a plain-English rationale string, and every missing/defaulted
+             input comes with an explicit caveat string. SizingInput carries whatever signal is
+             available -- CatalogSnapshot.schemaSizeBytes + WorkloadSummary totals from a live
+             connection, or cpuCoresHint/memoryGBHint/dataSizeGBHint pulled by ReportAnalyzer from
+             an uploaded report's text -- and degrades gracefully (documented floors/caveats) when
+             a given signal isn't available rather than guessing. Storage sizing uses a 20GB floor
+             and 1.6x headroom multiplier (index rebuilds/WAL/bloat/growth); vCPU/memory use
+             statement-volume tiers (SMALL/MEDIUM/LARGE/XLARGE) raised to any stated hint and
+             bumped further for CPU-bound or cache-friendly workload signals; storage IOPS is
+             explicitly caveated as a magnitude signal, not a measured rate, since a V$SQL/DMV
+             snapshot has no fixed observation window. SizingRecommendation is the shared output
+             shape for both entry points below.
 
 Admin + saved connections (com.polygres.advisor.core.ConnectionStore, ConnectionRecord):
   - CRUD over a set of named source-database connections, persisted in an embedded HSQLDB file
@@ -121,10 +140,29 @@ Uploaded reports (com.polygres.advisor.uploads.ReportStore, com.polygres.advisor
     the first report eating the whole budget). Combined analyses aren't cached against any
     single report row, since they span several; re-running is cheap enough to just regenerate.
 
+Sizing entry points (both return the same SizingRecommendation shape):
+  - POST /api/connections/{id}/sizing (ConnectionsRoute#runSizing): re-profiles the connection's
+    schema size + captures a fresh workload sample (best-effort -- degrades to storage-only sizing
+    if capture fails, e.g. insufficient privileges) and feeds real numbers into SizingCalculator.
+    No LLM involved; fully deterministic given the live source.
+  - POST /api/reports/sizing (ReportsRoute#sizing), body {"ids": [...]}: runs
+    ReportAnalyzer#analyzeMultiple across the selected report(s) and feeds its sizingSignals
+    (cpuCores/memoryGB/dataSizeGB -- only filled in when the report text states them directly, per
+    the analyzer's system prompt) into SizingCalculator. LLM-extraction-dependent: verified against
+    a real local Qwen 2.5 1.5B model that it correctly applies stated hints (e.g. "32 CPU cores" /
+    "256 GB RAM" in a report raised vCpus/memoryGB/storageGB accordingly) when the model extracts
+    them, but extraction is inconsistent run-to-run with a model this small -- a repeat call on
+    identical input can come back with sizingSignals all null and the calculator's documented
+    floors/caveats used instead. Both outcomes are the calculator behaving correctly; the gap is
+    small-model extraction reliability, not a code path bug. Swapping PRIMARY to Gemma 2 2B
+    (Omnigate's other locally-tested model) didn't improve this on the same report.
+
 web/         React + TS + Vite SPA: Login -> Connections (list/create/delete) ->
-             ConnectionDetail (Findings / Objects / Workload / Parameters tabs), and Reports
+             ConnectionDetail (Findings / Objects / Workload / Parameters tabs), Reports
              (multi-file upload, per-report or multi-select combined analysis via the shared
-             ReportAnalysisView component) as a parallel top-level flow.
+             ReportAnalysisView component), and Sizing (pages/Sizing.tsx -- pick a connection or
+             one-or-more uploaded reports, same stat-tile/rationale/caveats rendering for either
+             source) as parallel top-level flows off the four-item nav rail.
              The original ad-hoc Connect -> Report flow still exists at /quick-scan for a
              one-off scan without saving a connection.
 ```

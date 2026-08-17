@@ -32,6 +32,9 @@ public class CatalogSnapshot {
     public int synonymCount;
     public int partitionedTableCount;
 
+    /** Total on-disk size of the connecting schema's tables/indexes, in bytes -- 0 if the profiler couldn't determine it (e.g. missing grant). The primary storage-sizing input; see com.polygres.advisor.sizing.SizingCalculator. */
+    public long schemaSizeBytes;
+
     /** Built-in package/API usage found by scanning source text, e.g. "DBMS_OUTPUT" -> 42 call sites. */
     public Map<String, Integer> builtinPackageUsage = new LinkedHashMap<>();
 

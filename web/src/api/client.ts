@@ -279,3 +279,24 @@ export async function analyzeReport(id: string): Promise<ReportAnalysis> {
 export async function analyzeReportsBatch(ids: string[]): Promise<ReportAnalysis> {
   return api('/api/reports/analyze-batch', { method: 'POST', body: JSON.stringify({ ids }) })
 }
+
+// --- Sizing ---
+
+export interface SizingRecommendation {
+  tier: 'SMALL' | 'MEDIUM' | 'LARGE' | 'XLARGE'
+  vCpus: number
+  memoryGB: number
+  storageGB: number
+  storageIops: number
+  maxConnections: number
+  rationale: string[]
+  caveats: string[]
+}
+
+export async function runConnectionSizing(id: string): Promise<SizingRecommendation> {
+  return api(`/api/connections/${id}/sizing`, { method: 'POST' })
+}
+
+export async function runReportsSizing(ids: string[]): Promise<SizingRecommendation> {
+  return api('/api/reports/sizing', { method: 'POST', body: JSON.stringify({ ids }) })
+}
