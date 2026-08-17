@@ -94,6 +94,10 @@ export async function listConnections(): Promise<Connection[]> {
   return api<Connection[]>('/api/connections')
 }
 
+export async function getConnection(id: string): Promise<Connection> {
+  return api<Connection>(`/api/connections/${id}`)
+}
+
 export async function createConnection(c: { name: string; jdbcUrl: string; user: string; password: string }): Promise<Connection> {
   return api<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) })
 }
@@ -124,4 +128,22 @@ export async function getParameters(id: string): Promise<ParameterInfo[]> {
 
 export async function runConnectionScan(id: string): Promise<ScanResult> {
   return api(`/api/connections/${id}/scan`, { method: 'POST' })
+}
+
+export interface CapturedStatement {
+  sqlId: string
+  sqlText: string
+  executions: number
+  elapsedTimeMicros: number
+  parsingSchema: string
+  module: string | null
+}
+
+export interface FindingsResult extends ScanResult {
+  workload?: CapturedStatement[]
+  workloadError?: string
+}
+
+export async function runConnectionFindings(id: string): Promise<FindingsResult> {
+  return api(`/api/connections/${id}/findings`, { method: 'POST' })
 }

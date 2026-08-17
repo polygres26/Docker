@@ -35,6 +35,8 @@ import java.util.Optional;
  * GET    /api/connections/{id}/parameters              V$PARAMETER (Oracle) rows
  * POST   /api/connections/{id}/scan                    run CatalogProfiler + MigrationScorer
  * POST   /api/connections/{id}/workload                run WorkloadCapture
+ * POST   /api/connections/{id}/findings                 scan + workload in one round trip --
+ *                                                        backs the "Findings" dashboard tab
  * </pre>
  *
  * Only Oracle is wired up for the explore/assess actions today (MariaDB/MySQL is next -- same
@@ -67,6 +69,8 @@ public class ConnectionsRoute implements RouteHandler {
                 runScan(parts[3], response); return;
             } else if (parts.length == 5 && "workload".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
                 runWorkload(parts[3], response); return;
+            } else if (parts.length == 5 && "findings".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
+                runFindings(parts[3], response); return;
             } else if (parts.length == 6 && "objects".equals(parts[4]) && "detail".equals(parts[5]) && "GET".equalsIgnoreCase(method)) {
                 objectDetail(parts[3], request, response); return;
             }
@@ -148,6 +152,31 @@ public class ConnectionsRoute implements RouteHandler {
         BackendTarget target = requireOracleTarget(id, response);
         if (target == null) return;
         writeJson(response, 200, Map.of("statements", new OracleWorkloadCapture().capture(target, 200)));
+    }
+
+    /**
+     * Scan + workload capture in one round trip, for the Findings dashboard. Workload capture is
+     * best-effort here (same reasoning as {@link WorkloadRoute}): it needs a higher privilege tier
+     * ({@code V$SQL} access) than the catalog scan does, so a locked-down read-only account can
+     * still get a full findings dashboard minus the "what's actually running" section, rather than
+     * the whole request failing over one missing grant.
+     */
+    private void runFindings(String id, HttpServletResponse response) throws Exception {
+        BackendTarget target = requireOracleTarget(id, response);
+        if (target == null) return;
+
+        var snapshot = new OracleCatalogProfiler().profile(target);
+        var score = new MigrationScorer().score(snapshot);
+
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("snapshot", snapshot);
+        body.put("score", score);
+        try {
+            body.put("workload", new OracleWorkloadCapture().capture(target, 100));
+        } catch (Exception e) {
+            body.put("workloadError", "Workload capture unavailable: " + e.getMessage());
+        }
+        writeJson(response, 200, body);
     }
 
     private BackendTarget requireOracleTarget(String id, HttpServletResponse response) throws IOException {

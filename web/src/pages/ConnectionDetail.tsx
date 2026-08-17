@@ -1,30 +1,38 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  type Connection,
+  type FindingsResult,
   type ParameterInfo,
-  type ScanResult,
+  getConnection,
   getObjectDetail,
   getObjects,
   getParameters,
-  runConnectionScan,
+  runConnectionFindings,
 } from '../api/client'
 
-type Tab = 'objects' | 'parameters' | 'assessment'
+type Tab = 'findings' | 'objects' | 'parameters'
 
 export default function ConnectionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('objects')
+  const [tab, setTab] = useState<Tab>('findings')
+  const [connection, setConnection] = useState<Connection | null>(null)
+
+  useEffect(() => {
+    if (id) getConnection(id).then(setConnection).catch(() => {})
+  }, [id])
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={{ maxWidth: 1100 }}>
       <button onClick={() => navigate('/connections')} style={{ marginBottom: 16, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer' }}>
         ← Connections
       </button>
-      <h1>Connection detail</h1>
+      <h1 style={{ marginBottom: 2 }}>{connection?.name ?? 'Connection detail'}</h1>
+      {connection && <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 14 }}>{connection.jdbcUrl}</p>}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {(['objects', 'parameters', 'assessment'] as Tab[]).map((t) => (
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {(['findings', 'objects', 'parameters'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -43,12 +51,201 @@ export default function ConnectionDetail() {
         ))}
       </div>
 
+      {id && tab === 'findings' && <FindingsTab id={id} />}
       {id && tab === 'objects' && <ObjectsTab id={id} />}
       {id && tab === 'parameters' && <ParametersTab id={id} />}
-      {id && tab === 'assessment' && <AssessmentTab id={id} />}
     </div>
   )
 }
+
+// --- Findings ---------------------------------------------------------
+
+function severityColor(points: number): string {
+  if (points >= 15) return 'var(--hard)'
+  if (points >= 5) return 'var(--medium)'
+  return 'var(--easy)'
+}
+
+function severityLabel(points: number): string {
+  if (points >= 15) return 'High'
+  if (points >= 5) return 'Medium'
+  return 'Low'
+}
+
+function tierColor(tier: string): string {
+  if (tier.startsWith('EASY')) return 'var(--easy)'
+  if (tier.startsWith('MEDIUM')) return 'var(--medium)'
+  return 'var(--hard)'
+}
+
+function formatMicros(micros: number): string {
+  const ms = micros / 1000
+  if (ms < 1) return '<1 ms'
+  if (ms < 1000) return `${ms.toFixed(1)} ms`
+  return `${(ms / 1000).toFixed(2)} s`
+}
+
+function FindingsTab({ id }: { id: string }) {
+  const [result, setResult] = useState<FindingsResult | null>(null)
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    setLoading(true); setError(null)
+    try {
+      setResult(await runConnectionFindings(id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { run() }, [id])
+
+  if (loading) {
+    return (
+      <div className="panel" style={{ textAlign: 'center', padding: 48 }}>
+        <p style={{ color: 'var(--muted)' }}>Profiling schema, scoring migration difficulty, capturing workload…</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="panel" style={{ borderColor: 'var(--hard)' }}>
+        <p style={{ color: 'var(--hard)' }}>{error}</p>
+        <button className="primary" onClick={run} style={{ marginTop: 12 }}>Retry</button>
+      </div>
+    )
+  }
+  if (!result) return null
+
+  const { snapshot, score, workload, workloadError } = result
+  const sortedFindings = [...score.findings].sort((a, b) => b.points - a.points)
+  const meterPct = Math.min(100, (score.totalScore / 100) * 100)
+  const sortedWorkload = workload ? [...workload].sort((a, b) => b.elapsedTimeMicros - a.elapsedTimeMicros) : []
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Overall complexity hero */}
+      <div className="panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+          <div>
+            <span className="tier-badge" style={{ background: tierColor(score.tier), color: '#111' }}>
+              {score.tier.split(' -- ')[0]}
+            </span>
+            <p style={{ marginTop: 10, marginBottom: 4, maxWidth: 560 }}>{score.tier.split(' -- ')[1]}</p>
+            {snapshot.sourceVersion && <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>{snapshot.sourceVersion}</p>}
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 36, fontWeight: 700, lineHeight: 1 }}>{score.totalScore}</div>
+            <div style={{ color: 'var(--muted)', fontSize: 12 }}>overall complexity score</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ position: 'relative', height: 10, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
+            <div style={{ flex: 20, background: 'var(--easy)' }} />
+            <div style={{ flex: 40, background: 'var(--medium)' }} />
+            <div style={{ flex: 40, background: 'var(--hard)' }} />
+            <div
+              style={{
+                position: 'absolute', top: -3, left: `calc(${meterPct}% - 2px)`,
+                width: 4, height: 16, background: 'var(--text)', borderRadius: 2,
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+            <span>EASY (0–20)</span><span>MEDIUM (21–60)</span><span>HARD (61+)</span>
+          </div>
+        </div>
+
+        <button className="primary" onClick={run} style={{ marginTop: 16 }}>Re-run findings</button>
+      </div>
+
+      {score.warnings.length > 0 && (
+        <div className="panel" style={{ borderColor: 'var(--medium)' }}>
+          <strong>Warnings</strong>
+          <ul style={{ marginBottom: 0 }}>
+            {score.warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* Feature inventory quick stats */}
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>Feature inventory</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+          {[
+            ['Tables', snapshot.tableCount], ['Views', snapshot.viewCount],
+            ['Mat. views', snapshot.materializedViewCount], ['Sequences', snapshot.sequenceCount],
+            ['Triggers', snapshot.simpleTriggerCount + snapshot.complexTriggerCount],
+            ['Packages', snapshot.packageCount], ['Procedures', snapshot.standaloneProcedureCount],
+            ['Functions', snapshot.standaloneFunctionCount], ['DB links', snapshot.dbLinkCount],
+            ['Scheduled jobs', snapshot.scheduledJobCount], ['Partitioned tables', snapshot.partitionedTableCount],
+          ].map(([label, value]) => (
+            <div key={label as string} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{value as number}</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-item complexity */}
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>Migration complexity by item</h3>
+        {sortedFindings.length === 0 && <p style={{ color: 'var(--muted)' }}>No difficulty-scoring findings -- looks like a clean schema+data migration.</p>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {sortedFindings.map((f, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
+              <span style={{
+                background: severityColor(f.points), color: '#111', fontSize: 11, fontWeight: 700,
+                borderRadius: 999, padding: '3px 10px', flexShrink: 0, width: 64, textAlign: 'center',
+              }}>
+                {severityLabel(f.points)}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{f.feature} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>× {f.count}</span></div>
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>{f.note}</div>
+              </div>
+              <div style={{ fontWeight: 700, flexShrink: 0 }}>{f.points} pts</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Workload captured */}
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>Workload captured</h3>
+        {workloadError && <p style={{ color: 'var(--medium)' }}>{workloadError}</p>}
+        {!workloadError && sortedWorkload.length === 0 && <p style={{ color: 'var(--muted)' }}>No cached SQL captured.</p>}
+        {sortedWorkload.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead><tr><th>SQL</th><th>Executions</th><th>Elapsed</th><th>Module</th></tr></thead>
+              <tbody>
+                {sortedWorkload.map((s) => (
+                  <tr key={s.sqlId}>
+                    <td style={{ maxWidth: 480, fontFamily: 'monospace', fontSize: 12 }} title={s.sqlText}>
+                      {s.sqlText.length > 100 ? s.sqlText.slice(0, 100) + '…' : s.sqlText}
+                    </td>
+                    <td>{s.executions.toLocaleString()}</td>
+                    <td>{formatMicros(s.elapsedTimeMicros)}</td>
+                    <td style={{ color: 'var(--muted)' }}>{s.module || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- Objects ------------------------------------------------------------
 
 function ObjectsTab({ id }: { id: string }) {
   const [objects, setObjects] = useState<Record<string, string[]> | null>(null)
@@ -131,6 +328,8 @@ function ObjectsTab({ id }: { id: string }) {
   )
 }
 
+// --- Parameters -----------------------------------------------------------
+
 function ParametersTab({ id }: { id: string }) {
   const [params, setParams] = useState<ParameterInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -165,46 +364,6 @@ function ParametersTab({ id }: { id: string }) {
           ))}
         </tbody>
       </table>
-    </div>
-  )
-}
-
-function AssessmentTab({ id }: { id: string }) {
-  const [result, setResult] = useState<ScanResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function runScan() {
-    setLoading(true); setError(null)
-    try {
-      setResult(await runConnectionScan(id))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div>
-      <button className="primary" onClick={runScan} disabled={loading}>
-        {loading ? 'Scanning…' : 'Run migration assessment'}
-      </button>
-      {error && <p style={{ color: 'var(--hard)', marginTop: 12 }}>{error}</p>}
-      {result && (
-        <div className="panel" style={{ marginTop: 16 }}>
-          <p><strong>{result.score.tier}</strong></p>
-          <p style={{ color: 'var(--muted)' }}>Total score: {result.score.totalScore}</p>
-          <table>
-            <thead><tr><th>Feature</th><th>Count</th><th>Points</th></tr></thead>
-            <tbody>
-              {result.score.findings.map((f, i) => (
-                <tr key={i}><td>{f.feature}</td><td>{f.count}</td><td>{f.points}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }
