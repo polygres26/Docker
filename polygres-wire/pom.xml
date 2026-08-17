@@ -220,6 +220,13 @@
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>com.polygres.wire.server.Main</mainClass>
                 </transformer>
+                <!-- Without this, shading collapses every dependency's META-INF/services/java.sql.Driver
+                     file into a single last-jar-wins copy, silently dropping either the Postgres or
+                     Calcite JDBC driver's registration: found live, RollupStage's "jdbc:calcite:..."
+                     connection failed with "No suitable driver found" because org.postgresql.Driver's
+                     services file (packaged later) had overwritten Calcite's. ServicesResourceTransformer
+                     merges same-named META-INF/services/* files across all jars instead of picking one. -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
               </transformers>
               <filters>
                 <filter>

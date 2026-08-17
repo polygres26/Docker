@@ -6,6 +6,7 @@ import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.QosControlStage;
+import com.polygres.wire.core.RollupStage;
 import com.polygres.wire.core.RouterStage;
 import com.polygres.wire.core.StatsCollectorStage;
 import com.polygres.wire.http.admin.MetricsServer;
@@ -13,10 +14,16 @@ import com.polygres.wire.mywire.MySqlWireSessionHandler;
 import com.polygres.wire.orawire.session.SessionHandler;
 import com.polygres.wire.pgwire.PgBackendPool;
 import com.polygres.wire.pgwire.PgWireSessionHandler;
+import com.polygres.wire.rollup.RollupConfig;
+import com.polygres.wire.rollup.RollupDefinition;
+import com.polygres.wire.rollup.RollupRefreshJob;
+import com.polygres.wire.rollup.RollupStore;
 import com.polygres.wire.telemetry.PolyWireTelemetry;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -46,6 +53,32 @@ import org.slf4j.LoggerFactory;
  * short-circuiting the real backend round-trip) and moving StatsCollector ahead of Cache would
  * cost the "hits are fast, misses are not" latency-histogram signal instead. Still not wired: the
  * gRPC/HTTPS admin frontends from Omnigate's ProxyServer.
+ *
+ * <p>Third pass — {@code RollupStage} (rollup/materialized-view query rewriting) is now wired in
+ * too. Off by default, matching {@code CacheStage}'s own posture: only active when
+ * {@code POLYWIRE_ROLLUP_DEFINITIONS_FILE} names a YAML file of rollup definitions (see {@code
+ * RollupConfig}'s javadoc for the schema). Omnigate originally read this YAML from a DB-backed
+ * {@code ConfigStore}; PolyWire has no equivalent config-store table wired up (and adding one just
+ * for this single blob would be disproportionate), so a plain file path is used instead — simplest
+ * thing that lets an operator define/redefine rollups without a rebuild. Every configured
+ * definition is materialized once via {@code RollupRefreshJob.refreshNow} synchronously at startup
+ * (not left to the first scheduled interval) so the rollup table exists and has data before the
+ * first query that could match it arrives; {@code scheduleAll()} then takes over recurring
+ * refreshes. <b>Pipeline position</b>: {@code RollupStage}'s own javadoc calls for running it after
+ * {@code AccessControlStage}/{@code FirewallStage} (so any row-filter predicate a policy already
+ * injected into {@code sqlText} is present by the time substitution is attempted) — neither of
+ * those stages is wired into this pipeline at all yet, so the next-closest analogous slot is used:
+ * right after {@code DialectTranslationStage}, which is also where {@code targetBackend} first
+ * becomes resolved (the same reason {@code CacheStage} sits there) and, not incidentally, also the
+ * earliest point at which the final backend-native SQL text a rollup's regex/Calcite matching needs
+ * to see is actually available. Placed <em>before</em> {@code CacheStage}: a rollup-accelerated
+ * result is itself eligible to be cache-cached (no reason not to layer the two), and if a plain
+ * cache-key hit exists it's cheaper than even attempting Calcite substitution, but the two stages
+ * are independent enough that either order is defensible — this order was picked so a rollup miss
+ * still gets a chance at a cache hit on its now-rewritten... no: {@code CacheStage} keys off the
+ * original {@code sqlText}, so what actually matters here is that {@code RollupStage} runs first so
+ * its accelerated, much-cheaper query is what a cache entry (if any) would otherwise have avoided
+ * recomputing anyway — either stage can independently short-circuit the rest of the pipeline.
  */
 public final class Main {
 
@@ -54,7 +87,12 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         ServerOptions options = ServerOptions.parse(args);
 
-        BackendRegistry backendRegistry = BackendRegistry.fromConfig(null, null);
+        // POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS: named backends RouterStage rules and
+        // RollupStage definitions can target, beyond the one connection each frontend already
+        // opens for itself via ORAPG_PG_*. Previously always empty here (BackendRegistry.fromConfig
+        // hardcoded to (null, null)) -- routing/rollups had no way to be exercised without this.
+        BackendRegistry backendRegistry = BackendRegistry.fromConfig(
+                System.getenv("POLYWIRE_BACKENDS"), System.getenv("POLYWIRE_SHARD_BACKENDS"));
 
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
         if (telemetry != null) {
@@ -95,12 +133,48 @@ public final class Main {
             log.info("result cache disabled (set POLYWIRE_CACHE_TABLES to enable)");
         }
 
+        // Rollup: off by default (matches CacheStage's own posture) -- only wired in when
+        // POLYWIRE_ROLLUP_DEFINITIONS_FILE names a YAML file of rollup definitions (schema:
+        // RollupConfig's javadoc). Omnigate read this from a DB-backed ConfigStore; PolyWire has
+        // no equivalent store wired up, so a plain file path is used instead (simplest thing that
+        // lets rollups be redefined without a rebuild).
+        String rollupDefinitionsFile = System.getenv("POLYWIRE_ROLLUP_DEFINITIONS_FILE");
+        RollupStore rollupStore;
+        RollupRefreshJob rollupRefreshJob = null;
+        RollupStage rollupStage = null;
+        if (rollupDefinitionsFile != null && !rollupDefinitionsFile.isBlank()) {
+            String yamlText = Files.readString(Path.of(rollupDefinitionsFile));
+            List<RollupDefinition> definitions = RollupConfig.parse(yamlText);
+            rollupStore = new RollupStore(definitions);
+            rollupRefreshJob = new RollupRefreshJob(backendRegistry, rollupStore);
+            // Materialize every rollup synchronously now -- a query run immediately after startup
+            // must not depend on the first scheduled refresh interval having fired yet.
+            for (RollupDefinition def : definitions) {
+                try {
+                    rollupRefreshJob.refreshNow(def);
+                    log.info("rollup: \"{}\" materialized at startup (table {})", def.name(), def.rollupTableName());
+                } catch (Exception e) {
+                    log.warn("rollup: startup materialization failed for \"{}\", it will stay stale until its "
+                            + "next scheduled refresh ({})", def.name(), e.toString());
+                }
+            }
+            rollupRefreshJob.scheduleAll();
+            rollupStage = new RollupStage(rollupStore, backendRegistry);
+            log.info("rollup acceleration enabled: {} definition(s) from {}", definitions.size(), rollupDefinitionsFile);
+        } else {
+            rollupStore = RollupStore.empty();
+            log.info("rollup acceleration disabled (set POLYWIRE_ROLLUP_DEFINITIONS_FILE to enable)");
+        }
+
         StatsCollectorStage statsStage = new StatsCollectorStage(telemetry);
 
         List<PipelineStage> stages = new ArrayList<>();
         stages.add(new RouterStage());
         stages.add(qosStage);
         stages.add(new DialectTranslationStage(backendRegistry));
+        if (rollupStage != null) {
+            stages.add(rollupStage);
+        }
         if (cacheStage != null) {
             stages.add(cacheStage);
         }
