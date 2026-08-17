@@ -162,7 +162,16 @@ function FindingsTab({ id, onSeeWorkload }: { id: string; onSeeWorkload: () => v
           </div>
         </div>
 
-        <button className="primary" onClick={run} style={{ marginTop: 16 }}>Re-run findings</button>
+        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+          <button className="primary" onClick={run}>Re-run findings</button>
+          <a
+            href={`/api/connections/${id}/report`}
+            className="primary"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+          >
+            Download report
+          </a>
+        </div>
       </div>
 
       {score.warnings.length > 0 && (

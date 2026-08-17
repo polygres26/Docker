@@ -77,6 +77,13 @@ src/main/java/com/polygres/advisor/
              ad-hoc scan/workload/summarize routes. Same raw-Handler route-table pattern
              Omnigate's OmniGateHttpServer uses. ConnectionsRoute/ScanRoute/WorkloadRoute all
              dispatch through DialectSupport rather than hardcoding a vendor.
+  report/    FindingsReportGenerator -- the Findings tab's "Download report" PDF, built with
+             PDFBox directly (manual content-stream drawing/wrapping/pagination). Scoped to
+             Findings only (score, tier, feature inventory, scored findings), not a full data
+             dump of Workload/Objects/Parameters -- a migration-assessment summary a
+             stakeholder would read. Generated live on every request (GET
+             /api/connections/{id}/report re-scans right then) -- never a cached copy from an
+             earlier visit.
   http/auth/ Single-admin-account session auth (AdminAuth/AuthGuard) -- POLYGRES_ADMIN_USER /
              POLYGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
              see AdminAuth javadoc for the tradeoff and what Omnigate's fuller admin auth looks

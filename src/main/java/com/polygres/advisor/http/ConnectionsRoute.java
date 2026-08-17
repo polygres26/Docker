@@ -9,6 +9,7 @@ import com.polygres.advisor.core.DialectSupport;
 import com.polygres.advisor.core.SourceDialect;
 import com.polygres.advisor.llm.LlmSettingsStore;
 import com.polygres.advisor.llm.PlsqlSummarizer;
+import com.polygres.advisor.report.FindingsReportGenerator;
 import com.polygres.advisor.score.MigrationScorer;
 import com.polygres.advisor.workload.WorkloadSummary;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,6 +44,9 @@ import java.util.Optional;
  * POST   /api/connections/{id}/summarize                ?type=PACKAGE&amp;name=FOO -> PlsqlSummarizer
  *                                                        (PRIMARY + optional JUDGE review),
  *                                                        Oracle only today
+ * GET    /api/connections/{id}/report                   live-generated Findings PDF ("Download
+ *                                                        report") -- re-scans on every request,
+ *                                                        never a cached copy from an earlier visit
  * </pre>
  */
 public class ConnectionsRoute implements RouteHandler {
@@ -77,6 +81,8 @@ public class ConnectionsRoute implements RouteHandler {
                 runFindings(parts[3], response); return;
             } else if (parts.length == 5 && "summarize".equals(parts[4]) && "POST".equalsIgnoreCase(method)) {
                 runSummarize(parts[3], request, response); return;
+            } else if (parts.length == 5 && "report".equals(parts[4]) && "GET".equalsIgnoreCase(method)) {
+                downloadReport(parts[3], response); return;
             } else if (parts.length == 6 && "objects".equals(parts[4]) && "detail".equals(parts[5]) && "GET".equalsIgnoreCase(method)) {
                 objectDetail(parts[3], request, response); return;
             }
@@ -216,6 +222,31 @@ public class ConnectionsRoute implements RouteHandler {
                 "explanation", result.judgeVerdict().explanation()));
         }
         writeJson(response, 200, body);
+    }
+
+    /**
+     * "Download report" -- generates the Findings PDF live from a fresh scan (not a cached copy),
+     * per the project decision. GET, not POST: a plain browser navigation/{@code <a download>}
+     * can trigger a file download with the session cookie attached; a JSON POST route couldn't
+     * without extra blob-fetching plumbing on the client for no real benefit here.
+     */
+    private void downloadReport(String id, HttpServletResponse response) throws Exception {
+        Optional<ConnectionRecord> recordOpt = store.get(id);
+        if (recordOpt.isEmpty()) { writeError(response, 404, "Connection not found."); return; }
+        ConnectionRecord record = recordOpt.get();
+        BackendTarget target = requireTarget(id, response);
+        if (target == null) return;
+
+        var snapshot = DialectSupport.profilerFor(target.dialect()).profile(target);
+        var score = new MigrationScorer().score(snapshot);
+        byte[] pdf = new FindingsReportGenerator().generate(record, snapshot, score);
+
+        String filename = record.name.replaceAll("[^a-zA-Z0-9._-]", "_") + "-migration-assessment.pdf";
+        response.setContentType("application/pdf");
+        response.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+        response.setContentLength(pdf.length);
+        response.getOutputStream().write(pdf);
+        response.getOutputStream().flush();
     }
 
     /** {@code null} on 404 (already written); throws {@link UnsupportedOperationException} for a dialect Advisor can't recognize at all -- {@link #handle} turns that into a 501. */
