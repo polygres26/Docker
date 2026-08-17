@@ -6,6 +6,10 @@ easy tier) will drive the actual migration plus post-migration workload replay.
 
 **Sequencing:** Oracle first (19c baseline), then MariaDB/MySQL, then SQL Server. All three are
 wired up now for catalog profiling, workload capture, object exploration, parameter viewing, and
+scoring. For customers who won't share a live connect string, there's a second on-ramp: upload a
+performance report (AWR/MySQL/SQL Server) instead -- see `uploads/`/`ReportAnalyzer` below. It's a
+genuinely different kind of signal (LLM reading report text, no live catalog to query) and is
+labeled as such in the UI, not presented as equivalent to the Connections flow's deterministic
 scoring.
 
 ## Layout
@@ -97,10 +101,25 @@ Admin + saved connections (com.polygres.advisor.core.ConnectionStore, Connection
     assessment or workload capture, all using the connection's stored credentials server-side
     (the browser never sees them again after creation) and all dialect-agnostic on the UI side.
 
+Uploaded reports (com.polygres.advisor.uploads.ReportStore, com.polygres.advisor.llm.ReportAnalyzer):
+  - The no-live-connection on-ramp: upload a performance/workload report (Oracle AWR, a MySQL
+    performance report, a SQL Server DMV/Query Store export) and get an LLM-assisted read on it,
+    via the PRIMARY (+ optional JUDGE) model configured on the LLM configuration page.
+  - HtmlTextExtractor strips markup from HTML uploads (AWR reports ship as HTML) with a simple
+    regex pass, not a full HTML parser -- just enough to make the text readable to the model.
+  - Deliberately NOT wired into MigrationScorer -- there's no live catalog to run deterministic
+    queries against a static report, so this produces its own tier/findings/caveats shape
+    (ReportAnalyzer.Analysis) and the UI labels it explicitly as heuristic, not equivalent to the
+    Connections flow's deterministic scoring.
+  - Report text/metadata persisted the same way connections are (embedded HSQLDB for metadata +
+    cached analysis JSON; raw extracted text on disk under ~/.polygres/reports/<id>.txt, kept out
+    of the database row since a real AWR export can run to several MB).
+
 web/         React + TS + Vite SPA: Login -> Connections (list/create/delete) ->
-             ConnectionDetail (Findings / Objects / Workload / Parameters tabs). The original
-             ad-hoc Connect -> Report flow still exists at /quick-scan for a one-off scan
-             without saving a connection.
+             ConnectionDetail (Findings / Objects / Workload / Parameters tabs), and Reports
+             (list/upload -> ReportDetail with Analyze/Re-analyze) as a parallel top-level flow.
+             The original ad-hoc Connect -> Report flow still exists at /quick-scan for a
+             one-off scan without saving a connection.
 ```
 
 ## Running locally

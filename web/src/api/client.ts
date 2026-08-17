@@ -212,3 +212,66 @@ export async function saveLlmSettings(role: LlmRole, settings: {
 }): Promise<LlmSettings> {
   return api(`/api/llm-settings/${role}`, { method: 'PUT', body: JSON.stringify(settings) })
 }
+
+// --- Uploaded reports (no live connection) ---
+
+export interface UploadedReport {
+  id: string
+  name: string
+  dialect: string
+  filename: string
+  textLength: number
+  uploadedAt: string
+  analysisJson: string | null
+  analyzedAt: string | null
+}
+
+export async function listReports(): Promise<UploadedReport[]> {
+  return api('/api/reports')
+}
+
+export async function getReport(id: string): Promise<UploadedReport> {
+  return api(`/api/reports/${id}`)
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  await fetch(`/api/reports/${id}`, { method: 'DELETE' })
+}
+
+export async function uploadReport(file: File, name: string, dialect: string): Promise<UploadedReport> {
+  const bytes = await file.arrayBuffer()
+  const qs = new URLSearchParams({ name, dialect, filename: file.name })
+  const res = await fetch(`/api/reports?${qs.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: bytes,
+  })
+  const body = await res.json()
+  if (!res.ok) throw new Error(body?.error ?? `Upload failed (HTTP ${res.status})`)
+  return body as UploadedReport
+}
+
+export interface ReportFinding {
+  feature: string
+  severity: 'LOW' | 'MEDIUM' | 'HIGH'
+  note: string
+}
+
+export interface ReportWorkloadItem {
+  description: string
+  detail: string
+}
+
+export interface ReportAnalysis {
+  sourceVersion: string | null
+  tier: 'EASY' | 'MEDIUM' | 'HARD'
+  tierReason: string
+  findings: ReportFinding[]
+  topWorkload: ReportWorkloadItem[]
+  caveats: string[]
+  judgeVerdict?: { approved: boolean; explanation: string } | null
+}
+
+export async function analyzeReport(id: string): Promise<ReportAnalysis> {
+  return api(`/api/reports/${id}/analyze`, { method: 'POST' })
+}

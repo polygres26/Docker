@@ -51,6 +51,7 @@ public class AdvisorHttpServer extends AbstractHandler {
         routes.put("/api/summarize", AuthGuard.require(auth, new SummarizeRoute()));
         routes.put("/api/connections", AuthGuard.require(auth, new ConnectionsRoute()));
         routes.put("/api/llm-settings", AuthGuard.require(auth, new LlmSettingsRoute()));
+        routes.put("/api/reports", AuthGuard.require(auth, new ReportsRoute()));
     }
 
     @Override
