@@ -24,6 +24,8 @@ public class AdvisorHttpServer extends AbstractHandler {
 
     public AdvisorHttpServer() {
         routes.put("/api/scan", new ScanRoute());
+        routes.put("/api/workload", new WorkloadRoute());
+        routes.put("/api/summarize", new SummarizeRoute());
         routes.put("/api/health", (req, res) -> {
             res.setContentType("application/json");
             res.getWriter().write("{\"status\":\"ok\"}");

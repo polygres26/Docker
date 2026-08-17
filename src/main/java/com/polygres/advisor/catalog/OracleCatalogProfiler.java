@@ -158,4 +158,27 @@ public class OracleCatalogProfiler implements CatalogProfiler {
             return rs.next() ? rs.getInt(1) : 0;
         }
     }
+
+    /**
+     * Full source text for one PACKAGE/PACKAGE BODY/PROCEDURE/FUNCTION, ordered by line number --
+     * the input {@link com.polygres.advisor.llm.PlsqlSummarizer} sends to the model. Separate from
+     * {@link #profileSourceText}'s scan (which reads every object's source in bulk for the
+     * deterministic builtin/syntax counts): this is an on-demand, single-object fetch, called only
+     * when a summary is actually requested for that object, not baked into every scan.
+     */
+    public String fetchSource(BackendTarget target, String objectName, String objectType) throws SQLException {
+        StringBuilder source = new StringBuilder();
+        try (Connection connection = target.open();
+             java.sql.PreparedStatement ps = connection.prepareStatement(
+                 "SELECT TEXT FROM USER_SOURCE WHERE NAME = ? AND TYPE = ? ORDER BY LINE")) {
+            ps.setString(1, objectName);
+            ps.setString(2, objectType);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    source.append(rs.getString("TEXT"));
+                }
+            }
+        }
+        return source.toString();
+    }
 }
