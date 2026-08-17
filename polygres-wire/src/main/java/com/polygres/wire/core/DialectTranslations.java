@@ -1,0 +1,237 @@
+package com.polygres.wire.core;
+
+import java.util.Map;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Hub-and-spoke rule vocabulary behind {@link DialectTranslationStage} — normalize once per
+ * *source* dialect into one shared ANSI-ish canonical form, then render once per *target* dialect,
+ * instead of hand-writing a separate translator for every {@code (source, target)} pair. With
+ * {@code N} source dialects and {@code M} target dialects that's {@code N + M} functions to
+ * maintain instead of {@code N × M} — the difference between adding one function and adding six
+ * every time a new backend dialect (Snowflake, Databricks, ...) shows up.
+ *
+ * <p><b>Three source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}</b> — every
+ * frontend that stamps a real dialect (see {@link DialectTranslationStage}'s javadoc for which
+ * frontends produce which {@code SourceDialect}; {@code grpc} and MCP/HTTP both stamp
+ * {@code POLYWIRE_NATIVE}, which has no normalizer and never will — there's no wire-protocol signal
+ * telling PolyWire which dialect that SQL text was actually authored in, so nothing principled to
+ * normalize from). Six targets have renderers: {@code POSTGRES}, {@code MYSQL},
+ * {@code SNOWFLAKE}, {@code REDSHIFT}, {@code BIGQUERY}, {@code DATABRICKS}.
+ *
+ * <p><b>The {@code POSTGRES}/{@code MYSQL} normalizers reuse the {@code ORACLE} renderers'
+ * sequence handling for free</b>, by design: both convert their own real sequence-access syntax
+ * ({@code nextval('seq')}/{@code currval('seq')} for Postgres; MariaDB's {@code NEXTVAL(seq)}/
+ * {@code LASTVAL(seq)} for MySQL) back into the same Oracle-shaped {@code seq.NEXTVAL}/
+ * {@code seq.CURRVAL} dot-syntax the canonical form already uses — so every existing renderer
+ * (including the ones for Snowflake/Redshift/BigQuery/Databricks) handles a Postgres- or
+ * MySQL-sourced sequence reference correctly with zero new renderer code, the same "N + M, not
+ * N × M" property the hub-and-spoke design was built for in the first place.
+ *
+ * <p><b>Canonical form</b>: Oracle SQL with {@code DUAL} stripped, {@code NVL(...)} →
+ * {@code COALESCE(...)}, {@code SYSDATE} → {@code CURRENT_TIMESTAMP}, and a single simple
+ * {@code ROWNUM <=/< N} predicate → {@code LIMIT N} — all four already valid, as-is, on every one
+ * of the six target dialects, so no renderer needs to touch them. Sequence dot-syntax
+ * ({@code seq.NEXTVAL}/{@code seq.CURRVAL}) is deliberately <b>not</b> normalized — it's genuinely
+ * valid Snowflake syntax already, and every other target's handling (or honest non-handling) is
+ * dialect-specific enough that it belongs in the renderer, not the shared canonical form.
+ *
+ * <p><b>Per-target sequence handling, honestly uneven because the real platforms are</b>:
+ * <ul>
+ *   <li>{@code POSTGRES}: {@code nextval('seq')}/{@code currval('seq')} — real function-call
+ *   syntax.</li>
+ *   <li>{@code MYSQL} (via this project's MariaDB JDBC driver): MariaDB 10.3+'s real
+ *   {@code CREATE SEQUENCE} object, function-call form — {@code NEXTVAL(seq)}/{@code LASTVAL(seq)}.
+ *   Plain upstream MySQL has no sequence object at all; this project's MySQL wire frontend only
+ *   ever talks to a MariaDB-compatible backend (see ARCHITECTURE.md §1's driver-choice note), so
+ *   that's the real target being rendered for.</li>
+ *   <li>{@code SNOWFLAKE}: no rewrite — {@code seq.NEXTVAL}/{@code seq.CURRVAL} is Snowflake's own
+ *   native syntax, identical to Oracle's.</li>
+ *   <li>{@code REDSHIFT}/{@code BIGQUERY}/{@code DATABRICKS}: no native sequence-object equivalent
+ *   exists on any of the three real platforms — left untranslated deliberately, so a statement
+ *   using one fails with that backend's own clear "function/object not found" error instead of a
+ *   confident-looking wrong rewrite. Same "loud, not silent" convention as everywhere else in this
+ *   project (see {@code DbLinkStage}'s unregistered-link handling).</li>
+ * </ul>
+ *
+ * <p><b>Verification status, stated plainly</b>: {@code ORACLE→POSTGRES} and {@code ORACLE→MYSQL}
+ * are live-verified end-to-end against real backends (see ARCHITECTURE.md §5.5b/§5.5c), as is
+ * {@code POSTGRES→ORACLE} and {@code MYSQL→ORACLE} (see §5.5f). {@code ORACLE→SNOWFLAKE}/
+ * {@code REDSHIFT}/{@code BIGQUERY}/{@code DATABRICKS} (and the {@code POSTGRES}/{@code MYSQL}
+ * sources rendered at those same four targets) are unit-tested against the same rule vocabulary
+ * but have <b>not</b> been live-verified — no local, free way to run any of those four platforms in
+ * this environment (same honest gap already recorded for those backends' own connectivity in
+ * ARCHITECTURE.md §5.4c).
+ */
+final class DialectTranslations {
+
+    private DialectTranslations() {
+    }
+
+    private static final Map<SourceDialect, Function<String, String>> NORMALIZERS = Map.of(
+            SourceDialect.ORACLE, DialectTranslations::normalizeOracle,
+            SourceDialect.POSTGRES, DialectTranslations::normalizePostgres,
+            SourceDialect.MYSQL, DialectTranslations::normalizeMysql);
+
+    private static final Map<SourceDialect, Function<String, String>> RENDERERS = Map.of(
+            SourceDialect.ORACLE, DialectTranslations::renderOracle,
+            SourceDialect.POSTGRES, DialectTranslations::renderPostgres,
+            SourceDialect.MYSQL, DialectTranslations::renderMysql,
+            SourceDialect.SNOWFLAKE, DialectTranslations::renderIdentity,
+            SourceDialect.REDSHIFT, DialectTranslations::renderIdentity,
+            SourceDialect.BIGQUERY, DialectTranslations::renderBigQuery,
+            SourceDialect.DATABRICKS, DialectTranslations::renderIdentity,
+            // Calcite's SQL dialect is ANSI-close enough (real COALESCE/CURRENT_TIMESTAMP/LIMIT
+            // support) that the shared canonical form needs no rewriting here either; no sequence
+            // concept exists for a REST-backed table at all, so nothing to render for that.
+            SourceDialect.GENERIC_REST, DialectTranslations::renderIdentity);
+
+    /** {@code null} means "no normalizer for {@code from}, or no renderer for {@code to}" — caller passes the original SQL through untouched. */
+    static String translate(String sql, SourceDialect from, SourceDialect to) {
+        if (from == to) {
+            return sql;
+        }
+        Function<String, String> normalizer = NORMALIZERS.get(from);
+        Function<String, String> renderer = RENDERERS.get(to);
+        if (normalizer == null || renderer == null) {
+            return null;
+        }
+        return renderer.apply(normalizer.apply(sql));
+    }
+
+    // ---- ORACLE normalizer: Oracle SQL -> shared canonical form ----
+
+    private static final Pattern NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
+    private static final Pattern FROM_DUAL = Pattern.compile("(?i)\\s+FROM\\s+DUAL\\b");
+    private static final Pattern SYSDATE = Pattern.compile("(?i)\\bSYSDATE\\b");
+    private static final Pattern ROWNUM = Pattern.compile("(?i)(\\s+(?:AND|WHERE)\\s+)ROWNUM\\s*(<=|<)\\s*(\\d+)\\b");
+
+    private static String normalizeOracle(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, NVL, m -> "COALESCE(");
+        out = SqlLiterals.replaceOutsideLiterals(out, FROM_DUAL, m -> "");
+        out = SqlLiterals.replaceOutsideLiterals(out, SYSDATE, m -> "CURRENT_TIMESTAMP");
+        out = applyRownumLimit(out);
+        return out;
+    }
+
+    /**
+     * Handles exactly one simple {@code WHERE ROWNUM <=/< N} or {@code AND ROWNUM <=/< N}
+     * predicate — see {@link DialectTranslationStage}'s original javadoc for the full scope note
+     * this carries forward unchanged (a second {@code ROWNUM} reference, or one outside a simple
+     * comparison, is not attempted).
+     */
+    private static String applyRownumLimit(String sql) {
+        Matcher matcher = ROWNUM.matcher(sql);
+        if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
+            return sql;
+        }
+        String operator = matcher.group(2);
+        int n = Integer.parseInt(matcher.group(3));
+        int limit = operator.equals("<=") ? n : n - 1;
+        String withoutClause = sql.substring(0, matcher.start()) + sql.substring(matcher.end());
+        String trimmed = withoutClause.stripTrailing();
+        boolean hadSemicolon = trimmed.endsWith(";");
+        if (hadSemicolon) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).stripTrailing();
+        }
+        return trimmed + " LIMIT " + limit + (hadSemicolon ? ";" : "");
+    }
+
+    // ---- POSTGRES normalizer: Postgres SQL -> shared canonical form ----
+
+    private static final Pattern PG_NEXTVAL_CALL = Pattern.compile("(?i)\\bnextval\\s*\\(\\s*'([^']+)'\\s*\\)");
+    private static final Pattern PG_CURRVAL_CALL = Pattern.compile("(?i)\\bcurrval\\s*\\(\\s*'([^']+)'\\s*\\)");
+    private static final Pattern PG_NOW_CALL = Pattern.compile("(?i)\\bnow\\s*\\(\\s*\\)");
+    // Simple operand only (identifier, dotted identifier, integer/decimal literal, or a quoted
+    // string literal) immediately before "::type" -- deliberately not a general expression parser,
+    // same "narrow but honest" scope as everywhere else in this file. "(a + b)::int" or
+    // "func(x)::text" are left untranslated rather than risk a wrong rewrite.
+    private static final Pattern PG_CAST_SHORTHAND =
+            Pattern.compile("(?i)([A-Za-z_][\\w.$#]*|'[^']*'|\\d+(?:\\.\\d+)?)::([A-Za-z_][\\w]*)");
+
+    private static String normalizePostgres(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, PG_NEXTVAL_CALL, m -> m.group(1) + ".NEXTVAL");
+        out = SqlLiterals.replaceOutsideLiterals(out, PG_CURRVAL_CALL, m -> m.group(1) + ".CURRVAL");
+        out = SqlLiterals.replaceOutsideLiterals(out, PG_NOW_CALL, m -> "CURRENT_TIMESTAMP");
+        out = SqlLiterals.replaceOutsideLiterals(out, PG_CAST_SHORTHAND, m -> "CAST(" + m.group(1) + " AS " + m.group(2) + ")");
+        return out;
+    }
+
+    // ---- MYSQL normalizer: MySQL/MariaDB SQL -> shared canonical form ----
+
+    private static final Pattern MYSQL_NEXTVAL_CALL = Pattern.compile("(?i)\\bnextval\\s*\\(\\s*([A-Za-z_][\\w$#]*)\\s*\\)");
+    private static final Pattern MYSQL_LASTVAL_CALL = Pattern.compile("(?i)\\blastval\\s*\\(\\s*([A-Za-z_][\\w$#]*)\\s*\\)");
+    private static final Pattern MYSQL_NOW_CALL = Pattern.compile("(?i)\\bnow\\s*\\(\\s*\\)");
+    private static final Pattern MYSQL_BACKTICK_IDENTIFIER = Pattern.compile("`([^`]+)`");
+    private static final Pattern MYSQL_NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
+
+    private static String normalizeMysql(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NEXTVAL_CALL, m -> m.group(1) + ".NEXTVAL");
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_LASTVAL_CALL, m -> m.group(1) + ".CURRVAL");
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NOW_CALL, m -> "CURRENT_TIMESTAMP");
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_BACKTICK_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NVL, m -> "COALESCE(");
+        return out;
+    }
+
+    // ---- Renderers: canonical form -> target-specific concerns the canonical form doesn't already cover ----
+
+    private static final Pattern NEXTVAL = Pattern.compile("(?i)\\b([A-Za-z_][\\w$#]*)\\.NEXTVAL\\b");
+    private static final Pattern CURRVAL = Pattern.compile("(?i)\\b([A-Za-z_][\\w$#]*)\\.CURRVAL\\b");
+    private static final Pattern CURRENT_TIMESTAMP_NO_PARENS = Pattern.compile("(?i)\\bCURRENT_TIMESTAMP\\b(?!\\s*\\()");
+
+    private static String renderPostgres(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, NEXTVAL, m -> "nextval('" + m.group(1).toLowerCase() + "')");
+        out = SqlLiterals.replaceOutsideLiterals(out, CURRVAL, m -> "currval('" + m.group(1).toLowerCase() + "')");
+        return out;
+    }
+
+    private static String renderMysql(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, NEXTVAL, m -> "NEXTVAL(" + m.group(1).toLowerCase() + ")");
+        out = SqlLiterals.replaceOutsideLiterals(out, CURRVAL, m -> "LASTVAL(" + m.group(1).toLowerCase() + ")");
+        return out;
+    }
+
+    /** BigQuery's grammar rejects the bare {@code CURRENT_TIMESTAMP} keyword form -- it needs the call form. */
+    private static String renderBigQuery(String sql) {
+        return SqlLiterals.replaceOutsideLiterals(sql, CURRENT_TIMESTAMP_NO_PARENS, m -> "CURRENT_TIMESTAMP()");
+    }
+
+    // Only a trailing LIMIT clause is handled -- the canonical form only ever produces one there
+    // (from the ORACLE normalizer's ROWNUM rewrite, or a Postgres/MySQL source that already wrote
+    // one), so this deliberately doesn't attempt LIMIT...OFFSET or any other placement/shape.
+    private static final Pattern LIMIT_CLAUSE = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)\\s*;?\\s*$");
+
+    /**
+     * {@code COALESCE}/{@code CURRENT_TIMESTAMP}/{@code seq.NEXTVAL} dot-syntax are all already
+     * valid, real Oracle syntax -- nothing to rewrite for any of them. The one real gap: Oracle has
+     * no {@code LIMIT} keyword at all, so a canonical-form {@code LIMIT N} (however it got there --
+     * an ORACLE-normalized {@code ROWNUM}, or a Postgres/MySQL source that wrote {@code LIMIT}
+     * directly) is rewritten to Oracle 12c+'s real {@code FETCH FIRST N ROWS ONLY}.
+     */
+    private static String renderOracle(String sql) {
+        Matcher matcher = LIMIT_CLAUSE.matcher(sql);
+        if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
+            return sql;
+        }
+        String n = matcher.group(1);
+        String withoutLimit = sql.substring(0, matcher.start()).stripTrailing();
+        return withoutLimit + " FETCH FIRST " + n + " ROWS ONLY";
+    }
+
+    /**
+     * No target-specific rewrite needed beyond the shared canonical form: SNOWFLAKE's own sequence
+     * dot-syntax already matches Oracle's, and REDSHIFT/DATABRICKS have no native sequence object
+     * to translate to at all (see class javadoc) -- either way, nothing left to rewrite here.
+     */
+    private static String renderIdentity(String sql) {
+        return sql;
+    }
+}

@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package polywire;
+
+option java_package = "com.polygres.wire.grpc.proto";
+option java_multiple_files = true;
+
+// Native PolyWire wire protocol: a thin Type-3 JDBC driver talks this
+// instead of emulating a foreign database's wire protocol. Stateless per
+// call — username/password travel on every request rather than a separate
+// session-establishing RPC, keeping the server side simple (no
+// session/stream bookkeeping) for this first narrow slice.
+service QueryService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+
+message ExecuteRequest {
+  string username = 1;
+  string password = 2;
+  string sql = 3;
+  repeated string params = 4; // positional bind values, text-encoded
+}
+
+message ExecuteResponse {
+  bool success = 1;
+  string error_message = 2;
+  string sql_state = 3;
+  bool is_query = 4;
+  repeated string column_names = 5;
+  repeated Row rows = 6;
+  int64 update_count = 7;
+}
+
+message Row {
+  repeated string values = 1; // text-encoded, parallel to is_null
+  repeated bool is_null = 2;
+}

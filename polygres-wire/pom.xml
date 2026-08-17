@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.polygres</groupId>
+  <artifactId>polygres-wire</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+  <name>polygres-wire</name>
+  <description>PolyWire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
+    Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
+    (com.omnigate.*) into com.polygres.wire.*, independent standalone module, sibling to
+    polygres-advisor in this repo.</description>
+
+  <properties>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <postgresql.version>42.7.4</postgresql.version>
+    <calcite.version>1.42.0</calcite.version>
+    <guava.version>33.2.1-jre</guava.version>
+    <jackson.annotations.version>2.20</jackson.annotations.version>
+    <snakeyaml.version>2.3</snakeyaml.version>
+    <ignite.version>2.18.0</ignite.version>
+    <slf4j.version>2.0.16</slf4j.version>
+    <junit.version>5.11.3</junit.version>
+    <grpc.version>1.68.1</grpc.version>
+    <protobuf.version>3.25.5</protobuf.version>
+    <gson.version>2.11.0</gson.version>
+    <jetty.version>11.0.24</jetty.version>
+    <hikaricp.version>5.1.0</hikaricp.version>
+    <opentelemetry.version>1.43.0</opentelemetry.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <!-- TranslationCache's fallback LLM translator's HTTP client, and the rollup config's/access
+           policy's JSON bits — Apache-2.0. -->
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <version>${gson.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.polygres.wire.rollup.RollupConfig — real YAML parsing for the rollup definitions
+           config file, not a hand-rolled subset parser (Apache-2.0). -->
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <version>${snakeyaml.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.polygres.wire.core.RollupStage: reuses Calcite's own materialized-view substitution
+           machinery (RelOptMaterialization/RelOptMaterializations) to decide whether an incoming
+           aggregate query can be rewritten to hit a rollup table instead of the full source table —
+           real, tested query-rewrite logic, not hand-rolled SQL rewriting. Apache-2.0. -->
+      <groupId>org.apache.calcite</groupId>
+      <artifactId>calcite-core</artifactId>
+      <version>${calcite.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Pinned explicitly, same "nearest wins" reasoning Omnigate's pom.xml documents: without
+           this, some other dependency's older jackson-annotations gets picked by Maven's mediation
+           and calcite-core's own SqlStdOperatorTable bootstrap can fail at runtime looking for an
+           enum member the older version lacks. -->
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <version>${jackson.annotations.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Pinned explicitly: grpc-netty-shaded transitively pulls Guava's "-android" flavor, which
+           calcite-core's SqlStdOperatorTable is incompatible with at runtime (IncompatibleClassChangeError,
+           see Omnigate's pom.xml for the full live-found explanation) — forcing the "-jre" flavor here. -->
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <version>${guava.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-protobuf</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-stub</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <!-- generated grpc stubs reference @Generated, dropped from java.* since JDK 11 -->
+      <groupId>org.apache.tomcat</groupId>
+      <artifactId>annotations-api</artifactId>
+      <version>6.0.53</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <!-- PolyWire's only backend driver — PolyWire is Postgres-only end to end (BackendRegistry/
+           BackendConnectionPools/BackendTarget). Deliberately NOT adding ojdbc/mariadb/mssql/etc as
+           backend drivers here (see BackendConnectionPools' javadoc) — the Oracle/MySQL support this
+           module has is wire-protocol *frontend* code (orawire/mywire), not JDBC drivers this module
+           calls out to. -->
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>${postgresql.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Apache Ignite core (com.polygres.wire.cluster), Apache-2.0 — embedded in-process
+           (Ignition.start(), not a separate server) for CacheStage's cluster-aware cache-aside
+           result cache. Pinned to the 2.x line deliberately, not 3.x (see PolyWireCluster's javadoc). -->
+      <groupId>org.apache.ignite</groupId>
+      <artifactId>ignite-core</artifactId>
+      <version>${ignite.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk</artifactId>
+      <version>${opentelemetry.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+      <version>${opentelemetry.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+      <version>${hikaricp.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Embedded Jetty for the /metrics endpoint only (com.polygres.wire.http, once ported) —
+           admin UI/API/auth/SCIM pieces of Omnigate's http package are explicitly out of scope. -->
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-server</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-servlet</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-util</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>polygres-wire</finalName>
+    <extensions>
+      <extension>
+        <groupId>kr.motd.maven</groupId>
+        <artifactId>os-maven-plugin</artifactId>
+        <version>1.7.1</version>
+      </extension>
+    </extensions>
+    <plugins>
+      <plugin>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>0.6.1</version>
+        <configuration>
+          <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+          <pluginId>grpc-java</pluginId>
+          <pluginArtifact>io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}</pluginArtifact>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>compile</goal>
+              <goal>compile-custom</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.1</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>
