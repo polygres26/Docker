@@ -1,3 +1,4 @@
+import { Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
@@ -7,6 +8,7 @@ export default function Login() {
   const navigate = useNavigate()
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -44,13 +46,29 @@ export default function Login() {
             onChange={(e) => setUsername(e.target.value)}
             placeholder="Username"
           />
-          <input
-            className={styles.field}
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              className={styles.field}
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              style={{ paddingRight: 40, width: '100%', boxSizing: 'border-box' }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              style={{
+                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', padding: 4, cursor: 'pointer',
+                color: 'var(--muted)', display: 'flex', alignItems: 'center',
+              }}
+            >
+              {showPassword ? <EyeOff size={17} strokeWidth={1.8} /> : <Eye size={17} strokeWidth={1.8} />}
+            </button>
+          </div>
           <button className={styles.submit} type="submit" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
