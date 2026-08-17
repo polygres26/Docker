@@ -45,20 +45,29 @@ src/main/java/com/polygres/advisor/
              executions/elapsed/CPU time/buffer gets/disk reads, top modules, top-by-elapsed)
              -- what the UI's Workload tab summary leads with.
   llm/       LLM/SLM layer -- explicitly downstream of catalog + workload capture, never
-             feeds back into MigrationScorer's deterministic score:
-               - PlsqlSummarizer: deep-reasoning PL/SQL intent + portability-risk summary,
-                 one object at a time (Oracle-only today). Model id from POLYGRES_LLM_SUMMARY_MODEL.
-               - SqlWorkloadClassifier: high-volume, cheap classification of captured SQL
-                 into migration-relevant categories, any dialect. Model id from
-                 POLYGRES_LLM_CLASSIFY_MODEL (point this at a small/fast model -- the SLM
-                 side of the split).
-             Both go through ClaudeLlmProvider (plain HttpClient call to the Anthropic Messages
-             API; requires ANTHROPIC_API_KEY). No model ids are hardcoded as defaults -- set the
-             env vars explicitly; check current ids via the claude-api skill/reference.
-  http/      Embedded Jetty server (AdvisorHttpServer): admin/connections API + ad-hoc scan/
-             workload/summarize routes. Same raw-Handler route-table pattern Omnigate's
-             OmniGateHttpServer uses. ConnectionsRoute/ScanRoute/WorkloadRoute all dispatch
-             through DialectSupport rather than hardcoding a vendor.
+             feeds back into MigrationScorer's deterministic score. Configurable per the app's
+             LLM configuration page (own rail item, app-wide, not scoped to a connection):
+               - LlmRole (PRIMARY / JUDGE) + LlmProviderType (BUILTIN / EXTERNAL): PRIMARY does
+                 the actual work; JUDGE is an optional, independently-configured second model
+                 that reviews PRIMARY's PL/SQL summaries -- see LlmJudge's javadoc for why it's
+                 scoped to summarization only, not every LLM call.
+               - LlmSettingsStore: persists both roles' config (provider type, API key, base
+                 URL, model, enabled) in the same embedded HSQLDB store as connections.
+               - ClaudeLlmProvider (BUILTIN -- server's own ANTHROPIC_API_KEY) and
+                 OpenAiCompatibleLlmProvider (EXTERNAL -- user-supplied key + base URL, covers
+                 OpenAI/Azure OpenAI/Ollama/vLLM/etc., anything speaking the chat-completions
+                 shape) both implement LlmProvider; LlmProviderFactory resolves an LlmSettings
+                 row into a concrete provider + model.
+               - PlsqlSummarizer: deep-reasoning PL/SQL intent + portability-risk summary, one
+                 object at a time (Oracle-only today), using PRIMARY (and JUDGE, if enabled).
+               - SqlWorkloadClassifier: high-volume, cheap classification of captured SQL into
+                 migration-relevant categories, any dialect, using PRIMARY.
+             No model ids are hardcoded as defaults anywhere -- set them explicitly on the LLM
+             configuration page; check current Claude model ids via the claude-api skill/reference.
+  http/      Embedded Jetty server (AdvisorHttpServer): admin/connections/llm-settings API +
+             ad-hoc scan/workload/summarize routes. Same raw-Handler route-table pattern
+             Omnigate's OmniGateHttpServer uses. ConnectionsRoute/ScanRoute/WorkloadRoute all
+             dispatch through DialectSupport rather than hardcoding a vendor.
   http/auth/ Single-admin-account session auth (AdminAuth/AuthGuard) -- POLYGRES_ADMIN_USER /
              POLYGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
              see AdminAuth javadoc for the tradeoff and what Omnigate's fuller admin auth looks

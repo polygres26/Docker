@@ -14,9 +14,12 @@ import java.util.Map;
  * run over potentially thousands of captured statements, so it should point at a small, fast,
  * cheap model, not the same model {@link PlsqlSummarizer} uses for deep PL/SQL analysis.
  *
- * <p>Reads its model id from {@code POLYGRES_LLM_CLASSIFY_MODEL} -- no default baked in (see
- * {@link ClaudeLlmProvider}'s javadoc). Point this at a small/fast model (e.g. a Haiku-class
- * model); check current model ids via the claude-api reference rather than assuming one here.
+ * <p>Uses the PRIMARY role's configured provider/model (via {@link LlmSettingsStore}) -- the same
+ * configuration {@link PlsqlSummarizer} uses. No separate "classify" role: the SLM-vs-LLM split
+ * discussed in planning is about picking a small/fast model for PRIMARY when classification
+ * volume matters, not about a third configurable role -- point PRIMARY at whatever model fits
+ * both jobs, or accept that classification runs at PRIMARY's summarization-grade model if it's a
+ * larger one.
  *
  * <p>Batches statements into one prompt (default {@link #BATCH_SIZE}) rather than one call per
  * statement -- purely a cost/latency tradeoff for a first pass; revisit if batch responses turn
@@ -37,23 +40,23 @@ public class SqlWorkloadClassifier {
         Respond with ONLY the JSON array, no other text.
         """;
 
-    private final LlmProvider llm;
+    private final LlmSettingsStore settingsStore;
     private final Gson gson = new Gson();
 
-    public SqlWorkloadClassifier(LlmProvider llm) {
-        this.llm = llm;
+    public SqlWorkloadClassifier(LlmSettingsStore settingsStore) {
+        this.settingsStore = settingsStore;
     }
 
     public record Classification(int index, String category, String portabilityRisk) {}
 
     public List<Classification> classify(List<CapturedStatement> statements) throws Exception {
-        String model = requireEnv("POLYGRES_LLM_CLASSIFY_MODEL");
+        var primary = LlmProviderFactory.resolve(settingsStore.get(LlmRole.PRIMARY));
         List<Classification> results = new ArrayList<>();
 
         for (int start = 0; start < statements.size(); start += BATCH_SIZE) {
             List<CapturedStatement> batch = statements.subList(start, Math.min(start + BATCH_SIZE, statements.size()));
             String userPrompt = buildBatchPrompt(batch);
-            String response = llm.complete(model, SYSTEM_PROMPT, userPrompt);
+            String response = primary.provider().complete(primary.model(), SYSTEM_PROMPT, userPrompt);
             List<Classification> batchResults = parseResponse(response);
             // Re-offset indices to the caller's original list, not the batch-local numbering.
             for (Classification c : batchResults) {
@@ -90,12 +93,4 @@ public class SqlWorkloadClassifier {
         return counts;
     }
 
-    private String requireEnv(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is not set -- required to run workload classification. "
-                + "Set it to a small/fast Claude model id (see the claude-api reference for current ids).");
-        }
-        return value;
-    }
 }

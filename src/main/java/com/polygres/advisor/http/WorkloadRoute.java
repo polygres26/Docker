@@ -4,7 +4,8 @@ import com.google.gson.Gson;
 import com.polygres.advisor.core.BackendTarget;
 import com.polygres.advisor.core.DialectSupport;
 import com.polygres.advisor.core.SourceDialect;
-import com.polygres.advisor.llm.ClaudeLlmProvider;
+import com.polygres.advisor.llm.LlmRole;
+import com.polygres.advisor.llm.LlmSettingsStore;
 import com.polygres.advisor.llm.SqlWorkloadClassifier;
 import com.polygres.advisor.workload.CapturedStatement;
 import com.polygres.advisor.workload.WorkloadCapture;
@@ -15,16 +16,17 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@code POST /api/workload} -- capture the currently-cached SQL for a source database (Oracle
- * only today, see {@link WorkloadCapture}) and, if {@code POLYGRES_LLM_CLASSIFY_MODEL} is set,
+ * {@code POST /api/workload} -- capture the currently-cached SQL for a source database (see
+ * {@link WorkloadCapture}) and, if the PRIMARY LLM is configured (LLM configuration page),
  * classify each captured statement via {@link SqlWorkloadClassifier}. Classification is best-
- * effort: a missing model env var or an LLM-call failure degrades to "capture succeeded,
+ * effort: an unconfigured PRIMARY or an LLM-call failure degrades to "capture succeeded,
  * classification skipped" rather than failing the whole request -- capture is the deterministic,
  * always-useful part; classification is the enrichment layer on top.
  */
 public class WorkloadRoute implements RouteHandler {
 
     private static final Gson GSON = new Gson();
+    private final LlmSettingsStore settingsStore = new LlmSettingsStore();
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -60,10 +62,9 @@ public class WorkloadRoute implements RouteHandler {
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("statements", statements);
 
-        String classifyModel = System.getenv("POLYGRES_LLM_CLASSIFY_MODEL");
-        if (classifyModel != null && !classifyModel.isBlank() && !statements.isEmpty()) {
+        if (settingsStore.get(LlmRole.PRIMARY).isUsable() && !statements.isEmpty()) {
             try {
-                SqlWorkloadClassifier classifier = new SqlWorkloadClassifier(new ClaudeLlmProvider());
+                SqlWorkloadClassifier classifier = new SqlWorkloadClassifier(settingsStore);
                 List<SqlWorkloadClassifier.Classification> classifications = classifier.classify(statements);
                 body.put("classifications", classifications);
                 body.put("categorySummary", classifier.summarizeByCategory(classifications));
@@ -71,7 +72,7 @@ public class WorkloadRoute implements RouteHandler {
                 body.put("classificationError", e.getMessage());
             }
         } else {
-            body.put("classificationSkipped", "POLYGRES_LLM_CLASSIFY_MODEL not set -- capture-only result.");
+            body.put("classificationSkipped", "PRIMARY LLM is not configured -- capture-only result. Set it up on the LLM configuration page.");
         }
 
         response.setContentType("application/json");

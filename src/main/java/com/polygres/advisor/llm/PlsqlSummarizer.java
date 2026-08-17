@@ -5,16 +5,15 @@ import com.polygres.advisor.core.BackendTarget;
 
 /**
  * Deep-reasoning use case: given one package/procedure/function's PL/SQL source (via {@link
- * OracleCatalogProfiler#fetchSource}), ask Claude to summarize its intent and flag Postgres-
- * portability risks. This is the "explainer/rewrite-assist" layer the project plan called out as
- * explicitly downstream of {@link com.polygres.advisor.score.MigrationScorer} -- it never feeds
- * back into the deterministic score; it's read by a human reviewing the migration.
+ * OracleCatalogProfiler#fetchSource}), ask the configured PRIMARY LLM to summarize its intent and
+ * flag Postgres-portability risks. This is the "explainer/rewrite-assist" layer the project plan
+ * called out as explicitly downstream of {@link com.polygres.advisor.score.MigrationScorer} -- it
+ * never feeds back into the deterministic score; it's read by a human reviewing the migration.
  *
- * <p>Reads its model id from {@code POLYGRES_LLM_SUMMARY_MODEL} -- no default baked in (see
- * {@link ClaudeLlmProvider}'s javadoc for why). Point it at a full Claude model, not a small one;
- * this is the side of the SLM/LLM split that benefits from deeper reasoning, per the project's
- * stated intent to use bigger models for genuine understanding and smaller ones for high-volume
- * classification (see {@link SqlWorkloadClassifier}).
+ * <p>Reads PRIMARY's (and, if configured, JUDGE's) settings from {@link LlmSettingsStore} rather
+ * than an env var -- both roles are configured through the LLM configuration page, covering both
+ * the built-in Claude access and any external OpenAI-compatible provider. See {@link LlmJudge}'s
+ * javadoc for why this is the one place Judge review is wired in.
  */
 public class PlsqlSummarizer {
 
@@ -31,30 +30,35 @@ public class PlsqlSummarizer {
         not an end user -- do not soften or hedge findings.
         """;
 
-    private final LlmProvider llm;
+    private final LlmSettingsStore settingsStore;
     private final OracleCatalogProfiler profiler;
 
-    public PlsqlSummarizer(LlmProvider llm, OracleCatalogProfiler profiler) {
-        this.llm = llm;
+    public PlsqlSummarizer(LlmSettingsStore settingsStore, OracleCatalogProfiler profiler) {
+        this.settingsStore = settingsStore;
         this.profiler = profiler;
     }
 
-    public String summarize(BackendTarget target, String objectName, String objectType) throws Exception {
-        String model = requireEnv("POLYGRES_LLM_SUMMARY_MODEL");
+    public record Result(String summary, LlmJudge.Verdict judgeVerdict) {}
+
+    public Result summarize(BackendTarget target, String objectName, String objectType) throws Exception {
+        LlmSettings primarySettings = settingsStore.get(LlmRole.PRIMARY);
+        var primary = LlmProviderFactory.resolve(primarySettings);
+
         String source = profiler.fetchSource(target, objectName, objectType);
         if (source.isBlank()) {
-            return "No source found for " + objectType + " " + objectName + ".";
+            return new Result("No source found for " + objectType + " " + objectName + ".", null);
         }
-        String userPrompt = "Object: " + objectName + " (" + objectType + ")\n\n" + source;
-        return llm.complete(model, SYSTEM_PROMPT, userPrompt);
-    }
 
-    private String requireEnv(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is not set -- required to run LLM summarization. "
-                + "Set it to a Claude model id (see the claude-api reference for current ids).");
+        String userPrompt = "Object: " + objectName + " (" + objectType + ")\n\n" + source;
+        String summary = primary.provider().complete(primary.model(), SYSTEM_PROMPT, userPrompt);
+
+        LlmJudge.Verdict verdict = null;
+        LlmSettings judgeSettings = settingsStore.get(LlmRole.JUDGE);
+        if (judgeSettings.isUsable()) {
+            var judge = LlmProviderFactory.resolve(judgeSettings);
+            verdict = new LlmJudge(judge.provider(), judge.model()).review(source, summary);
         }
-        return value;
+
+        return new Result(summary, verdict);
     }
 }

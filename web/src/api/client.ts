@@ -172,3 +172,32 @@ export interface WorkloadResult {
 export async function runConnectionWorkload(id: string): Promise<WorkloadResult> {
   return api(`/api/connections/${id}/workload`, { method: 'POST' })
 }
+
+// --- LLM configuration ---
+
+export type LlmRole = 'primary' | 'judge'
+export type LlmProviderType = 'builtin' | 'external'
+
+export interface LlmSettings {
+  role: 'PRIMARY' | 'JUDGE'
+  providerType: 'BUILTIN' | 'EXTERNAL'
+  apiKey: null // never sent back by the server
+  baseUrl: string | null
+  model: string | null
+  enabled: boolean
+  updatedAt: string | null
+}
+
+export async function getLlmSettings(role: LlmRole): Promise<LlmSettings> {
+  return api(`/api/llm-settings/${role}`)
+}
+
+export async function saveLlmSettings(role: LlmRole, settings: {
+  providerType: LlmProviderType
+  apiKey?: string
+  baseUrl?: string
+  model: string
+  enabled: boolean
+}): Promise<LlmSettings> {
+  return api(`/api/llm-settings/${role}`, { method: 'PUT', body: JSON.stringify(settings) })
+}

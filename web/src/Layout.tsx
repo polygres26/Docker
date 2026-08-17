@@ -1,14 +1,14 @@
-import { Database, LogOut } from 'lucide-react'
+import { Cpu, Database, LogOut } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
 
 /**
  * Shell for every authenticated route -- icon-only dark nav rail + a breadcrumb top bar, same
- * shape as Omnigate's AdminLayout (~/Projects/Omnigate/web/src/pages/admin/AdminLayout.tsx),
- * scoped down to the one nav destination Advisor has today (Connections). Structured the same
- * way regardless -- adding a second rail item later (e.g. a cross-connection reports view) is a
- * one-line addition to NAV_ITEMS, not a shell rewrite.
+ * shape as Omnigate's AdminLayout (~/Projects/Omnigate/web/src/pages/admin/AdminLayout.tsx).
+ * Two nav destinations today: Connections (per-database work) and LLM configuration (app-wide
+ * config, not scoped to any one connection -- lives at its own top-level route rather than under
+ * a connection's tabs).
  */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -30,6 +30,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Database size={19} strokeWidth={1.8} />
             <span className={styles.railTip}>Connections</span>
+          </NavLink>
+          <NavLink
+            to="/llm-settings"
+            title="LLM configuration"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Cpu size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>LLM configuration</span>
           </NavLink>
         </div>
         <div className={styles.railSpacer} />

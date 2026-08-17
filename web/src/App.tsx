@@ -7,6 +7,7 @@ import Connections from './pages/Connections'
 import ConnectionDetail from './pages/ConnectionDetail'
 import Connect from './pages/Connect'
 import Report from './pages/Report'
+import LlmSettings from './pages/LlmSettings'
 
 /** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/connections" element={<RequireAuth><Connections /></RequireAuth>} />
       <Route path="/connections/:id" element={<RequireAuth><ConnectionDetail /></RequireAuth>} />
+      <Route path="/llm-settings" element={<RequireAuth><LlmSettings /></RequireAuth>} />
       <Route path="/quick-scan" element={<RequireAuth><Connect /></RequireAuth>} />
       <Route path="/report" element={<RequireAuth><Report /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/connections" replace />} />
