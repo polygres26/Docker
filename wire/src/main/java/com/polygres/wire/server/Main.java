@@ -395,9 +395,21 @@ public final class Main {
             log.info("TLS disabled (set POLYWIRE_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
         }
 
-        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
+        // POLYWIRE_AUTH_MODE=postgres_roles (default: shared_secret, CredentialStore's single dev
+        // credential, unchanged) -- see PgRoleAuthCache's javadoc for why only pgwire/mssqlwire
+        // can use it (both collect the client's password as cleartext already) and not
+        // orawire/mywire (real challenge-response protocols a Postgres password hash can't drive).
+        final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache =
+                "postgres_roles".equals(System.getenv("POLYWIRE_AUTH_MODE"))
+                        ? new com.polygres.wire.auth.PgRoleAuthCache(options) : null;
+        if (roleAuthCache != null) {
+            log.info("auth: POLYWIRE_AUTH_MODE=postgres_roles -- pgwire/mssqlwire logins verified against "
+                    + "real pg_authid role passwords (refreshed every {}s), not CredentialStore's shared secret",
+                    parseIntEnv("POLYWIRE_AUTH_REFRESH_SECONDS", 30));
+        }
+        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
-        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
+        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache));
         listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache));
 
         // dynamowire: DynamoDB's real client protocol is HTTP/JSON (SigV4-signed POST requests
@@ -430,13 +442,14 @@ public final class Main {
     }
 
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
-            BackendRegistry backendRegistry, ExecutorService sessionExecutor) {
+            BackendRegistry backendRegistry, ExecutorService sessionExecutor,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
             log.info("polywire listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
+                sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
             }
         } catch (IOException e) {
             log.error("Postgres wire listener on port {} failed", options.pgWireListenPort(), e);
@@ -458,13 +471,14 @@ public final class Main {
     }
 
     private static void acceptMssqlWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
-            BackendRegistry backendRegistry, ExecutorService sessionExecutor) {
+            BackendRegistry backendRegistry, ExecutorService sessionExecutor,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("polywire listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
+                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
             }
         } catch (IOException e) {
             log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);

@@ -89,9 +89,19 @@ public final class MssqlWireSessionHandler implements Runnable {
     // shared pipeline's own DialectTranslationStage (constructed once in Main with its own cache/
     // llmClient/cacheStore) is now the only place this session's queries get translated.
     private final FailedStatementLog failedStatementLog;
+    // Non-null only when POLYWIRE_AUTH_MODE=postgres_roles -- see PgRoleAuthCache's javadoc for
+    // why mssqlwire (unlike orawire/mywire) can use it: TDS LOGIN7 already sends the client's
+    // password as plain text, same precondition the cache's verification relies on.
+    private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
+        this(clientSocket, options, sharedStages, backendRegistry, null);
+    }
+
+    public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
+            List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
         this.clientSocket = clientSocket;
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
@@ -99,6 +109,15 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword());
         this.failedStatementLog.ensureSchema();
+        this.roleAuthCache = roleAuthCache;
+    }
+
+    private boolean authenticate(String username, String presentedPassword) {
+        if (roleAuthCache != null) {
+            return roleAuthCache.verify(username, presentedPassword);
+        }
+        byte[] expected = credentials.lookupPassword(username);
+        return expected != null && new String(expected, java.nio.charset.StandardCharsets.UTF_8).equals(presentedPassword);
     }
 
     @Override
@@ -192,9 +211,7 @@ public final class MssqlWireSessionHandler implements Runnable {
             return null;
         }
 
-        byte[] expected = credentials.lookupPassword(creds.userName());
-        String expectedPassword = expected == null ? null : new String(expected, java.nio.charset.StandardCharsets.UTF_8);
-        if (expected == null || !expectedPassword.equals(creds.password())) {
+        if (!authenticate(creds.userName(), creds.password())) {
             log.warn("mssqlwire: login failed for user '{}'", creds.userName());
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
                     TdsTokens.errorMessage(18456, "Login failed for user '" + creds.userName() + "'"));

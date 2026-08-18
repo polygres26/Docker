@@ -101,6 +101,18 @@ public final class PgWireSessionHandler implements Runnable {
     private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
+    // Non-null only when POLYWIRE_AUTH_MODE=postgres_roles -- see PgRoleAuthCache's javadoc for
+    // why pgwire (unlike orawire/mywire) can use it: this protocol already collects the client's
+    // password as cleartext, same precondition the cache's verification relies on.
+    private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
+
+    private boolean authenticate(String username, String presentedPassword) {
+        if (roleAuthCache != null) {
+            return roleAuthCache.verify(username, presentedPassword);
+        }
+        byte[] expected = credentials.lookupPassword(username);
+        return expected != null && presentedPassword.equals(new String(expected, StandardCharsets.UTF_8));
+    }
     // RTT optimization (ARCHITECTURE.md §11): built once per session (this class is already
     // instantiated fresh per accepted TCP connection), not per statement — see
     // JdbcBackendExecutor#rebind's javadoc for why. terminalExecutor starts unbound; every call
@@ -137,6 +149,12 @@ public final class PgWireSessionHandler implements Runnable {
 
     public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
+        this(clientSocket, options, sharedStages, backendRegistry, null);
+    }
+
+    public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
+            List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
         this.clientSocket = clientSocket;
         this.options = options;
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor);
@@ -144,6 +162,7 @@ public final class PgWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword());
         this.failedStatementLog.ensureSchema();
+        this.roleAuthCache = roleAuthCache;
     }
 
     @Override
@@ -297,8 +316,7 @@ public final class PgWireSessionHandler implements Runnable {
         in.readFully(body);
         String password = new String(body, 0, body.length - 1, StandardCharsets.UTF_8); // strip NUL
 
-        byte[] expected = credentials.lookupPassword(username);
-        if (expected == null || !password.equals(new String(expected, StandardCharsets.UTF_8))) {
+        if (!authenticate(username, password)) {
             PgMessages.writeErrorAndReady(out, "28P01", "password authentication failed for user \"" + username + "\"");
             return null;
         }
