@@ -38,6 +38,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLServerSocketFactory;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -388,15 +390,17 @@ public final class Main {
         grpcServer.start();
         log.info("polywire listening for gRPC on port {}", options.grpcPort());
 
-        SSLServerSocketFactory tlsFactory = null;
         if (options.tlsEnabled()) {
-            tlsFactory = TlsSupport.buildTlsFactory(options);
+            // SSLSocketFactory (wraps an already-accepted plain Socket), not SSLServerSocketFactory
+            // (wraps the accept() itself) -- see acceptOraWireTlsLoop's javadoc for why this
+            // listener needs to see the plain socket first, to read a PPv2 preamble before any TLS
+            // bytes flow.
+            SSLSocketFactory tlsSocketFactory = TlsSupport.buildTlsContext(options).getSocketFactory();
             log.info("TLS enabled (POLYWIRE_TLS_KEYSTORE={}): orawire TCPS on {}, pgwire+mywire negotiate TLS "
                             + "in-band on their existing plain ports ({}, {})",
                     options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
 
-            final SSLServerSocketFactory finalTlsFactory = tlsFactory;
-            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, finalTlsFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, clientAcl));
+            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
 
             grpcServer.startTls();
             log.info("polywire listening for gRPC TLS on port {}", options.grpcTlsPort());
@@ -551,37 +555,40 @@ public final class Main {
     }
 
     /**
-     * TCPS: same session handler as {@link #acceptOraWireLoop}, just fed by an
-     * {@code SSLServerSocket} instead of a plain one — TLS is a full-socket wrap done before any
-     * TNS bytes are exchanged (ported from Omnigate's {@code ProxyServer}), so no protocol-
-     * specific TLS code is needed here or in {@link SessionHandler} itself.
+     * TCPS: same session handler as {@link #acceptOraWireLoop} once the socket is wrapped in TLS
+     * — a full-socket wrap done before any TNS bytes are exchanged (ported from Omnigate's
+     * {@code ProxyServer}), so no protocol-specific TLS code is needed in {@link SessionHandler}
+     * itself.
      *
-     * <p><b>PPv2 not supported on this listener</b> -- {@code SSLServerSocket#accept()} already
-     * returns a socket mid-TLS-wrap (JSSE begins the handshake lazily on first I/O), so there is no
-     * point left to read a plaintext PPv2 preamble from before TLS bytes start flowing; PPv2 is
-     * designed to precede whatever protocol follows on a still-plaintext leg, which this
-     * always-TLS listener doesn't have. {@link com.polygres.wire.acl.ConnectionGate#acceptTcp}
-     * still applies the plain IP/CIDR {@link com.polygres.wire.acl.ClientAcl} against the raw TCP
-     * peer -- only the PPv2-derived-address case is unavailable here, a real, documented scope
-     * limit rather than an oversight.
+     * <p><b>Now PPv2-capable</b> -- previously this accepted directly on an {@code SSLServerSocket}
+     * (JSSE begins its handshake lazily on first I/O), which left no point to read a plaintext
+     * PPv2 preamble from before TLS bytes started flowing. Restructured to accept on a plain
+     * {@link ServerSocket} instead: {@link com.polygres.wire.acl.ConnectionGate#acceptTcp} reads
+     * PPv2 (if {@code POLYWIRE_ACL_PPV2_ENABLED}) and evaluates the ACL against the *still-plaintext*
+     * socket first, exactly like every other TCP frontend now does, then only a socket that
+     * passes gets wrapped in TLS via {@link SSLSocketFactory#createSocket(Socket, String, int,
+     * boolean)} with {@link SSLSocket#setUseClientMode(boolean)} explicitly set to server mode
+     * (the {@code autoClose=true} argument means closing the returned {@code SSLSocket} also
+     * closes the underlying plain one — no separate cleanup needed). The TLS handshake itself
+     * still only begins on the session handler's first real read/write, same lazy timing as
+     * before -- this only moves *where* the plain-vs-TLS split happens, not whether the handshake
+     * itself is eager.
      */
-    private static void acceptOraWireTlsLoop(ServerOptions options, SSLServerSocketFactory tlsFactory,
+    private static void acceptOraWireTlsLoop(ServerOptions options, SSLSocketFactory tlsSocketFactory,
             PgBackendPool backendPool, List<PipelineStage> pipelineStages, BackendRegistry backendRegistry,
-            ExecutorService sessionExecutor, com.polygres.wire.acl.ClientAcl ipOnlyAcl) {
-        try (SSLServerSocket serverSocket = (SSLServerSocket) tlsFactory.createServerSocket(options.tlsPort())) {
+            ExecutorService sessionExecutor, com.polygres.wire.acl.ConnectionGate connectionGate) {
+        try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
             log.info("polywire listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                if (!ipOnlyAcl.isAllowed(clientSocket.getInetAddress())) {
-                    log.warn("ACL: rejecting TCPS connection from {}", clientSocket.getInetAddress());
-                    try {
-                        clientSocket.close();
-                    } catch (IOException ignored) {
-                    }
-                    continue;
+                Socket plainSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(plainSocket)) {
+                    continue; // rejected + already closed -- see ConnectionGate's javadoc
                 }
-                sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry));
+                SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
+                        plainSocket, null, plainSocket.getPort(), true);
+                tlsSocket.setUseClientMode(false);
+                sessionExecutor.submit(new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry));
             }
         } catch (IOException e) {
             log.error("Oracle wire TCPS listener on port {} failed", options.tlsPort(), e);

@@ -45,10 +45,23 @@ public final class TlsSupport {
 
     public static SSLServerSocketFactory buildTlsFactory(ServerOptions options)
             throws GeneralSecurityException, IOException {
+        return buildTlsContext(options).getServerSocketFactory();
+    }
+
+    /**
+     * Same {@link SSLContext} {@link #buildTlsFactory} wraps as an {@link SSLServerSocketFactory}
+     * -- exposed directly here for {@code Main#acceptOraWireTlsLoop}'s PPv2 support, which needs
+     * an {@link javax.net.ssl.SSLSocketFactory} (via {@link SSLContext#getSocketFactory()}) to
+     * wrap an *already-accepted plain* {@link java.net.Socket} in TLS after reading a PPv2
+     * preamble off it, rather than an {@link SSLServerSocketFactory} that wraps the accept itself
+     * and gives no chance to read anything plaintext first. See that method's javadoc for why this
+     * ordering matters.
+     */
+    public static SSLContext buildTlsContext(ServerOptions options) throws GeneralSecurityException, IOException {
         KeyManagerFactory kmf = buildKeyManagerFactory(options);
         SSLContext context = SSLContext.getInstance("TLS");
         context.init(kmf.getKeyManagers(), null, null);
-        return context.getServerSocketFactory();
+        return context;
     }
 
     /**
