@@ -2,6 +2,7 @@ package com.polygres.wire.mssqlwire.session;
 
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.core.BackendRegistry;
+import com.polygres.wire.core.DialectTranslations;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
@@ -241,10 +242,24 @@ public final class MssqlWireSessionHandler implements Runnable {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
+        // SQL_SERVER->POSTGRES dialect translation: needed here, not just for
+        // DialectTranslationStage's own @link cross-dialect path, for the exact same
+        // architectural reason MySqlWireSessionHandler does this (see that class's identical
+        // comment and commit f593bd3's message) -- DialectTranslationStage only ever fires once
+        // Statement#targetBackend() has been resolved by RouterStage/DbLinkStage, which the
+        // default homogeneous mssqlwire->Postgres proxy path (no POLYWIRE_BACKENDS/routing rules
+        // configured) never sets. Found live: a real mssql-jdbc client's bracket-identifier/
+        // TOP/GETDATE()/ISNULL T-SQL passed straight through untranslated and failed with a real
+        // Postgres syntax error even though DialectTranslations.normalizeSqlServer already had
+        // correct rules for all of it -- this path just never reached them.
+        String translatedSql = DialectTranslations.translate(sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES);
+        if (translatedSql == null) {
+            translatedSql = sql;
+        }
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, List.of());
+            Statement statement = Statement.of(SourceDialect.SQL_SERVER, translatedSql, List.of());
             ExecutionResult result = pipeline.execute(statement);
 
             ByteArrayOutputStream body = new ByteArrayOutputStream();
