@@ -15,13 +15,20 @@ import java.util.regex.Pattern;
  * maintain instead of {@code N × M} — the difference between adding one function and adding six
  * every time a new backend dialect (Snowflake, Databricks, ...) shows up.
  *
- * <p><b>Four source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}, {@code
- * SQL_SERVER}</b> — every
+ * <p><b>Five source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}, {@code
+ * SQL_SERVER}, {@code POLYWIRE_NATIVE}</b> — every
  * frontend that stamps a real dialect (see {@link DialectTranslationStage}'s javadoc for which
  * frontends produce which {@code SourceDialect}; {@code grpc} and MCP/HTTP both stamp
- * {@code POLYWIRE_NATIVE}, which has no normalizer and never will — there's no wire-protocol signal
- * telling PolyWire which dialect that SQL text was actually authored in, so nothing principled to
- * normalize from). Six targets have renderers: {@code POSTGRES}, {@code MYSQL},
+ * {@code POLYWIRE_NATIVE}). {@code POLYWIRE_NATIVE}'s normalizer is a pure identity passthrough,
+ * not a real rewrite: PolyWire is a Postgres-only backend gateway (see ARCHITECTURE.md §1) — every
+ * target it ever routes to is {@code POSTGRES} — so SQL text arriving over PolyWire's own native
+ * protocols (gRPC, MCP/HTTP) is already valid Postgres SQL by construction and genuinely needs no
+ * translation, unlike Oracle/MySQL/SQL Server text arriving from a client that thinks it's talking
+ * to that platform. Without this entry, {@code translate()} returned {@code null} for every single
+ * {@code POLYWIRE_NATIVE→POSTGRES} call (the "no normalizer" case), which drove *every* gRPC/MCP
+ * query into the LLM-fallback path in {@link DialectTranslationStage#translateWithFallback} —
+ * and with no LLM endpoint configured, that fallback throws, so gRPC's basic query path failed
+ * outright until this was added. Six targets have renderers: {@code POSTGRES}, {@code MYSQL},
  * {@code SNOWFLAKE}, {@code REDSHIFT}, {@code BIGQUERY}, {@code DATABRICKS}.
  *
  * <p><b>The {@code POSTGRES}/{@code MYSQL} normalizers reuse the {@code ORACLE} renderers'
@@ -98,7 +105,12 @@ public final class DialectTranslations {
             SourceDialect.ORACLE, DialectTranslations::normalizeOracle,
             SourceDialect.POSTGRES, DialectTranslations::normalizePostgres,
             SourceDialect.MYSQL, DialectTranslations::normalizeMysql,
-            SourceDialect.SQL_SERVER, DialectTranslations::normalizeSqlServer);
+            SourceDialect.SQL_SERVER, DialectTranslations::normalizeSqlServer,
+            // Identity passthrough: PolyWire's own native protocols (gRPC, MCP/HTTP) always send
+            // SQL that's already Postgres-shaped, since PolyWire only ever routes to a Postgres
+            // backend -- see the class javadoc for why this must not fall through to "no
+            // normalizer" (which drove every native-protocol query into a failing LLM fallback).
+            SourceDialect.POLYWIRE_NATIVE, DialectTranslations::renderIdentity);
 
     private static final Map<SourceDialect, Function<String, String>> RENDERERS = Map.of(
             SourceDialect.ORACLE, DialectTranslations::renderOracle,

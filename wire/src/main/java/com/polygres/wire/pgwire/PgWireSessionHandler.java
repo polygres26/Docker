@@ -1,10 +1,12 @@
 package com.polygres.wire.pgwire;
 
+import com.polygres.wire.config.FailedStatementLog;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.SourceDialect;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
+import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.server.ServerOptions;
 import com.polygres.wire.server.TlsSupport;
@@ -109,12 +111,21 @@ public final class PgWireSessionHandler implements Runnable {
     // explicit transaction needs this, not just the pipeline's normal per-statement execute() path.
     private final com.polygres.wire.core.RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
+    // Same "record every failure, best-effort, never block the client's own response" store used
+    // by orawire/mywire/mssqlwire -- see FailedStatementLog's javadoc. No native error-code mapping
+    // is recorded here (unlike those three) since pgwire clients are native Postgres clients and
+    // already get the real SQLState back as-is; nativeError is left null.
+    private final FailedStatementLog failedStatementLog;
 
     // ---- Extended Query Protocol session state (see class javadoc) ----
     private Connection sessionConnection; // lazily borrowed, shared by Simple and Extended paths -- see sessionConnection()
     private final Map<String, String> preparedStatements = new LinkedHashMap<>();
     private final Map<String, Portal> portals = new LinkedHashMap<>();
     private boolean skipUntilSync; // set on any Extended Query error; real protocol semantics: ignore messages until the next Sync
+    // Best-effort SQL text for FailedStatementLog when an Extended Query step fails -- Bind is
+    // where a prepared statement's text is last known before pipeline.execute() runs, so that's
+    // where this gets set; a failure in Parse itself never has real SQL bound to a portal yet.
+    private volatile String lastExtendedSql;
 
     private static final Pattern DOLLAR_PARAM = Pattern.compile("\\$(\\d+)");
 
@@ -130,6 +141,9 @@ public final class PgWireSessionHandler implements Runnable {
         this.options = options;
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor);
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
+        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog.ensureSchema();
     }
 
     @Override
@@ -425,6 +439,9 @@ public final class PgWireSessionHandler implements Runnable {
             // Same reasoning as executeSimpleQuery's catch -- see
             // RoutingBackendExecutor#markTransactionFailed's javadoc.
             routingExecutor.markTransactionFailed();
+            if (lastExtendedSql != null) {
+                recordFailure(lastExtendedSql, e);
+            }
             PgMessages.writeErrorResponse(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
             out.flush();
             skipUntilSync = true;
@@ -477,6 +494,7 @@ public final class PgWireSessionHandler implements Runnable {
         if (sql == null) {
             throw new IOException("no such prepared statement: " + stmtName);
         }
+        lastExtendedSql = sql;
 
         Connection backend = sessionConnection(); // shared with Simple Query -- see that method's javadoc
         if (handleTransactionControl(backend, sql)) {
@@ -610,8 +628,19 @@ public final class PgWireSessionHandler implements Runnable {
             // which is why this isn't left to that class's own catch alone -- see
             // RoutingBackendExecutor#markTransactionFailed's javadoc.
             routingExecutor.markTransactionFailed();
+            recordFailure(sql, e);
             PgMessages.writeErrorAndReady(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
             out.flush();
+        }
+    }
+
+    private void recordFailure(String sql, SQLException e) {
+        if (e instanceof UntranslatableQueryException) {
+            failedStatementLog.record(SourceDialect.POSTGRES, sql,
+                    FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
+        } else {
+            failedStatementLog.record(SourceDialect.POSTGRES, sql,
+                    FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), null, e.getMessage());
         }
     }
 
