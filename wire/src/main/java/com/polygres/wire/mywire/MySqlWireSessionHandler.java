@@ -1,12 +1,17 @@
 package com.polygres.wire.mywire;
 
 import com.polygres.wire.auth.CredentialStore;
-import com.polygres.wire.core.DialectTranslations;
+import com.polygres.wire.config.FailedStatementLog;
+import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.SourceDialect;
+import com.polygres.wire.core.SqlStateErrorMapper;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
+import com.polygres.wire.core.TranslationCache;
+import com.polygres.wire.core.TranslationLlmClient;
+import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.pgwire.PgConnections;
 import com.polygres.wire.server.ServerOptions;
 import com.polygres.wire.server.TlsSupport;
@@ -53,12 +58,27 @@ public final class MySqlWireSessionHandler implements Runnable {
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
 
+    // Shared across every session on this node (mirrors DialectTranslationStage's own per-registry
+    // singleton cache/llmClient) -- this is what gives mywire's default homogeneous
+    // mywire->Postgres proxy path (no POLYWIRE_BACKENDS/routing configured, so
+    // DialectTranslationStage never fires -- see executeQuery's comment below) the exact same
+    // cache-check -> deterministic-rule -> LLM-fallback -> clean-reject guarantee the routed
+    // @link path already has, via DialectTranslationStage.translateWithFallback, rather than a
+    // second, uncached, no-fallback implementation calling DialectTranslations.translate directly.
+    private static final TranslationCache DEFAULT_PATH_CACHE = new TranslationCache();
+    private static final TranslationLlmClient DEFAULT_PATH_LLM_CLIENT = new TranslationLlmClient();
+
+    private final FailedStatementLog failedStatementLog;
+
     public MySqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
+        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog.ensureSchema();
     }
 
     @Override
@@ -213,11 +233,25 @@ public final class MySqlWireSessionHandler implements Runnable {
         // the rule existed but this path never reached it. Not applicable when
         // options.mywireNativeBackend() -- the backend really is MySQL/MariaDB there, so the
         // client's own dialect is already correct as-is.
+        //
+        // Goes through DialectTranslationStage.translateWithFallback -- the exact same
+        // cache-check -> deterministic-rule -> LLM-fallback -> clean-reject logic the routed
+        // @link path uses -- rather than calling DialectTranslations.translate() directly, which
+        // used to (a) re-run the regex normalize/render logic on every single query forever (no
+        // cache) and (b) silently pass the original untranslated SQL straight through to Postgres
+        // whenever no deterministic rule matched, directly contradicting
+        // UntranslatableQueryException's "never silently pass through" principle.
         String translatedSql = sql;
         if (!options.mywireNativeBackend()) {
-            String translated = DialectTranslations.translate(sql, SourceDialect.MYSQL, SourceDialect.POSTGRES);
-            if (translated != null) {
-                translatedSql = translated;
+            try {
+                translatedSql = DialectTranslationStage.translateWithFallback(
+                        sql, SourceDialect.MYSQL, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT);
+            } catch (UntranslatableQueryException e) {
+                failedStatementLog.record(SourceDialect.MYSQL, sql,
+                        FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
+                packets.writePayload(out, MySqlMessages.errPacket(SqlStateErrorMapper.MYSQL_DEFAULT, e.getSQLState(),
+                        e.getMessage() == null ? "statement could not be translated" : e.getMessage()));
+                return;
             }
         }
         try (Connection backend = options.mywireNativeBackend()
@@ -242,7 +276,11 @@ public final class MySqlWireSessionHandler implements Runnable {
                 packets.writePayload(out, MySqlMessages.okPacket(result.updateCount()));
             }
         } catch (SQLException e) {
-            packets.writePayload(out, MySqlMessages.errPacket(1105, sqlState(e),
+            String state = sqlState(e);
+            int nativeError = SqlStateErrorMapper.toMySqlError(state);
+            failedStatementLog.record(SourceDialect.MYSQL, sql,
+                    FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
+            packets.writePayload(out, MySqlMessages.errPacket(nativeError, state,
                     e.getMessage() == null ? "backend error" : e.getMessage()));
         }
     }

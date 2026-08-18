@@ -1,12 +1,15 @@
 package com.polygres.wire.orawire.session;
 
+import com.polygres.wire.config.FailedStatementLog;
 import com.polygres.wire.core.ColumnInfo;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.SourceDialect;
+import com.polygres.wire.core.SqlStateErrorMapper;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
+import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.orawire.translator.BindVariableRewriter;
 import com.polygres.wire.xa.XaTransaction;
 import com.polygres.wire.orawire.translator.DualTableRewriter;
@@ -131,6 +134,14 @@ public final class RequestLoop {
     // lifetime and cursor_id churn, not unbounded.
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
+    // Tracked purely so the top-level processMessage catch blocks (which see only a generic
+    // SQLException/RuntimeException, not the request that caused it) can still record the real
+    // SQL text into polywire_failed_statements -- see FailedStatementLog's javadoc. Set at the
+    // start of handleExecute/handleReexecute; best-effort ("statement text unavailable") if
+    // somehow still null when a failure is recorded.
+    private volatile String lastSqlText;
+    private final FailedStatementLog failedStatementLog;
+
     private record StatementSignature(String sql, int[] bindTypes) {
     }
 
@@ -162,6 +173,9 @@ public final class RequestLoop {
         this.backendRegistry = backendRegistry;
         this.oracleUsername = oracleUsername;
         this.oraclePassword = oraclePassword;
+        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog.ensureSchema();
     }
 
     public void run() throws IOException {
@@ -299,10 +313,20 @@ public final class RequestLoop {
             } else {
                 throw new UnsupportedOperationException("unsupported TTC function code: " + functionCode);
             }
+        } catch (UntranslatableQueryException e) {
+            log.warn("statement could not be translated: {}", e.getMessage());
+            failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
+                    FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
+            rollbackAfterStatementError();
+            ResponseWriter.writeErrorEnd(w, SqlStateErrorMapper.ORACLE_DEFAULT,
+                    e.getMessage() == null ? "statement could not be translated" : e.getMessage(), openCursorId, callNumber);
         } catch (SQLException e) {
             log.warn("backend error executing statement: {}", e.getMessage());
+            int nativeError = SqlStateErrorMapper.toOracleError(e.getSQLState());
+            failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
+                    FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             rollbackAfterStatementError();
-            ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? "backend error" : e.getMessage(), openCursorId, callNumber);
+            ResponseWriter.writeErrorEnd(w, nativeError, e.getMessage() == null ? "backend error" : e.getMessage(), openCursorId, callNumber);
         } catch (RuntimeException e) {
             // Belt-and-suspenders: an unexpected RuntimeException here (e.g. an unsupported
             // column type) used to propagate uncaught out of the request loop, silently dropping
@@ -534,6 +558,9 @@ public final class RequestLoop {
     private static final byte TNS_MARKER_TYPE_RESET = 2;
 
     private void handleExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
+        if (request.sqlText != null) {
+            lastSqlText = request.sqlText;
+        }
         closeOpenCursor();
         // ORAPG_ORACLE_BACKEND_MODE=native: relay the real backend's raw response bytes instead
         // of reconstructing DESCRIBE_INFO/inline-exhaustion from JDBC metadata — see
@@ -773,6 +800,7 @@ public final class RequestLoop {
             throw new IllegalStateException(
                     "REEXECUTE for cursor_id=" + cursorId + " with no prior EXECUTE on this connection to reuse");
         }
+        lastSqlText = signature.sql();
 
         List<BindParam> bindParams = signature.bindTypes().length > 0
                 ? ExecuteRequestReader.readBindValueRow(r, signature.bindTypes())

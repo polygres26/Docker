@@ -1,15 +1,20 @@
 package com.polygres.wire.mssqlwire.session;
 
 import com.polygres.wire.auth.CredentialStore;
+import com.polygres.wire.config.FailedStatementLog;
 import com.polygres.wire.core.BackendRegistry;
-import com.polygres.wire.core.DialectTranslations;
+import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.RoutingBackendExecutor;
 import com.polygres.wire.core.SourceDialect;
+import com.polygres.wire.core.SqlStateErrorMapper;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
+import com.polygres.wire.core.TranslationCache;
+import com.polygres.wire.core.TranslationLlmClient;
+import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.mssqlwire.frontend.Login7Handler;
 import com.polygres.wire.mssqlwire.frontend.PreLoginHandshake;
 import com.polygres.wire.mssqlwire.frontend.SqlBatchReader;
@@ -81,12 +86,25 @@ public final class MssqlWireSessionHandler implements Runnable {
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
 
+    // Same reasoning as MySqlWireSessionHandler's identical fields -- gives mssqlwire's default
+    // homogeneous mssqlwire->Postgres proxy path the same cache-check -> deterministic-rule ->
+    // LLM-fallback -> clean-reject guarantee DialectTranslationStage's routed @link path already
+    // has, via DialectTranslationStage.translateWithFallback, instead of an uncached, no-fallback
+    // direct call to DialectTranslations.translate().
+    private static final TranslationCache DEFAULT_PATH_CACHE = new TranslationCache();
+    private static final TranslationLlmClient DEFAULT_PATH_LLM_CLIENT = new TranslationLlmClient();
+
+    private final FailedStatementLog failedStatementLog;
+
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new RoutingBackendExecutor(backendRegistry, terminalExecutor));
+        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog.ensureSchema();
     }
 
     @Override
@@ -252,9 +270,21 @@ public final class MssqlWireSessionHandler implements Runnable {
         // TOP/GETDATE()/ISNULL T-SQL passed straight through untranslated and failed with a real
         // Postgres syntax error even though DialectTranslations.normalizeSqlServer already had
         // correct rules for all of it -- this path just never reached them.
-        String translatedSql = DialectTranslations.translate(sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES);
-        if (translatedSql == null) {
-            translatedSql = sql;
+        // Goes through DialectTranslationStage.translateWithFallback -- see
+        // MySqlWireSessionHandler's identical comment for why this replaced a direct, uncached,
+        // no-fallback call to DialectTranslations.translate() (which used to silently pass the
+        // original untranslated SQL through to Postgres on any unmatched construct).
+        String translatedSql;
+        try {
+            translatedSql = DialectTranslationStage.translateWithFallback(
+                    sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT);
+        } catch (UntranslatableQueryException e) {
+            failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
+                    FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(SqlStateErrorMapper.SQL_SERVER_DEFAULT,
+                            e.getMessage() == null ? "statement could not be translated" : e.getMessage()));
+            return;
         }
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
@@ -280,8 +310,11 @@ public final class MssqlWireSessionHandler implements Runnable {
             }
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
         } catch (SQLException e) {
+            int nativeError = SqlStateErrorMapper.toSqlServerError(e.getSQLState());
+            failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
+                    FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                    TdsTokens.errorMessage(50000, e.getMessage() == null ? "backend error" : e.getMessage()));
+                    TdsTokens.errorMessage(nativeError, e.getMessage() == null ? "backend error" : e.getMessage()));
         }
     }
 }

@@ -82,6 +82,18 @@ public final class DialectTranslations {
     private DialectTranslations() {
     }
 
+    // Verification-only instrumentation: counts every real call into translate() below, so a test
+    // can prove a repeat statement hit TranslationCache (in DialectTranslationStage.
+    // translateWithFallback) rather than re-running this regex normalize/render logic -- see that
+    // method's javadoc and MySqlWireSessionHandler/MssqlWireSessionHandler's default-path fix.
+    private static final java.util.concurrent.atomic.AtomicLong CALL_COUNT =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** Verification-only: total number of real (non-cached) {@link #translate} calls so far. */
+    public static long callCount() {
+        return CALL_COUNT.get();
+    }
+
     private static final Map<SourceDialect, Function<String, String>> NORMALIZERS = Map.of(
             SourceDialect.ORACLE, DialectTranslations::normalizeOracle,
             SourceDialect.POSTGRES, DialectTranslations::normalizePostgres,
@@ -103,6 +115,7 @@ public final class DialectTranslations {
 
     /** {@code null} means "no normalizer for {@code from}, or no renderer for {@code to}" — caller passes the original SQL through untouched. */
     public static String translate(String sql, SourceDialect from, SourceDialect to) {
+        CALL_COUNT.incrementAndGet();
         if (from == to) {
             return sql;
         }

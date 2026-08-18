@@ -1,6 +1,8 @@
 package com.polygres.wire.core;
 
 import java.sql.SQLException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * PolyWire's own JDBC-native equivalent of Oracle's {@code dg4odbc}/Heterogeneous Services: rather
@@ -36,6 +38,8 @@ import java.sql.SQLException;
  */
 public final class DialectTranslationStage implements PipelineStage {
 
+    private static final Logger log = LoggerFactory.getLogger(DialectTranslationStage.class);
+
     private final BackendRegistry registry;
     private final TranslationCache cache;
     private final TranslationLlmClient llmClient;
@@ -68,16 +72,43 @@ public final class DialectTranslationStage implements PipelineStage {
             return next.proceed(statement); // same dialect already, or target's dialect isn't one we recognize
         }
         String sqlText = statement.sqlText();
+        String rewritten = translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient);
+        return next.proceed(statement.withSqlText(rewritten));
+    }
+
+    /**
+     * The actual cache-check -> deterministic-rule -> LLM-fallback -> clean-reject logic, factored
+     * out of {@link #handle} so a frontend that never gets a {@code RouterStage}/{@code DbLinkStage}
+     * -resolved {@code targetBackend} (today: {@code mywire}/{@code mssqlwire}'s default
+     * single-backend proxy path -- see those classes' {@code executeQuery} javadoc) can still get
+     * the exact same caching and "never silently pass through untranslatable SQL" guarantee this
+     * stage already gives the routed {@code @link} path, without needing a full
+     * {@link Statement}/pipeline context. {@link #handle} and every direct caller share this one
+     * implementation -- there is exactly one translate-with-cache-and-fallback code path in this
+     * codebase, not one per frontend.
+     *
+     * @throws UntranslatableQueryException if neither a deterministic rule nor the LLM fallback
+     *     can translate {@code sqlText} -- never returns {@code null} and never silently returns
+     *     the original untranslated text.
+     */
+    public static String translateWithFallback(String sqlText, SourceDialect fromDialect,
+            SourceDialect targetDialect, TranslationCache cache, TranslationLlmClient llmClient)
+            throws UntranslatableQueryException {
+        if (fromDialect == targetDialect) {
+            return sqlText;
+        }
 
         String cached = cache.get(sqlText, fromDialect, targetDialect);
         if (cached != null) {
-            return next.proceed(statement.withSqlText(cached));
+            log.info("translation cache HIT for {}->{}: {}", fromDialect, targetDialect, sqlText);
+            return cached;
         }
+        log.info("translation cache MISS for {}->{}, translating: {}", fromDialect, targetDialect, sqlText);
 
         String rewritten = DialectTranslations.translate(sqlText, fromDialect, targetDialect);
         if (rewritten != null) {
             cache.put(sqlText, fromDialect, targetDialect, rewritten);
-            return next.proceed(statement.withSqlText(rewritten));
+            return rewritten;
         }
 
         // No deterministic rule for this construct -- fall back to the LLM translator rather than
@@ -96,6 +127,6 @@ public final class DialectTranslationStage implements PipelineStage {
                     "LLM fallback translator did not return usable SQL");
         }
         cache.put(sqlText, fromDialect, targetDialect, llmTranslated);
-        return next.proceed(statement.withSqlText(llmTranslated));
+        return llmTranslated;
     }
 }
