@@ -438,6 +438,17 @@ public final class Main {
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 
+        // MCP: same embedded-Jetty-HTTP shape as dynamowire above, JSON-RPC instead of SigV4/JSON.
+        // POLYWIRE_MCP_TOOLS registers real Postgres functions/procedures as individually-named
+        // tools (see PolyWireMcpServer's class javadoc) -- unset means execute_sql/list_tables/
+        // describe_table only, no registered-function tools, unchanged from not running this
+        // frontend at all except for those three generic tools being available.
+        int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
+        com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
+                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"));
+        mcpServer.start();
+        log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
+
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate);
     }
 

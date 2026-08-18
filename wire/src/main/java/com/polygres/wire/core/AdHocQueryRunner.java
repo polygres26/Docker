@@ -38,18 +38,35 @@ public final class AdHocQueryRunner {
     /** {@code accessContext}: the end user calling {@code /api/query} (see {@code AccessContextResolver}) — carried onto the {@link Statement} for {@code AccessControlStage} to enforce against. */
     public static Result run(Connection backend, List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
             String tenantId, String sql, AccessContext accessContext) {
-        return run(backend, sharedStages, backendRegistry, tenantId, sql, accessContext, null);
+        return run(backend, sharedStages, backendRegistry, tenantId, sql, List.of(), accessContext, null);
+    }
+
+    /**
+     * {@code bindParams}: added for {@code com.polygres.wire.mcp.PolyWireMcpServer}'s registered-
+     * function-as-tool invocation ({@code SELECT * FROM fn($1, $2, ...)}), the first real caller
+     * needing bound parameters rather than self-contained SQL text -- every other existing caller
+     * (currently none; see class javadoc) still gets an empty list via the overloads above.
+     */
+    public static Result run(Connection backend, List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
+            String tenantId, String sql, List<Object> bindParams, AccessContext accessContext) {
+        return run(backend, sharedStages, backendRegistry, tenantId, sql, bindParams, accessContext, null);
     }
 
     /** {@code nativeRlsInitializer}: §3.6 of the design doc — non-null enables native backend RLS/VPD pass-through instead of (in addition to) {@code AccessControlStage}'s app-level SQL rewriting; see {@code JdbcBackendExecutor}'s javadoc. */
     public static Result run(Connection backend, List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
             String tenantId, String sql, AccessContext accessContext,
             com.polygres.wire.core.access.NativeRlsSessionInitializer nativeRlsInitializer) {
+        return run(backend, sharedStages, backendRegistry, tenantId, sql, List.of(), accessContext, nativeRlsInitializer);
+    }
+
+    public static Result run(Connection backend, List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
+            String tenantId, String sql, List<Object> bindParams, AccessContext accessContext,
+            com.polygres.wire.core.access.NativeRlsSessionInitializer nativeRlsInitializer) {
         try {
             backend.setAutoCommit(true);
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
                     new RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend, nativeRlsInitializer)));
-            Statement statement = new Statement(tenantId, SourceDialect.POLYWIRE_NATIVE, sql, List.of(), "default", null, accessContext);
+            Statement statement = new Statement(tenantId, SourceDialect.POLYWIRE_NATIVE, sql, bindParams, "default", null, accessContext);
             return Result.ofSuccess(pipeline.execute(statement));
         } catch (SQLException e) {
             return Result.ofError(e);
