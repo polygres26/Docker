@@ -18,6 +18,14 @@ import org.slf4j.LoggerFactory;
  * already present in this registry) that {@link RoutingBackendExecutor} fans a scatter-gather query
  * out to — see that class's javadoc.
  *
+ * <p><b>Backend poisoning protection</b> ({@link TrustedBackendHosts}, {@code
+ * POLYWIRE_TRUSTED_BACKEND_HOSTS}): {@code spec} here is sourced from {@code
+ * polywire_config.backends}/{@code shardBackends}, hot-reloadable straight from a Postgres table
+ * (see {@link #reload}) -- so without an allowlist, anyone with write access to that table could
+ * register an arbitrary host and have real client traffic routed to it. Opt-in, disabled by
+ * default; see that class's javadoc for the full threat model and why the allowlist is env-var
+ * only, never itself settable from the same DB-writable surface it gates.
+ *
  * <p><b>Postgres-only</b>: unlike Polywire (which also resolved secrets via Vault/CyberArk through
  * {@code com.omnigate.secrets.SecretResolver} and capped backend count per free/commercial edition),
  * PolyWire keeps this deliberately small — every {@code user}/{@code password} field is used as a
@@ -73,6 +81,11 @@ public final class BackendRegistry {
      * authoritative and never gets this synthetic entry added alongside it.
      */
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec, BackendTarget defaultTarget) {
+        // POLYWIRE_TRUSTED_BACKEND_HOSTS -- see TrustedBackendHosts' class javadoc for why this is
+        // checked here (the DB-writable POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS surface) and not
+        // for defaultTarget below (the operator's own env-var-configured connection, already
+        // inherently trusted). Disabled (unset) is a zero-cost no-op -- every entry passes.
+        TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
         if (spec != null && !spec.isBlank()) {
             for (String entry : spec.split(";")) {
@@ -88,6 +101,12 @@ public final class BackendRegistry {
                 String url = parts.length > 0 ? parts[0].replace("%3B", ";").replace("%3b", ";") : "";
                 String user = parts.length > 1 ? parts[1] : null;
                 String password = parts.length > 2 ? parts[2] : null;
+                if (!trustedHosts.isTrusted(url)) {
+                    log.warn("backend registry: REFUSING to register backend '{}' ({}) -- its host is not in "
+                            + "POLYWIRE_TRUSTED_BACKEND_HOSTS. This entry is skipped, not fatal; every other "
+                            + "configured backend is unaffected.", name, url);
+                    continue;
+                }
                 targets.put(name, new BackendTarget(name, url, user, password));
             }
         } else if (defaultTarget != null) {
