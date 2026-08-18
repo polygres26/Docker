@@ -6,36 +6,6 @@ import java.util.Map;
 import org.bson.BsonDocument;
 import org.bson.BsonValue;
 
-/**
- * Translates a MongoDB {@code find}/{@code update}/{@code delete} filter document into a
- * Postgres {@code WHERE} clause against the {@code doc jsonb} column, using {@code ->} to reach a
- * top-level field's JSONB value and comparing it against a {@code ?::jsonb} bound parameter
- * (bound as extended-JSON text via {@link BsonJson#valueToJson}). Postgres's jsonb type has a
- * full, well-defined ordering (the same one that backs jsonb btree indexes and
- * {@code ORDER BY ... jsonb_column}), so {@code =, <>, <, <=, >, >=} all work directly on two
- * jsonb operands without needing a scalar cast for numbers/strings — that ordering is what
- * backs the comparison operators below.
- *
- * <p><b>Scope, stated plainly</b>: this is real semantic translation, not syntax substitution,
- * but it is intentionally narrow for this first pass:
- * <ul>
- *   <li>Covered: implicit top-level equality ({@code {field: value}}), {@code $eq}, {@code $ne},
- *       {@code $gt}, {@code $gte}, {@code $lt}, {@code $lte}, {@code $in} (as an OR of
- *       equalities), top-level implicit AND across multiple fields in one filter document.</li>
- *   <li><b>Not covered</b> (rejected with a clear "unsupported operator" error rather than
- *       silently ignored or mismatched): {@code $regex}, {@code $elemMatch}, geo operators,
- *       {@code $or}/{@code $and}/{@code $nor} as explicit top-level operators, dotted paths into
- *       nested documents/arrays, {@code $exists}, {@code $type}, and anything from the
- *       aggregation pipeline (out of scope for this whole frontend, not just this class — see
- *       {@code MongoWireSessionHandler}'s class javadoc).</li>
- * </ul>
- * mongo-java-server's postgresql-backend reference does no SQL-level filtering at all — it
- * streams every row back into the JVM and matches MongoDB filters there in Java. This class
- * deliberately diverges from that: pushing at least the common equality/comparison/`$in` cases
- * down into a real SQL {@code WHERE} clause is more honest about what a "Postgres-backed
- * MongoDB" frontend should do, and was cheap enough to build in this pass; anything outside this
- * class's covered set still needs an explicit error rather than a silent full-table return.
- */
 final class MongoQueryTranslator {
 
     record Where(String sql, List<String> jsonbParams) {
@@ -74,15 +44,6 @@ final class MongoQueryTranslator {
         return new Where(sql, params);
     }
 
-    /**
-     * Returns the extended-JSON text of {@code _id} (the same shape {@link
-     * PostgresDocumentStore}'s {@code id} column stores, via {@link
-     * PostgresDocumentStore#idJsonFor}) when {@code filter} is <em>exactly</em> a single-field
-     * equality match on {@code _id} — e.g. {@code {_id: "x"}} — or {@code null} otherwise
-     * (multi-field filters, filters on other fields, or operator forms like
-     * {@code {_id: {$gt: ...}}}). Used by {@code MongoCache} to scope caching to exact-{@code _id}
-     * lookups only; see its class javadoc for why broader filters are never cached.
-     */
     static String exactIdEquality(BsonDocument filter) {
         if (filter == null || filter.size() != 1) {
             return null;
@@ -93,7 +54,7 @@ final class MongoQueryTranslator {
         }
         BsonValue value = entry.getValue();
         if (value.isDocument() && hasOperatorKeys(value.asDocument())) {
-            return null; // e.g. {_id: {$gt: ...}} — not an exact match
+            return null;
         }
         return BsonJson.valueToJson(value);
     }
@@ -145,8 +106,7 @@ final class MongoQueryTranslator {
     }
 
     private static String fieldExpr(String field) {
-        // '->' (not '->>') so the comparison is jsonb-vs-jsonb, letting Postgres's native jsonb
-        // ordering do numeric/string comparisons correctly instead of forcing a text compare.
+        
         return "doc->'" + field.replace("'", "''") + "'";
     }
 

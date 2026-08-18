@@ -1,6 +1,5 @@
 package com.polygres.wire.orawire.ttc;
 
-/** One column's describe-info, narrow slice: VARCHAR2, NUMBER, DATE. Spec §3.1.1. */
 public final class ColumnMetadata {
 
     public final String name;

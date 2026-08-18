@@ -1,6 +1,5 @@
 package com.polygres.wire.orawire.ttc;
 
-/** Parsed OFETCH request. Spec §4.1: just cursor_id + fetch_array_size. */
 public final class FetchRequest {
     public final long cursorId;
     public final long fetchArraySize;

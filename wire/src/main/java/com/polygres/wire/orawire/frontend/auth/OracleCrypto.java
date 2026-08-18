@@ -7,15 +7,6 @@ import javax.crypto.Mac;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-/**
- * AES-CBC and PBKDF2-HMAC-SHA512 primitives for the O5LOGON 12c/PBKDF2
- * scheme, transcribed from reference/o5logon_auth_spec.md §2.2 (itself from
- * python-oracledb's impl/thin/crypto.pyx). Fixed all-zero IV, PKCS7 padding
- * on encrypt (Java's "AES/CBC/PKCS5Padding" is PKCS7-compatible for a
- * 16-byte block size), no auto-unpad on decrypt (callers slice manually, to
- * match the reference's behavior of never trusting a padding-derived
- * length).
- */
 public final class OracleCrypto {
 
     private static final byte[] ZERO_IV_16 = new byte[16];
@@ -40,7 +31,6 @@ public final class OracleCrypto {
         }
     }
 
-    /** Strips PKCS7 padding after a NoPadding decrypt (caller trusts the pad byte). */
     public static byte[] stripPkcs7(byte[] decrypted) {
         int padLen = decrypted[decrypted.length - 1] & 0xFF;
         if (padLen < 1 || padLen > 16 || padLen > decrypted.length) {
@@ -49,16 +39,6 @@ public final class OracleCrypto {
         return Arrays.copyOf(decrypted, decrypted.length - padLen);
     }
 
-    /**
-     * PBKDF2-HMAC-SHA512 implemented directly against raw password bytes
-     * (RFC 8018), rather than routing through Java's char[]-based
-     * PBEKeySpec/SecretKeyFactory — that path forces a char<->byte
-     * conversion inside the JCE provider whose exact encoding isn't
-     * documented, which would silently diverge from python-oracledb's
-     * get_derived_key(password_bytes, ...) for any non-ASCII password byte.
-     * This implementation takes the password bytes verbatim as the HMAC
-     * key, matching the reference exactly.
-     */
     public static byte[] pbkdf2HmacSha512(byte[] password, byte[] salt, int lengthBytes, int iterations) {
         try {
             Mac mac = Mac.getInstance("HmacSHA512");

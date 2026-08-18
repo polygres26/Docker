@@ -2,11 +2,6 @@ package com.polygres.wire.orawire.ttc;
 
 import java.time.LocalDateTime;
 
-/**
- * Encodes/decodes Oracle's 7-byte DATE wire format, per
- * reference/ttc_execute_fetch_spec.md §5.3. Fractional-second/timezone
- * variants (TIMESTAMP, length 11+) are out of narrow scope.
- */
 public final class OracleDateCodec {
 
     public static byte[] encode(LocalDateTime dt) {

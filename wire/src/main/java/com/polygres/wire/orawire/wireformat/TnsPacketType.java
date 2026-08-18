@@ -1,9 +1,5 @@
 package com.polygres.wire.orawire.wireformat;
 
-/**
- * TNS packet type byte values, per the Net8/TNS framing used by Oracle's
- * wire protocol (see python-oracledb impl/thin/packet.pyx / constants.pxi).
- */
 public enum TnsPacketType {
     CONNECT(1),
     ACCEPT(2),

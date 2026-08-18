@@ -37,61 +37,20 @@ import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Speaks the SQL Server TDS wire protocol directly: PRELOGIN handshake, LOGIN7 auth (SQL auth
- * only), then SQL_BATCH round-tripping onto the shared Postgres backend through the canonical
- * pipeline — same "basic connectivity" scope and same "proxy through {@link StatementPipeline}
- * with a fresh borrowed backend connection per statement" design as {@link
- * com.polygres.wire.mywire.MySqlWireSessionHandler} and {@code PgWireSessionHandler}; see those
- * classes' javadoc for the general rationale.
- *
- * <p><b>TLS</b>: PRELOGIN's ENCRYPTION option (MS-TDS §2.2.6.4) is now negotiated in-band, the
- * same shape as pgwire's {@code SSLRequest}/mywire's {@code CLIENT_SSL} (see {@link
- * com.polygres.wire.pgwire.PgWireSessionHandler#readStartupMessage}'s javadoc for the general
- * pattern) — this session's socket is upgraded to an {@link SSLSocket} in place immediately after
- * the PRELOGIN response is flushed, and every byte from LOGIN7 onward (including the whole
- * SQL_BATCH loop) runs over that TLS-wrapped socket. See {@link #performHandshake} for the actual
- * negotiation logic and {@link PreLoginHandshake}'s javadoc for the real MS-TDS ENCRYPTION byte
- * values (cross-checked against {@code mssql-jdbc}'s own {@code TDS.class} constants).
- *
- * <p>Still out of scope: no RPC/prepared-statement support (SQL_BATCH only), no dialect
- * translation depth beyond {@link com.polygres.wire.core.DialectTranslations#translate} — see that
- * class's SQL_SERVER normalizer for what T-SQL surface area is actually covered today.
- *
- * <p>Clean-room implementation: no Babelfish/Microsoft source was copied. Byte-level protocol
- * shape (packet header, PRELOGIN/LOGIN7 field layout, response token formats) was cross-checked
- * against the public MS-TDS specification; the project owner's suggested primary reference —
- * Babelfish for PostgreSQL's C implementation of the same protocol, in the {@code
- * babelfish-for-postgresql/postgresql_modified_for_babelfish} repo — was consulted for the org/
- * repo identification but its exact TDS-handling source directory could not be located within
- * this pass's time budget (its `src/backend` tree is large and the TDS front-end code, if
- * present in that repo at all rather than in a separate protocol-listener process, wasn't found
- * by path search); the public MS-TDS spec was the actual byte-level source of truth used here as
- * a result. Documented plainly rather than overclaiming the Babelfish cross-check.
- */
 public final class MssqlWireSessionHandler implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(MssqlWireSessionHandler.class);
 
     private final Socket clientSocket;
-    // Unlike pgwire/mywire, this never gets reassigned to a different Socket instance on TLS
-    // upgrade -- TdsTlsChannel (see performHandshake) layers directly on this same raw socket's
-    // streams via an SSLEngine, so plain-socket close() semantics are all that's ever needed here.
+    
     private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
 
-    // Translation caching used to live here (DEFAULT_PATH_CACHE/DEFAULT_PATH_LLM_CLIENT/
-    // translationCacheStore), backing a direct DialectTranslationStage.translateWithFallback call
-    // made right before pipeline.execute() -- removed; see executeQuery's comment for why the
-    // shared pipeline's own DialectTranslationStage (constructed once in Main with its own cache/
-    // llmClient/cacheStore) is now the only place this session's queries get translated.
     private final FailedStatementLog failedStatementLog;
-    // Non-null only when POLYWIRE_AUTH_MODE=postgres_roles -- see PgRoleAuthCache's javadoc for
-    // why mssqlwire (unlike orawire/mywire) can use it: TDS LOGIN7 already sends the client's
-    // password as plain text, same precondition the cache's verification relies on.
+    
     private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
@@ -129,23 +88,21 @@ public final class MssqlWireSessionHandler implements Runnable {
 
             HandshakeStreams streams = performHandshake(in, out, packets);
             if (streams == null) {
-                return; // PRELOGIN/LOGIN7 failed (or Windows auth requested -- unsupported)
+                return;
             }
             queryLoop(streams.in(), streams.out(), packets);
         } catch (java.io.EOFException e) {
-            // client disconnected mid-message; not worth logging as a warning
+            
         } catch (Exception e) {
             log.warn("mssqlwire session terminated: {}", e.getMessage(), e);
         } finally {
             try {
                 activeSocket.close();
             } catch (IOException ignoredOnSessionTeardown) {
-                // closing on the way out -- nothing left to report this to
+                
             }
         }
     }
-
-    // ---- PRELOGIN + LOGIN7 --------------------------------------------------
 
     private record HandshakeStreams(DataInputStream in, OutputStream out) {
     }
@@ -162,32 +119,22 @@ public final class MssqlWireSessionHandler implements Runnable {
                 && (requestedEncryption == PreLoginHandshake.ENCRYPT_ON
                         || requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED);
         if (!options.tlsEnabled() && requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED) {
-            // TLS isn't configured (POLYWIRE_TLS_KEYSTORE unset) and the client hard-requires
-            // encryption -- can't be served; fail the handshake cleanly rather than pretend.
+            
             log.warn("mssqlwire: client requires encryption but TLS isn't configured (set POLYWIRE_TLS_KEYSTORE)");
             return null;
         }
         byte negotiatedEncryption = willUpgrade
                 ? PreLoginHandshake.ENCRYPT_ON
                 : PreLoginHandshake.ENCRYPT_NOT_SUPPORTED;
-        // A real server's PRELOGIN *response* packet is framed as TABULAR_RESULT (0x04), not
-        // PRE_LOGIN (0x12) -- found live: mssql-jdbc's SQLServerConnection.prelogin() rejects
-        // anything else with "Unexpected response type". Only the *request* packet (client->
-        // server) uses type 0x12; MS-TDS's own wording is easy to misread as symmetric here.
+        
         packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, PreLoginHandshake.buildResponse(negotiatedEncryption));
 
         if (willUpgrade) {
-            // In-band TLS upgrade: both sides begin a TLS handshake on this same socket right
-            // after the PRELOGIN response is flushed, before LOGIN7 -- same shape as pgwire's
-            // SSLRequest upgrade (see PgWireSessionHandler#readStartupMessage's javadoc).
+            
             try {
                 SSLContext sslContext = SSLContext.getInstance("TLS");
                 sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
-                // See TdsTlsChannel's javadoc for why this needs an SSLEngine-driven channel
-                // rather than a raw-socket SSLSocket wrap (the shape pgwire/mywire both use) --
-                // real mssql-jdbc's TDS-wrapped-handshake framing turns out asymmetric between
-                // its own read and write sides, found only by live-testing against the simpler
-                // approach first.
+                
                 TdsTlsChannel tls = new TdsTlsChannel(sslContext, activeSocket);
                 tls.handshake();
                 in = new DataInputStream(tls.inputStream());
@@ -221,14 +168,6 @@ public final class MssqlWireSessionHandler implements Runnable {
         return new HandshakeStreams(in, out);
     }
 
-    // ---- SQL_BATCH loop ------------------------------------------------
-
-    // Driver-issued session-setup batches (mssql-jdbc sends these right after login, e.g.
-    // "SET ANSI_NULL_DFLT_ON ON" / "SET IMPLICIT_TRANSACTIONS OFF" / "SET QUOTED_IDENTIFIER ON")
-    // have no Postgres equivalent and would otherwise fail every connection before the client's
-    // real query ever runs -- no-op'd here rather than forwarded, matching mywire's identical
-    // shim for MySQL client libraries' own "SET NAMES ..." session setup (see
-    // MySqlWireSessionHandler.SET_STATEMENT's javadoc for the general rationale).
     private static final Pattern SET_STATEMENT = Pattern.compile("^\\s*set\\s+", Pattern.CASE_INSENSITIVE);
 
     private void queryLoop(DataInputStream in, OutputStream out, TdsPacket packets) throws IOException {
@@ -240,8 +179,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                     executeQuery(out, packets, sql);
                 }
                 case TdsPacketType.ATTENTION -> {
-                    // cancel request; this pass executes statements synchronously and has nothing
-                    // in flight to cancel by the time it would see this -- ack with an empty DONE.
+                    
                     ByteArrayOutputStream body = new ByteArrayOutputStream();
                     TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
@@ -253,7 +191,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                 }
                 default -> {
                     if (msg.payload().length == 0 && msg.type() == 0) {
-                        return; // client closed the connection (LOGOUT has no dedicated packet type in this pass)
+                        return;
                     }
                     log.warn("mssqlwire: unsupported message type 0x{}", Integer.toHexString(msg.type()));
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
@@ -270,26 +208,7 @@ public final class MssqlWireSessionHandler implements Runnable {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
-        // SQL_SERVER->POSTGRES dialect translation (bracket identifiers, TOP, GETDATE()/ISNULL,
-        // etc -- see DialectTranslations.normalizeSqlServer) now happens exactly once, inside
-        // pipeline.execute() below, via the shared DialectTranslationStage -- not here. It used
-        // to be called directly, right here, before pipeline.execute() (see
-        // MySqlWireSessionHandler's identical history in commit f593bd3): at the time,
-        // BackendRegistry never registered a targetBackend for the default homogeneous
-        // mssqlwire->Postgres proxy path (no POLYWIRE_BACKENDS configured), so
-        // DialectTranslationStage's own handle() silently no-op'd for this path and the direct
-        // call was the only translation that ever happened. Commit fa75e51 closed that gap
-        // generally -- BackendRegistry#fromConfig now always registers a synthetic "default"
-        // backend from ORAPG_PG_* when POLYWIRE_BACKENDS is unset, and
-        // RouterStage#resolveUnambiguousDefault falls back to exactly that entry -- so
-        // RouterStage resolves a real targetBackend for this path too now, and
-        // DialectTranslationStage.handle() fires inside pipeline.execute() same as every other
-        // frontend. Keeping the direct call on top of that translated every query twice (found
-        // live: polywire_translation_cache recorded two rows per query -- the untranslated SQL,
-        // then the already-translated SQL translated again into itself as a no-op) -- see
-        // DialectTranslationStage's translateWithFallback javadoc for the shared cache/fallback
-        // logic this path now reaches through pipeline.execute() alone, with no separate call
-        // needed.
+        
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
@@ -315,11 +234,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                 }
                 TdsTokens.writeDone(body, TdsTokens.doneCountStatus(), TdsTokens.curCmdSelect(), result.rows().size());
             } else {
-                // mssql-jdbc's StreamDone.getUpdateCount() (found live via bytecode inspection --
-                // see TdsTokens.curCmdFor's javadoc) asserts DONE's CurCmd is one of a specific
-                // whitelist (INSERT/UPDATE/DELETE/... ) before it will even read DoneRowCount --
-                // an all-zero/generic CurCmd silently produces -1 rather than the real row count,
-                // even though DONE_COUNT was set correctly.
+                
                 TdsTokens.writeDone(body, TdsTokens.doneCountStatus(), TdsTokens.curCmdFor(sql), result.updateCount());
             }
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());

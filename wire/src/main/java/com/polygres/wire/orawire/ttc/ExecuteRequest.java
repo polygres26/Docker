@@ -2,13 +2,12 @@ package com.polygres.wire.orawire.ttc;
 
 import java.util.List;
 
-/** Parsed OEXEC request from the client. */
 public final class ExecuteRequest {
     public final long cursorId;
-    public final String sqlText; // null if cursorId != 0 (re-execute of a cached cursor; not supported yet)
+    public final String sqlText;
     public final long options;
-    public final long numIters; // prefetch row count: how many rows the client expects inline in this response
-    public final List<BindParam> bindParams; // empty if no bind variables
+    public final long numIters;
+    public final List<BindParam> bindParams;
 
     public ExecuteRequest(long cursorId, String sqlText, long options, long numIters, List<BindParam> bindParams) {
         this.cursorId = cursorId;

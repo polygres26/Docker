@@ -13,24 +13,6 @@ import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.postgresql.util.PGobject;
 
-/**
- * Maps MongoDB database -&gt; Postgres schema and collection -&gt; Postgres table, same top-level
- * mapping mongo-java-server's postgresql-backend module uses (its {@code PostgresqlDatabase}/
- * {@code PostgresqlCollection}, BSD-3-Clause) — a database name becomes a schema, a collection
- * name becomes a table in it, created lazily with {@code CREATE SCHEMA IF NOT EXISTS}/
- * {@code CREATE TABLE IF NOT EXISTS} on first use.
- *
- * <p><b>Table shape diverges from the reference on purpose</b>, per this task's explicit
- * requirement: the reference stores an opaque {@code json} column plus a synthetic serial
- * {@code id} unrelated to MongoDB's own {@code _id}, and does all filtering by streaming rows
- * back into the JVM. This class instead uses:
- * <pre>{@code CREATE TABLE "<db>"."<collection>" (id text PRIMARY KEY, doc jsonb NOT NULL)}</pre>
- * where {@code id} is a real, indexed column holding the extended-JSON text form of the
- * document's actual {@code _id} (so lookups/updates/deletes by {@code _id} — the overwhelming
- * common case for all four CRUD ops — hit a primary-key index instead of a full scan), and
- * {@code doc} is {@code jsonb} (not {@code json}) specifically so {@link MongoQueryTranslator}'s
- * generated {@code WHERE} clauses can use jsonb's native comparison operators.
- */
 final class PostgresDocumentStore {
 
     private static final Pattern SAFE_NAME = Pattern.compile("^[A-Za-z0-9_]+$");
@@ -76,18 +58,12 @@ final class PostgresDocumentStore {
         return obj;
     }
 
-    /** {@code count} rows affected and the extended-JSON {@code _id} text of each — the exact
-     * shape {@code MongoCache} keys on, so a write can invalidate precisely the cache entries it
-     * touched instead of the whole collection. */
     record WriteResult(int count, List<String> ids) {}
 
-    /** The same extended-JSON {@code _id} text this store's {@code id} column holds — used by
-     * {@code MongoCommandDispatcher} to build/invalidate {@code MongoCache} keys consistently. */
     static String idJsonFor(Object idValue) {
         return BsonJson.valueToJson(new BsonObjectIdOrPassthrough(idValue).toBson());
     }
 
-    /** Inserts one document, generating an ObjectId {@code _id} if the document doesn't have one. */
     Document insertOne(String db, String collection, Document document) throws SQLException {
         if (!document.containsKey("_id")) {
             document.put("_id", new ObjectId());
@@ -124,7 +100,6 @@ final class PostgresDocumentStore {
         return results;
     }
 
-    /** Full-document replace ({@code $set}-merged document already computed by the caller). */
     WriteResult updateMany(String db, String collection, MongoQueryTranslator.Where where, Document merger, int limit)
             throws SQLException {
         try (Connection conn = connections.get()) {
@@ -159,10 +134,6 @@ final class PostgresDocumentStore {
         }
     }
 
-    /** Selects the affected {@code id}s first (needed both to scope {@code limit} and to report
-     * exactly which cache keys a write touched), then deletes precisely those rows — rather than
-     * a single filter-scoped {@code DELETE}, so the caller always learns which {@code _id}s were
-     * removed regardless of what shape the filter was. */
     WriteResult deleteMany(String db, String collection, MongoQueryTranslator.Where where, int limit) throws SQLException {
         try (Connection conn = connections.get()) {
             ensureTable(conn, db, collection);
@@ -196,7 +167,6 @@ final class PostgresDocumentStore {
         }
     }
 
-    /** Tiny local helper so a raw {@code ObjectId}/String/Number stored under "_id" both serialize consistently. */
     private record BsonObjectIdOrPassthrough(Object value) {
         org.bson.BsonValue toBson() {
             if (value instanceof ObjectId oid) {

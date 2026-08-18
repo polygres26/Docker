@@ -3,11 +3,6 @@ package com.polygres.wire.orawire.ttc;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
-/**
- * Writes TTC primitive types into an in-memory buffer for a single DATA
- * packet payload. Counterpart to {@link TtcReader}; same encoding-shape
- * caveats apply (see that class's javadoc).
- */
 public final class TtcWriter {
 
     private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -32,19 +27,16 @@ public final class TtcWriter {
         writeVarBigEndian(v, 8);
     }
 
-    /** Fixed-width 2-byte little-endian, used by PROTOCOL/DATA_TYPES (not the variable-length ub2). */
     public void writeUint16LE(int v) {
         buf.write(v & 0xFF);
         buf.write((v >> 8) & 0xFF);
     }
 
-    /** Fixed-width 2-byte big-endian, used by PROTOCOL/DATA_TYPES (not the variable-length ub2). */
     public void writeUint16BE(int v) {
         buf.write((v >> 8) & 0xFF);
         buf.write(v & 0xFF);
     }
 
-    /** Fixed-width 4-byte big-endian, used by CONNECT/ACCEPT (not the variable-length ub4). */
     public void writeUint32BE(long v) {
         buf.write((int) ((v >> 24) & 0xFF));
         buf.write((int) ((v >> 16) & 0xFF));
@@ -69,12 +61,6 @@ public final class TtcWriter {
         buf.write(tmp, 0, n);
     }
 
-    /**
-     * bytes_with_length, both forms: short form (values &lt;= TNS_MAX_SHORT_LENGTH: 1-byte
-     * length prefix, raw bytes) and long form (sentinel byte TNS_LONG_LENGTH_INDICATOR = 254,
-     * then a sequence of (ub4 chunk_length, raw chunk bytes) pairs at TNS_CHUNK_SIZE each,
-     * terminated by a ub4 value of 0) — per spec §5.1/§6.
-     */
     public void writeBytesWithLength(byte[] bytes) {
         if (bytes == null || bytes.length == 0) {
             writeUint8(0);
@@ -96,20 +82,10 @@ public final class TtcWriter {
         buf.write(bytes, 0, bytes.length);
     }
 
-    /** Single-length-prefix form (e.g. SQL text via write_bytes_with_length). */
     public void writeStrWithLength(String s) {
         writeBytesWithLength(s == null ? null : s.getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * Double-length-prefix form matching read_str_with_length (outer ub4
-     * byte count, then the normal inner writeBytesWithLength encoding of
-     * the same bytes) — used by column metadata name/schema/object-name
-     * fields (base.pyx:351-353) and O5LOGON KV pair values. Confirmed
-     * against a live capture after writeStrWithLength (single-prefix) was
-     * initially and incorrectly used for column names, which desynced the
-     * whole DESCRIBE_INFO parse on the real client.
-     */
     public void writeStrWithTwoLengths(String s) {
         if (s == null) {
             writeUb4(0);

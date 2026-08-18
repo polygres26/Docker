@@ -15,16 +15,6 @@ import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Interprets one OP_MSG command document and returns the reply document. Every command a real
- * MongoDB driver's handshake and CRUD calls send is handled directly here rather than being
- * routed through PolyWire's existing {@code StatementPipeline}/{@code RouterStage} SQL-statement
- * machinery — see {@code MongoWireSessionHandler}'s class javadoc for why. Only {@code find},
- * {@code insert}, {@code update}, {@code delete}, plus the handshake/no-op commands
- * (hello/isMaster/ping/buildInfo/getParameter/endSessions) needed for pymongo and the official
- * driver to complete a connection, are implemented — no aggregation pipeline (explicitly out of
- * scope, see the class javadoc), no {@code createIndexes}/{@code count}/{@code distinct}/etc.
- */
 final class MongoCommandDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
@@ -44,7 +34,7 @@ final class MongoCommandDispatcher {
                 case "hello", "ismaster", "ismastercmd" -> hello();
                 case "ping" -> ok();
                 case "buildinfo" -> buildInfo();
-                case "getparameter" -> ok(); // pymongo probes a few server params during handshake
+                case "getparameter" -> ok();
                 case "endsessions" -> ok();
                 case "insert" -> insert(command, db);
                 case "find" -> find(command, db);
@@ -53,13 +43,11 @@ final class MongoCommandDispatcher {
                 default -> commandNotFound(commandName);
             };
         } catch (IllegalArgumentException badFilter) {
-            // A filter/update outside this pass's supported operator set (see
-            // MongoQueryTranslator/UpdateApplier javadoc) — report it as a real Mongo error
-            // rather than mis-executing it.
-            return error(badFilter.getMessage(), 9); // FailedToParse-ish
+            
+            return error(badFilter.getMessage(), 9);
         } catch (SQLException e) {
             log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
-            return error("Postgres error: " + e.getMessage(), 8); // UnknownError
+            return error("Postgres error: " + e.getMessage(), 8);
         }
     }
 
@@ -74,8 +62,7 @@ final class MongoCommandDispatcher {
         reply.put("logicalSessionTimeoutMinutes", new BsonInt32(30));
         reply.put("connectionId", new BsonInt32(1));
         reply.put("minWireVersion", new BsonInt32(0));
-        // wire version 17 == MongoDB 6.0's; high enough that drivers negotiate OP_MSG (needs >=6)
-        // without also advertising server features (transactions, etc) this frontend doesn't have.
+        
         reply.put("maxWireVersion", new BsonInt32(17));
         reply.put("readOnly", BsonBoolean.FALSE);
         reply.put("ok", new BsonDouble(1.0));
@@ -110,8 +97,6 @@ final class MongoCommandDispatcher {
                 + "pipeline or index/admin commands)", 59);
     }
 
-    // ---- CRUD ----
-
     private BsonDocument insert(BsonDocument command, String db) throws SQLException {
         String collection = command.getString("insert").getValue();
         BsonArray documents = command.getArray("documents");
@@ -123,9 +108,7 @@ final class MongoCommandDispatcher {
                 Document stored = store.insertOne(db, collection, doc);
                 inserted++;
                 if (cache != null) {
-                    // A fresh insert can't itself be stale, but a prior delete+reinsert of the
-                    // same _id could otherwise leave a stale cache entry behind — cheap and safe
-                    // to invalidate unconditionally rather than reason about that race.
+                    
                     cache.invalidate(MongoCache.key(db, collection, PostgresDocumentStore.idJsonFor(stored.get("_id"))));
                 }
             } catch (SQLException e) {
@@ -148,7 +131,7 @@ final class MongoCommandDispatcher {
         BsonDocument filter = command.containsKey("filter") ? command.getDocument("filter") : new BsonDocument();
         int limit = command.containsKey("limit") ? command.getNumber("limit").intValue() : 0;
         List<Document> docs;
-        // Cache-aside, exact-_id lookups only — see MongoCache's class javadoc for scope.
+        
         String idJson = cache != null ? MongoQueryTranslator.exactIdEquality(filter) : null;
         if (idJson != null) {
             String cacheKey = MongoCache.key(db, collection, idJson);
@@ -171,7 +154,7 @@ final class MongoCommandDispatcher {
             firstBatch.add(d.toBsonDocument());
         }
         BsonDocument cursor = new BsonDocument();
-        cursor.put("id", new BsonInt64(0)); // exhausted in the first batch, no getMore needed
+        cursor.put("id", new BsonInt64(0));
         cursor.put("ns", new BsonString(db + "." + collection));
         cursor.put("firstBatch", firstBatch);
 
