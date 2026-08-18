@@ -63,21 +63,37 @@ public final class RouterStage implements PipelineStage {
     private volatile List<PredicateRule> predicateRules;
     private volatile List<ValueShardRule> valueShardRules;
     private volatile List<ShardRule> shardRules;
+    // Nullable: only set when a caller wants the "genuinely one unambiguous backend" fallback
+    // described in #resolveBackend's javadoc. Not swapped by #reconfigure -- it's the same
+    // BackendRegistry instance for the process lifetime (Main wires one in at startup), and that
+    // instance's own #reload already keeps its *contents* current in place.
+    private final BackendRegistry backendRegistry;
 
     public RouterStage() {
-        this(List.of(), List.of(), List.of(), List.of());
+        this(List.of(), List.of(), List.of(), List.of(), null);
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules, List<ShardRule> shardRules) {
-        this(schemaRules, predicateRules, List.of(), shardRules);
+        this(schemaRules, predicateRules, List.of(), shardRules, null);
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules,
             List<ValueShardRule> valueShardRules, List<ShardRule> shardRules) {
+        this(schemaRules, predicateRules, valueShardRules, shardRules, null);
+    }
+
+    /**
+     * Same as the four-arg constructor, plus {@code backendRegistry} — see
+     * {@link #resolveBackend}'s javadoc for exactly when and why it's consulted as a last-resort
+     * fallback after every rule list has been checked and none matched.
+     */
+    public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules,
+            List<ValueShardRule> valueShardRules, List<ShardRule> shardRules, BackendRegistry backendRegistry) {
         this.schemaRules = List.copyOf(schemaRules);
         this.predicateRules = List.copyOf(predicateRules);
         this.valueShardRules = List.copyOf(valueShardRules);
         this.shardRules = List.copyOf(shardRules);
+        this.backendRegistry = backendRegistry;
     }
 
     /** For read-only config introspection (the HTTP admin API). */
@@ -104,7 +120,7 @@ public final class RouterStage implements PipelineStage {
      * across {@code POLYWIRE_SHARD_BACKENDS} when no schema/predicate rule already routed them.
      */
     public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String shardTablesSpec) {
-        return fromConfig(schemaSpec, predicateSpec, null, shardTablesSpec);
+        return fromConfig(schemaSpec, predicateSpec, null, shardTablesSpec, null);
     }
 
     /**
@@ -134,6 +150,18 @@ public final class RouterStage implements PipelineStage {
      * rest of this class's javadoc.
      */
     public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec) {
+        return fromConfig(schemaSpec, predicateSpec, valueShardSpec, shardTablesSpec, null);
+    }
+
+    /**
+     * Same as the four-arg {@link #fromConfig}, plus {@code backendRegistry} — threaded through to
+     * the constructed {@link RouterStage} so {@link #resolveBackend} can fall back to a genuinely
+     * unambiguous single registered backend when no rule matched. Pass the same
+     * {@link BackendRegistry} instance the caller also hands to {@link DialectTranslationStage} —
+     * see that field's javadoc.
+     */
+    public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String valueShardSpec,
+            String shardTablesSpec, BackendRegistry backendRegistry) {
         List<SchemaRule> schemaRules = new ArrayList<>();
         if (schemaSpec != null && !schemaSpec.isBlank()) {
             for (String entry : schemaSpec.split(",")) {
@@ -176,7 +204,7 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        return new RouterStage(schemaRules, predicateRules, valueShardRules, shardRules);
+        return new RouterStage(schemaRules, predicateRules, valueShardRules, shardRules, backendRegistry);
     }
 
     /**
@@ -246,7 +274,49 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        return null;
+        return resolveUnambiguousDefault();
+    }
+
+    /**
+     * Last resort, checked only after every schema/predicate/value-shard/shard rule above already
+     * failed to match: falls back to {@link BackendRegistry#DEFAULT_BACKEND_NAME} when that's the
+     * <em>only</em> entry present in {@link #backendRegistry} — which happens precisely when
+     * {@code POLYWIRE_BACKENDS} was never configured (single-backend deployment, the default path
+     * this fixes — see {@code BackendRegistry#fromConfig}'s three-arg overload, which only ever
+     * registers that synthetic name when {@code spec} is unset). In that case there is genuinely
+     * only one place any statement could go — the same Postgres connection every frontend already
+     * opens for itself via {@code ORAPG_PG_*} — so route there instead of leaving
+     * {@code targetBackend} {@code null} (which would make {@link DialectTranslationStage} silently
+     * skip translation for that single-backend path).
+     *
+     * <p><b>Deliberately keyed on the name, not just the count.</b> An earlier version of this
+     * fallback fired whenever exactly one backend was registered for any reason, including an
+     * operator explicitly setting {@code POLYWIRE_BACKENDS} to a single named entry (e.g.
+     * {@code "shardb=..."}, no {@code "default"} entry involved at all). That is a real, meaningful
+     * "no rule matched" case — a query against an unrelated schema has no business being silently
+     * redirected to a shard that was only ever meant for schemas an explicit {@link SchemaRule}
+     * names — and live-testing this exact scenario (one {@code POLYWIRE_BACKENDS} entry plus one
+     * schema rule) reproduced real misrouting: an unrelated table lookup went to the shard instead
+     * of staying on the frontend's own default connection, and failed there with a wrong "relation
+     * does not exist" instead of resolving correctly against the actual default backend. Checking
+     * the name closes that gap: this fallback only ever fires for the implicit single-backend case
+     * {@code BackendRegistry} synthesizes on its own, never for an operator-configured
+     * {@code POLYWIRE_BACKENDS}, no matter how many entries it has.
+     */
+    private String resolveUnambiguousDefault() {
+        if (backendRegistry == null) {
+            return null;
+        }
+        var all = backendRegistry.all();
+        if (all.size() != 1) {
+            return null;
+        }
+        BackendTarget only = all.iterator().next();
+        if (!BackendRegistry.DEFAULT_BACKEND_NAME.equals(only.name())) {
+            return null;
+        }
+        log.debug("router: no rule matched, falling back to implicit single backend '{}'", only.name());
+        return only.name();
     }
 
     private static String classifyWorkload(String sql) {

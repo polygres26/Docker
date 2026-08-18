@@ -35,18 +35,44 @@ public final class BackendRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(BackendRegistry.class);
 
+    /** Synthetic name used for the implicit single-backend entry — see {@link #fromConfig(String, String, BackendTarget)}. */
+    public static final String DEFAULT_BACKEND_NAME = "default";
+
     private volatile Map<String, BackendTarget> targets;
     private volatile List<String> shardGroup;
+    // Not volatile-swapped independently: only ever read back by #reload to re-derive a fresh
+    // registry the same way startup did for the same inputs — see #reload's javadoc.
+    private final BackendTarget defaultTarget;
 
     public BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup) {
+        this(targets, shardGroup, null);
+    }
+
+    private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget) {
         this.targets = Map.copyOf(targets);
         this.shardGroup = List.copyOf(shardGroup);
+        this.defaultTarget = defaultTarget;
     }
 
     /**
      * {@code shardGroupSpec}: "backend1,backend2,..." — each name must also appear in {@code spec}.
      */
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec) {
+        return fromConfig(spec, shardGroupSpec, null);
+    }
+
+    /**
+     * Same as the two-arg {@link #fromConfig}, plus {@code defaultTarget}: when {@code spec}
+     * ({@code POLYWIRE_BACKENDS}) is unset, PolyWire is running in single-backend mode — every
+     * frontend already opens its own connection to the one Postgres backend described by the
+     * {@code ORAPG_PG_*} env vars, but until now that connection was never itself registered here,
+     * so {@link RouterStage} had nothing to fall back to and {@link DialectTranslationStage} never
+     * fired for the default deployment path (the gap this parameter closes — see
+     * {@code RouterStage#resolveBackend}'s javadoc). Registered under {@link #DEFAULT_BACKEND_NAME}
+     * only when {@code spec} is null/blank; a real {@code POLYWIRE_BACKENDS} config is always
+     * authoritative and never gets this synthetic entry added alongside it.
+     */
+    public static BackendRegistry fromConfig(String spec, String shardGroupSpec, BackendTarget defaultTarget) {
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
         if (spec != null && !spec.isBlank()) {
             for (String entry : spec.split(";")) {
@@ -64,11 +90,16 @@ public final class BackendRegistry {
                 String password = parts.length > 2 ? parts[2] : null;
                 targets.put(name, new BackendTarget(name, url, user, password));
             }
+        } else if (defaultTarget != null) {
+            targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
+            log.info("backend registry: no POLYWIRE_BACKENDS configured -- registered the single "
+                    + "implicit ORAPG_PG_* backend as '{}' so routing/translation has a fallback target",
+                    DEFAULT_BACKEND_NAME);
         }
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()
                 ? List.of()
                 : List.of(shardGroupSpec.split(",")).stream().map(String::trim).toList();
-        return new BackendRegistry(targets, shardGroup);
+        return new BackendRegistry(targets, shardGroup, defaultTarget);
     }
 
     /**
@@ -76,10 +107,12 @@ public final class BackendRegistry {
      * parsing logic so a reload can never diverge from what a fresh startup would have produced for
      * the same {@code spec}/{@code shardGroupSpec}. Every existing holder of this instance observes
      * the change immediately — no new indirection layer needed, since object identity never changes,
-     * only the two fields inside it.
+     * only the two fields inside it. Carries this instance's original {@code defaultTarget} forward
+     * (it's {@code ORAPG_PG_*}-derived and fixed for the process lifetime, unlike {@code spec}) so a
+     * hot-reload that clears {@code POLYWIRE_BACKENDS} back to unset doesn't lose the fallback entry.
      */
     public void reload(String spec, String shardGroupSpec) {
-        BackendRegistry fresh = fromConfig(spec, shardGroupSpec);
+        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, this.defaultTarget);
         this.targets = fresh.targets;
         this.shardGroup = fresh.shardGroup;
     }

@@ -5,6 +5,7 @@ import com.polygres.wire.cluster.PolyWireCluster;
 import com.polygres.wire.config.ConfigStore;
 import com.polygres.wire.config.PolyWireConfig;
 import com.polygres.wire.core.BackendRegistry;
+import com.polygres.wire.core.BackendTarget;
 import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.QosControlStage;
@@ -175,7 +176,16 @@ public final class Main {
         // RollupStage definitions can target, beyond the one connection each frontend already
         // opens for itself via ORAPG_PG_*. Now sourced from polywire_config (hot-reloadable), not
         // a static env var -- BackendRegistry#reload keeps this same instance current in place.
-        BackendRegistry backendRegistry = BackendRegistry.fromConfig(config.backends(), config.shardBackends());
+        // Synthetic "default" entry built from the same ORAPG_PG_* values every frontend already
+        // connects with directly -- gives RouterStage/DialectTranslationStage a real, registered
+        // targetBackend to fall back to in single-backend deployments (no POLYWIRE_BACKENDS set),
+        // instead of targetBackend staying null and DialectTranslationStage never firing for the
+        // default path. See BackendRegistry#fromConfig(String, String, BackendTarget)'s javadoc.
+        BackendTarget defaultBackendTarget = new BackendTarget(BackendRegistry.DEFAULT_BACKEND_NAME,
+                "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase(),
+                options.pgUser(), options.pgPassword());
+        BackendRegistry backendRegistry = BackendRegistry.fromConfig(
+                config.backends(), config.shardBackends(), defaultBackendTarget);
 
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
         if (telemetry != null) {
@@ -294,7 +304,8 @@ public final class Main {
                 config.routerSchemaRules(),
                 config.routerPredicateRules(),
                 config.routerValueShardRules(),
-                config.routerShardTables());
+                config.routerShardTables(),
+                backendRegistry);
         log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s), {} shard-table rule(s)",
                 routerStage.schemaRules().size(), routerStage.predicateRules().size(),
                 routerStage.valueShardRules().size(), routerStage.shardRules().size());
