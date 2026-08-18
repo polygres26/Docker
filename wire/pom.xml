@@ -24,6 +24,15 @@
     <jackson.annotations.version>2.20</jackson.annotations.version>
     <snakeyaml.version>2.3</snakeyaml.version>
     <ignite.version>2.18.0</ignite.version>
+    <!-- ignite-aws/ignite-gce stopped publishing after 2.11.1 (verified against Maven Central,
+         no 2.18.0 artifact exists for either); ignite-azure-ext is a separate ignite-extensions
+         release line, last published against ignite-core 2.13.0 (provided scope). All three still
+         only depend on TcpDiscoveryIpFinderAdapter, a stable SPI surface unchanged across the 2.x
+         line — see PolyWireCluster's javadoc for the full verification trail and the version-skew
+         caveat this pin carries. -->
+    <ignite.aws.version>2.11.1</ignite.aws.version>
+    <ignite.gce.version>2.11.1</ignite.gce.version>
+    <ignite.azure.version>1.0.0</ignite.azure.version>
     <slf4j.version>2.0.16</slf4j.version>
     <junit.version>5.11.3</junit.version>
     <grpc.version>1.68.1</grpc.version>
@@ -129,6 +138,59 @@
       <version>${ignite.version}</version>
     </dependency>
     <dependency>
+      <!-- TcpDiscoveryS3IpFinder (POLYWIRE_CLUSTER_DISCOVERY=s3) — nodes self-register their IP
+           in an S3 bucket on startup instead of a static host:port list, so replaced instances
+           don't break discovery. Real Maven Central coordinate verified directly (see
+           ignite.aws.version's comment above): ignite-aws stopped publishing after 2.11.1, there
+           is no 2.18.0 artifact, despite that being the natural guess given ignite-core's own
+           pin. Excludes its own transitive ignite-core 2.11.1 — Maven's nearest-wins mediation
+           would already prefer this project's direct 2.18.0 dependency, but the exclusion makes
+           that explicit rather than relying on mediation order. -->
+      <groupId>org.apache.ignite</groupId>
+      <artifactId>ignite-aws</artifactId>
+      <version>${ignite.aws.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.ignite</groupId>
+          <artifactId>ignite-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <!-- TcpDiscoveryGoogleStorageIpFinder (POLYWIRE_CLUSTER_DISCOVERY=gcs) — same
+           self-registration pattern as S3, backed by Cloud Storage. Same version-skew situation
+           as ignite-aws: last published at 2.11.1, no 2.18.0 artifact on Maven Central. -->
+      <groupId>org.apache.ignite</groupId>
+      <artifactId>ignite-gce</artifactId>
+      <version>${ignite.gce.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.ignite</groupId>
+          <artifactId>ignite-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <!-- TcpDiscoveryAzureBlobStoreIpFinder (POLYWIRE_CLUSTER_DISCOVERY=azure) — ships from a
+           *different* release line than ignite-aws/ignite-gce: it was moved out of mainline
+           Apache Ignite into the separate apache/ignite-extensions repo, published under artifact
+           id ignite-azure-ext (still groupId org.apache.ignite), last released as 1.0.0 against
+           ignite-core 2.13.0 (provided scope there, meaning it expects the embedding project to
+           supply its own ignite-core — exactly this project's situation). Verified for real: the
+           1.0.0 jar was downloaded and inspected directly
+           (org/apache/ignite/spi/discovery/tcp/ipfinder/azure/TcpDiscoveryAzureBlobStoreIpFinder.class
+           is really in it), not assumed from a package name. -->
+      <groupId>org.apache.ignite</groupId>
+      <artifactId>ignite-azure-ext</artifactId>
+      <version>${ignite.azure.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.ignite</groupId>
+          <artifactId>ignite-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-sdk</artifactId>
       <version>${opentelemetry.version}</version>
@@ -215,6 +277,31 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.1</version>
+        <configuration>
+          <!-- Same add-opens set scripts/run.sh documents needing on JDK 17+ for embedded
+               Ignite's reflective GridUnsafe bootstrap (module system blocks it by default) —
+               only actually exercised by PolyWireClusterAzBackupPlacementTest, which is the one
+               test class that starts real embedded Ignite nodes. -->
+          <argLine>
+            --add-opens=java.base/jdk.internal.access=ALL-UNNAMED
+            --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED
+            --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
+            --add-opens=java.base/java.lang=ALL-UNNAMED
+            --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+            --add-opens=java.base/java.io=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED
+            --add-opens=java.base/java.util=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED
+            --add-opens=java.base/java.math=ALL-UNNAMED
+            --add-opens=java.base/java.time=ALL-UNNAMED
+            --add-opens=java.base/java.text=ALL-UNNAMED
+            --add-opens=java.base/java.net=ALL-UNNAMED
+            --add-opens=java.sql/java.sql=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+          </argLine>
+        </configuration>
       </plugin>
       <plugin>
         <!-- Produces a runnable target/polygres-wire.jar (all deps bundled) with
