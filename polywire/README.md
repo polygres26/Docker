@@ -37,18 +37,18 @@ docker build -f docker/polywire/Dockerfile -t polywire:latest .
 Every PolyWire setting is an env var — see `Main.java`'s and `ServerOptions.java`'s own javadoc
 for the complete, authoritative list (QoS, cache, ACL, OAuth, AWS IAM SigV4, TLS, cluster/
 sharding, ...). The compose file above only sets the minimum needed to connect to a real backend
-(`ORAPG_PG_*`) plus the shared dev auth credential (`ORAPG_AUTH_*`) — everything else uses its
+(`POLYWIRE_PG_*`) plus the shared dev auth credential (`POLYWIRE_AUTH_*`) — everything else uses its
 documented default.
 
 **Config that lives in Postgres itself, not env vars**: `polywire_config` (QoS/backends/router/
 cache/ACL/OAuth/AWS IAM, hot-reloadable, no restart) and `polywire_firewall_rules` (a DBA-managed
 table — plain `INSERT`/`UPDATE`/`DELETE`, same mental model as `GRANT`/`REVOKE`) both live on
-whichever Postgres `ORAPG_PG_HOST` points at, auto-created on first boot. See `ConfigStore`'s and
+whichever Postgres `POLYWIRE_PG_HOST` points at, auto-created on first boot. See `ConfigStore`'s and
 `FirewallRuleStore`'s class javadoc for the full schema and examples.
 
 ## Primary/standby failover
 
-Set `ORAPG_PG_STANDBY_HOST`/`ORAPG_PG_STANDBY_PORT` (a real physical-replica pair of the primary
+Set `POLYWIRE_PG_STANDBY_HOST`/`POLYWIRE_PG_STANDBY_PORT` (a real physical-replica pair of the primary
 above, same credentials) to enable automatic failover — covers both real query traffic and every
 control-plane store (`polywire_config`, `polywire_firewall_rules`, translation cache, failed-
 statement log). See `PgConnections`' class javadoc for exactly what this does and doesn't cover.
