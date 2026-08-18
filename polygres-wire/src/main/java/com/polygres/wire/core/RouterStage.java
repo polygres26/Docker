@@ -49,20 +49,31 @@ public final class RouterStage implements PipelineStage {
     public record PredicateRule(int bindIndex, String expectedValue, String backendName) {
     }
 
+    /** Sharding-key routing via a {@link ShardingStrategy} (hash/consistent-hash/list/range) rather than {@link PredicateRule}'s fixed one-value-to-one-backend map — see {@link ShardingStrategy}'s javadoc and {@link #fromConfig}'s grammar. */
+    public record ValueShardRule(int bindIndex, ShardingStrategy strategy) {
+    }
+
     public record ShardRule(Pattern schemaPattern) {
     }
 
     private final List<SchemaRule> schemaRules;
     private final List<PredicateRule> predicateRules;
+    private final List<ValueShardRule> valueShardRules;
     private final List<ShardRule> shardRules;
 
     public RouterStage() {
-        this(List.of(), List.of(), List.of());
+        this(List.of(), List.of(), List.of(), List.of());
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules, List<ShardRule> shardRules) {
+        this(schemaRules, predicateRules, List.of(), shardRules);
+    }
+
+    public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules,
+            List<ValueShardRule> valueShardRules, List<ShardRule> shardRules) {
         this.schemaRules = List.copyOf(schemaRules);
         this.predicateRules = List.copyOf(predicateRules);
+        this.valueShardRules = List.copyOf(valueShardRules);
         this.shardRules = List.copyOf(shardRules);
     }
 
@@ -73,6 +84,10 @@ public final class RouterStage implements PipelineStage {
 
     public List<PredicateRule> predicateRules() {
         return predicateRules;
+    }
+
+    public List<ValueShardRule> valueShardRules() {
+        return valueShardRules;
     }
 
     public List<ShardRule> shardRules() {
@@ -86,6 +101,36 @@ public final class RouterStage implements PipelineStage {
      * across {@code POLYWIRE_SHARD_BACKENDS} when no schema/predicate rule already routed them.
      */
     public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String shardTablesSpec) {
+        return fromConfig(schemaSpec, predicateSpec, null, shardTablesSpec);
+    }
+
+    /**
+     * Same as the three-arg {@link #fromConfig}, plus {@code valueShardSpec}
+     * ({@code POLYWIRE_ROUTER_VALUE_SHARD_RULES}) — sharding-key routing via a
+     * {@link ShardingStrategy} instead of {@link PredicateRule}'s fixed one-value-to-one-backend
+     * map. Grammar: rules separated by {@code |}, each rule {@code bindIndex:type:params}:
+     * <ul>
+     *   <li>{@code hash}: {@code params} = comma-separated backend names, e.g.
+     *   {@code "0:hash:shard1,shard2,shard3"} — {@code hash(bindValue) % backends.size()}.</li>
+     *   <li>{@code consistent}: same {@code params} shape as {@code hash}, e.g.
+     *   {@code "0:consistent:shard1,shard2,shard3"} — a hash ring (150 virtual nodes/backend)
+     *   instead of plain modulo, so adding/removing a backend only remaps the keys that fell in
+     *   the affected ring arc(s), not everything.</li>
+     *   <li>{@code list}: {@code params} = {@code "backend1=v1,v2;backend2=v3"} (semicolon between
+     *   backends, comma between that backend's values), e.g.
+     *   {@code "0:list:shard1=east,north;shard2=west,south"}.</li>
+     *   <li>{@code range}: {@code params} = {@code "backend1<1000;backend2<3000;backend3"}
+     *   (semicolon-separated, ascending, half-open {@code [low, high)} bounds — each entry's
+     *   {@code low} is the previous entry's {@code high}, starting at {@code -infinity}; the last
+     *   entry, with no {@code <bound}, catches everything {@code >=} the previous bound), e.g.
+     *   {@code "0:range:shard1<1000;shard2<3000;shard3"} routes {@code bindValue < 1000} to
+     *   shard1, {@code 1000 <= bindValue < 3000} to shard2, {@code bindValue >= 3000} to shard3.</li>
+     * </ul>
+     * Checked in {@link #resolveBackend} right after {@link PredicateRule} and before
+     * {@link ShardRule} (scatter-gather) — same "most specific first" ordering rationale as the
+     * rest of this class's javadoc.
+     */
+    public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec) {
         List<SchemaRule> schemaRules = new ArrayList<>();
         if (schemaSpec != null && !schemaSpec.isBlank()) {
             for (String entry : schemaSpec.split(",")) {
@@ -106,6 +151,18 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
+        List<ValueShardRule> valueShardRules = new ArrayList<>();
+        if (valueShardSpec != null && !valueShardSpec.isBlank()) {
+            for (String rule : valueShardSpec.split("\\|")) {
+                String[] parts = rule.split(":", 3);
+                if (parts.length != 3) {
+                    continue;
+                }
+                int bindIndex = Integer.parseInt(parts[0].trim());
+                ShardingStrategy strategy = ShardingStrategy.fromConfig(parts[1].trim(), parts[2].trim());
+                valueShardRules.add(new ValueShardRule(bindIndex, strategy));
+            }
+        }
         List<ShardRule> shardRules = new ArrayList<>();
         if (shardTablesSpec != null && !shardTablesSpec.isBlank()) {
             for (String entry : shardTablesSpec.split(",")) {
@@ -116,7 +173,7 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        return new RouterStage(schemaRules, predicateRules, shardRules);
+        return new RouterStage(schemaRules, predicateRules, valueShardRules, shardRules);
     }
 
     @Override
@@ -142,6 +199,20 @@ public final class RouterStage implements PipelineStage {
                 log.debug("router: predicate rule matched (bind[{}]={}) -> backend={}",
                         rule.bindIndex(), rule.expectedValue(), rule.backendName());
                 return rule.backendName();
+            }
+        }
+        for (ValueShardRule rule : valueShardRules) {
+            List<Object> binds = statement.bindParams();
+            if (rule.bindIndex() < binds.size()) {
+                Object bindValue = binds.get(rule.bindIndex());
+                if (bindValue != null) {
+                    String backend = rule.strategy().resolve(String.valueOf(bindValue));
+                    if (backend != null) {
+                        log.debug("router: value-shard rule matched (bind[{}]={}) -> backend={}",
+                                rule.bindIndex(), bindValue, backend);
+                        return backend;
+                    }
+                }
             }
         }
         if (statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {

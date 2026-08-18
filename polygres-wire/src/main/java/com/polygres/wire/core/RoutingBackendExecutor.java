@@ -1,5 +1,7 @@
 package com.polygres.wire.core;
 
+import com.polygres.wire.xa.XaBackendFactory;
+import com.polygres.wire.xa.XaTransaction;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -65,6 +67,23 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      */
     private Map<String, String> cursorTargets;
 
+    /**
+     * Non-null exactly when {@link #transactionConnections} is (same lifetime) — coordinates a
+     * real Postgres 2PC commit across however many distinct shard backends the client's open
+     * transaction ends up touching. Every {@link #transactionConnections} entry is opened via
+     * {@link XaBackendFactory#open} (a real {@code PGXADataSource} branch) instead of a plain
+     * autocommit-false connection, and enlisted into this transaction the moment it's opened
+     * ({@link XaTransaction#addBranch}) — so a client transaction that only ever touches one
+     * shard still pays the (small) XA prepare/commit round trip, but a transaction spanning two
+     * or more shards gets real atomicity: {@link #endTransaction} drives one
+     * {@link XaTransaction#commit()}/{@link XaTransaction#rollback()} across every branch instead
+     * of committing/rolling back each connection independently — see {@link RouterStage}'s and
+     * this class's prior javadoc for why that used to be "future work" (this is that work, scoped
+     * to DML inside an explicit client {@code BEGIN}/{@code COMMIT}; {@link #executeScatterGather}
+     * remains the separate SELECT-only fan-out path and is unaffected).
+     */
+    private XaTransaction xaTransaction;
+
     private static final Pattern DECLARE_CURSOR = Pattern.compile("(?i)^\\s*DECLARE\\s+(\\w+)\\s+CURSOR\\b");
     private static final Pattern FETCH_OR_CLOSE_CURSOR =
             Pattern.compile("(?i)^\\s*(?:FETCH\\b.*\\b(?:FROM|IN)\\s+(\\w+)|CLOSE\\s+(\\w+))\\s*;?\\s*$");
@@ -91,33 +110,41 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     public void beginTransaction() {
         transactionConnections = new LinkedHashMap<>();
         cursorTargets = new LinkedHashMap<>();
+        xaTransaction = new XaTransaction();
     }
 
-    /** Commits (or rolls back) and closes every connection opened for the transaction just ended, then returns to the default (fresh-per-statement) behavior. Safe to call even if no routed statement ever actually opened one. */
+    /**
+     * Drives one real 2PC commit/rollback across every shard branch opened for the transaction
+     * just ended (via {@link XaTransaction#commit}/{@link XaTransaction#rollback}), then closes
+     * every branch connection, then returns to the default (fresh-per-statement) behavior. Safe to
+     * call even if no routed statement ever actually opened a branch (transactionConnections empty
+     * — {@link XaTransaction#hasBranches()} is false, commit()/rollback() on it are no-ops over an
+     * empty resource list).
+     */
     public void endTransaction(boolean commit) throws SQLException {
         if (transactionConnections == null) {
             return;
         }
         SQLException firstFailure = null;
+        try {
+            if (commit) {
+                xaTransaction.commit();
+            } else {
+                xaTransaction.rollback();
+            }
+        } catch (SQLException e) {
+            firstFailure = e;
+        }
         for (Connection connection : transactionConnections.values()) {
             try {
-                if (commit) {
-                    connection.commit();
-                } else {
-                    connection.rollback();
-                }
-            } catch (SQLException e) {
-                firstFailure = firstFailure == null ? e : firstFailure;
-            } finally {
-                try {
-                    connection.close();
-                } catch (SQLException ignoredOnCleanup) {
-                    // already reporting firstFailure if there was one; a close failure on the way out isn't more useful
-                }
+                connection.close();
+            } catch (SQLException ignoredOnCleanup) {
+                // already reporting firstFailure if there was one; a close failure on the way out isn't more useful
             }
         }
         transactionConnections = null;
         cursorTargets = null;
+        xaTransaction = null;
         if (firstFailure != null) {
             throw firstFailure;
         }
@@ -196,7 +223,12 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     private ExecutionResult executeOnTransactionConnection(BackendTarget target, Statement statement) throws SQLException {
         Connection connection = transactionConnections.get(target.name());
         if (connection == null) {
-            connection = target.openManualCommit(); // autoCommit(false) -- see BackendTarget#openManualCommit
+            // Real XA branch (PGXADataSource), not a plain autocommit-false connection -- see
+            // xaTransaction's javadoc for why every routed target during an explicit transaction
+            // gets one, not just multi-shard ones.
+            XaBackendFactory.XaBranch branch = XaBackendFactory.open(target);
+            xaTransaction.addBranch(branch.resource());
+            connection = branch.connection();
             transactionConnections.put(target.name(), connection);
         }
         return new JdbcBackendExecutor(connection).execute(statement);

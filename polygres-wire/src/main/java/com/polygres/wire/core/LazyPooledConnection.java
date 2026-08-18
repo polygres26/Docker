@@ -43,7 +43,7 @@ public final class LazyPooledConnection implements AutoCloseable {
 
     /**
      * Wraps a connection that's already open and not pool-managed (e.g. an
-     * XA branch from Omnigate's {@code com.omnigate.xa.XaBackendFactory} (not ported), which has
+     * XA branch from {@link com.polygres.wire.xa.XaBackendFactory}, which has
      * its own enlist/prepare/commit lifecycle that doesn't mix with generic
      * pooling — see that class's javadoc). {@link #commit()}/{@link
      * #rollback()} delegate straight through instead of releasing anything

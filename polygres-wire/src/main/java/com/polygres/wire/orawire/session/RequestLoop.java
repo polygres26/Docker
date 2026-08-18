@@ -8,6 +8,7 @@ import com.polygres.wire.core.SourceDialect;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
 import com.polygres.wire.orawire.translator.BindVariableRewriter;
+import com.polygres.wire.xa.XaTransaction;
 import com.polygres.wire.orawire.translator.DualTableRewriter;
 import com.polygres.wire.orawire.ttc.BindParam;
 import com.polygres.wire.orawire.ttc.ColumnMetadata;
@@ -85,7 +86,7 @@ public final class RequestLoop {
     private final com.polygres.wire.core.LazyPooledConnection pgConnection;
     private final com.polygres.wire.core.LazyPooledConnection oracleConnection; // null unless the legacy 2-way dual-exec path is enabled for this session
     private final List<Connection> replicaConnections; // empty unless POLYWIRE_REPLICATION_BACKENDS is configured (generalized N-way path)
-    private final XaCoordinatorStub xaTransaction; // non-null only when running under XA/2PC (either replication path)
+    private final XaTransaction xaTransaction; // non-null only when running under XA/2PC (either replication path)
     private final ServerOptions options;
     private final List<PipelineStage> sharedStages;
     private final com.polygres.wire.core.BackendRegistry backendRegistry;
@@ -135,7 +136,7 @@ public final class RequestLoop {
 
     public RequestLoop(TnsPacketReader reader, OutputStream out, com.polygres.wire.core.LazyPooledConnection pgConnection,
             com.polygres.wire.core.LazyPooledConnection oracleConnection, List<Connection> replicaConnections,
-            XaCoordinatorStub xaTransaction,
+            XaTransaction xaTransaction,
             ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
         this(reader, out, pgConnection, oracleConnection, replicaConnections, xaTransaction, options, sharedStages,
                 backendRegistry, null, null);
@@ -147,7 +148,7 @@ public final class RequestLoop {
     // needs these) is unaffected.
     public RequestLoop(TnsPacketReader reader, OutputStream out, com.polygres.wire.core.LazyPooledConnection pgConnection,
             com.polygres.wire.core.LazyPooledConnection oracleConnection, List<Connection> replicaConnections,
-            XaCoordinatorStub xaTransaction,
+            XaTransaction xaTransaction,
             ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
             String oracleUsername, String oraclePassword) {
         this.reader = reader;
@@ -930,16 +931,4 @@ public final class RequestLoop {
         out.flush();
     }
 
-    /**
-     * Minimal stand-in for Omnigate's real {@code com.omnigate.xa.XaTransaction} (2PC coordinator).
-     * PolyWire doesn't port the (excluded, per project scope) {@code xa} package, so every caller of
-     * this class now only ever passes {@code null} — the field and null-checks are kept as-is so
-     * this class's control flow doesn't otherwise diverge from Omnigate's, but nothing in PolyWire
-     * ever actually constructs one today.
-     */
-    interface XaCoordinatorStub {
-        void commit() throws SQLException;
-
-        void rollback();
-    }
 }

@@ -202,8 +202,24 @@ public final class Main {
 
         StatsCollectorStage statsStage = new StatsCollectorStage(telemetry);
 
+        // RouterStage rules: POLYWIRE_ROUTER_SCHEMA_RULES ("schema1:backend1,schema2:backend2"),
+        // POLYWIRE_ROUTER_PREDICATE_RULES ("bindIndex:value:backend,..."),
+        // POLYWIRE_ROUTER_VALUE_SHARD_RULES ("bindIndex:type:params|...", type = hash/consistent/
+        // list/range via ShardingStrategy -- see RouterStage.fromConfig's javadoc for the full
+        // grammar), and POLYWIRE_ROUTER_SHARD_TABLES ("schema1,schema2" -- scatter-gathers across
+        // POLYWIRE_SHARD_BACKENDS when no schema/predicate/value-shard rule already routed the
+        // query). All optional; unset means the previous zero-rule behavior (see RouterStage's
+        // javadoc).
         List<PipelineStage> stages = new ArrayList<>();
-        stages.add(new RouterStage());
+        RouterStage routerStage = RouterStage.fromConfig(
+                System.getenv("POLYWIRE_ROUTER_SCHEMA_RULES"),
+                System.getenv("POLYWIRE_ROUTER_PREDICATE_RULES"),
+                System.getenv("POLYWIRE_ROUTER_VALUE_SHARD_RULES"),
+                System.getenv("POLYWIRE_ROUTER_SHARD_TABLES"));
+        log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s), {} shard-table rule(s)",
+                routerStage.schemaRules().size(), routerStage.predicateRules().size(),
+                routerStage.valueShardRules().size(), routerStage.shardRules().size());
+        stages.add(routerStage);
         stages.add(qosStage);
         stages.add(new DialectTranslationStage(backendRegistry));
         if (rollupStage != null) {
