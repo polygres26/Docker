@@ -33,17 +33,17 @@ services:
       # polywire_translation_cache, polywire_failed_statements) and, by default, all query traffic
       # target -- see PgConnections'/BackendTarget's javadoc for the "config primary vs. sharded
       # data plane" split if POLYWIRE_BACKENDS is ever added here.
-      ORAPG_PG_HOST: postgres
-      ORAPG_PG_PORT: "5432"
-      ORAPG_PG_DATABASE: postgres
-      ORAPG_PG_USER: postgres
-      ORAPG_PG_PASSWORD: postgres
+      POLYWIRE_PG_HOST: postgres
+      POLYWIRE_PG_PORT: "5432"
+      POLYWIRE_PG_DATABASE: postgres
+      POLYWIRE_PG_USER: postgres
+      POLYWIRE_PG_PASSWORD: postgres
       # Shared dev credential for every wire-protocol frontend's default (non-postgres_roles) auth
       # -- see com.polygres.wire.auth.CredentialStore's javadoc. Change for anything beyond local
       # dev/test; consider POLYWIRE_AUTH_MODE=postgres_roles for real per-role Postgres auth instead
       # (see com.polygres.wire.auth.PgRoleAuthCache's javadoc).
-      ORAPG_AUTH_USER: postgres
-      ORAPG_AUTH_PASSWORD: postgres
+      POLYWIRE_AUTH_USER: postgres
+      POLYWIRE_AUTH_PASSWORD: postgres
     ports:
       - "15432:15432" # pgwire (Postgres wire protocol)
       - "13306:13306" # mywire (MySQL wire protocol)
