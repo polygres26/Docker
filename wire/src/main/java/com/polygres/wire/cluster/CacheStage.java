@@ -61,27 +61,50 @@ public final class CacheStage implements PipelineStage {
             "\\bfrom\\s+([A-Za-z_][\\w$]*(?:\\.[A-Za-z_][\\w$]*)?)", Pattern.CASE_INSENSITIVE);
 
     private final PolyWireCluster cluster;
-    private final List<Pattern> cachePatterns;
-    private final long ttlMillis;
+    // volatile, not final: see #reconfigure. cachePatterns changing takes effect immediately
+    // (checked fresh on every handle() call, same shape as QosControlStage/RouterStage's
+    // reconfigure). ttlMillis is also hot-reloadable for *new* cache instances (see
+    // #reconfigure's javadoc for why an already-created Ignite cache's own TTL can't be changed
+    // in place, and how this class works around that).
+    private volatile List<Pattern> cachePatterns;
+    private volatile long ttlMillis;
     // byte[], not ExecutionResult directly: found live that Ignite's mandatory BinaryMarshaller
     // (there's no configurable alternative in this Ignite version — checked, not assumed) can't
     // reflectively obtain field offsets on Java record classes ("can't get field offset on a
     // record class"), and ExecutionResult/ColumnInfo are both records. Serializing to bytes with
     // plain java.io.ObjectOutputStream ourselves — which records fully support, that's exactly why
     // both were made Serializable — sidesteps Ignite's own marshaller for this type entirely.
-    private final IgniteCache<String, byte[]> resultCache;
+    private volatile IgniteCache<String, byte[]> resultCache;
     // ARCHITECTURE.md §12.3: reverse index, table name -> the cache keys recorded against it, so a
     // write can invalidate exactly the entries it affects instead of scanning the whole cache.
-    private final IgniteCache<String, java.util.Set<String>> keysByTable;
+    private volatile IgniteCache<String, java.util.Set<String>> keysByTable;
 
     public CacheStage(PolyWireCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
         this.cluster = cluster;
-        this.cachePatterns = cacheTablePatterns.stream()
+        this.cachePatterns = compilePatterns(cacheTablePatterns);
+        this.ttlMillis = ttlMillis;
+        this.resultCache = cluster.getOrCreateCache(cacheName(ttlMillis), ttlMillis);
+        this.keysByTable = cluster.getOrCreateCache("polywire-query-cache-index", 0);
+    }
+
+    private static List<Pattern> compilePatterns(List<String> cacheTablePatterns) {
+        return cacheTablePatterns.stream()
                 .map(name -> Pattern.compile("\\b" + Pattern.quote(name.trim()) + "\\b", Pattern.CASE_INSENSITIVE))
                 .toList();
-        this.ttlMillis = ttlMillis;
-        this.resultCache = cluster.getOrCreateCache("polywire-query-cache", ttlMillis);
-        this.keysByTable = cluster.getOrCreateCache("polywire-query-cache-index", 0);
+    }
+
+    /**
+     * Ignite's {@code getOrCreateCache(name, ttl)} is a no-op on {@code ttl} if a cache by that
+     * name already exists (its config is fixed at creation) — so a genuine TTL hot-reload needs a
+     * distinctly-named cache per TTL value rather than reusing one fixed name. That's what this
+     * does: {@code #reconfigure} calling {@code getOrCreateCache(cacheName(newTtl), newTtl)} with
+     * a changed {@code newTtl} always lands on a fresh, correctly-configured cache instance
+     * (starting empty — a clean, if cold, cache beats a wrong TTL). The old cache instance for the
+     * previous TTL is simply dropped by this node; Ignite retains it cluster-side until eviction,
+     * a small accepted resource cost for keeping this narrow-slice fix simple.
+     */
+    private static String cacheName(long ttlMillis) {
+        return "polywire-query-cache-ttl" + ttlMillis;
     }
 
     /** {@code cacheTablesSpec}: {@code POLYWIRE_CACHE_TABLES}, comma-separated table/schema names. {@code ttlMillisSpec}: {@code POLYWIRE_CACHE_TTL_MS}, default 30000. */
@@ -105,6 +128,26 @@ public final class CacheStage implements PipelineStage {
             return null;
         }
         return fromConfig(cluster, cacheTablesSpec, ttlMillisSpec);
+    }
+
+    /** {@code cacheTablesSpec}/{@code ttlMillisSpec}: same grammar {@link #fromConfig} accepts. Applies immediately (patterns) and to entries written after this call (TTL — see {@link #cacheName}'s javadoc). */
+    public void reconfigure(String cacheTablesSpec, String ttlMillisSpec) {
+        List<String> tables = new ArrayList<>();
+        if (cacheTablesSpec != null && !cacheTablesSpec.isBlank()) {
+            for (String entry : cacheTablesSpec.split(",")) {
+                String trimmed = entry.trim();
+                if (!trimmed.isEmpty()) {
+                    tables.add(trimmed);
+                }
+            }
+        }
+        long newTtl = ttlMillisSpec == null || ttlMillisSpec.isBlank() ? 30_000 : Long.parseLong(ttlMillisSpec);
+        this.cachePatterns = compilePatterns(tables);
+        if (newTtl != this.ttlMillis) {
+            this.resultCache = cluster.getOrCreateCache(cacheName(newTtl), newTtl);
+            this.ttlMillis = newTtl;
+            log.info("cache: TTL changed to {}ms, now serving from a fresh (empty) cache instance", newTtl);
+        }
     }
 
     @Override

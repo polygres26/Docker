@@ -56,10 +56,13 @@ public final class RouterStage implements PipelineStage {
     public record ShardRule(Pattern schemaPattern) {
     }
 
-    private final List<SchemaRule> schemaRules;
-    private final List<PredicateRule> predicateRules;
-    private final List<ValueShardRule> valueShardRules;
-    private final List<ShardRule> shardRules;
+    // volatile, not final: see #reconfigure -- same "read fresh on every handle() call" hot-reload
+    // shape as QosControlStage's fields, driven by com.polygres.wire.config.ConfigStore's
+    // LISTEN/NOTIFY callback in Main.
+    private volatile List<SchemaRule> schemaRules;
+    private volatile List<PredicateRule> predicateRules;
+    private volatile List<ValueShardRule> valueShardRules;
+    private volatile List<ShardRule> shardRules;
 
     public RouterStage() {
         this(List.of(), List.of(), List.of(), List.of());
@@ -174,6 +177,26 @@ public final class RouterStage implements PipelineStage {
             }
         }
         return new RouterStage(schemaRules, predicateRules, valueShardRules, shardRules);
+    }
+
+    /**
+     * Replaces all four rule lists in place, reusing {@link #fromConfig}'s own parsing so a
+     * reload can never diverge from what a fresh startup would have produced for the same spec
+     * strings — same pattern as {@code BackendRegistry#reload}. Each field is swapped by a single
+     * volatile assignment (never partially updated), so a concurrent {@link #handle} call always
+     * sees either the fully-old or fully-new rule set for each list, never a mix within one list;
+     * across the four lists a caller could in principle observe old schemaRules alongside new
+     * predicateRules for one statement, but since every list already independently represents a
+     * complete, valid rule set on its own (there's no cross-list invariant to preserve), that's
+     * harmless — at worst one statement is routed by a config version that's one write "behind" on
+     * a single rule category, never routed by a torn/partial rule.
+     */
+    public void reconfigure(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec) {
+        RouterStage fresh = fromConfig(schemaSpec, predicateSpec, valueShardSpec, shardTablesSpec);
+        this.schemaRules = fresh.schemaRules;
+        this.predicateRules = fresh.predicateRules;
+        this.valueShardRules = fresh.valueShardRules;
+        this.shardRules = fresh.shardRules;
     }
 
     @Override

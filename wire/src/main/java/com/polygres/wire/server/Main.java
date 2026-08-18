@@ -2,6 +2,8 @@ package com.polygres.wire.server;
 
 import com.polygres.wire.cluster.CacheStage;
 import com.polygres.wire.cluster.PolyWireCluster;
+import com.polygres.wire.config.ConfigStore;
+import com.polygres.wire.config.PolyWireConfig;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.PipelineStage;
@@ -139,42 +141,73 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         ServerOptions options = ServerOptions.parse(args);
 
+        // com.polygres.wire.config.ConfigStore: the hot-reloadable config tier (QoS limits, cache
+        // TTLs, backend/routing rules, rollup definitions) now lives in the polywire_config table
+        // on the SAME bootstrap Postgres connection every frontend already uses (ORAPG_PG_*) --
+        // not a second, differently-configured connection. That bootstrap connection itself stays
+        // a plain env-var read (chicken-and-egg: a Postgres connection is needed before dynamic
+        // config *from* Postgres can be read at all) -- see ConfigStore's and PolyWireConfig's
+        // class javadoc for the full bootstrap-vs-dynamic split this implements.
+        ConfigStore configStore = new ConfigStore(options.pgHost(), options.pgPort(), options.pgDatabase(),
+                options.pgUser(), options.pgPassword());
+        configStore.ensureSchema();
+        ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
+        if (initialVersion == null) {
+            // First-run compatibility: no operator has to pre-populate polywire_config before ever
+            // starting PolyWire for the first time -- fall back to today's env-var-derived config
+            // and publish it as the cluster's first version so every node converges on the same
+            // starting point (a second node racing this on its own first boot just produces a
+            // higher-numbered version with equivalent content -- readLatest() picks the newest
+            // either way, never a torn one, per ConfigStore's insert-only design).
+            PolyWireConfig bootstrapDefault = PolyWireConfig.fromEnvDefaults();
+            long version = configStore.write(bootstrapDefault);
+            initialVersion = new ConfigStore.Version(version, bootstrapDefault, java.time.Instant.now());
+            log.info("config: polywire_config was empty -- published version {} from today's env-var defaults", version);
+        } else {
+            log.info("config: starting from polywire_config version {} (created {})",
+                    initialVersion.version(), initialVersion.createdAt());
+        }
+        java.util.concurrent.atomic.AtomicReference<ConfigStore.Version> currentConfigVersion =
+                new java.util.concurrent.atomic.AtomicReference<>(initialVersion);
+        PolyWireConfig config = initialVersion.payload();
+
         // POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS: named backends RouterStage rules and
         // RollupStage definitions can target, beyond the one connection each frontend already
-        // opens for itself via ORAPG_PG_*. Previously always empty here (BackendRegistry.fromConfig
-        // hardcoded to (null, null)) -- routing/rollups had no way to be exercised without this.
-        BackendRegistry backendRegistry = BackendRegistry.fromConfig(
-                System.getenv("POLYWIRE_BACKENDS"), System.getenv("POLYWIRE_SHARD_BACKENDS"));
+        // opens for itself via ORAPG_PG_*. Now sourced from polywire_config (hot-reloadable), not
+        // a static env var -- BackendRegistry#reload keeps this same instance current in place.
+        BackendRegistry backendRegistry = BackendRegistry.fromConfig(config.backends(), config.shardBackends());
 
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
         if (telemetry != null) {
             log.info("OTel export enabled (POLYWIRE_OTEL_ENDPOINT); set POLYWIRE_OTEL_ENDPOINT=disabled to turn off");
         }
 
-        // QoS: POLYWIRE_QOS_RATE_PER_SEC/_BURST/_MAX_WAIT_MS, deliberately low local-dev defaults
-        // (5 req/s, burst 5) so admission rejection is trivial to trigger in live testing with a
-        // tight psql loop; a sane production-shaped starting point is documented right here for
-        // anyone deploying this for real: POLYWIRE_QOS_RATE_PER_SEC=200 POLYWIRE_QOS_BURST=400
-        // (matches QosControlStage.fromConfig's own internal default of 200/400 when unset) is a
-        // reasonable per-node starting point for a modest OLTP workload; tune from there.
-        String qosRate = System.getenv().getOrDefault("POLYWIRE_QOS_RATE_PER_SEC", "5");
-        String qosBurst = System.getenv().getOrDefault("POLYWIRE_QOS_BURST", "5");
-        String qosMaxWait = System.getenv("POLYWIRE_QOS_MAX_WAIT_MS");
-        String qosClassLimits = System.getenv("POLYWIRE_QOS_CLASS_LIMITS");
-        String qosPoolWaitThreshold = System.getenv("POLYWIRE_QOS_POOL_WAIT_THRESHOLD");
+        // QoS: rate/burst/maxWait/classLimits/poolWaitThreshold now come from polywire_config
+        // (hot-reloadable -- see PolyWireConfig), not POLYWIRE_QOS_* env vars directly; those env
+        // vars still supply the *bootstrap default* the very first time a cluster starts with an
+        // empty polywire_config table (deliberately low local-dev defaults, 5 req/s burst 5, so
+        // admission rejection is trivial to trigger in live testing with a tight psql loop). A
+        // sane production-shaped starting point is documented right here for anyone deploying this
+        // for real: rate=200 burst=400 (matches QosControlStage.fromConfig's own internal default
+        // when unset) is a reasonable per-node starting point for a modest OLTP workload.
+        String qosRate = config.qosRatePerSec();
+        String qosBurst = config.qosBurst();
+        String qosMaxWait = config.qosMaxWaitMs();
+        String qosClassLimits = config.qosClassLimits();
+        String qosPoolWaitThreshold = config.qosPoolWaitThreshold();
         QosControlStage qosStage = QosControlStage.fromConfig(
                 qosRate, qosBurst, qosMaxWait, qosClassLimits, qosPoolWaitThreshold, telemetry);
-        log.info("QoS admission control: rate={}/s burst={} maxWaitMs={} (POLYWIRE_QOS_RATE_PER_SEC/_BURST/_MAX_WAIT_MS; "
+        log.info("QoS admission control: rate={}/s burst={} maxWaitMs={} (from polywire_config version {}; "
                         + "production-shaped starting point: rate=200 burst=400)",
-                qosRate, qosBurst, qosMaxWait == null ? "0" : qosMaxWait);
+                qosRate, qosBurst, qosMaxWait == null ? "0" : qosMaxWait, initialVersion.version());
 
         // Cache: off by default (matches CacheStage/Omnigate's own posture) — only wired in when
-        // POLYWIRE_CACHE_TABLES names at least one table. Backed by a single-node embedded Ignite
-        // instance; POLYWIRE_CLUSTER_ENABLED=true would additionally join a real cluster, but a
-        // single node is all CacheStage needs to function.
+        // polywire_config's cacheTables names at least one table. Backed by a single-node embedded
+        // Ignite instance; POLYWIRE_CLUSTER_ENABLED=true would additionally join a real cluster,
+        // but a single node is all CacheStage needs to function.
         PolyWireCluster cluster = PolyWireCluster.fromEnv();
-        String cacheTables = System.getenv("POLYWIRE_CACHE_TABLES");
-        String cacheTtlMs = System.getenv("POLYWIRE_CACHE_TTL_MS");
+        String cacheTables = config.cacheTables();
+        String cacheTtlMs = config.cacheTtlMs();
 
         // dynamowire/mongowire exact-key caches: unlike CacheStage above, default ON — see
         // DynamoCache/MongoCache's class javadocs for why a key-value/exact-_id cache doesn't
@@ -213,74 +246,112 @@ public final class Main {
                         + "exact-_id find only, not filtered find) ttlMs={}",
                 mongoCacheEnabled ? "enabled" : "disabled", mongoCacheTtlMs == null ? "30000" : mongoCacheTtlMs);
 
-        // Rollup: off by default (matches CacheStage's own posture) -- only wired in when
-        // POLYWIRE_ROLLUP_DEFINITIONS_FILE names a YAML file of rollup definitions (schema:
-        // RollupConfig's javadoc). Omnigate read this from a DB-backed ConfigStore; PolyWire has
-        // no equivalent store wired up, so a plain file path is used instead (simplest thing that
-        // lets rollups be redefined without a rebuild).
-        String rollupDefinitionsFile = System.getenv("POLYWIRE_ROLLUP_DEFINITIONS_FILE");
-        RollupStore rollupStore;
-        RollupRefreshJob rollupRefreshJob = null;
-        RollupStage rollupStage = null;
-        if (rollupDefinitionsFile != null && !rollupDefinitionsFile.isBlank()) {
-            String yamlText = Files.readString(Path.of(rollupDefinitionsFile));
-            List<RollupDefinition> definitions = RollupConfig.parse(yamlText);
-            rollupStore = new RollupStore(definitions);
-            rollupRefreshJob = new RollupRefreshJob(backendRegistry, rollupStore);
-            // Materialize every rollup synchronously now -- a query run immediately after startup
-            // must not depend on the first scheduled refresh interval having fired yet.
-            for (RollupDefinition def : definitions) {
-                try {
-                    rollupRefreshJob.refreshNow(def);
-                    log.info("rollup: \"{}\" materialized at startup (table {})", def.name(), def.rollupTableName());
-                } catch (Exception e) {
-                    log.warn("rollup: startup materialization failed for \"{}\", it will stay stale until its "
-                            + "next scheduled refresh ({})", def.name(), e.toString());
-                }
+        // Rollup: definitions now come from polywire_config's rollupDefinitionsYaml (hot-
+        // reloadable), falling back to the legacy POLYWIRE_ROLLUP_DEFINITIONS_FILE env var (a
+        // plain YAML file) only if the config version carries no rollup YAML of its own -- keeps
+        // existing file-based deployments working unchanged. RollupStore/RollupRefreshJob/
+        // RollupStage are now constructed unconditionally (even with zero definitions) rather than
+        // only when something was configured, so a config update that adds the *first* rollup
+        // definition later doesn't need a restart: the pipeline already contains a RollupStage
+        // wired to a store that can be RollupStore#reload'ed in place.
+        String rollupYaml = config.rollupDefinitionsYaml();
+        if (rollupYaml == null || rollupYaml.isBlank()) {
+            String rollupDefinitionsFile = System.getenv("POLYWIRE_ROLLUP_DEFINITIONS_FILE");
+            if (rollupDefinitionsFile != null && !rollupDefinitionsFile.isBlank()) {
+                rollupYaml = Files.readString(Path.of(rollupDefinitionsFile));
             }
-            rollupRefreshJob.scheduleAll();
-            rollupStage = new RollupStage(rollupStore, backendRegistry);
-            log.info("rollup acceleration enabled: {} definition(s) from {}", definitions.size(), rollupDefinitionsFile);
-        } else {
-            rollupStore = RollupStore.empty();
-            log.info("rollup acceleration disabled (set POLYWIRE_ROLLUP_DEFINITIONS_FILE to enable)");
         }
+        List<RollupDefinition> initialRollupDefinitions = RollupConfig.parse(rollupYaml);
+        RollupStore rollupStore = new RollupStore(initialRollupDefinitions);
+        RollupRefreshJob rollupRefreshJob = new RollupRefreshJob(backendRegistry, rollupStore);
+        // Materialize every rollup synchronously now -- a query run immediately after startup must
+        // not depend on the first scheduled refresh interval having fired yet.
+        for (RollupDefinition def : initialRollupDefinitions) {
+            try {
+                rollupRefreshJob.refreshNow(def);
+                log.info("rollup: \"{}\" materialized at startup (table {})", def.name(), def.rollupTableName());
+            } catch (Exception e) {
+                log.warn("rollup: startup materialization failed for \"{}\", it will stay stale until its "
+                        + "next scheduled refresh ({})", def.name(), e.toString());
+            }
+        }
+        rollupRefreshJob.scheduleAll();
+        RollupStage rollupStage = new RollupStage(rollupStore, backendRegistry);
+        log.info("rollup acceleration: {} definition(s) from polywire_config version {}",
+                initialRollupDefinitions.size(), initialVersion.version());
 
         StatsCollectorStage statsStage = new StatsCollectorStage(telemetry);
 
-        // RouterStage rules: POLYWIRE_ROUTER_SCHEMA_RULES ("schema1:backend1,schema2:backend2"),
-        // POLYWIRE_ROUTER_PREDICATE_RULES ("bindIndex:value:backend,..."),
-        // POLYWIRE_ROUTER_VALUE_SHARD_RULES ("bindIndex:type:params|...", type = hash/consistent/
-        // list/range via ShardingStrategy -- see RouterStage.fromConfig's javadoc for the full
-        // grammar), and POLYWIRE_ROUTER_SHARD_TABLES ("schema1,schema2" -- scatter-gathers across
-        // POLYWIRE_SHARD_BACKENDS when no schema/predicate/value-shard rule already routed the
-        // query). All optional; unset means the previous zero-rule behavior (see RouterStage's
-        // javadoc).
+        // RouterStage rules: schemaRules ("schema1:backend1,schema2:backend2"), predicateRules
+        // ("bindIndex:value:backend,..."), valueShardRules ("bindIndex:type:params|...", type =
+        // hash/consistent/list/range via ShardingStrategy -- see RouterStage.fromConfig's javadoc
+        // for the full grammar), and shardTables ("schema1,schema2" -- scatter-gathers across
+        // shardBackends when no schema/predicate/value-shard rule already routed the query). All
+        // sourced from polywire_config (hot-reloadable) now, all optional; unset means the
+        // previous zero-rule behavior (see RouterStage's javadoc).
         List<PipelineStage> stages = new ArrayList<>();
         RouterStage routerStage = RouterStage.fromConfig(
-                System.getenv("POLYWIRE_ROUTER_SCHEMA_RULES"),
-                System.getenv("POLYWIRE_ROUTER_PREDICATE_RULES"),
-                System.getenv("POLYWIRE_ROUTER_VALUE_SHARD_RULES"),
-                System.getenv("POLYWIRE_ROUTER_SHARD_TABLES"));
+                config.routerSchemaRules(),
+                config.routerPredicateRules(),
+                config.routerValueShardRules(),
+                config.routerShardTables());
         log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s), {} shard-table rule(s)",
                 routerStage.schemaRules().size(), routerStage.predicateRules().size(),
                 routerStage.valueShardRules().size(), routerStage.shardRules().size());
         stages.add(routerStage);
         stages.add(qosStage);
         stages.add(new DialectTranslationStage(backendRegistry));
-        if (rollupStage != null) {
-            stages.add(rollupStage);
-        }
+        stages.add(rollupStage);
         if (cacheStage != null) {
             stages.add(cacheStage);
         }
         stages.add(statsStage);
         List<PipelineStage> pipelineStages = List.copyOf(stages);
 
+        // Hot-reload: subscribe to polywire_config's LISTEN/NOTIFY channel. On every new version,
+        // re-apply it to every already-constructed stage in place (see each stage's own
+        // #reconfigure javadoc for why that's safe without restarting or interrupting in-flight
+        // sessions) rather than rebuilding pipelineStages -- the List<PipelineStage> reference
+        // itself never changes after this point, only what each stage inside it does on its next
+        // handle() call. cacheStage staying null when no table was ever configured at startup, and
+        // BackendRegistry-driven target additions for schemas RouterStage didn't know about yet,
+        // are the two narrow-slice limitations of this pass -- see the module README/commit
+        // message for the honest list of what's deferred.
+        configStore.listen(newVersion -> {
+            currentConfigVersion.set(newVersion);
+            PolyWireConfig c = newVersion.payload();
+            log.info("config: applying polywire_config version {} in place", newVersion.version());
+            QosControlStage parsedQos = QosControlStage.fromConfig(c.qosRatePerSec(), c.qosBurst(),
+                    c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
+            qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
+            routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
+                    c.routerValueShardRules(), c.routerShardTables());
+            backendRegistry.reload(c.backends(), c.shardBackends());
+            if (cacheStage != null) {
+                cacheStage.reconfigure(c.cacheTables(), c.cacheTtlMs());
+            }
+            List<RollupDefinition> newRollups = RollupConfig.parse(c.rollupDefinitionsYaml());
+            rollupStore.reload(newRollups);
+            for (RollupDefinition def : newRollups) {
+                try {
+                    rollupRefreshJob.refreshNow(def);
+                } catch (Exception e) {
+                    log.warn("rollup: reload materialization failed for \"{}\" ({})", def.name(), e.toString());
+                }
+            }
+            rollupRefreshJob.scheduleAll();
+            log.info("config: version {} applied (qos rate={}/s burst={}, {} router rule set(s), "
+                            + "{} backend(s), cache={}, {} rollup definition(s))",
+                    newVersion.version(), c.qosRatePerSec(), c.qosBurst(),
+                    routerStage.schemaRules().size() + routerStage.predicateRules().size()
+                            + routerStage.valueShardRules().size() + routerStage.shardRules().size(),
+                    backendRegistry.all().size(), cacheStage != null, newRollups.size());
+        });
+
         PgBackendPool backendPool = new PgBackendPool(options);
 
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage);
+        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get);
         metricsServer.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();

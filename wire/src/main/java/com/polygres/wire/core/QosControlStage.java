@@ -70,9 +70,14 @@ public final class QosControlStage implements PipelineStage {
         }
     }
 
-    private final ClassLimit defaultLimit;
-    private final Map<String, ClassLimit> classLimits;
-    private final long poolWaitThreshold;
+    // volatile, not final: see #reconfigure. Read fresh on every handle() call so a config change
+    // from com.polygres.wire.config.ConfigStore's LISTEN/NOTIFY callback applies to the very next
+    // statement without a restart -- in-flight statements that already captured the old values
+    // locally aren't retroactively affected, which is fine (ConfigStore's own javadoc: "new config
+    // just needs to apply to new/ongoing pipeline stage decisions going forward").
+    private volatile ClassLimit defaultLimit;
+    private volatile Map<String, ClassLimit> classLimits;
+    private volatile long poolWaitThreshold;
     private final PolyWireTelemetry telemetry;
     private final IntSupplier clusterSizeSupplier;
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
@@ -183,6 +188,29 @@ public final class QosControlStage implements PipelineStage {
 
     public Map<String, Counters> snapshot() {
         return Map.copyOf(countersByKey);
+    }
+
+    /**
+     * Applies a new set of limits in place — called by {@code Main}'s {@code
+     * com.polygres.wire.config.ConfigStore} LISTEN/NOTIFY callback on every new config version.
+     * Existing {@code buckets} entries are deliberately left as-is rather than cleared: {@link
+     * Bucket#tryConsume} already takes the (now-changed) {@code limit} as a parameter on every
+     * call and re-clamps {@code tokens} against the new capacity itself, so a bucket naturally
+     * adopts the new rate/burst on its very next refill without needing to be recreated or losing
+     * its accumulated token count.
+     */
+    public void reconfigure(ClassLimit newDefaultLimit, Map<String, ClassLimit> newClassLimits, long newPoolWaitThreshold) {
+        this.defaultLimit = newDefaultLimit;
+        this.classLimits = Map.copyOf(newClassLimits);
+        this.poolWaitThreshold = newPoolWaitThreshold;
+    }
+
+    /** Parses the same three config knobs {@link #fromConfig} does, for reuse by {@code reconfigure} callers that only have the raw spec strings (e.g. from a {@code PolyWireConfig} version). */
+    public static QosControlStage parseAndApply(QosControlStage stage, String rateEnv, String burstEnv,
+            String maxWaitEnv, String classLimitsSpec, String poolWaitThresholdEnv) {
+        QosControlStage parsed = fromConfig(rateEnv, burstEnv, maxWaitEnv, classLimitsSpec, poolWaitThresholdEnv, null);
+        stage.reconfigure(parsed.defaultLimit(), parsed.classLimits(), parsed.poolWaitThreshold());
+        return stage;
     }
 
     /** For read-only config introspection (the HTTP admin API). */
