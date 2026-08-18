@@ -1,5 +1,7 @@
 package com.polygres.wire.core;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -65,7 +67,7 @@ import java.util.regex.Pattern;
  * this environment (same honest gap already recorded for those backends' own connectivity in
  * ARCHITECTURE.md §5.4c).
  */
-final class DialectTranslations {
+public final class DialectTranslations {
 
     private DialectTranslations() {
     }
@@ -89,7 +91,7 @@ final class DialectTranslations {
             SourceDialect.GENERIC_REST, DialectTranslations::renderIdentity);
 
     /** {@code null} means "no normalizer for {@code from}, or no renderer for {@code to}" — caller passes the original SQL through untouched. */
-    static String translate(String sql, SourceDialect from, SourceDialect to) {
+    public static String translate(String sql, SourceDialect from, SourceDialect to) {
         if (from == to) {
             return sql;
         }
@@ -114,7 +116,117 @@ final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, FROM_DUAL, m -> "");
         out = SqlLiterals.replaceOutsideLiterals(out, SYSDATE, m -> "CURRENT_TIMESTAMP");
         out = applyRownumLimit(out);
+        out = rewriteDecodeCalls(out);
         return out;
+    }
+
+    private static final Pattern DECODE_CALL = Pattern.compile("(?i)\\bDECODE\\s*\\(");
+
+    /**
+     * {@code DECODE(expr, val1, res1, val2, res2, ..., default)} → {@code CASE expr WHEN val1 THEN
+     * res1 WHEN val2 THEN res2 ... ELSE default END} (or without {@code ELSE} when the argument
+     * count is exactly even — no trailing default). {@code CASE} is real ANSI syntax already valid
+     * on every target here (same reasoning as the rest of the canonical form), so this is a
+     * one-time rewrite with nothing further needed per-renderer.
+     *
+     * <p>Real parenthesis/quote-aware splitting, not a regex over the whole call — {@code DECODE}'s
+     * arguments routinely nest function calls and string literals containing commas
+     * ({@code DECODE(NVL(a,0), 1, 'a, b', 0)}), so a naive comma split would misparse those. One
+     * {@code DECODE} match is rewritten per pass; nested/repeated calls are handled by iterating
+     * until no more matches remain (outermost-first would also work, but inside-out is simpler to
+     * reason about and gives the same result since each rewrite only touches its own balanced span).
+     */
+    private static String rewriteDecodeCalls(String sql) {
+        String out = sql;
+        while (true) {
+            Matcher m = DECODE_CALL.matcher(out);
+            int openParenIdx = -1;
+            int searchFrom = 0;
+            while (m.find(searchFrom)) {
+                if (!SqlLiterals.isInsideStringLiteral(out, m.start())) {
+                    openParenIdx = m.end() - 1; // index of the '('
+                    break;
+                }
+                searchFrom = m.end();
+            }
+            if (openParenIdx < 0) {
+                return out;
+            }
+            int closeParenIdx = matchingCloseParen(out, openParenIdx);
+            if (closeParenIdx < 0) {
+                return out; // unbalanced -- leave untouched rather than risk a wrong rewrite
+            }
+            int callStart = out.lastIndexOf("DECODE", openParenIdx);
+            if (callStart < 0) {
+                callStart = out.lastIndexOf("decode", openParenIdx);
+            }
+            List<String> args = splitTopLevelArgs(out.substring(openParenIdx + 1, closeParenIdx));
+            if (args.size() < 3) {
+                return out; // not a real DECODE(expr, val, res, ...) shape -- leave untouched
+            }
+            String expr = args.get(0);
+            StringBuilder caseExpr = new StringBuilder("CASE ").append(expr);
+            int i = 1;
+            for (; i + 1 < args.size(); i += 2) {
+                caseExpr.append(" WHEN ").append(args.get(i)).append(" THEN ").append(args.get(i + 1));
+            }
+            if (i < args.size()) {
+                caseExpr.append(" ELSE ").append(args.get(i));
+            }
+            caseExpr.append(" END");
+            out = out.substring(0, callStart) + caseExpr + out.substring(closeParenIdx + 1);
+        }
+    }
+
+    /** Index of the {@code )} matching the {@code (} at {@code openIdx}, or -1 if unbalanced. Quote-aware (a paren inside a string literal doesn't count). */
+    private static int matchingCloseParen(String sql, int openIdx) {
+        int depth = 0;
+        boolean inString = false;
+        for (int i = openIdx; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'') {
+                if (inString && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    i++;
+                    continue;
+                }
+                inString = !inString;
+            } else if (!inString && c == '(') {
+                depth++;
+            } else if (!inString && c == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** Splits {@code argsText} on top-level commas only (not inside nested parens or string literals), trimming each piece. */
+    private static java.util.List<String> splitTopLevelArgs(String argsText) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        boolean inString = false;
+        int start = 0;
+        for (int i = 0; i < argsText.length(); i++) {
+            char c = argsText.charAt(i);
+            if (c == '\'') {
+                if (inString && i + 1 < argsText.length() && argsText.charAt(i + 1) == '\'') {
+                    i++;
+                    continue;
+                }
+                inString = !inString;
+            } else if (!inString && c == '(') {
+                depth++;
+            } else if (!inString && c == ')') {
+                depth--;
+            } else if (!inString && depth == 0 && c == ',') {
+                parts.add(argsText.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        parts.add(argsText.substring(start).trim());
+        return parts;
     }
 
     /**
@@ -168,14 +280,41 @@ final class DialectTranslations {
     private static final Pattern MYSQL_NOW_CALL = Pattern.compile("(?i)\\bnow\\s*\\(\\s*\\)");
     private static final Pattern MYSQL_BACKTICK_IDENTIFIER = Pattern.compile("`([^`]+)`");
     private static final Pattern MYSQL_NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
+    // MySQL's two-arg LIMIT (offset, count) -- distinct from the single-arg LIMIT N form (already
+    // valid, unchanged, on every target here) and from the LIMIT N OFFSET M form (already ANSI).
+    // Only fires on the plain-number two-arg shape; deliberately not attempted for bind-parameter
+    // offsets/counts (?, ? -- StatementPipeline binds those positionally, not textually, so there's
+    // nothing to distinguish "two-arg LIMIT" from "single-arg LIMIT with a comma-separated
+    // subquery" once the literals are gone).
+    private static final Pattern MYSQL_LIMIT_OFFSET_COUNT =
+            Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)\\s*,\\s*(\\d+)\\b");
+    private static final Pattern SHOW_TABLES = Pattern.compile("(?i)^\\s*SHOW\\s+TABLES\\s*;?\\s*$");
+    private static final Pattern SHOW_DATABASES = Pattern.compile("(?i)^\\s*SHOW\\s+DATABASES\\s*;?\\s*$");
 
     private static String normalizeMysql(String sql) {
+        // SHOW TABLES/DATABASES have no canonical-form shape to normalize into -- MySQL's SHOW
+        // family isn't real SQL syntax any target dialect recognizes, so these are rewritten
+        // directly to a real query here and skip the rest of the pipeline (a single-column result
+        // set shaped like MySQL's own SHOW TABLES/DATABASES output, built from Postgres catalog
+        // views since that's this project's one real MySQL-wire target -- see class javadoc on
+        // MYSQL's own renderer notes for why Postgres is the only real backend mywire talks to in
+        // its default, non-native mode).
+        if (SHOW_TABLES.matcher(sql).matches()) {
+            return "SELECT tablename AS \"Tables\" FROM pg_catalog.pg_tables "
+                    + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename";
+        }
+        if (SHOW_DATABASES.matcher(sql).matches()) {
+            return "SELECT datname AS \"Database\" FROM pg_catalog.pg_database "
+                    + "WHERE datistemplate = false ORDER BY datname";
+        }
         String out = sql;
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NEXTVAL_CALL, m -> m.group(1) + ".NEXTVAL");
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_LASTVAL_CALL, m -> m.group(1) + ".CURRVAL");
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NOW_CALL, m -> "CURRENT_TIMESTAMP");
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_BACKTICK_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NVL, m -> "COALESCE(");
+        out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_LIMIT_OFFSET_COUNT,
+                m -> "LIMIT " + m.group(2) + " OFFSET " + m.group(1));
         return out;
     }
 

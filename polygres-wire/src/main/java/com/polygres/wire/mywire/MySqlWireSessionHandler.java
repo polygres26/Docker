@@ -1,6 +1,7 @@
 package com.polygres.wire.mywire;
 
 import com.polygres.wire.auth.CredentialStore;
+import com.polygres.wire.core.DialectTranslations;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.SourceDialect;
@@ -200,11 +201,30 @@ public final class MySqlWireSessionHandler implements Runnable {
             packets.writePayload(out, MySqlMessages.okPacket(0));
             return;
         }
+        // MYSQL->POSTGRES dialect translation (backtick identifiers, SHOW TABLES/DATABASES,
+        // two-arg LIMIT, NVL/NOW(), sequence syntax -- see DialectTranslations' javadoc for the
+        // full rule vocabulary): needed here, not just for DialectTranslationStage's own @link
+        // cross-dialect path, because THIS is mywire's actual common case -- a real MySQL client's
+        // dialect proxied straight onto a real Postgres backend with no @link involved at all.
+        // Found live to matter: a real pymysql client's `SELECT \`id\` FROM \`orders\`` got a
+        // Postgres syntax error even though DialectTranslations already had a backtick rule --
+        // DialectTranslationStage only ever fires for a RouterStage/DbLinkStage-resolved
+        // targetBackend, which the default homogeneous mywire->Postgres proxy path never has, so
+        // the rule existed but this path never reached it. Not applicable when
+        // options.mywireNativeBackend() -- the backend really is MySQL/MariaDB there, so the
+        // client's own dialect is already correct as-is.
+        String translatedSql = sql;
+        if (!options.mywireNativeBackend()) {
+            String translated = DialectTranslations.translate(sql, SourceDialect.MYSQL, SourceDialect.POSTGRES);
+            if (translated != null) {
+                translatedSql = translated;
+            }
+        }
         try (Connection backend = options.mywireNativeBackend()
                 ? MySqlBackendConnections.open(options) : PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.MYSQL, sql, List.of());
+            Statement statement = Statement.of(SourceDialect.MYSQL, translatedSql, List.of());
             ExecutionResult result = pipeline.execute(statement);
             if (result.isQuery()) {
                 List<String> columnNames = result.columnNames();
