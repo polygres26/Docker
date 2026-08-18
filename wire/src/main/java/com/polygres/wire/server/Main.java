@@ -8,6 +8,7 @@ import com.polygres.wire.config.TranslationCacheStore;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
 import com.polygres.wire.core.DialectTranslationStage;
+import com.polygres.wire.core.FirewallStage;
 import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.RollupStage;
@@ -303,6 +304,29 @@ public final class Main {
         // sourced from polywire_config (hot-reloadable) now, all optional; unset means the
         // previous zero-rule behavior (see RouterStage's javadoc).
         List<PipelineStage> stages = new ArrayList<>();
+
+        // FirewallStage first, per its own javadoc -- a rejected statement should never reach
+        // translation/routing/a backend. Rules come from a real Postgres table
+        // (polywire_firewall_rules), not an env var -- see FirewallRuleStore's class javadoc for
+        // the schema and why: a DBA manages it with plain INSERT/UPDATE/DELETE, the same mental
+        // model as GRANT/REVOKE, and a trigger on the table auto-notifies this process so changes
+        // take effect within seconds with no restart and no manual LISTEN/NOTIFY knowledge needed.
+        com.polygres.wire.config.FirewallRuleStore firewallRuleStore = new com.polygres.wire.config.FirewallRuleStore(
+                options.pgHost(), options.pgPort(), options.pgDatabase(), options.pgUser(), options.pgPassword());
+        firewallRuleStore.ensureSchema();
+        List<FirewallStage.Rule> initialFirewallRules;
+        try {
+            initialFirewallRules = firewallRuleStore.readRules();
+        } catch (Exception e) {
+            log.warn("firewall: failed to read initial rules from polywire_firewall_rules, starting with zero "
+                    + "rules (default ALLOW) until the next successful read: {}", e.getMessage());
+            initialFirewallRules = List.of();
+        }
+        FirewallStage firewallStage = new FirewallStage(initialFirewallRules);
+        firewallRuleStore.listen(firewallStage::reloadRules);
+        log.info("firewall: {} rule(s) loaded from polywire_firewall_rules", initialFirewallRules.size());
+        stages.add(firewallStage);
+
         RouterStage routerStage = RouterStage.fromConfig(
                 config.routerSchemaRules(),
                 config.routerPredicateRules(),
