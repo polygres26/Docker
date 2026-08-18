@@ -4,6 +4,7 @@ import com.polygres.wire.cluster.CacheStage;
 import com.polygres.wire.cluster.PolyWireCluster;
 import com.polygres.wire.config.ConfigStore;
 import com.polygres.wire.config.PolyWireConfig;
+import com.polygres.wire.config.TranslationCacheStore;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
 import com.polygres.wire.core.DialectTranslationStage;
@@ -311,7 +312,10 @@ public final class Main {
                 routerStage.valueShardRules().size(), routerStage.shardRules().size());
         stages.add(routerStage);
         stages.add(qosStage);
-        stages.add(new DialectTranslationStage(backendRegistry));
+        TranslationCacheStore translationCacheStore = new TranslationCacheStore(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        translationCacheStore.ensureSchema();
+        stages.add(new DialectTranslationStage(backendRegistry, translationCacheStore));
         stages.add(rollupStage);
         if (cacheStage != null) {
             stages.add(cacheStage);

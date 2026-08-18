@@ -2,6 +2,7 @@ package com.polygres.wire.mssqlwire.session;
 
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.config.FailedStatementLog;
+import com.polygres.wire.config.TranslationCacheStore;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.ExecutionResult;
@@ -95,6 +96,7 @@ public final class MssqlWireSessionHandler implements Runnable {
     private static final TranslationLlmClient DEFAULT_PATH_LLM_CLIENT = new TranslationLlmClient();
 
     private final FailedStatementLog failedStatementLog;
+    private final TranslationCacheStore translationCacheStore;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
@@ -105,6 +107,9 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword());
         this.failedStatementLog.ensureSchema();
+        this.translationCacheStore = new TranslationCacheStore(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.translationCacheStore.ensureSchema();
     }
 
     @Override
@@ -277,7 +282,8 @@ public final class MssqlWireSessionHandler implements Runnable {
         String translatedSql;
         try {
             translatedSql = DialectTranslationStage.translateWithFallback(
-                    sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT);
+                    sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT,
+                    translationCacheStore);
         } catch (UntranslatableQueryException e) {
             failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
                     FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());

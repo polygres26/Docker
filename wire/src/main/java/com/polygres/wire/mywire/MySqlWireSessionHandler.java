@@ -2,6 +2,7 @@ package com.polygres.wire.mywire;
 
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.config.FailedStatementLog;
+import com.polygres.wire.config.TranslationCacheStore;
 import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
@@ -69,6 +70,7 @@ public final class MySqlWireSessionHandler implements Runnable {
     private static final TranslationLlmClient DEFAULT_PATH_LLM_CLIENT = new TranslationLlmClient();
 
     private final FailedStatementLog failedStatementLog;
+    private final TranslationCacheStore translationCacheStore;
 
     public MySqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
@@ -79,6 +81,9 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword());
         this.failedStatementLog.ensureSchema();
+        this.translationCacheStore = new TranslationCacheStore(options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.translationCacheStore.ensureSchema();
     }
 
     @Override
@@ -245,7 +250,8 @@ public final class MySqlWireSessionHandler implements Runnable {
         if (!options.mywireNativeBackend()) {
             try {
                 translatedSql = DialectTranslationStage.translateWithFallback(
-                        sql, SourceDialect.MYSQL, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT);
+                        sql, SourceDialect.MYSQL, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT,
+                        translationCacheStore);
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.MYSQL, sql,
                         FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());

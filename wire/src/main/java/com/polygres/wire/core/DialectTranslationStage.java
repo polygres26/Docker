@@ -1,5 +1,6 @@
 package com.polygres.wire.core;
 
+import com.polygres.wire.config.TranslationCacheStore;
 import java.sql.SQLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,17 +44,31 @@ public final class DialectTranslationStage implements PipelineStage {
     private final BackendRegistry registry;
     private final TranslationCache cache;
     private final TranslationLlmClient llmClient;
+    private final TranslationCacheStore cacheStore;
 
     public DialectTranslationStage(BackendRegistry registry) {
-        this(registry, new TranslationCache(), new TranslationLlmClient());
+        this(registry, new TranslationCache(), new TranslationLlmClient(), null);
+    }
+
+    /** Overload that also wires up {@link TranslationCacheStore} write-through -- see that
+     * class's javadoc. {@code cacheStore} may be {@code null} (write-through simply skipped,
+     * e.g. in tests that don't have a Postgres backend available). */
+    public DialectTranslationStage(BackendRegistry registry, TranslationCacheStore cacheStore) {
+        this(registry, new TranslationCache(), new TranslationLlmClient(), cacheStore);
     }
 
     /** Overload for tests, or an operator-supplied {@link TranslationLlmClient} pointed at a
      * non-default provider. */
     public DialectTranslationStage(BackendRegistry registry, TranslationCache cache, TranslationLlmClient llmClient) {
+        this(registry, cache, llmClient, null);
+    }
+
+    public DialectTranslationStage(BackendRegistry registry, TranslationCache cache, TranslationLlmClient llmClient,
+            TranslationCacheStore cacheStore) {
         this.registry = registry;
         this.cache = cache;
         this.llmClient = llmClient;
+        this.cacheStore = cacheStore;
     }
 
     @Override
@@ -72,7 +87,7 @@ public final class DialectTranslationStage implements PipelineStage {
             return next.proceed(statement); // same dialect already, or target's dialect isn't one we recognize
         }
         String sqlText = statement.sqlText();
-        String rewritten = translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient);
+        String rewritten = translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient, cacheStore);
         return next.proceed(statement.withSqlText(rewritten));
     }
 
@@ -94,6 +109,21 @@ public final class DialectTranslationStage implements PipelineStage {
     public static String translateWithFallback(String sqlText, SourceDialect fromDialect,
             SourceDialect targetDialect, TranslationCache cache, TranslationLlmClient llmClient)
             throws UntranslatableQueryException {
+        return translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient, null);
+    }
+
+    /**
+     * Same as the four-arg overload, additionally write-through recording every cache hit and
+     * every successfully-translated miss into {@code cacheStore} (may be {@code null} -- e.g.
+     * tests without a Postgres backend -- in which case write-through is simply skipped). See
+     * {@link TranslationCacheStore}'s javadoc for the write-through design (single upsert covers
+     * both directions) and for why this is a synchronous, best-effort write off the hot path
+     * rather than batched/async.
+     */
+    public static String translateWithFallback(String sqlText, SourceDialect fromDialect,
+            SourceDialect targetDialect, TranslationCache cache, TranslationLlmClient llmClient,
+            TranslationCacheStore cacheStore)
+            throws UntranslatableQueryException {
         if (fromDialect == targetDialect) {
             return sqlText;
         }
@@ -101,6 +131,9 @@ public final class DialectTranslationStage implements PipelineStage {
         String cached = cache.get(sqlText, fromDialect, targetDialect);
         if (cached != null) {
             log.info("translation cache HIT for {}->{}: {}", fromDialect, targetDialect, sqlText);
+            if (cacheStore != null) {
+                cacheStore.recordAccess(fromDialect, targetDialect, sqlText, cached);
+            }
             return cached;
         }
         log.info("translation cache MISS for {}->{}, translating: {}", fromDialect, targetDialect, sqlText);
@@ -108,6 +141,9 @@ public final class DialectTranslationStage implements PipelineStage {
         String rewritten = DialectTranslations.translate(sqlText, fromDialect, targetDialect);
         if (rewritten != null) {
             cache.put(sqlText, fromDialect, targetDialect, rewritten);
+            if (cacheStore != null) {
+                cacheStore.recordAccess(fromDialect, targetDialect, sqlText, rewritten);
+            }
             return rewritten;
         }
 
@@ -127,6 +163,9 @@ public final class DialectTranslationStage implements PipelineStage {
                     "LLM fallback translator did not return usable SQL");
         }
         cache.put(sqlText, fromDialect, targetDialect, llmTranslated);
+        if (cacheStore != null) {
+            cacheStore.recordAccess(fromDialect, targetDialect, sqlText, llmTranslated);
+        }
         return llmTranslated;
     }
 }
