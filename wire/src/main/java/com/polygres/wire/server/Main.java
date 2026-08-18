@@ -153,8 +153,7 @@ public final class Main {
         // a plain env-var read (chicken-and-egg: a Postgres connection is needed before dynamic
         // config *from* Postgres can be read at all) -- see ConfigStore's and PolyWireConfig's
         // class javadoc for the full bootstrap-vs-dynamic split this implements.
-        ConfigStore configStore = new ConfigStore(options.pgHost(), options.pgPort(), options.pgDatabase(),
-                options.pgUser(), options.pgPassword());
+        ConfigStore configStore = new ConfigStore(options);
         configStore.ensureSchema();
         ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
         if (initialVersion == null) {
@@ -185,9 +184,13 @@ public final class Main {
         // targetBackend to fall back to in single-backend deployments (no POLYWIRE_BACKENDS set),
         // instead of targetBackend staying null and DialectTranslationStage never firing for the
         // default path. See BackendRegistry#fromConfig(String, String, BackendTarget)'s javadoc.
+        // failoverOptions=options (not the 4-arg no-failover constructor) -- this is the one
+        // BackendTarget with real ORAPG_PG_STANDBY_HOST semantics; see BackendTarget's javadoc for
+        // why this was the actual gap found while wiring up config-primary failover, and why every
+        // other (explicitly POLYWIRE_BACKENDS-configured) target deliberately keeps null here.
         BackendTarget defaultBackendTarget = new BackendTarget(BackendRegistry.DEFAULT_BACKEND_NAME,
                 "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase(),
-                options.pgUser(), options.pgPassword());
+                options.pgUser(), options.pgPassword(), options);
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
                 config.backends(), config.shardBackends(), defaultBackendTarget);
 
@@ -311,8 +314,7 @@ public final class Main {
         // the schema and why: a DBA manages it with plain INSERT/UPDATE/DELETE, the same mental
         // model as GRANT/REVOKE, and a trigger on the table auto-notifies this process so changes
         // take effect within seconds with no restart and no manual LISTEN/NOTIFY knowledge needed.
-        com.polygres.wire.config.FirewallRuleStore firewallRuleStore = new com.polygres.wire.config.FirewallRuleStore(
-                options.pgHost(), options.pgPort(), options.pgDatabase(), options.pgUser(), options.pgPassword());
+        com.polygres.wire.config.FirewallRuleStore firewallRuleStore = new com.polygres.wire.config.FirewallRuleStore(options);
         firewallRuleStore.ensureSchema();
         List<FirewallStage.Rule> initialFirewallRules;
         try {
@@ -338,8 +340,7 @@ public final class Main {
                 routerStage.valueShardRules().size(), routerStage.shardRules().size());
         stages.add(routerStage);
         stages.add(qosStage);
-        TranslationCacheStore translationCacheStore = new TranslationCacheStore(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        TranslationCacheStore translationCacheStore = new TranslationCacheStore(options);
         translationCacheStore.ensureSchema();
         stages.add(new DialectTranslationStage(backendRegistry, translationCacheStore));
         stages.add(rollupStage);

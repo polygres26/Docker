@@ -2,7 +2,6 @@ package com.polygres.wire.config;
 
 import com.polygres.wire.core.SourceDialect;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -89,38 +88,30 @@ import org.slf4j.LoggerFactory;
  *       query that triggered it.
  *   <li>The write is a single-row upsert against a primary-key/unique-index lookup — cheap
  *       relative to the round-trip most of these proxied protocols already pay talking to their
- *       real backend, and Postgres's own connection is already warm (one {@code DriverManager}
- *       connection is opened and reused per call the same way {@code FailedStatementLog} does;
- *       see the note on {@link #open} below for why this isn't pooled).
+ *       real backend, and each call borrows a pooled connection via {@link
+ *       com.polygres.wire.pgwire.PgConnections#open} (same pool real query traffic shares, and
+ *       the same {@code ORAPG_PG_STANDBY_HOST} primary/standby failover -- if the config-primary
+ *       Postgres this table lives on fails over, this store's writes follow automatically).
  *   <li>If a live load test surfaces this as a real bottleneck, the natural next step is
  *       batching hit-count increments in memory and flushing periodically — deliberately not
  *       built here since nothing in this pass's live testing showed it was needed, and building
  *       unneeded batching logic risks the exact kind of complexity this codebase's other
  *       Postgres-backed stores (see {@link ConfigStore}, {@link FailedStatementLog}) avoid.
  * </ul>
- *
- * <p>Like {@link FailedStatementLog}, this opens a fresh, unpooled {@link DriverManager}
- * connection per call rather than borrowing from a HikariCP pool elsewhere in this codebase —
- * consistent with that class's reasoning, and simplest given this is best-effort, off the
- * primary query path.
  */
 public final class TranslationCacheStore {
 
     private static final Logger log = LoggerFactory.getLogger(TranslationCacheStore.class);
 
-    private final String jdbcUrl;
-    private final String user;
-    private final String password;
+    private final com.polygres.wire.server.ServerOptions options;
 
-    public TranslationCacheStore(String host, int port, String database, String user, String password) {
-        this.jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
-        this.user = user;
-        this.password = password;
+    public TranslationCacheStore(com.polygres.wire.server.ServerOptions options) {
+        this.options = options;
     }
 
     /** Idempotent -- safe to call on every node's startup. */
     public void ensureSchema() {
-        try (Connection conn = open(); Statement st = conn.createStatement()) {
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS polywire_translation_cache ("
                     + "id bigserial PRIMARY KEY, "
                     + "source_dialect text NOT NULL, "
@@ -152,7 +143,7 @@ public final class TranslationCacheStore {
      */
     public void recordAccess(SourceDialect sourceDialect, SourceDialect targetDialect,
             String originalSql, String translatedSql) {
-        try (Connection conn = open();
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO polywire_translation_cache "
                                 + "(source_dialect, target_dialect, original_sql, original_sql_hash, translated_sql) "
@@ -174,14 +165,4 @@ public final class TranslationCacheStore {
         }
     }
 
-    private Connection open() throws SQLException {
-        java.util.Properties props = new java.util.Properties();
-        if (user != null) {
-            props.setProperty("user", user);
-        }
-        if (password != null) {
-            props.setProperty("password", password);
-        }
-        return DriverManager.getConnection(jdbcUrl, props);
-    }
 }

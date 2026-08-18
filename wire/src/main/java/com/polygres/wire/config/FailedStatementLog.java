@@ -2,7 +2,6 @@ package com.polygres.wire.config;
 
 import com.polygres.wire.core.SourceDialect;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -54,19 +53,15 @@ public final class FailedStatementLog {
         BACKEND_ERROR
     }
 
-    private final String jdbcUrl;
-    private final String user;
-    private final String password;
+    private final com.polygres.wire.server.ServerOptions options;
 
-    public FailedStatementLog(String host, int port, String database, String user, String password) {
-        this.jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
-        this.user = user;
-        this.password = password;
+    public FailedStatementLog(com.polygres.wire.server.ServerOptions options) {
+        this.options = options;
     }
 
     /** Idempotent -- safe to call on every node's startup. */
     public void ensureSchema() {
-        try (Connection conn = open(); Statement st = conn.createStatement()) {
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS polywire_failed_statements ("
                     + "id bigserial PRIMARY KEY, "
                     + "occurred_at timestamptz NOT NULL DEFAULT now(), "
@@ -89,7 +84,7 @@ public final class FailedStatementLog {
      */
     public void record(SourceDialect dialect, String sqlText, FailureType failureType,
             String sqlState, Integer nativeErrorReturned, String message) {
-        try (Connection conn = open();
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO polywire_failed_statements "
                                 + "(dialect, sql_text, failure_type, sql_state, native_error_returned, message) "
@@ -112,14 +107,4 @@ public final class FailedStatementLog {
         }
     }
 
-    private Connection open() throws SQLException {
-        java.util.Properties props = new java.util.Properties();
-        if (user != null) {
-            props.setProperty("user", user);
-        }
-        if (password != null) {
-            props.setProperty("password", password);
-        }
-        return DriverManager.getConnection(jdbcUrl, props);
-    }
 }

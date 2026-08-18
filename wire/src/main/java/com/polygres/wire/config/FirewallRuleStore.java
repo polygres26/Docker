@@ -1,8 +1,9 @@
 package com.polygres.wire.config;
 
 import com.polygres.wire.core.FirewallStage;
+import com.polygres.wire.pgwire.PgConnections;
+import com.polygres.wire.server.ServerOptions;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -58,35 +59,36 @@ import org.slf4j.LoggerFactory;
  * run; they never need to know {@code LISTEN}/{@code NOTIFY} exists.
  *
  * <h2>LISTEN/NOTIFY propagation</h2>
- * Same shape as {@link ConfigStore}'s own LISTEN loop: a dedicated connection held open for the
- * process lifetime (Postgres's LISTEN state is per-session, so this can't be a pooled connection),
- * blocking on {@code PGConnection.getNotifications(5000)} and re-reading the whole rule set on any
+ * Same shape as {@link ConfigStore}'s own LISTEN loop: a dedicated, non-pooled connection
+ * ({@link PgConnections#openRaw}) held open for the process lifetime (Postgres's LISTEN state is
+ * per-session, so this can't be a pooled connection -- see that method's javadoc), blocking on
+ * {@code PGConnection.getNotifications(5000)} and re-reading the whole rule set on any
  * notification.
+ *
+ * <h2>Primary/standby failover</h2>
+ * Every connection here -- one-shot reads via {@link PgConnections#open} and the persistent
+ * LISTEN connection via {@link PgConnections#openRaw} -- goes through the same {@code
+ * ORAPG_PG_STANDBY_HOST} failover logic real query traffic already gets (see that class's
+ * javadoc), sharing its process-wide {@code onStandby} state: if the config-primary Postgres this
+ * table lives on fails over, this store's connections follow automatically, same as everything
+ * else that talks to it.
  */
 public final class FirewallRuleStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FirewallRuleStore.class);
     private static final String CHANNEL = "polywire_firewall_rules_changed";
 
-    private final String pgHost;
-    private final int pgPort;
-    private final String pgDatabase;
-    private final String pgUser;
-    private final String pgPassword;
+    private final ServerOptions options;
     private final AtomicBoolean listening = new AtomicBoolean(false);
     private volatile Connection listenConnection;
     private ExecutorService listenExecutor;
 
-    public FirewallRuleStore(String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
-        this.pgHost = pgHost;
-        this.pgPort = pgPort;
-        this.pgDatabase = pgDatabase;
-        this.pgUser = pgUser;
-        this.pgPassword = pgPassword;
+    public FirewallRuleStore(ServerOptions options) {
+        this.options = options;
     }
 
     public void ensureSchema() {
-        try (Connection conn = open(); Statement st = conn.createStatement()) {
+        try (Connection conn = PgConnections.open(options); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS polywire_firewall_rules ("
                     + "id bigserial PRIMARY KEY, "
                     + "priority integer NOT NULL DEFAULT 100, "
@@ -114,7 +116,7 @@ public final class FirewallRuleStore implements AutoCloseable {
     /** One-shot read of every enabled rule, ordered by {@code priority} then {@code id} -- used for the initial load and after every LISTEN notification. */
     public List<FirewallStage.Rule> readRules() throws SQLException {
         List<FirewallStage.Rule> rules = new ArrayList<>();
-        try (Connection conn = open();
+        try (Connection conn = PgConnections.open(options);
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT id, priority, action, statement_type, table_pattern, sql_pattern, description "
@@ -196,7 +198,7 @@ public final class FirewallRuleStore implements AutoCloseable {
     private void listenLoop(Consumer<List<FirewallStage.Rule>> callback) {
         while (listening.get()) {
             try {
-                Connection conn = open();
+                Connection conn = PgConnections.openRaw(options);
                 this.listenConnection = conn;
                 try (Statement st = conn.createStatement()) {
                     st.execute("LISTEN " + CHANNEL);
@@ -230,17 +232,6 @@ public final class FirewallRuleStore implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    private Connection open() throws SQLException {
-        java.util.Properties props = new java.util.Properties();
-        if (pgUser != null) {
-            props.setProperty("user", pgUser);
-        }
-        if (pgPassword != null) {
-            props.setProperty("password", pgPassword);
-        }
-        return DriverManager.getConnection("jdbc:postgresql://" + pgHost + ":" + pgPort + "/" + pgDatabase, props);
     }
 
     @Override

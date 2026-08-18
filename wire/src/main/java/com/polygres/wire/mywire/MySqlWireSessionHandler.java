@@ -68,8 +68,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
-        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
     }
 

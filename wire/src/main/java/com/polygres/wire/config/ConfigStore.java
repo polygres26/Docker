@@ -1,7 +1,6 @@
 package com.polygres.wire.config;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -59,14 +58,22 @@ import org.slf4j.LoggerFactory;
  * works through this class.
  *
  * <h2>LISTEN/NOTIFY propagation</h2>
- * {@link #listen} opens a <b>dedicated, non-pooled</b> JDBC connection via {@link DriverManager}
- * (deliberately not borrowed from a HikariCP pool elsewhere in this codebase) and issues {@code
- * LISTEN polywire_config_changed} on it, then blocks in a background thread on {@code
- * PGConnection.getNotifications(timeoutMs)}. This connection must stay open for the process
- * lifetime of the listener: Postgres's LISTEN/NOTIFY state is per-session, so a pooled connection
- * that gets silently recycled back to the pool (and handed to some unrelated caller, or closed and
- * replaced) would silently drop the subscription with no error raised anywhere — a real, sharp-
- * edged gotcha this class exists specifically to avoid.
+ * {@link #listen} opens a <b>dedicated, non-pooled</b> JDBC connection via {@link
+ * com.polygres.wire.pgwire.PgConnections#openRaw} (deliberately not borrowed from a HikariCP pool
+ * elsewhere in this codebase) and issues {@code LISTEN polywire_config_changed} on it, then blocks
+ * in a background thread on {@code PGConnection.getNotifications(timeoutMs)}. This connection must
+ * stay open for the process lifetime of the listener: Postgres's LISTEN/NOTIFY state is
+ * per-session, so a pooled connection that gets silently recycled back to the pool (and handed to
+ * some unrelated caller, or closed and replaced) would silently drop the subscription with no
+ * error raised anywhere — a real, sharp-edged gotcha this class exists specifically to avoid.
+ *
+ * <h2>Primary/standby failover</h2>
+ * Every connection here -- one-shot reads/writes via {@link
+ * com.polygres.wire.pgwire.PgConnections#open} and the persistent LISTEN connection via {@link
+ * com.polygres.wire.pgwire.PgConnections#openRaw} -- goes through the same {@code
+ * ORAPG_PG_STANDBY_HOST} failover logic real query traffic already gets, sharing its process-wide
+ * {@code onStandby} state: if the config-primary Postgres this table lives on fails over, this
+ * store's connections follow automatically, same as everything else that talks to it.
  */
 public final class ConfigStore implements AutoCloseable {
 
@@ -76,22 +83,18 @@ public final class ConfigStore implements AutoCloseable {
     public record Version(long version, PolyWireConfig payload, java.time.Instant createdAt) {
     }
 
-    private final String jdbcUrl;
-    private final String user;
-    private final String password;
+    private final com.polygres.wire.server.ServerOptions options;
     private final AtomicBoolean listening = new AtomicBoolean(false);
     private volatile Connection listenConnection;
     private ExecutorService listenExecutor;
 
-    public ConfigStore(String host, int port, String database, String user, String password) {
-        this.jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
-        this.user = user;
-        this.password = password;
+    public ConfigStore(com.polygres.wire.server.ServerOptions options) {
+        this.options = options;
     }
 
     /** Idempotent — safe to call on every node's startup. */
     public void ensureSchema() throws SQLException {
-        try (Connection conn = open(); Statement st = conn.createStatement()) {
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS polywire_config ("
                     + "version bigserial PRIMARY KEY, "
                     + "payload jsonb NOT NULL, "
@@ -107,7 +110,7 @@ public final class ConfigStore implements AutoCloseable {
 
     /** Inserts a brand-new version row (never updates an existing one) and returns its assigned version number. The insert trigger notifies every listening node. */
     public long write(PolyWireConfig config) throws SQLException {
-        try (Connection conn = open();
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO polywire_config (payload) VALUES (?::jsonb) RETURNING version")) {
             ps.setString(1, config.toJson());
@@ -124,7 +127,7 @@ public final class ConfigStore implements AutoCloseable {
      * for this to be torn-read-safe). Empty when the table has no rows yet (a brand-new cluster).
      */
     public Optional<Version> readLatest() throws SQLException {
-        try (Connection conn = open(); Statement st = conn.createStatement();
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT version, payload::text, created_at FROM polywire_config "
                                 + "ORDER BY version DESC LIMIT 1")) {
@@ -160,7 +163,7 @@ public final class ConfigStore implements AutoCloseable {
     private void listenLoop(Consumer<Version> callback) {
         while (listening.get()) {
             try {
-                Connection conn = open();
+                Connection conn = com.polygres.wire.pgwire.PgConnections.openRaw(options);
                 this.listenConnection = conn;
                 try (Statement st = conn.createStatement()) {
                     st.execute("LISTEN " + CHANNEL);
@@ -194,17 +197,6 @@ public final class ConfigStore implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    private Connection open() throws SQLException {
-        java.util.Properties props = new java.util.Properties();
-        if (user != null) {
-            props.setProperty("user", user);
-        }
-        if (password != null) {
-            props.setProperty("password", password);
-        }
-        return DriverManager.getConnection(jdbcUrl, props);
     }
 
     @Override

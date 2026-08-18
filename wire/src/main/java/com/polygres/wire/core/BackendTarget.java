@@ -12,8 +12,29 @@ import java.sql.SQLException;
  * backend — shared across every caller/session that targets the same real
  * backend, not opened fresh each time (see that class's javadoc for what
  * "shared" buys).
+ *
+ * <p><b>{@code failoverOptions} — real, primary/standby failover for the default backend
+ * specifically</b>: found live, while wiring {@code ORAPG_PG_STANDBY_HOST} failover into
+ * PolyWire's control-plane stores, that actual statement execution never went through {@link
+ * com.polygres.wire.pgwire.PgConnections}' failover logic at all, despite that class's own javadoc
+ * describing it as process-wide -- {@link RoutingBackendExecutor} borrows straight from this
+ * class's {@link #borrow}, which called {@link BackendConnectionPools#borrow} directly, hardcoded
+ * to whichever host built this target's {@code jdbcUrl} at {@code BackendRegistry} construction
+ * time, with no awareness a standby even existed. Only the "default" backend (built from {@code
+ * ORAPG_PG_*} in {@code Main}, the one with real standby semantics -- see {@code PgConnections}'
+ * javadoc on why a real {@code POLYWIRE_BACKENDS} shard target is a different, non-failover-aware
+ * case) gets a non-null {@code failoverOptions}; every explicitly-configured {@code
+ * POLYWIRE_BACKENDS}/{@code POLYWIRE_SHARD_BACKENDS} target keeps {@code null} here (unchanged,
+ * no automatic failover -- a real second physical backend named in a shard config isn't a
+ * physical-replica pair of the first, there's nothing to fail over *to*).
  */
-public record BackendTarget(String name, String jdbcUrl, String user, String password) {
+public record BackendTarget(String name, String jdbcUrl, String user, String password,
+        com.polygres.wire.server.ServerOptions failoverOptions) {
+
+    /** Convenience for every caller that doesn't need failover (explicit {@code POLYWIRE_BACKENDS} targets) -- {@code failoverOptions} defaults to {@code null}. */
+    public BackendTarget(String name, String jdbcUrl, String user, String password) {
+        this(name, jdbcUrl, user, password, null);
+    }
 
     /**
      * The SQL dialect this backend's JDBC URL implies — always {@link SourceDialect#POSTGRES} in
@@ -49,6 +70,9 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
     }
 
     private Connection borrow() throws SQLException {
+        if (failoverOptions != null) {
+            return com.polygres.wire.pgwire.PgConnections.open(failoverOptions);
+        }
         // Keyed on the physical (jdbcUrl, user) identity, not on this target's own configured
         // name -- see BackendConnectionPools#poolKeyFor's javadoc for why: two different names
         // routing to the same real backend must share one pool, not silently double it.

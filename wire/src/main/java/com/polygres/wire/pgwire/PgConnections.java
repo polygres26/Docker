@@ -3,7 +3,9 @@ package com.polygres.wire.pgwire;
 import com.polygres.wire.core.BackendConnectionPools;
 import com.polygres.wire.server.ServerOptions;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -14,7 +16,11 @@ import org.slf4j.LoggerFactory;
 /**
  * Shared "open a JDBC connection to the configured Postgres backend" logic —
  * used by every frontend that talks to it directly (PgBackendPool,
- * PgWireSessionHandler, QueryServiceImpl, MySqlWireSessionHandler).
+ * PgWireSessionHandler, QueryServiceImpl, MySqlWireSessionHandler), and by
+ * PolyWire's own control-plane stores ({@code ConfigStore}, {@code
+ * FirewallRuleStore}, {@code TranslationCacheStore}, {@code
+ * FailedStatementLog} — see {@link #openRaw}'s javadoc for why those need a
+ * second, non-pooled entry point into this same failover logic).
  *
  * <p>ARCHITECTURE.md gap-analysis item "switchover/failover": opt-in via
  * {@code ORAPG_PG_STANDBY_HOST} (same user/password/database as the
@@ -24,14 +30,16 @@ import org.slf4j.LoggerFactory;
  * When set, a failed connect attempt against the currently-active side
  * immediately retries the other side; a successful retry flips the shared
  * {@code onStandby} flag so every subsequent connection (across every
- * frontend/session, process-wide) goes straight to the healthy side without
- * re-paying the failed primary's connect timeout each time. A background
- * probe polls the primary every {@code ORAPG_PG_FAILBACK_CHECK_SECONDS}
- * (default 10s) while on standby and flips back once it recovers — a
- * narrow-slice health check (plain connect-and-close, no replication-lag or
- * read-only-mode awareness), not a full HA controller.
+ * frontend/session, process-wide — including the control-plane stores,
+ * since they share this same static flag) goes straight to the healthy
+ * side without re-paying the failed primary's connect timeout each time. A
+ * background probe polls the primary every {@code
+ * ORAPG_PG_FAILBACK_CHECK_SECONDS} (default 10s) while on standby and flips
+ * back once it recovers — a narrow-slice health check (plain
+ * connect-and-close, no replication-lag or read-only-mode awareness), not a
+ * full HA controller.
  *
- * <p>Every "connect" here is actually a {@link BackendConnectionPools#borrow}
+ * <p>Every {@link #open} call is actually a {@link BackendConnectionPools#borrow}
  * — many frontend sessions across pgwire/mywire/gRPC/orawire share the same
  * small pool per (host, port, database, user), rather than each opening its
  * own physical connection. Primary and standby are distinct pool keys, so
@@ -44,9 +52,36 @@ public final class PgConnections {
     private static final AtomicBoolean onStandby = new AtomicBoolean(false);
     private static volatile ScheduledExecutorService failbackProbe;
 
+    @FunctionalInterface
+    private interface ConnectionOpener {
+        Connection open(String host, int port, ServerOptions options) throws SQLException;
+    }
+
     public static Connection open(ServerOptions options) throws SQLException {
+        return openWithFailover(options, PgConnections::connect);
+    }
+
+    /**
+     * Same primary/standby failover as {@link #open} (shares the same static {@code onStandby}
+     * flag and failback probe -- a failover discovered via either entry point is immediately
+     * visible to the other), but a genuinely raw, non-pooled {@link DriverManager} connection
+     * instead of a {@link BackendConnectionPools#borrow} one.
+     *
+     * <p>Needed specifically for {@code ConfigStore}/{@code FirewallRuleStore}'s persistent
+     * {@code LISTEN} connections: a pooled connection is returned to the pool (not truly closed)
+     * on {@code close()}, and Postgres's {@code LISTEN} state is per-session -- handing a
+     * listening connection back into a shared pool for some unrelated later borrower to reuse
+     * would leak that session's notifications to whoever borrows it next. One-shot reads
+     * ({@code readLatest()}, {@code readRules()}, {@code record(...)}) still use {@link #open}
+     * (pooled is correct there -- a genuinely one-shot borrow-then-close).
+     */
+    public static Connection openRaw(ServerOptions options) throws SQLException {
+        return openWithFailover(options, PgConnections::connectRaw);
+    }
+
+    private static Connection openWithFailover(ServerOptions options, ConnectionOpener opener) throws SQLException {
         if (options.pgStandbyHost() == null || options.pgStandbyHost().isBlank()) {
-            return connect(options.pgHost(), options.pgPort(), options);
+            return opener.open(options.pgHost(), options.pgPort(), options);
         }
         boolean preferStandby = onStandby.get();
         String primaryHost = preferStandby ? options.pgStandbyHost() : options.pgHost();
@@ -54,11 +89,11 @@ public final class PgConnections {
         String fallbackHost = preferStandby ? options.pgHost() : options.pgStandbyHost();
         int fallbackPort = preferStandby ? options.pgPort() : options.pgStandbyPort();
         try {
-            return connect(primaryHost, primaryPort, options);
+            return opener.open(primaryHost, primaryPort, options);
         } catch (SQLException primaryFailure) {
             log.warn("failover: {}:{} unreachable ({}), trying {}:{}",
                     primaryHost, primaryPort, primaryFailure.getMessage(), fallbackHost, fallbackPort);
-            Connection connection = connect(fallbackHost, fallbackPort, options);
+            Connection connection = opener.open(fallbackHost, fallbackPort, options);
             if (onStandby.compareAndSet(preferStandby, !preferStandby)) {
                 log.warn("failover: switched to {}:{}", fallbackHost, fallbackPort);
                 if (!preferStandby) {
@@ -108,6 +143,18 @@ public final class PgConnections {
         // silently end up in separate pools before poolKeyFor unified them.
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.pgUser());
         return BackendConnectionPools.borrow(poolKey, url, options.pgUser(), options.pgPassword());
+    }
+
+    private static Connection connectRaw(String host, int port, ServerOptions options) throws SQLException {
+        String url = "jdbc:postgresql://" + host + ":" + port + "/" + options.pgDatabase();
+        Properties props = new Properties();
+        if (options.pgUser() != null) {
+            props.setProperty("user", options.pgUser());
+        }
+        if (options.pgPassword() != null) {
+            props.setProperty("password", options.pgPassword());
+        }
+        return DriverManager.getConnection(url, props);
     }
 
     private PgConnections() {

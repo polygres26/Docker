@@ -173,8 +173,7 @@ public final class RequestLoop {
         this.backendRegistry = backendRegistry;
         this.oracleUsername = oracleUsername;
         this.oraclePassword = oraclePassword;
-        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
     }
 

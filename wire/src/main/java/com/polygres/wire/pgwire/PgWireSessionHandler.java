@@ -159,8 +159,7 @@ public final class PgWireSessionHandler implements Runnable {
         this.options = options;
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor);
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
-        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
     }

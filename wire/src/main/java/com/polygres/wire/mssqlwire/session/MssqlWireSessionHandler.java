@@ -106,8 +106,7 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new RoutingBackendExecutor(backendRegistry, terminalExecutor));
-        this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
     }
