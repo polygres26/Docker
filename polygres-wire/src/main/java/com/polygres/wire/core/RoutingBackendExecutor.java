@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Terminal executor wrapping a frontend's own default connection.
@@ -37,6 +39,8 @@ import java.util.regex.Pattern;
  * the connection the frontend already has open — with zero overhead.
  */
 public final class RoutingBackendExecutor implements BackendExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(RoutingBackendExecutor.class);
 
     /** {@link RouterStage} sentinel meaning "fan this SELECT out across the shard group," not a real backend name. */
     public static final String SCATTER_ALL = "*scatter-all*";
@@ -84,6 +88,31 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      */
     private XaTransaction xaTransaction;
 
+    /**
+     * {@code true} once any statement routed to a transaction branch (via
+     * {@link #executeOnTransactionConnection}) has thrown a {@link SQLException} during the
+     * current explicit transaction — e.g. a real constraint violation. Reset by
+     * {@link #beginTransaction()}, consulted (and forced back to {@code false}) by
+     * {@link #endTransaction}.
+     *
+     * <p>Exists because real Postgres XA (pgjdbc's {@code PGXAConnection}) does not reliably
+     * surface a poisoned branch as a {@link XaTransaction#commit()} <em>prepare</em> failure the
+     * way the 2PC protocol's own rules would suggest — found live: a genuine duplicate-key
+     * violation on one shard's statement can still let that branch's {@code prepare()} report
+     * success, so {@link XaTransaction#commit()} proceeds into its commit-all loop, commits the
+     * healthy branch durably, and only then hits a client-side {@code currentXid}/{@code
+     * preparedXid} state mismatch on the poisoned branch's own {@code commit()} call — a genuine
+     * partial commit, not just an in-doubt window. Trusting the JDBC driver's prepare-phase
+     * bookkeeping to catch this case turned out not to be safe, so this class tracks "did any
+     * statement in this transaction actually fail" itself, at the layer that already knows —
+     * {@link #execute}'s own catch is the only place a poisoned branch is unambiguously observed —
+     * and {@link #endTransaction} refuses to even attempt {@link XaTransaction#commit()} when this
+     * is {@code true}, forcing a full rollback across every branch instead (same as real Postgres:
+     * a client that sends {@code COMMIT} after an error in the transaction gets an implicit
+     * rollback, not a partial one).
+     */
+    private boolean transactionFailed;
+
     private static final Pattern DECLARE_CURSOR = Pattern.compile("(?i)^\\s*DECLARE\\s+(\\w+)\\s+CURSOR\\b");
     private static final Pattern FETCH_OR_CLOSE_CURSOR =
             Pattern.compile("(?i)^\\s*(?:FETCH\\b.*\\b(?:FROM|IN)\\s+(\\w+)|CLOSE\\s+(\\w+))\\s*;?\\s*$");
@@ -107,10 +136,36 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * autocommitted connection per routed statement, since that's simpler and correct for the
      * common case (no explicit transaction spanning more than one routed statement).
      */
+    /**
+     * {@code true} between {@link #beginTransaction} and the matching {@link #endTransaction} —
+     * lets a session-scoped frontend (e.g. {@code PgWireSessionHandler}) know whether a statement
+     * that failed came from inside an explicit client transaction, so it can call
+     * {@link #markTransactionFailed} for failures this class never even sees itself (a statement
+     * rejected by an earlier pipeline stage — QoS admission control, the result cache, etc. — never
+     * reaches {@link #execute} at all, so {@link #transactionFailed}'s own catch in
+     * {@link #executeOnTransactionConnection} can't record it).
+     */
+    public boolean inTransaction() {
+        return transactionConnections != null;
+    }
+
+    /**
+     * Marks the current explicit transaction as failed, the same as a routed statement throwing
+     * from inside {@link #executeOnTransactionConnection} — see {@link #transactionFailed}'s
+     * javadoc. For failures {@link #execute} never sees itself (thrown by an earlier pipeline
+     * stage before routing even happens). No-op outside an explicit transaction.
+     */
+    public void markTransactionFailed() {
+        if (transactionConnections != null) {
+            transactionFailed = true;
+        }
+    }
+
     public void beginTransaction() {
         transactionConnections = new LinkedHashMap<>();
         cursorTargets = new LinkedHashMap<>();
         xaTransaction = new XaTransaction();
+        transactionFailed = false;
     }
 
     /**
@@ -120,14 +175,22 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * call even if no routed statement ever actually opened a branch (transactionConnections empty
      * — {@link XaTransaction#hasBranches()} is false, commit()/rollback() on it are no-ops over an
      * empty resource list).
+     *
+     * <p>{@code commit} is downgraded to a rollback when {@link #transactionFailed} — see that
+     * field's javadoc for why this class does not trust {@link XaTransaction#commit()} alone to
+     * catch a poisoned branch.
      */
     public void endTransaction(boolean commit) throws SQLException {
         if (transactionConnections == null) {
             return;
         }
+        boolean actuallyCommit = commit && !transactionFailed;
+        if (commit && transactionFailed) {
+            log.warn("xa: client sent COMMIT but a statement failed earlier in this transaction -- rolling back all branches instead (same as real Postgres implicitly rolling back a COMMIT after an error)");
+        }
         SQLException firstFailure = null;
         try {
-            if (commit) {
+            if (actuallyCommit) {
                 xaTransaction.commit();
             } else {
                 xaTransaction.rollback();
@@ -231,6 +294,14 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             connection = branch.connection();
             transactionConnections.put(target.name(), connection);
         }
-        return new JdbcBackendExecutor(connection).execute(statement);
+        try {
+            return new JdbcBackendExecutor(connection).execute(statement);
+        } catch (SQLException e) {
+            // See #transactionFailed's javadoc -- recorded here, not inferred later from
+            // XaTransaction's own prepare/commit outcome, since that outcome isn't a reliable
+            // signal for this.
+            transactionFailed = true;
+            throw e;
+        }
     }
 }

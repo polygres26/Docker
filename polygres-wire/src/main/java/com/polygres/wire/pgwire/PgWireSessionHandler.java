@@ -206,7 +206,27 @@ public final class PgWireSessionHandler implements Runnable {
      * open at all, not just this connection.
      */
     private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
-        String verb = sql.strip().split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT);
+        // Real clients vary on whether the terminating ';' is glued onto the verb token itself
+        // (psql script/heredoc mode sends literally "BEGIN;"/"COMMIT;"/"ROLLBACK;" as one Simple
+        // Query message, no space before the semicolon) or sent as a separate token/omitted
+        // entirely (most JDBC/psycopg2-style drivers send bare "BEGIN"). Found live to matter: a
+        // real psql session's BEGIN/COMMIT/ROLLBACK never matched the switch below without this
+        // strip -- verb came out as "BEGIN;"/"COMMIT;"/"ROLLBACK;", none of which equal the bare
+        // case labels, so this method silently returned false for every one of them. That meant
+        // routingExecutor.beginTransaction()/endTransaction() were never called at all: every
+        // routed statement in the "transaction" actually ran on a fresh autocommitted connection
+        // (RoutingBackendExecutor.execute's transactionConnections-null branch), so each write was
+        // durably committed the instant it ran, with zero real 2PC coordination -- the client's
+        // BEGIN/COMMIT/ROLLBACK became pure no-ops against the session's own default connection
+        // instead. This is what actually broke cross-shard atomicity end-to-end (proved live: an
+        // explicit ROLLBACK after a routed INSERT left the row durably committed on the real
+        // backend) -- the XA/2PC coordinator code itself was never reached, not a bug in its own
+        // prepare/commit logic.
+        String stripped = sql.strip();
+        if (stripped.endsWith(";")) {
+            stripped = stripped.substring(0, stripped.length() - 1).stripTrailing();
+        }
+        String verb = stripped.split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT);
         switch (verb) {
             case "BEGIN", "START" -> {
                 connection.setAutoCommit(false);
@@ -402,6 +422,9 @@ public final class PgWireSessionHandler implements Runnable {
         try {
             step.run();
         } catch (SQLException e) {
+            // Same reasoning as executeSimpleQuery's catch -- see
+            // RoutingBackendExecutor#markTransactionFailed's javadoc.
+            routingExecutor.markTransactionFailed();
             PgMessages.writeErrorResponse(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
             out.flush();
             skipUntilSync = true;
@@ -580,6 +603,13 @@ public final class PgWireSessionHandler implements Runnable {
             PgMessages.writeReadyForQuery(out, readyForQueryStatus(backend));
             out.flush();
         } catch (SQLException e) {
+            // Any failure here while an explicit transaction is open poisons it for the rest of
+            // its lifetime, exactly like real Postgres ("current transaction is aborted") --
+            // matters even for statements an earlier pipeline stage rejected (QoS admission
+            // control, the result cache, ...) before RoutingBackendExecutor.execute ever saw them,
+            // which is why this isn't left to that class's own catch alone -- see
+            // RoutingBackendExecutor#markTransactionFailed's javadoc.
+            routingExecutor.markTransactionFailed();
             PgMessages.writeErrorAndReady(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
             out.flush();
         }
