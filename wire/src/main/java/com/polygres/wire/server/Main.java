@@ -9,8 +9,10 @@ import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.RollupStage;
 import com.polygres.wire.core.RouterStage;
 import com.polygres.wire.core.StatsCollectorStage;
+import com.polygres.wire.dynamowire.DynamoWireServer;
 import com.polygres.wire.grpc.PolyWireGrpcServer;
 import com.polygres.wire.http.admin.MetricsServer;
+import com.polygres.wire.mongowire.MongoWireSessionHandler;
 import com.polygres.wire.mssqlwire.session.MssqlWireSessionHandler;
 import com.polygres.wire.mywire.MySqlWireSessionHandler;
 import com.polygres.wire.orawire.session.SessionHandler;
@@ -282,6 +284,20 @@ public final class Main {
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
+        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor));
+
+        // dynamowire: DynamoDB's real client protocol is HTTP/JSON (SigV4-signed POST requests
+        // naming the operation via X-Amz-Target), not a raw TCP wire protocol, so it doesn't fit
+        // the acceptXxxLoop(ServerSocket) pattern the other frontends use -- it's an embedded
+        // Jetty HTTP server instead. See DynamoWireServer's class javadoc for the execution-path
+        // and auth-scope decisions. Own port, independent of pipelineStages (see that javadoc for
+        // why it bypasses the SQL pipeline entirely).
+        int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
+        DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
+                options.pgDatabase(), options.pgUser(), options.pgPassword());
+        dynamoWireServer.start();
+        log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor);
     }
 
@@ -338,6 +354,29 @@ public final class Main {
             }
         } catch (IOException e) {
             log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);
+        }
+    }
+
+    /**
+     * mongowire: its own listener port (POLYWIRE_MONGOWIRE_PORT, default 27017 — MongoDB's real
+     * conventional default, unclaimed by any other frontend here), and deliberately its own
+     * un-pipelined path straight to a plain JDBC Postgres connection (see
+     * MongoWireSessionHandler's class javadoc for why) rather than sharing pipelineStages/
+     * backendRegistry the way the four SQL-text frontends above do.
+     */
+    private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor) {
+        int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
+        String pgUrl = "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase();
+        try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
+            log.info("polywire listening for TCP (MongoDB wire) on port {}, proxying to postgres {} "
+                    + "(find/insert/update/delete only -- no aggregation pipeline, see MongoWireSessionHandler)",
+                    mongoPort, pgUrl);
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword()));
+            }
+        } catch (IOException e) {
+            log.error("MongoDB wire listener on port {} failed", mongoPort, e);
         }
     }
 

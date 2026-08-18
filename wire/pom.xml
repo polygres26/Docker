@@ -32,6 +32,7 @@
     <jetty.version>11.0.24</jetty.version>
     <hikaricp.version>5.1.0</hikaricp.version>
     <opentelemetry.version>1.43.0</opentelemetry.version>
+    <bson.version>5.2.1</bson.version>
   </properties>
 
   <dependencies>
@@ -106,6 +107,18 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.polygres.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
+           standalone BSON library (Apache-2.0), NOT the mongo-java-driver client itself (that
+           would be a MongoDB *client* dependency, nonsensical for something acting as a MongoDB
+           *server*). Used purely for OP_MSG document (de)serialization; the wire-protocol framing
+           and Postgres translation in mongowire are hand-written, following mongo-java-server's
+           postgresql-backend module (BSD-3-Clause) as a design/structure reference — see
+           MongoWireSessionHandler's javadoc. -->
+      <groupId>org.mongodb</groupId>
+      <artifactId>bson</artifactId>
+      <version>${bson.version}</version>
     </dependency>
     <dependency>
       <!-- Apache Ignite core (com.polygres.wire.cluster), Apache-2.0 — embedded in-process

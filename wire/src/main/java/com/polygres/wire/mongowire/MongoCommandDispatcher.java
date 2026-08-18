@@ -1,0 +1,195 @@
+package com.polygres.wire.mongowire;
+
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import org.bson.BsonArray;
+import org.bson.BsonBoolean;
+import org.bson.BsonDocument;
+import org.bson.BsonDouble;
+import org.bson.BsonInt32;
+import org.bson.BsonInt64;
+import org.bson.BsonString;
+import org.bson.BsonValue;
+import org.bson.Document;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Interprets one OP_MSG command document and returns the reply document. Every command a real
+ * MongoDB driver's handshake and CRUD calls send is handled directly here rather than being
+ * routed through PolyWire's existing {@code StatementPipeline}/{@code RouterStage} SQL-statement
+ * machinery — see {@code MongoWireSessionHandler}'s class javadoc for why. Only {@code find},
+ * {@code insert}, {@code update}, {@code delete}, plus the handshake/no-op commands
+ * (hello/isMaster/ping/buildInfo/getParameter/endSessions) needed for pymongo and the official
+ * driver to complete a connection, are implemented — no aggregation pipeline (explicitly out of
+ * scope, see the class javadoc), no {@code createIndexes}/{@code count}/{@code distinct}/etc.
+ */
+final class MongoCommandDispatcher {
+
+    private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
+    private final PostgresDocumentStore store;
+
+    MongoCommandDispatcher(PostgresDocumentStore store) {
+        this.store = store;
+    }
+
+    BsonDocument dispatch(BsonDocument command) {
+        String commandName = command.getFirstKey();
+        String db = command.containsKey("$db") ? command.getString("$db").getValue() : "test";
+        try {
+            return switch (commandName.toLowerCase(java.util.Locale.ROOT)) {
+                case "hello", "ismaster", "ismastercmd" -> hello();
+                case "ping" -> ok();
+                case "buildinfo" -> buildInfo();
+                case "getparameter" -> ok(); // pymongo probes a few server params during handshake
+                case "endsessions" -> ok();
+                case "insert" -> insert(command, db);
+                case "find" -> find(command, db);
+                case "update" -> update(command, db);
+                case "delete" -> delete(command, db);
+                default -> commandNotFound(commandName);
+            };
+        } catch (IllegalArgumentException badFilter) {
+            // A filter/update outside this pass's supported operator set (see
+            // MongoQueryTranslator/UpdateApplier javadoc) — report it as a real Mongo error
+            // rather than mis-executing it.
+            return error(badFilter.getMessage(), 9); // FailedToParse-ish
+        } catch (SQLException e) {
+            log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
+            return error("Postgres error: " + e.getMessage(), 8); // UnknownError
+        }
+    }
+
+    private BsonDocument hello() {
+        BsonDocument reply = new BsonDocument();
+        reply.put("ismaster", BsonBoolean.TRUE);
+        reply.put("helloOk", BsonBoolean.TRUE);
+        reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
+        reply.put("maxMessageSizeBytes", new BsonInt32(48 * 1024 * 1024));
+        reply.put("maxWriteBatchSize", new BsonInt32(100000));
+        reply.put("localTime", new org.bson.BsonDateTime(System.currentTimeMillis()));
+        reply.put("logicalSessionTimeoutMinutes", new BsonInt32(30));
+        reply.put("connectionId", new BsonInt32(1));
+        reply.put("minWireVersion", new BsonInt32(0));
+        // wire version 17 == MongoDB 6.0's; high enough that drivers negotiate OP_MSG (needs >=6)
+        // without also advertising server features (transactions, etc) this frontend doesn't have.
+        reply.put("maxWireVersion", new BsonInt32(17));
+        reply.put("readOnly", BsonBoolean.FALSE);
+        reply.put("ok", new BsonDouble(1.0));
+        return reply;
+    }
+
+    private BsonDocument buildInfo() {
+        BsonDocument reply = ok();
+        reply.put("version", new BsonString("7.0.0-polywire-mongowire"));
+        reply.put("versionArray", new BsonArray(List.of(new BsonInt32(7), new BsonInt32(0), new BsonInt32(0))));
+        reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
+        return reply;
+    }
+
+    private static BsonDocument ok() {
+        BsonDocument doc = new BsonDocument();
+        doc.put("ok", new BsonDouble(1.0));
+        return doc;
+    }
+
+    private static BsonDocument error(String message, int code) {
+        BsonDocument doc = new BsonDocument();
+        doc.put("ok", new BsonDouble(0.0));
+        doc.put("errmsg", new BsonString(message));
+        doc.put("code", new BsonInt32(code));
+        return doc;
+    }
+
+    private static BsonDocument commandNotFound(String commandName) {
+        return error("no such command: '" + commandName + "' (mongowire covers hello/ping/buildInfo/"
+                + "getParameter/endSessions plus find/insert/update/delete — not the aggregation "
+                + "pipeline or index/admin commands)", 59);
+    }
+
+    // ---- CRUD ----
+
+    private BsonDocument insert(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("insert").getValue();
+        BsonArray documents = command.getArray("documents");
+        int inserted = 0;
+        List<BsonDocument> writeErrors = new ArrayList<>();
+        for (int i = 0; i < documents.size(); i++) {
+            Document doc = BsonJson.toDocument(documents.get(i).asDocument());
+            try {
+                store.insertOne(db, collection, doc);
+                inserted++;
+            } catch (SQLException e) {
+                BsonDocument werr = new BsonDocument();
+                werr.put("index", new BsonInt32(i));
+                werr.put("errmsg", new BsonString(e.getMessage()));
+                writeErrors.add(werr);
+            }
+        }
+        BsonDocument reply = ok();
+        reply.put("n", new BsonInt32(inserted));
+        if (!writeErrors.isEmpty()) {
+            reply.put("writeErrors", new BsonArray(new ArrayList<>(writeErrors)));
+        }
+        return reply;
+    }
+
+    private BsonDocument find(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("find").getValue();
+        BsonDocument filter = command.containsKey("filter") ? command.getDocument("filter") : new BsonDocument();
+        int limit = command.containsKey("limit") ? command.getNumber("limit").intValue() : 0;
+        MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
+        List<Document> docs = store.find(db, collection, where, limit);
+
+        BsonArray firstBatch = new BsonArray();
+        for (Document d : docs) {
+            firstBatch.add(d.toBsonDocument());
+        }
+        BsonDocument cursor = new BsonDocument();
+        cursor.put("id", new BsonInt64(0)); // exhausted in the first batch, no getMore needed
+        cursor.put("ns", new BsonString(db + "." + collection));
+        cursor.put("firstBatch", firstBatch);
+
+        BsonDocument reply = ok();
+        reply.put("cursor", cursor);
+        return reply;
+    }
+
+    private BsonDocument update(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("update").getValue();
+        BsonArray updates = command.getArray("updates");
+        int matched = 0;
+        int modified = 0;
+        for (BsonValue u : updates) {
+            BsonDocument spec = u.asDocument();
+            BsonDocument filter = spec.getDocument("q", new BsonDocument());
+            Document updateDoc = BsonJson.toDocument(spec.getDocument("u"));
+            boolean multi = spec.containsKey("multi") && spec.getBoolean("multi").getValue();
+            MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
+            int n = store.updateMany(db, collection, where, updateDoc, multi ? 0 : 1);
+            matched += n;
+            modified += n;
+        }
+        BsonDocument reply = ok();
+        reply.put("n", new BsonInt32(matched));
+        reply.put("nModified", new BsonInt32(modified));
+        return reply;
+    }
+
+    private BsonDocument delete(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("delete").getValue();
+        BsonArray deletes = command.getArray("deletes");
+        int deleted = 0;
+        for (BsonValue d : deletes) {
+            BsonDocument spec = d.asDocument();
+            BsonDocument filter = spec.getDocument("q", new BsonDocument());
+            int limit = spec.containsKey("limit") ? spec.getNumber("limit").intValue() : 0;
+            MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
+            deleted += store.deleteMany(db, collection, where, limit);
+        }
+        BsonDocument reply = ok();
+        reply.put("n", new BsonInt32(deleted));
+        return reply;
+    }
+}
