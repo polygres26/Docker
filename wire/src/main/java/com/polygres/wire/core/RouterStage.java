@@ -285,7 +285,7 @@ public final class RouterStage implements PipelineStage {
      * this fixes — see {@code BackendRegistry#fromConfig}'s three-arg overload, which only ever
      * registers that synthetic name when {@code spec} is unset). In that case there is genuinely
      * only one place any statement could go — the same Postgres connection every frontend already
-     * opens for itself via {@code ORAPG_PG_*} — so route there instead of leaving
+     * opens for itself via {@code POLYWIRE_PG_*} — so route there instead of leaving
      * {@code targetBackend} {@code null} (which would make {@link DialectTranslationStage} silently
      * skip translation for that single-backend path).
      *

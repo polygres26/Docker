@@ -73,7 +73,7 @@ public final class BackendRegistry {
      * Same as the two-arg {@link #fromConfig}, plus {@code defaultTarget}: when {@code spec}
      * ({@code POLYWIRE_BACKENDS}) is unset, PolyWire is running in single-backend mode — every
      * frontend already opens its own connection to the one Postgres backend described by the
-     * {@code ORAPG_PG_*} env vars, but until now that connection was never itself registered here,
+     * {@code POLYWIRE_PG_*} env vars, but until now that connection was never itself registered here,
      * so {@link RouterStage} had nothing to fall back to and {@link DialectTranslationStage} never
      * fired for the default deployment path (the gap this parameter closes — see
      * {@code RouterStage#resolveBackend}'s javadoc). Registered under {@link #DEFAULT_BACKEND_NAME}
@@ -112,7 +112,7 @@ public final class BackendRegistry {
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
             log.info("backend registry: no POLYWIRE_BACKENDS configured -- registered the single "
-                    + "implicit ORAPG_PG_* backend as '{}' so routing/translation has a fallback target",
+                    + "implicit POLYWIRE_PG_* backend as '{}' so routing/translation has a fallback target",
                     DEFAULT_BACKEND_NAME);
         }
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()
@@ -127,7 +127,7 @@ public final class BackendRegistry {
      * the same {@code spec}/{@code shardGroupSpec}. Every existing holder of this instance observes
      * the change immediately — no new indirection layer needed, since object identity never changes,
      * only the two fields inside it. Carries this instance's original {@code defaultTarget} forward
-     * (it's {@code ORAPG_PG_*}-derived and fixed for the process lifetime, unlike {@code spec}) so a
+     * (it's {@code POLYWIRE_PG_*}-derived and fixed for the process lifetime, unlike {@code spec}) so a
      * hot-reload that clears {@code POLYWIRE_BACKENDS} back to unset doesn't lose the fallback entry.
      */
     public void reload(String spec, String shardGroupSpec) {

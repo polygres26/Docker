@@ -18,7 +18,7 @@ mvn package -DskipTests
 scripts/run.sh
 ```
 
-No `ORAPG_PG_*` env vars set defaults to `localhost:5432`; see [Configuration](#configuration)
+No `POLYWIRE_PG_*` env vars set defaults to `localhost:5432`; see [Configuration](#configuration)
 below for pointing it at a real backend.
 
 ## Protocol frontends
@@ -45,9 +45,9 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 
 | Variable | Purpose |
 |---|---|
-| `ORAPG_PG_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `polywire_config`, `polywire_firewall_rules`, and control-plane state |
-| `ORAPG_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
-| `ORAPG_PG_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
+| `POLYWIRE_PG_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `polywire_config`, `polywire_firewall_rules`, and control-plane state |
+| `POLYWIRE_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
+| `POLYWIRE_PG_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
 | `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups |
 | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Allowlist gating what hosts `POLYWIRE_BACKENDS` can register — env-var only, never DB-writable |
 | `POLYWIRE_ACL_RULES` | IP/CIDR allow-deny rules |
@@ -71,7 +71,7 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 
 ## High availability
 
-Config-primary failover (`ORAPG_PG_STANDBY_HOST`) with automatic failback probing. Sharding via
+Config-primary failover (`POLYWIRE_PG_STANDBY_HOST`) with automatic failback probing. Sharding via
 `POLYWIRE_SHARD_BACKENDS` with scatter-gather query fan-out. See the full deployment guide for
 what's still open before a real multi-AZ production deploy.
 

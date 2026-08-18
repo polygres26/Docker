@@ -14,14 +14,14 @@ import java.sql.SQLException;
  * "shared" buys).
  *
  * <p><b>{@code failoverOptions} — real, primary/standby failover for the default backend
- * specifically</b>: found live, while wiring {@code ORAPG_PG_STANDBY_HOST} failover into
+ * specifically</b>: found live, while wiring {@code POLYWIRE_PG_STANDBY_HOST} failover into
  * PolyWire's control-plane stores, that actual statement execution never went through {@link
  * com.polygres.wire.pgwire.PgConnections}' failover logic at all, despite that class's own javadoc
  * describing it as process-wide -- {@link RoutingBackendExecutor} borrows straight from this
  * class's {@link #borrow}, which called {@link BackendConnectionPools#borrow} directly, hardcoded
  * to whichever host built this target's {@code jdbcUrl} at {@code BackendRegistry} construction
  * time, with no awareness a standby even existed. Only the "default" backend (built from {@code
- * ORAPG_PG_*} in {@code Main}, the one with real standby semantics -- see {@code PgConnections}'
+ * POLYWIRE_PG_*} in {@code Main}, the one with real standby semantics -- see {@code PgConnections}'
  * javadoc on why a real {@code POLYWIRE_BACKENDS} shard target is a different, non-failover-aware
  * case) gets a non-null {@code failoverOptions}; every explicitly-configured {@code
  * POLYWIRE_BACKENDS}/{@code POLYWIRE_SHARD_BACKENDS} target keeps {@code null} here (unchanged,

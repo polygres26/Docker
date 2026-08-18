@@ -71,7 +71,7 @@ import org.slf4j.LoggerFactory;
  * Every connection here -- one-shot reads/writes via {@link
  * com.polygres.wire.pgwire.PgConnections#open} and the persistent LISTEN connection via {@link
  * com.polygres.wire.pgwire.PgConnections#openRaw} -- goes through the same {@code
- * ORAPG_PG_STANDBY_HOST} failover logic real query traffic already gets, sharing its process-wide
+ * POLYWIRE_PG_STANDBY_HOST} failover logic real query traffic already gets, sharing its process-wide
  * {@code onStandby} state: if the config-primary Postgres this table lives on fails over, this
  * store's connections follow automatically, same as everything else that talks to it.
  */

@@ -13,7 +13,7 @@ import javax.net.ssl.TrustManagerFactory;
  * Shared TLS wiring for all four client-facing frontends (orawire/pgwire/mywire/gRPC). Ported
  * from Omnigate's {@code ProxyServer.buildTlsFactory()} (see that class for the original): one
  * PKCS12 keystore ({@code POLYWIRE_TLS_KEYSTORE}/{@code POLYWIRE_TLS_KEYSTORE_PASSWORD}, renamed
- * here from Omnigate's {@code ORAPG_TLS_*} for consistency with everything else already renamed
+ * here from Omnigate's {@code POLYWIRE_TLS_*} for consistency with everything else already renamed
  * in this port) backs every protocol's TLS listener. orawire/pgwire/mywire each wrap their
  * existing plain {@code ServerSocket} accept loop in an {@code SSLServerSocket} one instead — a
  * full-socket wrap done immediately after accept, before any protocol bytes, so none of the

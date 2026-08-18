@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
  * Real per-role Postgres authentication -- opt-in via {@code POLYWIRE_AUTH_MODE=postgres_roles}
  * (default {@code shared_secret}, {@link CredentialStore}'s single dev credential, unchanged).
  * pgbouncer-style {@code auth_query} design: an admin connection (this project's existing
- * {@code ORAPG_PG_*} backend credentials -- must be a superuser, since {@code pg_authid} is
+ * {@code POLYWIRE_PG_*} backend credentials -- must be a superuser, since {@code pg_authid} is
  * superuser-only) periodically fetches every loginable role's real password verifier from
  * {@code pg_authid} into an in-memory cache, refreshed on a timer
  * ({@code POLYWIRE_AUTH_REFRESH_SECONDS}, default 30s) rather than a live query per login.
@@ -91,7 +91,7 @@ public final class PgRoleAuthCache {
             }
         } catch (Exception e) {
             throw new RuntimeException("PgRoleAuthCache: failed to query pg_authid "
-                    + "(the ORAPG_PG_* admin connection must be a real superuser -- pg_authid.rolpassword "
+                    + "(the POLYWIRE_PG_* admin connection must be a real superuser -- pg_authid.rolpassword "
                     + "is superuser-only)", e);
         }
         verifiersByRole = fresh;

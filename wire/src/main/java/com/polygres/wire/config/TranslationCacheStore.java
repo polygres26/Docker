@@ -90,7 +90,7 @@ import org.slf4j.LoggerFactory;
  *       relative to the round-trip most of these proxied protocols already pay talking to their
  *       real backend, and each call borrows a pooled connection via {@link
  *       com.polygres.wire.pgwire.PgConnections#open} (same pool real query traffic shares, and
- *       the same {@code ORAPG_PG_STANDBY_HOST} primary/standby failover -- if the config-primary
+ *       the same {@code POLYWIRE_PG_STANDBY_HOST} primary/standby failover -- if the config-primary
  *       Postgres this table lives on fails over, this store's writes follow automatically).
  *   <li>If a live load test surfaces this as a real bottleneck, the natural next step is
  *       batching hit-count increments in memory and flushing periodically — deliberately not

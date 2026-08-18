@@ -10,7 +10,7 @@
 #
 # Usage: ./scripts/run.sh
 # Config: all via env vars, see Main.java's javadoc and its startup log lines for the full list
-# (ORAPG_PG_*/ORAPG_AUTH_*, POLYWIRE_*_PORT, POLYWIRE_QOS_*, POLYWIRE_CACHE_*, POLYWIRE_OTEL_ENDPOINT).
+# (POLYWIRE_PG_*/POLYWIRE_AUTH_*, POLYWIRE_*_PORT, POLYWIRE_QOS_*, POLYWIRE_CACHE_*, POLYWIRE_OTEL_ENDPOINT).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

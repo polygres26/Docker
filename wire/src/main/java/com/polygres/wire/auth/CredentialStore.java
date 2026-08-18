@@ -13,8 +13,8 @@ public final class CredentialStore {
     private final byte[] password;
 
     public CredentialStore() {
-        this.username = System.getenv().getOrDefault("ORAPG_AUTH_USER", "orapg");
-        this.password = System.getenv().getOrDefault("ORAPG_AUTH_PASSWORD", "orapg")
+        this.username = System.getenv().getOrDefault("POLYWIRE_AUTH_USER", "orapg");
+        this.password = System.getenv().getOrDefault("POLYWIRE_AUTH_PASSWORD", "orapg")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 

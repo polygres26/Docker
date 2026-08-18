@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * second, non-pooled entry point into this same failover logic).
  *
  * <p>ARCHITECTURE.md gap-analysis item "switchover/failover": opt-in via
- * {@code ORAPG_PG_STANDBY_HOST} (same user/password/database as the
+ * {@code POLYWIRE_PG_STANDBY_HOST} (same user/password/database as the
  * primary — a physical-replica HA pair, not a separately configured
  * backend; for routing traffic to a differently-shaped backend, use
  * {@code POLYWIRE_BACKENDS}/{@link com.polygres.wire.core.RouterStage} instead).
@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  * since they share this same static flag) goes straight to the healthy
  * side without re-paying the failed primary's connect timeout each time. A
  * background probe polls the primary every {@code
- * ORAPG_PG_FAILBACK_CHECK_SECONDS} (default 10s) while on standby and flips
+ * POLYWIRE_PG_FAILBACK_CHECK_SECONDS} (default 10s) while on standby and flips
  * back once it recovers — a narrow-slice health check (plain
  * connect-and-close, no replication-lag or read-only-mode awareness), not a
  * full HA controller.
@@ -109,7 +109,7 @@ public final class PgConnections {
         if (failbackProbe != null) {
             return;
         }
-        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("ORAPG_PG_FAILBACK_CHECK_SECONDS", "10"));
+        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("POLYWIRE_PG_FAILBACK_CHECK_SECONDS", "10"));
         failbackProbe = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "pg-failback-probe");
             t.setDaemon(true);

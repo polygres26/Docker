@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Unset means every host is trusted -- zero behavior change from before this feature existed,
  * same "opt-in, default unchanged" convention as every other feature added this session. The
- * {@code ORAPG_PG_*} config-primary backend ({@link BackendRegistry#DEFAULT_BACKEND_NAME}) is
+ * {@code POLYWIRE_PG_*} config-primary backend ({@link BackendRegistry#DEFAULT_BACKEND_NAME}) is
  * never checked against this list at all -- see {@link BackendRegistry#fromConfig}'s call site --
  * it's the operator's own env-var-configured connection, already inherently trusted since it's how
  * they told PolyWire to reach its own backend at deploy time; only the DB-writable {@code

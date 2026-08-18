@@ -201,7 +201,7 @@ public final class MySqlWireSessionHandler implements Runnable {
     // These have no Postgres equivalent and would otherwise fail every connection before
     // the client's real query ever runs, so they're no-op'd here rather than forwarded —
     // the same shim any MySQL-wire-protocol proxy in front of a non-MySQL backend needs.
-    // NOT applicable to ORAPG_MYWIRE_BACKEND=mysql (see options.mywireNativeBackend()): a real
+    // NOT applicable to POLYWIRE_MYWIRE_BACKEND=mysql (see options.mywireNativeBackend()): a real
     // MySQL/MariaDB backend understands these statements natively, so forwarding them is both
     // correct and necessary there (a client's charset/session settings should actually apply).
     private static final java.util.regex.Pattern SET_STATEMENT =
@@ -221,7 +221,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         // POLYWIRE_BACKENDS configured), so DialectTranslationStage's own handle() silently
         // no-op'd for this path and the direct call was the only translation that ever happened.
         // Commit fa75e51 closed that gap generally -- BackendRegistry#fromConfig now always
-        // registers a synthetic "default" backend from ORAPG_PG_* when POLYWIRE_BACKENDS is unset,
+        // registers a synthetic "default" backend from POLYWIRE_PG_* when POLYWIRE_BACKENDS is unset,
         // and RouterStage#resolveUnambiguousDefault falls back to exactly that entry -- so
         // RouterStage resolves a real targetBackend for this path too now, and
         // DialectTranslationStage.handle() fires inside pipeline.execute() same as every other

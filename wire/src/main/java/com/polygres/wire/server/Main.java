@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Bootstrap: starts the three frontend listeners (pgwire, mywire, orawire), each wired through a
- * shared pipeline onto a single Postgres backend (configured via the existing ORAPG_PG_* env
+ * shared pipeline onto a single Postgres backend (configured via the existing POLYWIRE_PG_* env
  * vars, defaults localhost:5432/postgres). Second pass — QoS admission control, cache-aside
  * result caching, and stats/OTel observability (deliberately skipped in the first pass, see
  * commit 7676603) are now wired in, in ARCHITECTURE.md §5's stage order: Router -&gt; Qos -&gt;
@@ -95,7 +95,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Fourth pass — TLS. All four client-facing frontends (orawire, pgwire, mywire, gRPC) now
  * support TLS, backed by one shared PKCS12 keystore ({@code POLYWIRE_TLS_KEYSTORE}/
- * {@code POLYWIRE_TLS_KEYSTORE_PASSWORD}, ported from Omnigate's Oracle-only {@code ORAPG_TLS_*}
+ * {@code POLYWIRE_TLS_KEYSTORE_PASSWORD}, ported from Omnigate's Oracle-only {@code POLYWIRE_TLS_*}
  * and renamed for consistency). orawire's TCPS listener is a straight port of Omnigate's
  * {@code ProxyServer} TLS handling: a second, TLS-only {@code ServerSocket} (built via
  * {@link TlsSupport#buildTlsFactory}) accepting the exact same {@link SessionHandler}, since TLS
@@ -148,7 +148,7 @@ public final class Main {
 
         // com.polygres.wire.config.ConfigStore: the hot-reloadable config tier (QoS limits, cache
         // TTLs, backend/routing rules, rollup definitions) now lives in the polywire_config table
-        // on the SAME bootstrap Postgres connection every frontend already uses (ORAPG_PG_*) --
+        // on the SAME bootstrap Postgres connection every frontend already uses (POLYWIRE_PG_*) --
         // not a second, differently-configured connection. That bootstrap connection itself stays
         // a plain env-var read (chicken-and-egg: a Postgres connection is needed before dynamic
         // config *from* Postgres can be read at all) -- see ConfigStore's and PolyWireConfig's
@@ -177,15 +177,15 @@ public final class Main {
 
         // POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS: named backends RouterStage rules and
         // RollupStage definitions can target, beyond the one connection each frontend already
-        // opens for itself via ORAPG_PG_*. Now sourced from polywire_config (hot-reloadable), not
+        // opens for itself via POLYWIRE_PG_*. Now sourced from polywire_config (hot-reloadable), not
         // a static env var -- BackendRegistry#reload keeps this same instance current in place.
-        // Synthetic "default" entry built from the same ORAPG_PG_* values every frontend already
+        // Synthetic "default" entry built from the same POLYWIRE_PG_* values every frontend already
         // connects with directly -- gives RouterStage/DialectTranslationStage a real, registered
         // targetBackend to fall back to in single-backend deployments (no POLYWIRE_BACKENDS set),
         // instead of targetBackend staying null and DialectTranslationStage never firing for the
         // default path. See BackendRegistry#fromConfig(String, String, BackendTarget)'s javadoc.
         // failoverOptions=options (not the 4-arg no-failover constructor) -- this is the one
-        // BackendTarget with real ORAPG_PG_STANDBY_HOST semantics; see BackendTarget's javadoc for
+        // BackendTarget with real POLYWIRE_PG_STANDBY_HOST semantics; see BackendTarget's javadoc for
         // why this was the actual gap found while wiring up config-primary failover, and why every
         // other (explicitly POLYWIRE_BACKENDS-configured) target deliberately keeps null here.
         BackendTarget defaultBackendTarget = new BackendTarget(BackendRegistry.DEFAULT_BACKEND_NAME,
