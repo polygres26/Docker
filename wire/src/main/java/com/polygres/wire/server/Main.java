@@ -114,6 +114,21 @@ import org.slf4j.LoggerFactory;
  * {@code POLYWIRE_GRPC_TLS_PORT} (default 17071) built from the same shared keystore via a
  * {@code KeyManagerFactory} handed straight to Netty's {@code SslContextBuilder} — no PEM
  * extraction or temp files needed, see {@link TlsSupport} and {@link PolyWireGrpcServer}.
+ *
+ * <p>Fifth pass — {@code mssqlwire} (SQL Server TDS) is now a fifth peer of pgwire/mywire/orawire
+ * in every sense this class wires up, not just query round-tripping: it shares the exact same
+ * {@code pipelineStages} list built above (Router → Qos → DialectTranslation → Cache → Stats), so
+ * QoS admission control and result caching apply to TDS traffic with zero changes here — see
+ * {@code MssqlWireSessionHandler}'s constructor. Its TLS story is the third shape in this codebase
+ * (after orawire's separate-TCPS-port wrap and pgwire/mywire's raw-socket in-band upgrade):
+ * MS-TDS's PRELOGIN {@code ENCRYPTION} option also negotiates in-band on the same plain-looking
+ * port, but — found live against real {@code mssql-jdbc} — the TLS handshake bytes themselves are
+ * additionally required to be wrapped in ordinary TDS packets while the handshake is in flight, a
+ * wrinkle specific enough to TDS that it needed its own {@code SSLEngine}-driven channel ({@code
+ * com.polygres.wire.mssqlwire.frontend.TdsTlsChannel}) rather than reusing pgwire/mywire's simpler
+ * raw {@code SSLSocket} wrap. All three of TLS, T-SQL dialect translation (see {@link
+ * com.polygres.wire.core.DialectTranslations#normalizeSqlServer}), and QoS/cache sharing are
+ * live-verified end-to-end against real {@code mssql-jdbc}.
  */
 public final class Main {
 

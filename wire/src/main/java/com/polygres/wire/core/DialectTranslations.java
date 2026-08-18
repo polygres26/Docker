@@ -15,7 +15,8 @@ import java.util.regex.Pattern;
  * maintain instead of {@code N × M} — the difference between adding one function and adding six
  * every time a new backend dialect (Snowflake, Databricks, ...) shows up.
  *
- * <p><b>Three source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}</b> — every
+ * <p><b>Four source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}, {@code
+ * SQL_SERVER}</b> — every
  * frontend that stamps a real dialect (see {@link DialectTranslationStage}'s javadoc for which
  * frontends produce which {@code SourceDialect}; {@code grpc} and MCP/HTTP both stamp
  * {@code POLYWIRE_NATIVE}, which has no normalizer and never will — there's no wire-protocol signal
@@ -66,6 +67,15 @@ import java.util.regex.Pattern;
  * but have <b>not</b> been live-verified — no local, free way to run any of those four platforms in
  * this environment (same honest gap already recorded for those backends' own connectivity in
  * ARCHITECTURE.md §5.4c).
+ *
+ * <p><b>{@code SQL_SERVER→POSTGRES} is also live-verified end-to-end</b>, against real {@code
+ * mssql-jdbc} through {@code com.polygres.wire.mssqlwire} onto a real Postgres backend: bracketed
+ * identifiers, {@code TOP N}, {@code GETDATE()}, and {@code ISNULL} were each independently
+ * confirmed. T-SQL's {@code +} string-concatenation operator is deliberately <b>not</b> translated
+ * — see {@link #normalizeSqlServer}'s javadoc for why a regex-only layer can't safely disambiguate
+ * it from arithmetic {@code +}. {@code SQL_SERVER→SNOWFLAKE}/{@code REDSHIFT}/{@code BIGQUERY}/
+ * {@code DATABRICKS} share the same unverified status as every other source rendered at those four
+ * targets, for the same reason.
  */
 public final class DialectTranslations {
 
@@ -75,7 +85,8 @@ public final class DialectTranslations {
     private static final Map<SourceDialect, Function<String, String>> NORMALIZERS = Map.of(
             SourceDialect.ORACLE, DialectTranslations::normalizeOracle,
             SourceDialect.POSTGRES, DialectTranslations::normalizePostgres,
-            SourceDialect.MYSQL, DialectTranslations::normalizeMysql);
+            SourceDialect.MYSQL, DialectTranslations::normalizeMysql,
+            SourceDialect.SQL_SERVER, DialectTranslations::normalizeSqlServer);
 
     private static final Map<SourceDialect, Function<String, String>> RENDERERS = Map.of(
             SourceDialect.ORACLE, DialectTranslations::renderOracle,
@@ -316,6 +327,68 @@ public final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_LIMIT_OFFSET_COUNT,
                 m -> "LIMIT " + m.group(2) + " OFFSET " + m.group(1));
         return out;
+    }
+
+    // ---- SQL_SERVER (T-SQL) normalizer: T-SQL -> shared canonical form ----
+
+    // Bracketed identifiers -- T-SQL's own quoting rule, same shape as MySQL's backtick rule
+    // (MYSQL_BACKTICK_IDENTIFIER above), different delimiter. A '[' inside a string literal is
+    // skipped by replaceOutsideLiterals the same way every other rule here is.
+    private static final Pattern MSSQL_BRACKETED_IDENTIFIER = Pattern.compile("\\[([^\\]]+)\\]");
+    private static final Pattern MSSQL_GETDATE_CALL = Pattern.compile("(?i)\\bGETDATE\\s*\\(\\s*\\)");
+    // ISNULL takes exactly two arguments in T-SQL, unlike Postgres's own variadic COALESCE -- a
+    // straight rename is correct here without the arg-restructuring DECODE->CASE rewrite needed
+    // (COALESCE(expr, replacement) is already the same shape as ISNULL(expr, replacement)).
+    private static final Pattern MSSQL_ISNULL = Pattern.compile("(?i)\\bISNULL\\s*\\(");
+    // SELECT [DISTINCT] TOP N ... -- the position is different from Postgres's LIMIT (TOP sits
+    // right after SELECT, LIMIT goes at the end of the statement), so this is a real structural
+    // rewrite: strip "TOP N" from right after SELECT[/DISTINCT] and append "LIMIT N" to the tail
+    // of the statement, same as applyRownumLimit does for Oracle's ROWNUM. Only a bare integer
+    // literal is handled (no "TOP (@n)" bind-parameter form, no "TOP N PERCENT") -- narrow but
+    // honest, same convention as everywhere else in this file.
+    private static final Pattern MSSQL_TOP =
+            Pattern.compile("(?i)^(\\s*SELECT\\s+)(DISTINCT\\s+)?TOP\\s+(\\d+)\\s+");
+
+    private static String normalizeSqlServer(String sql) {
+        String out = sql;
+        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_GETDATE_CALL, m -> "CURRENT_TIMESTAMP");
+        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_ISNULL, m -> "COALESCE(");
+        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_BRACKETED_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
+        out = applyTopLimit(out);
+        // Deliberately NOT translated: T-SQL's "+" string concatenation operator (e.g.
+        // "SELECT first_name + ' ' + last_name"). T-SQL overloads "+" for both arithmetic and
+        // string concatenation with no textual marker distinguishing the two -- telling them apart
+        // needs real operand type information (is 'a' a string column, a numeric column, a
+        // parameter?), which this regex-only, no-catalog-lookup translation layer genuinely doesn't
+        // have (same category of gap already documented for MYSQL_LIMIT_OFFSET_COUNT's bind-
+        // parameter carve-out above). Guessing wrong here is worse than not translating: a numeric
+        // "+" silently rewritten to string concat (or vice versa) produces a confidently wrong
+        // result instead of Postgres's own clear type-mismatch error. Left untouched on purpose --
+        // a T-SQL statement relying on "+" concatenation against a Postgres target needs to be
+        // rewritten by the caller to use "||" (or CONCAT()) directly.
+        return out;
+    }
+
+    /**
+     * Handles {@code SELECT [DISTINCT] TOP N ...} at the very start of the statement -- strips the
+     * {@code TOP N} clause and appends {@code LIMIT N} to the statement's tail (before a trailing
+     * semicolon, if any), mirroring {@link #applyRownumLimit}'s ROWNUM handling. A second/nested
+     * {@code TOP} (e.g. inside a subquery) isn't attempted, same "one simple case" scope as ROWNUM.
+     */
+    private static String applyTopLimit(String sql) {
+        Matcher matcher = MSSQL_TOP.matcher(sql);
+        if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
+            return sql;
+        }
+        String n = matcher.group(3);
+        String withoutTop = matcher.group(1) + (matcher.group(2) == null ? "" : matcher.group(2))
+                + sql.substring(matcher.end());
+        String trimmed = withoutTop.stripTrailing();
+        boolean hadSemicolon = trimmed.endsWith(";");
+        if (hadSemicolon) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).stripTrailing();
+        }
+        return trimmed + " LIMIT " + n + (hadSemicolon ? ";" : "");
     }
 
     // ---- Renderers: canonical form -> target-specific concerns the canonical form doesn't already cover ----

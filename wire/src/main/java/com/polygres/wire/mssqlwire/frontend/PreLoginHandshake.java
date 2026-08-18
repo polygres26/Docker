@@ -15,11 +15,24 @@ import java.util.Map;
  *              followed immediately by each option's data laid out at those offsets.
  * </pre>
  *
- * Token 0x01 (ENCRYPTION) is the only field this pass's response logic inspects: TLS is out of
- * scope for this round (see the module-level task description), so the server always answers
- * {@code ENCRYPT_NOT_SUPPORTED} (0x02) regardless of what the client requested — a real client
- * (verified live against {@code mssql-jdbc}) accepts that and proceeds with a plaintext LOGIN7
- * rather than failing the handshake, as long as it didn't request {@code ENCRYPT_REQUIRED} (0x01).
+ * Token 0x01 (ENCRYPTION) is the field this pass's TLS negotiation logic inspects. Real MS-TDS
+ * encoding (cross-checked live against {@code mssql-jdbc}'s own {@code TDS.class} constant pool —
+ * {@code javap -p -constants} on the shipped 12.10.0 jar — since the public spec's prose is easy
+ * to transcribe wrong): {@code ENCRYPT_OFF=0x00}, {@code ENCRYPT_ON=0x01}, {@code
+ * ENCRYPT_NOT_SUPPORTED=0x02}, {@code ENCRYPT_REQUIRED=0x03}. (An earlier pass of this file had
+ * {@code ENCRYPT_REQUIRED} wrongly aliased to {@code 0x01} — that byte is actually {@code
+ * ENCRYPT_ON} — which happened not to matter while the server unconditionally answered {@code
+ * NOT_SUPPORTED} either way; it matters now that encryption is actually negotiated.)
+ *
+ * <p>When {@link com.polygres.wire.server.ServerOptions#tlsEnabled()} and the client requested
+ * {@code ENCRYPT_ON} or {@code ENCRYPT_REQUIRED}, the server answers {@code ENCRYPT_ON} and the
+ * caller ({@code MssqlWireSessionHandler}) upgrades the socket to TLS in place immediately after
+ * this PRELOGIN response is flushed and before LOGIN7 is read — the same in-band-upgrade shape
+ * pgwire's {@code SSLRequest}/mywire's {@code CLIENT_SSL} already use (see {@code
+ * PgWireSessionHandler#readStartupMessage}'s javadoc for the general pattern this replicates).
+ * When TLS isn't configured, the server still answers {@code ENCRYPT_NOT_SUPPORTED} regardless of
+ * what the client requested, unless the client hard-requires it ({@code ENCRYPT_REQUIRED}), in
+ * which case the handshake is failed cleanly rather than silently served in plaintext.
  */
 public final class PreLoginHandshake {
 
@@ -30,8 +43,10 @@ public final class PreLoginHandshake {
     private static final byte TOKEN_MARS = 0x04;
     private static final byte TOKEN_TERMINATOR = (byte) 0xFF;
 
+    public static final byte ENCRYPT_OFF = 0x00;
+    public static final byte ENCRYPT_ON = 0x01;
     public static final byte ENCRYPT_NOT_SUPPORTED = 0x02;
-    public static final byte ENCRYPT_REQUIRED = 0x01;
+    public static final byte ENCRYPT_REQUIRED = 0x03;
 
     private PreLoginHandshake() {
     }
@@ -63,12 +78,12 @@ public final class PreLoginHandshake {
 
     /**
      * Builds the server's PRELOGIN response: VERSION (a made-up but well-formed server version),
-     * ENCRYPTION (always NOT_SUPPORTED — see class javadoc), INSTOPT (empty), THREADID (0), MARS
+     * ENCRYPTION (the negotiated byte — see class javadoc), INSTOPT (empty), THREADID (0), MARS
      * (off), terminated by 0xFF.
      */
-    public static byte[] buildResponse() {
+    public static byte[] buildResponse(byte negotiatedEncryption) {
         byte[] versionData = {0x0F, 0x00, 0x00, 0x07, 0x00, 0x00}; // 15.0.0.1792-ish; value is arbitrary but well-formed
-        byte[] encryptionData = {ENCRYPT_NOT_SUPPORTED};
+        byte[] encryptionData = {negotiatedEncryption};
         byte[] instoptData = {0x00}; // empty instance name, NUL-terminated
         byte[] threadIdData = {0x00, 0x00, 0x00, 0x00};
         byte[] marsData = {0x00};

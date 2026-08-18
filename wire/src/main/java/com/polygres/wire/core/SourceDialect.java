@@ -15,10 +15,15 @@ package com.polygres.wire.core;
  * as a {@link BackendTarget#dialect()} result, never as a {@link Statement#sourceDialect()} — no
  * frontend produces "generic REST"-dialected SQL.
  *
- * <p>{@code SQL_SERVER} joins {@code SNOWFLAKE}/{@code REDSHIFT}/{@code BIGQUERY}/{@code
- * DATABRICKS} as backend-only (ARCHITECTURE.md §41's SQL history harvesting extension) — no
- * wire-protocol frontend speaks SQL Server's TDS protocol, only {@code jdbc:sqlserver:...}
- * {@link BackendTarget}s reached via the bundled {@code mssql-jdbc} driver.
+ * <p>{@code SQL_SERVER} is no longer backend-only: {@code com.polygres.wire.mssqlwire}
+ * ({@code MssqlWireSessionHandler}) is a real wire-protocol frontend that speaks SQL Server's
+ * TDS protocol directly (PRELOGIN/LOGIN7 handshake, in-band TLS negotiation, SQL_BATCH
+ * round-tripping), stamping {@code Statement.sourceDialect()} as {@code SQL_SERVER} for every
+ * statement it receives — see that class's javadoc. It still also appears as a {@link
+ * BackendTarget#dialect()} result for {@code jdbc:sqlserver:...} targets reached via the bundled
+ * {@code mssql-jdbc} driver, same as before ARCHITECTURE.md §41's SQL history harvesting
+ * extension originally added it for — {@code SQL_SERVER} is simply no longer restricted to that
+ * one direction.
  *
  * <p>{@link DialectTranslations} looks up a normalizer/renderer pair keyed by a {@code (source,
  * target)} dialect drawn from this enum — see that class's javadoc for which pairs actually have
