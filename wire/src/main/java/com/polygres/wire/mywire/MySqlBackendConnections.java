@@ -20,8 +20,7 @@ public final class MySqlBackendConnections {
 
     public static Connection open(ServerOptions options) throws SQLException {
         String url = "jdbc:mariadb://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase();
-        String poolKey = "mysql:" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase()
-                + "/" + options.mysqlUser();
+        String poolKey = BackendConnectionPools.poolKeyFor(url, options.mysqlUser());
         return BackendConnectionPools.borrow(poolKey, url, options.mysqlUser(), options.mysqlPassword());
     }
 

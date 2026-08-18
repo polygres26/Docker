@@ -43,6 +43,26 @@ public final class BackendConnectionPools {
         return dataSource.getConnection();
     }
 
+    /**
+     * The physical identity a pool should be keyed on -- the actual {@code (jdbcUrl, user)} a
+     * connection is opened against, never a caller-chosen label like {@link BackendTarget#name}.
+     * Found live: {@link BackendTarget#borrow} used to key its pool on {@code name} while
+     * {@code PgConnections}' own direct-session path (pgwire's {@code sessionConnection()},
+     * mywire/mssqlwire/gRPC's per-statement borrow) keyed on {@code host:port/db/user} -- two
+     * different labels for what is, in the default single-backend deployment, the exact same
+     * physical Postgres, so it silently split into two independent 20-connection Hikari pools
+     * (confirmed via {@code /metrics}: {@code pool="default"} and
+     * {@code pool="localhost:5442/postgres/postgres"} both sitting at {@code idle=20}
+     * simultaneously) -- doubling the real ceiling on backend connections {@code
+     * POLYWIRE_POOL_MAX_SIZE} was supposed to be capping. Every caller now derives its poolKey
+     * from this one method so two routes to the same physical backend always collapse into one
+     * shared pool, regardless of what label (a configured backend name, a directly-built JDBC URL)
+     * got them there.
+     */
+    public static String poolKeyFor(String jdbcUrl, String user) {
+        return jdbcUrl + "|" + (user == null ? "" : user);
+    }
+
     public record PoolStats(String poolKey, int activeConnections, int idleConnections, int totalConnections,
             int maxPoolSize, int threadsAwaitingConnection) {
     }

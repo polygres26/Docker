@@ -6,9 +6,12 @@ import java.sql.SQLException;
 /**
  * One named JDBC backend a {@link RouterStage} rule can route a statement
  * to. Config only. Connections come from {@link BackendConnectionPools},
- * keyed by {@code name} — shared across every caller/session that targets
- * this backend, not opened fresh each time (see that class's javadoc for
- * what "shared" buys).
+ * keyed by the real {@code (jdbcUrl, user)} identity via {@link
+ * BackendConnectionPools#poolKeyFor} — not by {@code name}, which is only a
+ * routing label a config author picked and may not be unique per physical
+ * backend — shared across every caller/session that targets the same real
+ * backend, not opened fresh each time (see that class's javadoc for what
+ * "shared" buys).
  */
 public record BackendTarget(String name, String jdbcUrl, String user, String password) {
 
@@ -46,6 +49,9 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
     }
 
     private Connection borrow() throws SQLException {
-        return BackendConnectionPools.borrow(name, jdbcUrl, user, password);
+        // Keyed on the physical (jdbcUrl, user) identity, not on this target's own configured
+        // name -- see BackendConnectionPools#poolKeyFor's javadoc for why: two different names
+        // routing to the same real backend must share one pool, not silently double it.
+        return BackendConnectionPools.borrow(BackendConnectionPools.poolKeyFor(jdbcUrl, user), jdbcUrl, user, password);
     }
 }

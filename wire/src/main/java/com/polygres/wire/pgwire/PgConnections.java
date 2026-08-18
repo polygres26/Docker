@@ -101,7 +101,12 @@ public final class PgConnections {
         // string is measurably slower than concatenation for a hot path this narrow. No behavior
         // change: same URL/poolKey shape either way.
         String url = "jdbc:postgresql://" + host + ":" + port + "/" + options.pgDatabase();
-        String poolKey = host + ":" + port + "/" + options.pgDatabase() + "/" + options.pgUser();
+        // Poolkey derived the same way BackendTarget's own borrow() does -- see
+        // BackendConnectionPools#poolKeyFor's javadoc for why this must not be a hand-built string
+        // of its own: this project's default single-backend deployment reaches the exact same
+        // physical Postgres via both this path and a registered BackendTarget, and the two used to
+        // silently end up in separate pools before poolKeyFor unified them.
+        String poolKey = BackendConnectionPools.poolKeyFor(url, options.pgUser());
         return BackendConnectionPools.borrow(poolKey, url, options.pgUser(), options.pgPassword());
     }
 
