@@ -358,53 +358,34 @@ public final class Main {
         // BackendRegistry-driven target additions for schemas RouterStage didn't know about yet,
         // are the two narrow-slice limitations of this pass -- see the module README/commit
         // message for the honest list of what's deferred.
-        configStore.listen(newVersion -> {
-            currentConfigVersion.set(newVersion);
-            PolyWireConfig c = newVersion.payload();
-            log.info("config: applying polywire_config version {} in place", newVersion.version());
-            QosControlStage parsedQos = QosControlStage.fromConfig(c.qosRatePerSec(), c.qosBurst(),
-                    c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
-            qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
-            routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
-                    c.routerValueShardRules(), c.routerShardTables());
-            backendRegistry.reload(c.backends(), c.shardBackends());
-            if (cacheStage != null) {
-                cacheStage.reconfigure(c.cacheTables(), c.cacheTtlMs());
-            }
-            List<RollupDefinition> newRollups = RollupConfig.parse(c.rollupDefinitionsYaml());
-            rollupStore.reload(newRollups);
-            for (RollupDefinition def : newRollups) {
-                try {
-                    rollupRefreshJob.refreshNow(def);
-                } catch (Exception e) {
-                    log.warn("rollup: reload materialization failed for \"{}\" ({})", def.name(), e.toString());
-                }
-            }
-            rollupRefreshJob.scheduleAll();
-            log.info("config: version {} applied (qos rate={}/s burst={}, {} router rule set(s), "
-                            + "{} backend(s), cache={}, {} rollup definition(s))",
-                    newVersion.version(), c.qosRatePerSec(), c.qosBurst(),
-                    routerStage.schemaRules().size() + routerStage.predicateRules().size()
-                            + routerStage.valueShardRules().size() + routerStage.shardRules().size(),
-                    backendRegistry.all().size(), cacheStage != null, newRollups.size());
-        });
+        // configStore.listen(...) registration itself moved further down, past every object its
+        // callback now also reloads (ACL/OAuth/AWS IAM, added alongside the QoS/router/backend/
+        // cache/rollup reloads that were already here) -- a Java lambda can only close over
+        // variables already in scope, and those didn't exist yet at this point in the method.
 
         PgBackendPool backendPool = new PgBackendPool(options);
 
         // POLYWIRE_ACL_RULES / POLYWIRE_ACL_PPV2_ENABLED / POLYWIRE_ACL_TRUSTED_PROXIES -- see
         // ConnectionGate's javadoc. Built early: both HTTP servers below (metrics, dynamowire) and
-        // every TCP accept loop further down share this same instance/config. ClientAcl.DISABLED /
-        // ConnectionGate.DISABLED (nothing configured) is a zero-cost no-op, unchanged default
-        // behavior. clientAcl is also used directly (bypassing PPv2) by acceptOraWireTlsLoop --
-        // see that method's javadoc for why PPv2 can't compose with an always-TLS listener.
-        com.polygres.wire.acl.ClientAcl clientAcl = com.polygres.wire.acl.ClientAcl.fromEnv();
-        com.polygres.wire.acl.ConnectionGate connectionGate = com.polygres.wire.acl.ConnectionGate.fromEnv();
+        // every TCP accept loop further down share this same instance/config. Sourced from `config`
+        // (POLYWIRE_ACL_* env vars as the bootstrap default, polywire_config.aclRules/etc. taking
+        // over and hot-reloadable from there -- see Main's config-apply callback further down and
+        // ClientAcl/ConnectionGate's own class javadoc). .create(...), not .fromEnv() -- Main always
+        // wants its own dedicated, independently-reloadable instance, even when nothing is
+        // configured yet, never the shared DISABLED constant (see those classes' javadoc on why).
+        // clientAcl is also used directly (bypassing PPv2) by acceptOraWireTlsLoop -- see that
+        // method's javadoc for why PPv2 can't compose with an always-TLS listener.
+        com.polygres.wire.acl.ClientAcl clientAcl = com.polygres.wire.acl.ClientAcl.parse(config.aclRules());
+        com.polygres.wire.acl.ConnectionGate connectionGate = com.polygres.wire.acl.ConnectionGate.create(
+                clientAcl, "true".equalsIgnoreCase(config.aclPpv2Enabled()),
+                com.polygres.wire.acl.ConnectionGate.parseTrustedProxies(config.aclTrustedProxies()));
 
-        // POLYWIRE_OAUTH_ISSUER -- see AccessContextResolver's javadoc. DISABLED (unset) is a
-        // zero-cost no-op shared by every HTTP frontend below (metrics/dynamowire/MCP), same
-        // "opt-in, zero behavior change by default" convention as ConnectionGate.
-        com.polygres.wire.http.auth.AccessContextResolver oauth =
-                com.polygres.wire.http.auth.AccessContextResolver.fromEnv();
+        // POLYWIRE_OAUTH_ISSUER / polywire_config.oauthIssuer -- see AccessContextResolver's
+        // javadoc. Disabled (nothing configured) is a zero-cost no-op shared by every HTTP frontend
+        // below (metrics/dynamowire/MCP), same "opt-in, zero behavior change by default" convention
+        // as ConnectionGate; hot-reloadable the same way.
+        com.polygres.wire.http.auth.AccessContextResolver oauth = com.polygres.wire.http.auth.AccessContextResolver.create(
+                config.oauthIssuer(), config.oauthAudience(), config.oauthUserIdClaim(), config.oauthRolesClaim());
 
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate, oauth);
@@ -463,11 +444,12 @@ public final class Main {
         // and auth-scope decisions. Own port, independent of pipelineStages (see that javadoc for
         // why it bypasses the SQL pipeline entirely).
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
-        // POLYWIRE_AWS_IAM_CREDENTIALS -- see SigV4Verifier's javadoc for why this is the correct
-        // mechanism for dynamowire specifically (a real DynamoDB client never sends a bearer
-        // token, so generic OAuth doesn't apply to real clients hitting this frontend).
+        // POLYWIRE_AWS_IAM_CREDENTIALS / polywire_config.awsIamCredentials -- see SigV4Verifier's
+        // javadoc for why this is the correct mechanism for dynamowire specifically (a real
+        // DynamoDB client never sends a bearer token, so generic OAuth doesn't apply to real
+        // clients hitting this frontend); hot-reloadable the same way as ACL/OAuth above.
         com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials =
-                com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.fromEnv();
+                com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.create(config.awsIamCredentials());
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth,
                 awsIamCredentials);
@@ -484,6 +466,51 @@ public final class Main {
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"), oauth);
         mcpServer.start();
         log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
+
+        // Registered here, last -- this callback needs every object it reloads (qosStage through
+        // clientAcl/connectionGate/oauth/awsIamCredentials) already constructed, since a Java
+        // lambda can only close over variables already in scope at the point it's written.
+        configStore.listen(newVersion -> {
+            currentConfigVersion.set(newVersion);
+            PolyWireConfig c = newVersion.payload();
+            log.info("config: applying polywire_config version {} in place", newVersion.version());
+            QosControlStage parsedQos = QosControlStage.fromConfig(c.qosRatePerSec(), c.qosBurst(),
+                    c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
+            qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
+            routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
+                    c.routerValueShardRules(), c.routerShardTables());
+            backendRegistry.reload(c.backends(), c.shardBackends());
+            if (cacheStage != null) {
+                cacheStage.reconfigure(c.cacheTables(), c.cacheTtlMs());
+            }
+            List<RollupDefinition> newRollups = RollupConfig.parse(c.rollupDefinitionsYaml());
+            rollupStore.reload(newRollups);
+            for (RollupDefinition def : newRollups) {
+                try {
+                    rollupRefreshJob.refreshNow(def);
+                } catch (Exception e) {
+                    log.warn("rollup: reload materialization failed for \"{}\" ({})", def.name(), e.toString());
+                }
+            }
+            rollupRefreshJob.scheduleAll();
+            // ACL/OAuth/AWS IAM -- see this session's "support both env variables and
+            // polywire_config" request: same env-var-bootstrap-default-then-hot-reloadable shape
+            // as everything else in this callback, not a separate mechanism.
+            clientAcl.reload(c.aclRules());
+            connectionGate.reload("true".equalsIgnoreCase(c.aclPpv2Enabled()),
+                    com.polygres.wire.acl.ConnectionGate.parseTrustedProxies(c.aclTrustedProxies()));
+            oauth.reload(c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim());
+            awsIamCredentials.reload(c.awsIamCredentials());
+            log.info("config: version {} applied (qos rate={}/s burst={}, {} router rule set(s), "
+                            + "{} backend(s), cache={}, {} rollup definition(s), acl={} rule(s), "
+                            + "oauth={}, awsIam={} credential(s))",
+                    newVersion.version(), c.qosRatePerSec(), c.qosBurst(),
+                    routerStage.schemaRules().size() + routerStage.predicateRules().size()
+                            + routerStage.valueShardRules().size() + routerStage.shardRules().size(),
+                    backendRegistry.all().size(), cacheStage != null, newRollups.size(),
+                    clientAcl.hasRules() ? "some" : "0", c.oauthIssuer() == null ? "disabled" : "enabled",
+                    awsIamCredentials.isEnabled() ? "some" : "0");
+        });
 
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate);
     }

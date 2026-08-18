@@ -56,7 +56,7 @@ final class AclInterceptor implements ServerInterceptor {
     @Override
     public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
             ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
-        if (acl == ClientAcl.DISABLED) {
+        if (!acl.hasRules()) {
             return next.startCall(call, headers);
         }
         InetAddress proxied = call.getAttributes().get(GrpcProxyProtocol.PROXIED_REMOTE_ADDRESS);

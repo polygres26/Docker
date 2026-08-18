@@ -1,11 +1,9 @@
 package com.polygres.wire.http.auth;
 
-import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSVerifier;
 import com.nimbusds.jose.crypto.factories.DefaultJWSVerifierFactory;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import com.polygres.wire.core.AccessContext;
@@ -42,16 +40,20 @@ import org.slf4j.LoggerFactory;
  * Identity, Keycloak, AWS Cognito, ...) since they all publish the same {@code
  * .well-known/openid-configuration} discovery document and issue standard signed JWTs.
  *
- * <p>Opt-in via {@code POLYWIRE_OAUTH_ISSUER} -- unset means every HTTP frontend behaves exactly
- * as before this feature existed ({@link #DISABLED}, every request resolves to {@link
- * AccessContext#ANONYMOUS} with no token check at all).
+ * <p>Config source: {@code POLYWIRE_OAUTH_ISSUER}/{@code _AUDIENCE}/{@code _USERID_CLAIM}/
+ * {@code _ROLES_CLAIM} (bootstrap default) or {@code polywire_config.oauthIssuer}/etc.
+ * (hot-reloadable -- see {@link #reload}, called from {@code Main}'s config-apply callback).
+ * Unset issuer means every HTTP frontend behaves exactly as before this feature existed ({@link
+ * #DISABLED}, every request resolves to {@link AccessContext#ANONYMOUS} with no token check at
+ * all) -- see the class-level note on {@link #DISABLED} for why that constant is never itself
+ * reloaded.
  *
- * <p><b>Claim mapping is configurable</b> ({@code POLYWIRE_OAUTH_USERID_CLAIM} default {@code sub},
- * {@code POLYWIRE_OAUTH_ROLES_CLAIM} default {@code roles}) since different IdPs shape their
- * tokens differently -- Okta's own default authorization-server groups claim is commonly
- * {@code groups}, not {@code roles}, for example; this project doesn't assume one shape.
+ * <p><b>Claim mapping is configurable</b> (default {@code sub}/{@code roles}) since different
+ * IdPs shape their tokens differently -- Okta's own default authorization-server groups claim is
+ * commonly {@code groups}, not {@code roles}, for example; this project doesn't assume one shape.
  *
- * <p><b>JWKS caching</b>: fetched once at startup and refreshed on a timer ({@code
+ * <p><b>JWKS caching</b>: fetched once when OAuth becomes enabled (construction or the first
+ * {@link #reload} that sets a real issuer) and refreshed on a timer ({@code
  * POLYWIRE_OAUTH_JWKS_REFRESH_SECONDS}, default 300s) via the discovery document's own {@code
  * jwks_uri} -- same "cache locally, refresh periodically, never a live round-trip per request"
  * posture {@link com.polygres.wire.auth.PgRoleAuthCache} already established for role passwords.
@@ -60,6 +62,7 @@ public final class AccessContextResolver {
 
     private static final Logger log = LoggerFactory.getLogger(AccessContextResolver.class);
 
+    /** A plain default value ("OAuth not configured") -- never itself reloaded; see {@link com.polygres.wire.acl.ClientAcl}'s class javadoc for the identical reasoning. */
     public static final AccessContextResolver DISABLED = new AccessContextResolver(null, null, null, null);
 
     /** Outcome of resolving one request's bearer token. */
@@ -74,11 +77,15 @@ public final class AccessContextResolver {
         }
     }
 
-    private final String issuer;
-    private final String audience;
-    private final String userIdClaim;
-    private final String rolesClaim;
+    // volatile, not final -- see ClientAcl's identical field javadoc for why: a reload (from
+    // Main's polywire_config LISTEN callback) and a concurrent request's own read both need to see
+    // consistent values, never a torn combination, without a lock on the hot path.
+    private volatile String issuer;
+    private volatile String audience;
+    private volatile String userIdClaim;
+    private volatile String rolesClaim;
     private volatile JWKSet jwkSet = new JWKSet();
+    private volatile boolean jwksRefreshStarted;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
     private AccessContextResolver(String issuer, String audience, String userIdClaim, String rolesClaim) {
@@ -93,43 +100,76 @@ public final class AccessContextResolver {
         if (issuer == null || issuer.isBlank()) {
             return DISABLED;
         }
-        String audience = System.getenv("POLYWIRE_OAUTH_AUDIENCE");
-        String userIdClaim = System.getenv().getOrDefault("POLYWIRE_OAUTH_USERID_CLAIM", "sub");
-        String rolesClaim = System.getenv().getOrDefault("POLYWIRE_OAUTH_ROLES_CLAIM", "roles");
-        AccessContextResolver resolver = new AccessContextResolver(issuer, audience, userIdClaim, rolesClaim);
-        String jwksUri = System.getenv("POLYWIRE_OAUTH_JWKS_URI");
-        resolver.startJwksRefresh(jwksUri);
-        log.info("OAuth: POLYWIRE_OAUTH_ISSUER={} -- HTTP frontends now require a valid bearer token "
-                + "(userIdClaim={}, rolesClaim={}, audience={})", issuer, userIdClaim, rolesClaim,
-                audience == null ? "(not checked)" : audience);
+        AccessContextResolver resolver = new AccessContextResolver(null, null, null, null);
+        resolver.reload(issuer, System.getenv("POLYWIRE_OAUTH_AUDIENCE"),
+                System.getenv("POLYWIRE_OAUTH_USERID_CLAIM"), System.getenv("POLYWIRE_OAUTH_ROLES_CLAIM"));
         return resolver;
     }
 
-    private void startJwksRefresh(String explicitJwksUri) {
-        Runnable refresh = () -> {
-            try {
-                String jwksUri = explicitJwksUri != null && !explicitJwksUri.isBlank()
-                        ? explicitJwksUri : discoverJwksUri();
-                jwkSet = fetchJwkSet(jwksUri);
-                log.info("OAuth: refreshed JWKS from {} -- {} key(s)", jwksUri, jwkSet.getKeys().size());
-            } catch (Exception e) {
-                log.warn("OAuth: JWKS refresh failed, keeping previous key set ({} keys): {}",
-                        jwkSet.getKeys().size(), e.getMessage());
-            }
-        };
-        refresh.run(); // populate synchronously before accepting any requests
+    /** Builds a real, independently-reloadable instance, even when {@code issuer} is null (OAuth starts disabled but can be enabled later via {@link #reload}) -- unlike {@link #fromEnv}, never returns the shared {@link #DISABLED} constant. */
+    public static AccessContextResolver create(String issuer, String audience, String userIdClaim, String rolesClaim) {
+        AccessContextResolver resolver = new AccessContextResolver(null, null, null, null);
+        resolver.reload(issuer, audience, userIdClaim, rolesClaim);
+        return resolver;
+    }
+
+    /**
+     * Swaps in freshly-configured issuer/audience/claim-mapping; a blank/null {@code issuer}
+     * disables OAuth on this instance again (every request goes back to {@link
+     * AccessContext#ANONYMOUS}, no token check). Starts the background JWKS refresh loop the
+     * first time a real issuer is set (idempotent -- a later reload with a different issuer just
+     * changes what {@link #discoverJwksUri} resolves against on the loop's existing schedule,
+     * plus this call always does one synchronous fetch immediately so a changed issuer takes
+     * effect without waiting for the next scheduled tick).
+     */
+    public synchronized void reload(String issuer, String audience, String userIdClaim, String rolesClaim) {
+        this.issuer = (issuer == null || issuer.isBlank()) ? null : issuer;
+        this.audience = audience;
+        this.userIdClaim = userIdClaim == null || userIdClaim.isBlank() ? "sub" : userIdClaim;
+        this.rolesClaim = rolesClaim == null || rolesClaim.isBlank() ? "roles" : rolesClaim;
+        if (this.issuer == null) {
+            log.info("OAuth: reloaded -- disabled (no issuer configured)");
+            return;
+        }
+        refreshJwks();
+        if (!jwksRefreshStarted) {
+            jwksRefreshStarted = true;
+            startJwksRefreshLoop();
+        }
+        log.info("OAuth: reloaded -- issuer={}, userIdClaim={}, rolesClaim={}, audience={}",
+                this.issuer, this.userIdClaim, this.rolesClaim, audience == null ? "(not checked)" : audience);
+    }
+
+    private void startJwksRefreshLoop() {
         int refreshSeconds = parseIntEnv("POLYWIRE_OAUTH_JWKS_REFRESH_SECONDS", 300);
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "polywire-oauth-jwks-refresh");
             t.setDaemon(true);
             return t;
         });
-        scheduler.scheduleWithFixedDelay(refresh, refreshSeconds, refreshSeconds, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(this::refreshJwks, refreshSeconds, refreshSeconds, TimeUnit.SECONDS);
     }
 
-    private String discoverJwksUri() throws Exception {
-        String discoveryUrl = issuer.endsWith("/") ? issuer + ".well-known/openid-configuration"
-                : issuer + "/.well-known/openid-configuration";
+    private void refreshJwks() {
+        String currentIssuer = issuer; // one volatile read
+        if (currentIssuer == null) {
+            return;
+        }
+        try {
+            String jwksUriOverride = System.getenv("POLYWIRE_OAUTH_JWKS_URI");
+            String jwksUri = jwksUriOverride != null && !jwksUriOverride.isBlank()
+                    ? jwksUriOverride : discoverJwksUri(currentIssuer);
+            jwkSet = fetchJwkSet(jwksUri);
+            log.info("OAuth: refreshed JWKS from {} -- {} key(s)", jwksUri, jwkSet.getKeys().size());
+        } catch (Exception e) {
+            log.warn("OAuth: JWKS refresh failed, keeping previous key set ({} keys): {}",
+                    jwkSet.getKeys().size(), e.getMessage());
+        }
+    }
+
+    private String discoverJwksUri(String currentIssuer) throws Exception {
+        String discoveryUrl = currentIssuer.endsWith("/") ? currentIssuer + ".well-known/openid-configuration"
+                : currentIssuer + "/.well-known/openid-configuration";
         HttpRequest request = HttpRequest.newBuilder(URI.create(discoveryUrl)).GET().build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
@@ -153,19 +193,18 @@ public final class AccessContextResolver {
 
     /**
      * Convenience for the three HTTP frontends' {@code Handler.handle()}: resolves the caller and,
-     * once OAuth is enabled ({@code this != DISABLED}), enforces it -- writes {@code 401} and
-     * returns {@code null} for a missing or invalid token (enabling OAuth means requiring it, not
-     * silently falling back to anonymous), otherwise returns the resolved {@link AccessContext}
-     * ({@link AccessContext#ANONYMOUS} when {@code this == DISABLED}, unchanged pre-OAuth
-     * behavior).
+     * once OAuth is enabled, enforces it -- writes {@code 401} and returns {@code null} for a
+     * missing or invalid token (enabling OAuth means requiring it, not silently falling back to
+     * anonymous), otherwise returns the resolved {@link AccessContext} ({@link
+     * AccessContext#ANONYMOUS} when OAuth is disabled, unchanged pre-OAuth behavior).
      */
     public AccessContext enforce(HttpServletRequest request, HttpServletResponse response) throws java.io.IOException {
         Result result = resolve(request);
         if (result instanceof Result.Valid valid) {
             return valid.accessContext();
         }
-        if (this == DISABLED) {
-            return AccessContext.ANONYMOUS; // unreachable in practice (resolve() always returns Valid when DISABLED), kept for clarity
+        if (issuer == null) {
+            return AccessContext.ANONYMOUS; // unreachable in practice (resolve() always returns Valid when disabled), kept for clarity
         }
         String reason = result instanceof Result.Invalid invalid ? invalid.reason() : "missing Authorization: Bearer token";
         log.warn("OAuth: rejecting request -- {}", reason);
@@ -177,7 +216,8 @@ public final class AccessContextResolver {
 
     /** Resolves the caller's {@link AccessContext} from a request's {@code Authorization: Bearer <token>} header. */
     public Result resolve(HttpServletRequest request) {
-        if (this == DISABLED) {
+        String currentIssuer = issuer; // one volatile read for a consistent view across this call
+        if (currentIssuer == null) {
             return new Result.Valid(AccessContext.ANONYMOUS);
         }
         String header = request.getHeader("Authorization");
@@ -201,11 +241,12 @@ public final class AccessContextResolver {
             if (claims.getExpirationTime() != null && claims.getExpirationTime().before(now)) {
                 return new Result.Invalid("token expired");
             }
-            if (claims.getIssuer() != null && !claims.getIssuer().equals(issuer)) {
-                return new Result.Invalid("issuer mismatch: expected " + issuer + ", got " + claims.getIssuer());
+            if (claims.getIssuer() != null && !claims.getIssuer().equals(currentIssuer)) {
+                return new Result.Invalid("issuer mismatch: expected " + currentIssuer + ", got " + claims.getIssuer());
             }
-            if (audience != null && !audience.isBlank() && !claims.getAudience().contains(audience)) {
-                return new Result.Invalid("audience mismatch: expected " + audience + " in " + claims.getAudience());
+            String currentAudience = audience;
+            if (currentAudience != null && !currentAudience.isBlank() && !claims.getAudience().contains(currentAudience)) {
+                return new Result.Invalid("audience mismatch: expected " + currentAudience + " in " + claims.getAudience());
             }
             String userId = claims.getStringClaim(userIdClaim);
             Set<String> roles = extractRoles(claims);
@@ -217,15 +258,16 @@ public final class AccessContextResolver {
     }
 
     private Set<String> extractRoles(JWTClaimsSet claims) {
+        String claimName = rolesClaim; // one volatile read
         try {
-            List<String> asList = claims.getStringListClaim(rolesClaim);
+            List<String> asList = claims.getStringListClaim(claimName);
             if (asList != null) {
                 return new HashSet<>(asList);
             }
         } catch (Exception ignoredNotAStringList) {
             // fall through to the scalar case below (some IdPs send a single space-delimited "scope" string)
         }
-        String scalar = claims.getClaim(rolesClaim) == null ? null : String.valueOf(claims.getClaim(rolesClaim));
+        String scalar = claims.getClaim(claimName) == null ? null : String.valueOf(claims.getClaim(claimName));
         return scalar == null ? Set.of() : new HashSet<>(Arrays.asList(scalar.split("\\s+")));
     }
 

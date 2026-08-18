@@ -19,31 +19,51 @@ import org.slf4j.LoggerFactory;
  * credentials.
  *
  * <p><b>Trusting PPv2/X-Forwarded-For is itself a security decision</b> -- both are values the
- * immediate peer *claims*, not something PolyWire independently verifies. {@code
- * POLYWIRE_ACL_TRUSTED_PROXIES} (a CIDR list, blank/unset = trust any immediate peer) gates both:
- * PPv2 is only parsed (TCP), and {@code X-Forwarded-For} is only honored (HTTP), when the raw
- * socket's own immediate peer is itself inside this list -- otherwise the raw peer address is used
- * directly and any claimed header is ignored, the same "only trust a header from a known-good
- * upstream" posture as nginx's {@code set_real_ip_from} / Envoy's trusted-hops config. Left unset,
- * a listener with PPv2 enabled trusts whichever peer actually connects to it (matches enabling
- * PPv2 being an explicit opt-in already assuming the operator has firewalled the port to only the
- * real load balancer) -- setting it adds a second, defense-in-depth check.
+ * immediate peer *claims*, not something PolyWire independently verifies. Trusted-proxies (a CIDR
+ * list, blank/unset = trust any immediate peer) gates both: PPv2 is only parsed (TCP), and
+ * {@code X-Forwarded-For} is only honored (HTTP), when the raw socket's own immediate peer is
+ * itself inside this list -- otherwise the raw peer address is used directly and any claimed
+ * header is ignored, the same "only trust a header from a known-good upstream" posture as nginx's
+ * {@code set_real_ip_from} / Envoy's trusted-hops config. Left unset, a listener with PPv2 enabled
+ * trusts whichever peer actually connects to it (matches enabling PPv2 being an explicit opt-in
+ * already assuming the operator has firewalled the port to only the real load balancer) --
+ * setting it adds a second, defense-in-depth check.
+ *
+ * <p><b>Config source</b>: {@code POLYWIRE_ACL_PPV2_ENABLED}/{@code POLYWIRE_ACL_TRUSTED_PROXIES}
+ * (bootstrap default) or {@code polywire_config.aclPpv2Enabled}/{@code aclTrustedProxies}
+ * (hot-reloadable -- see {@link #reload}, called from {@code Main}'s config-apply callback). The
+ * underlying {@link ClientAcl} reloads independently through its own {@link ClientAcl#reload} --
+ * this class just holds a reference to it, so an ACL-rules-only change doesn't need to touch this
+ * class at all.
  */
 public final class ConnectionGate {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionGate.class);
 
-    /** No ACL rules, no PPv2 -- every connection allowed, zero behavior change from before this feature existed. */
+    /** No ACL rules, no PPv2 -- every connection allowed, zero behavior change from before this feature existed. A plain default value, never itself reloaded -- see {@link ClientAcl}'s class javadoc for the same reasoning. */
     public static final ConnectionGate DISABLED = new ConnectionGate(ClientAcl.DISABLED, false, List.of());
 
     private final ClientAcl acl;
-    private final boolean ppv2Enabled;
-    private final List<Cidr> trustedProxies;
+    // volatile, not final -- see ClientAcl's identical "rules" field javadoc for why: a reload
+    // (from Main's polywire_config LISTEN callback) and a concurrent connection's own read both
+    // need to see consistent values, never a torn combination, without a lock on the hot path.
+    private volatile boolean ppv2Enabled;
+    private volatile List<Cidr> trustedProxies;
 
     private ConnectionGate(ClientAcl acl, boolean ppv2Enabled, List<Cidr> trustedProxies) {
         this.acl = acl;
         this.ppv2Enabled = ppv2Enabled;
         this.trustedProxies = trustedProxies;
+    }
+
+    /**
+     * Builds a real, independently-reloadable instance -- unlike {@link #fromEnv}, never returns
+     * the shared {@link #DISABLED} constant, even when {@code acl} has no rules and PPv2 is off;
+     * {@code Main} uses this (not {@link #fromEnv}) for the one instance it shares across every
+     * frontend and later reloads.
+     */
+    public static ConnectionGate create(ClientAcl acl, boolean ppv2Enabled, List<Cidr> trustedProxies) {
+        return new ConnectionGate(acl, ppv2Enabled, List.copyOf(trustedProxies));
     }
 
     /** Exposed for {@code com.polygres.wire.grpc.PolyWireGrpcServer} to build its own PPv2-capable protocol negotiator from the same config, without re-parsing the env vars separately. */
@@ -59,24 +79,35 @@ public final class ConnectionGate {
         return trustedProxies;
     }
 
+    /** Swaps in freshly-parsed ppv2Enabled/trustedProxies -- the {@link #acl()} reference itself reloads independently via {@link ClientAcl#reload}. */
+    public void reload(boolean ppv2Enabled, List<Cidr> trustedProxies) {
+        this.ppv2Enabled = ppv2Enabled;
+        this.trustedProxies = List.copyOf(trustedProxies);
+        log.info("ConnectionGate: reloaded ppv2Enabled={}, trustedProxies={} entries", ppv2Enabled, trustedProxies.size());
+    }
+
     public static ConnectionGate fromEnv() {
         ClientAcl acl = ClientAcl.fromEnv();
         boolean ppv2Enabled = "true".equalsIgnoreCase(System.getenv("POLYWIRE_ACL_PPV2_ENABLED"));
-        if (acl == ClientAcl.DISABLED && !ppv2Enabled) {
+        if (!acl.hasRules() && !ppv2Enabled) {
             return DISABLED;
         }
+        List<Cidr> trustedProxies = parseTrustedProxies(System.getenv("POLYWIRE_ACL_TRUSTED_PROXIES"));
+        log.info("ConnectionGate: acl={}, ppv2Enabled={}, trustedProxies={} entries",
+                acl.hasRules() ? "enabled" : "disabled", ppv2Enabled, trustedProxies.size());
+        return new ConnectionGate(acl, ppv2Enabled, trustedProxies);
+    }
+
+    public static List<Cidr> parseTrustedProxies(String spec) {
         List<Cidr> trustedProxies = new ArrayList<>();
-        String trustedSpec = System.getenv("POLYWIRE_ACL_TRUSTED_PROXIES");
-        if (trustedSpec != null && !trustedSpec.isBlank()) {
-            for (String entry : trustedSpec.split(",")) {
+        if (spec != null && !spec.isBlank()) {
+            for (String entry : spec.split(",")) {
                 if (!entry.isBlank()) {
                     trustedProxies.add(Cidr.parse(entry.trim()));
                 }
             }
         }
-        log.info("ConnectionGate: acl={}, ppv2Enabled={}, trustedProxies={} entries",
-                acl == ClientAcl.DISABLED ? "disabled" : "enabled", ppv2Enabled, trustedProxies.size());
-        return new ConnectionGate(acl, ppv2Enabled, trustedProxies);
+        return trustedProxies;
     }
 
     /**
@@ -88,11 +119,13 @@ public final class ConnectionGate {
         if (this == DISABLED) {
             return true;
         }
+        boolean currentPpv2Enabled = ppv2Enabled; // one volatile read each -- see field javadoc
+        List<Cidr> currentTrustedProxies = trustedProxies;
         InetAddress rawPeer = socket.getInetAddress();
         InetAddress effectiveClient = rawPeer;
         try {
-            if (ppv2Enabled) {
-                if (!trustedProxies.isEmpty() && !matchesAny(rawPeer, trustedProxies)) {
+            if (currentPpv2Enabled) {
+                if (!currentTrustedProxies.isEmpty() && !matchesAny(rawPeer, currentTrustedProxies)) {
                     log.warn("ACL: rejecting connection from {} -- PPv2 is enabled on this listener but this peer "
                             + "is not in POLYWIRE_ACL_TRUSTED_PROXIES", rawPeer);
                     closeQuietly(socket);
@@ -122,11 +155,12 @@ public final class ConnectionGate {
         if (this == DISABLED) {
             return true;
         }
+        List<Cidr> currentTrustedProxies = trustedProxies; // one volatile read -- see field javadoc
         InetAddress rawPeer = parseQuietly(request.getRemoteAddr());
         InetAddress effectiveClient = rawPeer;
         String forwardedFor = request.getHeader("X-Forwarded-For");
         if (forwardedFor != null && !forwardedFor.isBlank() && rawPeer != null
-                && (trustedProxies.isEmpty() || matchesAny(rawPeer, trustedProxies))) {
+                && (currentTrustedProxies.isEmpty() || matchesAny(rawPeer, currentTrustedProxies))) {
             // Leftmost entry is the original client in the conventional (single-trusted-hop)
             // X-Forwarded-For chain shape -- a narrower reading than nginx's full trusted-hops
             // walk, adequate for one load balancer in front, not a chain of several.

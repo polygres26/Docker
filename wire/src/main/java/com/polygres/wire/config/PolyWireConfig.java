@@ -36,7 +36,15 @@ public record PolyWireConfig(
         String routerPredicateRules,
         String routerValueShardRules,
         String routerShardTables,
-        String rollupDefinitionsYaml) {
+        String rollupDefinitionsYaml,
+        String aclRules,
+        String aclPpv2Enabled,
+        String aclTrustedProxies,
+        String oauthIssuer,
+        String oauthAudience,
+        String oauthUserIdClaim,
+        String oauthRolesClaim,
+        String awsIamCredentials) {
 
     /** The bootstrap default derived from today's env-var-based config — used on a fresh cluster with no rows in {@code polywire_config} yet, so an operator never has to pre-populate the table before first start. */
     public static PolyWireConfig fromEnvDefaults() {
@@ -54,7 +62,15 @@ public record PolyWireConfig(
                 System.getenv("POLYWIRE_ROUTER_PREDICATE_RULES"),
                 System.getenv("POLYWIRE_ROUTER_VALUE_SHARD_RULES"),
                 System.getenv("POLYWIRE_ROUTER_SHARD_TABLES"),
-                null);
+                null,
+                System.getenv("POLYWIRE_ACL_RULES"),
+                System.getenv("POLYWIRE_ACL_PPV2_ENABLED"),
+                System.getenv("POLYWIRE_ACL_TRUSTED_PROXIES"),
+                System.getenv("POLYWIRE_OAUTH_ISSUER"),
+                System.getenv("POLYWIRE_OAUTH_AUDIENCE"),
+                System.getenv("POLYWIRE_OAUTH_USERID_CLAIM"),
+                System.getenv("POLYWIRE_OAUTH_ROLES_CLAIM"),
+                System.getenv("POLYWIRE_AWS_IAM_CREDENTIALS"));
     }
 
     public String toJson() {
@@ -73,6 +89,14 @@ public record PolyWireConfig(
         fields.put("routerValueShardRules", routerValueShardRules);
         fields.put("routerShardTables", routerShardTables);
         fields.put("rollupDefinitionsYaml", rollupDefinitionsYaml);
+        fields.put("aclRules", aclRules);
+        fields.put("aclPpv2Enabled", aclPpv2Enabled);
+        fields.put("aclTrustedProxies", aclTrustedProxies);
+        fields.put("oauthIssuer", oauthIssuer);
+        fields.put("oauthAudience", oauthAudience);
+        fields.put("oauthUserIdClaim", oauthUserIdClaim);
+        fields.put("oauthRolesClaim", oauthRolesClaim);
+        fields.put("awsIamCredentials", awsIamCredentials);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -103,7 +127,15 @@ public record PolyWireConfig(
                 fields.get("routerPredicateRules"),
                 fields.get("routerValueShardRules"),
                 fields.get("routerShardTables"),
-                fields.get("rollupDefinitionsYaml"));
+                fields.get("rollupDefinitionsYaml"),
+                fields.get("aclRules"),
+                fields.get("aclPpv2Enabled"),
+                fields.get("aclTrustedProxies"),
+                fields.get("oauthIssuer"),
+                fields.get("oauthAudience"),
+                fields.get("oauthUserIdClaim"),
+                fields.get("oauthRolesClaim"),
+                fields.get("awsIamCredentials"));
     }
 
     private static String quote(String value) {
