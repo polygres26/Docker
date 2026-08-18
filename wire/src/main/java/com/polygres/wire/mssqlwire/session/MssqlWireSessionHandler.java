@@ -2,9 +2,7 @@ package com.polygres.wire.mssqlwire.session;
 
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.config.FailedStatementLog;
-import com.polygres.wire.config.TranslationCacheStore;
 import com.polygres.wire.core.BackendRegistry;
-import com.polygres.wire.core.DialectTranslationStage;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
@@ -13,8 +11,6 @@ import com.polygres.wire.core.SourceDialect;
 import com.polygres.wire.core.SqlStateErrorMapper;
 import com.polygres.wire.core.Statement;
 import com.polygres.wire.core.StatementPipeline;
-import com.polygres.wire.core.TranslationCache;
-import com.polygres.wire.core.TranslationLlmClient;
 import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.mssqlwire.frontend.Login7Handler;
 import com.polygres.wire.mssqlwire.frontend.PreLoginHandshake;
@@ -87,16 +83,12 @@ public final class MssqlWireSessionHandler implements Runnable {
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
 
-    // Same reasoning as MySqlWireSessionHandler's identical fields -- gives mssqlwire's default
-    // homogeneous mssqlwire->Postgres proxy path the same cache-check -> deterministic-rule ->
-    // LLM-fallback -> clean-reject guarantee DialectTranslationStage's routed @link path already
-    // has, via DialectTranslationStage.translateWithFallback, instead of an uncached, no-fallback
-    // direct call to DialectTranslations.translate().
-    private static final TranslationCache DEFAULT_PATH_CACHE = new TranslationCache();
-    private static final TranslationLlmClient DEFAULT_PATH_LLM_CLIENT = new TranslationLlmClient();
-
+    // Translation caching used to live here (DEFAULT_PATH_CACHE/DEFAULT_PATH_LLM_CLIENT/
+    // translationCacheStore), backing a direct DialectTranslationStage.translateWithFallback call
+    // made right before pipeline.execute() -- removed; see executeQuery's comment for why the
+    // shared pipeline's own DialectTranslationStage (constructed once in Main with its own cache/
+    // llmClient/cacheStore) is now the only place this session's queries get translated.
     private final FailedStatementLog failedStatementLog;
-    private final TranslationCacheStore translationCacheStore;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
@@ -107,9 +99,6 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword());
         this.failedStatementLog.ensureSchema();
-        this.translationCacheStore = new TranslationCacheStore(options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
-        this.translationCacheStore.ensureSchema();
     }
 
     @Override
@@ -265,38 +254,41 @@ public final class MssqlWireSessionHandler implements Runnable {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
-        // SQL_SERVER->POSTGRES dialect translation: needed here, not just for
-        // DialectTranslationStage's own @link cross-dialect path, for the exact same
-        // architectural reason MySqlWireSessionHandler does this (see that class's identical
-        // comment and commit f593bd3's message) -- DialectTranslationStage only ever fires once
-        // Statement#targetBackend() has been resolved by RouterStage/DbLinkStage, which the
-        // default homogeneous mssqlwire->Postgres proxy path (no POLYWIRE_BACKENDS/routing rules
-        // configured) never sets. Found live: a real mssql-jdbc client's bracket-identifier/
-        // TOP/GETDATE()/ISNULL T-SQL passed straight through untranslated and failed with a real
-        // Postgres syntax error even though DialectTranslations.normalizeSqlServer already had
-        // correct rules for all of it -- this path just never reached them.
-        // Goes through DialectTranslationStage.translateWithFallback -- see
-        // MySqlWireSessionHandler's identical comment for why this replaced a direct, uncached,
-        // no-fallback call to DialectTranslations.translate() (which used to silently pass the
-        // original untranslated SQL through to Postgres on any unmatched construct).
-        String translatedSql;
-        try {
-            translatedSql = DialectTranslationStage.translateWithFallback(
-                    sql, SourceDialect.SQL_SERVER, SourceDialect.POSTGRES, DEFAULT_PATH_CACHE, DEFAULT_PATH_LLM_CLIENT,
-                    translationCacheStore);
-        } catch (UntranslatableQueryException e) {
-            failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
-                    FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
-            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                    TdsTokens.errorMessage(SqlStateErrorMapper.SQL_SERVER_DEFAULT,
-                            e.getMessage() == null ? "statement could not be translated" : e.getMessage()));
-            return;
-        }
+        // SQL_SERVER->POSTGRES dialect translation (bracket identifiers, TOP, GETDATE()/ISNULL,
+        // etc -- see DialectTranslations.normalizeSqlServer) now happens exactly once, inside
+        // pipeline.execute() below, via the shared DialectTranslationStage -- not here. It used
+        // to be called directly, right here, before pipeline.execute() (see
+        // MySqlWireSessionHandler's identical history in commit f593bd3): at the time,
+        // BackendRegistry never registered a targetBackend for the default homogeneous
+        // mssqlwire->Postgres proxy path (no POLYWIRE_BACKENDS configured), so
+        // DialectTranslationStage's own handle() silently no-op'd for this path and the direct
+        // call was the only translation that ever happened. Commit fa75e51 closed that gap
+        // generally -- BackendRegistry#fromConfig now always registers a synthetic "default"
+        // backend from ORAPG_PG_* when POLYWIRE_BACKENDS is unset, and
+        // RouterStage#resolveUnambiguousDefault falls back to exactly that entry -- so
+        // RouterStage resolves a real targetBackend for this path too now, and
+        // DialectTranslationStage.handle() fires inside pipeline.execute() same as every other
+        // frontend. Keeping the direct call on top of that translated every query twice (found
+        // live: polywire_translation_cache recorded two rows per query -- the untranslated SQL,
+        // then the already-translated SQL translated again into itself as a no-op) -- see
+        // DialectTranslationStage's translateWithFallback javadoc for the shared cache/fallback
+        // logic this path now reaches through pipeline.execute() alone, with no separate call
+        // needed.
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.SQL_SERVER, translatedSql, List.of());
-            ExecutionResult result = pipeline.execute(statement);
+            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, List.of());
+            ExecutionResult result;
+            try {
+                result = pipeline.execute(statement);
+            } catch (UntranslatableQueryException e) {
+                failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
+                        FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
+                packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                        TdsTokens.errorMessage(SqlStateErrorMapper.SQL_SERVER_DEFAULT,
+                                e.getMessage() == null ? "statement could not be translated" : e.getMessage()));
+                return;
+            }
 
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             if (result.isQuery()) {
