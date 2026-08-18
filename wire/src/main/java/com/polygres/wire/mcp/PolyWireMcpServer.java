@@ -80,15 +80,31 @@ public final class PolyWireMcpServer {
     private final List<PipelineStage> sharedStages;
     private final BackendRegistry backendRegistry;
     private final ConnectionGate connectionGate;
+    private final com.polygres.wire.http.auth.AccessContextResolver oauth;
     private final Server server;
     private final List<RegisteredFunctionTool> functionTools;
 
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
+        this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec,
+                com.polygres.wire.http.auth.AccessContextResolver.DISABLED);
+    }
+
+    /**
+     * {@code oauth}: once enabled ({@code POLYWIRE_OAUTH_ISSUER}), the resolved caller identity
+     * rides every tool call's {@link Statement} as its real {@link
+     * com.polygres.wire.core.AccessContext} (instead of {@code ANONYMOUS}) -- so {@code
+     * AccessControlStage}'s row/column policy, if an operator has one configured, enforces against
+     * the real authenticated MCP caller, not a blank identity.
+     */
+    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+            BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
+            com.polygres.wire.http.auth.AccessContextResolver oauth) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
         this.connectionGate = connectionGate;
+        this.oauth = oauth;
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -100,7 +116,11 @@ public final class PolyWireMcpServer {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     return;
                 }
-                handleRequest(request, response);
+                com.polygres.wire.core.AccessContext accessContext = oauth.enforce(request, response);
+                if (accessContext == null) {
+                    return;
+                }
+                handleRequest(request, response, accessContext);
             }
         });
     }
@@ -149,7 +169,8 @@ public final class PolyWireMcpServer {
 
     // ---- JSON-RPC dispatch --------------------------------------------------------------------
 
-    private void handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    private void handleRequest(HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.core.AccessContext accessContext) throws IOException {
         String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         JsonObject req;
         try {
@@ -178,7 +199,7 @@ public final class PolyWireMcpServer {
         switch (method) {
             case "initialize" -> writeResult(response, idElement, buildInitializeResult());
             case "tools/list" -> writeResult(response, idElement, buildToolsListResult());
-            case "tools/call" -> handleToolsCall(response, idElement, params);
+            case "tools/call" -> handleToolsCall(response, idElement, params, accessContext);
             default -> writeError(response, idElement, -32601, "Method not found: " + method);
         }
     }
@@ -246,7 +267,8 @@ public final class PolyWireMcpServer {
 
     // ---- tools/call -----------------------------------------------------------------------
 
-    private void handleToolsCall(HttpServletResponse response, JsonElement id, JsonObject params) throws IOException {
+    private void handleToolsCall(HttpServletResponse response, JsonElement id, JsonObject params,
+            com.polygres.wire.core.AccessContext accessContext) throws IOException {
         if (!params.has("name")) {
             writeError(response, id, -32602, "Invalid params: missing tool name");
             return;
@@ -257,13 +279,13 @@ public final class PolyWireMcpServer {
 
         try (Connection backend = PgConnections.open(options)) {
             AdHocQueryRunner.Result result = switch (toolName) {
-                case "execute_sql" -> runSql(backend, requireString(arguments, "sql"));
+                case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
                 case "list_tables" -> runSql(backend,
                         "SELECT schemaname, tablename FROM pg_catalog.pg_tables "
                                 + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
-                                + "ORDER BY schemaname, tablename");
-                case "describe_table" -> runDescribeTable(backend, arguments);
-                default -> runRegisteredTool(backend, toolName, arguments);
+                                + "ORDER BY schemaname, tablename", accessContext);
+                case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
+                default -> runRegisteredTool(backend, toolName, arguments, accessContext);
             };
             writeResult(response, id, toolCallResult(result));
         } catch (RuntimeException | java.sql.SQLException e) {
@@ -271,11 +293,13 @@ public final class PolyWireMcpServer {
         }
     }
 
-    private AdHocQueryRunner.Result runSql(Connection backend, String sql) {
-        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql);
+    private AdHocQueryRunner.Result runSql(Connection backend, String sql,
+            com.polygres.wire.core.AccessContext accessContext) {
+        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, accessContext);
     }
 
-    private AdHocQueryRunner.Result runDescribeTable(Connection backend, JsonObject arguments) {
+    private AdHocQueryRunner.Result runDescribeTable(Connection backend, JsonObject arguments,
+            com.polygres.wire.core.AccessContext accessContext) {
         String table = requireString(arguments, "table");
         String schema = arguments.has("schema") ? arguments.get("schema").getAsString() : "public";
         if (table.contains(".")) {
@@ -286,10 +310,11 @@ public final class PolyWireMcpServer {
         String sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
                 + "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
         return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql,
-                List.of(schema, table), com.polygres.wire.core.AccessContext.ANONYMOUS);
+                List.of(schema, table), accessContext);
     }
 
-    private AdHocQueryRunner.Result runRegisteredTool(Connection backend, String toolName, JsonObject arguments) {
+    private AdHocQueryRunner.Result runRegisteredTool(Connection backend, String toolName, JsonObject arguments,
+            com.polygres.wire.core.AccessContext accessContext) {
         RegisteredFunctionTool tool = functionTools.stream()
                 .filter(t -> t.toolName().equals(toolName))
                 .findFirst()
@@ -314,8 +339,7 @@ public final class PolyWireMcpServer {
         String sql = tool.signature().isProcedure()
                 ? "CALL " + qualified + "(" + placeholders + ")"
                 : "SELECT * FROM " + qualified + "(" + placeholders + ")";
-        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, binds,
-                com.polygres.wire.core.AccessContext.ANONYMOUS);
+        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, binds, accessContext);
     }
 
     /**

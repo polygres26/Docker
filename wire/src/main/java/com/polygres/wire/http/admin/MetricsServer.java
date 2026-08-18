@@ -44,6 +44,13 @@ public final class MetricsServer {
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
             Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate,
+                com.polygres.wire.http.auth.AccessContextResolver.DISABLED);
+    }
+
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth) {
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
             @Override
@@ -52,6 +59,10 @@ public final class MetricsServer {
                 if (!connectionGate.acceptHttp(request)) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.getWriter().write("forbidden");
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (oauth.enforce(request, response) == null) {
                     baseRequest.setHandled(true);
                     return;
                 }

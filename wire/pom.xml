@@ -38,6 +38,7 @@
     <grpc.version>1.68.1</grpc.version>
     <protobuf.version>3.25.5</protobuf.version>
     <gson.version>2.11.0</gson.version>
+    <nimbus-jose-jwt.version>9.37.3</nimbus-jose-jwt.version>
     <jetty.version>11.0.24</jetty.version>
     <hikaricp.version>5.1.0</hikaricp.version>
     <opentelemetry.version>1.43.0</opentelemetry.version>
@@ -51,6 +52,15 @@
       <groupId>com.google.code.gson</groupId>
       <artifactId>gson</artifactId>
       <version>${gson.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.polygres.wire.http.auth.AccessContextResolver — real JWT parsing/signature
+           verification (JWS/JWK/JWKS) for OAuth2/OIDC bearer tokens (Okta, Auth0, Azure AD, any
+           standards-compliant IdP) — the standard JVM library for this, not a hand-rolled JWT
+           parser (Apache-2.0). -->
+      <groupId>com.nimbusds</groupId>
+      <artifactId>nimbus-jose-jwt</artifactId>
+      <version>${nimbus-jose-jwt.version}</version>
     </dependency>
     <dependency>
       <!-- com.polygres.wire.rollup.RollupConfig — real YAML parsing for the rollup definitions

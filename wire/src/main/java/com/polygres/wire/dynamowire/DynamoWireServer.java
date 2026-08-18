@@ -81,6 +81,13 @@ public final class DynamoWireServer {
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate) {
+        this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate,
+                com.polygres.wire.http.auth.AccessContextResolver.DISABLED);
+    }
+
+    public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth) {
         this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
         this.handlers = new OperationHandlers(store, cache);
         this.server = new Server(port);
@@ -90,6 +97,9 @@ public final class DynamoWireServer {
                 baseRequest.setHandled(true);
                 if (!connectionGate.acceptHttp(request)) {
                     writeError(response, 403, "AccessDeniedException", "forbidden");
+                    return;
+                }
+                if (oauth.enforce(request, response) == null) {
                     return;
                 }
                 handleRequest(request, response);

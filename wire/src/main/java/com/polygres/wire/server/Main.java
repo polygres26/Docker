@@ -376,8 +376,14 @@ public final class Main {
         com.polygres.wire.acl.ClientAcl clientAcl = com.polygres.wire.acl.ClientAcl.fromEnv();
         com.polygres.wire.acl.ConnectionGate connectionGate = com.polygres.wire.acl.ConnectionGate.fromEnv();
 
+        // POLYWIRE_OAUTH_ISSUER -- see AccessContextResolver's javadoc. DISABLED (unset) is a
+        // zero-cost no-op shared by every HTTP frontend below (metrics/dynamowire/MCP), same
+        // "opt-in, zero behavior change by default" convention as ConnectionGate.
+        com.polygres.wire.http.auth.AccessContextResolver oauth =
+                com.polygres.wire.http.auth.AccessContextResolver.fromEnv();
+
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate);
+        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate, oauth);
         metricsServer.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
@@ -434,7 +440,7 @@ public final class Main {
         // why it bypasses the SQL pipeline entirely).
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate);
+                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 
@@ -445,7 +451,7 @@ public final class Main {
         // frontend at all except for those three generic tools being available.
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
-                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"));
+                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"), oauth);
         mcpServer.start();
         log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
 
