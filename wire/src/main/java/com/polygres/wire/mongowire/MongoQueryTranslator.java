@@ -74,6 +74,30 @@ final class MongoQueryTranslator {
         return new Where(sql, params);
     }
 
+    /**
+     * Returns the extended-JSON text of {@code _id} (the same shape {@link
+     * PostgresDocumentStore}'s {@code id} column stores, via {@link
+     * PostgresDocumentStore#idJsonFor}) when {@code filter} is <em>exactly</em> a single-field
+     * equality match on {@code _id} — e.g. {@code {_id: "x"}} — or {@code null} otherwise
+     * (multi-field filters, filters on other fields, or operator forms like
+     * {@code {_id: {$gt: ...}}}). Used by {@code MongoCache} to scope caching to exact-{@code _id}
+     * lookups only; see its class javadoc for why broader filters are never cached.
+     */
+    static String exactIdEquality(BsonDocument filter) {
+        if (filter == null || filter.size() != 1) {
+            return null;
+        }
+        Map.Entry<String, BsonValue> entry = filter.entrySet().iterator().next();
+        if (!"_id".equals(entry.getKey())) {
+            return null;
+        }
+        BsonValue value = entry.getValue();
+        if (value.isDocument() && hasOperatorKeys(value.asDocument())) {
+            return null; // e.g. {_id: {$gt: ...}} — not an exact match
+        }
+        return BsonJson.valueToJson(value);
+    }
+
     private static boolean hasOperatorKeys(BsonDocument doc) {
         return !doc.isEmpty() && doc.getFirstKey().startsWith("$");
     }

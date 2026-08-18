@@ -76,12 +76,23 @@ final class PostgresDocumentStore {
         return obj;
     }
 
+    /** {@code count} rows affected and the extended-JSON {@code _id} text of each — the exact
+     * shape {@code MongoCache} keys on, so a write can invalidate precisely the cache entries it
+     * touched instead of the whole collection. */
+    record WriteResult(int count, List<String> ids) {}
+
+    /** The same extended-JSON {@code _id} text this store's {@code id} column holds — used by
+     * {@code MongoCommandDispatcher} to build/invalidate {@code MongoCache} keys consistently. */
+    static String idJsonFor(Object idValue) {
+        return BsonJson.valueToJson(new BsonObjectIdOrPassthrough(idValue).toBson());
+    }
+
     /** Inserts one document, generating an ObjectId {@code _id} if the document doesn't have one. */
     Document insertOne(String db, String collection, Document document) throws SQLException {
         if (!document.containsKey("_id")) {
             document.put("_id", new ObjectId());
         }
-        String idJson = BsonJson.valueToJson(new BsonObjectIdOrPassthrough(document.get("_id")).toBson());
+        String idJson = idJsonFor(document.get("_id"));
         String docJson = BsonJson.toJson(document);
         try (Connection conn = connections.get()) {
             ensureTable(conn, db, collection);
@@ -114,7 +125,7 @@ final class PostgresDocumentStore {
     }
 
     /** Full-document replace ({@code $set}-merged document already computed by the caller). */
-    int updateMany(String db, String collection, MongoQueryTranslator.Where where, Document merger, int limit)
+    WriteResult updateMany(String db, String collection, MongoQueryTranslator.Where where, Document merger, int limit)
             throws SQLException {
         try (Connection conn = connections.get()) {
             ensureTable(conn, db, collection);
@@ -144,21 +155,36 @@ final class PostgresDocumentStore {
                     ps.executeBatch();
                 }
             }
-            return ids.size();
+            return new WriteResult(ids.size(), ids);
         }
     }
 
-    int deleteMany(String db, String collection, MongoQueryTranslator.Where where, int limit) throws SQLException {
+    /** Selects the affected {@code id}s first (needed both to scope {@code limit} and to report
+     * exactly which cache keys a write touched), then deletes precisely those rows — rather than
+     * a single filter-scoped {@code DELETE}, so the caller always learns which {@code _id}s were
+     * removed regardless of what shape the filter was. */
+    WriteResult deleteMany(String db, String collection, MongoQueryTranslator.Where where, int limit) throws SQLException {
         try (Connection conn = connections.get()) {
             ensureTable(conn, db, collection);
-            String sql = "DELETE FROM " + qualifiedTable(db, collection)
-                    + (limit > 0
-                            ? " WHERE id IN (SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
-                                    + " LIMIT " + limit + ")"
-                            : where.sql());
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            String selectSql = "SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
+                    + (limit > 0 ? " LIMIT " + limit : "");
+            List<String> ids = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
                 bindParams(ps, where.jsonbParams());
-                return ps.executeUpdate();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ids.add(rs.getString(1));
+                    }
+                }
+            }
+            if (ids.isEmpty()) {
+                return new WriteResult(0, List.of());
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM " + qualifiedTable(db, collection) + " WHERE id = ANY(?)")) {
+                ps.setArray(1, conn.createArrayOf("text", ids.toArray()));
+                int n = ps.executeUpdate();
+                return new WriteResult(n, ids);
             }
         }
     }

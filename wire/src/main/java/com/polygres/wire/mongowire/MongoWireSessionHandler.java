@@ -44,9 +44,19 @@ public final class MongoWireSessionHandler implements Runnable {
     private final MongoCommandDispatcher dispatcher;
 
     public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword) {
+        this(clientSocket, pgUrl, pgUser, pgPassword, null);
+    }
+
+    /**
+     * {@code cache}: nullable — an exact-{@code _id} cache-aside cache shared across every
+     * session (one per accepted TCP connection, so it must be constructed once in {@code Main}
+     * and passed in here, not built per-session); see {@link MongoCache}'s class javadoc for
+     * scope and default-on rationale. {@code null} when {@code POLYWIRE_MONGOWIRE_CACHE_ENABLED=false}.
+     */
+    public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword, MongoCache cache) {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(() -> openConnection(pgUrl, pgUser, pgPassword));
-        this.dispatcher = new MongoCommandDispatcher(store);
+        this.dispatcher = new MongoCommandDispatcher(store, cache);
     }
 
     private static Connection openConnection(String url, String user, String password) throws SQLException {

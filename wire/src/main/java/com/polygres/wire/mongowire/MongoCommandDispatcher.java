@@ -29,9 +29,11 @@ final class MongoCommandDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
     private final PostgresDocumentStore store;
+    private final MongoCache cache;
 
-    MongoCommandDispatcher(PostgresDocumentStore store) {
+    MongoCommandDispatcher(PostgresDocumentStore store, MongoCache cache) {
         this.store = store;
+        this.cache = cache;
     }
 
     BsonDocument dispatch(BsonDocument command) {
@@ -118,8 +120,14 @@ final class MongoCommandDispatcher {
         for (int i = 0; i < documents.size(); i++) {
             Document doc = BsonJson.toDocument(documents.get(i).asDocument());
             try {
-                store.insertOne(db, collection, doc);
+                Document stored = store.insertOne(db, collection, doc);
                 inserted++;
+                if (cache != null) {
+                    // A fresh insert can't itself be stale, but a prior delete+reinsert of the
+                    // same _id could otherwise leave a stale cache entry behind — cheap and safe
+                    // to invalidate unconditionally rather than reason about that race.
+                    cache.invalidate(MongoCache.key(db, collection, PostgresDocumentStore.idJsonFor(stored.get("_id"))));
+                }
             } catch (SQLException e) {
                 BsonDocument werr = new BsonDocument();
                 werr.put("index", new BsonInt32(i));
@@ -139,8 +147,24 @@ final class MongoCommandDispatcher {
         String collection = command.getString("find").getValue();
         BsonDocument filter = command.containsKey("filter") ? command.getDocument("filter") : new BsonDocument();
         int limit = command.containsKey("limit") ? command.getNumber("limit").intValue() : 0;
-        MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-        List<Document> docs = store.find(db, collection, where, limit);
+        List<Document> docs;
+        // Cache-aside, exact-_id lookups only — see MongoCache's class javadoc for scope.
+        String idJson = cache != null ? MongoQueryTranslator.exactIdEquality(filter) : null;
+        if (idJson != null) {
+            String cacheKey = MongoCache.key(db, collection, idJson);
+            Document cached = cache.get(cacheKey);
+            if (cached != null) {
+                log.debug("mongowire cache hit: {}", cacheKey);
+                docs = List.of(cached);
+            } else {
+                docs = store.find(db, collection, MongoQueryTranslator.translate(filter), limit);
+                if (!docs.isEmpty()) {
+                    cache.put(cacheKey, docs.get(0));
+                }
+            }
+        } else {
+            docs = store.find(db, collection, MongoQueryTranslator.translate(filter), limit);
+        }
 
         BsonArray firstBatch = new BsonArray();
         for (Document d : docs) {
@@ -167,9 +191,14 @@ final class MongoCommandDispatcher {
             Document updateDoc = BsonJson.toDocument(spec.getDocument("u"));
             boolean multi = spec.containsKey("multi") && spec.getBoolean("multi").getValue();
             MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            int n = store.updateMany(db, collection, where, updateDoc, multi ? 0 : 1);
-            matched += n;
-            modified += n;
+            PostgresDocumentStore.WriteResult result = store.updateMany(db, collection, where, updateDoc, multi ? 0 : 1);
+            matched += result.count();
+            modified += result.count();
+            if (cache != null) {
+                for (String idJson : result.ids()) {
+                    cache.invalidate(MongoCache.key(db, collection, idJson));
+                }
+            }
         }
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(matched));
@@ -186,7 +215,13 @@ final class MongoCommandDispatcher {
             BsonDocument filter = spec.getDocument("q", new BsonDocument());
             int limit = spec.containsKey("limit") ? spec.getNumber("limit").intValue() : 0;
             MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            deleted += store.deleteMany(db, collection, where, limit);
+            PostgresDocumentStore.WriteResult result = store.deleteMany(db, collection, where, limit);
+            deleted += result.count();
+            if (cache != null) {
+                for (String idJson : result.ids()) {
+                    cache.invalidate(MongoCache.key(db, collection, idJson));
+                }
+            }
         }
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(deleted));

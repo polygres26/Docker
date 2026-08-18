@@ -3,6 +3,7 @@ package com.polygres.wire.dynamowire;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -12,13 +13,26 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Implements each DynamoDB operation's request/response JSON shape on top of {@link PgItemStore}. */
+/**
+ * Implements each DynamoDB operation's request/response JSON shape on top of {@link PgItemStore}.
+ * {@code cache} (nullable — null when {@code POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false}) wraps
+ * {@code GetItem} in cache-aside and invalidates the exact key on every write that touches it —
+ * see {@link DynamoCache}'s class javadoc for scope (exact-key lookups only, not Query/Scan).
+ */
 final class OperationHandlers {
 
     private final PgItemStore store;
+    private final DynamoCache cache;
 
-    OperationHandlers(PgItemStore store) {
+    OperationHandlers(PgItemStore store, DynamoCache cache) {
         this.store = store;
+        this.cache = cache;
+    }
+
+    private String cacheKeyFor(TableSchema schema, Map<String, AttributeValue> attrs) {
+        String pk = attrs.get(schema.partitionKeyName()).scalar;
+        String sk = schema.hasSortKey() ? attrs.get(schema.sortKeyName()).scalar : null;
+        return DynamoCache.key(schema.tableName(), pk, sk);
     }
 
     JsonObject dispatch(String operation, JsonObject req) {
@@ -142,6 +156,9 @@ final class OperationHandlers {
         ExpressionContext ctx = ExpressionContext.parse(req);
         String cond = optString(req, "ConditionExpression");
         Map<String, AttributeValue> old = store.putItem(schema, item, cond, ctx);
+        if (cache != null) {
+            cache.invalidate(cacheKeyFor(schema, item));
+        }
         JsonObject resp = new JsonObject();
         if ("ALL_OLD".equals(optString(req, "ReturnValues")) && old != null) {
             resp.add("Attributes", PgItemStore.itemToJson(old));
@@ -152,7 +169,21 @@ final class OperationHandlers {
     private JsonObject getItem(JsonObject req) {
         TableSchema schema = store.describeTable(req.get("TableName").getAsString());
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
-        Map<String, AttributeValue> item = store.getItem(schema, key);
+        Map<String, AttributeValue> item;
+        if (cache != null) {
+            String cacheKey = cacheKeyFor(schema, key);
+            String cachedJson = cache.get(cacheKey);
+            if (cachedJson != null) {
+                item = PgItemStore.jsonToItem(JsonParser.parseString(cachedJson).getAsJsonObject());
+            } else {
+                item = store.getItem(schema, key);
+                if (item != null) {
+                    cache.put(cacheKey, PgItemStore.itemToJson(item).toString());
+                }
+            }
+        } else {
+            item = store.getItem(schema, key);
+        }
         JsonObject resp = new JsonObject();
         if (item != null) {
             item = applyProjection(item, optString(req, "ProjectionExpression"), ExpressionContext.parse(req));
@@ -166,6 +197,9 @@ final class OperationHandlers {
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(req);
         Map<String, AttributeValue> old = store.deleteItem(schema, key, optString(req, "ConditionExpression"), ctx);
+        if (cache != null) {
+            cache.invalidate(cacheKeyFor(schema, key));
+        }
         JsonObject resp = new JsonObject();
         if ("ALL_OLD".equals(optString(req, "ReturnValues")) && old != null) {
             resp.add("Attributes", PgItemStore.itemToJson(old));
@@ -179,6 +213,9 @@ final class OperationHandlers {
         ExpressionContext ctx = ExpressionContext.parse(req);
         String updateExpr = req.get("UpdateExpression").getAsString();
         Map<String, AttributeValue> newItem = store.updateItem(schema, key, updateExpr, optString(req, "ConditionExpression"), ctx);
+        if (cache != null) {
+            cache.invalidate(cacheKeyFor(schema, key));
+        }
         JsonObject resp = new JsonObject();
         String rv = optString(req, "ReturnValues");
         if (rv != null && !"NONE".equals(rv)) {
@@ -268,9 +305,15 @@ final class OperationHandlers {
                 if (writeReq.has("PutRequest")) {
                     Map<String, AttributeValue> item = PgItemStore.jsonToItem(writeReq.getAsJsonObject("PutRequest").getAsJsonObject("Item"));
                     store.putItem(schema, item, null, new ExpressionContext());
+                    if (cache != null) {
+                        cache.invalidate(cacheKeyFor(schema, item));
+                    }
                 } else if (writeReq.has("DeleteRequest")) {
                     Map<String, AttributeValue> key = PgItemStore.jsonToItem(writeReq.getAsJsonObject("DeleteRequest").getAsJsonObject("Key"));
                     store.deleteItem(schema, key, null, new ExpressionContext());
+                    if (cache != null) {
+                        cache.invalidate(cacheKeyFor(schema, key));
+                    }
                 }
             }
         }
@@ -301,6 +344,11 @@ final class OperationHandlers {
 
     private JsonObject transactWriteItems(JsonObject req) {
         JsonArray transactItems = req.getAsJsonArray("TransactItems");
+        // Keys touched are collected as the ops run and only invalidated after the surrounding
+        // Postgres transaction actually commits (runInTransaction throws + rolls back on failure,
+        // in which case this list is simply discarded — invalidating a key for a write that never
+        // committed would be wrong, not just wasteful).
+        List<String> touchedCacheKeys = new ArrayList<>();
         // Real Postgres transaction (BEGIN/COMMIT) — see DynamoWireServer's javadoc on why this
         // doesn't need the project's existing XA/2PC coordinator: every dynamowire item lives on
         // the single Postgres backend this frontend talks to, so ordinary transactional isolation
@@ -310,9 +358,9 @@ final class OperationHandlers {
             for (JsonElement e : transactItems) {
                 JsonObject op = e.getAsJsonObject();
                 try {
-                    if (op.has("Put")) applyTransactPut(conn, op.getAsJsonObject("Put"));
-                    else if (op.has("Delete")) applyTransactDelete(conn, op.getAsJsonObject("Delete"));
-                    else if (op.has("Update")) applyTransactUpdate(conn, op.getAsJsonObject("Update"));
+                    if (op.has("Put")) applyTransactPut(conn, op.getAsJsonObject("Put"), touchedCacheKeys);
+                    else if (op.has("Delete")) applyTransactDelete(conn, op.getAsJsonObject("Delete"), touchedCacheKeys);
+                    else if (op.has("Update")) applyTransactUpdate(conn, op.getAsJsonObject("Update"), touchedCacheKeys);
                     else if (op.has("ConditionCheck")) applyTransactConditionCheck(conn, op.getAsJsonObject("ConditionCheck"));
                 } catch (SQLException sqle) {
                     throw new RuntimeException(sqle);
@@ -320,18 +368,26 @@ final class OperationHandlers {
             }
             return null;
         });
+        if (cache != null) {
+            for (String cacheKey : touchedCacheKeys) {
+                cache.invalidate(cacheKey);
+            }
+        }
         return new JsonObject();
     }
 
-    private void applyTransactPut(Connection conn, JsonObject put) throws SQLException {
+    private void applyTransactPut(Connection conn, JsonObject put, List<String> touchedCacheKeys) throws SQLException {
         TableSchema schema = store.describeTable(put.get("TableName").getAsString());
         Map<String, AttributeValue> item = PgItemStore.jsonToItem(put.getAsJsonObject("Item"));
         ExpressionContext ctx = ExpressionContext.parse(put);
         String cond = optString(put, "ConditionExpression");
         transactionalUpsert(conn, schema, item, cond, ctx);
+        if (cache != null) {
+            touchedCacheKeys.add(cacheKeyFor(schema, item));
+        }
     }
 
-    private void applyTransactUpdate(Connection conn, JsonObject update) throws SQLException {
+    private void applyTransactUpdate(Connection conn, JsonObject update, List<String> touchedCacheKeys) throws SQLException {
         TableSchema schema = store.describeTable(update.get("TableName").getAsString());
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(update.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(update);
@@ -345,9 +401,12 @@ final class OperationHandlers {
         UpdateExpressionParser.apply(update.get("UpdateExpression").getAsString(), item, ctx);
         item.putAll(key);
         transactionalUpsert(conn, schema, item, null, ctx);
+        if (cache != null) {
+            touchedCacheKeys.add(cacheKeyFor(schema, key));
+        }
     }
 
-    private void applyTransactDelete(Connection conn, JsonObject del) throws SQLException {
+    private void applyTransactDelete(Connection conn, JsonObject del, List<String> touchedCacheKeys) throws SQLException {
         TableSchema schema = store.describeTable(del.get("TableName").getAsString());
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(del.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(del);
@@ -363,6 +422,9 @@ final class OperationHandlers {
             ps.setString(1, pk);
             ps.setString(2, sk);
             ps.executeUpdate();
+        }
+        if (cache != null) {
+            touchedCacheKeys.add(cacheKeyFor(schema, key));
         }
     }
 

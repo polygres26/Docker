@@ -65,8 +65,19 @@ public final class DynamoWireServer {
     private final OperationHandlers handlers;
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
+        this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, null);
+    }
+
+    /**
+     * {@code cache}: nullable — an exact-key ({@code GetItem}-only) cache-aside cache; see
+     * {@link DynamoCache}'s class javadoc for scope and default-on rationale. {@code null} when
+     * {@code POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false}, in which case every {@code GetItem} goes
+     * straight to Postgres exactly as before this pass.
+     */
+    public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            DynamoCache cache) {
         this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
-        this.handlers = new OperationHandlers(store);
+        this.handlers = new OperationHandlers(store, cache);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
             @Override

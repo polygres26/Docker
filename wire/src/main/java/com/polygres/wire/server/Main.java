@@ -175,8 +175,22 @@ public final class Main {
         PolyWireCluster cluster = PolyWireCluster.fromEnv();
         String cacheTables = System.getenv("POLYWIRE_CACHE_TABLES");
         String cacheTtlMs = System.getenv("POLYWIRE_CACHE_TTL_MS");
+
+        // dynamowire/mongowire exact-key caches: unlike CacheStage above, default ON — see
+        // DynamoCache/MongoCache's class javadocs for why a key-value/exact-_id cache doesn't
+        // carry CacheStage's arbitrary-SQL staleness risk. Opt out per-frontend with
+        // POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false / POLYWIRE_MONGOWIRE_CACHE_ENABLED=false.
+        boolean dynamoCacheEnabled = !"false".equalsIgnoreCase(
+                System.getenv().getOrDefault("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "true"));
+        String dynamoCacheTtlMs = System.getenv("POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS");
+        boolean mongoCacheEnabled = !"false".equalsIgnoreCase(
+                System.getenv().getOrDefault("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "true"));
+        String mongoCacheTtlMs = System.getenv("POLYWIRE_MONGOWIRE_CACHE_TTL_MS");
+
+        boolean needsLocalIgniteForKvCache = dynamoCacheEnabled || mongoCacheEnabled
+                || (cacheTables != null && !cacheTables.isBlank());
         PolyWireCluster cacheCluster = cluster.enabled() ? cluster
-                : (cacheTables != null && !cacheTables.isBlank() ? startLocalCacheCluster() : cluster);
+                : (needsLocalIgniteForKvCache ? startLocalCacheCluster() : cluster);
         CacheStage cacheStage = CacheStage.fromConfigOrNull(cacheCluster, cacheTables, cacheTtlMs);
         if (cacheStage != null) {
             log.info("result cache enabled: tables=[{}] ttlMs={}", cacheTables,
@@ -184,6 +198,20 @@ public final class Main {
         } else {
             log.info("result cache disabled (set POLYWIRE_CACHE_TABLES to enable)");
         }
+
+        com.polygres.wire.dynamowire.DynamoCache dynamoCache = dynamoCacheEnabled
+                ? com.polygres.wire.dynamowire.DynamoCache.create(cacheCluster, dynamoCacheTtlMs)
+                : null;
+        log.info("dynamowire GetItem cache: {} (POLYWIRE_DYNAMOWIRE_CACHE_ENABLED, default on; "
+                        + "exact-key GetItem only, not Query/Scan) ttlMs={}",
+                dynamoCacheEnabled ? "enabled" : "disabled", dynamoCacheTtlMs == null ? "30000" : dynamoCacheTtlMs);
+
+        com.polygres.wire.mongowire.MongoCache mongoCache = mongoCacheEnabled
+                ? com.polygres.wire.mongowire.MongoCache.create(cacheCluster, mongoCacheTtlMs)
+                : null;
+        log.info("mongowire find cache: {} (POLYWIRE_MONGOWIRE_CACHE_ENABLED, default on; "
+                        + "exact-_id find only, not filtered find) ttlMs={}",
+                mongoCacheEnabled ? "enabled" : "disabled", mongoCacheTtlMs == null ? "30000" : mongoCacheTtlMs);
 
         // Rollup: off by default (matches CacheStage's own posture) -- only wired in when
         // POLYWIRE_ROLLUP_DEFINITIONS_FILE names a YAML file of rollup definitions (schema:
@@ -284,7 +312,7 @@ public final class Main {
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
-        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor));
+        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache));
 
         // dynamowire: DynamoDB's real client protocol is HTTP/JSON (SigV4-signed POST requests
         // naming the operation via X-Amz-Target), not a raw TCP wire protocol, so it doesn't fit
@@ -294,7 +322,7 @@ public final class Main {
         // why it bypasses the SQL pipeline entirely).
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword());
+                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 
@@ -364,7 +392,8 @@ public final class Main {
      * MongoWireSessionHandler's class javadoc for why) rather than sharing pipelineStages/
      * backendRegistry the way the four SQL-text frontends above do.
      */
-    private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor) {
+    private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
+            com.polygres.wire.mongowire.MongoCache mongoCache) {
         int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
         String pgUrl = "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase();
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
@@ -373,7 +402,7 @@ public final class Main {
                     mongoPort, pgUrl);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword()));
+                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword(), mongoCache));
             }
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);
