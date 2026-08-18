@@ -22,14 +22,6 @@ import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Server side of the native PolyWire JDBC driver (ARCHITECTURE.md §5.9):
- * one unary RPC per statement, stateless — each call opens (and closes) its
- * own backend connection, same as every other frontend. Reuses the shared
- * {@link StatementPipeline} stages exactly like {@code PgWireSessionHandler}
- * does, so stats/firewall/QoS apply uniformly across all three frontends
- * without protocol-specific duplication.
- */
 public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBase {
 
     private static final Logger log = LoggerFactory.getLogger(QueryServiceImpl.class);

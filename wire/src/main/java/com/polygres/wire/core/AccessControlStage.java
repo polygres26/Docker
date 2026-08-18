@@ -9,42 +9,10 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * End-user row/column access control — see {@code docs/design/end-user-data-access-security.md}
- * §3.4. Placed after Omnigate's NL2SQL stage (not ported — see PolyWire's scope notes), before {@link FirewallStage} in
- * {@code GatewayComponents}' stage list: by the time this stage runs, {@code sqlText} is always
- * real SQL (LLM-generated or client-supplied directly), same rationale
- * {@code Nl2SqlStage}'s javadoc already gives for why {@code FirewallStage} runs after NL2SQL
- * rather than before.
- *
- * <p>Two responsibilities per statement, mirroring the two enforcement styles surveyed in the
- * design doc rather than picking one:
- * <ol>
- *   <li><b>Row filter injection</b> ({@link AccessPolicy.RowFilter}, Cube.js
- *   {@code queryRewrite}-style): for every matching, non-bypassed rule whose
- *   {@code requiredAttribute} is present on the caller's {@link AccessContext}, appends a bound
- *   {@code <filterColumn> = ?} predicate via {@link WhereClauseInjector}. If the attribute is
- *   <em>absent</em>, there's nothing to filter on — this fails closed (reject), not open
- *   (unfiltered), same as responsibility 2 below.</li>
- *   <li><b>Column grant enforcement</b> ({@link AccessPolicy.ColumnGrant}, sql-data-guard-style
- *   backstop): for every matching rule the caller's attributes don't satisfy, either rejects the
- *   statement ({@code on_violation: deny}, the default) or rewrites the denied column reference to
- *   {@code NULL} via {@link ColumnMasker} ({@code on_violation: mask}) — see {@link AccessPolicy}'s
- *   javadoc for why {@code mask} is opt-in, not default.</li>
- * </ol>
- *
- * <p><b>Fail-closed default</b> (§3.5): an {@link AccessContext#isAnonymous() anonymous} caller
- * hitting a table any configured rule matches is rejected outright, before either responsibility
- * above even runs — an unauthenticated caller must never get "no filter matched, so unfiltered."
- * This only bites once a policy is actually configured ({@link AccessPolicy#isEmpty()} false); with
- * no policy configured at all, this stage is a complete no-op pass-through, matching every other
- * optional stage's zero-config convention ({@code RouterStage}, {@code FirewallStage}).
- */
 public final class AccessControlStage implements PipelineStage {
 
     private static final Logger log = LoggerFactory.getLogger(AccessControlStage.class);
 
-    /** Not {@code final} — see {@link #reloadPolicy}, the live-editable-config path from a DB-backed policy (§K of the config/audit-in-a-database follow-on). {@code volatile} since a reload from an admin HTTP request and a concurrent statement's own read both need to see a consistent, fully-constructed {@link AccessPolicy} — never a partially-applied one — without needing a lock on the hot path. */
     private volatile AccessPolicy policy;
     private final com.polygres.wire.audit.AuditLog auditLog;
 
@@ -52,7 +20,6 @@ public final class AccessControlStage implements PipelineStage {
         this(policy, null);
     }
 
-    /** {@code auditLog}: null is a legitimate, tolerated "no durable trail wired up" (every existing caller/test) — every decision below still logs via SLF4J either way. */
     public AccessControlStage(AccessPolicy policy, com.polygres.wire.audit.AuditLog auditLog) {
         this.policy = policy == null ? AccessPolicy.EMPTY : policy;
         this.auditLog = auditLog;
@@ -62,15 +29,6 @@ public final class AccessControlStage implements PipelineStage {
         return policy;
     }
 
-    /**
-     * Swaps in a new policy for every statement from this point on — no restart needed. Called by
-     * the {@code PUT /api/config/access-policy} admin route after persisting the new YAML to
-     * {@code ConfigStore}, mirroring {@code BackendRegistry.reload}'s existing "persist, then hot-
-     * swap the live component" shape for {@code PUT /api/config/backends}. A single volatile
-     * reference swap — nothing in {@link #enforce} holds a reference to the old {@link AccessPolicy}
-     * across a statement, so an in-flight statement either sees the whole old policy or the whole
-     * new one, never a mix.
-     */
     public void reloadPolicy(AccessPolicy newPolicy) {
         this.policy = newPolicy == null ? AccessPolicy.EMPTY : newPolicy;
         log.info("access-control: policy reloaded ({} column grant(s), {} row filter(s))",
@@ -79,7 +37,7 @@ public final class AccessControlStage implements PipelineStage {
 
     @Override
     public ExecutionResult handle(Statement statement, PipelineChain next) throws SQLException {
-        AccessPolicy currentPolicy = policy; // one volatile read — see reloadPolicy's javadoc on why enforce() below takes it as a parameter instead of re-reading the field
+        AccessPolicy currentPolicy = policy;
         if (currentPolicy.isEmpty()) {
             return next.proceed(statement);
         }
@@ -87,7 +45,6 @@ public final class AccessControlStage implements PipelineStage {
         return next.proceed(result);
     }
 
-    /** Public so {@code com.polygres.wire.http.AccessPolicyTestRoute}'s dry-run mode (§3.8) can call it directly without a full pipeline — the same enforcement logic {@link #handle} uses, just without a backend dispatch on success. Uses whatever policy is live at the moment of the call. */
     public Statement enforce(Statement statement) throws SQLException {
         return enforce(statement, policy);
     }
@@ -153,11 +110,6 @@ public final class AccessControlStage implements PipelineStage {
             }
         }
 
-        // No blanket ACCESS_ALLOWED event here on purpose: most statements never touch any
-        // configured rule at all (an unrelated table, or an already-satisfied grant) and logging
-        // an audit entry for every single one of those would drown the durable trail in noise —
-        // ROW_FILTER_APPLIED/COLUMN_MASKED already are the "allowed, and here's what changed"
-        // signal for statements a rule actually did something to; ACCESS_DENIED covers rejection.
         return statement;
     }
 
@@ -176,9 +128,6 @@ public final class AccessControlStage implements PipelineStage {
         return false;
     }
 
-    // Deliberately reuses the same identifier-boundary matching ColumnMasker already applies, so
-    // "does this grant even apply" and "how would we mask it" never disagree about what counts as
-    // a reference to the column.
     private static boolean referencesColumn(String sqlText, String column) {
         return java.util.regex.Pattern
                 .compile("(?:\\b[\\w$]+\\.)?\\b" + java.util.regex.Pattern.quote(column) + "\\b",

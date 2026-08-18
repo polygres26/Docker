@@ -6,22 +6,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Types;
 
-/**
- * Encodes PostgreSQL wire protocol v3.0 backend (server-&gt;client) messages.
- * Format reference: PostgreSQL's own public protocol documentation
- * ("Frontend/Backend Protocol") — an open spec, not reverse-engineered from
- * any source.
- */
 final class PgMessages {
 
     static final int SSL_REQUEST_CODE = 80877103;
     static final int GSSENC_REQUEST_CODE = 80877104;
-    static final int PROTOCOL_VERSION_3_0 = 196608; // 3 << 16 | 0
+    static final int PROTOCOL_VERSION_3_0 = 196608;
 
     static void writeAuthCleartextPassword(DataOutputStream out) throws IOException {
         out.writeByte('R');
         out.writeInt(8);
-        out.writeInt(3); // AuthenticationCleartextPassword
+        out.writeInt(3);
         out.flush();
     }
 
@@ -43,8 +37,8 @@ final class PgMessages {
     static void writeBackendKeyData(DataOutputStream out) throws IOException {
         out.writeByte('K');
         out.writeInt(12);
-        out.writeInt(0); // process id — no real per-connection identity to report yet
-        out.writeInt(0); // secret key — cancel-request support not implemented
+        out.writeInt(0);
+        out.writeInt(0);
     }
 
     static void writeReadyForQuery(DataOutputStream out, char status) throws IOException {
@@ -72,12 +66,12 @@ final class PgMessages {
         writeShort(body, n);
         for (int i = 0; i < n; i++) {
             body.write(cstring(columnNames.get(i)));
-            writeInt(body, 0); // table OID — not tracked
-            writeShort(body, 0); // column attr number — not tracked
+            writeInt(body, 0);
+            writeShort(body, 0);
             writeInt(body, oidFor(columnJdbcTypes.get(i)));
-            writeShort(body, -1); // type length: variable
-            writeInt(body, -1); // type modifier: none
-            writeShort(body, 0); // format code: text
+            writeShort(body, -1);
+            writeInt(body, -1);
+            writeShort(body, 0);
         }
         out.writeByte('T');
         out.writeInt(4 + body.size());
@@ -108,10 +102,6 @@ final class PgMessages {
         out.write(tagB);
     }
 
-    // ---- Extended Query Protocol (Parse/Bind/Describe/Execute/Sync/Close) ----
-    // See PgWireSessionHandler's javadoc for why this exists: real clients like postgres_fdw never
-    // use Simple Query at all.
-
     static void writeParseComplete(DataOutputStream out) throws IOException {
         out.writeByte('1');
         out.writeInt(4);
@@ -127,26 +117,22 @@ final class PgMessages {
         out.writeInt(4);
     }
 
-    /** Sent for {@code Describe Statement} — {@code paramCount} is always 0 here: this project doesn't track bind-parameter type OIDs from Parse, so it honestly reports none rather than guessing. */
     static void writeParameterDescription(DataOutputStream out, int paramCount) throws IOException {
         out.writeByte('t');
         out.writeInt(4 + 2 + paramCount * 4);
         writeShortDirect(out, paramCount);
     }
 
-    /** Sent instead of {@code RowDescription} when the described statement/portal doesn't return rows. */
     static void writeNoData(DataOutputStream out) throws IOException {
         out.writeByte('n');
         out.writeInt(4);
     }
 
-    /** Sent from {@code Execute} when {@code maxRows} cut a portal off before its last row — the client is expected to send another {@code Execute} to continue. */
     static void writePortalSuspended(DataOutputStream out) throws IOException {
         out.writeByte('s');
         out.writeInt(4);
     }
 
-    /** Unlike {@link #writeErrorAndReady}, does NOT also send {@code ReadyForQuery} — the Extended Query Protocol only sends that in response to {@code Sync}, potentially several messages later. */
     static void writeErrorResponse(DataOutputStream out, String sqlState, String message) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write('S'); body.write(cstring("ERROR"));
@@ -162,17 +148,16 @@ final class PgMessages {
         out.writeShort(v);
     }
 
-    /** Maps a java.sql.Types code to the closest built-in Postgres type OID (text format is used for all values regardless). */
     private static int oidFor(int jdbcType) {
         return switch (jdbcType) {
-            case Types.INTEGER, Types.SMALLINT -> 23; // int4
-            case Types.BIGINT -> 20; // int8
-            case Types.NUMERIC, Types.DECIMAL -> 1700; // numeric
-            case Types.DOUBLE, Types.FLOAT, Types.REAL -> 701; // float8
-            case Types.BOOLEAN, Types.BIT -> 16; // bool
-            case Types.DATE -> 1082; // date
-            case Types.TIMESTAMP -> 1114; // timestamp
-            default -> 25; // text
+            case Types.INTEGER, Types.SMALLINT -> 23;
+            case Types.BIGINT -> 20;
+            case Types.NUMERIC, Types.DECIMAL -> 1700;
+            case Types.DOUBLE, Types.FLOAT, Types.REAL -> 701;
+            case Types.BOOLEAN, Types.BIT -> 16;
+            case Types.DATE -> 1082;
+            case Types.TIMESTAMP -> 1114;
+            default -> 25;
         };
     }
 

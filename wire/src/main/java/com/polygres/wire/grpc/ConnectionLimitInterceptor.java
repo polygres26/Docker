@@ -8,13 +8,6 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 
-/**
- * The gRPC equivalent of {@code ProxyServer.admitOrReject} for the three TCP wire frontends: the
- * native driver's {@code Execute} RPC is stateless-per-call rather than a long-lived session, so
- * there's no socket-accept moment to gate — instead this counts each in-flight call as one
- * connection against the same process-wide {@link ConnectionLimiter}, acquiring at call start and
- * releasing exactly once when the call completes or is cancelled.
- */
 final class ConnectionLimitInterceptor implements ServerInterceptor {
 
     @Override

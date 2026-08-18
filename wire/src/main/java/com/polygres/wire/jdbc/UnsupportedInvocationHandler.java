@@ -7,18 +7,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
-/**
- * Backs the JDBC {@code Connection}/{@code PreparedStatement}/{@code ResultSet}
- * proxies (PolyWireDriver etc.): the java.sql interfaces have 60+ methods
- * each, and this narrow-slice driver (like the rest of PolyWire's frontends
- * so far) only needs a handful of them. A {@link java.lang.reflect.Proxy}
- * with this handler lets each proxy class implement only the methods it
- * actually supports — declared once, by name — instead of writing (or
- * generating) every interface method with a body that just throws.
- * {@code equals}/{@code hashCode}/{@code toString} get sane identity-based
- * defaults so the proxies behave normally in collections/logs; anything
- * else not explicitly registered throws {@link SQLFeatureNotSupportedException}.
- */
 final class UnsupportedInvocationHandler implements InvocationHandler {
 
     private final Map<String, Function<Object[], Object>> impls = new HashMap<>();
@@ -56,7 +44,6 @@ final class UnsupportedInvocationHandler implements InvocationHandler {
         };
     }
 
-    /** Lets a lambda registered via {@link #on} throw a checked SQLException without a functional-interface mismatch. */
     static final class WrappedSql extends RuntimeException {
         final java.sql.SQLException cause;
 

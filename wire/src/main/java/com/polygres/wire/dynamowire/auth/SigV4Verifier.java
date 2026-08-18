@@ -13,28 +13,6 @@ import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-/**
- * AWS Signature Version 4 request verification for dynamowire -- closes the gap {@code
- * DynamoWireServer}'s own class javadoc already documented ("accepts any {@code Authorization}
- * header (SigV4-shaped or not) without verifying the signature"). Real DynamoDB's actual client
- * protocol always authenticates this way (every AWS SDK signs every request with SigV4, with no
- * option to send a bearer token instead) -- unlike the generic OAuth2/OIDC bearer-token support
- * added for the other HTTP frontends, which doesn't apply here since a real DynamoDB client never
- * sends one.
- *
- * <p>Reimplements AWS's own published SigV4 algorithm directly (<a
- * href="https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html">Creating
- * a canonical request</a>) -- the same well-documented, stable HMAC-chain scheme real
- * AWS-API-compatible open-source servers (LocalStack, MinIO's S3 gateway) already implement
- * server-side; nothing novel here, just the standard verification-side computation.
- *
- * <p><b>Narrow-slice, stated plainly</b>: DynamoDB's real requests are always {@code POST /} with
- * no query string, so canonical URI/query-string handling is hardcoded to that shape rather than
- * general-purpose; a canonical-header value is trimmed but not whitespace-collapsed (real AWS SDKs
- * send simple single-line header values for DynamoDB requests, so this doesn't need the fuller RFC
- * 7230 folding logic AWS's own spec describes for the general case). {@code X-Amz-Date} is checked
- * against a ±15-minute clock-skew window, the same default AWS itself uses.
- */
 public final class SigV4Verifier {
 
     private static final Pattern AUTH_HEADER = Pattern.compile(
@@ -93,7 +71,6 @@ public final class SigV4Verifier {
             String canonicalHeaders = buildCanonicalHeaders(request, signedHeaders);
             String hashedPayload = hex(sha256(rawBody.getBytes(StandardCharsets.UTF_8)));
 
-            // DynamoDB's real requests are always POST / with no query string -- see class javadoc.
             String canonicalRequest = "POST\n/\n\n" + canonicalHeaders + "\n"
                     + String.join(";", signedHeaders) + "\n" + hashedPayload;
 

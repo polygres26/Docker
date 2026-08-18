@@ -17,44 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Embedded Jetty HTTP server speaking DynamoDB's real client protocol: AWS SDKs, the CLI, and
- * every DynamoDB tool POST SigV4-signed JSON requests to a single endpoint, naming the operation
- * via the {@code X-Amz-Target: DynamoDB_20120810.<Operation>} header (e.g. {@code GetItem}), not
- * via the URL path — this is why dynamowire, unlike orawire/pgwire/mywire/mssqlwire, is HTTP/JSON
- * rather than another raw-TCP frontend. Follows the same raw-{@code Handler}-API pattern as
- * {@link com.polygres.wire.http.admin.MetricsServer}.
- *
- * <h2>Auth — explicitly NOT real SigV4 verification</h2>
- * Real DynamoDB requires AWS SigV4 request signing. ExtendDB implements full SigV4 verification
- * with an IAM-like policy store (see its docs/manuals/10-security-model.md, referenced from its
- * architecture guide) — that is a substantial subsystem on its own and is out of scope for this
- * pass. This server accepts any {@code Authorization} header (SigV4-shaped or not) without
- * verifying the signature: the AWS SDK client still signs every request exactly as it would
- * against real AWS (nothing about the client changes), so this is purely a server-side
- * simplification for a local-dev/test posture, not a client-visible protocol deviation. This is a
- * deliberate, documented gap — a real production target would need real SigV4 verification before
- * being reachable outside a trusted network.
- *
- * <h2>Execution path — bypasses the SQL pipeline entirely</h2>
- * orawire/pgwire/mywire/mssqlwire all funnel through {@code StatementPipeline}/{@code RouterStage}/
- * {@code QosControlStage}/{@code CacheStage}, whose core abstraction ({@code Statement} with a
- * {@code sqlText} field) assumes a SQL statement string. DynamoDB operations are structured
- * JSON RPCs with their own semantics (conditional writes, key-value lookups, expression languages)
- * that don't map onto "a SQL string to route/cache/QoS-gate" without a bad, lossy fit. This
- * frontend therefore talks straight to {@link PgItemStore} (itself talking to Postgres via a plain
- * JDBC/HikariCP pool) rather than forcing itself through that pipeline — a parallel, simpler
- * execution path scoped to this one frontend, matching the same reasoning mssqlwire's NATIVE mode
- * javadoc gives for bypassing machinery that doesn't fit a given wire protocol's real shape.
- *
- * <h2>Scope</h2>
- * Implemented and live-verified: CreateTable, DeleteTable, DescribeTable, ListTables, PutItem,
- * GetItem, DeleteItem, UpdateItem (SET/REMOVE/ADD/DELETE, ConditionExpression), Query, Scan
- * (KeyConditionExpression, FilterExpression, ProjectionExpression, Limit/ExclusiveStartKey
- * pagination), BatchGetItem, BatchWriteItem, TransactGetItems, TransactWriteItems. Not
- * implemented: UpdateTable, Streams, TTL, Import/Export, GSI/LSI — see this class's and
- * {@link PgItemStore}'s javadoc for exactly what's deferred and why.
- */
 public final class DynamoWireServer {
 
     private static final Logger log = LoggerFactory.getLogger(DynamoWireServer.class);
@@ -68,12 +30,6 @@ public final class DynamoWireServer {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, null);
     }
 
-    /**
-     * {@code cache}: nullable — an exact-key ({@code GetItem}-only) cache-aside cache; see
-     * {@link DynamoCache}'s class javadoc for scope and default-on rationale. {@code null} when
-     * {@code POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false}, in which case every {@code GetItem} goes
-     * straight to Postgres exactly as before this pass.
-     */
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, com.polygres.wire.acl.ConnectionGate.DISABLED);
@@ -93,15 +49,6 @@ public final class DynamoWireServer {
                 com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.DISABLED);
     }
 
-    /**
-     * {@code awsIamCredentials}: real AWS SigV4 verification (see {@link
-     * com.polygres.wire.dynamowire.auth.SigV4Verifier}'s javadoc) -- the native mechanism real
-     * DynamoDB clients actually use, unlike {@code oauth} (a real DynamoDB client/SDK never sends
-     * a bearer token, so enabling generic OAuth here would just reject every real client; SigV4 is
-     * the correct mechanism for this specific frontend). {@link
-     * com.polygres.wire.dynamowire.auth.AwsIamCredentialStore#DISABLED} skips this gate entirely,
-     * unchanged pre-existing behavior.
-     */
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth,

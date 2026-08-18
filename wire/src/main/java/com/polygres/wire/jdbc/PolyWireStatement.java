@@ -10,14 +10,6 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * A {@link PreparedStatement} proxy backed by one gRPC {@code Execute} call
- * per {@code execute()}/{@code executeQuery()}/{@code executeUpdate()} —
- * this narrow slice sends bind values with the same call that runs the
- * statement rather than a separate server-side Prepare step, so "prepared"
- * here means "SQL text stored client-side for reuse," not a real
- * server-side prepared-statement handle.
- */
 final class PolyWireStatement {
 
     static PreparedStatement create(QueryServiceGrpc.QueryServiceBlockingStub stub, String username, String password,

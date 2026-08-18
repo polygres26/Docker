@@ -5,20 +5,11 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * A small recursive-descent evaluator for DynamoDB's {@code ConditionExpression}/
- * {@code FilterExpression} boolean grammar, evaluated against a materialized item (a null item —
- * i.e. the item doesn't exist — makes every path read as "attribute not present"). Covered:
- * {@code =, <>, <, <=, >, >=}, {@code BETWEEN x AND y}, {@code IN (v1, v2, ...)},
- * {@code attribute_exists(path)}, {@code attribute_not_exists(path)}, {@code begins_with(path, v)},
- * {@code contains(path, v)}, {@code AND}, {@code OR}, {@code NOT}, and parentheses. Not covered:
- * {@code size(path)} and {@code attribute_type(path, type)} functions.
- */
 public final class ConditionExpressionEvaluator {
 
     private final String expr;
     private int pos;
-    private final Map<String, AttributeValue> item; // may be null (item does not exist)
+    private final Map<String, AttributeValue> item;
     private final ExpressionContext ctx;
 
     private ConditionExpressionEvaluator(String expr, Map<String, AttributeValue> item, ExpressionContext ctx) {
@@ -81,14 +72,14 @@ public final class ConditionExpressionEvaluator {
             if (peek() == '(') {
                 return parseFunctionCall(funcName);
             }
-            // It was actually a path (rewind isn't simple char-by-char, so reconstruct comparison starting at funcName)
+            
             return parseComparisonFrom(funcName);
         }
         throw new DynamoException("ValidationException", "Expected expression at position " + pos + " in: " + expr);
     }
 
     private boolean parseFunctionCall(String funcName) {
-        pos++; // '('
+        pos++;
         List<String> args = parseArgList();
         switch (funcName) {
             case "attribute_exists" -> {
@@ -147,7 +138,7 @@ public final class ConditionExpressionEvaluator {
             AttributeValue right = resolveOperand(rhsToken);
             return compare(op, left, right);
         }
-        // BETWEEN / IN keywords
+        
         int save = pos;
         skipWs();
         if (matchKeyword("BETWEEN")) {

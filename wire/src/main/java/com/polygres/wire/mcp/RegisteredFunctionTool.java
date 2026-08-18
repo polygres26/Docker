@@ -6,16 +6,9 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 
-/**
- * One {@code POLYWIRE_MCP_TOOLS} entry, fully resolved: the tool name a caller sees, its
- * human-written description, and its real signature (via {@link PgFunctionIntrospector}) used
- * both to build the tool's JSON Schema and to know how many {@code ?} placeholders/what order to
- * bind arguments in when {@link PolyWireMcpServer} invokes it.
- */
 record RegisteredFunctionTool(String toolName, String description, PgFunctionIntrospector.FunctionSignature signature,
         JsonObject inputSchema) {
 
-    /** Parses one {@code toolName=schema.function|description} entry (schema defaults to {@code public}) and introspects it. */
     static RegisteredFunctionTool introspect(Connection conn, String entry) throws SQLException {
         int eq = entry.indexOf('=');
         if (eq <= 0) {
@@ -46,9 +39,7 @@ record RegisteredFunctionTool(String toolName, String description, PgFunctionInt
         JsonObject properties = new JsonObject();
         JsonArray required = new JsonArray();
         for (PgFunctionIntrospector.ParamDef param : signature.params()) {
-            // OUT/INOUT parameters are return-shaped, not caller-supplied input -- only IN/INOUT
-            // (and the unlabeled default, which information_schema reports as null for a plain "IN"
-            // in some Postgres versions) belong in the tool's *input* schema.
+            
             if ("OUT".equalsIgnoreCase(param.mode())) {
                 continue;
             }

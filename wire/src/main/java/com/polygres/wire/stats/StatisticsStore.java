@@ -11,23 +11,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.ignite.IgniteCache;
 
-/**
- * Cluster-shared table row-count statistics — the piece that answers "how does another PolyWire
- * server in a cluster see the same numbers": same dual-mode shape every other cluster-shared store
- * in this codebase already uses ({@code ConversationStore}, {@code ClusterSqlPlanStore}, {@code
- * SessionStore}, {@code OntologyStore}) — a local {@link ConcurrentHashMap} when no cluster is
- * configured, or its own Ignite cache ({@code polywire-table-stats}, deliberately separate from
- * every other cache/region for the same "one region can't serve two different eviction/access
- * patterns well" reasoning {@code SqlPlanStore}'s javadoc documents) when one is — so a statistic
- * collected by whichever node happened to run {@link StatisticsScheduler}'s pass is visible to every
- * node's {@link com.polygres.wire.core.FederationStage} planner, not just the one that collected it.
- *
- * <p>TTL-bounded (default 24h, {@code POLYWIRE_STATS_TTL_MS}), not versioned/invalidated on write —
- * a stale statistic (source data changed since last collection) degrades to a worse cost estimate,
- * not a wrong query result; {@link StatisticsScheduler}'s periodic re-collection is what keeps this
- * fresh, same "detective, not preventive" posture the TTL choice for {@code ClusterSqlPlanStore}'s
- * plan history already uses.
- */
 public final class StatisticsStore {
 
     private static final String CACHE_NAME = "polywire-table-stats";
@@ -78,7 +61,6 @@ public final class StatisticsStore {
         }
     }
 
-    /** {@code null} if never collected (or evicted by TTL) — callers must treat that as "no opinion," falling back to Calcite's own default (see {@code FederationStage}'s Statistic wrapper), not as zero rows. */
     public TableStatistics get(String qualifiedTableName) {
         if (clustered()) {
             byte[] bytes = clusterCache.get(qualifiedTableName);

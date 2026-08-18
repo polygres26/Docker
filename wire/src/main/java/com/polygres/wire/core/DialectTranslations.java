@@ -7,96 +7,14 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Hub-and-spoke rule vocabulary behind {@link DialectTranslationStage} — normalize once per
- * *source* dialect into one shared ANSI-ish canonical form, then render once per *target* dialect,
- * instead of hand-writing a separate translator for every {@code (source, target)} pair. With
- * {@code N} source dialects and {@code M} target dialects that's {@code N + M} functions to
- * maintain instead of {@code N × M} — the difference between adding one function and adding six
- * every time a new backend dialect (Snowflake, Databricks, ...) shows up.
- *
- * <p><b>Five source normalizers today: {@code ORACLE}, {@code POSTGRES}, {@code MYSQL}, {@code
- * SQL_SERVER}, {@code POLYWIRE_NATIVE}</b> — every
- * frontend that stamps a real dialect (see {@link DialectTranslationStage}'s javadoc for which
- * frontends produce which {@code SourceDialect}; {@code grpc} and MCP/HTTP both stamp
- * {@code POLYWIRE_NATIVE}). {@code POLYWIRE_NATIVE}'s normalizer is a pure identity passthrough,
- * not a real rewrite: PolyWire is a Postgres-only backend gateway (see ARCHITECTURE.md §1) — every
- * target it ever routes to is {@code POSTGRES} — so SQL text arriving over PolyWire's own native
- * protocols (gRPC, MCP/HTTP) is already valid Postgres SQL by construction and genuinely needs no
- * translation, unlike Oracle/MySQL/SQL Server text arriving from a client that thinks it's talking
- * to that platform. Without this entry, {@code translate()} returned {@code null} for every single
- * {@code POLYWIRE_NATIVE→POSTGRES} call (the "no normalizer" case), which drove *every* gRPC/MCP
- * query into the LLM-fallback path in {@link DialectTranslationStage#translateWithFallback} —
- * and with no LLM endpoint configured, that fallback throws, so gRPC's basic query path failed
- * outright until this was added. Six targets have renderers: {@code POSTGRES}, {@code MYSQL},
- * {@code SNOWFLAKE}, {@code REDSHIFT}, {@code BIGQUERY}, {@code DATABRICKS}.
- *
- * <p><b>The {@code POSTGRES}/{@code MYSQL} normalizers reuse the {@code ORACLE} renderers'
- * sequence handling for free</b>, by design: both convert their own real sequence-access syntax
- * ({@code nextval('seq')}/{@code currval('seq')} for Postgres; MariaDB's {@code NEXTVAL(seq)}/
- * {@code LASTVAL(seq)} for MySQL) back into the same Oracle-shaped {@code seq.NEXTVAL}/
- * {@code seq.CURRVAL} dot-syntax the canonical form already uses — so every existing renderer
- * (including the ones for Snowflake/Redshift/BigQuery/Databricks) handles a Postgres- or
- * MySQL-sourced sequence reference correctly with zero new renderer code, the same "N + M, not
- * N × M" property the hub-and-spoke design was built for in the first place.
- *
- * <p><b>Canonical form</b>: Oracle SQL with {@code DUAL} stripped, {@code NVL(...)} →
- * {@code COALESCE(...)}, {@code SYSDATE} → {@code CURRENT_TIMESTAMP}, and a single simple
- * {@code ROWNUM <=/< N} predicate → {@code LIMIT N} — all four already valid, as-is, on every one
- * of the six target dialects, so no renderer needs to touch them. Sequence dot-syntax
- * ({@code seq.NEXTVAL}/{@code seq.CURRVAL}) is deliberately <b>not</b> normalized — it's genuinely
- * valid Snowflake syntax already, and every other target's handling (or honest non-handling) is
- * dialect-specific enough that it belongs in the renderer, not the shared canonical form.
- *
- * <p><b>Per-target sequence handling, honestly uneven because the real platforms are</b>:
- * <ul>
- *   <li>{@code POSTGRES}: {@code nextval('seq')}/{@code currval('seq')} — real function-call
- *   syntax.</li>
- *   <li>{@code MYSQL} (via this project's MariaDB JDBC driver): MariaDB 10.3+'s real
- *   {@code CREATE SEQUENCE} object, function-call form — {@code NEXTVAL(seq)}/{@code LASTVAL(seq)}.
- *   Plain upstream MySQL has no sequence object at all; this project's MySQL wire frontend only
- *   ever talks to a MariaDB-compatible backend (see ARCHITECTURE.md §1's driver-choice note), so
- *   that's the real target being rendered for.</li>
- *   <li>{@code SNOWFLAKE}: no rewrite — {@code seq.NEXTVAL}/{@code seq.CURRVAL} is Snowflake's own
- *   native syntax, identical to Oracle's.</li>
- *   <li>{@code REDSHIFT}/{@code BIGQUERY}/{@code DATABRICKS}: no native sequence-object equivalent
- *   exists on any of the three real platforms — left untranslated deliberately, so a statement
- *   using one fails with that backend's own clear "function/object not found" error instead of a
- *   confident-looking wrong rewrite. Same "loud, not silent" convention as everywhere else in this
- *   project (see {@code DbLinkStage}'s unregistered-link handling).</li>
- * </ul>
- *
- * <p><b>Verification status, stated plainly</b>: {@code ORACLE→POSTGRES} and {@code ORACLE→MYSQL}
- * are live-verified end-to-end against real backends (see ARCHITECTURE.md §5.5b/§5.5c), as is
- * {@code POSTGRES→ORACLE} and {@code MYSQL→ORACLE} (see §5.5f). {@code ORACLE→SNOWFLAKE}/
- * {@code REDSHIFT}/{@code BIGQUERY}/{@code DATABRICKS} (and the {@code POSTGRES}/{@code MYSQL}
- * sources rendered at those same four targets) are unit-tested against the same rule vocabulary
- * but have <b>not</b> been live-verified — no local, free way to run any of those four platforms in
- * this environment (same honest gap already recorded for those backends' own connectivity in
- * ARCHITECTURE.md §5.4c).
- *
- * <p><b>{@code SQL_SERVER→POSTGRES} is also live-verified end-to-end</b>, against real {@code
- * mssql-jdbc} through {@code com.polygres.wire.mssqlwire} onto a real Postgres backend: bracketed
- * identifiers, {@code TOP N}, {@code GETDATE()}, and {@code ISNULL} were each independently
- * confirmed. T-SQL's {@code +} string-concatenation operator is deliberately <b>not</b> translated
- * — see {@link #normalizeSqlServer}'s javadoc for why a regex-only layer can't safely disambiguate
- * it from arithmetic {@code +}. {@code SQL_SERVER→SNOWFLAKE}/{@code REDSHIFT}/{@code BIGQUERY}/
- * {@code DATABRICKS} share the same unverified status as every other source rendered at those four
- * targets, for the same reason.
- */
 public final class DialectTranslations {
 
     private DialectTranslations() {
     }
 
-    // Verification-only instrumentation: counts every real call into translate() below, so a test
-    // can prove a repeat statement hit TranslationCache (in DialectTranslationStage.
-    // translateWithFallback) rather than re-running this regex normalize/render logic -- see that
-    // method's javadoc and MySqlWireSessionHandler/MssqlWireSessionHandler's default-path fix.
     private static final java.util.concurrent.atomic.AtomicLong CALL_COUNT =
             new java.util.concurrent.atomic.AtomicLong();
 
-    /** Verification-only: total number of real (non-cached) {@link #translate} calls so far. */
     public static long callCount() {
         return CALL_COUNT.get();
     }
@@ -106,10 +24,7 @@ public final class DialectTranslations {
             SourceDialect.POSTGRES, DialectTranslations::normalizePostgres,
             SourceDialect.MYSQL, DialectTranslations::normalizeMysql,
             SourceDialect.SQL_SERVER, DialectTranslations::normalizeSqlServer,
-            // Identity passthrough: PolyWire's own native protocols (gRPC, MCP/HTTP) always send
-            // SQL that's already Postgres-shaped, since PolyWire only ever routes to a Postgres
-            // backend -- see the class javadoc for why this must not fall through to "no
-            // normalizer" (which drove every native-protocol query into a failing LLM fallback).
+            
             SourceDialect.POLYWIRE_NATIVE, DialectTranslations::renderIdentity);
 
     private static final Map<SourceDialect, Function<String, String>> RENDERERS = Map.of(
@@ -120,12 +35,9 @@ public final class DialectTranslations {
             SourceDialect.REDSHIFT, DialectTranslations::renderIdentity,
             SourceDialect.BIGQUERY, DialectTranslations::renderBigQuery,
             SourceDialect.DATABRICKS, DialectTranslations::renderIdentity,
-            // Calcite's SQL dialect is ANSI-close enough (real COALESCE/CURRENT_TIMESTAMP/LIMIT
-            // support) that the shared canonical form needs no rewriting here either; no sequence
-            // concept exists for a REST-backed table at all, so nothing to render for that.
+            
             SourceDialect.GENERIC_REST, DialectTranslations::renderIdentity);
 
-    /** {@code null} means "no normalizer for {@code from}, or no renderer for {@code to}" — caller passes the original SQL through untouched. */
     public static String translate(String sql, SourceDialect from, SourceDialect to) {
         CALL_COUNT.incrementAndGet();
         if (from == to) {
@@ -139,47 +51,20 @@ public final class DialectTranslations {
         return renderer.apply(normalizer.apply(sql));
     }
 
-    // ---- ORACLE normalizer: Oracle SQL -> shared canonical form ----
-
     private static final Pattern NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
     private static final Pattern FROM_DUAL = Pattern.compile("(?i)\\s+FROM\\s+DUAL\\b");
     private static final Pattern SYSDATE = Pattern.compile("(?i)\\bSYSDATE\\b");
-    // Oracle's pseudo-columns for the DB/session timezone -- SQLcl queries these standalone (not
-    // only inside the NLS union probe above), same "no Postgres object, but a real, known answer"
-    // category as the rest of this file's session-metadata rewrites.
+    
     private static final Pattern DBTIMEZONE = Pattern.compile("(?i)\\bDBTIMEZONE\\b");
     private static final Pattern SESSIONTIMEZONE = Pattern.compile("(?i)\\bSESSIONTIMEZONE\\b");
     private static final Pattern ROWNUM = Pattern.compile("(?i)(\\s+(?:AND|WHERE)\\s+)ROWNUM\\s*(<=|<)\\s*(\\d+)\\b");
 
-    // ---- SQLcl session-setup probes: no canonical-form shape to normalize into, same category
-    // as normalizeMysql's SHOW_TABLES/SHOW_DATABASES handling -- these are either not real SQL
-    // any target dialect recognizes (Oracle's ALTER SESSION SET TIME_ZONE), reference catalog
-    // objects Postgres genuinely doesn't have (NLS_SESSION_PARAMETERS/NLS_DATABASE_PARAMETERS), or
-    // are PL/SQL blocks calling an Oracle-only package (DBMS_METADATA) with literally nothing on
-    // the Postgres side to translate to. Found live: every one of these came from SQLcl's own
-    // automatic connect-time probing (not a query a user typed) and previously failed every single
-    // orawire session -- see ARCHITECTURE.md's SQLcl compatibility notes.
-
     private static final Pattern ALTER_SESSION_TIME_ZONE =
             Pattern.compile("(?i)^\\s*ALTER\\s+SESSION\\s+SET\\s+TIME_ZONE\\s*=\\s*('[^']*')\\s*;?\\s*$");
 
-    // SQLcl's own NLS probe: "select parameter,value from nls_session_parameters union all
-    // SELECT 'DB_TIMEZONE' ... FROM nls_database_parameters WHERE parameter='NLS_CHARACTERSET'" --
-    // matched loosely on the one table name that anchors it (nls_session_parameters has no
-    // Postgres equivalent at all, real or emulable), not the whole exact statement text, since
-    // SQLcl versions vary this probe's other clauses. Answered with the same session-default
-    // values a fresh Oracle session reports before anything overrides them (AMERICAN_AMERICA
-    // locale, standard NLS formats) -- structural/session metadata, not application data, the same
-    // category of "real-shaped, not real" answer as normalizeMysql's SHOW_TABLES rewrite.
     private static final Pattern NLS_SESSION_PARAMETERS_PROBE =
             Pattern.compile("(?i)\\bFROM\\s+nls_session_parameters\\b");
 
-    // Detects (loosely) SQLcl's internal DBMS_METADATA session-configuration call -- both the
-    // plain "begin dbms_metadata.set_transform_param(...); end;" shape and the "declare FUNCTION
-    // ifelse(...) ... begin dbms_metadata.set_transform_param(...); end;" shape wrap the same
-    // underlying call, so anchoring on the package.procedure name catches both. There is no
-    // canonical-form or target-dialect equivalent for this at all -- Postgres has no PL/SQL, no
-    // anonymous begin/end blocks, and no DBMS_METADATA package, so nothing to normalize this into.
     private static final Pattern DBMS_METADATA_BLOCK =
             Pattern.compile("(?i)\\bdbms_metadata\\s*\\.\\s*set_transform_param\\s*\\(");
 
@@ -189,8 +74,7 @@ public final class DialectTranslations {
     private static final Pattern DBA_USERS = Pattern.compile("(?i)\\bdba_users\\b");
 
     private static String normalizeOracle(String sql) {
-        // Whole-statement rewrites first, same convention as normalizeMysql's SHOW_TABLES check --
-        // these replace the entire statement, so nothing downstream should also touch it.
+        
         Matcher alterSessionTz = ALTER_SESSION_TIME_ZONE.matcher(sql);
         if (alterSessionTz.matches()) {
             return "SET TIME ZONE " + alterSessionTz.group(1);
@@ -218,11 +102,6 @@ public final class DialectTranslations {
         return out;
     }
 
-    /**
-     * Real Oracle session defaults (AMERICAN_AMERICA locale, standard NLS formats) for SQLcl's
-     * connect-time {@code NLS_SESSION_PARAMETERS}/{@code NLS_DATABASE_PARAMETERS} probe -- there is
-     * no Postgres table holding this, so this is a literal-values answer, not a catalog query.
-     */
     private static String nlsSessionParametersAnswer() {
         return "SELECT * FROM (VALUES "
                 + "('NLS_LANGUAGE','AMERICAN'),"
@@ -250,16 +129,6 @@ public final class DialectTranslations {
                 + ") AS t(parameter, value)";
     }
 
-    /**
-     * No functional Postgres equivalent exists for an anonymous PL/SQL block calling
-     * {@code DBMS_METADATA} -- unlike every other rewrite in this file, this isn't translating
-     * syntax, it's recognizing a specific SQLcl-internal bookkeeping call and stubbing it out as a
-     * harmless statement that succeeds without doing anything on the backend. Preserves the
-     * original bind-placeholder count (each {@code ?} already rewritten from a named Oracle bind
-     * by {@code BindVariableRewriter} before this ever runs) so {@code JdbcBackendExecutor}'s
-     * positional {@code setObject} calls still line up 1:1 with the values the client actually
-     * sent -- dropping a placeholder here would leave a bind value with no {@code ?} to attach to.
-     */
     private static String dbmsMetadataNoOp(String sql) {
         long placeholderCount = PLACEHOLDER.matcher(sql).results().count();
         StringBuilder out = new StringBuilder("SELECT 1 WHERE FALSE");
@@ -271,20 +140,6 @@ public final class DialectTranslations {
 
     private static final Pattern DECODE_CALL = Pattern.compile("(?i)\\bDECODE\\s*\\(");
 
-    /**
-     * {@code DECODE(expr, val1, res1, val2, res2, ..., default)} → {@code CASE expr WHEN val1 THEN
-     * res1 WHEN val2 THEN res2 ... ELSE default END} (or without {@code ELSE} when the argument
-     * count is exactly even — no trailing default). {@code CASE} is real ANSI syntax already valid
-     * on every target here (same reasoning as the rest of the canonical form), so this is a
-     * one-time rewrite with nothing further needed per-renderer.
-     *
-     * <p>Real parenthesis/quote-aware splitting, not a regex over the whole call — {@code DECODE}'s
-     * arguments routinely nest function calls and string literals containing commas
-     * ({@code DECODE(NVL(a,0), 1, 'a, b', 0)}), so a naive comma split would misparse those. One
-     * {@code DECODE} match is rewritten per pass; nested/repeated calls are handled by iterating
-     * until no more matches remain (outermost-first would also work, but inside-out is simpler to
-     * reason about and gives the same result since each rewrite only touches its own balanced span).
-     */
     private static String rewriteDecodeCalls(String sql) {
         String out = sql;
         while (true) {
@@ -293,7 +148,7 @@ public final class DialectTranslations {
             int searchFrom = 0;
             while (m.find(searchFrom)) {
                 if (!SqlLiterals.isInsideStringLiteral(out, m.start())) {
-                    openParenIdx = m.end() - 1; // index of the '('
+                    openParenIdx = m.end() - 1;
                     break;
                 }
                 searchFrom = m.end();
@@ -303,7 +158,7 @@ public final class DialectTranslations {
             }
             int closeParenIdx = matchingCloseParen(out, openParenIdx);
             if (closeParenIdx < 0) {
-                return out; // unbalanced -- leave untouched rather than risk a wrong rewrite
+                return out;
             }
             int callStart = out.lastIndexOf("DECODE", openParenIdx);
             if (callStart < 0) {
@@ -311,7 +166,7 @@ public final class DialectTranslations {
             }
             List<String> args = splitTopLevelArgs(out.substring(openParenIdx + 1, closeParenIdx));
             if (args.size() < 3) {
-                return out; // not a real DECODE(expr, val, res, ...) shape -- leave untouched
+                return out;
             }
             String expr = args.get(0);
             StringBuilder caseExpr = new StringBuilder("CASE ").append(expr);
@@ -327,7 +182,6 @@ public final class DialectTranslations {
         }
     }
 
-    /** Index of the {@code )} matching the {@code (} at {@code openIdx}, or -1 if unbalanced. Quote-aware (a paren inside a string literal doesn't count). */
     private static int matchingCloseParen(String sql, int openIdx) {
         int depth = 0;
         boolean inString = false;
@@ -351,7 +205,6 @@ public final class DialectTranslations {
         return -1;
     }
 
-    /** Splits {@code argsText} on top-level commas only (not inside nested parens or string literals), trimming each piece. */
     private static java.util.List<String> splitTopLevelArgs(String argsText) {
         List<String> parts = new ArrayList<>();
         int depth = 0;
@@ -378,12 +231,6 @@ public final class DialectTranslations {
         return parts;
     }
 
-    /**
-     * Handles exactly one simple {@code WHERE ROWNUM <=/< N} or {@code AND ROWNUM <=/< N}
-     * predicate — see {@link DialectTranslationStage}'s original javadoc for the full scope note
-     * this carries forward unchanged (a second {@code ROWNUM} reference, or one outside a simple
-     * comparison, is not attempted).
-     */
     private static String applyRownumLimit(String sql) {
         Matcher matcher = ROWNUM.matcher(sql);
         if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
@@ -401,15 +248,10 @@ public final class DialectTranslations {
         return trimmed + " LIMIT " + limit + (hadSemicolon ? ";" : "");
     }
 
-    // ---- POSTGRES normalizer: Postgres SQL -> shared canonical form ----
-
     private static final Pattern PG_NEXTVAL_CALL = Pattern.compile("(?i)\\bnextval\\s*\\(\\s*'([^']+)'\\s*\\)");
     private static final Pattern PG_CURRVAL_CALL = Pattern.compile("(?i)\\bcurrval\\s*\\(\\s*'([^']+)'\\s*\\)");
     private static final Pattern PG_NOW_CALL = Pattern.compile("(?i)\\bnow\\s*\\(\\s*\\)");
-    // Simple operand only (identifier, dotted identifier, integer/decimal literal, or a quoted
-    // string literal) immediately before "::type" -- deliberately not a general expression parser,
-    // same "narrow but honest" scope as everywhere else in this file. "(a + b)::int" or
-    // "func(x)::text" are left untranslated rather than risk a wrong rewrite.
+    
     private static final Pattern PG_CAST_SHORTHAND =
             Pattern.compile("(?i)([A-Za-z_][\\w.$#]*|'[^']*'|\\d+(?:\\.\\d+)?)::([A-Za-z_][\\w]*)");
 
@@ -422,32 +264,19 @@ public final class DialectTranslations {
         return out;
     }
 
-    // ---- MYSQL normalizer: MySQL/MariaDB SQL -> shared canonical form ----
-
     private static final Pattern MYSQL_NEXTVAL_CALL = Pattern.compile("(?i)\\bnextval\\s*\\(\\s*([A-Za-z_][\\w$#]*)\\s*\\)");
     private static final Pattern MYSQL_LASTVAL_CALL = Pattern.compile("(?i)\\blastval\\s*\\(\\s*([A-Za-z_][\\w$#]*)\\s*\\)");
     private static final Pattern MYSQL_NOW_CALL = Pattern.compile("(?i)\\bnow\\s*\\(\\s*\\)");
     private static final Pattern MYSQL_BACKTICK_IDENTIFIER = Pattern.compile("`([^`]+)`");
     private static final Pattern MYSQL_NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
-    // MySQL's two-arg LIMIT (offset, count) -- distinct from the single-arg LIMIT N form (already
-    // valid, unchanged, on every target here) and from the LIMIT N OFFSET M form (already ANSI).
-    // Only fires on the plain-number two-arg shape; deliberately not attempted for bind-parameter
-    // offsets/counts (?, ? -- StatementPipeline binds those positionally, not textually, so there's
-    // nothing to distinguish "two-arg LIMIT" from "single-arg LIMIT with a comma-separated
-    // subquery" once the literals are gone).
+    
     private static final Pattern MYSQL_LIMIT_OFFSET_COUNT =
             Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)\\s*,\\s*(\\d+)\\b");
     private static final Pattern SHOW_TABLES = Pattern.compile("(?i)^\\s*SHOW\\s+TABLES\\s*;?\\s*$");
     private static final Pattern SHOW_DATABASES = Pattern.compile("(?i)^\\s*SHOW\\s+DATABASES\\s*;?\\s*$");
 
     private static String normalizeMysql(String sql) {
-        // SHOW TABLES/DATABASES have no canonical-form shape to normalize into -- MySQL's SHOW
-        // family isn't real SQL syntax any target dialect recognizes, so these are rewritten
-        // directly to a real query here and skip the rest of the pipeline (a single-column result
-        // set shaped like MySQL's own SHOW TABLES/DATABASES output, built from Postgres catalog
-        // views since that's this project's one real MySQL-wire target -- see class javadoc on
-        // MYSQL's own renderer notes for why Postgres is the only real backend mywire talks to in
-        // its default, non-native mode).
+        
         if (SHOW_TABLES.matcher(sql).matches()) {
             return "SELECT tablename AS \"Tables\" FROM pg_catalog.pg_tables "
                     + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename";
@@ -467,23 +296,11 @@ public final class DialectTranslations {
         return out;
     }
 
-    // ---- SQL_SERVER (T-SQL) normalizer: T-SQL -> shared canonical form ----
-
-    // Bracketed identifiers -- T-SQL's own quoting rule, same shape as MySQL's backtick rule
-    // (MYSQL_BACKTICK_IDENTIFIER above), different delimiter. A '[' inside a string literal is
-    // skipped by replaceOutsideLiterals the same way every other rule here is.
     private static final Pattern MSSQL_BRACKETED_IDENTIFIER = Pattern.compile("\\[([^\\]]+)\\]");
     private static final Pattern MSSQL_GETDATE_CALL = Pattern.compile("(?i)\\bGETDATE\\s*\\(\\s*\\)");
-    // ISNULL takes exactly two arguments in T-SQL, unlike Postgres's own variadic COALESCE -- a
-    // straight rename is correct here without the arg-restructuring DECODE->CASE rewrite needed
-    // (COALESCE(expr, replacement) is already the same shape as ISNULL(expr, replacement)).
+    
     private static final Pattern MSSQL_ISNULL = Pattern.compile("(?i)\\bISNULL\\s*\\(");
-    // SELECT [DISTINCT] TOP N ... -- the position is different from Postgres's LIMIT (TOP sits
-    // right after SELECT, LIMIT goes at the end of the statement), so this is a real structural
-    // rewrite: strip "TOP N" from right after SELECT[/DISTINCT] and append "LIMIT N" to the tail
-    // of the statement, same as applyRownumLimit does for Oracle's ROWNUM. Only a bare integer
-    // literal is handled (no "TOP (@n)" bind-parameter form, no "TOP N PERCENT") -- narrow but
-    // honest, same convention as everywhere else in this file.
+    
     private static final Pattern MSSQL_TOP =
             Pattern.compile("(?i)^(\\s*SELECT\\s+)(DISTINCT\\s+)?TOP\\s+(\\d+)\\s+");
 
@@ -493,26 +310,10 @@ public final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_ISNULL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_BRACKETED_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
         out = applyTopLimit(out);
-        // Deliberately NOT translated: T-SQL's "+" string concatenation operator (e.g.
-        // "SELECT first_name + ' ' + last_name"). T-SQL overloads "+" for both arithmetic and
-        // string concatenation with no textual marker distinguishing the two -- telling them apart
-        // needs real operand type information (is 'a' a string column, a numeric column, a
-        // parameter?), which this regex-only, no-catalog-lookup translation layer genuinely doesn't
-        // have (same category of gap already documented for MYSQL_LIMIT_OFFSET_COUNT's bind-
-        // parameter carve-out above). Guessing wrong here is worse than not translating: a numeric
-        // "+" silently rewritten to string concat (or vice versa) produces a confidently wrong
-        // result instead of Postgres's own clear type-mismatch error. Left untouched on purpose --
-        // a T-SQL statement relying on "+" concatenation against a Postgres target needs to be
-        // rewritten by the caller to use "||" (or CONCAT()) directly.
+        
         return out;
     }
 
-    /**
-     * Handles {@code SELECT [DISTINCT] TOP N ...} at the very start of the statement -- strips the
-     * {@code TOP N} clause and appends {@code LIMIT N} to the statement's tail (before a trailing
-     * semicolon, if any), mirroring {@link #applyRownumLimit}'s ROWNUM handling. A second/nested
-     * {@code TOP} (e.g. inside a subquery) isn't attempted, same "one simple case" scope as ROWNUM.
-     */
     private static String applyTopLimit(String sql) {
         Matcher matcher = MSSQL_TOP.matcher(sql);
         if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
@@ -528,8 +329,6 @@ public final class DialectTranslations {
         }
         return trimmed + " LIMIT " + n + (hadSemicolon ? ";" : "");
     }
-
-    // ---- Renderers: canonical form -> target-specific concerns the canonical form doesn't already cover ----
 
     private static final Pattern NEXTVAL = Pattern.compile("(?i)\\b([A-Za-z_][\\w$#]*)\\.NEXTVAL\\b");
     private static final Pattern CURRVAL = Pattern.compile("(?i)\\b([A-Za-z_][\\w$#]*)\\.CURRVAL\\b");
@@ -549,23 +348,12 @@ public final class DialectTranslations {
         return out;
     }
 
-    /** BigQuery's grammar rejects the bare {@code CURRENT_TIMESTAMP} keyword form -- it needs the call form. */
     private static String renderBigQuery(String sql) {
         return SqlLiterals.replaceOutsideLiterals(sql, CURRENT_TIMESTAMP_NO_PARENS, m -> "CURRENT_TIMESTAMP()");
     }
 
-    // Only a trailing LIMIT clause is handled -- the canonical form only ever produces one there
-    // (from the ORACLE normalizer's ROWNUM rewrite, or a Postgres/MySQL source that already wrote
-    // one), so this deliberately doesn't attempt LIMIT...OFFSET or any other placement/shape.
     private static final Pattern LIMIT_CLAUSE = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)\\s*;?\\s*$");
 
-    /**
-     * {@code COALESCE}/{@code CURRENT_TIMESTAMP}/{@code seq.NEXTVAL} dot-syntax are all already
-     * valid, real Oracle syntax -- nothing to rewrite for any of them. The one real gap: Oracle has
-     * no {@code LIMIT} keyword at all, so a canonical-form {@code LIMIT N} (however it got there --
-     * an ORACLE-normalized {@code ROWNUM}, or a Postgres/MySQL source that wrote {@code LIMIT}
-     * directly) is rewritten to Oracle 12c+'s real {@code FETCH FIRST N ROWS ONLY}.
-     */
     private static String renderOracle(String sql) {
         Matcher matcher = LIMIT_CLAUSE.matcher(sql);
         if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
@@ -576,11 +364,6 @@ public final class DialectTranslations {
         return withoutLimit + " FETCH FIRST " + n + " ROWS ONLY";
     }
 
-    /**
-     * No target-specific rewrite needed beyond the shared canonical form: SNOWFLAKE's own sequence
-     * dot-syntax already matches Oracle's, and REDSHIFT/DATABRICKS have no native sequence object
-     * to translate to at all (see class javadoc) -- either way, nothing left to rewrite here.
-     */
     private static String renderIdentity(String sql) {
         return sql;
     }

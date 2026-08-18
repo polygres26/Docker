@@ -7,16 +7,6 @@ import java.util.concurrent.atomic.LongAdder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Real (not stubbed) pipeline stage: per-tenant/workload-class statement
- * counts, error counts, and cumulative latency, kept in memory. This is
- * ARCHITECTURE.md §5's "Stats Collector" — {@link #snapshot()} backs the
- * hand-rolled {@code /metrics} Prometheus endpoint, and (when {@code
- * telemetry} is non-null) the same numbers are also recorded as real
- * OpenTelemetry instruments and pushed via OTLP — see {@link
- * PolyWireTelemetry}. Both are populated from this single call site so they
- * can never drift from each other.
- */
 public final class StatsCollectorStage implements PipelineStage {
 
     private static final Logger log = LoggerFactory.getLogger(StatsCollectorStage.class);
@@ -28,7 +18,7 @@ public final class StatsCollectorStage implements PipelineStage {
     }
 
     private final ConcurrentHashMap<String, Counters> byTenant = new ConcurrentHashMap<>();
-    private final PolyWireTelemetry telemetry; // nullable — OTLP export is opt-in, see PolyWireTelemetry.fromEnv()
+    private final PolyWireTelemetry telemetry;
 
     public StatsCollectorStage() {
         this(null);

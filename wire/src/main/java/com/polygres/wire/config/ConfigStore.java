@@ -14,67 +14,6 @@ import org.postgresql.PGNotification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Postgres-backed config store for PolyWire's hot-reloadable config tier (see {@code
- * PolyWireConfig}'s and {@code Main}'s class javadoc for the full bootstrap-vs-dynamic split).
- * Reuses the cluster's existing Postgres backend as the config store rather than standing up a
- * new subsystem (etcd/Consul/ZooKeeper) — every node already holds a live connection to this same
- * Postgres, which already gives durability and transactional consistency for free.
- *
- * <h2>Schema</h2>
- * <pre>{@code
- * CREATE TABLE polywire_config (
- *     version     bigserial PRIMARY KEY,
- *     payload     jsonb NOT NULL,
- *     created_at  timestamptz NOT NULL DEFAULT now()
- * );
- * }</pre>
- * <b>Insert-only, never updated in place</b>: every config change is a brand-new row. A reader
- * always does a single {@code SELECT ... ORDER BY version DESC LIMIT 1} — one committed row, read
- * whole, under Postgres's normal MVCC snapshot semantics, so a reader can never observe a
- * half-applied ("torn") version, and a row already read by one node is never mutated out from
- * under it later. That's what makes "old and new copies coexist during a rolling patch" safe: a
- * node running version N and a node that already picked up version N+1 both keep operating
- * correctly and independently — neither version is ever changed or deleted after being written.
- *
- * <h2>Writing a new version (supported mechanism for this pass)</h2>
- * There is deliberately no HTTP admin write-endpoint yet (Wire has zero config-write HTTP surface
- * today — {@link com.polygres.wire.http.admin.MetricsServer} only ever served read-only {@code
- * GET} routes before this change, and building a real authenticated write API is a larger, more
- * carefully-scoped follow-up than this pass attempts). The supported way to publish a new config
- * version right now is a plain SQL insert against the table above, e.g.:
- * <pre>{@code
- * INSERT INTO polywire_config (payload) VALUES (
- *   '{"qosRatePerSec":"50","qosBurst":"50","qosMaxWaitMs":null,"qosClassLimits":null,
- *     "qosPoolWaitThreshold":null,"cacheTables":null,"cacheTtlMs":null,"backends":null,
- *     "shardBackends":null,"routerSchemaRules":null,"routerPredicateRules":null,
- *     "routerValueShardRules":null,"routerShardTables":null,"rollupDefinitionsYaml":null}'::jsonb
- * );
- * }</pre>
- * {@link #ensureSchema} additionally installs an {@code AFTER INSERT} trigger that calls {@code
- * pg_notify('polywire_config_changed', ...)} for every new row — so this works identically
- * whether the insert comes from {@link #write}, {@code psql}, or any other SQL client; the trigger
- * is what makes "raw SQL insert" a fully supported publish mechanism rather than one that only
- * works through this class.
- *
- * <h2>LISTEN/NOTIFY propagation</h2>
- * {@link #listen} opens a <b>dedicated, non-pooled</b> JDBC connection via {@link
- * com.polygres.wire.pgwire.PgConnections#openRaw} (deliberately not borrowed from a HikariCP pool
- * elsewhere in this codebase) and issues {@code LISTEN polywire_config_changed} on it, then blocks
- * in a background thread on {@code PGConnection.getNotifications(timeoutMs)}. This connection must
- * stay open for the process lifetime of the listener: Postgres's LISTEN/NOTIFY state is
- * per-session, so a pooled connection that gets silently recycled back to the pool (and handed to
- * some unrelated caller, or closed and replaced) would silently drop the subscription with no
- * error raised anywhere — a real, sharp-edged gotcha this class exists specifically to avoid.
- *
- * <h2>Primary/standby failover</h2>
- * Every connection here -- one-shot reads/writes via {@link
- * com.polygres.wire.pgwire.PgConnections#open} and the persistent LISTEN connection via {@link
- * com.polygres.wire.pgwire.PgConnections#openRaw} -- goes through the same {@code
- * POLYWIRE_PG_STANDBY_HOST} failover logic real query traffic already gets, sharing its process-wide
- * {@code onStandby} state: if the config-primary Postgres this table lives on fails over, this
- * store's connections follow automatically, same as everything else that talks to it.
- */
 public final class ConfigStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ConfigStore.class);
@@ -92,7 +31,6 @@ public final class ConfigStore implements AutoCloseable {
         this.options = options;
     }
 
-    /** Idempotent — safe to call on every node's startup. */
     public void ensureSchema() throws SQLException {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS polywire_config ("
@@ -108,7 +46,6 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
-    /** Inserts a brand-new version row (never updates an existing one) and returns its assigned version number. The insert trigger notifies every listening node. */
     public long write(PolyWireConfig config) throws SQLException {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
@@ -121,11 +58,6 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
-    /**
-     * Reads the current latest complete version in one transaction (a single {@code SELECT} is
-     * already one atomic MVCC snapshot read in Postgres, so no explicit {@code BEGIN} is needed
-     * for this to be torn-read-safe). Empty when the table has no rows yet (a brand-new cluster).
-     */
     public Optional<Version> readLatest() throws SQLException {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
@@ -141,13 +73,6 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
-    /**
-     * Starts a background LISTEN loop on a dedicated connection; {@code callback} is invoked
-     * (with the newly-read latest {@link Version}) every time a notification arrives. Call at
-     * most once per {@code ConfigStore} instance. Idle-polls {@code getNotifications(5000)} rather
-     * than an unbounded block so the loop can also periodically notice the connection has died and
-     * needs recreating, rather than hanging forever on a dropped socket.
-     */
     public void listen(Consumer<Version> callback) throws SQLException {
         if (!listening.compareAndSet(false, true)) {
             throw new IllegalStateException("listen() already called on this ConfigStore");
@@ -207,7 +132,7 @@ public final class ConfigStore implements AutoCloseable {
             try {
                 conn.close();
             } catch (SQLException ignored) {
-                // best-effort close during shutdown
+                
             }
         }
         if (listenExecutor != null) {

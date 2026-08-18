@@ -6,7 +6,6 @@ import com.polygres.wire.core.StatsCollectorStage;
 import java.util.Locale;
 import java.util.Map;
 
-/** Renders {@link StatsCollectorStage#snapshot()}/{@link QosControlStage#snapshot()} as Prometheus text exposition format (one gauge/counter family per metric, one label series per tenant/class/pool). Ported from Omnigate's MetricsRenderer. */
 public final class MetricsRenderer {
 
     public static String render(StatsCollectorStage statsStage, QosControlStage qosStage) {

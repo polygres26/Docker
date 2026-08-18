@@ -4,29 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Thin in-memory cache in front of {@link DialectTranslations}/{@link TranslationLlmClient} so a
- * repeat query (proxied connections see the same handful of statement shapes over and over — same
- * observation {@link com.polygres.wire.core.BackendConnectionPools#applyStatementCacheProperties}
- * javadoc makes about pgJDBC's own statement cache) skips re-translation entirely, deterministic
- * rule or LLM fallback either way.
- *
- * <p>Keyed on {@code (sourceDialect, targetDialect, normalizedSqlText)} — normalization is just
- * whitespace-collapse + trim, not a real SQL parser/canonicalizer (deliberately simple: two
- * cosmetically-different-but-semantically-identical queries missing each other's cache entry costs
- * one extra translation, not a correctness bug, so this doesn't need to be exhaustive).
- *
- * <p>Hand-rolled {@link LinkedHashMap}-based LRU rather than a Caffeine (or similar) dependency —
- * Caffeine isn't already a transitive dependency of this module, and the task this cache does
- * (bounded map, evict oldest on overflow) doesn't need Caffeine's window-TinyLFU sophistication.
- * Synchronized rather than a {@code ConcurrentHashMap} because {@link LinkedHashMap}'s
- * access-order eviction isn't thread-safe on its own — contention here is low (translation itself,
- * the miss path, is far more expensive than a synchronized map lookup).
- */
 public final class TranslationCache {
 
-    /** Matches {@code POLYWIRE_STMT_CACHE_SIZE}'s default (see {@code BackendConnectionPools}) — no
-     * particular reason the two need to match, just a reasonable, consistent default. */
     private static final int DEFAULT_MAX_ENTRIES = 250;
 
     private final Map<CacheKey, String> cache;

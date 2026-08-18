@@ -8,18 +8,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Executes DynamoDB {@code UpdateExpression}s against an item's attribute map, mutating it in
- * place. Scope covered: {@code SET path = value}, {@code SET path = path}, {@code SET path =
- * path + value} / {@code path - value} (numeric), {@code SET path = if_not_exists(path, value)},
- * {@code SET path = list_append(path, value)}, {@code REMOVE path[, path...]},
- * {@code ADD path value} (numeric increment, or SS/NS/BS set union), {@code DELETE path value}
- * (SS/NS/BS set difference) or bare {@code DELETE path}. Clauses are separated by the {@code SET}/
- * {@code REMOVE}/{@code ADD}/{@code DELETE} keywords (case-sensitive, matching real DynamoDB);
- * multiple assignments within one clause are comma-separated. Not covered: nested function
- * composition beyond one level (e.g. {@code list_append} inside {@code if_not_exists}), and
- * {@code REMOVE} of list elements by index renumbering semantics beyond a simple map delete.
- */
 public final class UpdateExpressionParser {
 
     private static final Pattern CLAUSE_SPLIT = Pattern.compile("(?=\\b(SET|REMOVE|ADD|DELETE)\\b)");
@@ -91,7 +79,7 @@ public final class UpdateExpressionParser {
             if (b != null) merged.addAll(b.list);
             return AttributeValue.ofL(merged);
         }
-        // path + value / path - value (numeric)
+        
         int plus = topLevelIndexOf(rhs, '+');
         int minus = topLevelIndexOf(rhs, '-');
         if (plus > 0 || minus > 0) {
@@ -158,7 +146,7 @@ public final class UpdateExpressionParser {
 
     private static AttributeValue rebuildSet(AttributeValue.Type type, Set<String> values) {
         Map<String, AttributeValue> dummy = new LinkedHashMap<>();
-        // Reuse AttributeValue.fromJson-free construction via toJson round trip for simplicity.
+        
         com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
         com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
         for (String v : values) arr.add(v);

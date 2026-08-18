@@ -7,19 +7,11 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * A resolved document path such as {@code a.b[0].c} (after {@code #alias} substitution), used by
- * both the update-expression executor and the condition/filter-expression evaluator to
- * get/set/remove a value inside an item's attribute tree. Scope: supports dotted map traversal
- * and {@code [n]} list indices; does not support the very rare combination of a literal
- * {@code #}/{@code :}/{@code .} inside an unescaped attribute name (real DynamoDB requires
- * {@code ExpressionAttributeNames} for those anyway).
- */
 public final class ItemPath {
 
     private static final Pattern SEGMENT = Pattern.compile("([^\\.\\[\\]]+)|\\[(\\d+)\\]");
 
-    public final List<Object> segments = new ArrayList<>(); // String (map key) or Integer (list index)
+    public final List<Object> segments = new ArrayList<>();
 
     private ItemPath() {}
 
@@ -43,7 +35,6 @@ public final class ItemPath {
         return s;
     }
 
-    /** Reads the value this path points to inside {@code item}, or null if any segment is absent. */
     public AttributeValue get(Map<String, AttributeValue> item) {
         Object cur = item;
         for (Object seg : segments) {
@@ -67,7 +58,6 @@ public final class ItemPath {
         return null;
     }
 
-    /** Writes {@code value} at this path inside {@code item}, creating intermediate maps as needed. */
     @SuppressWarnings("unchecked")
     public void set(Map<String, AttributeValue> item, AttributeValue value) {
         Map<String, AttributeValue> curMap = item;
@@ -103,7 +93,7 @@ public final class ItemPath {
             item.remove(segments.get(0));
             return;
         }
-        // Navigate to parent, then remove/null the last segment.
+        
         Map<String, AttributeValue> curMap = item;
         for (int i = 0; i < segments.size() - 1; i++) {
             Object seg = segments.get(i);

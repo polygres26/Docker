@@ -13,12 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Implements each DynamoDB operation's request/response JSON shape on top of {@link PgItemStore}.
- * {@code cache} (nullable — null when {@code POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false}) wraps
- * {@code GetItem} in cache-aside and invalidates the exact key on every write that touches it —
- * see {@link DynamoCache}'s class javadoc for scope (exact-key lookups only, not Query/Scan).
- */
 final class OperationHandlers {
 
     private final PgItemStore store;
@@ -54,8 +48,6 @@ final class OperationHandlers {
             default -> throw new DynamoException("UnknownOperationException", "Operation not implemented by dynamowire: " + operation);
         };
     }
-
-    // ---------------------------------------------------------------- table management
 
     private JsonObject createTable(JsonObject req) {
         String tableName = req.get("TableName").getAsString();
@@ -148,8 +140,6 @@ final class OperationHandlers {
         return resp;
     }
 
-    // ---------------------------------------------------------------- item CRUD
-
     private JsonObject putItem(JsonObject req) {
         TableSchema schema = store.describeTable(req.get("TableName").getAsString());
         Map<String, AttributeValue> item = PgItemStore.jsonToItem(req.getAsJsonObject("Item"));
@@ -224,8 +214,6 @@ final class OperationHandlers {
         return resp;
     }
 
-    // ---------------------------------------------------------------- Query / Scan
-
     private JsonObject query(JsonObject req) {
         TableSchema schema = store.describeTable(req.get("TableName").getAsString());
         ExpressionContext ctx = ExpressionContext.parse(req);
@@ -270,8 +258,6 @@ final class OperationHandlers {
         }
         return out;
     }
-
-    // ---------------------------------------------------------------- batch operations
 
     private JsonObject batchGetItem(JsonObject req) {
         JsonObject requestItems = req.getAsJsonObject("RequestItems");
@@ -322,12 +308,10 @@ final class OperationHandlers {
         return resp;
     }
 
-    // ---------------------------------------------------------------- transactions (single real Postgres backend)
-
     private JsonObject transactGetItems(JsonObject req) {
         JsonArray transactItems = req.getAsJsonArray("TransactItems");
         JsonArray responses = new JsonArray();
-        // A plain read snapshot suffices here — no cross-item write atomicity concern for reads.
+        
         for (JsonElement e : transactItems) {
             JsonObject get = e.getAsJsonObject().getAsJsonObject("Get");
             TableSchema schema = store.describeTable(get.get("TableName").getAsString());
@@ -344,16 +328,9 @@ final class OperationHandlers {
 
     private JsonObject transactWriteItems(JsonObject req) {
         JsonArray transactItems = req.getAsJsonArray("TransactItems");
-        // Keys touched are collected as the ops run and only invalidated after the surrounding
-        // Postgres transaction actually commits (runInTransaction throws + rolls back on failure,
-        // in which case this list is simply discarded — invalidating a key for a write that never
-        // committed would be wrong, not just wasteful).
+        
         List<String> touchedCacheKeys = new ArrayList<>();
-        // Real Postgres transaction (BEGIN/COMMIT) — see DynamoWireServer's javadoc on why this
-        // doesn't need the project's existing XA/2PC coordinator: every dynamowire item lives on
-        // the single Postgres backend this frontend talks to, so ordinary transactional isolation
-        // is sufficient; XA exists in this project for cross-*backend* atomicity, which doesn't
-        // apply here.
+        
         store.runInTransaction(conn -> {
             for (JsonElement e : transactItems) {
                 JsonObject op = e.getAsJsonObject();

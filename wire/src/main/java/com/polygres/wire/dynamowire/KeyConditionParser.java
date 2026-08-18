@@ -3,20 +3,14 @@ package com.polygres.wire.dynamowire;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Parses {@code Query}'s {@code KeyConditionExpression} — a much narrower grammar than
- * {@code FilterExpression}: exactly one partition-key equality, optionally ANDed with one sort-key
- * condition ({@code =, <, <=, >, >=, BETWEEN x AND y, begins_with(sk, v)}). Real DynamoDB requires
- * the partition key clause to use {@code =}; this parser enforces the same.
- */
 public final class KeyConditionParser {
 
     public enum SortOp { EQ, LT, LE, GT, GE, BETWEEN, BEGINS_WITH, NONE }
 
     public final String partitionValueToken;
     public SortOp sortOp = SortOp.NONE;
-    public String sortValueToken;      // for EQ/LT/LE/GT/GE/BEGINS_WITH
-    public String sortValueToken2;     // for BETWEEN's high bound
+    public String sortValueToken;
+    public String sortValueToken2;
 
     private KeyConditionParser(String partitionValueToken) {
         this.partitionValueToken = partitionValueToken;
@@ -82,13 +76,6 @@ public final class KeyConditionParser {
         throw new DynamoException("ValidationException", "Unrecognized sort key condition: " + clause);
     }
 
-    /**
-     * KeyConditionExpression has at most two clauses (partition key, then optionally sort key)
-     * joined by exactly one top-level AND — the partition-key clause is always a bare equality
-     * and never itself contains AND, so splitting on the *first* case-insensitive " AND " token
-     * correctly separates the two clauses even when the sort clause is itself a BETWEEN (which
-     * contains a second, nested AND that must NOT be split on).
-     */
     private static String[] splitOnAnd(String expr) {
         Matcher m = Pattern.compile("(?i)\\s+AND\\s+").matcher(expr);
         if (m.find()) {

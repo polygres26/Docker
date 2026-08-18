@@ -5,7 +5,6 @@ import io.grpc.ManagedChannel;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 
-/** A {@link Connection} proxy: every "statement" over this connection shares the same gRPC channel/stub. */
 final class PolyWireConnection {
 
     static Connection create(ManagedChannel channel, String username, String password) {
@@ -24,7 +23,7 @@ final class PolyWireConnection {
         handler.on("setAutoCommit", args -> {
             autoCommit[0] = (Boolean) args[0];
             return null;
-        }); // no server-side transaction state yet — see ARCHITECTURE.md §5.9/§6 Phase 2 (XA/2PC)
+        });
         handler.on("commit", args -> null);
         handler.on("rollback", args -> null);
 

@@ -9,27 +9,11 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.crypto.SecretKeyFactory;
 
-/**
- * Verifies a plaintext password against a real Postgres {@code pg_authid.rolpassword} stored
- * verifier -- the same two formats Postgres itself stores server-side, reimplemented here purely
- * for local verification (no bind, no network call). Used by {@link PgRoleAuthCache} so PolyWire
- * can validate a client-presented password against a *real* Postgres role's actual password,
- * entirely offline, without opening a connection to the backend for each login attempt.
- *
- * <p>Deliberately covers only the two stored-verifier shapes {@code pg_authid.rolpassword} can
- * actually contain on a modern Postgres (13+ defaults to {@code scram-sha-256}; {@code md5} is
- * still readable for roles created under an older {@code password_encryption} setting or never
- * rotated since): {@code md5<32 hex chars>} and {@code SCRAM-SHA-256$<iterations>:<salt>$
- * <StoredKey>:<ServerKey>}. Both are Postgres's own documented on-disk formats -- see
- * {@code src/common/scram-common.c}/{@code md5_crypt_verify} in the Postgres source for the
- * canonical algorithm this mirrors.
- */
 public final class PostgresPasswordVerifier {
 
     private PostgresPasswordVerifier() {
     }
 
-    /** @return true if {@code presentedPassword} is the real password behind {@code storedVerifier}. */
     public static boolean verify(String storedVerifier, String username, String presentedPassword) {
         if (storedVerifier == null || presentedPassword == null) {
             return false;
@@ -42,19 +26,13 @@ public final class PostgresPasswordVerifier {
                 return verifyScramSha256(storedVerifier, presentedPassword);
             }
         } catch (Exception e) {
-            // Malformed verifier or crypto failure -- treat as "does not match", never throw out
-            // of an auth check (same "fail closed, not loud" posture as a wrong password).
+            
             return false;
         }
-        // Any other/unknown verifier shape (e.g. plain, the pre-9.1-deprecated format) -- this
-        // project doesn't attempt to reproduce it; caller should fall back to rejecting the login
-        // rather than guessing at a format that was already unusual enough to reach this branch.
+        
         return false;
     }
 
-    // ---- md5 ----
-
-    /** Postgres's md5 auth format: {@code "md5" + hex(md5(password || username))}. */
     private static boolean verifyMd5(String storedVerifier, String username, String presentedPassword)
             throws NoSuchAlgorithmException {
         MessageDigest md5 = MessageDigest.getInstance("MD5");
@@ -71,20 +49,6 @@ public final class PostgresPasswordVerifier {
         return sb.toString();
     }
 
-    // ---- SCRAM-SHA-256 ----
-
-    /**
-     * Format: {@code SCRAM-SHA-256$<iterations>:<salt base64>$<StoredKey base64>:<ServerKey base64>}.
-     * Verification only needs {@code StoredKey}: derive {@code SaltedPassword} via PBKDF2-HMAC-
-     * SHA256 from the presented password/salt/iterations (RFC 5802 §2.2), then
-     * {@code ClientKey = HMAC(SaltedPassword, "Client Key")}, {@code StoredKey = SHA256(ClientKey)}
-     * -- if that matches the stored {@code StoredKey}, the presented password is correct. This is
-     * exactly the computation a real SCRAM exchange's server side performs against the client's
-     * proof, just done here directly against a plaintext password instead of over a live
-     * challenge-response, since every wire protocol this project speaks already collects the
-     * client's password as cleartext (see class javadoc on why that's true for pgwire/mssqlwire but
-     * not orawire/mywire).
-     */
     private static boolean verifyScramSha256(String storedVerifier, String presentedPassword) throws Exception {
         String[] parts = storedVerifier.substring("SCRAM-SHA-256$".length()).split("\\$");
         if (parts.length != 2) {

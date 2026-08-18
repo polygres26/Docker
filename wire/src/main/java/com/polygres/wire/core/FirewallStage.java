@@ -9,55 +9,23 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * ARCHITECTURE.md §5.7: an ordered allow/deny rule list, evaluated first in the pipeline so a
- * rejected statement never reaches translation, routing, or a backend. One built-in heuristic (not
- * a rule) rejects classic stacked-query injection (a bind-unrelated literal SQL statement appended
- * after a {@code ;}) regardless of rule configuration -- a narrow, cheap check, not a general
- * injection detector.
- *
- * <p><b>Rule shape, deliberately not raw regex-only</b>: each {@link Rule} matches on a
- * {@code statementType} (SELECT/INSERT/UPDATE/DELETE/DROP/TRUNCATE/ALTER/CREATE/GRANT/REVOKE/...,
- * or {@code null}/{@code ANY} for every statement) and/or a {@code tablePattern} (matched against
- * the statement's real referenced tables via {@link SqlTableReferences}, not the raw SQL text --
- * same reasoning {@code AccessControlStage} already gives for using that extractor: narrower and
- * less prone to a rule accidentally matching an unrelated substring than full-text search). This
- * is the "simple and intuitive to set up" surface -- a DBA managing {@code
- * com.polygres.wire.config.FirewallRuleStore}'s backing table writes {@code deny DROP} or
- * {@code deny DELETE on public.orders} shaped rows, not a regex. A raw {@code sqlPattern} regex is
- * still available as an escape hatch for the rare case neither dimension expresses what's needed.
- *
- * <p>Rules are evaluated in {@code priority} order (lower first, ties broken by {@code id}); first
- * enabled rule that matches wins. Default action when nothing matches is {@code ALLOW}, unchanged
- * semantics from before this rule shape existed.
- */
 public final class FirewallStage implements PipelineStage {
 
     private static final Logger log = LoggerFactory.getLogger(FirewallStage.class);
 
-    // "; <keyword>" after the first statement — the classic stacked-query pattern.
-    // Doesn't flag a trailing lone ";" (many clients send one) or ";" inside a string literal is a
-    // known gap — a narrow heuristic, not a parser.
     private static final Pattern STACKED_QUERY = Pattern.compile(
             ";\\s*(select|insert|update|delete|drop|alter|create|grant|exec)\\b", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern LEADING_KEYWORD = Pattern.compile("^\\s*(\\w+)");
-    // DDL/DML shapes SqlTableReferences' FROM/JOIN extraction alone doesn't cover -- a DROP/
-    // TRUNCATE/ALTER TABLE names its target after the TABLE keyword, not FROM/JOIN, and INSERT
-    // names its target after INTO.
+    
     private static final Pattern TABLE_KEYWORD_TARGET = Pattern.compile(
             "\\b(?:TABLE|INTO)\\s+([a-zA-Z_][\\w$]*(?:\\.[a-zA-Z_][\\w$]*)*)", Pattern.CASE_INSENSITIVE);
-    // Bare UPDATE <table> SET ... -- UPDATE's own target isn't preceded by FROM/JOIN/TABLE/INTO.
+    
     private static final Pattern UPDATE_TARGET = Pattern.compile(
             "^\\s*UPDATE\\s+([a-zA-Z_][\\w$]*(?:\\.[a-zA-Z_][\\w$]*)*)", Pattern.CASE_INSENSITIVE);
 
     public enum Action { ALLOW, DENY }
 
-    /**
-     * {@code tablePattern}/{@code sqlPattern} are {@code null} when that dimension isn't part of
-     * this rule (matches regardless). {@code statementType} is {@code null} or {@code "ANY"} for
-     * the same "matches regardless" meaning on that dimension.
-     */
     public record Rule(long id, int priority, Action action, String statementType, Pattern tablePattern,
             Pattern sqlPattern, String description) {
 
@@ -89,28 +57,17 @@ public final class FirewallStage implements PipelineStage {
         }
     }
 
-    // volatile, not final -- see AccessControlStage's identical "policy" field javadoc for why:
-    // a reload from FirewallRuleStore's LISTEN callback and a concurrent statement's own read both
-    // need to see a consistent, fully-built rule list, never a partially-applied one, without a
-    // lock on the hot path.
     private volatile List<Rule> rules;
 
     public FirewallStage(List<Rule> rules) {
         this.rules = List.copyOf(rules);
     }
 
-    /** Swaps in a freshly-read rule list -- see {@link com.polygres.wire.config.FirewallRuleStore#listen}. */
     public void reloadRules(List<Rule> newRules) {
         this.rules = List.copyOf(newRules);
         log.info("firewall: reloaded {} rule(s)", newRules.size());
     }
 
-    /**
-     * Legacy string grammar (raw regex, {@code "pattern1:allow,pattern2:deny,..."}) -- kept only
-     * for the rare caller that wants pure-regex rules directly in code (e.g. a test); {@link
-     * com.polygres.wire.config.FirewallRuleStore} is the real, Postgres-table-backed source of
-     * rules this stage is actually wired to in {@code Main}.
-     */
     public static FirewallStage fromConfig(String spec) {
         List<Rule> parsed = new java.util.ArrayList<>();
         if (spec != null && !spec.isBlank()) {
@@ -141,7 +98,7 @@ public final class FirewallStage implements PipelineStage {
             throw new SQLException("statement rejected by firewall: stacked query detected", "42000");
         }
         String statementType = detectStatementType(sql);
-        List<Rule> currentRules = rules; // one volatile read -- see the field's javadoc on why
+        List<Rule> currentRules = rules;
         for (Rule rule : currentRules) {
             if (rule.matchesStatementType(statementType) && rule.matchesTables(sql) && rule.matchesSql(sql)) {
                 if (rule.action() == Action.DENY) {
@@ -150,7 +107,7 @@ public final class FirewallStage implements PipelineStage {
                     throw new SQLException("statement rejected by firewall rule"
                             + (rule.description() == null ? "" : ": " + rule.description()), "42000");
                 }
-                break; // ALLOW: stop evaluating, same "first match wins" semantics as before
+                break;
             }
         }
         return next.proceed(statement);

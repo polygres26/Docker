@@ -8,33 +8,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.yaml.snakeyaml.Yaml;
 
-/**
- * Parses the rollup-definitions YAML blob ({@code ConfigStore} key {@link #CONFIG_STORE_KEY}) —
- * same snakeyaml, top-level-mapping-with-typed-list-sections shape as {@link
- * com.polygres.wire.core.access.AccessPolicyYamlConfig}, same "validate first, throw before anything
- * persists" contract the admin route relies on.
- *
- * <pre>{@code
- * rollups:
- *   - name: "orders_by_region_day"
- *     backend: "default"
- *     source_table: "public.orders"
- *     group_by: ["region", "order_date"]
- *     aggregations:
- *       - "SUM(amount) AS revenue"
- *       - "COUNT(*) AS order_count"
- *     refresh_interval_minutes: 15
- *     max_staleness_minutes: 30
- * }</pre>
- */
 public final class RollupConfig {
 
     public static final String CONFIG_STORE_KEY = "ROLLUP_DEFINITIONS_YAML";
 
-    /** Admin-only config, not user input, but validated with the same rigor {@code
-     * AccessPolicyYamlConfig} applies to its own fields rather than trusted as raw SQL — {@code
-     * aggregations} entries are the one field that would otherwise be free-form SQL text spliced
-     * directly into {@link RollupDefinition#definingSql()}. */
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern AGGREGATION = Pattern.compile(
             "^(SUM|COUNT|AVG|MIN|MAX)\\s*\\([^()]*\\)\\s+AS\\s+[A-Za-z_][A-Za-z0-9_]*$", Pattern.CASE_INSENSITIVE);

@@ -19,29 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/**
- * Maps DynamoDB tables/items onto real Postgres tables, following ExtendDB's storage-postgres
- * design as described in its architecture guide (docs/manuals/01-architecture-guide.md, read via
- * WebFetch — GitHub raw content — for this port; the actual Rust source wasn't fetchable in this
- * environment, so this is a from-description reimplementation, not a port of its code):
- * <ul>
- *   <li>One real Postgres table per DynamoDB table: {@code dynamo_item_<name>}, with the
- *       partition key (and sort key, if present) as real indexed columns ({@code pk_value text},
- *       {@code sk_value text}, plus {@code sk_num numeric} when the sort key type is N, so numeric
- *       sort-key ordering/comparisons are correct rather than lexicographic).</li>
- *   <li>The full item — including the key attributes themselves — stored as JSONB in the
- *       {@code item} column, in DynamoDB's own typed-attribute-value JSON shape (see
- *       {@link AttributeValue}), so nothing is lost in translation and reads are exact round-trips.</li>
- *   <li>A catalog table {@code _dynamo_tables} holding each table's key schema, mirroring
- *       ExtendDB's separation of "engine layer" (expression parsing/filtering, done here in Java —
- *       see {@link ConditionExpressionEvaluator}/{@link UpdateExpressionParser}) from storage.</li>
- * </ul>
- * Divergence from ExtendDB noted where it matters: no GSI/LSI support in this pass (ExtendDB gives
- * each index its own Postgres table; out of scope here — see class javadoc on {@link DynamoWireServer}
- * for the full list of what's deferred). {@code Limit} is applied to the number of items returned
- * after FilterExpression, not to the number of items evaluated before it as real DynamoDB does —
- * a real, documented simplification, not an oversight.
- */
 public final class PgItemStore {
 
     private static final Logger log = LoggerFactory.getLogger(PgItemStore.class);
@@ -82,8 +59,6 @@ public final class PgItemStore {
     private static String pgTableName(String dynamoTableName) {
         return "dynamo_item_" + SAFE_IDENT.matcher(dynamoTableName.toLowerCase()).replaceAll("_");
     }
-
-    // ---------------------------------------------------------------- table management
 
     public TableSchema createTable(String tableName, String pkName, String pkType, String skName, String skType) {
         String pg = pgTableName(tableName);
@@ -168,15 +143,12 @@ public final class PgItemStore {
         return out;
     }
 
-    // ---------------------------------------------------------------- item CRUD
-
     private static String keyToken(Map<String, AttributeValue> item, String attr) {
         AttributeValue v = item.get(attr);
         if (v == null) throw new DynamoException("ValidationException", "Missing required key attribute: " + attr);
         return v.scalar;
     }
 
-    /** Returns the previous item (for ReturnValues=ALL_OLD), or null if none existed / condition check applies pre-write. */
     public Map<String, AttributeValue> putItem(TableSchema schema, Map<String, AttributeValue> item, String conditionExpr, ExpressionContext ctx) {
         String pg = pgTableName(schema.tableName());
         String pk = keyToken(item, schema.partitionKeyName());
@@ -283,10 +255,10 @@ public final class PgItemStore {
                     throw new DynamoException("ConditionalCheckFailedException", "The conditional request failed");
                 }
                 Map<String, AttributeValue> item = existing != null ? new LinkedHashMap<>(existing) : new LinkedHashMap<>();
-                // Key attributes are always present, even on brand-new items created by UpdateItem.
+                
                 item.putAll(key);
                 UpdateExpressionParser.apply(updateExpr, item, ctx);
-                item.putAll(key); // keys are immutable — re-assert after SET/REMOVE in case an expression touched them
+                item.putAll(key);
                 String json = itemToJson(item).toString();
                 BigDecimal skNum = schema.hasSortKey() && "N".equals(schema.sortKeyType()) ? new BigDecimal(sk) : null;
                 try (var ps = c.prepareStatement(
@@ -309,8 +281,6 @@ public final class PgItemStore {
             throw new RuntimeException("UpdateItem failed", e);
         }
     }
-
-    // ---------------------------------------------------------------- Query / Scan
 
     public record PageResult(List<Map<String, AttributeValue>> items, Map<String, AttributeValue> lastEvaluatedKey) {}
 
@@ -385,9 +355,9 @@ public final class PgItemStore {
                     results.add(item);
                     if (limit != null && results.size() >= limit) {
                         lastKey = keyOf(schema, item);
-                        // Peek whether more rows exist to decide whether LastEvaluatedKey should really be set.
+                        
                         if (rs.next()) {
-                            // there is at least one more row — keep lastKey as set above.
+                            
                         } else {
                             lastKey = null;
                         }
@@ -408,10 +378,6 @@ public final class PgItemStore {
         return k;
     }
 
-    // ---------------------------------------------------------------- transactions (single-backend)
-
-    /** Runs {@code work} inside one real Postgres transaction (BEGIN/COMMIT) — see DynamoWireServer's
-     * javadoc on TransactWriteItems/TransactGetItems for why XA isn't needed here. */
     public <T> T runInTransaction(java.util.function.Function<Connection, T> work) {
         try (Connection c = ds.getConnection()) {
             c.setAutoCommit(false);
@@ -431,8 +397,6 @@ public final class PgItemStore {
     public String tableToPgName(String tableName) {
         return pgTableName(tableName);
     }
-
-    // ---------------------------------------------------------------- JSON <-> item map
 
     public static JsonObject itemToJson(Map<String, AttributeValue> item) {
         JsonObject obj = new JsonObject();

@@ -10,36 +10,8 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import org.yaml.snakeyaml.Yaml;
 
-/**
- * Parses {@code POLYWIRE_ACCESS_POLICY_CONFIG} — a YAML file of {@code column_grants}/
- * {@code row_filters}, see {@link AccessPolicy} and
- * {@code docs/design/end-user-data-access-security.md} §3.3. Loader shape (snakeyaml, a top-level
- * mapping with typed list sections) mirrors {@code com.polygres.wire.ontology.ingest.SourcesYamlConfig}
- * — same convention, different section names.
- *
- * <pre>{@code
- * column_grants:
- *   - table_pattern: "employees"
- *     columns: ["salary", "ssn"]
- *     required_attribute: "role"
- *     allowed_values: ["hr", "finance"]
- *     on_violation: "deny"   # "deny" (default) or "mask"
- *
- * row_filters:
- *   - table_pattern: "orders|customers"
- *     filter_column: "tenant_id"
- *     required_attribute: "tenant"
- *
- *   - table_pattern: "regional_sales"
- *     filter_column: "region"
- *     required_attribute: "region"
- *     values_for_unfiltered: ["*"]
- *     bypass_roles: ["admin"]
- * }</pre>
- */
 public final class AccessPolicyYamlConfig {
 
-    /** {@code ConfigStore} key the policy YAML blob is stored under (§K of the config/audit-in-a-database follow-on) — a shared constant so {@code GatewayComponents} (startup load) and {@code ApiRoutes.updateAccessPolicy} (live edit) never drift on the key name. */
     public static final String CONFIG_STORE_KEY = "ACCESS_POLICY_YAML";
 
     private AccessPolicyYamlConfig() {
@@ -51,7 +23,6 @@ public final class AccessPolicyYamlConfig {
         }
     }
 
-    /** {@code yamlText}: the policy YAML as a string rather than a file — used when the policy is stored in {@code ConfigStore} instead of (or as a live override of) a file on disk. Public: called from {@code com.polygres.wire.server.GatewayComponents} and the live-reload admin route, both outside this package. */
     public static AccessPolicy parse(String yamlText) {
         return parse(new java.io.ByteArrayInputStream(yamlText.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }

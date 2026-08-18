@@ -3,25 +3,6 @@ package com.polygres.wire.config;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * The versioned, hot-reloadable half of PolyWire's config (see {@code ConfigStore}'s class
- * javadoc for the full bootstrap-vs-dynamic split). Deliberately <b>not</b> a nested JSON object
- * per subsystem — every value here is the exact same string grammar its corresponding
- * {@code *Stage.fromConfig}/{@code BackendRegistry.fromConfig} static parser already accepts from
- * an env var today (e.g. {@link #qosRatePerSec} is what {@code POLYWIRE_QOS_RATE_PER_SEC} used to
- * be). That's a real design choice, not laziness: it means a version stored in {@code
- * polywire_config} round-trips through the exact same parsing code a fresh env-var boot already
- * uses and has already been live-tested with, so this change adds a new place that config comes
- * <em>from</em> without adding a second, parallel grammar for what it <em>means</em>. A future
- * pass that wants a genuinely structured/typed payload (rather than embedded spec strings) can
- * still build on top of this shape without changing how it's stored or propagated.
- *
- * <p>Serialized as a flat JSON object of string keys to string (or {@code null}) values — see
- * {@link #toJson()}/{@link #fromJson(String)}. Hand-rolled rather than pulling in a JSON
- * library: the shape is fixed and flat (no nested objects/arrays/numbers to worry about), so a
- * small dedicated encoder/decoder is both sufficient and easier to audit than adding a new
- * dependency (this module carries jackson-annotations only, not jackson-databind — see pom.xml).
- */
 public record PolyWireConfig(
         String qosRatePerSec,
         String qosBurst,
@@ -46,7 +27,6 @@ public record PolyWireConfig(
         String oauthRolesClaim,
         String awsIamCredentials) {
 
-    /** The bootstrap default derived from today's env-var-based config — used on a fresh cluster with no rows in {@code polywire_config} yet, so an operator never has to pre-populate the table before first start. */
     public static PolyWireConfig fromEnvDefaults() {
         return new PolyWireConfig(
                 System.getenv().getOrDefault("POLYWIRE_QOS_RATE_PER_SEC", "5"),
@@ -161,7 +141,6 @@ public record PolyWireConfig(
         return sb.append('"').toString();
     }
 
-    /** Minimal parser for exactly this record's flat {@code {"key":"value"|null,...}} shape — not a general JSON parser. */
     private static Map<String, String> parseFlatObject(String json) {
         Map<String, String> result = new LinkedHashMap<>();
         int i = json.indexOf('{');
@@ -211,7 +190,7 @@ public record PolyWireConfig(
 
     private static String parseString(String json, int start, int[] endOut) {
         StringBuilder sb = new StringBuilder();
-        int i = start + 1; // skip opening quote
+        int i = start + 1;
         while (json.charAt(i) != '"') {
             char c = json.charAt(i);
             if (c == '\\') {
@@ -235,7 +214,7 @@ public record PolyWireConfig(
                 i++;
             }
         }
-        endOut[0] = i + 1; // past closing quote
+        endOut[0] = i + 1;
         return sb.toString();
     }
 }

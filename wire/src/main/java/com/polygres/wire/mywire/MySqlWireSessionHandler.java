@@ -30,36 +30,20 @@ import javax.net.ssl.SSLSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Speaks the MySQL client/server protocol directly: handshake v10,
- * mysql_native_password auth, then COM_QUERY (text protocol only — no
- * prepared statements/COM_STMT_*, no SSL). Same narrow-slice scope and same
- * "proxy onto the shared Postgres backend through the canonical pipeline"
- * design as {@code com.polygres.wire.pgwire.PgWireSessionHandler}; see that
- * class's javadoc for the rationale — including borrowing a pooled backend
- * connection fresh per statement rather than holding one for the session.
- */
 public final class MySqlWireSessionHandler implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(MySqlWireSessionHandler.class);
     private static final AtomicLong NEXT_CONNECTION_ID = new AtomicLong(1);
 
     private final Socket clientSocket;
-    // Reassigned to the SSLSocket layer if the client negotiates CLIENT_SSL (see performHandshake) --
-    // tracked here purely so run()'s cleanup closes whichever socket is actually live.
+    
     private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
-    // RTT optimization (ARCHITECTURE.md §11) — same reasoning as PgWireSessionHandler's identical
-    // fields: built once per session, rebound per statement, not rebuilt per statement.
+    
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
 
-    // Translation caching (DEFAULT_PATH_CACHE/DEFAULT_PATH_LLM_CLIENT/translationCacheStore) used
-    // to live here, backing a direct DialectTranslationStage.translateWithFallback call made
-    // right before pipeline.execute() -- removed; see executeQuery's comment for why the shared
-    // pipeline's own DialectTranslationStage (constructed once in Main with its own cache/
-    // llmClient/cacheStore) is now the only place this session's queries get translated.
     private final FailedStatementLog failedStatementLog;
 
     public MySqlWireSessionHandler(Socket clientSocket, ServerOptions options,
@@ -82,43 +66,25 @@ public final class MySqlWireSessionHandler implements Runnable {
 
             HandshakeStreams handshake = performHandshake(in, out, packets);
             if (handshake == null) {
-                return; // auth failed
+                return;
             }
             queryLoop(handshake.in(), handshake.out(), packets);
         } catch (java.io.EOFException e) {
-            // client disconnected mid-message; not worth logging as a warning
+            
         } catch (Exception e) {
             log.warn("mywire session terminated: {}", e.getMessage(), e);
         } finally {
             try {
-                activeSocket.close(); // closes the TLS layer (if any) and the underlying socket
+                activeSocket.close();
             } catch (IOException ignoredOnSessionTeardown) {
-                // closing on the way out -- nothing left to report this to
+                
             }
         }
     }
 
-    // ---- handshake + auth --------------------------------------------------
-
-    /** Bundles the (possibly TLS-upgraded) streams a caller must switch to after {@link #performHandshake}. */
     private record HandshakeStreams(DataInputStream in, OutputStream out) {
     }
 
-    /**
-     * MySQL protocol's own in-band TLS negotiation (mirrors {@code PgWireSessionHandler}'s
-     * {@code SSLRequest} handling — see that class's javadoc for the general rationale). The
-     * server's initial Handshake packet advertises {@code CLIENT_SSL} only when
-     * {@link ServerOptions#tlsEnabled()}; a real client that wants TLS (e.g. {@code pymysql}
-     * with an {@code ssl=} context) responds with a partial "SSLRequest" packet — capability
-     * flags (with {@code CLIENT_SSL} set) + max packet size + charset + 23 reserved bytes, no
-     * username/auth-response yet — then immediately starts a TLS handshake on the same socket.
-     * Detected here by checking the {@code CLIENT_SSL} bit on the very first response packet;
-     * when set, the socket is upgraded in place via {@code SSLSocketFactory} and the *real*
-     * handshake-response packet (username, auth bytes, etc.) is read fresh over the new TLS
-     * streams, exactly as the protocol spec describes. A client that never sets the bit (or a
-     * deployment with no keystore configured, so the flag was never advertised) proceeds exactly
-     * as before this change — the plain port is unaffected.
-     */
     private HandshakeStreams performHandshake(DataInputStream in, OutputStream out, MySqlPacket packets) throws IOException {
         byte[] scramble = new byte[20];
         new SecureRandom().nextBytes(scramble);
@@ -142,14 +108,14 @@ public final class MySqlWireSessionHandler implements Runnable {
             } catch (GeneralSecurityException e) {
                 throw new IOException("mywire TLS upgrade failed", e);
             }
-            response = packets.readPayload(in); // real HandshakeResponse41, now over TLS
+            response = packets.readPayload(in);
         }
 
         int[] pos = {0};
-        pos[0] += 4; // client capability flags
-        pos[0] += 4; // max packet size
-        pos[0] += 1; // character set
-        pos[0] += 23; // reserved
+        pos[0] += 4;
+        pos[0] += 4;
+        pos[0] += 1;
+        pos[0] += 23;
         String username = MySqlPacket.readNulString(response, pos);
         int authLen = response[pos[0]++] & 0xFF;
         byte[] authResponse = Arrays.copyOfRange(response, pos[0], pos[0] + authLen);
@@ -166,8 +132,6 @@ public final class MySqlWireSessionHandler implements Runnable {
         packets.writePayload(out, MySqlMessages.okPacket(0));
         return new HandshakeStreams(in, out);
     }
-
-    // ---- COM_QUERY loop ------------------------------------------------
 
     private static final int COM_QUIT = 0x01;
     private static final int COM_INIT_DB = 0x02;
@@ -196,14 +160,6 @@ public final class MySqlWireSessionHandler implements Runnable {
         }
     }
 
-    // MySQL client libraries (mysql CLI, mysqlclient, pymysql, ...) send session setup
-    // statements like "SET NAMES utf8mb4" / "SET autocommit=1" right after connecting.
-    // These have no Postgres equivalent and would otherwise fail every connection before
-    // the client's real query ever runs, so they're no-op'd here rather than forwarded —
-    // the same shim any MySQL-wire-protocol proxy in front of a non-MySQL backend needs.
-    // NOT applicable to POLYWIRE_MYWIRE_BACKEND=mysql (see options.mywireNativeBackend()): a real
-    // MySQL/MariaDB backend understands these statements natively, so forwarding them is both
-    // correct and necessary there (a client's charset/session settings should actually apply).
     private static final java.util.regex.Pattern SET_STATEMENT =
             java.util.regex.Pattern.compile("^\\s*set\\s+", java.util.regex.Pattern.CASE_INSENSITIVE);
 
@@ -212,27 +168,7 @@ public final class MySqlWireSessionHandler implements Runnable {
             packets.writePayload(out, MySqlMessages.okPacket(0));
             return;
         }
-        // MYSQL->POSTGRES dialect translation (backtick identifiers, SHOW TABLES/DATABASES,
-        // two-arg LIMIT, NVL/NOW(), sequence syntax -- see DialectTranslations' javadoc for the
-        // full rule vocabulary) now happens exactly once, inside pipeline.execute() below, via
-        // the shared DialectTranslationStage -- not here. It used to be called directly, right
-        // here, before pipeline.execute() (see commit f593bd3): at the time, BackendRegistry never
-        // registered a targetBackend for the default homogeneous mywire->Postgres proxy path (no
-        // POLYWIRE_BACKENDS configured), so DialectTranslationStage's own handle() silently
-        // no-op'd for this path and the direct call was the only translation that ever happened.
-        // Commit fa75e51 closed that gap generally -- BackendRegistry#fromConfig now always
-        // registers a synthetic "default" backend from POLYWIRE_PG_* when POLYWIRE_BACKENDS is unset,
-        // and RouterStage#resolveUnambiguousDefault falls back to exactly that entry -- so
-        // RouterStage resolves a real targetBackend for this path too now, and
-        // DialectTranslationStage.handle() fires inside pipeline.execute() same as every other
-        // frontend. Keeping the direct call on top of that translated every query twice (found
-        // live: polywire_translation_cache recorded two rows per query -- the untranslated SQL,
-        // then the already-translated SQL translated again into itself as a no-op) -- see
-        // DialectTranslationStage's translateWithFallback javadoc for the shared cache/fallback
-        // logic this path now reaches through pipeline.execute() alone, with no separate call
-        // needed. Not applicable when options.mywireNativeBackend() -- the backend really is
-        // MySQL/MariaDB there, so the client's own dialect is already correct as-is and
-        // DialectTranslationStage's handle() no-ops (fromDialect == targetDialect).
+        
         try (Connection backend = options.mywireNativeBackend()
                 ? MySqlBackendConnections.open(options) : PgConnections.open(options)) {
             backend.setAutoCommit(true);

@@ -2,24 +2,10 @@ package com.polygres.wire.server;
 
 public final class ServerOptions {
 
-    /** Which backend's result is returned to the client when dual execution is enabled. */
     public enum DualExecAuthority {
         POSTGRES, ORACLE
     }
 
-    /**
-     * JDBC: the existing OracleBackendPool/JdbcBackendExecutor path — full rewrite/routing
-     * pipeline support, but ResponseWriter reconstructs DESCRIBE_INFO/inline-exhaustion bytes
-     * from JDBC metadata, which live testing found a real, un-derivable gap in (see
-     * ResponseWriter's own javadoc history) — java.sql.ResultSetMetaData never exposes the
-     * backend-computed al8o4/RPA array a real client's own OALL8 response includes.
-     *
-     * NATIVE: relays the real backend's raw TTC bytes for a query's own DESCRIBE_INFO/ROW_DATA/
-     * terminator instead of reconstructing them — see NativeByteCaptureProxy's javadoc for how.
-     * Narrow slice: only statements whose entire result exhausts within the first EXECUTE
-     * response (no separate FETCH continuation) are supported by this first version; anything
-     * needing SQL rewriting/routing/dual-exec still needs the JDBC path.
-     */
     public enum OracleBackendMode {
         JDBC, NATIVE
     }
@@ -105,17 +91,7 @@ public final class ServerOptions {
     }
 
     public static ServerOptions parse(String[] args) {
-        // TODO: replace with real CLI parsing; hardcoded defaults for local dev only.
-        // One shared keystore backs TLS for all four client-facing frontends (orawire TCPS,
-        // pgwire, mywire, gRPC) -- renamed from Omnigate's POLYWIRE_TLS_* to POLYWIRE_TLS_* for
-        // consistency with everything else already renamed in this port. orawire gets a second,
-        // TLS-only listener port alongside its existing plain-TCP one (same design Omnigate uses
-        // for Oracle TCPS); gRPC gets the same treatment now that it's actually started (it wasn't
-        // wired into Main at all before this). pgwire and mywire are both different: each
-        // negotiates TLS in-band on its existing plain port (Postgres's real SSLRequest handshake,
-        // MySQL's real CLIENT_SSL capability-flag handshake) instead of a separate port -- see
-        // Main's class javadoc and PgWireSessionHandler/MySqlWireSessionHandler's own javadoc for
-        // why (a dedicated always-TLS port doesn't work for either protocol's real clients).
+        
         String keystorePath = System.getenv("POLYWIRE_TLS_KEYSTORE");
         boolean tlsEnabled = keystorePath != null && !keystorePath.isBlank();
         int tlsPort = parseIntEnv("POLYWIRE_TLS_PORT", 2484);
@@ -128,13 +104,7 @@ public final class ServerOptions {
                 ? DualExecAuthority.ORACLE : DualExecAuthority.POSTGRES;
         boolean dualExecRequireBoth = parseBoolEnv("POLYWIRE_DUAL_EXEC_REQUIRE_BOTH", false);
         boolean dualExecXaEnabled = parseBoolEnv("POLYWIRE_DUAL_EXEC_XA_ENABLED", false);
-        // Lets a pure single-backend homogeneous mode (Oracle driver/client -> polywire -> real
-        // Oracle, no Postgres involved at all) reuse the existing DUAL_EXEC_AUTHORITY=oracle
-        // plumbing without ever actually touching Postgres: when false, RequestLoop skips every
-        // executeShadow() call (Postgres shadow AND N-way replicas) entirely, so the lazily-opened
-        // Postgres connection this session would otherwise borrow is never actually connected —
-        // no live Postgres backend is required at runtime, only the static POLYWIRE_AUTH_USER/
-        // PASSWORD credential the O5LOGON handshake itself checks against.
+        
         boolean dualExecShadowEnabled = parseBoolEnv("POLYWIRE_DUAL_EXEC_SHADOW_ENABLED", true);
         String oracleHost = System.getenv().getOrDefault("POLYWIRE_ORACLE_HOST", "localhost");
         int oraclePort = parseIntEnv("POLYWIRE_ORACLE_PORT", 1521);
@@ -143,14 +113,6 @@ public final class ServerOptions {
                 System.getenv().getOrDefault("POLYWIRE_ORACLE_BACKEND_MODE", "jdbc"))
                 ? OracleBackendMode.NATIVE : OracleBackendMode.JDBC;
 
-        // POLYWIRE_MYWIRE_BACKEND=mysql: mirrors POLYWIRE_DUAL_EXEC_AUTHORITY=oracle's role for
-        // orawire — mywire's default (and, until now, only) mode proxies onto the shared
-        // Postgres backend like every other frontend; this puts a real MySQL/MariaDB instance
-        // behind the MySQL-wire frontend instead, for the homogeneous (MySQL client -> polywire
-        // -> real MySQL/MariaDB) case. Deliberately NOT a dual-exec-style shadow/authority pair
-        // like Oracle's — mywire has no cross-dialect translation need in this mode (client SQL
-        // is already MySQL dialect, target is real MySQL/MariaDB), so it's a simple either/or
-        // backend selection, not two backends running side by side.
         boolean mywireNativeBackend = "mysql".equalsIgnoreCase(
                 System.getenv().getOrDefault("POLYWIRE_MYWIRE_BACKEND", "postgres"));
         String mysqlHost = System.getenv().getOrDefault("POLYWIRE_MYSQL_HOST", "localhost");
@@ -162,24 +124,19 @@ public final class ServerOptions {
         int pgWireListenPort = parseIntEnv("POLYWIRE_PGWIRE_PORT", 15432);
         int myWireListenPort = parseIntEnv("POLYWIRE_MYWIRE_PORT", 13306);
         int orawireListenPort = parseIntEnv("POLYWIRE_ORAWIRE_PORT", 11521);
-        // TDS (SQL Server wire) — see com.polygres.wire.mssqlwire package javadoc. Default 14333:
-        // clear of every other PolyWire port (15432/13306/11521/19090/7070/8080/8443/2484/17071)
-        // and of SQL Server's own default (1433).
+        
         int mssqlWireListenPort = parseIntEnv("POLYWIRE_MSSQLWIRE_PORT", 14333);
         int grpcPort = parseIntEnv("POLYWIRE_GRPC_PORT", 7070);
         int httpPort = parseIntEnv("POLYWIRE_HTTP_PORT", 8080);
-        // Reuses the same keystore as the Oracle TCPS listener (POLYWIRE_TLS_KEYSTORE) — one cert
-        // to manage per deployment. The HTTPS console/API connector only starts when that
-        // keystore is configured; see PolyWireHttpServer.start().
+        
         int httpsPort = parseIntEnv("POLYWIRE_HTTPS_PORT", 8443);
 
         String pgHost = System.getenv().getOrDefault("POLYWIRE_PG_HOST", "localhost");
         int pgPort = parseIntEnv("POLYWIRE_PG_PORT", 5432);
         String pgDatabase = System.getenv().getOrDefault("POLYWIRE_PG_DATABASE", "postgres");
-        String pgUser = System.getenv("POLYWIRE_PG_USER"); // null is valid: local trust-auth Postgres needs no credentials
+        String pgUser = System.getenv("POLYWIRE_PG_USER");
         String pgPassword = System.getenv("POLYWIRE_PG_PASSWORD");
-        // Standby shares pgUser/pgPassword/pgDatabase — same credentials/schema on both sides of an HA pair.
-        // Failover is opt-in: PgConnections only engages it when this is non-blank (see that class's javadoc).
+        
         String pgStandbyHost = System.getenv("POLYWIRE_PG_STANDBY_HOST");
         int pgStandbyPort = parseIntEnv("POLYWIRE_PG_STANDBY_PORT", pgPort);
 

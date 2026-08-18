@@ -3,7 +3,6 @@ package com.polygres.wire.pgwire;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
-/** Sequential reader over one already-fully-buffered Extended Query Protocol message body — Parse/Bind/Describe/Execute/Close all need to pull several fields out of a fixed byte[] in order. */
 final class PgBodyReader {
 
     private final byte[] data;
@@ -22,7 +21,7 @@ final class PgBodyReader {
             throw new IOException("unterminated string in message body");
         }
         String s = new String(data, start, pos - start, StandardCharsets.UTF_8);
-        pos++; // skip the NUL
+        pos++;
         return s;
     }
 
@@ -30,7 +29,7 @@ final class PgBodyReader {
         require(2);
         int v = ((data[pos] & 0xFF) << 8) | (data[pos + 1] & 0xFF);
         pos += 2;
-        return (short) v; // sign-extend -- protocol fields like format codes are signed int16
+        return (short) v;
     }
 
     int readInt32() throws IOException {

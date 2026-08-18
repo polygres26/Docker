@@ -13,16 +13,6 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * The native PolyWire JDBC driver (Type 4 — a direct socket protocol, gRPC
- * here, not a bridge to another driver; "Type 3" language in
- * ARCHITECTURE.md §5.9 followed OJP's own terminology loosely). URL form,
- * OJP-style: {@code jdbc:polywire://host:port/database?user=X&password=Y}.
- * Talks gRPC to {@code QueryServiceImpl} instead of emulating a foreign
- * wire protocol — see {@link PolyWireConnection}/{@link PolyWireStatement}/
- * {@link PolyWireResultSet}, each a narrow-slice {@link java.lang.reflect.Proxy}
- * implementation covering only the JDBC methods this driver actually needs.
- */
 public final class PolyWireDriver implements Driver {
 
     private static final Pattern URL_PATTERN = Pattern.compile("jdbc:polywire://([^:/]+):(\\d+)/([^?]*)(?:\\?(.*))?");
@@ -39,7 +29,7 @@ public final class PolyWireDriver implements Driver {
     public Connection connect(String url, Properties info) throws SQLException {
         Matcher m = URL_PATTERN.matcher(url);
         if (!m.matches()) {
-            return null; // not our URL scheme — per Driver contract, let DriverManager try the next driver
+            return null;
         }
         String host = m.group(1);
         int port = Integer.parseInt(m.group(2));
@@ -87,7 +77,7 @@ public final class PolyWireDriver implements Driver {
 
     @Override
     public boolean jdbcCompliant() {
-        return false; // narrow slice — see class javadoc
+        return false;
     }
 
     @Override

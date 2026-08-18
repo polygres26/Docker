@@ -6,16 +6,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
-/**
- * MySQL client/server protocol packet framing (3-byte little-endian length +
- * 1-byte sequence id) and the length-encoded int/string primitives used
- * throughout the wire format. Built from MySQL's own public protocol
- * documentation ("MySQL Client/Server Protocol"), not reverse-engineered
- * from any source — same approach as {@code com.polygres.wire.pgwire.PgMessages}.
- */
 final class MySqlPacket {
 
-    int sequenceId = -1; // pre-increment in writePayload means the first packet sent gets id 0
+    int sequenceId = -1;
 
     byte[] readPayload(DataInputStream in) throws IOException {
         int len = in.readUnsignedByte() | (in.readUnsignedByte() << 8) | (in.readUnsignedByte() << 16);
@@ -34,8 +27,6 @@ final class MySqlPacket {
         out.write(payload);
         out.flush();
     }
-
-    // ---- length-encoded primitives ----------------------------------------
 
     static long readLenEncInt(byte[] data, int[] pos) {
         int first = data[pos[0]++] & 0xFF;
@@ -73,7 +64,7 @@ final class MySqlPacket {
             pos[0]++;
         }
         String s = new String(data, start, pos[0] - start, StandardCharsets.UTF_8);
-        pos[0]++; // skip NUL
+        pos[0]++;
         return s;
     }
 

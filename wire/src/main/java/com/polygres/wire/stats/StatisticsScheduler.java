@@ -16,20 +16,6 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Periodically populates {@link StatisticsStore} from every real-JDBC-dialect {@link BackendTarget}
- * in a {@link BackendRegistry} — the collection side of what {@code FederationStage}'s Calcite
- * planner integration consumes. Scoped to <b>named backends only</b> ({@link BackendRegistry#all()},
- * not the anonymous default connection): those are exactly the ones {@code FederationStage} can ever
- * mount into a federated Calcite connection (it only federates schema-rule-matched named backends —
- * see that class's javadoc on the backend-registry-name-doubles-as-real-schema-name convention),
- * so there's nothing to gain profiling a backend federation can never reach.
- *
- * <p>Same "runs once at startup, then on a fixed interval" shape as {@code OntologyScheduler}, same
- * "unset means the feature doesn't exist" default. {@code GENERIC_REST} backends (REST/S3/SharePoint)
- * are silently skipped — see {@link NativeStatisticsCollector}'s javadoc for why (no native optimizer
- * to read from at all; a sampling-based collector for those is separate, real future work).
- */
 public final class StatisticsScheduler implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(StatisticsScheduler.class);
@@ -49,26 +35,10 @@ public final class StatisticsScheduler implements AutoCloseable {
         });
     }
 
-    /**
-     * A usable {@link #collectForBackend} caller that never schedules anything on its own — for
-     * {@code BackendOnboardingPipeline}'s one-shot "collect stats for just this new backend right
-     * now" call (ARCHITECTURE.md §51), independent of whether periodic collection is even
-     * configured (unlike {@link #startIfConfigured}, this never returns {@code null}: on-demand
-     * collection for a freshly registered backend shouldn't depend on {@code
-     * POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES} being set at all). The instance's own {@link
-     * #executor} is never used — {@link #close} is a no-op-safe shutdown of an executor that never
-     * ran anything, kept only so this type doesn't need two different shapes.
-     */
     public static StatisticsScheduler forOnDemandCollection(BackendRegistry backendRegistry, StatisticsStore store) {
         return new StatisticsScheduler(backendRegistry, store);
     }
 
-    /**
-     * {@code null} (no scheduler constructed, no background thread) unless {@code
-     * POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES} is set to a positive integer. An initial collection
-     * pass runs immediately (not after waiting a full interval) so a freshly started server doesn't
-     * plan its first federated queries against a completely empty {@link StatisticsStore}.
-     */
     public static StatisticsScheduler startIfConfigured(BackendRegistry backendRegistry, StatisticsStore store) {
         int intervalMinutes = intEnv("POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES", 0);
         if (intervalMinutes <= 0) {
@@ -88,7 +58,6 @@ public final class StatisticsScheduler implements AutoCloseable {
         }
     }
 
-    /** Package-visible so tests can drive one cycle synchronously without waiting on a real interval. */
     synchronized void runCycle() {
         int collected = 0;
         for (BackendTarget target : backendRegistry.all()) {
@@ -101,13 +70,6 @@ public final class StatisticsScheduler implements AutoCloseable {
         log.info("stats: collection cycle done — {} table row-count(s) collected/refreshed", collected);
     }
 
-    /**
-     * Public (not just the scheduled cycle's own internal use) so {@code
-     * com.polygres.wire.server.onboarding.BackendOnboardingPipeline} can collect statistics for a single,
-     * just-registered backend immediately rather than waiting for the next scheduled interval —
-     * ARCHITECTURE.md §51. Same collection logic either way, just invoked for one {@link
-     * BackendTarget} instead of every one in a {@link BackendRegistry}.
-     */
     public int collectForBackend(BackendTarget target, SourceDialect dialect) {
         String schema = foldedSchemaName(target, dialect);
         int count = 0;
@@ -115,7 +77,7 @@ public final class StatisticsScheduler implements AutoCloseable {
             for (String table : listTables(connection, schema)) {
                 Long rowCount = collector.rowCount(connection, dialect, schema, table);
                 if (rowCount == null) {
-                    continue; // no native stats gathered for this table yet -- nothing to store, not zero rows
+                    continue;
                 }
                 java.util.Map<String, Long> columnDistinctCounts =
                         collector.columnDistinctCounts(connection, dialect, schema, table, rowCount);
@@ -130,7 +92,6 @@ public final class StatisticsScheduler implements AutoCloseable {
         return count;
     }
 
-    /** Same convention {@code FederationStage.foldedSchemaName} already establishes: the backend registry name doubles as the real database schema name, folded to whatever case that dialect stores unquoted identifiers in. */
     private static String foldedSchemaName(BackendTarget target, SourceDialect dialect) {
         return dialect == SourceDialect.ORACLE
                 ? target.name().toUpperCase(Locale.ROOT)

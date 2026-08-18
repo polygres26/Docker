@@ -6,7 +6,6 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Types;
 
-/** Builds a {@link ResultSet} proxy over an already-fetched {@link ExecuteResponse} (no streaming/cursor — see class note on PolyWireDriver). */
 final class PolyWireResultSet {
 
     static ResultSet create(ExecuteResponse response) {
@@ -47,7 +46,7 @@ final class PolyWireResultSet {
         handler.on("getColumnCount", args -> response.getColumnNamesCount());
         handler.on("getColumnLabel", args -> response.getColumnNames((Integer) args[0] - 1));
         handler.on("getColumnName", args -> response.getColumnNames((Integer) args[0] - 1));
-        handler.on("getColumnType", args -> Types.VARCHAR); // text-encoded wire format — see ARCHITECTURE.md §5.9
+        handler.on("getColumnType", args -> Types.VARCHAR);
         return (ResultSetMetaData) Proxy.newProxyInstance(
                 PolyWireResultSet.class.getClassLoader(), new Class<?>[] {ResultSetMetaData.class}, handler);
     }

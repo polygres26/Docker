@@ -30,80 +30,16 @@ import javax.net.ssl.SSLSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Speaks the PostgreSQL frontend/backend wire protocol (v3.0) directly:
- * startup handshake, cleartext-password auth, then the Simple Query
- * subprotocol ('Q' -&gt; RowDescription/DataRow(s)/CommandComplete). This is a
- * narrow slice — Simple Query only, no Parse/Bind/Execute (extended query),
- * no SSL, no COPY — analogous in scope to the Oracle frontend's initial cut
- * (see {@code com.polygres.wire.orawire.session.RequestLoop}), but far simpler to
- * implement since Postgres's wire format is openly documented (no
- * clean-room reverse-engineering needed, unlike Oracle's TTC).
- *
- * <p>Reuses the same backend Postgres instance the Oracle frontend proxies
- * to ({@link ServerOptions#pgHost()} etc.). Query execution runs through
- * the shared {@link StatementPipeline} (ARCHITECTURE.md §3/§4) instead of
- * talking to JDBC directly — this is the reference integration proving the
- * canonical {@link Statement} abstraction works end-to-end against a real
- * client (psql); the Oracle frontend still executes directly and is the
- * next candidate to migrate onto the same pipeline.
- *
- * <p>Each Simple Query statement is its own auto-committed unit of work, so
- * {@link #executeSimpleQuery} borrows a connection from {@link
- * com.polygres.wire.core.BackendConnectionPools} (via {@link PgConnections#open})
- * fresh per statement and returns it immediately after — a session sitting
- * idle between queries (or one that never queries at all) holds zero
- * backend connections, and many concurrent pgwire sessions share the same
- * small backend pool instead of each pinning one connection for their
- * entire lifetime.
- *
- * <p><b>Extended Query Protocol (Parse/Bind/Describe/Execute/Sync/Close) is also supported</b> —
- * added after discovering live that real clients relying on it (found via {@code postgres_fdw},
- * which never uses Simple Query at all) couldn't connect. Unlike Simple Query, this needs a
- * <em>session-scoped</em> connection ({@link #extendedConnection}, lazily borrowed and held until
- * the session ends), not a fresh one per statement — {@code postgres_fdw} genuinely issues
- * {@code DECLARE CURSOR}/{@code FETCH}/{@code CLOSE}/{@code COMMIT} as real SQL text, and a cursor
- * is backend-session state that a per-statement borrow/release model would destroy between the
- * {@code DECLARE} and the first {@code FETCH}. {@link JdbcBackendExecutor#execute} already detects
- * query-vs-non-query generically via {@code PreparedStatement.execute()}'s own boolean return, not
- * SQL-verb sniffing — so {@code DECLARE}/{@code FETCH}/{@code CLOSE} are handled correctly with no
- * changes needed there; a real backend connection genuinely creates a real server-side cursor.
- *
- * <p><b>Deliberately narrow, matching this project's usual scope discipline</b>:
- * <ul>
- *   <li><b>No real server-side incremental cursors of our own</b> — {@code Bind} eagerly runs the
- *   statement in full and caches the {@link ExecutionResult} on the {@link Portal}; repeated
- *   {@code Execute} calls against the same portal slice that already-computed row list by
- *   {@code maxRows}, they don't re-fetch from the backend incrementally. Fine for the row counts
- *   this project's scope targets; a genuinely large result set would materialize fully in memory at
- *   {@code Bind} time rather than streaming.</li>
- *   <li><b>Text-format bind parameters only</b> — a binary-format parameter is rejected with a
- *   real {@code ErrorResponse}, not silently misread.</li>
- *   <li><b>{@code $1}/{@code $2} positional parameters are rewritten to JDBC {@code ?} placeholders</b>
- *   ({@link #DOLLAR_PARAM}), reordering the bind list to match each {@code ?}'s textual occurrence
- *   order (handles repeats/reordering, e.g. {@code $2} appearing before {@code $1}) — Postgres's own
- *   native parameter syntax isn't valid JDBC {@code PreparedStatement} placeholder syntax, and
- *   {@link JdbcBackendExecutor} binds positionally by {@code ?} order.</li>
- *   <li><b>{@code Describe Statement}</b> (before {@code Bind}) always reports zero parameters and
- *   no row shape — this project doesn't pre-analyze a statement's real parameter types or result
- *   shape without running it, and {@code postgres_fdw} in practice describes the <em>portal</em>
- *   (after {@code Bind}, when the real shape is already known), not the bare statement.</li>
- * </ul>
- */
 public final class PgWireSessionHandler implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(PgWireSessionHandler.class);
 
     private final Socket clientSocket;
-    // Reassigned to the SSLSocket layer if the client negotiates SSLRequest (see readStartupMessage) --
-    // tracked here (rather than threaded through every method signature) purely so run()'s cleanup
-    // closes whichever socket is actually live, TLS-upgraded or not.
+    
     private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
-    // Non-null only when POLYWIRE_AUTH_MODE=postgres_roles -- see PgRoleAuthCache's javadoc for
-    // why pgwire (unlike orawire/mywire) can use it: this protocol already collects the client's
-    // password as cleartext, same precondition the cache's verification relies on.
+    
     private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
 
     private boolean authenticate(String username, String presentedPassword) {
@@ -113,30 +49,19 @@ public final class PgWireSessionHandler implements Runnable {
         byte[] expected = credentials.lookupPassword(username);
         return expected != null && presentedPassword.equals(new String(expected, StandardCharsets.UTF_8));
     }
-    // RTT optimization (ARCHITECTURE.md §11): built once per session (this class is already
-    // instantiated fresh per accepted TCP connection), not per statement — see
-    // JdbcBackendExecutor#rebind's javadoc for why. terminalExecutor starts unbound; every call
-    // site rebinds it to that statement's freshly-borrowed connection before running pipeline.execute.
+    
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
-    // Kept as a field (not just handed to StatementPipeline and forgotten) so handleTransactionControl
-    // can drive its beginTransaction()/endTransaction() — see that executor's javadoc for why a real
-    // explicit transaction needs this, not just the pipeline's normal per-statement execute() path.
+    
     private final com.polygres.wire.core.RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
-    // Same "record every failure, best-effort, never block the client's own response" store used
-    // by orawire/mywire/mssqlwire -- see FailedStatementLog's javadoc. No native error-code mapping
-    // is recorded here (unlike those three) since pgwire clients are native Postgres clients and
-    // already get the real SQLState back as-is; nativeError is left null.
+    
     private final FailedStatementLog failedStatementLog;
 
-    // ---- Extended Query Protocol session state (see class javadoc) ----
-    private Connection sessionConnection; // lazily borrowed, shared by Simple and Extended paths -- see sessionConnection()
+    private Connection sessionConnection;
     private final Map<String, String> preparedStatements = new LinkedHashMap<>();
     private final Map<String, Portal> portals = new LinkedHashMap<>();
-    private boolean skipUntilSync; // set on any Extended Query error; real protocol semantics: ignore messages until the next Sync
-    // Best-effort SQL text for FailedStatementLog when an Extended Query step fails -- Bind is
-    // where a prepared statement's text is last known before pipeline.execute() runs, so that's
-    // where this gets set; a failure in Parse itself never has real SQL bound to a portal yet.
+    private boolean skipUntilSync;
+    
     private volatile String lastExtendedSql;
 
     private static final Pattern DOLLAR_PARAM = Pattern.compile("\\$(\\d+)");
@@ -173,87 +98,44 @@ public final class PgWireSessionHandler implements Runnable {
 
             StartupStreams startup = performStartup(in, out);
             if (startup == null) {
-                return; // auth failed or client bailed after SSL negotiation
+                return;
             }
             queryLoop(startup.in(), startup.out());
         } catch (java.io.EOFException e) {
-            // client disconnected mid-message; not worth logging as a warning
+            
         } catch (Exception e) {
             log.warn("pgwire session terminated: {}", e.getMessage(), e);
         } finally {
             try {
-                activeSocket.close(); // closes the TLS layer (if any) and the underlying socket
+                activeSocket.close();
             } catch (IOException ignoredOnSessionTeardown) {
-                // closing on the way out -- nothing left to report this to
+                
             }
             try {
-                routingExecutor.endTransaction(false); // a client that disconnects mid-transaction rolls back -- real Postgres does the same on connection loss, and this is what actually releases any routed connections beginTransaction() opened
+                routingExecutor.endTransaction(false);
             } catch (SQLException ignoredOnSessionTeardown) {
-                // closing on the way out -- nothing left to report this to
+                
             }
             if (sessionConnection != null) {
                 try {
                     sessionConnection.close();
                 } catch (SQLException ignoredOnSessionTeardown) {
-                    // closing on the way out -- nothing left to report this to
+                    
                 }
             }
         }
     }
 
-    /**
-     * Borrowed once, lazily, on the first statement that actually needs to run something — shared
-     * by <em>both</em> Simple Query and Extended Query Protocol paths, not one connection per
-     * protocol. Found live to matter: {@code postgres_fdw} sends {@code BEGIN} via Simple Query but
-     * {@code DECLARE CURSOR}/{@code FETCH}/{@code CLOSE} via Extended Query — a real Postgres
-     * session is inherently one continuous connection/transaction context regardless of which
-     * sub-protocol carries any given statement, so giving each path its own separate physical
-     * connection (this class's original design, before that was discovered) meant a real
-     * {@code BEGIN} on one connection never reached the session the cursor was later declared on,
-     * and the target backend correctly rejected it ("DECLARE CURSOR can only be used in transaction
-     * blocks").
-     */
     private Connection sessionConnection() throws SQLException {
         if (sessionConnection == null) {
             sessionConnection = PgConnections.open(options);
-            sessionConnection.setAutoCommit(true); // matches real Postgres: autocommit until an explicit BEGIN
+            sessionConnection.setAutoCommit(true);
         }
         return sessionConnection;
     }
 
-    /**
-     * {@code true} if {@code sql} was itself a transaction-control statement and has already been
-     * fully handled — real {@code BEGIN}/{@code COMMIT}/{@code ROLLBACK} SQL text is intercepted
-     * and translated into real {@link Connection#setAutoCommit}/{@link Connection#commit}/
-     * {@link Connection#rollback} calls against the shared session connection, rather than forwarded
-     * as literal SQL text — this project's {@link JdbcBackendExecutor} always runs through
-     * {@code PreparedStatement}, and keeping this connection's own {@code autoCommit} flag
-     * genuinely in sync with what the client asked for is what makes the rest of the session's
-     * statements (including a later {@code DECLARE CURSOR}) actually run inside the transaction the
-     * client thinks it started.
-     *
-     * <p>Also drives {@link #routingExecutor}'s {@code beginTransaction()}/{@code endTransaction()}
-     * in lockstep with the session connection's own transaction boundary — see that executor's
-     * javadoc for why a {@code table@link}-routed statement needs to know an explicit transaction is
-     * open at all, not just this connection.
-     */
     private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
-        // Real clients vary on whether the terminating ';' is glued onto the verb token itself
-        // (psql script/heredoc mode sends literally "BEGIN;"/"COMMIT;"/"ROLLBACK;" as one Simple
-        // Query message, no space before the semicolon) or sent as a separate token/omitted
-        // entirely (most JDBC/psycopg2-style drivers send bare "BEGIN"). Found live to matter: a
-        // real psql session's BEGIN/COMMIT/ROLLBACK never matched the switch below without this
-        // strip -- verb came out as "BEGIN;"/"COMMIT;"/"ROLLBACK;", none of which equal the bare
-        // case labels, so this method silently returned false for every one of them. That meant
-        // routingExecutor.beginTransaction()/endTransaction() were never called at all: every
-        // routed statement in the "transaction" actually ran on a fresh autocommitted connection
-        // (RoutingBackendExecutor.execute's transactionConnections-null branch), so each write was
-        // durably committed the instant it ran, with zero real 2PC coordination -- the client's
-        // BEGIN/COMMIT/ROLLBACK became pure no-ops against the session's own default connection
-        // instead. This is what actually broke cross-shard atomicity end-to-end (proved live: an
-        // explicit ROLLBACK after a routed INSERT left the row durably committed on the real
-        // backend) -- the XA/2PC coordinator code itself was never reached, not a bug in its own
-        // prepare/commit logic.
+        
         String stripped = sql.strip();
         if (stripped.endsWith(";")) {
             stripped = stripped.substring(0, stripped.length() - 1).stripTrailing();
@@ -289,9 +171,6 @@ public final class PgWireSessionHandler implements Runnable {
         }
     }
 
-    // ---- startup + auth --------------------------------------------------
-
-    /** Bundles the (possibly TLS-upgraded) streams a caller must switch to after {@link #performStartup}. */
     private record StartupStreams(DataInputStream in, DataOutputStream out) {
     }
 
@@ -313,7 +192,7 @@ public final class PgWireSessionHandler implements Runnable {
         int len = in.readInt();
         byte[] body = new byte[len - 4];
         in.readFully(body);
-        String password = new String(body, 0, body.length - 1, StandardCharsets.UTF_8); // strip NUL
+        String password = new String(body, 0, body.length - 1, StandardCharsets.UTF_8);
 
         if (!authenticate(username, password)) {
             PgMessages.writeErrorAndReady(out, "28P01", "password authentication failed for user \"" + username + "\"");
@@ -332,25 +211,6 @@ public final class PgWireSessionHandler implements Runnable {
     private record StartupMessage(DataInputStream in, DataOutputStream out, Map<String, String> params) {
     }
 
-    /**
-     * Returns the startup params (and the streams to keep using -- TLS-upgraded if the client sent
-     * {@code SSLRequest} and {@link ServerOptions#tlsEnabled()}), or {@code null} if the connection
-     * ended during SSL/GSS negotiation or startup.
-     *
-     * <p>{@code SSLRequest} handling: real Postgres wire protocol v3 negotiates TLS in-band on the
-     * same port a plaintext client also uses -- the client sends an {@code SSLRequest} startup
-     * packet before anything else, the server replies a single {@code 'S'} (yes) or {@code 'N'} (no)
-     * byte, and on {@code 'S'} both sides immediately begin a TLS handshake using the very socket
-     * the plaintext bytes were just exchanged over. This is what a real {@code psql
-     * sslmode=require} client actually speaks, so it's implemented here directly (upgrading this
-     * session's socket in place via {@code SSLSocketFactory.createSocket(Socket, ...)} in server
-     * mode) rather than only standing up a separate always-TLS listener port the way orawire/mywire
-     * do -- unlike them, pgwire has its own real, well-documented in-protocol negotiation that real
-     * clients expect on the standard port, and skipping it would mean {@code sslmode=require}
-     * against the plain pgwire port simply fails for every real Postgres client/driver out there.
-     * When TLS isn't configured ({@code POLYWIRE_TLS_KEYSTORE} unset), the reply is {@code 'N'},
-     * exactly as before this change -- a plaintext-only client is completely unaffected.
-     */
     private StartupMessage readStartupMessage(DataInputStream in, DataOutputStream out) throws IOException {
         while (true) {
             int len = in.readInt();
@@ -373,13 +233,13 @@ public final class PgWireSessionHandler implements Runnable {
                         throw new IOException("pgwire TLS upgrade failed", e);
                     }
                 } else {
-                    out.writeByte('N'); // "no" to SSL -- plaintext only, matches pre-TLS behavior
+                    out.writeByte('N');
                     out.flush();
                 }
                 continue;
             }
             if (code == PgMessages.GSSENC_REQUEST_CODE) {
-                out.writeByte('N'); // GSS encryption still unsupported
+                out.writeByte('N');
                 out.flush();
                 continue;
             }
@@ -416,8 +276,6 @@ public final class PgWireSessionHandler implements Runnable {
         return data.length;
     }
 
-    // ---- query loop: Simple Query + Extended Query Protocol ---------------
-
     private void queryLoop(DataInputStream in, DataOutputStream out) throws IOException {
         while (true) {
             int type = in.readUnsignedByte();
@@ -426,15 +284,15 @@ public final class PgWireSessionHandler implements Runnable {
             in.readFully(body);
 
             switch (type) {
-                case 'X' -> { return; } // Terminate
+                case 'X' -> { return; }
                 case 'Q' -> executeSimpleQuery(out, new String(body, 0, body.length - 1, StandardCharsets.UTF_8));
                 case 'P' -> dispatchExtended(out, () -> handleParse(out, body));
                 case 'B' -> dispatchExtended(out, () -> handleBind(out, body));
                 case 'D' -> dispatchExtended(out, () -> handleDescribe(out, body));
                 case 'E' -> dispatchExtended(out, () -> handleExecute(out, body));
                 case 'C' -> dispatchExtended(out, () -> handleClose(out, body));
-                case 'H' -> out.flush(); // Flush -- no response message of its own
-                case 'S' -> handleSync(out); // always runs, even mid-error -- this is what clears the error state
+                case 'H' -> out.flush();
+                case 'S' -> handleSync(out);
                 default -> throw new IOException("unsupported pgwire message type: " + (char) type);
             }
         }
@@ -445,7 +303,6 @@ public final class PgWireSessionHandler implements Runnable {
         void run() throws IOException, SQLException;
     }
 
-    /** Real Extended Query Protocol semantics: once one message in a pipelined batch errors, every subsequent Bind/Describe/Execute/Close is silently skipped until the client's next Sync — not just the one that failed. */
     private void dispatchExtended(DataOutputStream out, ExtendedStep step) throws IOException {
         if (skipUntilSync) {
             return;
@@ -453,8 +310,7 @@ public final class PgWireSessionHandler implements Runnable {
         try {
             step.run();
         } catch (SQLException e) {
-            // Same reasoning as executeSimpleQuery's catch -- see
-            // RoutingBackendExecutor#markTransactionFailed's javadoc.
+            
             routingExecutor.markTransactionFailed();
             if (lastExtendedSql != null) {
                 recordFailure(lastExtendedSql, e);
@@ -476,7 +332,7 @@ public final class PgWireSessionHandler implements Runnable {
         String stmtName = r.readCString();
         String sql = r.readCString();
         int numParamTypes = r.readInt16();
-        r.skip(numParamTypes * 4); // param type OIDs -- not tracked; JDBC infers types from the bound Java values
+        r.skip(numParamTypes * 4);
         preparedStatements.put(stmtName, sql);
         PgMessages.writeParseComplete(out);
     }
@@ -505,7 +361,7 @@ public final class PgWireSessionHandler implements Runnable {
             rawParams.add(new String(r.readBytes(valueLen), StandardCharsets.UTF_8));
         }
         int numResultFormats = r.readInt16();
-        r.skip(numResultFormats * 2); // result format codes -- always text here, so nothing to honor
+        r.skip(numResultFormats * 2);
 
         String sql = preparedStatements.get(stmtName);
         if (sql == null) {
@@ -513,7 +369,7 @@ public final class PgWireSessionHandler implements Runnable {
         }
         lastExtendedSql = sql;
 
-        Connection backend = sessionConnection(); // shared with Simple Query -- see that method's javadoc
+        Connection backend = sessionConnection();
         if (handleTransactionControl(backend, sql)) {
             portals.put(portalName, new Portal(sql, ExecutionResult.ofUpdate(0)));
             PgMessages.writeBindComplete(out);
@@ -530,15 +386,6 @@ public final class PgWireSessionHandler implements Runnable {
         PgMessages.writeBindComplete(out);
     }
 
-    /**
-     * Postgres's own {@code $1}/{@code $2} positional parameter syntax isn't valid JDBC
-     * {@code PreparedStatement} placeholder syntax (which only understands {@code ?}, bound
-     * strictly by textual occurrence order) — {@link JdbcBackendExecutor} binds positionally, so
-     * this rewrites each {@code $N} to {@code ?} and builds {@code orderedBinds} to match, handling
-     * repeats and out-of-order references (e.g. {@code $2} appearing in the text before {@code $1})
-     * correctly by looking up {@code rawParams.get(N - 1)} at each occurrence rather than assuming
-     * {@code $N} appears in order.
-     */
     private static String rewriteDollarParams(String sql, List<Object> rawParams, List<Object> orderedBinds) {
         Matcher matcher = DOLLAR_PARAM.matcher(sql);
         StringBuilder rewritten = new StringBuilder();
@@ -559,8 +406,7 @@ public final class PgWireSessionHandler implements Runnable {
         char kind = (char) r.readByte();
         String name = r.readCString();
         if (kind == 'S') {
-            // Describe Statement, before Bind -- see class javadoc: not pre-analyzed, honestly
-            // reported as zero parameters and no known row shape rather than guessed.
+            
             PgMessages.writeParameterDescription(out, 0);
             PgMessages.writeNoData(out);
             return;
@@ -596,7 +442,7 @@ public final class PgWireSessionHandler implements Runnable {
         }
         portal.nextRow()[0] = end;
         if (end < rows.size()) {
-            PgMessages.writePortalSuspended(out); // maxRows cut it short -- client is expected to Execute again for the rest
+            PgMessages.writePortalSuspended(out);
         } else {
             PgMessages.writeCommandComplete(out, "SELECT " + rows.size());
         }
@@ -616,14 +462,14 @@ public final class PgWireSessionHandler implements Runnable {
 
     private void executeSimpleQuery(DataOutputStream out, String sql) throws IOException {
         try {
-            Connection backend = sessionConnection(); // shared with Extended Query Protocol -- see that method's javadoc
+            Connection backend = sessionConnection();
             if (handleTransactionControl(backend, sql)) {
                 PgMessages.writeCommandComplete(out, sql.strip().split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT));
                 PgMessages.writeReadyForQuery(out, readyForQueryStatus(backend));
                 out.flush();
                 return;
             }
-            terminalExecutor.rebind(backend); // see field javadoc — pipeline itself is session-scoped, not rebuilt here
+            terminalExecutor.rebind(backend);
             Statement statement = Statement.of(SourceDialect.POSTGRES, sql, List.of());
             ExecutionResult result = pipeline.execute(statement);
             if (result.isQuery()) {
@@ -638,12 +484,7 @@ public final class PgWireSessionHandler implements Runnable {
             PgMessages.writeReadyForQuery(out, readyForQueryStatus(backend));
             out.flush();
         } catch (SQLException e) {
-            // Any failure here while an explicit transaction is open poisons it for the rest of
-            // its lifetime, exactly like real Postgres ("current transaction is aborted") --
-            // matters even for statements an earlier pipeline stage rejected (QoS admission
-            // control, the result cache, ...) before RoutingBackendExecutor.execute ever saw them,
-            // which is why this isn't left to that class's own catch alone -- see
-            // RoutingBackendExecutor#markTransactionFailed's javadoc.
+            
             routingExecutor.markTransactionFailed();
             recordFailure(sql, e);
             PgMessages.writeErrorAndReady(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
@@ -672,7 +513,7 @@ public final class PgWireSessionHandler implements Runnable {
             case "INSERT" -> "INSERT 0 " + updateCount;
             case "UPDATE" -> "UPDATE " + updateCount;
             case "DELETE" -> "DELETE " + updateCount;
-            default -> verb; // CREATE/DROP/ALTER/BEGIN/COMMIT etc. take no row count
+            default -> verb;
         };
     }
 }

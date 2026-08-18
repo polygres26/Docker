@@ -13,30 +13,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-/**
- * DynamoDB's typed attribute-value representation — the real wire shape clients send/receive,
- * e.g. {@code {"S": "hello"}}, {@code {"N": "123"}}, {@code {"M": {...}}}, {@code {"L": [...]}},
- * {@code {"BOOL": true}}, {@code {"NULL": true}}, {@code {"SS": [...]}}, {@code {"NS": [...]}},
- * {@code {"BS": [...]}} (binary — base64 in JSON). This class round-trips that shape faithfully
- * to/from Gson's {@link JsonElement} tree, and also to/from Postgres's JSONB storage (we persist
- * the same typed shape verbatim in the {@code item} JSONB column — see {@link PgItemStore} — so
- * there is no lossy intermediate representation between what a client sent and what lands in
- * Postgres).
- *
- * <p>Scope: {@code B}/{@code BS} (binary) are supported as base64 strings, matching the JSON wire
- * format; we do not decode/interpret binary contents specially. Numbers ({@code N}) are kept as
- * exact decimal strings (DynamoDB's own contract — arbitrary precision, no double rounding) using
- * {@link java.math.BigDecimal} only for comparisons, never for storage.
- */
 public final class AttributeValue {
 
     public enum Type { S, N, B, BOOL, NULL, M, L, SS, NS, BS }
 
     public final Type type;
-    public final String scalar;              // S, N, B (base64), BOOL ("true"/"false"), NULL ("true")
-    public final Map<String, AttributeValue> map;    // M
-    public final List<AttributeValue> list;          // L
-    public final Set<String> stringSet;               // SS, NS (kept as strings), BS (base64 strings)
+    public final String scalar;
+    public final Map<String, AttributeValue> map;
+    public final List<AttributeValue> list;
+    public final Set<String> stringSet;
 
     private AttributeValue(Type type, String scalar, Map<String, AttributeValue> map,
             List<AttributeValue> list, Set<String> stringSet) {
@@ -54,7 +39,6 @@ public final class AttributeValue {
     public static AttributeValue ofM(Map<String, AttributeValue> m) { return new AttributeValue(Type.M, null, m, null, null); }
     public static AttributeValue ofL(List<AttributeValue> l) { return new AttributeValue(Type.L, null, null, l, null); }
 
-    /** Parses one {@code {"S": "..."}}-style typed-value JSON object. */
     public static AttributeValue fromJson(JsonElement el) {
         if (!el.isJsonObject()) {
             throw new DynamoException("ValidationException", "Attribute value must be a JSON object with a type key");
@@ -97,7 +81,6 @@ public final class AttributeValue {
         return s;
     }
 
-    /** Emits this value back into DynamoDB's typed JSON shape. */
     public JsonElement toJson() {
         JsonObject obj = new JsonObject();
         switch (type) {
@@ -134,11 +117,6 @@ public final class AttributeValue {
         return map;
     }
 
-    /**
-     * Ordering used for sort-key comparisons (Query's KeyConditionExpression) and comparison
-     * operators in FilterExpression/ConditionExpression. Only defined between same-typed scalars,
-     * matching DynamoDB's own rule that comparisons across types are not meaningful.
-     */
     public int compareTo(AttributeValue other) {
         if (type != other.type) {
             throw new DynamoException("ValidationException", "Cannot compare attribute values of different types");

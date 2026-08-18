@@ -8,57 +8,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.IntSupplier;
 
-/**
- * ARCHITECTURE.md §5.2: token-bucket admission control per
- * {@link Statement#workloadClass()} (populated by {@link RouterStage},
- * which runs before this stage in the chain), tenant-scoped
- * ({@code tenantId:workloadClass} is the bucket key).
- *
- * <ul>
- *   <li><b>Per-class limits</b>: {@code POLYWIRE_QOS_CLASS_LIMITS} overrides
- *   the global rate/burst/max-wait for specific classes — e.g. give
- *   {@code batch} a smaller budget than {@code query} — falling back to the
- *   global {@code POLYWIRE_QOS_RATE_PER_SEC}/{@code _BURST}/{@code _MAX_WAIT_MS}
- *   for any class not listed.</li>
- *   <li><b>Soft-reject slow lane</b>: an over-limit statement doesn't fail
- *   immediately — it blocks the calling frontend thread (same pattern as
- *   HikariCP's own connection-wait, already used throughout this codebase)
- *   for up to {@code maxWaitMillis}, retrying as the bucket refills, only
- *   hard-rejecting once that budget is exhausted. {@code maxWaitMillis=0}
- *   (the default) is the original instant-reject behavior — this is opt-in,
- *   not a behavior change for existing config. There's no real scheduler or
- *   priority queue here — it's a bounded busy-wait, the honest narrow-slice
- *   version of OJP's SQS "slow lane" concept, not a full one.</li>
- *   <li><b>Pool-aware admission</b>: for statements {@link RouterStage}
- *   already resolved to a specific {@link BackendTarget}, also checks
- *   {@link BackendConnectionPools#statsFor} — if that backend's pool
- *   already has {@code POLYWIRE_QOS_POOL_WAIT_THRESHOLD} or more sessions
- *   queued waiting for a physical connection, this statement is rejected at
- *   admission instead of also piling into that queue. Opt-in
- *   (threshold {@code -1} by default = disabled) since it's new rejection
- *   behavior. Only applies to routed statements — a statement bound for a
- *   frontend's own default connection has no resolvable pool key here,
- *   since {@code QosControlStage} is protocol-agnostic and doesn't know
- *   which frontend it's running under; documented narrow-slice limit.</li>
- *   <li><b>Metrics</b>: admitted/rejected counts per {@code tenant:class},
- *   surfaced on {@code /metrics} ({@link #snapshot()}) and — when telemetry
- *   is configured — pushed via OTLP the same way {@link StatsCollectorStage}
- *   does.</li>
- *   <li><b>Cluster-size reconciliation</b> (ARCHITECTURE.md §12.4 v1): when
- *   {@code com.polygres.wire.cluster.PolyWireCluster} is enabled, each node's
- *   local bucket is sized at {@code configured_rate / current_cluster_size}
- *   instead of the full configured rate — so N nodes admitting
- *   independently still sum to roughly the configured cluster-wide rate,
- *   without a distributed counter on the admission hot path (that would
- *   put a network round-trip back on the path §11 just optimized). {@code
- *   clusterSizeSupplier} defaults to always-1 (today's single-node
- *   behavior, unchanged) when clustering is disabled or not wired in —
- *   this is <em>divide-by-N</em>, an intentionally simple v1 that assumes
- *   roughly even load across nodes; §12.4 names the real weakness (skewed
- *   load, e.g. {@code orawire}'s session-pinned connections landing
- *   unevenly) and a v2 credit-borrowing follow-on, not attempted here.</li>
- * </ul>
- */
 public final class QosControlStage implements PipelineStage {
 
     public record ClassLimit(double ratePerSecond, double burstCapacity, long maxWaitMillis) {
@@ -70,11 +19,6 @@ public final class QosControlStage implements PipelineStage {
         }
     }
 
-    // volatile, not final: see #reconfigure. Read fresh on every handle() call so a config change
-    // from com.polygres.wire.config.ConfigStore's LISTEN/NOTIFY callback applies to the very next
-    // statement without a restart -- in-flight statements that already captured the old values
-    // locally aren't retroactively affected, which is fine (ConfigStore's own javadoc: "new config
-    // just needs to apply to new/ongoing pipeline stage decisions going forward").
     private volatile ClassLimit defaultLimit;
     private volatile Map<String, ClassLimit> classLimits;
     private volatile long poolWaitThreshold;
@@ -97,12 +41,6 @@ public final class QosControlStage implements PipelineStage {
         this.clusterSizeSupplier = clusterSizeSupplier;
     }
 
-    /**
-     * {@code classLimitsSpec}: "class:ratePerSec:burst:maxWaitMs,..." — overrides for specific
-     * workload classes; any class not listed uses the global rate/burst/maxWait arguments.
-     * {@code poolWaitThresholdEnv}: {@code POLYWIRE_QOS_POOL_WAIT_THRESHOLD}, "-1"/unset disables
-     * pool-aware admission.
-     */
     public static QosControlStage fromConfig(String rateEnv, String burstEnv, String maxWaitEnv,
             String classLimitsSpec, String poolWaitThresholdEnv, PolyWireTelemetry telemetry) {
         return fromConfig(rateEnv, burstEnv, maxWaitEnv, classLimitsSpec, poolWaitThresholdEnv, telemetry, () -> 1);
@@ -142,9 +80,7 @@ public final class QosControlStage implements PipelineStage {
         Counters counters = countersByKey.computeIfAbsent(countersKey, k -> new Counters());
 
         ClassLimit configuredLimit = classLimits.getOrDefault(workloadClass, defaultLimit);
-        // §12.4 v1: divide by current cluster size (1 = clustering disabled, today's unchanged
-        // behavior) on every call, not once at bucket creation — so a cluster-size change (a node
-        // joining/leaving) takes effect on the very next statement, not after a restart.
+        
         ClassLimit limit = divideByClusterSize(configuredLimit);
         String bucketKey = statement.tenantId() + ":" + workloadClass;
         Bucket bucket = buckets.computeIfAbsent(bucketKey, k -> new Bucket(limit.burstCapacity()));
@@ -180,7 +116,7 @@ public final class QosControlStage implements PipelineStage {
     private ClassLimit divideByClusterSize(ClassLimit limit) {
         int clusterSize = Math.max(1, clusterSizeSupplier.getAsInt());
         if (clusterSize == 1) {
-            return limit; // clustering disabled (or a genuinely solo node) — no division, unchanged behavior
+            return limit;
         }
         return new ClassLimit(limit.ratePerSecond() / clusterSize, limit.burstCapacity() / clusterSize,
                 limit.maxWaitMillis());
@@ -190,22 +126,12 @@ public final class QosControlStage implements PipelineStage {
         return Map.copyOf(countersByKey);
     }
 
-    /**
-     * Applies a new set of limits in place — called by {@code Main}'s {@code
-     * com.polygres.wire.config.ConfigStore} LISTEN/NOTIFY callback on every new config version.
-     * Existing {@code buckets} entries are deliberately left as-is rather than cleared: {@link
-     * Bucket#tryConsume} already takes the (now-changed) {@code limit} as a parameter on every
-     * call and re-clamps {@code tokens} against the new capacity itself, so a bucket naturally
-     * adopts the new rate/burst on its very next refill without needing to be recreated or losing
-     * its accumulated token count.
-     */
     public void reconfigure(ClassLimit newDefaultLimit, Map<String, ClassLimit> newClassLimits, long newPoolWaitThreshold) {
         this.defaultLimit = newDefaultLimit;
         this.classLimits = Map.copyOf(newClassLimits);
         this.poolWaitThreshold = newPoolWaitThreshold;
     }
 
-    /** Parses the same three config knobs {@link #fromConfig} does, for reuse by {@code reconfigure} callers that only have the raw spec strings (e.g. from a {@code PolyWireConfig} version). */
     public static QosControlStage parseAndApply(QosControlStage stage, String rateEnv, String burstEnv,
             String maxWaitEnv, String classLimitsSpec, String poolWaitThresholdEnv) {
         QosControlStage parsed = fromConfig(rateEnv, burstEnv, maxWaitEnv, classLimitsSpec, poolWaitThresholdEnv, null);
@@ -213,7 +139,6 @@ public final class QosControlStage implements PipelineStage {
         return stage;
     }
 
-    /** For read-only config introspection (the HTTP admin API). */
     public ClassLimit defaultLimit() {
         return defaultLimit;
     }
@@ -234,7 +159,6 @@ public final class QosControlStage implements PipelineStage {
             this.tokens = initialTokens;
         }
 
-        /** Tries once immediately; if that fails and {@code limit.maxWaitMillis() > 0}, retries as the bucket refills, up to that budget. */
         boolean awaitToken(ClassLimit limit) {
             long deadlineNanos = System.nanoTime() + limit.maxWaitMillis() * 1_000_000L;
             while (true) {

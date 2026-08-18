@@ -13,25 +13,6 @@ import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Pushes the same counters {@code /metrics} exposes (ARCHITECTURE.md
- * gap-analysis "metrics/stats endpoint") to a real OpenTelemetry pipeline
- * via OTLP/gRPC, rather than only being pull-scraped. Statement
- * count/errors/latency come from {@link com.polygres.wire.core.StatsCollectorStage}
- * calling {@link #recordStatement}; per-backend pool occupancy comes from an
- * observable callback reading {@link BackendConnectionPools#snapshot()}
- * directly — including {@code polywire.pool.waiting}, the count of frontend
- * sessions currently blocked waiting for a backend connection because the
- * pool is at {@code maxPoolSize}, which is the metric that actually proves
- * "many frontend connections, few backend connections, and the frontend
- * waits when the backend is saturated" rather than just asserting it.
- *
- * <p>Opt-in: {@code POLYWIRE_OTEL_ENDPOINT=disabled} (or leaving no OTel
- * Collector reachable) means export attempts fail silently in the
- * background per OTLP exporter semantics — {@code /metrics} keeps working
- * regardless, since it reads the same underlying counters directly rather
- * than through this pipeline.
- */
 public final class PolyWireTelemetry {
 
     private static final Logger log = LoggerFactory.getLogger(PolyWireTelemetry.class);
@@ -108,7 +89,6 @@ public final class PolyWireTelemetry {
         (admitted ? qosAdmittedCounter : qosRejectedCounter).add(1, attrs);
     }
 
-    /** Returns null (telemetry disabled) if {@code POLYWIRE_OTEL_ENDPOINT=disabled} is explicitly set. */
     public static PolyWireTelemetry fromEnv() {
         String endpoint = System.getenv().getOrDefault("POLYWIRE_OTEL_ENDPOINT", "http://localhost:4317");
         if ("disabled".equalsIgnoreCase(endpoint)) {

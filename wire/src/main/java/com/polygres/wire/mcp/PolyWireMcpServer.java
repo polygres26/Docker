@@ -27,49 +27,6 @@ import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Embedded Jetty MCP (Model Context Protocol) server -- the frontend {@link
- * com.polygres.wire.core.AdHocQueryRunner}'s own class javadoc already named and was pulled out
- * for, before this pass actually built it. Speaks MCP's Streamable HTTP transport (JSON-RPC 2.0
- * over a single POST endpoint) -- same raw-{@code Handler} pattern as {@code DynamoWireServer}/
- * {@code MetricsServer}, and the same "every frontend converges on {@code StatementPipeline}"
- * architecture as every other protocol here.
- *
- * <h2>Tools exposed</h2>
- * <ul>
- *   <li>{@code execute_sql} -- runs arbitrary SQL through the real pipeline (so {@code
- *   FirewallStage}/{@code AccessControlStage}/{@code CacheStage}, if configured, all apply exactly
- *   as they would to any other frontend -- this class adds no separate SQL-safety layer of its
- *   own, matching how every wire-protocol frontend already relies on the pipeline itself for
- *   that).</li>
- *   <li>{@code list_tables} / {@code describe_table} -- catalog introspection, same
- *   {@code pg_catalog}/{@code information_schema} shape {@code DialectTranslations}' own
- *   {@code SHOW TABLES} rewrite already uses for mywire.</li>
- *   <li>Zero or more <b>registered-function tools</b> ({@code POLYWIRE_MCP_TOOLS}) -- the
- *   DBMS_CLOUD_AI_AGENT-style piece: an explicit, operator-controlled allow-list naming real
- *   Postgres functions/procedures to expose as individually-named, individually-described tools.
- *   Each one's input JSON Schema is generated from the function's actual signature via {@link
- *   PgFunctionIntrospector} -- the same "introspect the catalog, auto-derive one caller-facing
- *   surface per callable object" mechanic PostgREST already established for REST endpoints, just
- *   targeting MCP tools instead of HTTP routes. Deliberately <b>not</b> auto-discovery of every
- *   function in {@code pg_proc} -- that would be a real privilege-escalation surface ({@code
- *   SECURITY DEFINER} functions, internal helpers never meant to be externally callable); an
- *   explicit list is the same "loud, never silently expand scope" convention {@link
- *   BackendRegistry}/{@code ConfigStore} already use throughout this project.</li>
- * </ul>
- *
- * <h2>Session handling</h2>
- * A real {@code Mcp-Session-Id} is minted on {@code initialize} and echoed back on every
- * subsequent request -- narrow-slice: not actually used to isolate per-session state (this server
- * is stateless per call, same as every other frontend's ad-hoc-query path), just issued and
- * validated for protocol compliance with clients that check for it.
- *
- * <h2>Not implemented in this pass</h2>
- * SSE/streaming responses (every response here is a single JSON object -- spec-compliant for
- * synchronous tool calls, which is the only shape this server's tools ever produce), MCP
- * resources/prompts (tools only), and batched JSON-RPC requests (deprecated in the current MCP
- * spec revision anyway).
- */
 public final class PolyWireMcpServer {
 
     private static final Logger log = LoggerFactory.getLogger(PolyWireMcpServer.class);
@@ -90,13 +47,6 @@ public final class PolyWireMcpServer {
                 com.polygres.wire.http.auth.AccessContextResolver.DISABLED);
     }
 
-    /**
-     * {@code oauth}: once enabled ({@code POLYWIRE_OAUTH_ISSUER}), the resolved caller identity
-     * rides every tool call's {@link Statement} as its real {@link
-     * com.polygres.wire.core.AccessContext} (instead of {@code ANONYMOUS}) -- so {@code
-     * AccessControlStage}'s row/column policy, if an operator has one configured, enforces against
-     * the real authenticated MCP caller, not a blank identity.
-     */
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.polygres.wire.http.auth.AccessContextResolver oauth) {
@@ -133,15 +83,6 @@ public final class PolyWireMcpServer {
         server.stop();
     }
 
-    // ---- registered-function-tool introspection (startup only) ------------------------------
-
-    /**
-     * {@code toolsSpec}: {@code ;}-separated, each entry {@code toolName=schema.function|description}
-     * (schema defaults to {@code public} if omitted) -- same {@code ;}-separated-entries shape
-     * {@code POLYWIRE_BACKENDS} already uses. A function that fails to introspect (doesn't exist,
-     * introspection query itself fails) is logged and skipped, not fatal to server startup -- one
-     * bad entry in a long list shouldn't take down every other registered tool.
-     */
     private static List<RegisteredFunctionTool> introspectRegisteredTools(ServerOptions options, String toolsSpec) {
         List<RegisteredFunctionTool> tools = new ArrayList<>();
         if (toolsSpec == null || toolsSpec.isBlank()) {
@@ -167,8 +108,6 @@ public final class PolyWireMcpServer {
         return tools;
     }
 
-    // ---- JSON-RPC dispatch --------------------------------------------------------------------
-
     private void handleRequest(HttpServletRequest request, HttpServletResponse response,
             com.polygres.wire.core.AccessContext accessContext) throws IOException {
         String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -188,7 +127,7 @@ public final class PolyWireMcpServer {
             return;
         }
         if (idElement == null) {
-            // A notification (e.g. notifications/initialized) -- no response body expected, just ack.
+            
             response.setStatus(HttpServletResponse.SC_ACCEPTED);
             return;
         }
@@ -265,8 +204,6 @@ public final class PolyWireMcpServer {
         return schema;
     }
 
-    // ---- tools/call -----------------------------------------------------------------------
-
     private void handleToolsCall(HttpServletResponse response, JsonElement id, JsonObject params,
             com.polygres.wire.core.AccessContext accessContext) throws IOException {
         if (!params.has("name")) {
@@ -322,10 +259,7 @@ public final class PolyWireMcpServer {
         List<Object> binds = new ArrayList<>();
         StringBuilder placeholders = new StringBuilder();
         for (PgFunctionIntrospector.ParamDef param : tool.signature().params()) {
-            // OUT parameters aren't supplied by the caller in the call syntax at all -- same
-            // "skip them" rule RegisteredFunctionTool.buildInputSchema already applies when
-            // deciding what belongs in the tool's *input* schema; kept consistent here so the
-            // placeholder count always matches what the schema actually asked the caller for.
+            
             if ("OUT".equalsIgnoreCase(param.mode())) {
                 continue;
             }
@@ -342,17 +276,6 @@ public final class PolyWireMcpServer {
         return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, binds, accessContext);
     }
 
-    /**
-     * {@code pgType}-aware -- found live: binding every JSON number as a plain {@code BigDecimal}
-     * regardless of the target parameter's real type made Postgres's own function-overload
-     * resolution reject an otherwise-correct call ({@code function public.f(numeric) does not
-     * exist} for a real {@code f(integer)}), since JDBC's {@code setObject(BigDecimal)} sends the
-     * bind as {@code numeric} and Postgres won't implicitly widen/narrow that to match a
-     * differently-typed parameter during overload resolution. Narrowed to the introspected
-     * parameter's actual type instead, same category of type-directed coercion {@code
-     * JdbcBackendExecutor#coerce} already does, just informed by real catalog metadata here
-     * instead of a string-parse guess.
-     */
     private static Object jsonToBindValue(JsonElement element, String pgType) {
         if (element == null || element.isJsonNull()) {
             return null;
@@ -368,12 +291,12 @@ public final class PolyWireMcpServer {
                     case "smallint", "integer" -> prim.getAsInt();
                     case "bigint" -> prim.getAsLong();
                     case "real", "double precision" -> prim.getAsDouble();
-                    default -> prim.getAsBigDecimal(); // numeric/decimal and anything unrecognized
+                    default -> prim.getAsBigDecimal();
                 };
             }
             return prim.getAsString();
         }
-        return element.toString(); // json/jsonb-shaped argument -- passed through as its JSON text
+        return element.toString();
     }
 
     private static String requireString(JsonObject obj, String key) {
@@ -415,8 +338,6 @@ public final class PolyWireMcpServer {
         return mapped;
     }
 
-    // ---- JSON-RPC response writing ---------------------------------------------------------
-
     private static void writeResult(HttpServletResponse response, JsonElement id, JsonObject result) throws IOException {
         JsonObject envelope = new JsonObject();
         envelope.addProperty("jsonrpc", "2.0");
@@ -436,7 +357,7 @@ public final class PolyWireMcpServer {
         error.addProperty("message", message);
         envelope.add("error", error);
         response.setContentType("application/json; charset=utf-8");
-        response.setStatus(HttpServletResponse.SC_OK); // JSON-RPC errors are still HTTP 200, per spec
+        response.setStatus(HttpServletResponse.SC_OK);
         response.getWriter().write(GSON.toJson(envelope));
     }
 }

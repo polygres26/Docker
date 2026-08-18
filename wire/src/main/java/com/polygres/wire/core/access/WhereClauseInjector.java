@@ -5,23 +5,6 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Appends a bound {@code <column> = ?} row-filter predicate to a SQL statement's {@code WHERE}
- * clause (creating one if none exists) — the mechanism behind {@link AccessPolicy.RowFilter}
- * enforcement in {@code AccessControlStage}, matching Cube.js's {@code queryRewrite} pattern of
- * deriving the filter before the statement reaches a backend. Uses a bind parameter, never string
- * interpolation, so the injected value can never itself be an injection vector.
- *
- * <p>Regex/text-level, not a real SQL parser — same documented fidelity {@code RouterStage}'s
- * schema matching and {@link SqlTableReferences} already accept: it finds the first top-level
- * {@code GROUP BY}/{@code HAVING}/{@code ORDER BY}/{@code LIMIT}/{@code OFFSET}/{@code FETCH}
- * keyword textually and inserts before it, honoring an existing {@code WHERE} by ANDing rather
- * than replacing. <b>Known gap</b>: doesn't track parenthesis depth, so a subquery containing one
- * of those keywords (e.g. {@code WHERE id IN (SELECT id FROM t ORDER BY x LIMIT 1)}) can produce
- * an insertion point earlier than intended — flagged as a real limitation, not silently assumed
- * away; {@code docs/design/end-user-data-access-security.md} §3.6 is exactly why native RLS/VPD
- * pass-through exists as the preferred mode where available, immune to this class of gap entirely.
- */
 public final class WhereClauseInjector {
 
     private WhereClauseInjector() {
@@ -35,7 +18,6 @@ public final class WhereClauseInjector {
     public record Injected(String sqlText, List<Object> bindParams) {
     }
 
-    /** Injects {@code <filterColumn> = ?} bound to {@code value}, returning the rewritten SQL and bind list (original {@code bindParams} untouched, a new list is returned). */
     public static Injected inject(String sqlText, List<Object> bindParams, String filterColumn, Object value) {
         String trimmed = sqlText.stripTrailing();
         boolean hadTrailingSemicolon = trimmed.endsWith(";");
@@ -45,9 +27,6 @@ public final class WhereClauseInjector {
         boolean hasWhere = WHERE_KEYWORD.matcher(body.substring(0, insertAt)).find();
         String predicate = (hasWhere ? " AND " : " WHERE ") + filterColumn + " = ?";
 
-        // Trim whitespace on both sides of the insertion point so the predicate's own leading
-        // space (and, if there's trailing content, one separating space before it) don't double
-        // up into "  WHERE" / "?GROUP BY".
         String before = body.substring(0, insertAt).stripTrailing();
         String after = body.substring(insertAt).stripLeading();
         String newSql = before + predicate + (after.isEmpty() ? "" : " " + after) + (hadTrailingSemicolon ? ";" : "");

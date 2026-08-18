@@ -5,12 +5,6 @@ import com.google.gson.JsonObject;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Holds one request's {@code ExpressionAttributeNames} (the {@code #alias -> realName} map) and
- * {@code ExpressionAttributeValues} (the {@code :alias -> AttributeValue} map), and resolves
- * {@code #}/{@code :} tokens against them for {@link UpdateExpressionParser} and
- * {@link ConditionExpressionEvaluator}.
- */
 public final class ExpressionContext {
 
     public final Map<String, String> names = new HashMap<>();
@@ -31,7 +25,6 @@ public final class ExpressionContext {
         return ctx;
     }
 
-    /** Resolves a raw path token (possibly a #alias) to the real top-level attribute name. */
     public String resolveName(String token) {
         if (token.startsWith("#")) {
             String real = names.get(token);
