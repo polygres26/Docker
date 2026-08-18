@@ -33,17 +33,31 @@ public final class PolyWireGrpcServer {
     private final ServerOptions options;
     private final List<PipelineStage> sharedStages;
     private final com.polygres.wire.core.BackendRegistry backendRegistry;
+    private final com.polygres.wire.acl.ClientAcl clientAcl;
     private final Server server;
     private Server tlsServer;
 
     public PolyWireGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
             com.polygres.wire.core.BackendRegistry backendRegistry) {
+        this(options, sharedStages, backendRegistry, com.polygres.wire.acl.ClientAcl.DISABLED);
+    }
+
+    /**
+     * {@code clientAcl}: see {@link AclInterceptor}'s javadoc for why gRPC enforces
+     * {@link com.polygres.wire.acl.ClientAcl} per-call via interceptor rather than at accept time
+     * like every other frontend, and why it doesn't support PPv2 (unlike the TCP frontends' own
+     * {@code ConnectionGate}).
+     */
+    public PolyWireGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
+            com.polygres.wire.core.BackendRegistry backendRegistry, com.polygres.wire.acl.ClientAcl clientAcl) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
+        this.clientAcl = clientAcl;
         this.server = ServerBuilder.forPort(options.grpcPort())
                 .addService(new QueryServiceImpl(options, sharedStages, backendRegistry))
                 .intercept(new ConnectionLimitInterceptor())
+                .intercept(new AclInterceptor(clientAcl))
                 .build();
     }
 
@@ -59,6 +73,7 @@ public final class PolyWireGrpcServer {
                 .sslContext(sslContext)
                 .addService(new QueryServiceImpl(options, sharedStages, backendRegistry))
                 .intercept(new ConnectionLimitInterceptor())
+                .intercept(new AclInterceptor(clientAcl))
                 .build();
         tlsServer.start();
     }

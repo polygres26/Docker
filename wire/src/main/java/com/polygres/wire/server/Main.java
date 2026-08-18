@@ -384,7 +384,7 @@ public final class Main {
         // gRPC: not wired into Main at all before this pass (see class javadoc). Started
         // unconditionally on POLYWIRE_GRPC_PORT (plaintext); a second TLS listener on
         // POLYWIRE_GRPC_TLS_PORT is added only when a keystore is configured.
-        PolyWireGrpcServer grpcServer = new PolyWireGrpcServer(options, pipelineStages, backendRegistry);
+        PolyWireGrpcServer grpcServer = new PolyWireGrpcServer(options, pipelineStages, backendRegistry, clientAcl);
         grpcServer.start();
         log.info("polywire listening for gRPC on port {}", options.grpcPort());
 
