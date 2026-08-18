@@ -11,6 +11,7 @@ import com.polygres.wire.core.RouterStage;
 import com.polygres.wire.core.StatsCollectorStage;
 import com.polygres.wire.grpc.PolyWireGrpcServer;
 import com.polygres.wire.http.admin.MetricsServer;
+import com.polygres.wire.mssqlwire.session.MssqlWireSessionHandler;
 import com.polygres.wire.mywire.MySqlWireSessionHandler;
 import com.polygres.wire.orawire.session.SessionHandler;
 import com.polygres.wire.pgwire.PgBackendPool;
@@ -265,6 +266,7 @@ public final class Main {
 
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
+        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor);
     }
 
@@ -307,6 +309,20 @@ public final class Main {
             }
         } catch (IOException e) {
             log.error("MySQL wire listener on port {} failed", options.myWireListenPort(), e);
+        }
+    }
+
+    private static void acceptMssqlWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
+            BackendRegistry backendRegistry, ExecutorService sessionExecutor) {
+        try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
+            log.info("polywire listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
+                    options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
+            }
+        } catch (IOException e) {
+            log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);
         }
     }
 

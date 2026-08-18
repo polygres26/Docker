@@ -57,6 +57,7 @@ public final class ServerOptions {
     private final String mysqlDatabase;
     private final String mysqlUser;
     private final String mysqlPassword;
+    private final int mssqlWireListenPort;
 
     private ServerOptions(int listenPort, int pgWireListenPort, int myWireListenPort, int grpcPort, int httpPort, int httpsPort, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             String pgStandbyHost, int pgStandbyPort,
@@ -65,7 +66,8 @@ public final class ServerOptions {
             boolean dualExecEnabled, DualExecAuthority dualExecAuthority, boolean dualExecRequireBoth, boolean dualExecXaEnabled,
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
-            boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword) {
+            boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
+            int mssqlWireListenPort) {
         this.listenPort = listenPort;
         this.pgWireListenPort = pgWireListenPort;
         this.myWireListenPort = myWireListenPort;
@@ -99,6 +101,7 @@ public final class ServerOptions {
         this.mysqlDatabase = mysqlDatabase;
         this.mysqlUser = mysqlUser;
         this.mysqlPassword = mysqlPassword;
+        this.mssqlWireListenPort = mssqlWireListenPort;
     }
 
     public static ServerOptions parse(String[] args) {
@@ -159,6 +162,10 @@ public final class ServerOptions {
         int pgWireListenPort = parseIntEnv("POLYWIRE_PGWIRE_PORT", 15432);
         int myWireListenPort = parseIntEnv("POLYWIRE_MYWIRE_PORT", 13306);
         int orawireListenPort = parseIntEnv("POLYWIRE_ORAWIRE_PORT", 11521);
+        // TDS (SQL Server wire) — see com.polygres.wire.mssqlwire package javadoc. Default 14333:
+        // clear of every other PolyWire port (15432/13306/11521/19090/7070/8080/8443/2484/17071)
+        // and of SQL Server's own default (1433).
+        int mssqlWireListenPort = parseIntEnv("POLYWIRE_MSSQLWIRE_PORT", 14333);
         int grpcPort = parseIntEnv("POLYWIRE_GRPC_PORT", 7070);
         int httpPort = parseIntEnv("POLYWIRE_HTTP_PORT", 8080);
         // Reuses the same keystore as the Oracle TCPS listener (ORAPG_TLS_KEYSTORE) — one cert
@@ -182,7 +189,12 @@ public final class ServerOptions {
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
-                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword);
+                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mssqlWireListenPort);
+    }
+
+    public int mssqlWireListenPort() {
+        return mssqlWireListenPort;
     }
 
     private static int parseIntEnv(String name, int defaultValue) {
