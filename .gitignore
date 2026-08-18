@@ -2,9 +2,10 @@ target/
 dependency-reduced-pom.xml
 *.class
 
-web/node_modules/
-web/dist/
-web/.oxlintrc.json.bak
+advisor/web/node_modules/
+advisor/web/dist/
+advisor/web/.vite/
+advisor/web/.oxlintrc.json.bak
 
 .DS_Store
 *.log
