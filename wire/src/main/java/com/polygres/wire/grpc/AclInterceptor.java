@@ -32,10 +32,16 @@ import org.slf4j.LoggerFactory;
  * {@link com.polygres.wire.grpc.QueryServiceImpl} ever sees it), just enforced per-call rather than
  * once at the TCP accept.
  *
- * <p><b>No PPv2 support</b> -- unlike the TCP frontends, this only ever evaluates the raw gRPC
- * transport's own peer address, matching orawire's TLS-listener scope limit for the same
- * PPv2-needs-a-plaintext-leading-byte reason (see {@code Main#acceptOraWireTlsLoop}'s javadoc);
- * gRPC here is always plaintext-or-TLS-terminated-by-PolyWire-itself, same shape.
+ * <p><b>PPv2 support</b>: when {@code POLYWIRE_ACL_PPV2_ENABLED=true}, {@link PpV2ProtocolNegotiator}
+ * already rejected any disallowed connection at the negotiation layer -- before any call could
+ * ever reach this interceptor -- and carries the resolved PPv2 source address via
+ * {@link GrpcProxyProtocol#PROXIED_REMOTE_ADDRESS} (not {@code Grpc.TRANSPORT_ATTR_REMOTE_ADDR};
+ * see that key's javadoc for why). This interceptor re-checks it anyway, defense-in-depth, same as
+ * every other double-checked rejection path in this project (e.g. {@code
+ * PgWireSessionHandler}'s Extended Query error handling) -- cheap, and correct even if a future
+ * change adds another way to reach this interceptor without going through the negotiator. Falls
+ * back to the raw {@code Grpc.TRANSPORT_ATTR_REMOTE_ADDR} peer when PPv2 isn't enabled for this
+ * listener, same as before PPv2 support existed.
  */
 final class AclInterceptor implements ServerInterceptor {
 
@@ -53,10 +59,16 @@ final class AclInterceptor implements ServerInterceptor {
         if (acl == ClientAcl.DISABLED) {
             return next.startCall(call, headers);
         }
-        SocketAddress remote = call.getAttributes().get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
-        InetAddress remoteAddress = remote instanceof InetSocketAddress isa ? isa.getAddress() : null;
+        InetAddress proxied = call.getAttributes().get(GrpcProxyProtocol.PROXIED_REMOTE_ADDRESS);
+        InetAddress remoteAddress = proxied;
+        Object loggedPeer = proxied;
+        if (remoteAddress == null) {
+            SocketAddress remote = call.getAttributes().get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+            remoteAddress = remote instanceof InetSocketAddress isa ? isa.getAddress() : null;
+            loggedPeer = remote;
+        }
         if (remoteAddress == null || !acl.isAllowed(remoteAddress)) {
-            log.warn("ACL: rejecting gRPC call from {}", remote);
+            log.warn("ACL: rejecting gRPC call from {}", loggedPeer);
             call.close(Status.PERMISSION_DENIED.withDescription("connection rejected by ACL"), headers);
             return new ServerCall.Listener<>() {
             };

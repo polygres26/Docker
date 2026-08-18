@@ -46,6 +46,19 @@ public final class ConnectionGate {
         this.trustedProxies = trustedProxies;
     }
 
+    /** Exposed for {@code com.polygres.wire.grpc.PolyWireGrpcServer} to build its own PPv2-capable protocol negotiator from the same config, without re-parsing the env vars separately. */
+    public ClientAcl acl() {
+        return acl;
+    }
+
+    public boolean ppv2Enabled() {
+        return ppv2Enabled;
+    }
+
+    public List<Cidr> trustedProxies() {
+        return trustedProxies;
+    }
+
     public static ConnectionGate fromEnv() {
         ClientAcl acl = ClientAcl.fromEnv();
         boolean ppv2Enabled = "true".equalsIgnoreCase(System.getenv("POLYWIRE_ACL_PPV2_ENABLED"));

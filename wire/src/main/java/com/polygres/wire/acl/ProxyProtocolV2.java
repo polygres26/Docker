@@ -32,6 +32,17 @@ public final class ProxyProtocolV2 {
             0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A
     };
 
+    /** Length of {@link #SIGNATURE} -- exposed so a caller buffering bytes itself (e.g. a Netty
+     * handler that can't just hand an {@link InputStream} to {@link #readHeader}) can check the
+     * signature as soon as this many bytes are available, before deciding whether to keep
+     * buffering toward a full header at all. */
+    public static final int SIGNATURE_LENGTH = SIGNATURE.length;
+
+    /** True if {@code candidate} (expected to be exactly {@link #SIGNATURE_LENGTH} bytes) matches the real PPv2 signature. */
+    public static boolean signatureMatches(byte[] candidate) {
+        return java.util.Arrays.equals(candidate, SIGNATURE);
+    }
+
     private static final int FAMILY_INET = 0x1;
     private static final int FAMILY_INET6 = 0x2;
     private static final int COMMAND_MASK = 0x0F;
