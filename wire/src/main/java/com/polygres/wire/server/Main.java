@@ -365,8 +365,17 @@ public final class Main {
 
         PgBackendPool backendPool = new PgBackendPool(options);
 
+        // POLYWIRE_ACL_RULES / POLYWIRE_ACL_PPV2_ENABLED / POLYWIRE_ACL_TRUSTED_PROXIES -- see
+        // ConnectionGate's javadoc. Built early: both HTTP servers below (metrics, dynamowire) and
+        // every TCP accept loop further down share this same instance/config. ClientAcl.DISABLED /
+        // ConnectionGate.DISABLED (nothing configured) is a zero-cost no-op, unchanged default
+        // behavior. clientAcl is also used directly (bypassing PPv2) by acceptOraWireTlsLoop --
+        // see that method's javadoc for why PPv2 can't compose with an always-TLS listener.
+        com.polygres.wire.acl.ClientAcl clientAcl = com.polygres.wire.acl.ClientAcl.fromEnv();
+        com.polygres.wire.acl.ConnectionGate connectionGate = com.polygres.wire.acl.ConnectionGate.fromEnv();
+
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get);
+        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate);
         metricsServer.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
@@ -387,7 +396,7 @@ public final class Main {
                     options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
 
             final SSLServerSocketFactory finalTlsFactory = tlsFactory;
-            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, finalTlsFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor));
+            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, finalTlsFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, clientAcl));
 
             grpcServer.startTls();
             log.info("polywire listening for gRPC TLS on port {}", options.grpcTlsPort());
@@ -407,10 +416,11 @@ public final class Main {
                     + "real pg_authid role passwords (refreshed every {}s), not CredentialStore's shared secret",
                     parseIntEnv("POLYWIRE_AUTH_REFRESH_SECONDS", 30));
         }
-        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache));
-        listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor));
-        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache));
-        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache));
+
+        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
+        listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
+        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
+        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate));
 
         // dynamowire: DynamoDB's real client protocol is HTTP/JSON (SigV4-signed POST requests
         // naming the operation via X-Amz-Target), not a raw TCP wire protocol, so it doesn't fit
@@ -420,11 +430,11 @@ public final class Main {
         // why it bypasses the SQL pipeline entirely).
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache);
+                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 
-        acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor);
+        acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate);
     }
 
     /**
@@ -443,12 +453,15 @@ public final class Main {
 
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
-            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
             log.info("polywire listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue; // rejected + already closed -- see ConnectionGate's javadoc
+                }
                 sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
             }
         } catch (IOException e) {
@@ -457,12 +470,16 @@ public final class Main {
     }
 
     private static void acceptMySqlWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
-            BackendRegistry backendRegistry, ExecutorService sessionExecutor) {
+            BackendRegistry backendRegistry, ExecutorService sessionExecutor,
+            com.polygres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(options.myWireListenPort())) {
             log.info("polywire listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
                 sessionExecutor.submit(new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
             }
         } catch (IOException e) {
@@ -472,12 +489,15 @@ public final class Main {
 
     private static void acceptMssqlWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
-            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("polywire listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
                 sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
             }
         } catch (IOException e) {
@@ -493,7 +513,7 @@ public final class Main {
      * backendRegistry the way the four SQL-text frontends above do.
      */
     private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
-            com.polygres.wire.mongowire.MongoCache mongoCache) {
+            com.polygres.wire.mongowire.MongoCache mongoCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
         int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
         String pgUrl = "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase();
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
@@ -502,6 +522,9 @@ public final class Main {
                     mongoPort, pgUrl);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
                 sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword(), mongoCache));
             }
         } catch (IOException e) {
@@ -510,12 +533,16 @@ public final class Main {
     }
 
     private static void acceptOraWireLoop(ServerOptions options, PgBackendPool backendPool,
-            List<PipelineStage> pipelineStages, BackendRegistry backendRegistry, ExecutorService sessionExecutor) {
+            List<PipelineStage> pipelineStages, BackendRegistry backendRegistry, ExecutorService sessionExecutor,
+            com.polygres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
             log.info("polywire listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
                 sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry));
             }
         } catch (IOException e) {
@@ -528,15 +555,32 @@ public final class Main {
      * {@code SSLServerSocket} instead of a plain one — TLS is a full-socket wrap done before any
      * TNS bytes are exchanged (ported from Omnigate's {@code ProxyServer}), so no protocol-
      * specific TLS code is needed here or in {@link SessionHandler} itself.
+     *
+     * <p><b>PPv2 not supported on this listener</b> -- {@code SSLServerSocket#accept()} already
+     * returns a socket mid-TLS-wrap (JSSE begins the handshake lazily on first I/O), so there is no
+     * point left to read a plaintext PPv2 preamble from before TLS bytes start flowing; PPv2 is
+     * designed to precede whatever protocol follows on a still-plaintext leg, which this
+     * always-TLS listener doesn't have. {@link com.polygres.wire.acl.ConnectionGate#acceptTcp}
+     * still applies the plain IP/CIDR {@link com.polygres.wire.acl.ClientAcl} against the raw TCP
+     * peer -- only the PPv2-derived-address case is unavailable here, a real, documented scope
+     * limit rather than an oversight.
      */
     private static void acceptOraWireTlsLoop(ServerOptions options, SSLServerSocketFactory tlsFactory,
             PgBackendPool backendPool, List<PipelineStage> pipelineStages, BackendRegistry backendRegistry,
-            ExecutorService sessionExecutor) {
+            ExecutorService sessionExecutor, com.polygres.wire.acl.ClientAcl ipOnlyAcl) {
         try (SSLServerSocket serverSocket = (SSLServerSocket) tlsFactory.createServerSocket(options.tlsPort())) {
             log.info("polywire listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                if (!ipOnlyAcl.isAllowed(clientSocket.getInetAddress())) {
+                    log.warn("ACL: rejecting TCPS connection from {}", clientSocket.getInetAddress());
+                    try {
+                        clientSocket.close();
+                    } catch (IOException ignored) {
+                    }
+                    continue;
+                }
                 sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry));
             }
         } catch (IOException e) {

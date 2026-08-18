@@ -34,16 +34,27 @@ public final class MetricsServer {
     private final Server server;
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
-        this(port, statsStage, qosStage, null);
+        this(port, statsStage, qosStage, null, com.polygres.wire.acl.ConnectionGate.DISABLED);
     }
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
             Supplier<ConfigStore.Version> currentVersionSupplier) {
+        this(port, statsStage, qosStage, currentVersionSupplier, com.polygres.wire.acl.ConnectionGate.DISABLED);
+    }
+
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate) {
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
                     HttpServletResponse response) throws java.io.IOException {
+                if (!connectionGate.acceptHttp(request)) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.getWriter().write("forbidden");
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if ("/metrics".equals(target)) {
                     String body = MetricsRenderer.render(statsStage, qosStage);
                     response.setStatus(HttpServletResponse.SC_OK);

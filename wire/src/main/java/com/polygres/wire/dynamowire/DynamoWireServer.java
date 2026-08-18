@@ -76,6 +76,11 @@ public final class DynamoWireServer {
      */
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache) {
+        this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, com.polygres.wire.acl.ConnectionGate.DISABLED);
+    }
+
+    public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate) {
         this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
         this.handlers = new OperationHandlers(store, cache);
         this.server = new Server(port);
@@ -83,6 +88,10 @@ public final class DynamoWireServer {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException {
                 baseRequest.setHandled(true);
+                if (!connectionGate.acceptHttp(request)) {
+                    writeError(response, 403, "AccessDeniedException", "forbidden");
+                    return;
+                }
                 handleRequest(request, response);
             }
         });
