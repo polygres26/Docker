@@ -1,37 +1,45 @@
 # PolyAdvisor — Docker
 
-Two images:
-
-- **`Dockerfile`** — the Java backend (`AdvisorHttpServer`). Multi-stage: `maven:3.9-eclipse-
-  temurin-21` builds the shaded jar (`target/polygres-advisor.jar`), then an
-  `eclipse-temurin:21-jre-jammy` runtime stage runs it.
-- **`Dockerfile.frontend`** — the `advisor/web` Vite/React SPA, built to static files (`node:22-
-  alpine`) and served by nginx (`nginx.conf`), which also proxies `/api` to the backend container.
-  Two separate images because the backend doesn't serve the built SPA directly yet — see
-  `advisor/web/vite.config.ts`'s own comment on that gap (a `SpaResourceHandler`-equivalent isn't
-  ported here); nginx does the same job Vite's own dev-server proxy does for `npm run dev`.
+One image, one container: `AdvisorHttpServer` runs on embedded Jetty (already a dependency of
+this module) and serves the built `advisor/web` SPA directly via `SpaResourceHandler`, alongside
+its own JSON API — no nginx or second container needed.
 
 ## Quick start
 
 From the **repo root** (the build context has to be the repo root — `advisor/` is a standalone
-Maven module with no parent pom, but both Dockerfiles still need `advisor/` as a subdirectory they
+Maven module with no parent pom, but the Dockerfile still needs `advisor/` as a subdirectory it
 can `COPY` from):
 
 ```bash
 docker compose -f docker/polyadvisor/docker-compose.yml up --build
 ```
 
-Open `http://localhost:8080`. The backend itself isn't published on the host — everything goes
-through nginx on 8080, matching how this is meant to be deployed (one public entry point).
+Open `http://localhost:8090`. The API and UI are on the same origin — `/api/*` is handled by
+`AdvisorHttpServer`'s own routes, everything else (JS/CSS/images, and any path that doesn't
+match a real static file, e.g. a client-side route like `/reports/42`) falls back to the SPA
+via `SpaResourceHandler`, standard SPA-hosting behavior.
 
-## Building the images standalone
+## Building the image standalone
 
 ```bash
-docker build -f docker/polyadvisor/Dockerfile -t polyadvisor-backend:latest .
-docker build -f docker/polyadvisor/Dockerfile.frontend -t polyadvisor-frontend:latest .
+docker build -f docker/polyadvisor/Dockerfile -t polyadvisor:latest .
 ```
 
 (Still run from the repo root — same reason as above.)
+
+## How the SPA gets served (no nginx)
+
+The image build has two stages that feed the runtime stage: a `node:22-alpine` stage builds
+`advisor/web` to static files, and a `maven:3.9-eclipse-temurin-21` stage builds the backend
+jar. Both outputs land in the final `eclipse-temurin:21-jre-jammy` image; `POLYGRES_ADVISOR_WEB_DIR=/app/web`
+tells `AdvisorHttpServer` where to find the built SPA at startup. Unset that env var (or point
+it at a directory that doesn't exist) and the same image runs API-only — useful if you want to
+front it with your own static tier or CDN instead.
+
+**Prefer a separate static-file tier anyway?** (independently scaled, CDN-fronted, etc.)
+`Dockerfile.frontend` and `nginx.conf` are still in this directory for that path — build them
+the same way the old two-image setup did, and don't set `POLYGRES_ADVISOR_WEB_DIR` on the
+backend container so it only serves the API.
 
 ## Data persistence
 

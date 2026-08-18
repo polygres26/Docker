@@ -9,3 +9,6 @@ advisor/web/.oxlintrc.json.bak
 
 .DS_Store
 *.log
+
+.env
+.env.local

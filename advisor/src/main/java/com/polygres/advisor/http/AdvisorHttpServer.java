@@ -28,6 +28,12 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Everything except {@code /api/health}, {@code /api/login}, and {@code /api/session} requires
  * a valid admin session (see {@link AuthGuard}) -- this is an admin tool, not a public API.
+ *
+ * <p><b>SPA hosting</b>: this class only ever claims {@code /api/*} -- see {@link #handle}. When
+ * {@code POLYGRES_ADVISOR_WEB_DIR} is set (see {@link #main}), it's wired into a Jetty {@code
+ * HandlerList} ahead of {@link SpaResourceHandler}, which serves the built {@code advisor/web}
+ * SPA for everything this class doesn't claim -- no separate nginx/static-file server required,
+ * Jetty (already this module's embedded HTTP server) does both jobs in one process.
  */
 public class AdvisorHttpServer extends AbstractHandler {
 
@@ -57,6 +63,11 @@ public class AdvisorHttpServer extends AbstractHandler {
     @Override
     public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
             throws java.io.IOException {
+        if (!target.startsWith("/api/")) {
+            // Not ours -- leave unhandled (don't 404 here) so a HandlerList's next handler, the
+            // SPA static-file server, gets a chance. See this class's own SPA-hosting javadoc.
+            return;
+        }
         RouteHandler handler = resolve(target);
         if (handler == null) {
             response.setStatus(404);
@@ -86,7 +97,24 @@ public class AdvisorHttpServer extends AbstractHandler {
     public static void main(String[] args) throws Exception {
         int port = Integer.parseInt(System.getenv().getOrDefault("POLYGRES_ADVISOR_PORT", "8090"));
         Server server = new Server(port);
-        server.setHandler(new AdvisorHttpServer());
+
+        AdvisorHttpServer api = new AdvisorHttpServer();
+        // POLYGRES_ADVISOR_WEB_DIR: path to the built advisor/web SPA (its `dist/`). Opt-in --
+        // unset means API-only, identical to this class's behavior before SpaResourceHandler
+        // existed (run advisor/web separately via `npm run dev`, or front this with nginx, as
+        // before). Set it and Jetty serves the SPA itself, no nginx/second container needed.
+        String webDir = System.getenv("POLYGRES_ADVISOR_WEB_DIR");
+        if (webDir != null && !webDir.isBlank() && java.nio.file.Files.isDirectory(java.nio.file.Path.of(webDir))) {
+            org.eclipse.jetty.server.handler.HandlerList handlers = new org.eclipse.jetty.server.handler.HandlerList();
+            handlers.setHandlers(new org.eclipse.jetty.server.Handler[] {api, new SpaResourceHandler(webDir)});
+            server.setHandler(handlers);
+        } else {
+            if (webDir != null && !webDir.isBlank()) {
+                log.warn("POLYGRES_ADVISOR_WEB_DIR={} is not a directory -- serving API only", webDir);
+            }
+            server.setHandler(api);
+        }
+
         server.start();
         log.info("Polygres Advisor listening on http://localhost:{}", port);
         server.join();
