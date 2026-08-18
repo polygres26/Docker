@@ -144,16 +144,129 @@ public final class DialectTranslations {
     private static final Pattern NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
     private static final Pattern FROM_DUAL = Pattern.compile("(?i)\\s+FROM\\s+DUAL\\b");
     private static final Pattern SYSDATE = Pattern.compile("(?i)\\bSYSDATE\\b");
+    // Oracle's pseudo-columns for the DB/session timezone -- SQLcl queries these standalone (not
+    // only inside the NLS union probe above), same "no Postgres object, but a real, known answer"
+    // category as the rest of this file's session-metadata rewrites.
+    private static final Pattern DBTIMEZONE = Pattern.compile("(?i)\\bDBTIMEZONE\\b");
+    private static final Pattern SESSIONTIMEZONE = Pattern.compile("(?i)\\bSESSIONTIMEZONE\\b");
     private static final Pattern ROWNUM = Pattern.compile("(?i)(\\s+(?:AND|WHERE)\\s+)ROWNUM\\s*(<=|<)\\s*(\\d+)\\b");
 
+    // ---- SQLcl session-setup probes: no canonical-form shape to normalize into, same category
+    // as normalizeMysql's SHOW_TABLES/SHOW_DATABASES handling -- these are either not real SQL
+    // any target dialect recognizes (Oracle's ALTER SESSION SET TIME_ZONE), reference catalog
+    // objects Postgres genuinely doesn't have (NLS_SESSION_PARAMETERS/NLS_DATABASE_PARAMETERS), or
+    // are PL/SQL blocks calling an Oracle-only package (DBMS_METADATA) with literally nothing on
+    // the Postgres side to translate to. Found live: every one of these came from SQLcl's own
+    // automatic connect-time probing (not a query a user typed) and previously failed every single
+    // orawire session -- see ARCHITECTURE.md's SQLcl compatibility notes.
+
+    private static final Pattern ALTER_SESSION_TIME_ZONE =
+            Pattern.compile("(?i)^\\s*ALTER\\s+SESSION\\s+SET\\s+TIME_ZONE\\s*=\\s*('[^']*')\\s*;?\\s*$");
+
+    // SQLcl's own NLS probe: "select parameter,value from nls_session_parameters union all
+    // SELECT 'DB_TIMEZONE' ... FROM nls_database_parameters WHERE parameter='NLS_CHARACTERSET'" --
+    // matched loosely on the one table name that anchors it (nls_session_parameters has no
+    // Postgres equivalent at all, real or emulable), not the whole exact statement text, since
+    // SQLcl versions vary this probe's other clauses. Answered with the same session-default
+    // values a fresh Oracle session reports before anything overrides them (AMERICAN_AMERICA
+    // locale, standard NLS formats) -- structural/session metadata, not application data, the same
+    // category of "real-shaped, not real" answer as normalizeMysql's SHOW_TABLES rewrite.
+    private static final Pattern NLS_SESSION_PARAMETERS_PROBE =
+            Pattern.compile("(?i)\\bFROM\\s+nls_session_parameters\\b");
+
+    // Detects (loosely) SQLcl's internal DBMS_METADATA session-configuration call -- both the
+    // plain "begin dbms_metadata.set_transform_param(...); end;" shape and the "declare FUNCTION
+    // ifelse(...) ... begin dbms_metadata.set_transform_param(...); end;" shape wrap the same
+    // underlying call, so anchoring on the package.procedure name catches both. There is no
+    // canonical-form or target-dialect equivalent for this at all -- Postgres has no PL/SQL, no
+    // anonymous begin/end blocks, and no DBMS_METADATA package, so nothing to normalize this into.
+    private static final Pattern DBMS_METADATA_BLOCK =
+            Pattern.compile("(?i)\\bdbms_metadata\\s*\\.\\s*set_transform_param\\s*\\(");
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\?");
+
+    private static final Pattern ALL_TABLES_LIKE = Pattern.compile("(?i)\\b(all_tables|user_tables|dba_tables)\\b");
+    private static final Pattern DBA_USERS = Pattern.compile("(?i)\\bdba_users\\b");
+
     private static String normalizeOracle(String sql) {
+        // Whole-statement rewrites first, same convention as normalizeMysql's SHOW_TABLES check --
+        // these replace the entire statement, so nothing downstream should also touch it.
+        Matcher alterSessionTz = ALTER_SESSION_TIME_ZONE.matcher(sql);
+        if (alterSessionTz.matches()) {
+            return "SET TIME ZONE " + alterSessionTz.group(1);
+        }
+        if (NLS_SESSION_PARAMETERS_PROBE.matcher(sql).find()) {
+            return nlsSessionParametersAnswer();
+        }
+        if (DBMS_METADATA_BLOCK.matcher(sql).find()) {
+            return dbmsMetadataNoOp(sql);
+        }
+
         String out = sql;
         out = SqlLiterals.replaceOutsideLiterals(out, NVL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, FROM_DUAL, m -> "");
         out = SqlLiterals.replaceOutsideLiterals(out, SYSDATE, m -> "CURRENT_TIMESTAMP");
+        out = SqlLiterals.replaceOutsideLiterals(out, DBTIMEZONE, m -> "current_setting('TimeZone')");
+        out = SqlLiterals.replaceOutsideLiterals(out, SESSIONTIMEZONE, m -> "current_setting('TimeZone')");
+        out = SqlLiterals.replaceOutsideLiterals(out, ALL_TABLES_LIKE,
+                m -> "(SELECT tablename AS table_name, schemaname AS owner FROM pg_catalog.pg_tables "
+                        + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema')) " + m.group(1));
+        out = SqlLiterals.replaceOutsideLiterals(out, DBA_USERS,
+                m -> "(SELECT usename AS username, NULL::timestamp AS last_login FROM pg_catalog.pg_user) dba_users");
         out = applyRownumLimit(out);
         out = rewriteDecodeCalls(out);
         return out;
+    }
+
+    /**
+     * Real Oracle session defaults (AMERICAN_AMERICA locale, standard NLS formats) for SQLcl's
+     * connect-time {@code NLS_SESSION_PARAMETERS}/{@code NLS_DATABASE_PARAMETERS} probe -- there is
+     * no Postgres table holding this, so this is a literal-values answer, not a catalog query.
+     */
+    private static String nlsSessionParametersAnswer() {
+        return "SELECT * FROM (VALUES "
+                + "('NLS_LANGUAGE','AMERICAN'),"
+                + "('NLS_TERRITORY','AMERICA'),"
+                + "('NLS_CURRENCY','$'),"
+                + "('NLS_ISO_CURRENCY','AMERICA'),"
+                + "('NLS_NUMERIC_CHARACTERS','.,'),"
+                + "('NLS_CALENDAR','GREGORIAN'),"
+                + "('NLS_DATE_FORMAT','DD-MON-RR'),"
+                + "('NLS_DATE_LANGUAGE','AMERICAN'),"
+                + "('NLS_SORT','BINARY'),"
+                + "('NLS_TIME_FORMAT','HH.MI.SSXFF AM'),"
+                + "('NLS_TIMESTAMP_FORMAT','DD-MON-RR HH.MI.SSXFF AM'),"
+                + "('NLS_TIME_TZ_FORMAT','HH.MI.SSXFF AM TZR'),"
+                + "('NLS_TIMESTAMP_TZ_FORMAT','DD-MON-RR HH.MI.SSXFF AM TZR'),"
+                + "('NLS_DUAL_CURRENCY','$'),"
+                + "('NLS_COMP','BINARY'),"
+                + "('NLS_LENGTH_SEMANTICS','BYTE'),"
+                + "('NLS_NCHAR_CONV_EXCP','FALSE'),"
+                + "('DB_TIMEZONE', current_setting('TimeZone')),"
+                + "('SESSION_TIMEZONE', current_setting('TimeZone')),"
+                + "('SESSION_TIMEZONE_OFFSET', to_char(extract(timezone_hour FROM now()), 'S00') "
+                + "|| ':' || lpad(abs(extract(timezone_minute FROM now()))::text, 2, '0')),"
+                + "('NLS_CHARACTERSET', 'AL32UTF8')"
+                + ") AS t(parameter, value)";
+    }
+
+    /**
+     * No functional Postgres equivalent exists for an anonymous PL/SQL block calling
+     * {@code DBMS_METADATA} -- unlike every other rewrite in this file, this isn't translating
+     * syntax, it's recognizing a specific SQLcl-internal bookkeeping call and stubbing it out as a
+     * harmless statement that succeeds without doing anything on the backend. Preserves the
+     * original bind-placeholder count (each {@code ?} already rewritten from a named Oracle bind
+     * by {@code BindVariableRewriter} before this ever runs) so {@code JdbcBackendExecutor}'s
+     * positional {@code setObject} calls still line up 1:1 with the values the client actually
+     * sent -- dropping a placeholder here would leave a bind value with no {@code ?} to attach to.
+     */
+    private static String dbmsMetadataNoOp(String sql) {
+        long placeholderCount = PLACEHOLDER.matcher(sql).results().count();
+        StringBuilder out = new StringBuilder("SELECT 1 WHERE FALSE");
+        for (int i = 0; i < placeholderCount; i++) {
+            out.append(" AND ?::text IS NOT NULL");
+        }
+        return out.toString();
     }
 
     private static final Pattern DECODE_CALL = Pattern.compile("(?i)\\bDECODE\\s*\\(");
