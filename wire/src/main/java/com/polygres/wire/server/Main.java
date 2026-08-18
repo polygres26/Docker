@@ -439,8 +439,14 @@ public final class Main {
         // and auth-scope decisions. Own port, independent of pipelineStages (see that javadoc for
         // why it bypasses the SQL pipeline entirely).
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
+        // POLYWIRE_AWS_IAM_CREDENTIALS -- see SigV4Verifier's javadoc for why this is the correct
+        // mechanism for dynamowire specifically (a real DynamoDB client never sends a bearer
+        // token, so generic OAuth doesn't apply to real clients hitting this frontend).
+        com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials =
+                com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.fromEnv();
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth);
+                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth,
+                awsIamCredentials);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 

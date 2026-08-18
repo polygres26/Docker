@@ -82,14 +82,34 @@ public final class DynamoWireServer {
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate,
-                com.polygres.wire.http.auth.AccessContextResolver.DISABLED);
+                com.polygres.wire.http.auth.AccessContextResolver.DISABLED,
+                com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.DISABLED);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth) {
+        this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate, oauth,
+                com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.DISABLED);
+    }
+
+    /**
+     * {@code awsIamCredentials}: real AWS SigV4 verification (see {@link
+     * com.polygres.wire.dynamowire.auth.SigV4Verifier}'s javadoc) -- the native mechanism real
+     * DynamoDB clients actually use, unlike {@code oauth} (a real DynamoDB client/SDK never sends
+     * a bearer token, so enabling generic OAuth here would just reject every real client; SigV4 is
+     * the correct mechanism for this specific frontend). {@link
+     * com.polygres.wire.dynamowire.auth.AwsIamCredentialStore#DISABLED} skips this gate entirely,
+     * unchanged pre-existing behavior.
+     */
+    public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth,
+            com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials) {
         this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
         this.handlers = new OperationHandlers(store, cache);
+        com.polygres.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
+                new com.polygres.wire.dynamowire.auth.SigV4Verifier(awsIamCredentials);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
             @Override
@@ -99,15 +119,23 @@ public final class DynamoWireServer {
                     writeError(response, 403, "AccessDeniedException", "forbidden");
                     return;
                 }
-                if (oauth.enforce(request, response) == null) {
+                String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                if (awsIamCredentials.isEnabled()) {
+                    com.polygres.wire.dynamowire.auth.SigV4Verifier.Result sigResult = sigV4Verifier.verify(request, body);
+                    if (!sigResult.valid()) {
+                        log.warn("SigV4: rejecting request -- {}", sigResult.reason());
+                        writeError(response, 401, "UnrecognizedClientException", sigResult.reason());
+                        return;
+                    }
+                } else if (oauth.enforce(request, response) == null) {
                     return;
                 }
-                handleRequest(request, response);
+                handleRequest(request, response, body);
             }
         });
     }
 
-    private void handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    private void handleRequest(HttpServletRequest request, HttpServletResponse response, String body) throws IOException {
         response.setContentType("application/x-amz-json-1.0");
         String amzTarget = request.getHeader("X-Amz-Target");
         if (amzTarget == null || !amzTarget.startsWith(TARGET_PREFIX)) {
@@ -115,7 +143,6 @@ public final class DynamoWireServer {
             return;
         }
         String operation = amzTarget.substring(TARGET_PREFIX.length());
-        String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         JsonObject requestJson;
         try {
             requestJson = body.isBlank() ? new JsonObject() : JsonParser.parseString(body).getAsJsonObject();
