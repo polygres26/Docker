@@ -95,7 +95,8 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (targetName == null && transactionConnections != null) {
             targetName = cursorTargets.get(cursorNameReferenced(statement.sqlText()));
         }
-        if (targetName == null || registry.isEmpty()) {
+        
+        if (targetName == null || registry.isEmpty() || BackendRegistry.DEFAULT_BACKEND_NAME.equals(targetName)) {
             return defaultExecutor.execute(statement);
         }
         if (SCATTER_ALL.equals(targetName)) {

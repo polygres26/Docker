@@ -304,13 +304,29 @@ public final class DialectTranslations {
     private static final Pattern MSSQL_TOP =
             Pattern.compile("(?i)^(\\s*SELECT\\s+)(DISTINCT\\s+)?TOP\\s+(\\d+)\\s+");
 
+    private static final Pattern MSSQL_BEGIN_TRAN =
+            Pattern.compile("(?i)^\\s*BEGIN\\s+TRAN(SACTION)?\\b.*$");
+    private static final Pattern MSSQL_COMMIT_TRAN =
+            Pattern.compile("(?i)^\\s*COMMIT\\s+(TRAN(SACTION)?)?\\b.*$");
+    private static final Pattern MSSQL_ROLLBACK_TRAN =
+            Pattern.compile("(?i)^\\s*ROLLBACK\\s+TRAN(SACTION)?\\b.*$");
+
     private static String normalizeSqlServer(String sql) {
+        if (MSSQL_BEGIN_TRAN.matcher(sql).matches()) {
+            
+            return "SET LOCAL lock_timeout TO DEFAULT";
+        }
+        if (MSSQL_COMMIT_TRAN.matcher(sql).matches()) {
+            return "COMMIT";
+        }
+        if (MSSQL_ROLLBACK_TRAN.matcher(sql).matches()) {
+            return "ROLLBACK";
+        }
         String out = sql;
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_GETDATE_CALL, m -> "CURRENT_TIMESTAMP");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_ISNULL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_BRACKETED_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
         out = applyTopLimit(out);
-        
         return out;
     }
 
