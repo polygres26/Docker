@@ -372,21 +372,41 @@ export async function deleteFirewallRule(id: number): Promise<void> {
   await api(`/api/wire/firewall-rules/${id}`, { method: 'DELETE' })
 }
 
-// --- PolyWire ACL (IP/CIDR allow/reject) rules ---
-// Unlike firewall rules (one row per rule), ACL rules live as a single semicolon-delimited
-// spec string inside polywire_config -- see com.polygres.wire.acl.ClientAcl's own parser, which
-// this page's format string must stay compatible with.
+// --- PolyWire full config (backends, router rules, QoS, ACL, OAuth, ...) ---
+// One GET/PUT(-partial) resource over every field of PolyWireConfig -- see
+// com.polygres.wire.config.PolyWireConfig and MetricsServer#handleConfig. A PUT only needs to
+// carry the fields a page actually edits; everything else is carried forward from the latest
+// polywire_config version untouched.
 
-export interface AclSettings {
+export interface WireConfig {
+  qosRatePerSec: string | null
+  qosBurst: string | null
+  qosMaxWaitMs: string | null
+  qosClassLimits: string | null
+  qosPoolWaitThreshold: string | null
+  cacheTables: string | null
+  cacheTtlMs: string | null
+  backends: string | null
+  shardBackends: string | null
+  routerSchemaRules: string | null
+  routerPredicateRules: string | null
+  routerValueShardRules: string | null
+  routerShardTables: string | null
+  rollupDefinitionsYaml: string | null
   aclRules: string | null
   aclPpv2Enabled: string | null
   aclTrustedProxies: string | null
+  oauthIssuer: string | null
+  oauthAudience: string | null
+  oauthUserIdClaim: string | null
+  oauthRolesClaim: string | null
+  awsIamCredentials: string | null
 }
 
-export async function getAclSettings(): Promise<AclSettings> {
-  return api('/api/wire/acl-rules')
+export async function getWireConfig(): Promise<WireConfig> {
+  return api('/api/wire/config')
 }
 
-export async function saveAclSettings(settings: AclSettings): Promise<{ ok: boolean; version: number }> {
-  return api('/api/wire/acl-rules', { method: 'PUT', body: JSON.stringify(settings) })
+export async function saveWireConfig(partial: Partial<WireConfig>): Promise<{ ok: boolean; version: number }> {
+  return api('/api/wire/config', { method: 'PUT', body: JSON.stringify(partial) })
 }

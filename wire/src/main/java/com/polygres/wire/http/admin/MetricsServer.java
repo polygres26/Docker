@@ -22,12 +22,14 @@ import org.slf4j.LoggerFactory;
  * The admin HTTP surface: {@code /metrics} (Prometheus text), {@code /config} (read-only current
  * config snapshot), and -- when a {@link FirewallRuleStore} is supplied -- a real CRUD API for SQL
  * Firewall rules under {@code /api/firewall-rules}, guarded by a bearer token
- * ({@code POLYWIRE_ADMIN_TOKEN}). When a {@link ConfigStore} is also supplied, {@code /api/acl-rules}
- * exposes the ACL (IP/CIDR allow/reject) rules living inside {@code polywire_config.aclRules} as
- * their own GET/PUT resource -- a write there appends a new {@code polywire_config} version, the
- * same LISTEN/NOTIFY path every other config field already reloads through. Meant to be called
- * server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of an already-authenticated
- * admin session), not directly from a browser -- there's no CORS handling and no session/cookie
+ * ({@code POLYWIRE_ADMIN_TOKEN}). When a {@link ConfigStore} is also supplied, {@code /api/config}
+ * exposes every field of {@link PolyWireConfig} (backends, router rules, QoS limits, ACL rules,
+ * OAuth settings, ...) as one GET/PUT(-partial) resource -- a PUT merges the given fields onto the
+ * latest version and appends a new {@code polywire_config} row, the same LISTEN/NOTIFY path every
+ * config field already reloads through. Callers only send the fields they're changing; everything
+ * else carries forward from the current version untouched. Meant to be called server-to-server
+ * (e.g. by PolyAdvisor's own backend, proxying on behalf of an already-authenticated admin
+ * session), not directly from a browser -- there's no CORS handling and no session/cookie
  * machinery here on purpose.
  */
 public final class MetricsServer {
@@ -111,7 +113,7 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
-                if (configStore != null && "/api/acl-rules".equals(target)) {
+                if (configStore != null && "/api/config".equals(target)) {
                     if (!bearerTokenValid(request, adminToken)) {
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         response.setContentType("application/json; charset=utf-8");
@@ -119,7 +121,7 @@ public final class MetricsServer {
                         baseRequest.setHandled(true);
                         return;
                     }
-                    handleAclRules(request, response, configStore);
+                    handleConfig(request, response, configStore);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -204,7 +206,7 @@ public final class MetricsServer {
         }
     }
 
-    private static void handleAclRules(HttpServletRequest request, HttpServletResponse response,
+    private static void handleConfig(HttpServletRequest request, HttpServletResponse response,
             ConfigStore configStore) throws java.io.IOException {
         response.setContentType("application/json; charset=utf-8");
         try {
@@ -213,27 +215,37 @@ public final class MetricsServer {
                         .map(ConfigStore.Version::payload)
                         .orElseGet(PolyWireConfig::fromEnvDefaults);
                 response.setStatus(HttpServletResponse.SC_OK);
-                response.getWriter().write("{\"aclRules\":" + jsonString(current.aclRules())
-                        + ",\"aclPpv2Enabled\":" + jsonString(current.aclPpv2Enabled())
-                        + ",\"aclTrustedProxies\":" + jsonString(current.aclTrustedProxies()) + "}");
+                response.getWriter().write(current.toJson());
             } else if ("PUT".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
                 PolyWireConfig current = configStore.readLatest()
                         .map(ConfigStore.Version::payload)
                         .orElseGet(PolyWireConfig::fromEnvDefaults);
                 PolyWireConfig updated = new PolyWireConfig(
-                        current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
-                        current.qosClassLimits(), current.qosPoolWaitThreshold(),
-                        current.cacheTables(), current.cacheTtlMs(),
-                        current.backends(), current.shardBackends(),
-                        current.routerSchemaRules(), current.routerPredicateRules(),
-                        current.routerValueShardRules(), current.routerShardTables(),
-                        current.rollupDefinitionsYaml(),
-                        body.has("aclRules") ? optionalString(body, "aclRules") : current.aclRules(),
-                        body.has("aclPpv2Enabled") ? optionalString(body, "aclPpv2Enabled") : current.aclPpv2Enabled(),
-                        body.has("aclTrustedProxies") ? optionalString(body, "aclTrustedProxies") : current.aclTrustedProxies(),
-                        current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
-                        current.oauthRolesClaim(), current.awsIamCredentials());
+                        field(body, "qosRatePerSec", current.qosRatePerSec()),
+                        field(body, "qosBurst", current.qosBurst()),
+                        field(body, "qosMaxWaitMs", current.qosMaxWaitMs()),
+                        field(body, "qosClassLimits", current.qosClassLimits()),
+                        field(body, "qosPoolWaitThreshold", current.qosPoolWaitThreshold()),
+                        field(body, "cacheTables", current.cacheTables()),
+                        field(body, "cacheTtlMs", current.cacheTtlMs()),
+                        field(body, "backends", current.backends()),
+                        field(body, "shardBackends", current.shardBackends()),
+                        field(body, "routerSchemaRules", current.routerSchemaRules()),
+                        field(body, "routerPredicateRules", current.routerPredicateRules()),
+                        field(body, "routerValueShardRules", current.routerValueShardRules()),
+                        field(body, "routerShardTables", current.routerShardTables()),
+                        field(body, "rollupDefinitionsYaml", current.rollupDefinitionsYaml()),
+                        field(body, "aclRules", current.aclRules()),
+                        field(body, "aclPpv2Enabled", current.aclPpv2Enabled()),
+                        field(body, "aclTrustedProxies", current.aclTrustedProxies()),
+                        field(body, "oauthIssuer", current.oauthIssuer()),
+                        field(body, "oauthAudience", current.oauthAudience()),
+                        field(body, "oauthUserIdClaim", current.oauthUserIdClaim()),
+                        field(body, "oauthRolesClaim", current.oauthRolesClaim()),
+                        field(body, "awsIamCredentials", current.awsIamCredentials()));
+                // Validate the pieces that have a real parser before committing a new version --
+                // fail loud on the request instead of publishing a version every listener chokes on.
                 com.polygres.wire.acl.ClientAcl.parse(updated.aclRules());
                 long version = configStore.write(updated);
                 response.setStatus(HttpServletResponse.SC_OK);
@@ -243,13 +255,17 @@ public final class MetricsServer {
                 response.getWriter().write("{\"error\":\"no such route\"}");
             }
         } catch (java.sql.SQLException e) {
-            log.warn("acl-rules admin API: database error", e);
+            log.warn("config admin API: database error", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
         } catch (IllegalArgumentException e) {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
         }
+    }
+
+    private static String field(JsonObject body, String key, String fallback) {
+        return body.has(key) ? optionalString(body, key) : fallback;
     }
 
     private static void writeRulesList(HttpServletResponse response, FirewallRuleStore store)

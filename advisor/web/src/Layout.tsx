@@ -1,4 +1,4 @@
-import { Cpu, Database, FileUp, Gauge, LogOut, Network, Shield } from 'lucide-react'
+import { Cpu, Database, FileUp, Gauge, KeyRound, LogOut, Network, Route, Server, Shield, SlidersHorizontal } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
@@ -71,6 +71,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Network size={19} strokeWidth={1.8} />
             <span className={styles.railTip}>Wire: ACL</span>
+          </NavLink>
+          <NavLink
+            to="/wire-backends"
+            title="Wire: Backends"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Server size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: Backends</span>
+          </NavLink>
+          <NavLink
+            to="/wire-router"
+            title="Wire: Router rules"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Route size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: Router rules</span>
+          </NavLink>
+          <NavLink
+            to="/wire-qos"
+            title="Wire: QoS"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <SlidersHorizontal size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: QoS</span>
+          </NavLink>
+          <NavLink
+            to="/wire-oauth"
+            title="Wire: OAuth"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <KeyRound size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: OAuth</span>
           </NavLink>
         </div>
         <div className={styles.railSpacer} />

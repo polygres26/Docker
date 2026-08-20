@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { type AclSettings, getAclSettings, saveAclSettings } from '../api/client'
+import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
  * IP / CIDR access control -- edits `polywire_config.aclRules` (one `allow:<cidr>` or
@@ -17,14 +17,14 @@ export default function WireAclRules() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  function apply(s: AclSettings) {
+  function apply(s: WireConfig) {
     setRules((s.aclRules ?? '').split(';').map((r) => r.trim()).filter(Boolean).join('\n'))
     setTrustedProxies(s.aclTrustedProxies ?? '')
     setPpv2Enabled(s.aclPpv2Enabled === 'true')
   }
 
   useEffect(() => {
-    getAclSettings()
+    getWireConfig()
       .then((s) => { apply(s); setLoaded(true) })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
@@ -36,7 +36,7 @@ export default function WireAclRules() {
     setMessage(null)
     try {
       const spec = rules.split('\n').map((r) => r.trim()).filter(Boolean).join(';')
-      const saved = await saveAclSettings({
+      const saved = await saveWireConfig({
         aclRules: spec,
         aclPpv2Enabled: String(ppv2Enabled),
         aclTrustedProxies: trustedProxies || null,

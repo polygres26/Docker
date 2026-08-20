@@ -14,6 +14,10 @@ import Sizing from './pages/Sizing'
 import WireSettings from './pages/WireSettings'
 import WireFirewallRules from './pages/WireFirewallRules'
 import WireAclRules from './pages/WireAclRules'
+import WireBackends from './pages/WireBackends'
+import WireRouterRules from './pages/WireRouterRules'
+import WireQos from './pages/WireQos'
+import WireOAuth from './pages/WireOAuth'
 
 /** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -43,6 +47,10 @@ export default function App() {
       <Route path="/wire-settings" element={<RequireAuth><WireSettings /></RequireAuth>} />
       <Route path="/wire-firewall" element={<RequireAuth><WireFirewallRules /></RequireAuth>} />
       <Route path="/wire-acl" element={<RequireAuth><WireAclRules /></RequireAuth>} />
+      <Route path="/wire-backends" element={<RequireAuth><WireBackends /></RequireAuth>} />
+      <Route path="/wire-router" element={<RequireAuth><WireRouterRules /></RequireAuth>} />
+      <Route path="/wire-qos" element={<RequireAuth><WireQos /></RequireAuth>} />
+      <Route path="/wire-oauth" element={<RequireAuth><WireOAuth /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/connections" replace />} />
     </Routes>
   )
