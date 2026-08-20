@@ -3,6 +3,7 @@ import {
   type Connection, type SizingRecommendation, type UploadedReport,
   listConnections, listReports, runConnectionSizing, runReportsSizing,
 } from '../api/client'
+import AdvisorTabs from '../components/AdvisorTabs'
 
 function tierStyle(tier: string): { bg: string; fg: string } {
   if (tier === 'SMALL') return { bg: 'var(--easy-soft)', fg: 'var(--accent-strong)' }
@@ -62,6 +63,7 @@ export default function Sizing() {
 
   return (
     <div style={{ maxWidth: 780 }}>
+      <AdvisorTabs />
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Sizing</h1>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 20 }}>
         A starting-point Postgres instance shape (vCPUs, memory, storage, IOPS, connections) built

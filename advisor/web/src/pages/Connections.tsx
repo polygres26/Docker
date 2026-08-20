@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type Connection, createConnection, deleteConnection, listConnections } from '../api/client'
+import AdvisorTabs from '../components/AdvisorTabs'
+import CredentialField from '../components/CredentialField'
 
 export default function Connections() {
   const [connections, setConnections] = useState<Connection[]>([])
@@ -37,6 +39,7 @@ export default function Connections() {
 
   return (
     <div>
+      <AdvisorTabs />
       <h1 style={{ fontSize: 22, marginBottom: 20 }}>Connections</h1>
 
       <div className="panel" style={{ marginBottom: 20, maxWidth: 640 }}>
@@ -83,8 +86,8 @@ export default function Connections() {
             <input id="user" value={user} onChange={(e) => setUser(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="password">Password</label>
-            <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <label htmlFor="password">Credential</label>
+            <CredentialField value={password} onChange={setPassword} />
           </div>
           {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
           <div style={{ display: 'flex', gap: 10 }}>

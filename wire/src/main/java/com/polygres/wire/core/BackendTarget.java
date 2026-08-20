@@ -34,7 +34,12 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         if (failoverOptions != null) {
             return com.polygres.wire.pgwire.PgConnections.open(failoverOptions);
         }
-        
-        return BackendConnectionPools.borrow(BackendConnectionPools.poolKeyFor(jdbcUrl, user), jdbcUrl, user, password);
+
+        // password may be a "vault:..."/"cyberark:..." reference, not a literal -- resolved on
+        // every borrow (not cached on this record) so a rotated secret takes effect on the next
+        // connection attempt rather than requiring a restart. A literal password round-trips
+        // through SecretRef.parse/SecretResolver.resolve as a no-op.
+        String resolvedPassword = com.polygres.wire.secrets.SecretResolver.resolve(password);
+        return BackendConnectionPools.borrow(BackendConnectionPools.poolKeyFor(jdbcUrl, user), jdbcUrl, user, resolvedPassword);
     }
 }

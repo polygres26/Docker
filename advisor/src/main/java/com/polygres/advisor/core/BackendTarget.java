@@ -34,9 +34,16 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         return null;
     }
 
-    /** Read-only autocommit connection borrowed from this target's shared pool. */
+    /**
+     * Read-only autocommit connection borrowed from this target's shared pool. {@code password}
+     * may be a {@code vault:...}/{@code cyberark:...} secret reference instead of a literal --
+     * resolved here, on every open, so a rotated secret takes effect on the next connection
+     * rather than requiring a restart (see {@code com.polygres.advisor.secrets.SecretResolver}).
+     * A literal password round-trips through unchanged.
+     */
     public Connection open() throws SQLException {
-        Connection connection = BackendConnectionPools.borrow(name, jdbcUrl, user, password);
+        String resolvedPassword = com.polygres.advisor.secrets.SecretResolver.resolve(password);
+        Connection connection = BackendConnectionPools.borrow(name, jdbcUrl, user, resolvedPassword);
         connection.setAutoCommit(true);
         connection.setReadOnly(true);
         return connection;

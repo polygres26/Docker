@@ -65,10 +65,17 @@ export default function WireBackends() {
         <form onSubmit={handleSave}>
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Backends (one per line: name=jdbcUrl|user|password)</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+              The password segment doesn't have to be a literal password -- it's resolved at connect time, so a
+              secret reference works too: <code>vault:secret/data/prod/postgres#password</code> (needs{' '}
+              <code>VAULT_ADDR</code>/<code>VAULT_TOKEN</code> on PolyWire) or{' '}
+              <code>cyberark:AppID=PolyWire&amp;Safe=DB-Secrets&amp;Object=prod-postgres</code> (needs{' '}
+              <code>CYBERARK_CCP_URL</code>). A plain password still works exactly as before.
+            </div>
             <textarea
               value={backends}
               onChange={(e) => setBackends(e.target.value)}
-              placeholder={'reporting=jdbc:postgresql://reporting-host:5432/app|app_user|app_pass\nanalytics=jdbc:postgresql://analytics-host:5432/app|app_user|app_pass'}
+              placeholder={'reporting=jdbc:postgresql://reporting-host:5432/app|app_user|app_pass\nanalytics=jdbc:postgresql://analytics-host:5432/app|app_user|vault:secret/data/prod/postgres#password'}
               rows={6}
               style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
             />

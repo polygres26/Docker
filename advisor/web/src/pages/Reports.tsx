@@ -5,6 +5,7 @@ import {
   analyzeReportsBatch, deleteReport, listReports, uploadReport,
 } from '../api/client'
 import ReportAnalysisView from './ReportAnalysisView'
+import AdvisorTabs from '../components/AdvisorTabs'
 
 const DIALECTS = ['ORACLE', 'MYSQL', 'MARIADB', 'SQL_SERVER']
 
@@ -103,6 +104,7 @@ export default function Reports() {
 
   return (
     <div style={{ maxWidth: 780 }}>
+      <AdvisorTabs />
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Reports</h1>
       {/* Why this page exists, in one line -- not a walkthrough of every field below. */}
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>

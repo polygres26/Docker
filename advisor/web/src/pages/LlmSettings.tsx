@@ -7,6 +7,7 @@ import {
   getLocalModelPresets,
   saveLlmSettings,
 } from '../api/client'
+import AdvisorTabs from '../components/AdvisorTabs'
 
 export default function LlmSettings() {
   const [presets, setPresets] = useState<{ qwen: LocalModelPreset; gemma: LocalModelPreset } | null>(null)
@@ -15,6 +16,7 @@ export default function LlmSettings() {
 
   return (
     <div style={{ maxWidth: 640 }}>
+      <AdvisorTabs />
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
       {/* Primary does the work; Judge is an optional second opinion -- kept to one sentence each on the cards below, not spelled out again here. */}
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
