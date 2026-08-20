@@ -95,7 +95,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               className={() => `${styles.railItem} ${MIGRATION_ROUTES.some((r) => location.pathname.startsWith(r)) ? styles.railItemActive : ''}`}
             >
               <Compass size={17} strokeWidth={1.8} />
-              Migration
+              Advisor
             </NavLink>
           </div>
         </div>
