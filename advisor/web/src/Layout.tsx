@@ -1,5 +1,5 @@
 import {
-  Activity, KeyRound, LayoutGrid, LogOut, Network, Route, Server, Shield, SlidersHorizontal,
+  Activity, Compass, Cpu, KeyRound, LogOut, Network, Route, Server, Shield, SlidersHorizontal,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
@@ -34,17 +34,20 @@ const WIRE_GROUPS = [
   },
 ]
 
-// Advisor's own four pages (Connections, Reports, Sizing, LLM configuration) live behind one
-// sidebar entry now -- they're tabs on each other (see AdvisorTabs), not separate destinations,
-// so the sidebar doesn't need to enumerate them. isActive covers every Advisor route so this
-// entry stays highlighted no matter which Advisor tab is open.
-const ADVISOR_ROUTES = ['/connections', '/reports', '/sizing', '/llm-settings']
+// Migration's own three pages (Connections, Reports, Sizing) live behind one sidebar entry --
+// they're tabs on each other (see AdvisorTabs), not separate destinations, so the sidebar
+// doesn't need to enumerate them. isActive covers every Migration route so this entry stays
+// highlighted no matter which tab is open.
+const MIGRATION_ROUTES = ['/connections', '/reports', '/sizing']
 
 /**
- * Shell for every authenticated route -- PolyWire's connection/traffic tools lead the sidebar
- * (that's the product being actively worked on day to day), Advisor's own per-database tools
- * collapse to a single grouped entry below it, since those four pages are now tabs on one
- * another rather than individual sidebar destinations (see AdvisorTabs).
+ * Shell for every authenticated route. Three top-level groups: PolyWire's connection/traffic
+ * tools (the product being actively worked on day to day), Migration -- Advisor's own
+ * per-database assessment tools (Connections, Reports, Sizing, tabbed on one another, see
+ * AdvisorTabs), and Shared -- config that isn't specific to either product. LLM configuration
+ * lives here, not under Migration, because the same Primary/Judge model config also drives
+ * PolyWire's SQL translation and anything else that calls the LLM -- filing it under "Migration"
+ * would have implied it was migration-only, which it isn't.
  */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -85,14 +88,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className={styles.railDivider} />
 
         <div className={styles.railSection}>
-          <div className={styles.railSectionLabel}>Advisor</div>
+          <div className={styles.railSectionLabel}>Migration</div>
           <div className={styles.railGroup}>
             <NavLink
               to="/connections"
-              className={() => `${styles.railItem} ${ADVISOR_ROUTES.some((r) => location.pathname.startsWith(r)) ? styles.railItemActive : ''}`}
+              className={() => `${styles.railItem} ${MIGRATION_ROUTES.some((r) => location.pathname.startsWith(r)) ? styles.railItemActive : ''}`}
             >
-              <LayoutGrid size={17} strokeWidth={1.8} />
-              Advisor
+              <Compass size={17} strokeWidth={1.8} />
+              Migration
+            </NavLink>
+          </div>
+        </div>
+
+        <div className={styles.railDivider} />
+
+        <div className={styles.railSection}>
+          <div className={styles.railSectionLabel}>Shared</div>
+          <div className={styles.railGroup}>
+            <NavLink to="/llm-settings" className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
+              <Cpu size={17} strokeWidth={1.8} />
+              LLM configuration
             </NavLink>
           </div>
         </div>

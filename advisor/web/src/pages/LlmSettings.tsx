@@ -7,7 +7,6 @@ import {
   getLocalModelPresets,
   saveLlmSettings,
 } from '../api/client'
-import AdvisorTabs from '../components/AdvisorTabs'
 
 export default function LlmSettings() {
   const [presets, setPresets] = useState<{ qwen: LocalModelPreset; gemma: LocalModelPreset } | null>(null)
@@ -16,9 +15,10 @@ export default function LlmSettings() {
 
   return (
     <div style={{ maxWidth: 640 }}>
-      <AdvisorTabs />
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
-      {/* Primary does the work; Judge is an optional second opinion -- kept to one sentence each on the cards below, not spelled out again here. */}
+      {/* Not migration-only -- this same Primary/Judge model config also drives PolyWire's SQL
+          translation and any other feature that calls the LLM, which is why it's a standalone
+          "Shared" sidebar entry rather than a tab under Migration. */}
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         Primary and Judge can each independently use the built-in local model (Qwen or Gemma) or an OpenAI API key.
       </p>
