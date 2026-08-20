@@ -19,6 +19,7 @@ public final class StatsCollectorStage implements PipelineStage {
 
     private final ConcurrentHashMap<String, Counters> byTenant = new ConcurrentHashMap<>();
     private final PolyWireTelemetry telemetry;
+    private final SqlMetricsCollector sqlMetrics = new SqlMetricsCollector();
 
     public StatsCollectorStage() {
         this(null);
@@ -37,6 +38,7 @@ public final class StatsCollectorStage implements PipelineStage {
             long elapsedNanos = System.nanoTime() - start;
             counters.statementCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
+            sqlMetrics.record(statement.sourceDialect(), statement.sqlText(), elapsedNanos);
             record(statement.tenantId(), false, elapsedNanos);
             return result;
         } catch (SQLException e) {
@@ -44,11 +46,16 @@ public final class StatsCollectorStage implements PipelineStage {
             counters.statementCount().increment();
             counters.errorCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
+            sqlMetrics.record(statement.sourceDialect(), statement.sqlText(), elapsedNanos);
             record(statement.tenantId(), true, elapsedNanos);
             log.debug("statement failed: tenant={} dialect={} error={}",
                     statement.tenantId(), statement.sourceDialect(), e.getMessage());
             throw e;
         }
+    }
+
+    public SqlMetricsCollector.Snapshot sqlMetricsSnapshot() {
+        return sqlMetrics.snapshot();
     }
 
     private void record(String tenant, boolean failed, long elapsedNanos) {

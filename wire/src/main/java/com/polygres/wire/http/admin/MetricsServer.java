@@ -101,6 +101,20 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if ("/api/metrics/summary".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(renderMetricsSummary(statsStage));
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (firewallRuleStore != null && target.startsWith("/api/firewall-rules")) {
                     if (!bearerTokenValid(request, adminToken)) {
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -329,6 +343,37 @@ public final class MetricsServer {
         return "{\"configStoreEnabled\":true,\"version\":" + version.version()
                 + ",\"createdAt\":\"" + version.createdAt() + "\""
                 + ",\"payload\":" + version.payload().toJson() + "}";
+    }
+
+    private static String renderMetricsSummary(StatsCollectorStage statsStage) {
+        com.polygres.wire.core.SqlMetricsCollector.Snapshot snap = statsStage.sqlMetricsSnapshot();
+        StringBuilder json = new StringBuilder("{");
+        json.append("\"protocolCounts\":{");
+        boolean first = true;
+        for (var entry : snap.protocolCounts().entrySet()) {
+            if (!first) json.append(',');
+            first = false;
+            json.append(jsonString(entry.getKey())).append(':').append(entry.getValue());
+        }
+        json.append('}');
+        json.append(",\"totalReads\":").append(snap.totalReads());
+        json.append(",\"totalWrites\":").append(snap.totalWrites());
+        json.append(",\"totalOther\":").append(snap.totalOther());
+        json.append(",\"readsPerSec\":").append(String.format(java.util.Locale.ROOT, "%.2f", snap.readsPerSec()));
+        json.append(",\"writesPerSec\":").append(String.format(java.util.Locale.ROOT, "%.2f", snap.writesPerSec()));
+        json.append(",\"topSql\":[");
+        first = true;
+        for (var s : snap.topSql()) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"sql\":").append(jsonString(s.normalizedSql()))
+                    .append(",\"calls\":").append(s.calls())
+                    .append(",\"totalMs\":").append(s.totalMillis())
+                    .append(",\"avgMs\":").append(s.avgMillis())
+                    .append('}');
+        }
+        json.append("]}");
+        return json.toString();
     }
 
     public void start() throws Exception {

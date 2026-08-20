@@ -18,6 +18,7 @@ import WireBackends from './pages/WireBackends'
 import WireRouterRules from './pages/WireRouterRules'
 import WireQos from './pages/WireQos'
 import WireOAuth from './pages/WireOAuth'
+import WireMetrics from './pages/WireMetrics'
 
 /** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -51,6 +52,7 @@ export default function App() {
       <Route path="/wire-router" element={<RequireAuth><WireRouterRules /></RequireAuth>} />
       <Route path="/wire-qos" element={<RequireAuth><WireQos /></RequireAuth>} />
       <Route path="/wire-oauth" element={<RequireAuth><WireOAuth /></RequireAuth>} />
+      <Route path="/wire-metrics" element={<RequireAuth><WireMetrics /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/connections" replace />} />
     </Routes>
   )

@@ -1,4 +1,4 @@
-import { Cpu, Database, FileUp, Gauge, KeyRound, LogOut, Network, Route, Server, Shield, SlidersHorizontal } from 'lucide-react'
+import { Activity, Cpu, Database, FileUp, Gauge, KeyRound, LogOut, Network, Route, Server, Shield, SlidersHorizontal } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
@@ -55,6 +55,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Cpu size={19} strokeWidth={1.8} />
             <span className={styles.railTip}>LLM configuration</span>
+          </NavLink>
+          <NavLink
+            to="/wire-metrics"
+            title="Wire: Metrics"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Activity size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: Metrics</span>
           </NavLink>
           <NavLink
             to="/wire-firewall"

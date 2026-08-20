@@ -410,3 +410,26 @@ export async function getWireConfig(): Promise<WireConfig> {
 export async function saveWireConfig(partial: Partial<WireConfig>): Promise<{ ok: boolean; version: number }> {
   return api('/api/wire/config', { method: 'PUT', body: JSON.stringify(partial) })
 }
+
+// --- PolyWire live metrics (protocol traffic, reads/writes per sec, top SQL by cost) ---
+
+export interface WireMetricsSql {
+  sql: string
+  calls: number
+  totalMs: number
+  avgMs: number
+}
+
+export interface WireMetricsSummary {
+  protocolCounts: Record<string, number>
+  totalReads: number
+  totalWrites: number
+  totalOther: number
+  readsPerSec: number
+  writesPerSec: number
+  topSql: WireMetricsSql[]
+}
+
+export async function getWireMetrics(): Promise<WireMetricsSummary> {
+  return api('/api/wire/metrics/summary')
+}
