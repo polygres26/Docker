@@ -5,14 +5,33 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
 
-const WIRE_ITEMS = [
-  { to: '/wire-metrics', label: 'Metrics', icon: Activity },
-  { to: '/wire-firewall', label: 'SQL Firewall', icon: Shield },
-  { to: '/wire-acl', label: 'ACL', icon: Network },
-  { to: '/wire-backends', label: 'Backends', icon: Server },
-  { to: '/wire-router', label: 'Router rules', icon: Route },
-  { to: '/wire-qos', label: 'QoS', icon: SlidersHorizontal },
-  { to: '/wire-oauth', label: 'OAuth', icon: KeyRound },
+// Three groups instead of one flat list of seven: "how do I see what's happening" (Monitoring),
+// "who's allowed to do what" (Security), and "where does traffic go and how fast" (Traffic) --
+// the same three questions someone actually has when they open PolyWire's admin UI, in the order
+// they usually ask them.
+const WIRE_GROUPS = [
+  {
+    label: 'Monitoring',
+    items: [
+      { to: '/wire-metrics', label: 'Metrics', icon: Activity },
+    ],
+  },
+  {
+    label: 'Security',
+    items: [
+      { to: '/wire-firewall', label: 'SQL Firewall', icon: Shield },
+      { to: '/wire-acl', label: 'ACL', icon: Network },
+      { to: '/wire-oauth', label: 'OAuth', icon: KeyRound },
+    ],
+  },
+  {
+    label: 'Traffic',
+    items: [
+      { to: '/wire-backends', label: 'Backends', icon: Server },
+      { to: '/wire-router', label: 'Router rules', icon: Route },
+      { to: '/wire-qos', label: 'QoS', icon: SlidersHorizontal },
+    ],
+  },
 ]
 
 // Advisor's own four pages (Connections, Reports, Sizing, LLM configuration) live behind one
@@ -48,14 +67,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <div className={styles.railSection}>
           <div className={styles.railSectionLabel}>PolyWire</div>
-          <div className={styles.railGroup}>
-            {WIRE_ITEMS.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to} className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
-                <Icon size={17} strokeWidth={1.8} />
-                {label}
-              </NavLink>
-            ))}
-          </div>
+          {WIRE_GROUPS.map((group) => (
+            <div key={group.label} className={styles.railSubGroup}>
+              <div className={styles.railSubLabel}>{group.label}</div>
+              <div className={styles.railGroup}>
+                {group.items.map(({ to, label, icon: Icon }) => (
+                  <NavLink key={to} to={to} className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
+                    <Icon size={17} strokeWidth={1.8} />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className={styles.railDivider} />
