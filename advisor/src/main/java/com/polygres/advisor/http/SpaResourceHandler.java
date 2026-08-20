@@ -41,6 +41,12 @@ public class SpaResourceHandler extends AbstractHandler {
         this.delegate = new ResourceHandler();
         delegate.setDirectoriesListed(false);
         delegate.setWelcomeFiles(new String[] {"index.html"});
+        // Jetty's ResourceHandler defaults to a 302 to the literal welcome file ("/" ->
+        // "/index.html") rather than serving it in place. React Router's BrowserRouter only
+        // matches "/", not "/index.html" -- the client landed on a URL its own router can't
+        // route, and rendered nothing. Serving index.html directly for "/" (no redirect) keeps
+        // the URL the SPA actually has a route for.
+        delegate.setRedirectWelcome(false);
         delegate.setResourceBase(webDir);
         this.indexHtml = Path.of(webDir, "index.html");
     }
@@ -72,6 +78,17 @@ public class SpaResourceHandler extends AbstractHandler {
     @Override
     public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
             throws IOException, ServletException {
+        // "/" itself: serve index.html in place rather than letting it reach the delegate
+        // ResourceHandler, whose welcome-file handling 302s to the literal "/index.html" URL in
+        // this Jetty version even with setRedirectWelcome(false) -- and React Router's
+        // BrowserRouter has a route for "/", not for "/index.html", so that redirect landed the
+        // client on a URL its own router couldn't match and rendered nothing.
+        if ("/".equals(target) && Files.isRegularFile(indexHtml)) {
+            response.setContentType("text/html; charset=utf-8");
+            response.getOutputStream().write(Files.readAllBytes(indexHtml));
+            baseRequest.setHandled(true);
+            return;
+        }
         delegate.handle(target, baseRequest, request, response);
         if (baseRequest.isHandled() || response.isCommitted()) {
             return;
