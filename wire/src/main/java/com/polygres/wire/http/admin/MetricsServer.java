@@ -27,15 +27,23 @@ import org.slf4j.LoggerFactory;
  * OAuth settings, ...) as one GET/PUT(-partial) resource -- a PUT merges the given fields onto the
  * latest version and appends a new {@code polywire_config} row, the same LISTEN/NOTIFY path every
  * config field already reloads through. Callers only send the fields they're changing; everything
- * else carries forward from the current version untouched. Meant to be called server-to-server
- * (e.g. by PolyAdvisor's own backend, proxying on behalf of an already-authenticated admin
- * session), not directly from a browser -- there's no CORS handling and no session/cookie
- * machinery here on purpose.
+ * else carries forward from the current version untouched. When a {@link com.polygres.wire.core.BackendRegistry}
+ * is also supplied, {@code /api/backends} lists every configured backend and {@code /api/backends/{name}/tables},
+ * {@code /api/backends/{name}/tables/{schema}/{table}/columns}, and {@code /api/backends/{name}/query}
+ * expose {@link com.polygres.wire.core.DataExplorer}'s object browser and ad-hoc query console --
+ * see that class's javadoc for why this deliberately bypasses the wire pipeline (Firewall/ACL
+ * don't apply to it) and why that's fine given it's gated the same way as everything else here.
+ * Meant to be called server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of
+ * an already-authenticated admin session), not directly from a browser -- there's no CORS
+ * handling and no session/cookie machinery here on purpose.
  */
 public final class MetricsServer {
 
     private static final Logger log = LoggerFactory.getLogger(MetricsServer.class);
     private static final Pattern FIREWALL_RULE_ID_PATH = Pattern.compile("^/api/firewall-rules/(\\d+)$");
+    private static final Pattern BACKEND_TABLES_PATH = Pattern.compile("^/api/backends/([^/]+)/tables$");
+    private static final Pattern BACKEND_COLUMNS_PATH = Pattern.compile("^/api/backends/([^/]+)/tables/([^/]+)/([^/]+)/columns$");
+    private static final Pattern BACKEND_QUERY_PATH = Pattern.compile("^/api/backends/([^/]+)/query$");
 
     private final Server server;
 
@@ -70,6 +78,14 @@ public final class MetricsServer {
             Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
             ConfigStore configStore) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, null);
+    }
+
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -136,6 +152,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleConfig(request, response, configStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (backendRegistry != null && target.startsWith("/api/backends")) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleBackends(target, request, response, backendRegistry);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -282,6 +310,120 @@ public final class MetricsServer {
         return body.has(key) ? optionalString(body, key) : fallback;
     }
 
+    private static void handleBackends(String target, HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.core.BackendRegistry backendRegistry) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        try {
+            Matcher tablesMatch = BACKEND_TABLES_PATH.matcher(target);
+            Matcher columnsMatch = BACKEND_COLUMNS_PATH.matcher(target);
+            Matcher queryMatch = BACKEND_QUERY_PATH.matcher(target);
+
+            if ("/api/backends".equals(target) && "GET".equals(request.getMethod())) {
+                StringBuilder json = new StringBuilder("[");
+                boolean first = true;
+                for (com.polygres.wire.core.BackendTarget t : backendRegistry.all()) {
+                    if (!first) json.append(',');
+                    first = false;
+                    json.append("{\"name\":").append(jsonString(t.name()))
+                            .append(",\"jdbcUrl\":").append(jsonString(t.jdbcUrl()))
+                            .append(",\"dialect\":").append(jsonString(t.dialect() == null ? null : t.dialect().name()))
+                            .append('}');
+                }
+                json.append(']');
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(json.toString());
+            } else if (tablesMatch.matches() && "GET".equals(request.getMethod())) {
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, tablesMatch.group(1), response);
+                if (t == null) return;
+                StringBuilder json = new StringBuilder("[");
+                boolean first = true;
+                for (var table : com.polygres.wire.core.DataExplorer.listTables(t)) {
+                    if (!first) json.append(',');
+                    first = false;
+                    json.append("{\"schema\":").append(jsonString(table.schema()))
+                            .append(",\"name\":").append(jsonString(table.name()))
+                            .append(",\"type\":").append(jsonString(table.type()))
+                            .append('}');
+                }
+                json.append(']');
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(json.toString());
+            } else if (columnsMatch.matches() && "GET".equals(request.getMethod())) {
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, columnsMatch.group(1), response);
+                if (t == null) return;
+                StringBuilder json = new StringBuilder("[");
+                boolean first = true;
+                for (var col : com.polygres.wire.core.DataExplorer.listColumns(t, columnsMatch.group(2), columnsMatch.group(3))) {
+                    if (!first) json.append(',');
+                    first = false;
+                    json.append("{\"name\":").append(jsonString(col.name()))
+                            .append(",\"type\":").append(jsonString(col.type()))
+                            .append(",\"nullable\":").append(col.nullable())
+                            .append('}');
+                }
+                json.append(']');
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(json.toString());
+            } else if (queryMatch.matches() && "POST".equals(request.getMethod())) {
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, queryMatch.group(1), response);
+                if (t == null) return;
+                JsonObject body = readJsonBody(request);
+                if (!body.has("sql") || body.get("sql").getAsString().isBlank()) {
+                    throw new IllegalArgumentException("sql is required");
+                }
+                var result = com.polygres.wire.core.DataExplorer.runQuery(t, body.get("sql").getAsString());
+                StringBuilder json = new StringBuilder("{\"columns\":[");
+                boolean first = true;
+                for (String c : result.columns()) {
+                    if (!first) json.append(',');
+                    first = false;
+                    json.append(jsonString(c));
+                }
+                json.append("],\"rows\":[");
+                first = true;
+                for (var row : result.rows()) {
+                    if (!first) json.append(',');
+                    first = false;
+                    json.append('[');
+                    boolean firstCell = true;
+                    for (Object cell : row) {
+                        if (!firstCell) json.append(',');
+                        firstCell = false;
+                        json.append(cell == null ? "null" : jsonString(String.valueOf(cell)));
+                    }
+                    json.append(']');
+                }
+                json.append("],\"rowCount\":").append(result.rowCount())
+                        .append(",\"truncated\":").append(result.truncated())
+                        .append(",\"tookMs\":").append(result.tookMs())
+                        .append('}');
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(json.toString());
+            } else {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("backends admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        } catch (IllegalArgumentException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+        }
+    }
+
+    private static com.polygres.wire.core.BackendTarget requireBackend(com.polygres.wire.core.BackendRegistry backendRegistry,
+            String name, HttpServletResponse response) throws java.io.IOException {
+        com.polygres.wire.core.BackendTarget t = backendRegistry.get(name);
+        if (t == null) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            response.getWriter().write("{\"error\":\"no such backend: " + name.replace("\"", "'") + "\"}");
+            return null;
+        }
+        return t;
+    }
+
     private static void writeRulesList(HttpServletResponse response, FirewallRuleStore store)
             throws java.sql.SQLException, java.io.IOException {
         StringBuilder json = new StringBuilder("[");
@@ -370,6 +512,19 @@ public final class MetricsServer {
                     .append(",\"calls\":").append(s.calls())
                     .append(",\"totalMs\":").append(s.totalMillis())
                     .append(",\"avgMs\":").append(s.avgMillis())
+                    .append('}');
+        }
+        json.append("],\"byBackend\":[");
+        first = true;
+        for (var b : snap.byBackend()) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"backend\":").append(jsonString(b.backend()))
+                    .append(",\"calls\":").append(b.calls())
+                    .append(",\"reads\":").append(b.reads())
+                    .append(",\"writes\":").append(b.writes())
+                    .append(",\"totalMs\":").append(b.totalMillis())
+                    .append(",\"avgMs\":").append(b.avgMillis())
                     .append('}');
         }
         json.append("]}");

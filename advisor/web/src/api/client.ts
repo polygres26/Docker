@@ -420,6 +420,15 @@ export interface WireMetricsSql {
   avgMs: number
 }
 
+export interface WireMetricsBackend {
+  backend: string
+  calls: number
+  reads: number
+  writes: number
+  totalMs: number
+  avgMs: number
+}
+
 export interface WireMetricsSummary {
   protocolCounts: Record<string, number>
   totalReads: number
@@ -428,8 +437,53 @@ export interface WireMetricsSummary {
   readsPerSec: number
   writesPerSec: number
   topSql: WireMetricsSql[]
+  byBackend: WireMetricsBackend[]
 }
 
 export async function getWireMetrics(): Promise<WireMetricsSummary> {
   return api('/api/wire/metrics/summary')
+}
+
+// --- PolyWire backend object browser + ad-hoc query console ---
+
+export interface BackendInfo {
+  name: string
+  jdbcUrl: string
+  dialect: string | null
+}
+
+export interface TableInfo {
+  schema: string
+  name: string
+  type: string
+}
+
+export interface ColumnInfo {
+  name: string
+  type: string
+  nullable: boolean
+}
+
+export interface QueryResult {
+  columns: string[]
+  rows: unknown[][]
+  rowCount: number
+  truncated: boolean
+  tookMs: number
+}
+
+export async function listBackends(): Promise<BackendInfo[]> {
+  return api('/api/wire/backends')
+}
+
+export async function listBackendTables(backend: string): Promise<TableInfo[]> {
+  return api(`/api/wire/backends/${encodeURIComponent(backend)}/tables`)
+}
+
+export async function listBackendColumns(backend: string, schema: string, table: string): Promise<ColumnInfo[]> {
+  return api(`/api/wire/backends/${encodeURIComponent(backend)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/columns`)
+}
+
+export async function runBackendQuery(backend: string, sql: string): Promise<QueryResult> {
+  return api(`/api/wire/backends/${encodeURIComponent(backend)}/query`, { method: 'POST', body: JSON.stringify({ sql }) })
 }

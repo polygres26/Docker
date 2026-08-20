@@ -31,6 +31,9 @@ public final class SqlMetricsCollector {
     public record SqlStat(String normalizedSql, long calls, long totalMillis, long avgMillis) {
     }
 
+    public record BackendStat(String backend, long calls, long reads, long writes, long totalMillis, long avgMillis) {
+    }
+
     public record Snapshot(
             Map<String, Long> protocolCounts,
             long totalReads,
@@ -38,7 +41,8 @@ public final class SqlMetricsCollector {
             long totalOther,
             double readsPerSec,
             double writesPerSec,
-            List<SqlStat> topSql) {
+            List<SqlStat> topSql,
+            List<BackendStat> byBackend) {
     }
 
     private static final class SqlEntry {
@@ -51,8 +55,16 @@ public final class SqlMetricsCollector {
         }
     }
 
+    private static final class BackendEntry {
+        final LongAdder calls = new LongAdder();
+        final LongAdder reads = new LongAdder();
+        final LongAdder writes = new LongAdder();
+        final LongAdder totalNanos = new LongAdder();
+    }
+
     private final ConcurrentHashMap<String, LongAdder> byProtocol = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, SqlEntry> sqlStats = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, BackendEntry> byBackend = new ConcurrentHashMap<>();
     private final LongAdder totalReads = new LongAdder();
     private final LongAdder totalWrites = new LongAdder();
     private final LongAdder totalOther = new LongAdder();
@@ -62,6 +74,16 @@ public final class SqlMetricsCollector {
     private final AtomicLong lastPollNanos = new AtomicLong(System.nanoTime());
 
     public void record(SourceDialect dialect, String sqlText, long elapsedNanos) {
+        record(dialect, null, sqlText, elapsedNanos);
+    }
+
+    /**
+     * @param backendName the resolved routing target (see {@code Statement#targetBackend()},
+     *      set by {@code RouterStage} earlier in the pipeline) -- {@code null} or blank folds
+     *      into {@code "default"} so single-backend deployments (no {@code POLYWIRE_BACKENDS}
+     *      configured) still get a per-backend row instead of disappearing from the breakdown.
+     */
+    public void record(SourceDialect dialect, String backendName, String sqlText, long elapsedNanos) {
         byProtocol.computeIfAbsent(protocolName(dialect), k -> new LongAdder()).increment();
 
         StatementKind kind = classify(sqlText);
@@ -69,6 +91,16 @@ public final class SqlMetricsCollector {
             case READ -> totalReads.increment();
             case WRITE -> totalWrites.increment();
             case OTHER -> totalOther.increment();
+        }
+
+        String backend = (backendName == null || backendName.isBlank()) ? "default" : backendName;
+        BackendEntry backendEntry = byBackend.computeIfAbsent(backend, k -> new BackendEntry());
+        backendEntry.calls.increment();
+        backendEntry.totalNanos.add(elapsedNanos);
+        if (kind == StatementKind.READ) {
+            backendEntry.reads.increment();
+        } else if (kind == StatementKind.WRITE) {
+            backendEntry.writes.increment();
         }
 
         String normalized = normalize(sqlText);
@@ -154,7 +186,17 @@ public final class SqlMetricsCollector {
         top.sort(Comparator.comparingLong(SqlStat::totalMillis).reversed());
         List<SqlStat> top10 = top.size() > 10 ? top.subList(0, 10) : top;
 
+        List<BackendStat> backendStats = new ArrayList<>();
+        for (var e : byBackend.entrySet()) {
+            BackendEntry be = e.getValue();
+            long calls = be.calls.sum();
+            long totalMs = be.totalNanos.sum() / 1_000_000;
+            long avgMs = calls == 0 ? 0 : totalMs / calls;
+            backendStats.add(new BackendStat(e.getKey(), calls, be.reads.sum(), be.writes.sum(), totalMs, avgMs));
+        }
+        backendStats.sort(Comparator.comparingLong(BackendStat::calls).reversed());
+
         return new Snapshot(protocolCounts, reads, writes, totalOther.sum(), readsPerSec, writesPerSec,
-                List.copyOf(top10));
+                List.copyOf(top10), List.copyOf(backendStats));
     }
 }

@@ -191,6 +191,56 @@ export default function WireMetrics() {
         </div>
       </div>
 
+      <div className={styles.card} style={{ marginBottom: 16 }}>
+        <div className={styles.cardHeadRow}>
+          <p className={styles.cardTitle}>Traffic by backend</p>
+        </div>
+        <p className={styles.cardSubtitle}>
+          Where statements actually landed, by routing target — see <Link to="/wire-backends">Backends</Link> to
+          change what's configured.
+        </p>
+        {metrics.byBackend.length === 0 ? (
+          <div className={styles.empty}>No traffic yet.</div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.sqlTable}>
+              <thead>
+                <tr>
+                  <th>Backend</th>
+                  <th style={{ textAlign: 'right' }}>Calls</th>
+                  <th style={{ textAlign: 'right' }}>Reads</th>
+                  <th style={{ textAlign: 'right' }}>Writes</th>
+                  <th style={{ textAlign: 'right' }}>Avg</th>
+                  <th style={{ textAlign: 'right' }}>Total cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.byBackend.map((b) => {
+                  const maxBackendCost = Math.max(1, ...metrics.byBackend.map((x) => x.totalMs))
+                  return (
+                    <tr key={b.backend}>
+                      <td className={styles.sqlText}>{b.backend}</td>
+                      <td className={styles.numCell}>{formatNumber(b.calls)}</td>
+                      <td className={styles.numCell}>{formatNumber(b.reads)}</td>
+                      <td className={styles.numCell}>{formatNumber(b.writes)}</td>
+                      <td className={styles.numCell}>{b.avgMs} ms</td>
+                      <td className={styles.numCell}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                          <span>{formatNumber(b.totalMs)} ms</span>
+                          <span className={styles.costBarTrack}>
+                            <span className={styles.costBarFill} style={{ width: `${(b.totalMs / maxBackendCost) * 100}%` }} />
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className={styles.card}>
         <div className={styles.cardHeadRow}>
           <p className={styles.cardTitle}>Top 10 SQL by cost</p>

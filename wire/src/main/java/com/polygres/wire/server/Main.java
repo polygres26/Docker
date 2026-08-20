@@ -203,7 +203,7 @@ public final class Main {
                 config.oauthIssuer(), config.oauthAudience(), config.oauthUserIdClaim(), config.oauthRolesClaim());
 
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate, oauth, firewallRuleStore, configStore);
+        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate, oauth, firewallRuleStore, configStore, backendRegistry);
         metricsServer.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();

@@ -38,7 +38,7 @@ public final class StatsCollectorStage implements PipelineStage {
             long elapsedNanos = System.nanoTime() - start;
             counters.statementCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
-            sqlMetrics.record(statement.sourceDialect(), statement.sqlText(), elapsedNanos);
+            sqlMetrics.record(statement.sourceDialect(), statement.targetBackend(), statement.sqlText(), elapsedNanos);
             record(statement.tenantId(), false, elapsedNanos);
             return result;
         } catch (SQLException e) {
@@ -46,7 +46,7 @@ public final class StatsCollectorStage implements PipelineStage {
             counters.statementCount().increment();
             counters.errorCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
-            sqlMetrics.record(statement.sourceDialect(), statement.sqlText(), elapsedNanos);
+            sqlMetrics.record(statement.sourceDialect(), statement.targetBackend(), statement.sqlText(), elapsedNanos);
             record(statement.tenantId(), true, elapsedNanos);
             log.debug("statement failed: tenant={} dialect={} error={}",
                     statement.tenantId(), statement.sourceDialect(), e.getMessage());
