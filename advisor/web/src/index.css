@@ -1,57 +1,55 @@
 /*
- * Design tokens, ported from Omnigate's web/src/index.css (~/Projects/Omnigate) so Polygres
- * Advisor shares its parent gateway's look and feel: same forest/teal palette, same ink-toned
- * neutrals with a faint sage cast, same soft-background badge style, same always-dark nav rail
- * identity (--rail-*). Values are copied as-is, not reinterpreted -- this is deliberately the
- * same system, not a same-family variant.
+ * Design tokens -- switched from the original forest/teal palette to a deep-blue "admin console"
+ * scheme (navy rail, cobalt accent) per direct design direction. Same token shape as before
+ * (--rail-* for the always-dark nav rail, --accent/--*-soft pairs for semantic states) so every
+ * component built against these names needed zero changes, just a new palette underneath.
  *
- * Severity tokens (--easy/--medium/--hard, used by the Findings dashboard) map onto Omnigate's
- * existing three semantic states rather than inventing a fourth palette: --easy = --accent
- * (teal-green already reads as "good"), --medium = --warn, --hard = --danger.
+ * Severity tokens (--easy/--medium/--hard, used by the Findings dashboard) still map onto the
+ * three semantic states: --easy = --accent, --medium = warm amber, --hard = red.
  */
 :root {
-  --bg: #eef1ef;
+  --bg: #eef1f6;
   --panel: #ffffff;
-  --text: #17211f;
-  --muted: #5b6864;
-  --border: #dde4e1;
-  --accent: #1f7a63;
-  --accent-strong: #15604d;
-  --accent-soft: #e4f2ed;
-  --hard: #b5453f;
-  --hard-soft: #fbeceb;
-  --medium: #a9772e;
-  --medium-soft: #fbf1e3;
+  --text: #172033;
+  --muted: #5c6b85;
+  --border: #dde3ef;
+  --accent: #2f5fb8;
+  --accent-strong: #24478f;
+  --accent-soft: #e6edfa;
+  --hard: #c0392b;
+  --hard-soft: #fbeae8;
+  --medium: #b9770e;
+  --medium-soft: #fbf1e0;
   --easy: var(--accent);
   --easy-soft: var(--accent-soft);
-  --shadow-sm: 0 1px 2px rgba(23, 33, 31, 0.06), 0 1px 1px rgba(23, 33, 31, 0.04);
-  --shadow-md: 0 8px 24px rgba(23, 33, 31, 0.08), 0 2px 6px rgba(23, 33, 31, 0.05);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.06);
 
-  /* The rail: constant across themes, same "instrument panel" reasoning as Omnigate's admin shell. */
-  --rail-bg: #14211e;
-  --rail-ink: #dce8e4;
-  --rail-ink-dim: #7f958e;
-  --rail-hover: #1d302b;
-  --rail-active: #23392f;
-  --rail-accent: #57cbb0;
-  --rail-rule: #223530;
+  /* The rail: constant across themes, always-dark "instrument panel" navy. */
+  --rail-bg: #101a2e;
+  --rail-ink: #dce6f7;
+  --rail-ink-dim: #7c8bab;
+  --rail-hover: #17253f;
+  --rail-active: #1d2f4f;
+  --rail-accent: #5b8ff0;
+  --rail-rule: #1c2a45;
 
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101513;
-    --panel: #171e1c;
-    --text: #e6ece9;
-    --muted: #95a49e;
-    --border: #263330;
-    --accent: #4fbfa2;
-    --accent-strong: #6cd4b8;
-    --accent-soft: #17322b;
-    --hard: #e2837c;
+    --bg: #0d1220;
+    --panel: #141b2e;
+    --text: #e6ecf9;
+    --muted: #93a1c2;
+    --border: #26314c;
+    --accent: #6c96e6;
+    --accent-strong: #8fb0ee;
+    --accent-soft: #1a2740;
+    --hard: #e58a7e;
     --hard-soft: #3a201e;
-    --medium: #d9a75a;
+    --medium: #dba85f;
     --medium-soft: #332508;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -59,19 +57,19 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #101513; --panel: #171e1c; --text: #e6ece9; --muted: #95a49e; --border: #263330;
-  --accent: #4fbfa2; --accent-strong: #6cd4b8; --accent-soft: #17322b;
-  --hard: #e2837c; --hard-soft: #3a201e; --medium: #d9a75a; --medium-soft: #332508;
+  --bg: #0d1220; --panel: #141b2e; --text: #e6ecf9; --muted: #93a1c2; --border: #26314c;
+  --accent: #6c96e6; --accent-strong: #8fb0ee; --accent-soft: #1a2740;
+  --hard: #e58a7e; --hard-soft: #3a201e; --medium: #dba85f; --medium-soft: #332508;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 :root[data-theme="light"] {
-  --bg: #eef1ef; --panel: #ffffff; --text: #17211f; --muted: #5b6864; --border: #dde4e1;
-  --accent: #1f7a63; --accent-strong: #15604d; --accent-soft: #e4f2ed;
-  --hard: #b5453f; --hard-soft: #fbeceb; --medium: #a9772e; --medium-soft: #fbf1e3;
-  --shadow-sm: 0 1px 2px rgba(23, 33, 31, 0.06), 0 1px 1px rgba(23, 33, 31, 0.04);
-  --shadow-md: 0 8px 24px rgba(23, 33, 31, 0.08), 0 2px 6px rgba(23, 33, 31, 0.05);
+  --bg: #eef1f6; --panel: #ffffff; --text: #172033; --muted: #5c6b85; --border: #dde3ef;
+  --accent: #2f5fb8; --accent-strong: #24478f; --accent-soft: #e6edfa;
+  --hard: #c0392b; --hard-soft: #fbeae8; --medium: #b9770e; --medium-soft: #fbf1e0;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
 * { box-sizing: border-box; }

@@ -1,84 +1,88 @@
-/* Ported from Omnigate's Admin.module.css rail/topbar (~/Projects/Omnigate/web/src/pages/admin) --
-   same always-dark icon rail, same "instrument panel" identity, scoped down to the one nav group
-   Advisor actually has today. */
+/* Wide, labeled, grouped sidebar -- replaces the earlier icon-only-with-tooltip rail now that
+   there are enough destinations (4 Advisor + 7 Wire) that hover-to-discover stopped scaling.
+   Structure: brand mark, then named sections ("Advisor", "PolyWire") each with a small caption
+   label, matching the grouped-sidebar pattern in the reference admin themes this was modeled on. */
 
 .shell { display: flex; min-height: 100%; }
 
 .rail {
-  width: 60px;
+  width: 220px;
   flex: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 14px 0;
+  padding: 16px 12px;
   background: var(--rail-bg);
+  overflow-y: auto;
+}
+
+.railBrand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 18px;
 }
 
 .railMark {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   background: var(--rail-accent);
   color: var(--rail-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  font-size: 12px;
-  margin-bottom: 18px;
+  font-size: 13px;
+  flex: none;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
-.railGroup { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; }
+.railBrandText { display: flex; flex-direction: column; line-height: 1.2; }
+.railBrandTitle { color: var(--rail-ink); font-weight: 700; font-size: 13.5px; }
+.railBrandSub { color: var(--rail-ink-dim); font-size: 10.5px; }
+
+.railSection { margin-bottom: 4px; }
+
+.railSectionLabel {
+  color: var(--rail-ink-dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 14px 10px 6px;
+}
+
+.railGroup { display: flex; flex-direction: column; gap: 2px; }
 
 .railSpacer { flex: 1; }
 
 .railItem {
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
   color: var(--rail-ink-dim);
-  position: relative;
   text-decoration: none;
+  font-size: 13.5px;
+  white-space: nowrap;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
 }
 
 .railItem:hover { background: var(--rail-hover); color: var(--rail-ink); }
 
-.railItemActive { background: var(--rail-active); color: var(--rail-accent); }
+.railItemActive { background: var(--rail-active); color: var(--rail-ink); font-weight: 600; }
 
-.railItemActive::before {
-  content: "";
-  position: absolute;
-  left: -14px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--rail-accent);
+.railItemActive svg { color: var(--rail-accent); }
+
+.railDivider {
+  height: 1px;
+  background: var(--rail-rule);
+  margin: 10px 4px;
 }
-
-.railTip {
-  position: absolute;
-  left: 52px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--rail-active);
-  color: var(--rail-ink);
-  font-size: 11.5px;
-  padding: 5px 9px;
-  border-radius: 6px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s;
-  box-shadow: var(--shadow-md);
-  z-index: 5;
-}
-
-.railItem:hover .railTip { opacity: 1; }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
