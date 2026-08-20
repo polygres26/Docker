@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.polygres.wire.config.ConfigStore;
 import com.polygres.wire.config.FirewallRuleStore;
+import com.polygres.wire.config.PolyWireConfig;
 import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.StatsCollectorStage;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,9 +22,13 @@ import org.slf4j.LoggerFactory;
  * The admin HTTP surface: {@code /metrics} (Prometheus text), {@code /config} (read-only current
  * config snapshot), and -- when a {@link FirewallRuleStore} is supplied -- a real CRUD API for SQL
  * Firewall rules under {@code /api/firewall-rules}, guarded by a bearer token
- * ({@code POLYWIRE_ADMIN_TOKEN}). Meant to be called server-to-server (e.g. by PolyAdvisor's own
- * backend, proxying on behalf of an already-authenticated admin session), not directly from a
- * browser -- there's no CORS handling and no session/cookie machinery here on purpose.
+ * ({@code POLYWIRE_ADMIN_TOKEN}). When a {@link ConfigStore} is also supplied, {@code /api/acl-rules}
+ * exposes the ACL (IP/CIDR allow/reject) rules living inside {@code polywire_config.aclRules} as
+ * their own GET/PUT resource -- a write there appends a new {@code polywire_config} version, the
+ * same LISTEN/NOTIFY path every other config field already reloads through. Meant to be called
+ * server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of an already-authenticated
+ * admin session), not directly from a browser -- there's no CORS handling and no session/cookie
+ * machinery here on purpose.
  */
 public final class MetricsServer {
 
@@ -56,6 +61,13 @@ public final class MetricsServer {
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
             Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore, null);
+    }
+
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -96,6 +108,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleFirewallRules(target, request, response, firewallRuleStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (configStore != null && "/api/acl-rules".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleAclRules(request, response, configStore);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -172,6 +196,54 @@ public final class MetricsServer {
             }
         } catch (java.sql.SQLException e) {
             log.warn("firewall-rules admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        } catch (IllegalArgumentException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+        }
+    }
+
+    private static void handleAclRules(HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        try {
+            if ("GET".equals(request.getMethod())) {
+                PolyWireConfig current = configStore.readLatest()
+                        .map(ConfigStore.Version::payload)
+                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"aclRules\":" + jsonString(current.aclRules())
+                        + ",\"aclPpv2Enabled\":" + jsonString(current.aclPpv2Enabled())
+                        + ",\"aclTrustedProxies\":" + jsonString(current.aclTrustedProxies()) + "}");
+            } else if ("PUT".equals(request.getMethod())) {
+                JsonObject body = readJsonBody(request);
+                PolyWireConfig current = configStore.readLatest()
+                        .map(ConfigStore.Version::payload)
+                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                PolyWireConfig updated = new PolyWireConfig(
+                        current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
+                        current.qosClassLimits(), current.qosPoolWaitThreshold(),
+                        current.cacheTables(), current.cacheTtlMs(),
+                        current.backends(), current.shardBackends(),
+                        current.routerSchemaRules(), current.routerPredicateRules(),
+                        current.routerValueShardRules(), current.routerShardTables(),
+                        current.rollupDefinitionsYaml(),
+                        body.has("aclRules") ? optionalString(body, "aclRules") : current.aclRules(),
+                        body.has("aclPpv2Enabled") ? optionalString(body, "aclPpv2Enabled") : current.aclPpv2Enabled(),
+                        body.has("aclTrustedProxies") ? optionalString(body, "aclTrustedProxies") : current.aclTrustedProxies(),
+                        current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
+                        current.oauthRolesClaim(), current.awsIamCredentials());
+                com.polygres.wire.acl.ClientAcl.parse(updated.aclRules());
+                long version = configStore.write(updated);
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"ok\":true,\"version\":" + version + "}");
+            } else {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("acl-rules admin API: database error", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
         } catch (IllegalArgumentException e) {

@@ -371,3 +371,22 @@ export async function updateFirewallRule(id: number, rule: {
 export async function deleteFirewallRule(id: number): Promise<void> {
   await api(`/api/wire/firewall-rules/${id}`, { method: 'DELETE' })
 }
+
+// --- PolyWire ACL (IP/CIDR allow/reject) rules ---
+// Unlike firewall rules (one row per rule), ACL rules live as a single semicolon-delimited
+// spec string inside polywire_config -- see com.polygres.wire.acl.ClientAcl's own parser, which
+// this page's format string must stay compatible with.
+
+export interface AclSettings {
+  aclRules: string | null
+  aclPpv2Enabled: string | null
+  aclTrustedProxies: string | null
+}
+
+export async function getAclSettings(): Promise<AclSettings> {
+  return api('/api/wire/acl-rules')
+}
+
+export async function saveAclSettings(settings: AclSettings): Promise<{ ok: boolean; version: number }> {
+  return api('/api/wire/acl-rules', { method: 'PUT', body: JSON.stringify(settings) })
+}

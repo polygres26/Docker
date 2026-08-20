@@ -13,6 +13,7 @@ import ReportDetail from './pages/ReportDetail'
 import Sizing from './pages/Sizing'
 import WireSettings from './pages/WireSettings'
 import WireFirewallRules from './pages/WireFirewallRules'
+import WireAclRules from './pages/WireAclRules'
 
 /** Gate: redirects to /login unless a valid admin session cookie is present, then wraps the page in the rail/topbar shell. Checked once per mount via GET /api/session (never triggers a 401 itself). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,7 @@ export default function App() {
       <Route path="/report" element={<RequireAuth><Report /></RequireAuth>} />
       <Route path="/wire-settings" element={<RequireAuth><WireSettings /></RequireAuth>} />
       <Route path="/wire-firewall" element={<RequireAuth><WireFirewallRules /></RequireAuth>} />
+      <Route path="/wire-acl" element={<RequireAuth><WireAclRules /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/connections" replace />} />
     </Routes>
   )

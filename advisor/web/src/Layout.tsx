@@ -1,4 +1,4 @@
-import { Cpu, Database, FileUp, Gauge, LogOut, Shield } from 'lucide-react'
+import { Cpu, Database, FileUp, Gauge, LogOut, Network, Shield } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
 import styles from './Layout.module.css'
@@ -63,6 +63,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Shield size={19} strokeWidth={1.8} />
             <span className={styles.railTip}>Wire: SQL Firewall</span>
+          </NavLink>
+          <NavLink
+            to="/wire-acl"
+            title="Wire: ACL"
+            className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}
+          >
+            <Network size={19} strokeWidth={1.8} />
+            <span className={styles.railTip}>Wire: ACL</span>
           </NavLink>
         </div>
         <div className={styles.railSpacer} />
