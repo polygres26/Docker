@@ -135,6 +135,14 @@ public final class PolyWireProcess implements AutoCloseable {
             drain.start();
 
             waitForHttpReady(metricsPort, Duration.ofSeconds(30));
+            // /metrics starts early in Main's setup, before every protocol listener thread has
+            // necessarily started (each frontend binds on its own thread, in sequence) -- so it
+            // alone isn't proof the frontend under test is actually accepting connections yet.
+            // Found live: a real ojdbc11 client connecting to orawire (one of the later listeners
+            // to start) got ORA-12541/connection-refused even though /metrics was already up.
+            for (int port : ports.values()) {
+                waitForTcpReady(port, Duration.ofSeconds(30));
+            }
             return new PolyWireProcess(process, metricsPort, Map.copyOf(ports));
         }
 
@@ -155,6 +163,20 @@ public final class PolyWireProcess implements AutoCloseable {
                 Thread.sleep(200);
             }
             throw new IllegalStateException("PolyWire did not become ready within " + timeout);
+        }
+
+        private static void waitForTcpReady(int port, Duration timeout) throws InterruptedException {
+            Instant deadline = Instant.now().plus(timeout);
+            while (Instant.now().isBefore(deadline)) {
+                try (java.net.Socket socket = new java.net.Socket()) {
+                    socket.connect(new java.net.InetSocketAddress("localhost", port), 500);
+                    return;
+                } catch (IOException notReadyYet) {
+                    // fall through to retry
+                }
+                Thread.sleep(200);
+            }
+            throw new IllegalStateException("PolyWire frontend on port " + port + " did not become ready within " + timeout);
         }
     }
 

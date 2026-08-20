@@ -309,3 +309,65 @@ export async function runConnectionSizing(id: string): Promise<SizingRecommendat
 export async function runReportsSizing(ids: string[]): Promise<SizingRecommendation> {
   return api('/api/reports/sizing', { method: 'POST', body: JSON.stringify({ ids }) })
 }
+
+// --- PolyWire connection + management ---
+// The browser only ever talks to these Advisor routes; Advisor's own backend proxies to
+// PolyWire's admin API server-to-server, so PolyWire's admin token never reaches the browser.
+
+export interface WireConnectionStatus {
+  adminUrl: string | null
+  hasToken: boolean
+  configured: boolean
+}
+
+export async function getWireSettings(): Promise<WireConnectionStatus> {
+  return api('/api/wire-settings')
+}
+
+export async function saveWireSettings(adminUrl: string, adminToken: string): Promise<WireConnectionStatus> {
+  return api('/api/wire-settings', { method: 'PUT', body: JSON.stringify({ adminUrl, adminToken }) })
+}
+
+export interface FirewallRule {
+  id: number
+  priority: number
+  action: 'allow' | 'deny'
+  statementType: string | null
+  tablePattern: string | null
+  sqlPattern: string | null
+  enabled: boolean
+  description: string | null
+  createdAt: string
+}
+
+export async function listFirewallRules(): Promise<FirewallRule[]> {
+  return api('/api/wire/firewall-rules')
+}
+
+export async function createFirewallRule(rule: {
+  priority: number
+  action: 'allow' | 'deny'
+  statementType?: string
+  tablePattern?: string
+  sqlPattern?: string
+  enabled: boolean
+  description?: string
+}): Promise<{ id: number }> {
+  return api('/api/wire/firewall-rules', { method: 'POST', body: JSON.stringify(rule) })
+}
+
+export async function updateFirewallRule(id: number, rule: {
+  priority: number
+  action: 'allow' | 'deny'
+  statementType?: string
+  tablePattern?: string
+  sqlPattern?: string
+  enabled: boolean
+  description?: string
+}): Promise<void> {
+  await api(`/api/wire/firewall-rules/${id}`, { method: 'PUT', body: JSON.stringify(rule) })
+}
+
+export async function deleteFirewallRule(id: number): Promise<void> {
+  await api(`/api/wire/firewall-rules/${id}`, { method: 'DELETE' })
+}

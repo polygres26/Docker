@@ -59,6 +59,75 @@ public final class FirewallRuleStore implements AutoCloseable {
         }
     }
 
+    /** Admin-facing row shape (raw DB values, not compiled Patterns) -- for the admin API/UI, not the pipeline. */
+    public record AdminRow(long id, int priority, String action, String statementType, String tablePattern,
+            String sqlPattern, boolean enabled, String description, String createdAt) {
+    }
+
+    public List<AdminRow> listAll() throws SQLException {
+        List<AdminRow> rows = new ArrayList<>();
+        try (Connection conn = PgConnections.open(options);
+                Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery(
+                        "SELECT id, priority, action, statement_type, table_pattern, sql_pattern, enabled, "
+                                + "description, created_at FROM polywire_firewall_rules ORDER BY priority, id")) {
+            while (rs.next()) {
+                rows.add(new AdminRow(rs.getLong("id"), rs.getInt("priority"), rs.getString("action"),
+                        rs.getString("statement_type"), rs.getString("table_pattern"), rs.getString("sql_pattern"),
+                        rs.getBoolean("enabled"), rs.getString("description"),
+                        String.valueOf(rs.getTimestamp("created_at"))));
+            }
+        }
+        return rows;
+    }
+
+    public long insert(int priority, String action, String statementType, String tablePattern, String sqlPattern,
+            boolean enabled, String description) throws SQLException {
+        try (Connection conn = PgConnections.open(options);
+                java.sql.PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO polywire_firewall_rules (priority, action, statement_type, table_pattern, "
+                                + "sql_pattern, enabled, description) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id")) {
+            ps.setInt(1, priority);
+            ps.setString(2, action);
+            ps.setString(3, statementType);
+            ps.setString(4, tablePattern);
+            ps.setString(5, sqlPattern);
+            ps.setBoolean(6, enabled);
+            ps.setString(7, description);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    public boolean update(long id, int priority, String action, String statementType, String tablePattern,
+            String sqlPattern, boolean enabled, String description) throws SQLException {
+        try (Connection conn = PgConnections.open(options);
+                java.sql.PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE polywire_firewall_rules SET priority = ?, action = ?, statement_type = ?, "
+                                + "table_pattern = ?, sql_pattern = ?, enabled = ?, description = ? WHERE id = ?")) {
+            ps.setInt(1, priority);
+            ps.setString(2, action);
+            ps.setString(3, statementType);
+            ps.setString(4, tablePattern);
+            ps.setString(5, sqlPattern);
+            ps.setBoolean(6, enabled);
+            ps.setString(7, description);
+            ps.setLong(8, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    public boolean delete(long id) throws SQLException {
+        try (Connection conn = PgConnections.open(options);
+                java.sql.PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM polywire_firewall_rules WHERE id = ?")) {
+            ps.setLong(1, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
     public List<FirewallStage.Rule> readRules() throws SQLException {
         List<FirewallStage.Rule> rules = new ArrayList<>();
         try (Connection conn = PgConnections.open(options);

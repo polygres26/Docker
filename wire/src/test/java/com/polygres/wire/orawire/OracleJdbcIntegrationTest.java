@@ -1,0 +1,101 @@
+package com.polygres.wire.orawire;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.polygres.wire.testsupport.PolyWireProcess;
+import com.polygres.wire.testsupport.RealPostgres;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+/**
+ * End-to-end proof that a real Oracle JDBC client (ojdbc11's thin driver, real TNS/TTC/O5LOGON
+ * wire protocol, not just python-oracledb) gets correct results through orawire's SQL dialect
+ * translation into a real Postgres backend -- real subprocess, real Postgres container, no mocks.
+ * Complements {@code tests/python/test_orawire.py}'s python-oracledb coverage with a second, JDBC
+ * client to prove the wire protocol isn't only correct for one implementation's own quirks.
+ */
+class OracleJdbcIntegrationTest {
+
+    private static RealPostgres postgres;
+    private static PolyWireProcess polywire;
+
+    @BeforeAll
+    static void startInfra() throws Exception {
+        postgres = RealPostgres.start();
+        polywire = PolyWireProcess.builder()
+                .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
+                .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                .start();
+    }
+
+    @AfterAll
+    static void stopInfra() {
+        if (polywire != null) {
+            polywire.close();
+        }
+        if (postgres != null) {
+            postgres.close();
+        }
+    }
+
+    private Connection connect() throws SQLException {
+        String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+        return DriverManager.getConnection(url, postgres.username(), postgres.password());
+    }
+
+    @Test
+    void select() throws SQLException {
+        try (Connection conn = connect();
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT 21 * 2 FROM DUAL")) {
+            assertTrue(rs.next());
+            assertEquals(42, rs.getInt(1));
+        }
+    }
+
+    @Test
+    void insertUpdateDeleteRoundTrip() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE ojdbc_it (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+                conn.commit();
+
+                stmt.executeUpdate("INSERT INTO ojdbc_it (id, name) VALUES (1, 'alpha')");
+                stmt.executeUpdate("INSERT INTO ojdbc_it (id, name) VALUES (2, 'beta')");
+                conn.commit();
+
+                stmt.executeUpdate("UPDATE ojdbc_it SET name = 'alpha-updated' WHERE id = 1");
+                conn.commit();
+
+                try (ResultSet rs = stmt.executeQuery("SELECT name FROM ojdbc_it WHERE id = 1")) {
+                    assertTrue(rs.next());
+                    assertEquals("alpha-updated", rs.getString(1));
+                }
+
+                stmt.executeUpdate("DELETE FROM ojdbc_it WHERE id = 2");
+                conn.commit();
+
+                try (ResultSet rs = stmt.executeQuery("SELECT count(*) FROM ojdbc_it")) {
+                    assertTrue(rs.next());
+                    assertEquals(1, rs.getInt(1));
+                }
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE ojdbc_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
+}
