@@ -116,6 +116,17 @@ public final class MetricsServer {
                     return;
                 }
                 if ("/config".equals(target)) {
+                    // Unlike /metrics (Prometheus counters, no secrets), this returns the full
+                    // config -- including the backends field's embedded password and
+                    // awsIamCredentials -- decrypted. Gated like every other config-bearing
+                    // route, not left open; nothing internal ever relied on this being public.
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(renderConfig(currentVersionSupplier));
