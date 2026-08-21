@@ -26,11 +26,20 @@ public final class PolyWireTelemetry {
     private final DoubleHistogram latencyHistogram;
     private final LongCounter qosAdmittedCounter;
     private final LongCounter qosRejectedCounter;
+    private final Meter meter;
 
-    private PolyWireTelemetry(String otlpEndpoint, long exportIntervalMs) {
-        OtlpGrpcMetricExporter exporter = OtlpGrpcMetricExporter.builder()
-                .setEndpoint(otlpEndpoint)
-                .build();
+    private static final AttributeKey<String> PROTOCOL = AttributeKey.stringKey("protocol");
+    private static final AttributeKey<String> BACKEND = AttributeKey.stringKey("backend");
+    private static final AttributeKey<String> KIND = AttributeKey.stringKey("kind");
+
+    private PolyWireTelemetry(String otlpEndpoint, long exportIntervalMs, java.util.Map<String, String> headers) {
+        var exporterBuilder = OtlpGrpcMetricExporter.builder().setEndpoint(otlpEndpoint);
+        // SaaS OTLP endpoints (New Relic's otlp.nr-data.net, Datadog's own OTLP intake if not
+        // routing through a local Agent) need an API-key header on every export request -- a
+        // local collector/agent (the more common enterprise pattern) needs none, hence this being
+        // optional rather than assumed.
+        headers.forEach(exporterBuilder::addHeader);
+        OtlpGrpcMetricExporter exporter = exporterBuilder.build();
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
                 .registerMetricReader(PeriodicMetricReader.builder(exporter)
                         .setInterval(Duration.ofMillis(exportIntervalMs))
@@ -72,7 +81,60 @@ public final class PolyWireTelemetry {
                     }
                 });
 
-        log.info("OpenTelemetry metrics export enabled: OTLP/gRPC to {} every {}ms", otlpEndpoint, exportIntervalMs);
+        this.meter = meter;
+        log.info("OpenTelemetry metrics export enabled: OTLP/gRPC to {} every {}ms{}", otlpEndpoint, exportIntervalMs,
+                headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)");
+    }
+
+    /**
+     * Registers the wire-protocol-traffic / per-backend / read-write metrics from {@link
+     * com.polygres.wire.core.SqlMetricsCollector} as async OTel gauges, reporting whatever {@code
+     * snapshotSupplier} returns at each export tick -- same pattern as the pool-stats gauges
+     * above, and the same reasoning: these are cumulative counters read from a live collector,
+     * not values this class accumulates itself, so an observable gauge reporting the current
+     * total is simpler and just as correct as threading a LongCounter.add() call through every
+     * call site that already has direct access to the collector.
+     */
+    public void attachSqlMetrics(java.util.function.Supplier<com.polygres.wire.core.SqlMetricsCollector.Snapshot> snapshotSupplier) {
+        meter.gaugeBuilder("polywire.protocol.statements").ofLongs()
+                .setDescription("Statements handled per wire protocol since process start.")
+                .buildWithCallback(measurement -> {
+                    var snap = snapshotSupplier.get();
+                    snap.protocolCounts().forEach((protocol, count) -> measurement.record(count, Attributes.of(PROTOCOL, protocol)));
+                });
+        meter.gaugeBuilder("polywire.statements.by_kind").ofLongs()
+                .setDescription("Statements by read/write/other classification since process start.")
+                .buildWithCallback(measurement -> {
+                    var snap = snapshotSupplier.get();
+                    measurement.record(snap.totalReads(), Attributes.of(KIND, "read"));
+                    measurement.record(snap.totalWrites(), Attributes.of(KIND, "write"));
+                    measurement.record(snap.totalOther(), Attributes.of(KIND, "other"));
+                });
+        meter.gaugeBuilder("polywire.statements.rate")
+                .setDescription("Reads/writes per second, computed since the previous export tick.")
+                .setUnit("1/s")
+                .buildWithCallback(measurement -> {
+                    var snap = snapshotSupplier.get();
+                    measurement.record(snap.readsPerSec(), Attributes.of(KIND, "read"));
+                    measurement.record(snap.writesPerSec(), Attributes.of(KIND, "write"));
+                });
+        meter.gaugeBuilder("polywire.backend.statements").ofLongs()
+                .setDescription("Statements routed to each backend since process start.")
+                .buildWithCallback(measurement -> {
+                    var snap = snapshotSupplier.get();
+                    for (var b : snap.byBackend()) {
+                        measurement.record(b.calls(), Attributes.of(BACKEND, b.backend()));
+                    }
+                });
+        meter.gaugeBuilder("polywire.backend.statement_duration_total")
+                .setDescription("Cumulative execution time of statements routed to each backend.")
+                .setUnit("s")
+                .buildWithCallback(measurement -> {
+                    var snap = snapshotSupplier.get();
+                    for (var b : snap.byBackend()) {
+                        measurement.record(b.totalMillis() / 1000.0, Attributes.of(BACKEND, b.backend()));
+                    }
+                });
     }
 
     public void recordStatement(String tenant, boolean failed, double durationSeconds) {
@@ -95,11 +157,34 @@ public final class PolyWireTelemetry {
             return null;
         }
         long intervalMs = parseLongEnv("POLYWIRE_OTEL_EXPORT_INTERVAL_MS", 5_000);
-        return new PolyWireTelemetry(endpoint, intervalMs);
+        return new PolyWireTelemetry(endpoint, intervalMs, parseHeaders(System.getenv("POLYWIRE_OTEL_HEADERS")));
     }
 
     private static long parseLongEnv(String name, long defaultValue) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? defaultValue : Long.parseLong(value);
+    }
+
+    /**
+     * {@code POLYWIRE_OTEL_HEADERS="api-key=NRAK-xxx,x-other=value"} -- comma-separated
+     * {@code key=value} pairs sent as gRPC metadata on every export request. This is how a SaaS
+     * OTLP endpoint that skips a local collector authenticates the export (New Relic's
+     * {@code api-key} header, for instance); unset means no headers, appropriate when
+     * POLYWIRE_OTEL_ENDPOINT points at a local collector/agent that needs none.
+     */
+    private static java.util.Map<String, String> parseHeaders(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+        for (String pair : spec.split(",")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0) {
+                log.warn("POLYWIRE_OTEL_HEADERS: skipping malformed entry (expected key=value): {}", pair);
+                continue;
+            }
+            headers.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+        }
+        return headers;
     }
 }

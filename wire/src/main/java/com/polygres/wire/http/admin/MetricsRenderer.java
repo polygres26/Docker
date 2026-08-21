@@ -48,6 +48,44 @@ public final class MetricsRenderer {
             qosStage.snapshot().forEach((key, counters) -> appendQosSeries(out, "polywire_qos_rejected_total", key, counters.rejected().sum()));
         }
 
+        // Protocol/backend/read-write breakdown from SqlMetricsCollector -- the same numbers the
+        // Advisor "Wire traffic" dashboard shows, now on the same path every hyperscaler and APM
+        // platform already knows how to scrape. Deliberately does NOT expose the top-10-SQL data
+        // here: normalized SQL text as a label value would be unbounded cardinality, which is
+        // exactly what a Prometheus-style time series database is bad at -- that data stays in
+        // /api/metrics/summary, where it's a bounded JSON list, not a metric series.
+        var sqlSnap = statsStage.sqlMetricsSnapshot();
+
+        out.append("# HELP polywire_protocol_statements_total Statements handled per wire protocol.\n");
+        out.append("# TYPE polywire_protocol_statements_total counter\n");
+        sqlSnap.protocolCounts().forEach((protocol, count) ->
+                out.append("polywire_protocol_statements_total{protocol=\"").append(escape(protocol)).append("\"} ")
+                        .append(count).append('\n'));
+
+        out.append("# HELP polywire_statements_by_kind_total Statements by read/write/other classification.\n");
+        out.append("# TYPE polywire_statements_by_kind_total counter\n");
+        out.append("polywire_statements_by_kind_total{kind=\"read\"} ").append(sqlSnap.totalReads()).append('\n');
+        out.append("polywire_statements_by_kind_total{kind=\"write\"} ").append(sqlSnap.totalWrites()).append('\n');
+        out.append("polywire_statements_by_kind_total{kind=\"other\"} ").append(sqlSnap.totalOther()).append('\n');
+
+        out.append("# HELP polywire_statements_rate Reads/writes per second since the previous /metrics scrape.\n");
+        out.append("# TYPE polywire_statements_rate gauge\n");
+        out.append("polywire_statements_rate{kind=\"read\"} ")
+                .append(String.format(Locale.ROOT, "%.4f", sqlSnap.readsPerSec())).append('\n');
+        out.append("polywire_statements_rate{kind=\"write\"} ")
+                .append(String.format(Locale.ROOT, "%.4f", sqlSnap.writesPerSec())).append('\n');
+
+        out.append("# HELP polywire_backend_statements_total Statements routed to each backend.\n");
+        out.append("# TYPE polywire_backend_statements_total counter\n");
+        out.append("# HELP polywire_backend_statement_duration_seconds_total Cumulative execution time per backend.\n");
+        out.append("# TYPE polywire_backend_statement_duration_seconds_total counter\n");
+        for (var b : sqlSnap.byBackend()) {
+            out.append("polywire_backend_statements_total{backend=\"").append(escape(b.backend())).append("\"} ")
+                    .append(b.calls()).append('\n');
+            out.append("polywire_backend_statement_duration_seconds_total{backend=\"").append(escape(b.backend())).append("\"} ")
+                    .append(String.format(Locale.ROOT, "%.6f", b.totalMillis() / 1000.0)).append('\n');
+        }
+
         return out.toString();
     }
 

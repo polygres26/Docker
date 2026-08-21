@@ -153,6 +153,9 @@ public final class Main {
                 initialRollupDefinitions.size(), initialVersion.version());
 
         StatsCollectorStage statsStage = new StatsCollectorStage(telemetry);
+        if (telemetry != null) {
+            telemetry.attachSqlMetrics(statsStage::sqlMetricsSnapshot);
+        }
 
         List<PipelineStage> stages = new ArrayList<>();
 
