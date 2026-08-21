@@ -33,6 +33,10 @@ import org.slf4j.LoggerFactory;
  * expose {@link com.polygres.wire.core.DataExplorer}'s object browser and ad-hoc query console --
  * see that class's javadoc for why this deliberately bypasses the wire pipeline (Firewall/ACL
  * don't apply to it) and why that's fine given it's gated the same way as everything else here.
+ * {@code POST /api/backends/test} probes a candidate jdbcUrl/user/password (never persisted --
+ * pure connectivity check) via {@link com.polygres.wire.core.BackendConnectivityTest}; {@code
+ * POST /api/backends/{name}/test} runs the same probe against an already-configured backend's
+ * live credentials, for a "is this still reachable" re-check.
  * Meant to be called server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of
  * an already-authenticated admin session), not directly from a browser -- there's no CORS
  * handling and no session/cookie machinery here on purpose.
@@ -44,6 +48,7 @@ public final class MetricsServer {
     private static final Pattern BACKEND_TABLES_PATH = Pattern.compile("^/api/backends/([^/]+)/tables$");
     private static final Pattern BACKEND_COLUMNS_PATH = Pattern.compile("^/api/backends/([^/]+)/tables/([^/]+)/([^/]+)/columns$");
     private static final Pattern BACKEND_QUERY_PATH = Pattern.compile("^/api/backends/([^/]+)/query$");
+    private static final Pattern BACKEND_TEST_NAMED_PATH = Pattern.compile("^/api/backends/([^/]+)/test$");
 
     private final Server server;
 
@@ -317,8 +322,37 @@ public final class MetricsServer {
             Matcher tablesMatch = BACKEND_TABLES_PATH.matcher(target);
             Matcher columnsMatch = BACKEND_COLUMNS_PATH.matcher(target);
             Matcher queryMatch = BACKEND_QUERY_PATH.matcher(target);
+            Matcher testNamedMatch = BACKEND_TEST_NAMED_PATH.matcher(target);
 
-            if ("/api/backends".equals(target) && "GET".equals(request.getMethod())) {
+            if ("/api/backends/test".equals(target) && "POST".equals(request.getMethod())) {
+                // Test-before-add: params the caller is considering, not anything already in
+                // polywire_config -- this never touches BackendRegistry or writes anything.
+                JsonObject body = readJsonBody(request);
+                if (!body.has("jdbcUrl") || body.get("jdbcUrl").getAsString().isBlank()) {
+                    throw new IllegalArgumentException("jdbcUrl is required");
+                }
+                var result = com.polygres.wire.core.BackendConnectivityTest.test(
+                        body.get("jdbcUrl").getAsString(),
+                        optionalString(body, "user"),
+                        optionalString(body, "password"));
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"ok\":" + result.ok()
+                        + ",\"message\":" + jsonString(result.message())
+                        + ",\"tookMs\":" + result.tookMs()
+                        + ",\"serverVersion\":" + jsonString(result.serverVersion()) + "}");
+            } else if (testNamedMatch.matches() && "POST".equals(request.getMethod())) {
+                // Re-check an already-configured backend -- same probe, but reading the
+                // jdbcUrl/user/password straight out of the live registry instead of the request
+                // body, so the Backends page can offer a "test" action per already-saved entry.
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, testNamedMatch.group(1), response);
+                if (t == null) return;
+                var result = com.polygres.wire.core.BackendConnectivityTest.test(t.jdbcUrl(), t.user(), t.password());
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"ok\":" + result.ok()
+                        + ",\"message\":" + jsonString(result.message())
+                        + ",\"tookMs\":" + result.tookMs()
+                        + ",\"serverVersion\":" + jsonString(result.serverVersion()) + "}");
+            } else if ("/api/backends".equals(target) && "GET".equals(request.getMethod())) {
                 StringBuilder json = new StringBuilder("[");
                 boolean first = true;
                 for (com.polygres.wire.core.BackendTarget t : backendRegistry.all()) {

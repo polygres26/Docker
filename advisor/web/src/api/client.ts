@@ -487,3 +487,20 @@ export async function listBackendColumns(backend: string, schema: string, table:
 export async function runBackendQuery(backend: string, sql: string): Promise<QueryResult> {
   return api(`/api/wire/backends/${encodeURIComponent(backend)}/query`, { method: 'POST', body: JSON.stringify({ sql }) })
 }
+
+// --- PolyWire backend connectivity test ---
+
+export interface BackendTestResult {
+  ok: boolean
+  message: string
+  tookMs: number
+  serverVersion: string | null
+}
+
+export async function testBackendConnection(params: { jdbcUrl: string; user: string; password: string }): Promise<BackendTestResult> {
+  return api('/api/wire/backends/test', { method: 'POST', body: JSON.stringify(params) })
+}
+
+export async function testConfiguredBackend(name: string): Promise<BackendTestResult> {
+  return api(`/api/wire/backends/${encodeURIComponent(name)}/test`, { method: 'POST' })
+}
