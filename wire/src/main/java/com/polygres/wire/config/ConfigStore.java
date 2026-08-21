@@ -50,7 +50,7 @@ public final class ConfigStore implements AutoCloseable {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO polywire_config (payload) VALUES (?::jsonb) RETURNING version")) {
-            ps.setString(1, config.toJson());
+            ps.setString(1, encryptSecretFields(config).toJson());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getLong(1);
@@ -67,10 +67,40 @@ public final class ConfigStore implements AutoCloseable {
                 return Optional.empty();
             }
             long version = rs.getLong(1);
-            PolyWireConfig payload = PolyWireConfig.fromJson(rs.getString(2));
+            PolyWireConfig payload = decryptSecretFields(PolyWireConfig.fromJson(rs.getString(2)));
             java.time.Instant createdAt = rs.getTimestamp(3).toInstant();
             return Optional.of(new Version(version, payload, createdAt));
         }
+    }
+
+    // Only these two fields ever carry a credential -- backends' "name=url|user|password" spec
+    // embeds a literal password inline, and awsIamCredentials is exactly what it sounds like.
+    // Everything else in PolyWireConfig (QoS, router rules, ACL, OAuth issuer/audience/claims) is
+    // config, not secret, and stays as plain JSON so the column's still a real jsonb document a
+    // human can read by eye. See com.polygres.wire.secrets.FieldCipher's javadoc for the
+    // encv1:-prefix / plaintext-passthrough scheme that makes this a no-op migration.
+    private static PolyWireConfig encryptSecretFields(PolyWireConfig c) {
+        return new PolyWireConfig(
+                c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
+                c.cacheTables(), c.cacheTtlMs(),
+                com.polygres.wire.secrets.FieldCipher.encrypt(c.backends()), c.shardBackends(),
+                c.routerSchemaRules(), c.routerPredicateRules(), c.routerValueShardRules(), c.routerShardTables(),
+                c.rollupDefinitionsYaml(),
+                c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),
+                c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim(),
+                com.polygres.wire.secrets.FieldCipher.encrypt(c.awsIamCredentials()));
+    }
+
+    private static PolyWireConfig decryptSecretFields(PolyWireConfig c) {
+        return new PolyWireConfig(
+                c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
+                c.cacheTables(), c.cacheTtlMs(),
+                com.polygres.wire.secrets.FieldCipher.decrypt(c.backends()), c.shardBackends(),
+                c.routerSchemaRules(), c.routerPredicateRules(), c.routerValueShardRules(), c.routerShardTables(),
+                c.rollupDefinitionsYaml(),
+                c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),
+                c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim(),
+                com.polygres.wire.secrets.FieldCipher.decrypt(c.awsIamCredentials()));
     }
 
     public void listen(Consumer<Version> callback) throws SQLException {

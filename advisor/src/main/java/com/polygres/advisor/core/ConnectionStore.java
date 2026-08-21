@@ -20,10 +20,11 @@ import java.util.Optional;
  * file lives at {@code <dir>/polygres-store}. Uses {@link BackendConnectionPools} under a fixed
  * pool key, same as every other connection in this app, rather than a separate pooling mechanism.
  *
- * <p><b>Known gap, same as before:</b> {@code password} is stored in plaintext in this database
- * (HSQLDB has no encryption-at-rest here) -- real hardening (encrypted columns, or delegating to a
- * secrets manager) is future work; {@link ConnectionRecord#redacted()} is what keeps it from ever
- * round-tripping back to the browser.
+ * <p>{@code password} is encrypted at rest (AES-256-GCM) via {@link com.polygres.advisor.secrets.FieldCipher}
+ * whenever {@code POLYGRES_ENCRYPTION_KEY} is set on this process -- opt-in, with a loud startup
+ * warning if it isn't, and backward-compatible with rows written before the key existed (they
+ * stay plaintext until the next save). {@link ConnectionRecord#redacted()} is what keeps the
+ * (decrypted) value from ever round-tripping back to the browser regardless.
  */
 public class ConnectionStore {
 
@@ -83,7 +84,7 @@ public class ConnectionStore {
             ps.setString(2, record.name);
             ps.setString(3, record.jdbcUrl);
             ps.setString(4, record.user);
-            ps.setString(5, record.password);
+            ps.setString(5, com.polygres.advisor.secrets.FieldCipher.encrypt(record.password));
             ps.setString(6, record.createdAt);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -109,7 +110,7 @@ public class ConnectionStore {
             ps.setString(1, existing.name);
             ps.setString(2, existing.jdbcUrl);
             ps.setString(3, existing.user);
-            ps.setString(4, existing.password);
+            ps.setString(4, com.polygres.advisor.secrets.FieldCipher.encrypt(existing.password));
             ps.setString(5, id);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -134,7 +135,7 @@ public class ConnectionStore {
         record.name = rs.getString("name");
         record.jdbcUrl = rs.getString("jdbc_url");
         record.user = rs.getString("user_name");
-        record.password = rs.getString("password");
+        record.password = com.polygres.advisor.secrets.FieldCipher.decrypt(rs.getString("password"));
         record.createdAt = rs.getString("created_at");
         return record;
     }

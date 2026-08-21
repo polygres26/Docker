@@ -45,7 +45,8 @@ public class WireConnectionStore {
                 PreparedStatement ps = connection.prepareStatement("SELECT admin_url, admin_token FROM wire_connection WHERE id = 1")) {
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return new WireConnection(rs.getString("admin_url"), rs.getString("admin_token"));
+                    return new WireConnection(rs.getString("admin_url"),
+                            com.polygres.advisor.secrets.FieldCipher.decrypt(rs.getString("admin_token")));
                 }
             }
         } catch (SQLException e) {
@@ -59,15 +60,16 @@ public class WireConnectionStore {
         // Blank adminToken on save keeps the existing stored token -- same "browser never has the
         // real secret to send back" convention as LlmSettingsStore#save.
         String tokenToStore = (adminToken != null && !adminToken.isBlank()) ? adminToken : existing.adminToken();
+        String encryptedToken = com.polygres.advisor.secrets.FieldCipher.encrypt(tokenToStore);
         try (Connection connection = borrow();
                 PreparedStatement ps = connection.prepareStatement(
                         "MERGE INTO wire_connection USING (VALUES(1)) AS src(id) ON wire_connection.id = src.id "
                                 + "WHEN MATCHED THEN UPDATE SET admin_url = ?, admin_token = ? "
                                 + "WHEN NOT MATCHED THEN INSERT (id, admin_url, admin_token) VALUES (1, ?, ?)")) {
             ps.setString(1, adminUrl);
-            ps.setString(2, tokenToStore);
+            ps.setString(2, encryptedToken);
             ps.setString(3, adminUrl);
-            ps.setString(4, tokenToStore);
+            ps.setString(4, encryptedToken);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Could not save Wire connection settings", e);
