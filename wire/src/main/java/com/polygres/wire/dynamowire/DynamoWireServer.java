@@ -62,7 +62,31 @@ public final class DynamoWireServer {
             com.polygres.wire.http.auth.AccessContextResolver oauth,
             com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
             com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
-        this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
+        this(port, new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword), cache, connectionGate, oauth,
+                awsIamCredentials, sqlMetrics);
+    }
+
+    /**
+     * Sharded mode -- {@code backendRegistry.shardGroup()} (the same shard group SQL's
+     * value-shard rules already route across) becomes the set of Postgres backends item storage
+     * is split over, hashed by each item's own partition-key value. An empty shard group
+     * (nothing configured) behaves exactly like the single-backend constructor above, pointed at
+     * the registry's default target -- see {@link PgItemStore}'s javadoc for the full story.
+     */
+    public DynamoWireServer(int port, com.polygres.wire.core.BackendRegistry backendRegistry, DynamoCache cache,
+            com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth,
+            com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this(port, new PgItemStore(backendRegistry), cache, connectionGate, oauth, awsIamCredentials, sqlMetrics);
+    }
+
+    private DynamoWireServer(int port, PgItemStore store, DynamoCache cache,
+            com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth,
+            com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this.store = store;
         this.handlers = new OperationHandlers(store, cache);
         this.sqlMetrics = sqlMetrics;
         com.polygres.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
@@ -130,9 +154,36 @@ public final class DynamoWireServer {
                     default -> null;
                 };
                 if (kind != null) {
-                    sqlMetrics.recordOperation("dynamowire", "default", kind, operation, System.nanoTime() - start);
+                    sqlMetrics.recordOperation("dynamowire", resolveBackendLabel(operation, requestJson), kind,
+                            operation, System.nanoTime() - start);
                 }
             }
+        }
+    }
+
+    /**
+     * Best-effort, metrics-label-only re-derivation of which shard an item-level operation
+     * landed on -- PgItemStore doesn't hand the resolved backend name back from its own
+     * operations (it isn't needed for correctness, only for this label), so this repeats the
+     * same "find the partition key, ask the store which shard it hashes to" lookup independently.
+     * Any failure (unknown table, malformed key, a Scan with no key at all) just falls back to
+     * "default" -- getting the metrics label right is never worth failing the actual request.
+     */
+    private String resolveBackendLabel(String operation, JsonObject requestJson) {
+        try {
+            if (!requestJson.has("TableName")) {
+                return "default";
+            }
+            TableSchema schema = store.describeTable(requestJson.get("TableName").getAsString());
+            JsonObject keySource = requestJson.has("Key") ? requestJson.getAsJsonObject("Key")
+                    : requestJson.has("Item") ? requestJson.getAsJsonObject("Item") : null;
+            if (keySource == null) {
+                return "default";
+            }
+            AttributeValue pk = PgItemStore.jsonToItem(keySource).get(schema.partitionKeyName());
+            return pk == null ? "default" : store.resolveBackendFor(pk.scalar);
+        } catch (RuntimeException e) {
+            return "default";
         }
     }
 

@@ -255,9 +255,12 @@ public final class Main {
 
         com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials =
                 com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.create(config.awsIamCredentials());
-        DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
-                options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth,
-                awsIamCredentials, sqlMetrics);
+        // Sharded when POLYWIRE_SHARD_BACKENDS is configured (the same shard group SQL's
+        // value-shard rules already use) -- item storage splits across it by partition-key hash,
+        // same as real DynamoDB's own partition model. Falls back to the single implicit
+        // backend automatically when no shard group is configured -- see PgItemStore's javadoc.
+        DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, backendRegistry, dynamoCache,
+                connectionGate, oauth, awsIamCredentials, sqlMetrics);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 

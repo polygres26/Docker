@@ -328,10 +328,16 @@ final class OperationHandlers {
 
     private JsonObject transactWriteItems(JsonObject req) {
         JsonArray transactItems = req.getAsJsonArray("TransactItems");
-        
+
         List<String> touchedCacheKeys = new ArrayList<>();
-        
-        store.runInTransaction(conn -> {
+
+        // A sharded store routes the whole transaction by one partition-key value -- real
+        // DynamoDB requires every item in a transaction to resolve to partitions it can commit
+        // atomically together too, so using the first item's own key is consistent with that,
+        // not a shortcut specific to this implementation.
+        String routingPartitionKey = firstTransactPartitionKey(transactItems);
+
+        store.runInTransaction(routingPartitionKey, conn -> {
             for (JsonElement e : transactItems) {
                 JsonObject op = e.getAsJsonObject();
                 try {
@@ -351,6 +357,24 @@ final class OperationHandlers {
             }
         }
         return new JsonObject();
+    }
+
+    private String firstTransactPartitionKey(JsonArray transactItems) {
+        if (transactItems.isEmpty()) {
+            return null;
+        }
+        JsonObject first = transactItems.get(0).getAsJsonObject();
+        for (String opName : List.of("Put", "Delete", "Update", "ConditionCheck")) {
+            if (!first.has(opName)) {
+                continue;
+            }
+            JsonObject op = first.getAsJsonObject(opName);
+            TableSchema schema = store.describeTable(op.get("TableName").getAsString());
+            JsonObject keySource = "Put".equals(opName) ? op.getAsJsonObject("Item") : op.getAsJsonObject("Key");
+            AttributeValue pk = PgItemStore.jsonToItem(keySource).get(schema.partitionKeyName());
+            return pk == null ? null : pk.scalar;
+        }
+        return null;
     }
 
     private void applyTransactPut(Connection conn, JsonObject put, List<String> touchedCacheKeys) throws SQLException {
