@@ -68,11 +68,55 @@ final class MongoCommandDispatcher {
                     default -> null;
                 };
                 if (kind != null) {
-                    sqlMetrics.recordOperation("mongowire", "default", kind, db + "." + lower,
+                    sqlMetrics.recordOperation("mongowire", resolveBackendLabel(command, lower), kind, db + "." + lower,
                             System.nanoTime() - start);
                 }
             }
         }
+    }
+
+    /**
+     * Best-effort, metrics-label-only re-derivation of which shard an operation resolved to --
+     * mirrors dynamowire's {@code DynamoWireServer#resolveBackendLabel}. For find/update/delete
+     * this is exact ({@code exactIdEquality} is the same check the store itself uses to route);
+     * for insert it's a peek at the caller-supplied {@code _id} on the first document only --
+     * an auto-generated one isn't known until {@code insertOne} runs, and that's fine, this is a
+     * label, not a routing decision. Any failure just falls back to "default".
+     */
+    private String resolveBackendLabel(BsonDocument command, String lower) {
+        try {
+            BsonDocument filter = switch (lower) {
+                case "find" -> command.containsKey("filter") ? command.getDocument("filter") : null;
+                case "update" -> firstSpecFilter(command, "updates");
+                case "delete" -> firstSpecFilter(command, "deletes");
+                default -> null;
+            };
+            if (filter != null) {
+                String idJson = MongoQueryTranslator.exactIdEquality(filter);
+                return idJson == null ? "default" : store.resolveBackendFor(idJson);
+            }
+            if ("insert".equals(lower) && command.containsKey("documents")) {
+                BsonArray docs = command.getArray("documents");
+                if (!docs.isEmpty() && docs.get(0).asDocument().containsKey("_id")) {
+                    String idJson = BsonJson.valueToJson(docs.get(0).asDocument().get("_id"));
+                    return store.resolveBackendFor(idJson);
+                }
+            }
+            return "default";
+        } catch (RuntimeException e) {
+            return "default";
+        }
+    }
+
+    private static BsonDocument firstSpecFilter(BsonDocument command, String arrayField) {
+        if (!command.containsKey(arrayField)) {
+            return null;
+        }
+        BsonArray specs = command.getArray(arrayField);
+        if (specs.isEmpty()) {
+            return null;
+        }
+        return specs.get(0).asDocument().getDocument("q", new BsonDocument());
     }
 
     private BsonDocument hello() {
@@ -164,13 +208,13 @@ final class MongoCommandDispatcher {
                 log.debug("mongowire cache hit: {}", cacheKey);
                 docs = List.of(cached);
             } else {
-                docs = store.find(db, collection, MongoQueryTranslator.translate(filter), limit);
+                docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
                 if (!docs.isEmpty()) {
                     cache.put(cacheKey, docs.get(0));
                 }
             }
         } else {
-            docs = store.find(db, collection, MongoQueryTranslator.translate(filter), limit);
+            docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
         }
 
         BsonArray firstBatch = new BsonArray();
@@ -198,7 +242,7 @@ final class MongoCommandDispatcher {
             Document updateDoc = BsonJson.toDocument(spec.getDocument("u"));
             boolean multi = spec.containsKey("multi") && spec.getBoolean("multi").getValue();
             MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            PostgresDocumentStore.WriteResult result = store.updateMany(db, collection, where, updateDoc, multi ? 0 : 1);
+            PostgresDocumentStore.WriteResult result = store.updateMany(db, collection, filter, where, updateDoc, multi ? 0 : 1);
             matched += result.count();
             modified += result.count();
             if (cache != null) {
@@ -222,7 +266,7 @@ final class MongoCommandDispatcher {
             BsonDocument filter = spec.getDocument("q", new BsonDocument());
             int limit = spec.containsKey("limit") ? spec.getNumber("limit").intValue() : 0;
             MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            PostgresDocumentStore.WriteResult result = store.deleteMany(db, collection, where, limit);
+            PostgresDocumentStore.WriteResult result = store.deleteMany(db, collection, filter, where, limit);
             deleted += result.count();
             if (cache != null) {
                 for (String idJson : result.ids()) {

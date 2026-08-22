@@ -33,6 +33,19 @@ public final class MongoWireSessionHandler implements Runnable {
         this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
     }
 
+    /**
+     * Sharded mode -- documents route by hashing {@code _id} across
+     * {@code backendRegistry.shardGroup()}, the same shard group dynamowire and SQL sharding
+     * already use. Empty shard group behaves like the single-backend constructor above, pointed
+     * at the registry's default target -- see {@link PostgresDocumentStore}'s javadoc.
+     */
+    public MongoWireSessionHandler(Socket clientSocket, com.polygres.wire.core.BackendRegistry backendRegistry,
+            MongoCache cache, com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this.clientSocket = clientSocket;
+        PostgresDocumentStore store = new PostgresDocumentStore(backendRegistry);
+        this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
+    }
+
     private static Connection openConnection(String url, String user, String password) throws SQLException {
         return DriverManager.getConnection(url, user, password);
     }

@@ -1,5 +1,8 @@
 package com.polygres.wire.mongowire;
 
+import com.polygres.wire.core.BackendRegistry;
+import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.ShardingStrategy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -8,23 +11,126 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import org.bson.BsonDocument;
 import org.bson.BsonObjectId;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.postgresql.util.PGobject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+/**
+ * Document storage for mongowire, backed by Postgres. Two modes, same shape as dynamowire's
+ * {@code PgItemStore}:
+ *
+ * <p><b>Single-backend (legacy):</b> {@link #PostgresDocumentStore(ConnectionSupplier, MongoCache)}
+ * -- one fixed connection supplier, exactly as before this class supported sharding at all.
+ *
+ * <p><b>Sharded:</b> {@link #PostgresDocumentStore(BackendRegistry, MongoCache)} routes by
+ * hashing the document's {@code _id} across {@code backendRegistry.shardGroup()} -- read fresh on
+ * every call (not captured once), so a config change takes effect immediately, no restart,
+ * matching {@code PgItemStore}'s dynamowire sharding and {@code RouterStage}'s SQL sharding.
+ *
+ * <p>{@code _id} was the obvious choice where dynamowire had an explicit, schema-declared
+ * partition key to reuse: every Mongo document already has one (generated on insert if the
+ * caller didn't supply one), it's the one field every collection is guaranteed to have, and
+ * {@code MongoQueryTranslator.exactIdEquality} already existed (for GetItem-style cache lookups)
+ * to detect exactly the query shape -- {@code find/updateMany/deleteMany} filtered on nothing but
+ * {@code {_id: <value>}} -- that resolves to one shard unambiguously. Any other filter (an
+ * arbitrary field, a range, no filter at all) can't be reduced to "which one shard", so it fans
+ * out across every shard backend and concatenates -- same scatter-gather tradeoff as dynamowire's
+ * {@code Scan}, and the same one real sharded MongoDB has scanning across shards that don't share
+ * the query's shard key.
+ *
+ * <p>Unlike dynamowire, there's no separate catalog table here to keep stable -- {@code
+ * ensureTable} (CREATE SCHEMA/TABLE) just runs on every shard backend up front, since a
+ * collection needs to exist wherever a document might land, and there's no metadata row whose
+ * "home" could move under a shard-group change.
+ */
 final class PostgresDocumentStore {
 
+    private static final Logger log = LoggerFactory.getLogger(PostgresDocumentStore.class);
     private static final Pattern SAFE_NAME = Pattern.compile("^[A-Za-z0-9_]+$");
-    private final ConnectionSupplier connections;
+
+    private final ConnectionSupplier legacyConnections;
+    private final BackendRegistry backendRegistry;
     private final ConcurrentHashMap<String, Boolean> ensuredTables = new ConcurrentHashMap<>();
+    private volatile List<String> lastLoggedShardGroup = null;
 
     interface ConnectionSupplier {
         Connection get() throws SQLException;
     }
 
     PostgresDocumentStore(ConnectionSupplier connections) {
-        this.connections = connections;
+        this.legacyConnections = connections;
+        this.backendRegistry = null;
+    }
+
+    PostgresDocumentStore(BackendRegistry backendRegistry) {
+        this.legacyConnections = null;
+        this.backendRegistry = backendRegistry;
+        logShardGroupIfChanged();
+    }
+
+    private List<String> currentShardGroup() {
+        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+    }
+
+    private void logShardGroupIfChanged() {
+        List<String> group = currentShardGroup();
+        if (!group.equals(lastLoggedShardGroup)) {
+            lastLoggedShardGroup = group;
+            if (!group.isEmpty()) {
+                log.info("mongowire: sharding document storage across {} backend(s) by _id: {}", group.size(), group);
+            } else if (backendRegistry != null) {
+                log.info("mongowire: no shard group configured -- document storage on the single default backend");
+            }
+        }
+    }
+
+    boolean isSharded() {
+        return !currentShardGroup().isEmpty();
+    }
+
+    /** Metrics-label-only: which backend a document with this _id would route to, no connection opened. */
+    String resolveBackendFor(String idJson) {
+        if (legacyConnections != null || idJson == null) {
+            return "default";
+        }
+        List<String> group = currentShardGroup();
+        return group.isEmpty() ? BackendRegistry.DEFAULT_BACKEND_NAME : ShardingStrategy.hash(group).resolve(idJson);
+    }
+
+    /** All currently-live backend connections a document might need to be found on. */
+    private List<Connection> allBackendConnections() throws SQLException {
+        if (legacyConnections != null) {
+            return List.of(legacyConnections.get());
+        }
+        List<Connection> connections = new ArrayList<>();
+        List<String> group = currentShardGroup();
+        List<String> names = group.isEmpty() ? List.of(BackendRegistry.DEFAULT_BACKEND_NAME) : group;
+        for (String name : names) {
+            BackendTarget target = backendRegistry.get(name);
+            if (target != null) {
+                connections.add(target.open());
+            }
+        }
+        return connections;
+    }
+
+    /** The one backend a document with this _id (as its Mongo Extended JSON string) belongs on. */
+    private Connection shardConnectionFor(String idJson) throws SQLException {
+        if (legacyConnections != null) {
+            return legacyConnections.get();
+        }
+        logShardGroupIfChanged();
+        List<String> group = currentShardGroup();
+        String backendName = group.isEmpty() ? BackendRegistry.DEFAULT_BACKEND_NAME : ShardingStrategy.hash(group).resolve(idJson);
+        BackendTarget target = backendRegistry.get(backendName);
+        if (target == null) {
+            throw new IllegalStateException("mongowire: resolved shard backend \"" + backendName + "\" is not configured");
+        }
+        return target.open();
     }
 
     private static String quoteIdent(String name) {
@@ -39,15 +145,18 @@ final class PostgresDocumentStore {
         return quoteIdent(db) + "." + quoteIdent(collection);
     }
 
-    private void ensureTable(Connection conn, String db, String collection) throws SQLException {
+    /** Ensures the collection's table exists on every backend a document could land on. */
+    private void ensureTable(String db, String collection) throws SQLException {
         String key = db + "." + collection;
         if (ensuredTables.putIfAbsent(key, Boolean.TRUE) != null) {
             return;
         }
-        try (var st = conn.createStatement()) {
-            st.execute("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(db));
-            st.execute("CREATE TABLE IF NOT EXISTS " + qualifiedTable(db, collection)
-                    + " (id text PRIMARY KEY, doc jsonb NOT NULL)");
+        for (Connection conn : allBackendConnections()) {
+            try (conn; var st = conn.createStatement()) {
+                st.execute("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(db));
+                st.execute("CREATE TABLE IF NOT EXISTS " + qualifiedTable(db, collection)
+                        + " (id text PRIMARY KEY, doc jsonb NOT NULL)");
+            }
         }
     }
 
@@ -70,29 +179,33 @@ final class PostgresDocumentStore {
         }
         String idJson = idJsonFor(document.get("_id"));
         String docJson = BsonJson.toJson(document);
-        try (Connection conn = connections.get()) {
-            ensureTable(conn, db, collection);
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO " + qualifiedTable(db, collection) + " (id, doc) VALUES (?, ?)")) {
-                ps.setString(1, idJson);
-                ps.setObject(2, jsonb(docJson));
-                ps.executeUpdate();
-            }
+        ensureTable(db, collection);
+        try (Connection conn = shardConnectionFor(idJson);
+                PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO " + qualifiedTable(db, collection) + " (id, doc) VALUES (?, ?)")) {
+            ps.setString(1, idJson);
+            ps.setObject(2, jsonb(docJson));
+            ps.executeUpdate();
         }
         return document;
     }
 
-    List<Document> find(String db, String collection, MongoQueryTranslator.Where where, int limit) throws SQLException {
+    List<Document> find(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where, int limit) throws SQLException {
+        ensureTable(db, collection);
+        String idJson = MongoQueryTranslator.exactIdEquality(filter);
+        List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
         List<Document> results = new ArrayList<>();
-        try (Connection conn = connections.get()) {
-            ensureTable(conn, db, collection);
-            String sql = "SELECT doc FROM " + qualifiedTable(db, collection) + where.sql()
-                    + (limit > 0 ? " LIMIT " + limit : "");
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        String sql = "SELECT doc FROM " + qualifiedTable(db, collection) + where.sql()
+                + (limit > 0 ? " LIMIT " + limit : "");
+        for (Connection conn : targets) {
+            try (conn; PreparedStatement ps = conn.prepareStatement(sql)) {
                 bindParams(ps, where.jsonbParams());
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         results.add(BsonJson.fromJson(rs.getString(1)));
+                        if (limit > 0 && results.size() >= limit) {
+                            return results;
+                        }
                     }
                 }
             }
@@ -100,64 +213,79 @@ final class PostgresDocumentStore {
         return results;
     }
 
-    WriteResult updateMany(String db, String collection, MongoQueryTranslator.Where where, Document merger, int limit)
-            throws SQLException {
-        try (Connection conn = connections.get()) {
-            ensureTable(conn, db, collection);
-            String selectSql = "SELECT id, doc FROM " + qualifiedTable(db, collection) + where.sql()
-                    + (limit > 0 ? " LIMIT " + limit : "");
-            List<String> ids = new ArrayList<>();
-            List<String> newDocs = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
-                bindParams(ps, where.jsonbParams());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Document existing = BsonJson.fromJson(rs.getString(2));
-                        UpdateApplier.apply(existing, merger);
-                        ids.add(rs.getString(1));
-                        newDocs.add(BsonJson.toJson(existing));
+    WriteResult updateMany(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where,
+            Document merger, int limit) throws SQLException {
+        ensureTable(db, collection);
+        String idJson = MongoQueryTranslator.exactIdEquality(filter);
+        List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
+        int totalCount = 0;
+        List<String> allIds = new ArrayList<>();
+        String selectSql = "SELECT id, doc FROM " + qualifiedTable(db, collection) + where.sql()
+                + (limit > 0 ? " LIMIT " + limit : "");
+        for (Connection conn : targets) {
+            try (conn) {
+                List<String> ids = new ArrayList<>();
+                List<String> newDocs = new ArrayList<>();
+                try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
+                    bindParams(ps, where.jsonbParams());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            Document existing = BsonJson.fromJson(rs.getString(2));
+                            UpdateApplier.apply(existing, merger);
+                            ids.add(rs.getString(1));
+                            newDocs.add(BsonJson.toJson(existing));
+                        }
                     }
-                }
-            }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE " + qualifiedTable(db, collection) + " SET doc = ? WHERE id = ?")) {
-                for (int i = 0; i < ids.size(); i++) {
-                    ps.setObject(1, jsonb(newDocs.get(i)));
-                    ps.setString(2, ids.get(i));
-                    ps.addBatch();
                 }
                 if (!ids.isEmpty()) {
-                    ps.executeBatch();
-                }
-            }
-            return new WriteResult(ids.size(), ids);
-        }
-    }
-
-    WriteResult deleteMany(String db, String collection, MongoQueryTranslator.Where where, int limit) throws SQLException {
-        try (Connection conn = connections.get()) {
-            ensureTable(conn, db, collection);
-            String selectSql = "SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
-                    + (limit > 0 ? " LIMIT " + limit : "");
-            List<String> ids = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
-                bindParams(ps, where.jsonbParams());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        ids.add(rs.getString(1));
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "UPDATE " + qualifiedTable(db, collection) + " SET doc = ? WHERE id = ?")) {
+                        for (int i = 0; i < ids.size(); i++) {
+                            ps.setObject(1, jsonb(newDocs.get(i)));
+                            ps.setString(2, ids.get(i));
+                            ps.addBatch();
+                        }
+                        ps.executeBatch();
                     }
                 }
-            }
-            if (ids.isEmpty()) {
-                return new WriteResult(0, List.of());
-            }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "DELETE FROM " + qualifiedTable(db, collection) + " WHERE id = ANY(?)")) {
-                ps.setArray(1, conn.createArrayOf("text", ids.toArray()));
-                int n = ps.executeUpdate();
-                return new WriteResult(n, ids);
+                totalCount += ids.size();
+                allIds.addAll(ids);
             }
         }
+        return new WriteResult(totalCount, allIds);
+    }
+
+    WriteResult deleteMany(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where, int limit) throws SQLException {
+        ensureTable(db, collection);
+        String idJson = MongoQueryTranslator.exactIdEquality(filter);
+        List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
+        int totalCount = 0;
+        List<String> allIds = new ArrayList<>();
+        String selectSql = "SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
+                + (limit > 0 ? " LIMIT " + limit : "");
+        for (Connection conn : targets) {
+            try (conn) {
+                List<String> ids = new ArrayList<>();
+                try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
+                    bindParams(ps, where.jsonbParams());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            ids.add(rs.getString(1));
+                        }
+                    }
+                }
+                if (!ids.isEmpty()) {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM " + qualifiedTable(db, collection) + " WHERE id = ANY(?)")) {
+                        ps.setArray(1, conn.createArrayOf("text", ids.toArray()));
+                        ps.executeUpdate();
+                    }
+                }
+                totalCount += ids.size();
+                allIds.addAll(ids);
+            }
+        }
+        return new WriteResult(totalCount, allIds);
     }
 
     private void bindParams(PreparedStatement ps, List<String> jsonbParams) throws SQLException {

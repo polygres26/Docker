@@ -249,7 +249,7 @@ public final class Main {
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
-        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics));
+        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics, backendRegistry));
 
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
 
@@ -387,19 +387,18 @@ public final class Main {
 
     private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
             com.polygres.wire.mongowire.MongoCache mongoCache, com.polygres.wire.acl.ConnectionGate connectionGate,
-            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics, BackendRegistry backendRegistry) {
         int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
-        String pgUrl = "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase();
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
-            log.info("polywire listening for TCP (MongoDB wire) on port {}, proxying to postgres {} "
+            log.info("polywire listening for TCP (MongoDB wire) on port {} "
                     + "(find/insert/update/delete only -- no aggregation pipeline, see MongoWireSessionHandler)",
-                    mongoPort, pgUrl);
+                    mongoPort);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword(), mongoCache, sqlMetrics));
+                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
             }
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);
