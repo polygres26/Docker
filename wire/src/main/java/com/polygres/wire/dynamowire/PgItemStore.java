@@ -39,7 +39,20 @@ import java.util.regex.Pattern;
  * {@code DEFAULT_BACKEND_NAME} target). Table catalog metadata ({@code _dynamo_tables}) and
  * DDL are NOT shardable by definition -- {@link #createTable}/{@link #deleteTable} run their DDL
  * on every shard backend (so every shard has the physical table an item might land on) but keep
- * exactly one catalog row, on the registry's default/first backend.
+ * exactly one catalog row, always on {@code DEFAULT_BACKEND_NAME} regardless of shard group
+ * membership (that name has to stay fixed and stable -- see {@link #currentCatalogBackendName}'s
+ * javadoc for why using a shard-group member here broke DescribeTable the first time this was
+ * tried). A deployment that shards needs {@code POLYWIRE_BACKENDS} to include a
+ * {@code default=...} entry alongside the shard backends for exactly this reason.
+ *
+ * <p><b>Live-reloadable:</b> the shard group is re-read from {@code backendRegistry} on every
+ * call, not captured once at construction -- a {@code POLYWIRE_BACKENDS}/
+ * {@code POLYWIRE_SHARD_BACKENDS} config change takes effect on this store's very next
+ * operation, same as {@code RouterStage}'s SQL sharding. What it does NOT do is migrate data:
+ * turning sharding on after a table already has rows leaves those rows on whatever backend they
+ * were written to (the old single default, most likely) -- reads for those specific keys will
+ * miss if they now hash to a different shard. This mirrors how a real distributed store needs an
+ * explicit resharding/migration step; it isn't attempted automatically here.
  *
  * <p><b>Known limitation:</b> {@link #scan} has no partition key to hash on, so a sharded store
  * fans it out across every shard backend and concatenates results -- correct in the sense that
@@ -54,9 +67,7 @@ public final class PgItemStore {
 
     private final HikariDataSource legacyDs;
     private final BackendRegistry backendRegistry;
-    private final ShardingStrategy shardStrategy;
-    private final List<String> shardBackendNames;
-    private final String catalogBackendName;
+    private volatile List<String> lastLoggedShardGroup = null;
 
     public PgItemStore(String host, int port, String database, String user, String password) {
         HikariConfig cfg = new HikariConfig();
@@ -67,31 +78,73 @@ public final class PgItemStore {
         cfg.setMaximumPoolSize(8);
         this.legacyDs = new HikariDataSource(cfg);
         this.backendRegistry = null;
-        this.shardStrategy = null;
-        this.shardBackendNames = List.of();
-        this.catalogBackendName = null;
         ensureCatalog(borrowCatalogConnection());
     }
 
     /**
      * Sharded mode -- routes by {@code backendRegistry.shardGroup()} when non-empty, otherwise
      * behaves like a single-backend store pointed at {@code backendRegistry}'s default target.
+     * The shard group is read fresh from {@code backendRegistry} on every call (see {@link
+     * #currentShardGroup()}), not captured once here -- {@code backendRegistry} is the same
+     * mutable, hot-reloaded instance {@code RouterStage} already reads live, so a
+     * POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS config change takes effect on this store's very
+     * next operation, no process restart needed, matching how every other router-backed feature
+     * in PolyWire already reloads.
      */
     public PgItemStore(BackendRegistry backendRegistry) {
         this.legacyDs = null;
         this.backendRegistry = backendRegistry;
-        this.shardBackendNames = backendRegistry.shardGroup();
-        this.shardStrategy = shardBackendNames.isEmpty() ? null : ShardingStrategy.hash(shardBackendNames);
-        this.catalogBackendName = !shardBackendNames.isEmpty() ? shardBackendNames.get(0) : BackendRegistry.DEFAULT_BACKEND_NAME;
-        if (!shardBackendNames.isEmpty()) {
-            log.info("dynamowire: sharding item storage across {} backend(s) by partition key: {}",
-                    shardBackendNames.size(), shardBackendNames);
-        }
+        logShardGroupIfChanged();
         ensureCatalog(borrowCatalogConnection());
     }
 
+    private List<String> currentShardGroup() {
+        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+    }
+
+    /**
+     * The registry's stable {@code DEFAULT_BACKEND_NAME} when it's actually registered --
+     * {@code _dynamo_tables} needs one fixed home that doesn't move when the shard group is
+     * reconfigured. (Earlier this was {@code shardGroup.get(0)}, which broke DescribeTable for
+     * every table created before sharding was turned on: the catalog "moved" to a shard backend
+     * that had never seen that table's row.) A deployment that shards needs {@code
+     * POLYWIRE_BACKENDS} to keep a {@code default=...} entry alongside the shard backends for
+     * exactly this reason -- but if an operator forgets that and {@code default} isn't
+     * registered, falling back to the first shard-group member (the old behavior) and logging a
+     * warning is far better than what this did the first time: an unhandled
+     * {@code IllegalStateException} out of the constructor that took the entire PolyWire process
+     * down at startup, every wire protocol included, over a dynamowire-only config detail.
+     */
+    private String currentCatalogBackendName() {
+        List<String> group = currentShardGroup();
+        if (backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME) != null) {
+            return BackendRegistry.DEFAULT_BACKEND_NAME;
+        }
+        if (!group.isEmpty()) {
+            log.warn("dynamowire: \"{}\" is not a configured backend -- falling back to \"{}\" (the first "
+                    + "shard-group member) for the _dynamo_tables catalog. Add a \"default=...\" entry to "
+                    + "POLYWIRE_BACKENDS to give the catalog a stable home that survives shard-group changes.",
+                    BackendRegistry.DEFAULT_BACKEND_NAME, group.get(0));
+            return group.get(0);
+        }
+        return BackendRegistry.DEFAULT_BACKEND_NAME;
+    }
+
+    private void logShardGroupIfChanged() {
+        List<String> group = currentShardGroup();
+        if (!group.equals(lastLoggedShardGroup)) {
+            lastLoggedShardGroup = group;
+            if (!group.isEmpty()) {
+                log.info("dynamowire: sharding item storage across {} backend(s) by partition key: {}",
+                        group.size(), group);
+            } else {
+                log.info("dynamowire: no shard group configured -- item storage on the single default backend");
+            }
+        }
+    }
+
     public boolean isSharded() {
-        return shardStrategy != null;
+        return !currentShardGroup().isEmpty();
     }
 
     /** Which backend name a given partition-key value would route to -- no connection opened. */
@@ -99,7 +152,8 @@ public final class PgItemStore {
         if (legacyDs != null) {
             return "default";
         }
-        return shardStrategy != null ? shardStrategy.resolve(pkValue) : catalogBackendName;
+        List<String> group = currentShardGroup();
+        return group.isEmpty() ? currentCatalogBackendName() : ShardingStrategy.hash(group).resolve(pkValue);
     }
 
     private Connection borrowCatalogConnection() throws RuntimeException {
@@ -107,6 +161,7 @@ public final class PgItemStore {
             if (legacyDs != null) {
                 return legacyDs.getConnection();
             }
+            String catalogBackendName = currentCatalogBackendName();
             BackendTarget target = backendRegistry.get(catalogBackendName);
             if (target == null) {
                 throw new IllegalStateException("dynamowire: catalog backend \"" + catalogBackendName
@@ -123,7 +178,8 @@ public final class PgItemStore {
         if (legacyDs != null) {
             return legacyDs.getConnection();
         }
-        String backendName = shardStrategy != null ? shardStrategy.resolve(pkValue) : catalogBackendName;
+        logShardGroupIfChanged();
+        String backendName = resolveBackendFor(pkValue);
         BackendTarget target = backendRegistry.get(backendName);
         if (target == null) {
             throw new IllegalStateException("dynamowire: resolved shard backend \"" + backendName
@@ -134,7 +190,8 @@ public final class PgItemStore {
 
     private List<Connection> borrowAllShardConnections() throws SQLException {
         List<Connection> connections = new ArrayList<>();
-        List<String> names = shardBackendNames.isEmpty() ? List.of(catalogBackendName) : shardBackendNames;
+        List<String> group = currentShardGroup();
+        List<String> names = group.isEmpty() ? List.of(currentCatalogBackendName()) : group;
         for (String name : names) {
             BackendTarget target = backendRegistry.get(name);
             if (target == null) {

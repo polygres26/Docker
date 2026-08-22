@@ -259,10 +259,19 @@ public final class Main {
         // value-shard rules already use) -- item storage splits across it by partition-key hash,
         // same as real DynamoDB's own partition model. Falls back to the single implicit
         // backend automatically when no shard group is configured -- see PgItemStore's javadoc.
-        DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, backendRegistry, dynamoCache,
-                connectionGate, oauth, awsIamCredentials, sqlMetrics);
-        dynamoWireServer.start();
-        log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+        // Wrapped so a dynamowire-only misconfiguration (e.g. its catalog backend unreachable)
+        // logs loudly and leaves dynamowire off instead of taking down every other wire protocol
+        // this process serves -- an unhandled exception here used to kill the whole main thread.
+        try {
+            DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, backendRegistry, dynamoCache,
+                    connectionGate, oauth, awsIamCredentials, sqlMetrics);
+            dynamoWireServer.start();
+            log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+        } catch (Exception e) {
+            log.error("dynamowire failed to start on port {} -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring dynamowire back.",
+                    dynamoWirePort, e);
+        }
 
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
