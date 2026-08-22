@@ -19,14 +19,24 @@ public final class StatsCollectorStage implements PipelineStage {
 
     private final ConcurrentHashMap<String, Counters> byTenant = new ConcurrentHashMap<>();
     private final PolyWireTelemetry telemetry;
-    private final SqlMetricsCollector sqlMetrics = new SqlMetricsCollector();
+    private final SqlMetricsCollector sqlMetrics;
 
     public StatsCollectorStage() {
         this(null);
     }
 
     public StatsCollectorStage(PolyWireTelemetry telemetry) {
+        this(telemetry, new SqlMetricsCollector());
+    }
+
+    /**
+     * @param sqlMetrics shared with mongowire/dynamowire in {@code Main} so every wire protocol
+     *      feeds the same collector -- see that class's javadoc for why they can't go through
+     *      this stage's own {@link #handle} the way the SQL protocols do.
+     */
+    public StatsCollectorStage(PolyWireTelemetry telemetry, SqlMetricsCollector sqlMetrics) {
         this.telemetry = telemetry;
+        this.sqlMetrics = sqlMetrics;
     }
 
     @Override

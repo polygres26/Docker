@@ -152,7 +152,13 @@ public final class Main {
         log.info("rollup acceleration: {} definition(s) from polywire_config version {}",
                 initialRollupDefinitions.size(), initialVersion.version());
 
-        StatsCollectorStage statsStage = new StatsCollectorStage(telemetry);
+        // One SqlMetricsCollector for the whole process -- shared with DynamoWireServer and the
+        // mongowire session loop below (see StatsCollectorStage's javadoc for why those two feed
+        // it directly at their own dispatch point instead of going through this stage's handle()
+        // like the SQL wire protocols do) so the traffic dashboard and every metrics export path
+        // reflect all six wire protocols, not just the four that share the pipeline.
+        com.polygres.wire.core.SqlMetricsCollector sqlMetrics = new com.polygres.wire.core.SqlMetricsCollector();
+        StatsCollectorStage statsStage = new StatsCollectorStage(telemetry, sqlMetrics);
         if (telemetry != null) {
             telemetry.attachSqlMetrics(statsStage::sqlMetricsSnapshot);
         }
@@ -243,15 +249,15 @@ public final class Main {
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
-        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate));
+        listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics));
 
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
-        
+
         com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials =
                 com.polygres.wire.dynamowire.auth.AwsIamCredentialStore.create(config.awsIamCredentials());
         DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, options.pgHost(), options.pgPort(),
                 options.pgDatabase(), options.pgUser(), options.pgPassword(), dynamoCache, connectionGate, oauth,
-                awsIamCredentials);
+                awsIamCredentials, sqlMetrics);
         dynamoWireServer.start();
         log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
 
@@ -368,7 +374,8 @@ public final class Main {
     }
 
     private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
-            com.polygres.wire.mongowire.MongoCache mongoCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
+            com.polygres.wire.mongowire.MongoCache mongoCache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
         String pgUrl = "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase();
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
@@ -380,7 +387,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword(), mongoCache));
+                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, pgUrl, options.pgUser(), options.pgPassword(), mongoCache, sqlMetrics));
             }
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);

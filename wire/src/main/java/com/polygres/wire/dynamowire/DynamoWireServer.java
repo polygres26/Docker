@@ -25,6 +25,7 @@ public final class DynamoWireServer {
     private final Server server;
     private final PgItemStore store;
     private final OperationHandlers handlers;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, null);
@@ -53,8 +54,17 @@ public final class DynamoWireServer {
             DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth,
             com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials) {
+        this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate, oauth, awsIamCredentials, null);
+    }
+
+    public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            DynamoCache cache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth,
+            com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = new PgItemStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword);
         this.handlers = new OperationHandlers(store, cache);
+        this.sqlMetrics = sqlMetrics;
         com.polygres.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
                 new com.polygres.wire.dynamowire.auth.SigV4Verifier(awsIamCredentials);
         this.server = new Server(port);
@@ -97,6 +107,7 @@ public final class DynamoWireServer {
             writeError(response, 400, "SerializationException", "Could not parse request body as JSON: " + e.getMessage());
             return;
         }
+        long start = System.nanoTime();
         try {
             JsonObject responseJson = handlers.dispatch(operation, requestJson);
             response.setStatus(HttpServletResponse.SC_OK);
@@ -106,6 +117,22 @@ public final class DynamoWireServer {
         } catch (RuntimeException e) {
             log.error("dynamowire operation {} failed", operation, e);
             writeError(response, 500, "InternalFailure", String.valueOf(e.getMessage()));
+        } finally {
+            // Skip schema operations (CreateTable/DeleteTable/DescribeTable/ListTables) --
+            // they're not "traffic" in the sense the dashboard means, and would otherwise show up
+            // as one-off top-cost entries unrelated to actual read/write volume.
+            if (sqlMetrics != null) {
+                var kind = switch (operation) {
+                    case "GetItem", "Query", "Scan", "BatchGetItem", "TransactGetItems" ->
+                            com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ;
+                    case "PutItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "TransactWriteItems" ->
+                            com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE;
+                    default -> null;
+                };
+                if (kind != null) {
+                    sqlMetrics.recordOperation("dynamowire", "default", kind, operation, System.nanoTime() - start);
+                }
+            }
         }
     }
 

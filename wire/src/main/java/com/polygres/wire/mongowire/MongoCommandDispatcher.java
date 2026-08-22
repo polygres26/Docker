@@ -20,17 +20,25 @@ final class MongoCommandDispatcher {
     private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
     private final PostgresDocumentStore store;
     private final MongoCache cache;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     MongoCommandDispatcher(PostgresDocumentStore store, MongoCache cache) {
+        this(store, cache, null);
+    }
+
+    MongoCommandDispatcher(PostgresDocumentStore store, MongoCache cache, com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.cache = cache;
+        this.sqlMetrics = sqlMetrics;
     }
 
     BsonDocument dispatch(BsonDocument command) {
         String commandName = command.getFirstKey();
         String db = command.containsKey("$db") ? command.getString("$db").getValue() : "test";
+        String lower = commandName.toLowerCase(java.util.Locale.ROOT);
+        long start = System.nanoTime();
         try {
-            return switch (commandName.toLowerCase(java.util.Locale.ROOT)) {
+            return switch (lower) {
                 case "hello", "ismaster", "ismastercmd" -> hello();
                 case "ping" -> ok();
                 case "buildinfo" -> buildInfo();
@@ -43,11 +51,27 @@ final class MongoCommandDispatcher {
                 default -> commandNotFound(commandName);
             };
         } catch (IllegalArgumentException badFilter) {
-            
+
             return error(badFilter.getMessage(), 9);
         } catch (SQLException e) {
             log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
             return error("Postgres error: " + e.getMessage(), 8);
+        } finally {
+            // Only the real data-plane commands -- hello/ping/buildinfo/etc. are driver handshake
+            // noise on every connection, not something a traffic dashboard should show as
+            // "operations", and would otherwise dominate the top-N-by-cost table with near-zero
+            // latency entries.
+            if (sqlMetrics != null) {
+                var kind = switch (lower) {
+                    case "find" -> com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ;
+                    case "insert", "update", "delete" -> com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE;
+                    default -> null;
+                };
+                if (kind != null) {
+                    sqlMetrics.recordOperation("mongowire", "default", kind, db + "." + lower,
+                            System.nanoTime() - start);
+                }
+            }
         }
     }
 

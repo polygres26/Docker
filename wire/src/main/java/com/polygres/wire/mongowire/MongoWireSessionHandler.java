@@ -19,13 +19,18 @@ public final class MongoWireSessionHandler implements Runnable {
     private final MongoCommandDispatcher dispatcher;
 
     public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword) {
-        this(clientSocket, pgUrl, pgUser, pgPassword, null);
+        this(clientSocket, pgUrl, pgUser, pgPassword, null, null);
     }
 
     public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword, MongoCache cache) {
+        this(clientSocket, pgUrl, pgUser, pgPassword, cache, null);
+    }
+
+    public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword,
+            MongoCache cache, com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(() -> openConnection(pgUrl, pgUser, pgPassword));
-        this.dispatcher = new MongoCommandDispatcher(store, cache);
+        this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
     }
 
     private static Connection openConnection(String url, String user, String password) throws SQLException {

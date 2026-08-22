@@ -12,12 +12,20 @@ import java.util.regex.Pattern;
 
 /**
  * What customers actually want to see on a metrics dashboard: which wire protocol is carrying
- * traffic, how many reads/writes per second, and which SQL is costing the most. Fed by
- * {@link StatsCollectorStage} on every statement that passes through the shared pipeline (pgwire,
- * mywire, mssqlwire, orawire -- see the {@code pipelineStages} wiring in {@code Main}; mongowire
- * and dynamowire have their own request paths and aren't reflected here). Deliberately not a
- * Prometheus counter: this holds enough shape (normalized SQL text, per-protocol breakdown) that
- * a plain counter can't capture, and is read back as one JSON snapshot by the admin API.
+ * traffic, how many reads/writes per second, and which SQL (or, for mongowire/dynamowire, which
+ * operation) is costing the most. One shared instance across every protocol PolyWire speaks --
+ * {@link StatsCollectorStage} feeds it via {@link #record(SourceDialect, String, String, long)}
+ * for the SQL wire protocols that pass through the shared pipeline (pgwire, mywire, mssqlwire,
+ * orawire), and mongowire/dynamowire feed it directly via {@link #recordOperation} at their own
+ * single dispatch choke point (they never build a {@code Statement} or go through {@code
+ * PipelineStage}s -- see {@code MongoCommandDispatcher#dispatch} / {@code
+ * OperationHandlers#dispatch}), since those protocols don't have literal SQL text to classify or
+ * normalize but have an equally natural single label (the command/operation name). Both paths
+ * update the same protocol/backend/read-write/top-N-cost breakdown; the caller can't tell from
+ * the snapshot which path a given data point came from, which is the point -- one pipeline, one
+ * dashboard, regardless of wire protocol. Deliberately not a Prometheus counter: this holds
+ * enough shape (per-item labels, per-protocol breakdown) that a plain counter can't capture, and
+ * is read back as one JSON snapshot by the admin API.
  */
 public final class SqlMetricsCollector {
 
@@ -84,9 +92,20 @@ public final class SqlMetricsCollector {
      *      configured) still get a per-backend row instead of disappearing from the breakdown.
      */
     public void record(SourceDialect dialect, String backendName, String sqlText, long elapsedNanos) {
-        byProtocol.computeIfAbsent(protocolName(dialect), k -> new LongAdder()).increment();
+        recordOperation(protocolName(dialect), backendName, classify(sqlText), normalize(sqlText), elapsedNanos);
+    }
 
-        StatementKind kind = classify(sqlText);
+    /**
+     * The mongowire/dynamowire entry point -- {@code label} is whatever that protocol's own
+     * dispatch already has on hand as a natural, already-bounded-cardinality description (a
+     * DynamoDB operation name like {@code "PutItem"}, a Mongo command name like {@code "find"} --
+     * see the call sites in {@code DynamoWireServer}/{@code MongoWireSessionHandler}), not
+     * something this class derives by parsing SQL text the way {@link #record} does. {@code kind}
+     * is supplied by the caller rather than inferred, since there's no SQL keyword to classify.
+     */
+    public void recordOperation(String protocolName, String backendName, StatementKind kind, String label, long elapsedNanos) {
+        byProtocol.computeIfAbsent(protocolName == null ? "unknown" : protocolName, k -> new LongAdder()).increment();
+
         switch (kind) {
             case READ -> totalReads.increment();
             case WRITE -> totalWrites.increment();
@@ -103,14 +122,13 @@ public final class SqlMetricsCollector {
             backendEntry.writes.increment();
         }
 
-        String normalized = normalize(sqlText);
-        if (normalized != null) {
-            SqlEntry entry = sqlStats.get(normalized);
+        if (label != null && !label.isBlank()) {
+            SqlEntry entry = sqlStats.get(label);
             if (entry == null) {
                 if (sqlStats.size() >= TOP_SQL_CAP) {
                     return;
                 }
-                entry = sqlStats.computeIfAbsent(normalized, SqlEntry::new);
+                entry = sqlStats.computeIfAbsent(label, SqlEntry::new);
             }
             entry.calls.increment();
             entry.totalNanos.add(elapsedNanos);
