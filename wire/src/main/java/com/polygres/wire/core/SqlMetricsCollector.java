@@ -36,11 +36,13 @@ import java.util.regex.Pattern;
  * span -- true "server-side round trip" in the sense a reverse proxy's `$request_time` is (total
  * time PolyWire itself took to service the request), not network RTT to the client, which no
  * server-side vantage point can measure. Not every call site reports it: pgwire's extended query
- * protocol splits Bind (executes) from Execute (streams the already-computed result) across two
- * client messages with client-controlled gaps in between, so no single span there would be
- * honest -- extended-protocol executions only get exec-time, never RTT. Every other call site
- * (pgwire simple query, mywire, mssqlwire, orawire, gRPC, mongowire, dynamowire, sqswire) reports
- * both.
+ * protocol splits Bind (which executes the query -- no data sent yet) from Execute (a separate,
+ * client-paced message that streams the already-computed result), so a span joining the two would
+ * include client think-time, not just PolyWire's own service time -- Bind never gets an RTT
+ * sample. Execute's own span is honest on its own, though (no backend re-execution, no client
+ * gap inside it), so it does get one -- same reasoning as orawire's Fetch below. Every other call
+ * site (pgwire simple query, pgwire Execute, mywire, mssqlwire, orawire, gRPC, mongowire,
+ * dynamowire, sqswire) reports both exec time and RTT.
  */
 public final class SqlMetricsCollector {
 

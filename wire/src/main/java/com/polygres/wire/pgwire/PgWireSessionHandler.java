@@ -443,21 +443,32 @@ public final class PgWireSessionHandler implements Runnable {
         if (portal == null) {
             throw new IOException("no such portal: " + portalName);
         }
-        if (!portal.result().isQuery()) {
-            PgMessages.writeCommandComplete(out, commandTag(portal.sqlText(), (int) portal.result().updateCount()));
-            return;
-        }
-        List<List<Object>> rows = portal.result().rows();
-        int start = portal.nextRow()[0];
-        int end = maxRows <= 0 ? rows.size() : Math.min(rows.size(), start + maxRows);
-        for (int i = start; i < end; i++) {
-            PgMessages.writeDataRow(out, rows.get(i));
-        }
-        portal.nextRow()[0] = end;
-        if (end < rows.size()) {
-            PgMessages.writePortalSuspended(out);
-        } else {
-            PgMessages.writeCommandComplete(out, "SELECT " + rows.size());
+        // RTT: Execute's own span is honest on its own -- unlike Bind (which ran the query but
+        // sends nothing) it does no backend re-execution and has no client-paced gap inside it,
+        // just "read this request, stream rows, write the response" -- see SqlMetricsCollector's
+        // RTT javadoc for why Bind itself never gets a sample.
+        long rttStart = System.nanoTime();
+        try {
+            if (!portal.result().isQuery()) {
+                PgMessages.writeCommandComplete(out, commandTag(portal.sqlText(), (int) portal.result().updateCount()));
+                return;
+            }
+            List<List<Object>> rows = portal.result().rows();
+            int start = portal.nextRow()[0];
+            int end = maxRows <= 0 ? rows.size() : Math.min(rows.size(), start + maxRows);
+            for (int i = start; i < end; i++) {
+                PgMessages.writeDataRow(out, rows.get(i));
+            }
+            portal.nextRow()[0] = end;
+            if (end < rows.size()) {
+                PgMessages.writePortalSuspended(out);
+            } else {
+                PgMessages.writeCommandComplete(out, "SELECT " + rows.size());
+            }
+        } finally {
+            if (sqlMetrics != null) {
+                sqlMetrics.recordRtt(SourceDialect.POSTGRES, portal.sqlText(), System.nanoTime() - rttStart);
+            }
         }
     }
 

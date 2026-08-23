@@ -256,9 +256,9 @@ export default function WireMetrics() {
         <p className={styles.cardSubtitle}>
           Ranked by cumulative execution time (calls × avg latency) — the statements actually costing you compute.
           <strong> Avg RTT</strong> is the full request-read-to-response-written span (server-side, not network) —
-          "—" means this call site doesn't report it yet (pgwire's extended query protocol splits a query's Bind
-          and Execute across two client messages with client-controlled gaps between them, so no single honest
-          span exists there).
+          "—" shows up only for pgwire's Bind step, which runs the query but sends nothing back (a separate,
+          client-paced Execute streams the result, so joining the two would count client think-time as latency).
+          Execute itself, and every other protocol including orawire's Fetch, reports a real sample.
         </p>
         {metrics.topSql.length === 0 ? (
           <div className={styles.empty}>No SQL captured yet.</div>

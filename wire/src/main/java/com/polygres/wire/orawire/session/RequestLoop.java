@@ -149,6 +149,15 @@ public final class RequestLoop {
 
         TtcWriter w = new TtcWriter();
         boolean logoff = false;
+        // RTT: wraps the WHOLE dispatch below through sendData() at the bottom of this method --
+        // not just the handle* call -- since handle* only fills an in-memory TtcWriter buffer;
+        // the actual socket write happens once, afterward, shared by every function code. Only
+        // recorded for the statement-shaped function codes (Execute/Fetch/Reexecute) against
+        // lastSqlText, which Execute sets and stays valid for a Fetch against the same open
+        // cursor. Fetch gets its own honest sample here: unlike pgwire's Bind-vs-Execute split,
+        // Fetch does no backend re-execution and has no client-paced gap of its own -- it's a
+        // clean one-message-in-one-response-out cycle, just like Execute's initial batch.
+        long rttStart = System.nanoTime();
         try {
             if (functionCode == TtcConstants.FUNC_EXECUTE) {
                 handleExecute(ExecuteRequestReader.read(r), w, callNumber);
@@ -201,7 +210,15 @@ public final class RequestLoop {
             ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? e.toString() : e.getMessage(), openCursorId, callNumber);
         }
         sendData(w.toByteArray());
+        if (sqlMetrics != null && lastSqlText != null && isStatementShaped(functionCode)) {
+            sqlMetrics.recordRtt(SourceDialect.ORACLE, lastSqlText, System.nanoTime() - rttStart);
+        }
         return logoff;
+    }
+
+    private static boolean isStatementShaped(int functionCode) {
+        return functionCode == TtcConstants.FUNC_EXECUTE || functionCode == TtcConstants.FUNC_FETCH
+                || functionCode == TtcConstants.FUNC_REEXECUTE || functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH;
     }
 
     private void handleLogoff() throws SQLException {
@@ -368,12 +385,6 @@ public final class RequestLoop {
         Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
         StatementPipeline pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(primaryConn)));
-        // RTT: from here (Execute request parsed, about to run) through the response written
-        // below for this same Execute -- covers the initial row batch this call itself writes,
-        // not any later separate Fetch requests for remaining rows (those are their own
-        // client-paced round trips, same caveat as pgwire's extended protocol -- see
-        // SqlMetricsCollector's RTT javadoc).
-        long rttStart = System.nanoTime();
         ExecutionResult result = pipeline.execute(statement);
         openCursorId = nextCursorId++;
         if (bindTypes != null) {
@@ -400,9 +411,6 @@ public final class RequestLoop {
                 commitAll();
             }
             ResponseWriter.writeSuccessEnd(w, result.updateCount(), openCursorId, callNumber);
-        }
-        if (sqlMetrics != null) {
-            sqlMetrics.recordRtt(SourceDialect.ORACLE, request.sqlText, System.nanoTime() - rttStart);
         }
     }
 
