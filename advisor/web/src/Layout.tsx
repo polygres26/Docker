@@ -1,5 +1,5 @@
 import {
-  Activity, Compass, Cpu, KeyRound, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties,
+  Activity, Compass, Cpu, KeyRound, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
@@ -28,6 +28,7 @@ const WIRE_GROUPS = [
     label: 'Traffic',
     items: [
       { to: '/wire-backends', label: 'Backends', icon: Server },
+      { to: '/wire-queues', label: 'Queues', icon: ListOrdered },
       { to: '/wire-data', label: 'Data explorer', icon: TableProperties },
       { to: '/wire-router', label: 'Router rules', icon: Route },
       { to: '/wire-qos', label: 'QoS', icon: SlidersHorizontal },

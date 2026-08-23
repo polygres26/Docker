@@ -488,6 +488,27 @@ export async function runBackendQuery(backend: string, sql: string): Promise<Que
   return api(`/api/wire/backends/${encodeURIComponent(backend)}/query`, { method: 'POST', body: JSON.stringify({ sql }) })
 }
 
+// --- sqswire (Amazon SQS compatibility) queues ---
+
+export interface QueueInfo {
+  name: string
+  visible: number
+  inFlight: number
+  fifo: boolean
+  visibilityTimeout: number
+  dlqQueueName: string | null
+  maxReceiveCount: number | null
+  backend: string
+}
+
+export async function listQueues(): Promise<QueueInfo[]> {
+  return api('/api/wire/queues')
+}
+
+export async function deleteQueue(name: string): Promise<void> {
+  await api(`/api/wire/queues/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
 // --- PolyWire backend connectivity test ---
 
 export interface BackendTestResult {

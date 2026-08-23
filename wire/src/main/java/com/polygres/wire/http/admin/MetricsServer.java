@@ -36,7 +36,10 @@ import org.slf4j.LoggerFactory;
  * {@code POST /api/backends/test} probes a candidate jdbcUrl/user/password (never persisted --
  * pure connectivity check) via {@link com.polygres.wire.core.BackendConnectivityTest}; {@code
  * POST /api/backends/{name}/test} runs the same probe against an already-configured backend's
- * live credentials, for a "is this still reachable" re-check.
+ * live credentials, for a "is this still reachable" re-check. When {@code backendRegistry} is
+ * supplied, {@code GET /api/queues} also lists every sqswire queue (depth, FIFO/DLQ attributes,
+ * resolved shard backend) and {@code DELETE /api/queues/{name}} removes one -- see
+ * {@link #handleQueues}.
  * Meant to be called server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of
  * an already-authenticated admin session), not directly from a browser -- there's no CORS
  * handling and no session/cookie machinery here on purpose.
@@ -51,6 +54,7 @@ public final class MetricsServer {
     private static final Pattern BACKEND_TEST_NAMED_PATH = Pattern.compile("^/api/backends/([^/]+)/test$");
 
     private final Server server;
+    private final com.polygres.wire.sqswire.PgQueueStore queueStore;
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.polygres.wire.acl.ConnectionGate.DISABLED);
@@ -92,6 +96,10 @@ public final class MetricsServer {
             com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
             ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
+        // Reuses the same live backendRegistry sqswire itself routes through -- a separate
+        // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
+        // than threading sqswire's own store across process wiring just for this read-only page.
+        this.queueStore = backendRegistry == null ? null : new com.polygres.wire.sqswire.PgQueueStore(backendRegistry);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
             @Override
@@ -180,6 +188,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleBackends(target, request, response, backendRegistry);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (queueStore != null && target.startsWith("/api/queues")) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleQueues(target, request, response, queueStore);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -467,6 +487,58 @@ public final class MetricsServer {
             return null;
         }
         return t;
+    }
+
+    private static final Pattern QUEUE_NAME_PATH = Pattern.compile("^/api/queues/([^/]+)$");
+
+    /**
+     * Read-only admin view of sqswire's queues -- {@code GET /api/queues} lists every queue with
+     * its live depth (visible/in-flight message counts from {@link com.polygres.wire.sqswire.PgQueueStore#countMessages}),
+     * FIFO/DLQ/redrive attributes, and which shard backend it currently resolves to (so the page
+     * can show sharding is actually splitting queues across backends, same idea as the Backends
+     * page's per-backend view). {@code DELETE /api/queues/{name}} drops a queue entirely -- the
+     * one mutating action this route offers, useful for clearing out a demo/test queue from the
+     * UI without a psql session.
+     */
+    private static void handleQueues(String target, HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.sqswire.PgQueueStore queueStore) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        try {
+            Matcher nameMatch = QUEUE_NAME_PATH.matcher(target);
+            if ("/api/queues".equals(target) && "GET".equals(request.getMethod())) {
+                StringBuilder json = new StringBuilder("[");
+                boolean first = true;
+                for (String name : queueStore.listQueues()) {
+                    if (!first) json.append(',');
+                    first = false;
+                    var counts = queueStore.countMessages(name);
+                    var attrs = queueStore.queueAttributes(name);
+                    json.append("{\"name\":").append(jsonString(name))
+                            .append(",\"visible\":").append(counts.visible())
+                            .append(",\"inFlight\":").append(counts.inFlight())
+                            .append(",\"fifo\":").append(attrs.fifo())
+                            .append(",\"visibilityTimeout\":").append(attrs.visibilityTimeout())
+                            .append(",\"dlqQueueName\":").append(jsonString(attrs.dlqQueueName()))
+                            .append(",\"maxReceiveCount\":").append(attrs.maxReceiveCount() == null ? "null" : attrs.maxReceiveCount())
+                            .append(",\"backend\":").append(jsonString(queueStore.resolveBackendFor(name)))
+                            .append('}');
+                }
+                json.append(']');
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(json.toString());
+            } else if (nameMatch.matches() && "DELETE".equals(request.getMethod())) {
+                queueStore.deleteQueue(nameMatch.group(1));
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"ok\":true}");
+            } else {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("queues admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
     }
 
     private static void writeRulesList(HttpServletResponse response, FirewallRuleStore store)

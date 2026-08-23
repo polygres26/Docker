@@ -27,11 +27,12 @@ import org.slf4j.LoggerFactory;
  * same shard group SQL's value-shard rules and dynamowire/mongowire already use -- hashed via
  * {@link ShardingStrategy#hash}. One queue's table lives entirely on one resolved backend (unlike
  * dynamowire/mongowire, almost every SQS operation is already scoped to a single queue, so there's
- * no per-message shard key to hash independently). {@code ListQueues} is the one operation that
- * has no single queue to route by, so it fans out across every shard backend and merges -- same
- * pattern as dynamowire's {@code Scan} / mongowire's non-{@code _id} {@code find}. A registry with
- * an empty shard group behaves like a single-backend store pointed at
- * {@code BackendRegistry.DEFAULT_BACKEND_NAME}.
+ * no per-message shard key to hash independently). {@code ListQueues} is the one operation with no
+ * single queue to route by, but unlike dynamowire's {@code Scan} / mongowire's non-{@code _id}
+ * {@code find} it doesn't need to fan out across shard backends at all: the queue-attributes
+ * catalog (below) is already the one stable, cluster-wide list of every queue name, so
+ * {@code ListQueues} just reads that. A registry with an empty shard group behaves like a
+ * single-backend store pointed at {@code BackendRegistry.DEFAULT_BACKEND_NAME}.
  *
  * <p><b>Queue attributes catalog:</b> {@code _sqs_queues} holds each queue's visibility timeout
  * default, FIFO flag, and redrive policy (DLQ target + max receive count). Like dynamowire's
@@ -179,34 +180,6 @@ public final class PgQueueStore {
         }
     }
 
-    /** Every shard backend's connection, for fan-out operations like ListQueues. */
-    private List<Connection> allBackendConnections() throws SQLException {
-        List<Connection> connections = new ArrayList<>();
-        if (legacyDs != null) {
-            connections.add(legacyDs.getConnection());
-            return connections;
-        }
-        logShardGroupIfChanged();
-        List<String> group = currentShardGroup();
-        if (group.isEmpty()) {
-            BackendTarget target = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
-            if (target == null) {
-                throw new IllegalStateException("sqswire: no \"" + BackendRegistry.DEFAULT_BACKEND_NAME + "\" backend registered");
-            }
-            connections.add(target.open());
-            return connections;
-        }
-        for (String name : group) {
-            BackendTarget target = backendRegistry.get(name);
-            if (target == null) {
-                log.warn("sqswire: shard group member \"{}\" is not a registered backend -- skipping for this fan-out", name);
-                continue;
-            }
-            connections.add(target.open());
-        }
-        return connections;
-    }
-
     private static String safeTableName(String queueName) {
         return "sqs_queue_" + SAFE_QUEUE_NAME.matcher(queueName).replaceAll("_");
     }
@@ -294,20 +267,22 @@ public final class PgQueueStore {
         }
     }
 
-    /** Queue names across every shard backend, deduplicated -- see class javadoc for why this fans out. */
+    /**
+     * Reads the catalog ({@code _sqs_queues}) rather than scanning {@code information_schema}
+     * across every shard backend -- the catalog is already the one stable, cluster-wide source
+     * of queue names (see the class javadoc), and unlike a table-name-derived list it preserves
+     * the real queue name: Postgres identifiers can't hold {@code -}/{@code .} (both legal in SQS
+     * queue names, e.g. {@code orders.fifo}), so deriving a name from the sanitized table name
+     * would return the wrong string and silently miss that queue's own catalog row (its FIFO
+     * flag, DLQ, etc.) on every subsequent lookup -- exactly the bug this replaced.
+     */
     public List<String> listQueues() throws SQLException {
         List<String> names = new ArrayList<>();
-        for (Connection conn : allBackendConnections()) {
-            try (conn; var st = conn.createStatement();
-                    ResultSet rs = st.executeQuery(
-                            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'sqs_queue_%'")) {
-                while (rs.next()) {
-                    String table = rs.getString(1);
-                    String name = table.substring("sqs_queue_".length());
-                    if (!names.contains(name)) {
-                        names.add(name);
-                    }
-                }
+        try (Connection cat = borrowCatalogConnection();
+                var st = cat.createStatement();
+                ResultSet rs = st.executeQuery("SELECT queue_name FROM _sqs_queues ORDER BY queue_name")) {
+            while (rs.next()) {
+                names.add(rs.getString(1));
             }
         }
         return names;

@@ -15,6 +15,7 @@ import WireSettings from './pages/WireSettings'
 import WireFirewallRules from './pages/WireFirewallRules'
 import WireAclRules from './pages/WireAclRules'
 import WireBackends from './pages/WireBackends'
+import WireQueues from './pages/WireQueues'
 import WireRouterRules from './pages/WireRouterRules'
 import WireQos from './pages/WireQos'
 import WireOAuth from './pages/WireOAuth'
@@ -50,6 +51,7 @@ export default function App() {
       <Route path="/wire-firewall" element={<RequireAuth><WireFirewallRules /></RequireAuth>} />
       <Route path="/wire-acl" element={<RequireAuth><WireAclRules /></RequireAuth>} />
       <Route path="/wire-backends" element={<RequireAuth><WireBackends /></RequireAuth>} />
+      <Route path="/wire-queues" element={<RequireAuth><WireQueues /></RequireAuth>} />
       <Route path="/wire-router" element={<RequireAuth><WireRouterRules /></RequireAuth>} />
       <Route path="/wire-qos" element={<RequireAuth><WireQos /></RequireAuth>} />
       <Route path="/wire-oauth" element={<RequireAuth><WireOAuth /></RequireAuth>} />
