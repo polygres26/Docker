@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpFromLine, Gauge, Link as LinkIcon, RefreshCw } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, Gauge, Link as LinkIcon, RefreshCw, Timer } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type WireMetricsSummary, getWireMetrics } from '../api/client'
@@ -128,6 +128,13 @@ export default function WireMetrics() {
             <div className={styles.heroStatValue}>{protocolEntries.length}</div>
             <div className={styles.heroStatSub}>{protocolEntries.map(([n]) => n).join(', ') || 'none yet'}</div>
           </div>
+          <div className={styles.heroStat}>
+            <div className={styles.heroStatLabel}><Timer size={13} /> Avg RTT</div>
+            <div className={styles.heroStatValue}>{metrics.avgRttMs === null ? '—' : `${metrics.avgRttMs} ms`}</div>
+            <div className={styles.heroStatSub}>
+              {metrics.rttSamples === 0 ? 'no samples yet' : `${formatNumber(metrics.rttSamples)} request(s) measured`}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -248,6 +255,10 @@ export default function WireMetrics() {
         </div>
         <p className={styles.cardSubtitle}>
           Ranked by cumulative execution time (calls × avg latency) — the statements actually costing you compute.
+          <strong> Avg RTT</strong> is the full request-read-to-response-written span (server-side, not network) —
+          "—" means this call site doesn't report it yet (pgwire's extended query protocol splits a query's Bind
+          and Execute across two client messages with client-controlled gaps between them, so no single honest
+          span exists there).
         </p>
         {metrics.topSql.length === 0 ? (
           <div className={styles.empty}>No SQL captured yet.</div>
@@ -259,7 +270,8 @@ export default function WireMetrics() {
                   <th></th>
                   <th>SQL</th>
                   <th style={{ textAlign: 'right' }}>Calls</th>
-                  <th style={{ textAlign: 'right' }}>Avg</th>
+                  <th style={{ textAlign: 'right' }}>Avg exec</th>
+                  <th style={{ textAlign: 'right' }}>Avg RTT</th>
                   <th style={{ textAlign: 'right' }}>Total cost</th>
                 </tr>
               </thead>
@@ -270,6 +282,7 @@ export default function WireMetrics() {
                     <td className={styles.sqlText}>{s.sql}</td>
                     <td className={styles.numCell}>{formatNumber(s.calls)}</td>
                     <td className={styles.numCell}>{s.avgMs} ms</td>
+                    <td className={styles.numCell}>{s.avgRttMs === null ? '—' : `${s.avgRttMs} ms`}</td>
                     <td className={styles.numCell}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
                         <span>{formatNumber(s.totalMs)} ms</span>

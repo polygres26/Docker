@@ -125,7 +125,12 @@ public final class SqsWireServer {
                 };
                 if (kind != null) {
                     String backendLabel = queueName == null ? "default" : store.resolveBackendFor(queueName);
-                    sqlMetrics.recordOperation("sqswire", backendLabel, kind, operation, System.nanoTime() - start);
+                    // This span already covers the full request-to-response-write cycle (the
+                    // response.getWriter().write(...) above runs inside the timed try block), so
+                    // the same duration is valid as both exec time and RTT -- see
+                    // SqlMetricsCollector's RTT javadoc.
+                    long elapsedNanos = System.nanoTime() - start;
+                    sqlMetrics.recordOperation("sqswire", backendLabel, kind, operation, elapsedNanos, elapsedNanos);
                 }
             }
         }
@@ -390,7 +395,8 @@ public final class SqsWireServer {
                 };
                 if (kind != null) {
                     String backendLabel = queueName == null ? "default" : store.resolveBackendFor(queueName);
-                    sqlMetrics.recordOperation("sqswire", backendLabel, kind, action, System.nanoTime() - start);
+                    long elapsedNanos = System.nanoTime() - start;
+                    sqlMetrics.recordOperation("sqswire", backendLabel, kind, action, elapsedNanos, elapsedNanos);
                 }
             }
         }

@@ -68,6 +68,32 @@ public final class StatsCollectorStage implements PipelineStage {
         return sqlMetrics.snapshot();
     }
 
+    /**
+     * Lets a session handler find the shared collector by scanning {@code sharedStages} for this
+     * stage, instead of threading a new constructor parameter through every protocol's session
+     * handler and every {@code accept*Loop} in {@code Main} just to report RTT -- see {@code
+     * SqlMetricsCollector}'s RTT section for why session handlers need this at all.
+     */
+    public SqlMetricsCollector sqlMetrics() {
+        return sqlMetrics;
+    }
+
+    /**
+     * The lookup every SQL-protocol session handler does in its constructor to get a
+     * {@link SqlMetricsCollector} reference for RTT reporting. Returns {@code null} if
+     * {@code stages} has no {@code StatsCollectorStage} (e.g. a test harness assembling its own
+     * minimal stage list) -- callers treat that as "RTT reporting disabled for this session,"
+     * never as a reason to fail the request.
+     */
+    public static SqlMetricsCollector findIn(java.util.List<PipelineStage> stages) {
+        for (PipelineStage stage : stages) {
+            if (stage instanceof StatsCollectorStage stats) {
+                return stats.sqlMetrics();
+            }
+        }
+        return null;
+    }
+
     private void record(String tenant, boolean failed, long elapsedNanos) {
         if (telemetry != null) {
             telemetry.recordStatement(tenant, failed, elapsedNanos / 1_000_000_000.0);

@@ -43,6 +43,7 @@ public final class MySqlWireSessionHandler implements Runnable {
     
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
 
@@ -52,6 +53,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
+        this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
     }
@@ -152,7 +154,11 @@ public final class MySqlWireSessionHandler implements Runnable {
                 case COM_PING, COM_INIT_DB -> packets.writePayload(out, MySqlMessages.okPacket(0));
                 case COM_QUERY -> {
                     String sql = new String(payload, 1, payload.length - 1, StandardCharsets.UTF_8);
+                    long rttStart = System.nanoTime();
                     executeQuery(out, packets, sql);
+                    if (sqlMetrics != null) {
+                        sqlMetrics.recordRtt(SourceDialect.MYSQL, sql, System.nanoTime() - rttStart);
+                    }
                 }
                 default -> packets.writePayload(out, MySqlMessages.errPacket(1047, "08S01",
                         "unsupported command: 0x" + Integer.toHexString(command)));

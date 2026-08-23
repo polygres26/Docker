@@ -154,8 +154,13 @@ public final class DynamoWireServer {
                     default -> null;
                 };
                 if (kind != null) {
+                    // This span already covers the full request-to-response-write cycle (the
+                    // response.getWriter().write(...) above runs inside the timed try block), so
+                    // the same duration is valid as both exec time and RTT -- see
+                    // SqlMetricsCollector's RTT javadoc.
+                    long elapsedNanos = System.nanoTime() - start;
                     sqlMetrics.recordOperation("dynamowire", resolveBackendLabel(operation, requestJson), kind,
-                            operation, System.nanoTime() - start);
+                            operation, elapsedNanos, elapsedNanos);
                 }
             }
         }

@@ -68,6 +68,7 @@ public final class RequestLoop {
 
     private volatile String lastSqlText;
     private final FailedStatementLog failedStatementLog;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     private record StatementSignature(String sql, int[] bindTypes) {
     }
@@ -98,6 +99,7 @@ public final class RequestLoop {
         this.oraclePassword = oraclePassword;
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
+        this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
     }
 
     public void run() throws IOException {
@@ -366,6 +368,12 @@ public final class RequestLoop {
         Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
         StatementPipeline pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(primaryConn)));
+        // RTT: from here (Execute request parsed, about to run) through the response written
+        // below for this same Execute -- covers the initial row batch this call itself writes,
+        // not any later separate Fetch requests for remaining rows (those are their own
+        // client-paced round trips, same caveat as pgwire's extended protocol -- see
+        // SqlMetricsCollector's RTT javadoc).
+        long rttStart = System.nanoTime();
         ExecutionResult result = pipeline.execute(statement);
         openCursorId = nextCursorId++;
         if (bindTypes != null) {
@@ -392,6 +400,9 @@ public final class RequestLoop {
                 commitAll();
             }
             ResponseWriter.writeSuccessEnd(w, result.updateCount(), openCursorId, callNumber);
+        }
+        if (sqlMetrics != null) {
+            sqlMetrics.recordRtt(SourceDialect.ORACLE, request.sqlText, System.nanoTime() - rttStart);
         }
     }
 

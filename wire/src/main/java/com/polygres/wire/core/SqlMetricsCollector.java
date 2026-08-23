@@ -26,6 +26,21 @@ import java.util.regex.Pattern;
  * dashboard, regardless of wire protocol. Deliberately not a Prometheus counter: this holds
  * enough shape (per-item labels, per-protocol breakdown) that a plain counter can't capture, and
  * is read back as one JSON snapshot by the admin API.
+ *
+ * <p><b>RTT vs. execution time:</b> {@link #record}/{@link #recordOperation} measure only
+ * pipeline/backend execution time (firewall + router + QoS + translation + the actual backend
+ * round trip) -- for the SQL protocols that's everything {@code StatementPipeline.execute}
+ * spans, which stops before the session handler serializes and writes the response back to the
+ * client socket. {@link #recordRtt}/{@link #recordOperationRtt} are a second, optional signal
+ * fed separately by each session handler wrapping its own full request-read-to-response-written
+ * span -- true "server-side round trip" in the sense a reverse proxy's `$request_time` is (total
+ * time PolyWire itself took to service the request), not network RTT to the client, which no
+ * server-side vantage point can measure. Not every call site reports it: pgwire's extended query
+ * protocol splits Bind (executes) from Execute (streams the already-computed result) across two
+ * client messages with client-controlled gaps in between, so no single span there would be
+ * honest -- extended-protocol executions only get exec-time, never RTT. Every other call site
+ * (pgwire simple query, mywire, mssqlwire, orawire, gRPC, mongowire, dynamowire, sqswire) reports
+ * both.
  */
 public final class SqlMetricsCollector {
 
@@ -36,7 +51,8 @@ public final class SqlMetricsCollector {
 
     public enum StatementKind { READ, WRITE, OTHER }
 
-    public record SqlStat(String normalizedSql, long calls, long totalMillis, long avgMillis) {
+    public record SqlStat(String normalizedSql, long calls, long totalMillis, long avgMillis,
+            Long avgRttMillis) {
     }
 
     public record BackendStat(String backend, long calls, long reads, long writes, long totalMillis, long avgMillis) {
@@ -50,13 +66,17 @@ public final class SqlMetricsCollector {
             double readsPerSec,
             double writesPerSec,
             List<SqlStat> topSql,
-            List<BackendStat> byBackend) {
+            List<BackendStat> byBackend,
+            Long avgRttMs,
+            long rttSamples) {
     }
 
     private static final class SqlEntry {
         final String normalizedSql;
         final LongAdder calls = new LongAdder();
         final LongAdder totalNanos = new LongAdder();
+        final LongAdder rttCalls = new LongAdder();
+        final LongAdder rttTotalNanos = new LongAdder();
 
         SqlEntry(String normalizedSql) {
             this.normalizedSql = normalizedSql;
@@ -76,6 +96,8 @@ public final class SqlMetricsCollector {
     private final LongAdder totalReads = new LongAdder();
     private final LongAdder totalWrites = new LongAdder();
     private final LongAdder totalOther = new LongAdder();
+    private final LongAdder rttSamples = new LongAdder();
+    private final LongAdder totalRttNanos = new LongAdder();
 
     private final AtomicLong lastPollReads = new AtomicLong(0);
     private final AtomicLong lastPollWrites = new AtomicLong(0);
@@ -132,6 +154,46 @@ public final class SqlMetricsCollector {
             }
             entry.calls.increment();
             entry.totalNanos.add(elapsedNanos);
+        }
+    }
+
+    /**
+     * Convenience for call sites (sqswire, dynamowire) whose single existing measurement already
+     * spans the full request-read-to-response-written window -- their {@code finally} block wraps
+     * the response write, not just the business logic -- so the same {@code elapsedNanos} is
+     * simultaneously valid as both exec time and RTT. Equivalent to calling {@link #recordOperation
+     * (String, String, StatementKind, String, long)} followed by {@link #recordOperationRtt}.
+     */
+    public void recordOperation(String protocolName, String backendName, StatementKind kind, String label,
+            long elapsedNanos, long rttNanos) {
+        recordOperation(protocolName, backendName, kind, label, elapsedNanos);
+        recordOperationRtt(label, rttNanos);
+    }
+
+    /**
+     * Fed separately from {@link #record}, by a session handler that measured its own
+     * read-request-to-write-response span -- see the class javadoc's RTT section. {@code
+     * sqlText} is normalized the same way {@link #record} does so it lands in the same
+     * per-fingerprint bucket that call already created.
+     */
+    public void recordRtt(SourceDialect dialect, String sqlText, long rttNanos) {
+        recordOperationRtt(normalize(sqlText), rttNanos);
+    }
+
+    /** The mongowire/dynamowire/sqswire/gRPC entry point -- {@code label} matches what {@link #recordOperation} used. */
+    public void recordOperationRtt(String label, long rttNanos) {
+        rttSamples.increment();
+        totalRttNanos.add(rttNanos);
+        if (label == null || label.isBlank()) {
+            return;
+        }
+        // Only updates an entry that record()/recordOperation() already created for this same
+        // call -- never creates one on its own, so it can't bypass TOP_SQL_CAP or add an entry
+        // with exec stats missing.
+        SqlEntry entry = sqlStats.get(label);
+        if (entry != null) {
+            entry.rttCalls.increment();
+            entry.rttTotalNanos.add(rttNanos);
         }
     }
 
@@ -199,7 +261,9 @@ public final class SqlMetricsCollector {
             long calls = entry.calls.sum();
             long totalMs = entry.totalNanos.sum() / 1_000_000;
             long avgMs = calls == 0 ? 0 : totalMs / calls;
-            top.add(new SqlStat(entry.normalizedSql, calls, totalMs, avgMs));
+            long rttCalls = entry.rttCalls.sum();
+            Long avgRttMs = rttCalls == 0 ? null : entry.rttTotalNanos.sum() / 1_000_000 / rttCalls;
+            top.add(new SqlStat(entry.normalizedSql, calls, totalMs, avgMs, avgRttMs));
         }
         top.sort(Comparator.comparingLong(SqlStat::totalMillis).reversed());
         List<SqlStat> top10 = top.size() > 10 ? top.subList(0, 10) : top;
@@ -214,7 +278,10 @@ public final class SqlMetricsCollector {
         }
         backendStats.sort(Comparator.comparingLong(BackendStat::calls).reversed());
 
+        long rttSampleCount = rttSamples.sum();
+        Long avgRttMs = rttSampleCount == 0 ? null : totalRttNanos.sum() / 1_000_000 / rttSampleCount;
+
         return new Snapshot(protocolCounts, reads, writes, totalOther.sum(), readsPerSec, writesPerSec,
-                List.copyOf(top10), List.copyOf(backendStats));
+                List.copyOf(top10), List.copyOf(backendStats), avgRttMs, rttSampleCount);
     }
 }

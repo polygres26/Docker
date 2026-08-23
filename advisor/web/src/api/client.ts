@@ -418,6 +418,7 @@ export interface WireMetricsSql {
   calls: number
   totalMs: number
   avgMs: number
+  avgRttMs: number | null
 }
 
 export interface WireMetricsBackend {
@@ -436,6 +437,8 @@ export interface WireMetricsSummary {
   totalOther: number
   readsPerSec: number
   writesPerSec: number
+  avgRttMs: number | null
+  rttSamples: number
   topSql: WireMetricsSql[]
   byBackend: WireMetricsBackend[]
 }

@@ -48,9 +48,10 @@ public final class MssqlWireSessionHandler implements Runnable {
     private final CredentialStore credentials = new CredentialStore();
     private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
     private final StatementPipeline pipeline;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
-    
+
     private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
@@ -65,6 +66,7 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
                 new RoutingBackendExecutor(backendRegistry, terminalExecutor));
+        this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
@@ -176,7 +178,11 @@ public final class MssqlWireSessionHandler implements Runnable {
             switch (msg.type()) {
                 case TdsPacketType.SQL_BATCH -> {
                     String sql = SqlBatchReader.readSqlText(msg.payload());
+                    long rttStart = System.nanoTime();
                     executeQuery(out, packets, sql);
+                    if (sqlMetrics != null) {
+                        sqlMetrics.recordRtt(SourceDialect.SQL_SERVER, sql, System.nanoTime() - rttStart);
+                    }
                 }
                 case TdsPacketType.ATTENTION -> {
                     

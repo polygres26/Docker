@@ -17,6 +17,7 @@ public final class MongoWireSessionHandler implements Runnable {
 
     private final Socket clientSocket;
     private final MongoCommandDispatcher dispatcher;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword) {
         this(clientSocket, pgUrl, pgUser, pgPassword, null, null);
@@ -31,6 +32,7 @@ public final class MongoWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(() -> openConnection(pgUrl, pgUser, pgPassword));
         this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
+        this.sqlMetrics = sqlMetrics;
     }
 
     /**
@@ -44,6 +46,7 @@ public final class MongoWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(backendRegistry);
         this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
+        this.sqlMetrics = sqlMetrics;
     }
 
     private static Connection openConnection(String url, String user, String password) throws SQLException {
@@ -57,11 +60,26 @@ public final class MongoWireSessionHandler implements Runnable {
             OutputStream out = socket.getOutputStream();
             while (true) {
                 OpMsgFrame frame = OpMsgFrame.read(in);
+                // RTT: from here (request frame fully read) through writeReply below -- unlike
+                // dispatch()'s own internal exec-time measurement (which stops before this method
+                // gets the reply back), this span covers the write too. Label mirrors dispatch()'s
+                // own first-command-key logic just enough to land in the same per-fingerprint
+                // bucket record() already created -- see SqlMetricsCollector's RTT javadoc.
+                long rttStart = System.nanoTime();
                 BsonDocument reply = dispatcher.dispatch(frame.body);
                 OpMsgFrame.writeReply(out, frame.requestId, reply, frame.legacyQuery);
+                if (sqlMetrics != null && !frame.body.isEmpty()) {
+                    // Must match MongoCommandDispatcher#dispatch's own label exactly ("db.command",
+                    // not just "command") or this updates a bucket that was never created and
+                    // silently no-ops -- found by actually running mixed traffic through this and
+                    // checking avgRttMs came back null for mongowire entries.
+                    String commandName = frame.body.getFirstKey().toLowerCase(java.util.Locale.ROOT);
+                    String db = frame.body.containsKey("$db") ? frame.body.getString("$db").getValue() : "test";
+                    sqlMetrics.recordOperationRtt(db + "." + commandName, System.nanoTime() - rttStart);
+                }
             }
         } catch (EOFException e) {
-            
+
         } catch (Exception e) {
             log.warn("mongowire session terminated: {}", e.getMessage(), e);
         }

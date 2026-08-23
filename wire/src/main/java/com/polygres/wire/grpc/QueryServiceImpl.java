@@ -30,12 +30,14 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
     private final List<PipelineStage> sharedStages;
     private final com.polygres.wire.core.BackendRegistry backendRegistry;
     private final CredentialStore credentials = new CredentialStore();
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     public QueryServiceImpl(ServerOptions options, List<PipelineStage> sharedStages,
             com.polygres.wire.core.BackendRegistry backendRegistry) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
+        this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
     }
 
     @Override
@@ -51,6 +53,9 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
             return;
         }
 
+        // RTT: from here (request already deserialized by gRPC) through onNext() below --
+        // the one request-in, response-out boundary this unary RPC has.
+        long rttStart = System.nanoTime();
         try (Connection backend = openBackend()) {
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
                     new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend)));
@@ -65,6 +70,9 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
                     .setSqlState(e.getSQLState() == null ? "58000" : e.getSQLState())
                     .setErrorMessage(e.getMessage() == null ? "backend error" : e.getMessage())
                     .build());
+        }
+        if (sqlMetrics != null) {
+            sqlMetrics.recordRtt(SourceDialect.POLYWIRE_NATIVE, request.getSql(), System.nanoTime() - rttStart);
         }
         responseObserver.onCompleted();
     }

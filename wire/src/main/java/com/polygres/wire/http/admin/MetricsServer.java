@@ -620,6 +620,8 @@ public final class MetricsServer {
         json.append(",\"totalOther\":").append(snap.totalOther());
         json.append(",\"readsPerSec\":").append(String.format(java.util.Locale.ROOT, "%.2f", snap.readsPerSec()));
         json.append(",\"writesPerSec\":").append(String.format(java.util.Locale.ROOT, "%.2f", snap.writesPerSec()));
+        json.append(",\"avgRttMs\":").append(snap.avgRttMs() == null ? "null" : snap.avgRttMs());
+        json.append(",\"rttSamples\":").append(snap.rttSamples());
         json.append(",\"topSql\":[");
         first = true;
         for (var s : snap.topSql()) {
@@ -629,6 +631,7 @@ public final class MetricsServer {
                     .append(",\"calls\":").append(s.calls())
                     .append(",\"totalMs\":").append(s.totalMillis())
                     .append(",\"avgMs\":").append(s.avgMillis())
+                    .append(",\"avgRttMs\":").append(s.avgRttMillis() == null ? "null" : s.avgRttMillis())
                     .append('}');
         }
         json.append("],\"byBackend\":[");

@@ -54,7 +54,8 @@ public final class PgWireSessionHandler implements Runnable {
     
     private final com.polygres.wire.core.RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
-    
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
+
     private final FailedStatementLog failedStatementLog;
 
     private Connection sessionConnection;
@@ -84,6 +85,7 @@ public final class PgWireSessionHandler implements Runnable {
         this.options = options;
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor);
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
+        this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
@@ -285,7 +287,18 @@ public final class PgWireSessionHandler implements Runnable {
 
             switch (type) {
                 case 'X' -> { return; }
-                case 'Q' -> executeSimpleQuery(out, new String(body, 0, body.length - 1, StandardCharsets.UTF_8));
+                case 'Q' -> {
+                    String simpleQuerySql = new String(body, 0, body.length - 1, StandardCharsets.UTF_8);
+                    // RTT: from here (request fully parsed) through executeSimpleQuery's own
+                    // out.flush() -- the one client-message-in, response-out boundary the simple
+                    // query protocol actually has. Extended protocol (P/B/D/E/C below) can't offer
+                    // the same honest span -- see SqlMetricsCollector's RTT javadoc.
+                    long rttStart = System.nanoTime();
+                    executeSimpleQuery(out, simpleQuerySql);
+                    if (sqlMetrics != null) {
+                        sqlMetrics.recordRtt(SourceDialect.POSTGRES, simpleQuerySql, System.nanoTime() - rttStart);
+                    }
+                }
                 case 'P' -> dispatchExtended(out, () -> handleParse(out, body));
                 case 'B' -> dispatchExtended(out, () -> handleBind(out, body));
                 case 'D' -> dispatchExtended(out, () -> handleDescribe(out, body));
