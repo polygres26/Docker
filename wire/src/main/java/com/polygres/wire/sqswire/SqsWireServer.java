@@ -1,0 +1,289 @@
+package com.polygres.wire.sqswire;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
+import java.util.List;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * sqswire -- Amazon SQS wire-protocol compatibility. Speaks the JSON-1.1 protocol
+ * (X-Amz-Target: AmazonSQS.&lt;Action&gt;) the current AWS SDKs (boto3, SDK v2/v3) use by default,
+ * backed by {@link PgQueueStore} -- a pgmq-style (github.com/pgmq/pgmq) Postgres table per queue,
+ * reimplemented in plain SQL so no {@code pgmq} extension is required on the backend.
+ *
+ * <p>Covers CreateQueue/DeleteQueue/GetQueueUrl/ListQueues/SendMessage/ReceiveMessage/
+ * DeleteMessage/ChangeMessageVisibility/GetQueueAttributes -- the core queue lifecycle. FIFO
+ * queues, dead-letter/redrive policies, and the legacy query-string (Action=...) protocol are not
+ * yet covered; see the sqswire plan for the intended build order.
+ */
+public final class SqsWireServer {
+
+    private static final Logger log = LoggerFactory.getLogger(SqsWireServer.class);
+    private static final String TARGET_PREFIX = "AmazonSQS.";
+
+    private final Server server;
+    private final PgQueueStore store;
+    private final String queueUrlBase;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
+
+    public SqsWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
+        this(port, new PgQueueStore(pgHost, pgPort, pgDatabase, pgUser, pgPassword),
+                com.polygres.wire.acl.ConnectionGate.DISABLED, null);
+    }
+
+    /**
+     * Sharded mode -- {@code backendRegistry.shardGroup()} becomes the set of Postgres backends
+     * queue storage splits across, hashed by queue name -- see {@link PgQueueStore}'s javadoc.
+     */
+    public SqsWireServer(int port, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.acl.ConnectionGate connectionGate, com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this(port, new PgQueueStore(backendRegistry), connectionGate, sqlMetrics);
+    }
+
+    private SqsWireServer(int port, PgQueueStore store, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this.store = store;
+        this.sqlMetrics = sqlMetrics;
+        this.queueUrlBase = "http://localhost:" + port + "/queue";
+        this.server = new Server(port);
+        server.setHandler(new AbstractHandler() {
+            @Override
+            public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+                    throws IOException {
+                baseRequest.setHandled(true);
+                if (!connectionGate.acceptHttp(request)) {
+                    writeError(response, 403, "AccessDenied", "forbidden");
+                    return;
+                }
+                String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                handleRequest(request, response, body);
+            }
+        });
+    }
+
+    private void handleRequest(HttpServletRequest request, HttpServletResponse response, String body) throws IOException {
+        response.setContentType("application/x-amz-json-1.1");
+        String amzTarget = request.getHeader("X-Amz-Target");
+        if (amzTarget == null || !amzTarget.startsWith(TARGET_PREFIX)) {
+            writeError(response, 400, "UnknownOperationException", "Missing or unrecognized X-Amz-Target header: " + amzTarget);
+            return;
+        }
+        String operation = amzTarget.substring(TARGET_PREFIX.length());
+        JsonObject requestJson;
+        try {
+            requestJson = body.isBlank() ? new JsonObject() : JsonParser.parseString(body).getAsJsonObject();
+        } catch (RuntimeException e) {
+            writeError(response, 400, "InvalidAction", "Could not parse request body as JSON: " + e.getMessage());
+            return;
+        }
+        long start = System.nanoTime();
+        String queueName = queueNameFromRequest(requestJson);
+        try {
+            JsonObject responseJson = dispatch(operation, requestJson);
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(responseJson.toString());
+        } catch (SqsException e) {
+            writeError(response, e.status, e.sqsErrorType, e.getMessage());
+        } catch (SQLException e) {
+            log.warn("sqswire: Postgres error servicing {}: {}", operation, e.getMessage());
+            writeError(response, 500, "InternalError", "Postgres error: " + e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("sqswire operation {} failed", operation, e);
+            writeError(response, 500, "InternalError", String.valueOf(e.getMessage()));
+        } finally {
+            if (sqlMetrics != null) {
+                var kind = switch (operation) {
+                    case "ReceiveMessage", "GetQueueAttributes", "ListQueues", "GetQueueUrl" ->
+                            com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ;
+                    case "SendMessage", "DeleteMessage", "ChangeMessageVisibility", "CreateQueue", "DeleteQueue" ->
+                            com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE;
+                    default -> null;
+                };
+                if (kind != null) {
+                    String backendLabel = queueName == null ? "default" : store.resolveBackendFor(queueName);
+                    sqlMetrics.recordOperation("sqswire", backendLabel, kind, operation, System.nanoTime() - start);
+                }
+            }
+        }
+    }
+
+    private JsonObject dispatch(String operation, JsonObject req) throws SQLException {
+        return switch (operation) {
+            case "CreateQueue" -> createQueue(req);
+            case "DeleteQueue" -> deleteQueue(req);
+            case "GetQueueUrl" -> getQueueUrl(req);
+            case "ListQueues" -> listQueues();
+            case "SendMessage" -> sendMessage(req);
+            case "ReceiveMessage" -> receiveMessage(req);
+            case "DeleteMessage" -> deleteMessage(req);
+            case "ChangeMessageVisibility" -> changeMessageVisibility(req);
+            case "GetQueueAttributes" -> getQueueAttributes(req);
+            default -> throw new SqsException(400, "UnknownOperationException", "sqswire does not implement " + operation);
+        };
+    }
+
+    /** Every action's request carries either a queue name or a queue URL ending in it. */
+    private String queueNameFromRequest(JsonObject req) {
+        if (req.has("QueueName")) {
+            return req.get("QueueName").getAsString();
+        }
+        if (req.has("QueueUrl")) {
+            String url = req.get("QueueUrl").getAsString();
+            int slash = url.lastIndexOf('/');
+            return slash < 0 ? url : url.substring(slash + 1);
+        }
+        return null;
+    }
+
+    private String requireQueueName(JsonObject req) {
+        String name = queueNameFromRequest(req);
+        if (name == null) {
+            throw new SqsException(400, "MissingParameter", "QueueName or QueueUrl is required");
+        }
+        return name;
+    }
+
+    private JsonObject createQueue(JsonObject req) throws SQLException {
+        String name = req.has("QueueName") ? req.get("QueueName").getAsString()
+                : throwMissing("QueueName");
+        store.createQueue(name);
+        JsonObject resp = new JsonObject();
+        resp.addProperty("QueueUrl", queueUrlBase + "/" + name);
+        return resp;
+    }
+
+    private JsonObject deleteQueue(JsonObject req) throws SQLException {
+        store.deleteQueue(requireQueueName(req));
+        return new JsonObject();
+    }
+
+    private JsonObject getQueueUrl(JsonObject req) {
+        String name = req.has("QueueName") ? req.get("QueueName").getAsString() : throwMissing("QueueName");
+        JsonObject resp = new JsonObject();
+        resp.addProperty("QueueUrl", queueUrlBase + "/" + name);
+        return resp;
+    }
+
+    private JsonObject listQueues() throws SQLException {
+        List<String> names = store.listQueues();
+        JsonArray urls = new JsonArray();
+        for (String name : names) {
+            urls.add(queueUrlBase + "/" + name);
+        }
+        JsonObject resp = new JsonObject();
+        resp.add("QueueUrls", urls);
+        return resp;
+    }
+
+    private JsonObject sendMessage(JsonObject req) throws SQLException {
+        String name = requireQueueName(req);
+        String body = req.has("MessageBody") ? req.get("MessageBody").getAsString() : throwMissing("MessageBody");
+        String groupId = req.has("MessageGroupId") ? req.get("MessageGroupId").getAsString() : null;
+        String dedupId = req.has("MessageDeduplicationId") ? req.get("MessageDeduplicationId").getAsString() : null;
+        long msgId = store.sendMessage(name, body, groupId, dedupId);
+        JsonObject resp = new JsonObject();
+        resp.addProperty("MessageId", String.valueOf(msgId));
+        resp.addProperty("MD5OfMessageBody", md5Hex(body));
+        return resp;
+    }
+
+    private JsonObject receiveMessage(JsonObject req) throws SQLException {
+        String name = requireQueueName(req);
+        int maxMessages = req.has("MaxNumberOfMessages") ? req.get("MaxNumberOfMessages").getAsInt() : 1;
+        int visibilityTimeout = req.has("VisibilityTimeout") ? req.get("VisibilityTimeout").getAsInt() : 30;
+        List<PgQueueStore.ReceivedMessage> messages = store.receiveMessages(name, maxMessages, visibilityTimeout);
+        JsonArray arr = new JsonArray();
+        for (PgQueueStore.ReceivedMessage m : messages) {
+            JsonObject msgJson = new JsonObject();
+            msgJson.addProperty("MessageId", String.valueOf(m.msgId()));
+            msgJson.addProperty("ReceiptHandle", m.receiptHandle());
+            msgJson.addProperty("Body", m.body());
+            msgJson.addProperty("MD5OfBody", md5Hex(m.body()));
+            JsonObject attrs = new JsonObject();
+            attrs.addProperty("ApproximateReceiveCount", String.valueOf(m.readCt()));
+            msgJson.add("Attributes", attrs);
+            arr.add(msgJson);
+        }
+        JsonObject resp = new JsonObject();
+        resp.add("Messages", arr);
+        return resp;
+    }
+
+    private JsonObject deleteMessage(JsonObject req) throws SQLException {
+        String name = requireQueueName(req);
+        String receiptHandle = req.has("ReceiptHandle") ? req.get("ReceiptHandle").getAsString() : throwMissing("ReceiptHandle");
+        boolean deleted = store.deleteMessage(name, receiptHandle);
+        if (!deleted) {
+            throw new SqsException(400, "ReceiptHandleIsInvalid", "The receipt handle is invalid or the message no longer exists");
+        }
+        return new JsonObject();
+    }
+
+    private JsonObject changeMessageVisibility(JsonObject req) throws SQLException {
+        String name = requireQueueName(req);
+        String receiptHandle = req.has("ReceiptHandle") ? req.get("ReceiptHandle").getAsString() : throwMissing("ReceiptHandle");
+        int visibilityTimeout = req.has("VisibilityTimeout") ? req.get("VisibilityTimeout").getAsInt() : 30;
+        boolean changed = store.changeMessageVisibility(name, receiptHandle, visibilityTimeout);
+        if (!changed) {
+            throw new SqsException(400, "ReceiptHandleIsInvalid", "The receipt handle is invalid or the message no longer exists");
+        }
+        return new JsonObject();
+    }
+
+    private JsonObject getQueueAttributes(JsonObject req) throws SQLException {
+        String name = requireQueueName(req);
+        PgQueueStore.QueueCounts counts = store.countMessages(name);
+        JsonObject attrs = new JsonObject();
+        attrs.addProperty("ApproximateNumberOfMessages", String.valueOf(counts.visible()));
+        attrs.addProperty("ApproximateNumberOfMessagesNotVisible", String.valueOf(counts.inFlight()));
+        JsonObject resp = new JsonObject();
+        resp.add("Attributes", attrs);
+        return resp;
+    }
+
+    private static String throwMissing(String param) {
+        throw new SqsException(400, "MissingParameter", param + " is required");
+    }
+
+    private static String md5Hex(String s) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("MD5").digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private void writeError(HttpServletResponse response, int status, String errorType, String message) throws IOException {
+        JsonObject err = new JsonObject();
+        err.addProperty("__type", "com.amazonaws.sqs#" + errorType);
+        err.addProperty("message", message);
+        response.setStatus(status);
+        response.getWriter().write(err.toString());
+    }
+
+    public void start() throws Exception {
+        server.start();
+        log.info("polywire sqswire (Amazon SQS HTTP/JSON) listening on port {}",
+                ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
+    }
+
+    public void stop() throws Exception {
+        server.stop();
+        store.close();
+    }
+}
