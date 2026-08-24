@@ -53,7 +53,41 @@ public final class DialectTranslations {
         if (normalizer == null || renderer == null) {
             return null;
         }
-        return renderer.apply(normalizer.apply(sql));
+        String rewritten = renderer.apply(normalizer.apply(sql));
+        // Real bug, found live testing orawire against a genuine SQLcl client (not just the JDBC
+        // driver every prior test used): this used to return `rewritten` unconditionally once a
+        // normalizer/renderer pair existed for the (from, to) pair, even when neither actually
+        // recognized anything Oracle-specific in the input and just handed it back unchanged --
+        // e.g. "CREATE TABLE t (id NUMBER)" reached Postgres as literally "NUMBER", a type that
+        // doesn't exist there. DialectTranslationStage.translateWithFallback only calls the LLM
+        // fallback when this method returns null, so a rule set that's merely incomplete (as any
+        // fixed set of hand-written patterns for an unbounded DDL/PL-SQL surface always will be)
+        // was silently mistaken for a successful translation, and the LLM fallback that exists
+        // specifically for exactly this case was structurally unreachable for it.
+        //
+        // This is a best-effort safety net, not an exhaustive detector: it catches the specific,
+        // common Oracle-only tokens found live (below) that survive both passes untouched, which
+        // is a strong signal this statement needs the LLM, not a guarantee every mistranslation is
+        // caught. Scoped to ORACLE->POSTGRES since that's the pairing this was found against; the
+        // other dialect pairs' rule sets haven't been audited the same way yet.
+        if (from == SourceDialect.ORACLE && to == SourceDialect.POSTGRES
+                && containsUnhandledOracleConstruct(rewritten)) {
+            return null;
+        }
+        return rewritten;
+    }
+
+    /** See {@link #translate}'s comment above -- deliberately a short, high-confidence list of
+     * tokens that are not valid Postgres syntax and aren't already handled by a rule in
+     * {@link #normalizeOracle}/{@link #renderPostgres}, not an attempt to enumerate every Oracle
+     * construct that could possibly appear. */
+    private static final Pattern UNHANDLED_ORACLE_CONSTRUCT = Pattern.compile(
+            "(?i)\\b(VARCHAR2|NVARCHAR2|CLOB|BLOB|ROWID|CONNECT\\s+BY|START\\s+WITH|MINUS)\\b"
+          + "|\\bNUMBER\\s*(\\(|\\b)"
+          + "|\\bRAW\\s*\\(");
+
+    private static boolean containsUnhandledOracleConstruct(String sql) {
+        return SqlLiterals.findOutsideLiterals(sql, UNHANDLED_ORACLE_CONSTRUCT);
     }
 
     private static final Pattern NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");

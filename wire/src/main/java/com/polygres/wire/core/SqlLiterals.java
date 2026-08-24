@@ -27,6 +27,21 @@ final class SqlLiterals {
         return out.toString();
     }
 
+    /** {@code true} if {@code pattern} matches anywhere in {@code sql} outside a string literal --
+     * same literal-awareness as {@link #replaceOutsideLiterals}, for callers that only need a
+     * yes/no check (e.g. "does this still contain a construct I don't know how to rewrite?"). */
+    static boolean findOutsideLiterals(String sql, Pattern pattern) {
+        Matcher matcher = pattern.matcher(sql);
+        int last = 0;
+        while (matcher.find(last)) {
+            if (!isInsideStringLiteral(sql, matcher.start())) {
+                return true;
+            }
+            last = matcher.end();
+        }
+        return false;
+    }
+
     static boolean isInsideStringLiteral(String sql, int position) {
         boolean inString = false;
         int i = 0;
