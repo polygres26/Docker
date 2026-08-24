@@ -30,6 +30,8 @@
     <ojdbc.version>23.8.0.25.04</ojdbc.version>
     <mongodb.version>5.5.1</mongodb.version>
     <awssdk.version>2.46.7</awssdk.version>
+    <opensearch-java.version>2.19.0</opensearch-java.version>
+    <httpclient5.version>5.3.1</httpclient5.version>
   </properties>
 
   <dependencies>
@@ -80,6 +82,17 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>sqs</artifactId>
       <version>${awssdk.version}</version>
+    </dependency>
+    <!-- oswire -->
+    <dependency>
+      <groupId>org.opensearch.client</groupId>
+      <artifactId>opensearch-java</artifactId>
+      <version>${opensearch-java.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <version>${httpclient5.version}</version>
     </dependency>
   </dependencies>
 

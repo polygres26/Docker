@@ -25,4 +25,5 @@ final class TestConfig {
     static final int MONGOWIRE_PORT = port("POLYWIRE_MONGOWIRE_PORT", 27017);
     static final int DYNAMOWIRE_PORT = port("POLYWIRE_DYNAMOWIRE_PORT", 18000);
     static final int SQSWIRE_PORT = port("POLYWIRE_SQSWIRE_PORT", 9324);
+    static final int OSWIRE_PORT = port("POLYWIRE_OSWIRE_PORT", 9200);
 }
