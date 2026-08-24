@@ -47,9 +47,15 @@ Configuration, and more) is served on port `19090`.
 
 ![PolyWire multi-AZ cloud deployment: stateless instances per zone behind a network load balancer, primary/backup cache copies replicating across zones, a config-primary Postgres with standby failover](docs/deployment.png)
 
-This is the target topology — the load balancer fan-out, per-zone instance scaling, and
-config-primary failover all work today; the cross-zone cache backup replication shown is not yet
-built (still needs cloud-native cluster discovery, AZ-aware backup placement, and inter-node TLS).
+Every piece of this diagram is real and tested today: the load balancer fan-out, per-zone
+instance scaling, config-primary failover, and the cross-zone cache backup replication — a cache
+entry's backup copy is placed on a node in a different availability zone than its primary,
+proven by a live test with three real cache nodes, not a simulation. Cluster discovery works
+across a static seed list or AWS S3/GCP Cloud Storage/Azure Blob Storage; connections between
+cache nodes can be TLS-encrypted. What's still open: the cloud discovery modes are verified
+against the real client libraries but not yet exercised against real cloud storage (no cloud
+credentials available to test with), and each node's zone is operator-supplied rather than
+auto-detected.
 
 ## Image packaging reference
 
