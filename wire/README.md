@@ -24,7 +24,7 @@ execution. Config lives in Postgres itself (`polywire_config`, `polywire_firewal
 hot-reloaded to every running process via `LISTEN/NOTIFY` — no restart to change a firewall
 rule, routing topology, or SQL rewrite rule.
 
-![PolyWire architecture: eight client protocols feed a shared nine-stage pipeline (frontends, firewall, router, QoS, dialect translation, rollup, cache, stats, backend execution), driven by a Postgres control plane over LISTEN/NOTIFY, executing against horizontally-sharded Postgres backends](docs/architecture.png)
+![PolyWire architecture: nine client protocols (OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP) feed a shared eight-stage pipeline -- frontends, firewall, router, QoS, dialect translation, rollup, cache, stats collector -- each paired with the customer outcome it drives, backed by a Postgres control plane over LISTEN/NOTIFY and executing against horizontally-sharded Postgres backends](docs/architecture.png)
 
 The full architecture, security, HA, and deployment guide with more diagrams lives at
 [`polywire/index.html`](https://polygres26.github.io/polywire/) (or open it directly:
