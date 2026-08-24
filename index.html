@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polygres — PolyAdvisor &amp; PolyWire</title>
+<meta name="description" content="Polygres: migration assessment (PolyAdvisor) and a multi-protocol Postgres gateway (PolyWire).">
+<style>
+  :root {
+    --paper: #ffffff;
+    --paper-raised: #f6f7f9;
+    --ink: #1b2430;
+    --ink-dim: #57626f;
+    --ink-faint: #8894a2;
+    --line: #dde3e9;
+    --indigo: #3f5b9b;
+    --indigo-soft: #e8ecf7;
+    --teal: #227465;
+    --teal-soft: #e2f3ef;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #12161c;
+      --paper-raised: #181d25;
+      --ink: #e7ecf2;
+      --ink-dim: #98a3b2;
+      --ink-faint: #5c6673;
+      --line: #2a323d;
+      --indigo: #7f9ce0;
+      --indigo-soft: #232c3d;
+      --teal: #5cc0ac;
+      --teal-soft: #16292a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.6; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 56px 24px 80px; }
+  header { margin-bottom: 40px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--indigo); margin: 0 0 12px; }
+  h1 { font-size: clamp(30px, 5vw, 42px); margin: 0 0 14px; letter-spacing: -0.01em; }
+  h1 span { color: var(--indigo); }
+  .lede { color: var(--ink-dim); font-size: 17px; max-width: 68ch; margin: 0; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin: 32px 0; }
+  .card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+  .card h2 { font-size: 18px; margin: 0 0 8px; }
+  .card p { color: var(--ink-dim); font-size: 14.5px; margin: 0 0 14px; }
+  .card code { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; color: var(--ink); }
+
+  h2.section { font-size: 20px; margin: 48px 0 14px; letter-spacing: -0.01em; }
+  figure { margin: 0 0 40px; }
+  figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
+  figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px; max-width: 78ch; }
+
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; background: var(--teal-soft); color: var(--teal); padding: 4px 10px; border-radius: 999px; margin-bottom: 6px; }
+
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
+  footer a { color: var(--indigo); }
+  a { color: var(--indigo); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">Polygres</p>
+      <h1>PolyAdvisor &amp; <span>PolyWire</span></h1>
+      <p class="lede">
+        Two tools for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: assess how hard
+        the migration is, then bridge your existing application to Postgres while you do it.
+      </p>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <span class="badge">ghcr.io/polygres26/polyadvisor</span>
+        <h2>PolyAdvisor</h2>
+        <p>Connects to a source database (or takes an uploaded performance report) and scores
+          migration difficulty, feature-by-feature, plus a Postgres sizing recommendation.</p>
+        <code>docker run -p 8090:8090 \
+  -v polyadvisor-data:/data \
+  ghcr.io/polygres26/polyadvisor:latest</code>
+      </div>
+      <div class="card">
+        <span class="badge">ghcr.io/polygres26/polywire</span>
+        <h2>PolyWire</h2>
+        <p>Speaks Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, and Amazon SQS wire
+          protocols, translating and routing every one of them to real Postgres.</p>
+        <code>docker run -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_PG_HOST=&lt;host&gt; \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+    </div>
+
+    <h2 class="section">Architecture</h2>
+    <figure>
+      <img src="docs/architecture.png" alt="PolyWire architecture: nine client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane, executing against horizontally-sharded Postgres backends">
+      <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres.</figcaption>
+    </figure>
+
+    <h2 class="section">Multi-AZ deployment</h2>
+    <figure>
+      <img src="docs/deployment.png" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, stateless instances per zone holding primary or backup cache copies, a config-primary Postgres with standby failover">
+      <figcaption>Target topology for a multi-AZ rollout. The load-balancer fan-out, per-zone instance scaling, and config-primary failover work today; the cross-zone cache backup replication shown is not yet built.</figcaption>
+    </figure>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="README.md">README.md</a> and
+      <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
+      in this repo.
+    </footer>
+  </div>
+</body>
+</html>
