@@ -84,14 +84,6 @@
   table.rttTable td.num { font-family: var(--mono); }
   table.rttTable td.speedup { color: var(--teal); font-family: var(--mono); font-weight: 600; }
 
-  .obsDiagram { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 0 0 16px; }
-  .obsDiagram svg { display: block; width: 100%; height: auto; }
-  .obsLegend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 12.5px; color: var(--ink-dim); margin: 0 0 24px; }
-  .obsLegend span { display: inline-flex; align-items: center; gap: 6px; }
-  .obsLegend i { width: 18px; height: 0; border-top: 2.5px solid; display: inline-block; }
-  .obsLegend i.scrape { border-color: var(--teal); }
-  .obsLegend i.direct { border-color: var(--indigo); }
-  .obsLegend i.collector { border-color: var(--amber); border-top-style: dashed; }
   .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
   .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .obsCard h4 { margin: 0 0 6px; font-size: 14px; }
@@ -385,73 +377,10 @@
         identifies its data by the <code>polywire_*</code> metric-name prefix, not a service tag.
       </p>
 
-      <div class="obsDiagram">
-        <svg viewBox="0 0 860 430" role="img" xmlns="http://www.w3.org/2000/svg"
-          aria-label="PolyWire exposes a Prometheus /metrics endpoint and an OTLP/gRPC push. A teal scrape path runs through a scrape agent to self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics.">
-          <defs>
-            <marker id="obsArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path>
-            </marker>
-          </defs>
-          <style>
-            .obsNode rect { fill: var(--paper); stroke: var(--line); }
-            .obsNode text { fill: var(--ink); font: 12px var(--sans); }
-            .obsLabel { fill: var(--ink-faint); font: 10.5px var(--mono); text-transform: uppercase; letter-spacing: .03em; }
-            .obsEdge { fill: none; stroke-width: 2; marker-end: url(#obsArrow); }
-          </style>
-
-          <g class="obsNode">
-            <rect x="20" y="185" width="130" height="60" rx="10"></rect>
-            <text x="85" y="211" text-anchor="middle" font-weight="600">PolyWire</text>
-            <text x="85" y="228" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">metrics exporter</text>
-          </g>
-
-          <path class="obsEdge" d="M150 200 C 210 200, 210 130, 260 130" stroke="var(--teal)"></path>
-          <text class="obsLabel" x="185" y="150">/metrics :19090</text>
-          <path class="obsEdge" d="M150 230 C 210 230, 210 300, 260 300" stroke="var(--indigo)"></path>
-          <text class="obsLabel" x="177" y="288">OTLP/gRPC :4317</text>
-
-          <g class="obsNode">
-            <rect x="260" y="100" width="140" height="60" rx="10"></rect>
-            <text x="330" y="126" text-anchor="middle" font-weight="600">Scrape agent</text>
-            <text x="330" y="143" text-anchor="middle" font-size="10" fill="var(--ink-faint)">Prometheus / Agent</text>
-          </g>
-
-          <path class="obsEdge" d="M400 130 C 460 130, 460 40, 520 40" stroke="var(--teal)"></path>
-          <path class="obsEdge" d="M400 130 L 520 130" stroke="var(--teal)"></path>
-          <path class="obsEdge" d="M400 130 C 460 130, 460 220, 520 220" stroke="var(--teal)"></path>
-
-          <path class="obsEdge" d="M150 230 C 460 300, 460 380, 520 380" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-          <g class="obsNode">
-            <rect x="440" y="345" width="150" height="60" rx="10"></rect>
-            <text x="515" y="371" text-anchor="middle" font-weight="600" font-size="11.5">OTel Collector</text>
-            <text x="515" y="388" text-anchor="middle" font-size="10" fill="var(--ink-faint)">ADOT / contrib</text>
-          </g>
-          <path class="obsEdge" d="M590 375 C 650 375, 650 350, 700 350" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-          <path class="obsEdge" d="M590 375 L 700 400" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-
-          <path class="obsEdge" d="M150 218 C 400 260, 460 260, 520 260" stroke="var(--indigo)"></path>
-
-          <g class="obsNode"><rect x="520" y="10" width="150" height="46" rx="9"></rect><text x="595" y="38" text-anchor="middle" font-size="12">Self-hosted Grafana</text></g>
-          <g class="obsNode"><rect x="520" y="100" width="150" height="46" rx="9"></rect><text x="595" y="128" text-anchor="middle" font-size="12">Grafana Cloud</text></g>
-          <g class="obsNode"><rect x="520" y="196" width="150" height="46" rx="9"></rect><text x="595" y="219" text-anchor="middle" font-size="11.5">Datadog (scrape check)</text></g>
-          <g class="obsNode"><rect x="520" y="238" width="150" height="46" rx="9"></rect><text x="595" y="261" text-anchor="middle" font-size="11.5">Datadog (native OTLP)</text></g>
-          <g class="obsNode"><rect x="520" y="280" width="150" height="46" rx="9"></rect><text x="595" y="303" text-anchor="middle" font-size="12">New Relic</text></g>
-
-          <g class="obsNode"><rect x="700" y="10" width="150" height="42" rx="9"></rect><text x="775" y="36" text-anchor="middle" font-size="11.5">AWS CloudWatch</text></g>
-          <g class="obsNode"><rect x="700" y="60" width="150" height="42" rx="9"></rect><text x="775" y="86" text-anchor="middle" font-size="11.5">Azure Monitor</text></g>
-          <g class="obsNode"><rect x="700" y="110" width="150" height="42" rx="9"></rect><text x="775" y="136" text-anchor="middle" font-size="11.5">GCP Cloud Monitoring</text></g>
-          <g class="obsNode"><rect x="700" y="326" width="150" height="42" rx="9"></rect><text x="775" y="352" text-anchor="middle" font-size="12">AppDynamics</text></g>
-          <path class="obsEdge" d="M590 375 C 650 375, 650 100, 700 81" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-          <path class="obsEdge" d="M590 375 C 650 375, 650 30, 700 31" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-          <path class="obsEdge" d="M590 375 C 650 375, 650 130, 700 131" stroke="var(--amber)" stroke-dasharray="5 4"></path>
-        </svg>
-      </div>
-      <div class="obsLegend">
-        <span><i class="scrape"></i>Prometheus scrape</span>
-        <span><i class="direct"></i>Direct OTLP push</span>
-        <span><i class="collector"></i>Via OpenTelemetry Collector</span>
-      </div>
+      <figure>
+        <img src="docs/observability.png" alt="PolyWire observability integration diagram: PolyWire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A green Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. A blue direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An orange dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics">
+        <figcaption>How PolyWire's metrics reach each platform: a Prometheus scrape, a direct OTLP push, or a push routed through an OpenTelemetry Collector, depending on what the destination platform natively accepts.</figcaption>
+      </figure>
 
       <div class="rttTableWrap">
         <table class="rttTable">
