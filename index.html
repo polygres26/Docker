@@ -503,6 +503,35 @@
   ghcr.io/polygres26/polyadvisor:latest</code>
       </div>
 
+      <h3 class="subhead">Connecting, exploring, and reviewing PL/SQL with an LLM's help</h3>
+      <p class="rttNote">
+        A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
+        reference into Vault or CyberArk if you'd rather not store the secret in PolyAdvisor at
+        all. Once it's saved, Objects lists everything that user can see, grouped by type and
+        (for a multi-schema connection) owner-qualified so a package in one schema is never
+        confused for one in another. Selecting a routine shows its real source, pulled live from
+        the database, not a cached copy.
+      </p>
+      <figure>
+        <img src="docs/polyadvisor-add-connection.png" alt="PolyAdvisor's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
+        <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved from Vault/CyberArk at connect time instead of being stored at all.</figcaption>
+      </figure>
+      <p class="rttNote">
+        <b>What the LLM step actually does, precisely:</b> select a package, procedure, or
+        function and PolyAdvisor can ask an LLM to explain it — a plain-English summary of what
+        it does, a bullet list of the specific constructs that are non-trivial to port to
+        Postgres (cursor locking, <code>DBMS_OUTPUT</code>, autonomous transactions, and the
+        like), and a trivial/moderate/substantial effort estimate with its reasoning. This is a
+        reviewer's aid, not a code generator — it does not emit PL/pgSQL, and nothing it produces
+        feeds back into the deterministic score above. Runs entirely local by default (no API
+        key, nothing leaves the machine) against a small on-box model, or against an external
+        provider if you configure one on the LLM page.
+      </p>
+      <figure>
+        <img src="docs/polyadvisor-plsql-summarize.png" alt="PolyAdvisor's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
+        <figcaption>A real Oracle procedure's source (left: cursor <code>FOR UPDATE</code> loop, <code>DBMS_OUTPUT</code>, exception handling) and the LLM's live output below it — a summary, the specific constructs that need manual attention when porting to Postgres, and an effort estimate. Explanation and risk-flagging, not automated translation.</figcaption>
+      </figure>
+
       <h3 class="subhead">Admin console</h3>
       <figure>
         <img src="docs/admin-polyadvisor.png" alt="PolyAdvisor's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
