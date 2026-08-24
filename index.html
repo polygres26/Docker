@@ -300,18 +300,28 @@
         stops trusting that table for acceleration until the next refresh succeeds.
       </p>
       <p class="rttNote">
-        <b>Acceleration is automatic, and it's real query planning, not string substitution.</b>
-        PolyWire embeds <a href="https://calcite.apache.org/" target="_blank"
-        rel="noopener">Apache Calcite</a> — a genuine SQL parser, validator, and relational query
-        planner — inside its own pipeline. When a client sends an aggregate query against
-        <code>orders</code>, PolyWire parses it, checks whether a fresh rollup's source table is
-        mentioned, and only rewrites the query to read from
-        <code>polywire_rollup_daily_order_totals</code> instead when Calcite's materialized-view
-        matcher can actually prove that substitution is valid for that specific query shape. Your
-        application still just queries <code>orders</code> — it never has to know the rollup
-        exists. If the rollup is stale, doesn't apply, or the rewrite can't be proven safe for that
-        query, PolyWire falls straight through to the real table unchanged — a rollup can only ever
-        make a matching query faster, never make an unmatched one wrong.
+        <b>Acceleration is automatic and always on for a fresh, matching rollup — there's no
+        separate switch to flip.</b> PolyWire embeds <a href="https://calcite.apache.org/"
+        target="_blank" rel="noopener">Apache Calcite</a> — a genuine SQL parser, validator, and
+        relational query planner — inside its own pipeline. When a client sends an aggregate query
+        against <code>orders</code>, PolyWire parses it, checks whether a fresh rollup's source
+        table is mentioned, and rewrites the query to read from
+        <code>polywire_rollup_daily_order_totals</code> instead whenever Calcite's
+        materialized-view matcher can prove that substitution is valid for that specific query
+        shape — defining the rollup above <i>is</i> turning rewriting on for it, nothing else to
+        configure. Your application still just queries <code>orders</code> — it never has to know
+        the rollup exists. If the rollup is stale, doesn't apply, or the rewrite can't be proven
+        safe for that query, PolyWire falls straight through to the real table unchanged — a
+        rollup can only ever make a matching query faster, never make an unmatched one wrong.
+      </p>
+      <p class="rttNote">
+        <b>Which protocols this applies to:</b> rollup acceleration lives in the same shared
+        pipeline as the SQL firewall and dialect translation, so it covers every protocol that
+        sends a SQL statement through that pipeline — <b>pgwire, mywire, mssqlwire, orawire,
+        gRPC, and MCP's <code>execute_sql</code> tool</b>. mongowire, dynamowire, and sqswire
+        don't build SQL text at all — a Mongo <code>find</code> or a DynamoDB <code>GetItem</code>
+        goes straight from that protocol's own store layer to Postgres, so there's no SQL
+        statement for a rollup to match against and no rewriting happens for those three today.
       </p>
 
       <h3 class="subhead">Architecture</h3>
