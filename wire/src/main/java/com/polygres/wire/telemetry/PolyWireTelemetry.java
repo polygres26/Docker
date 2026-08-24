@@ -6,8 +6,10 @@ import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.DoubleHistogram;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporter;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import java.time.Duration;
 import org.slf4j.Logger;
@@ -32,14 +34,13 @@ public final class PolyWireTelemetry {
     private static final AttributeKey<String> BACKEND = AttributeKey.stringKey("backend");
     private static final AttributeKey<String> KIND = AttributeKey.stringKey("kind");
 
-    private PolyWireTelemetry(String otlpEndpoint, long exportIntervalMs, java.util.Map<String, String> headers) {
-        var exporterBuilder = OtlpGrpcMetricExporter.builder().setEndpoint(otlpEndpoint);
-        // SaaS OTLP endpoints (New Relic's otlp.nr-data.net, Datadog's own OTLP intake if not
-        // routing through a local Agent) need an API-key header on every export request -- a
-        // local collector/agent (the more common enterprise pattern) needs none, hence this being
-        // optional rather than assumed.
-        headers.forEach(exporterBuilder::addHeader);
-        OtlpGrpcMetricExporter exporter = exporterBuilder.build();
+    private PolyWireTelemetry(String protocol, String otlpEndpoint, long exportIntervalMs,
+            java.util.Map<String, String> headers) {
+        if (!"http".equalsIgnoreCase(protocol) && !"grpc".equalsIgnoreCase(protocol)) {
+            log.warn("POLYWIRE_OTEL_PROTOCOL={} not recognized (expected 'grpc' or 'http'); defaulting to grpc", protocol);
+            protocol = "grpc";
+        }
+        MetricExporter exporter = buildExporter(protocol, otlpEndpoint, headers);
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
                 .registerMetricReader(PeriodicMetricReader.builder(exporter)
                         .setInterval(Duration.ofMillis(exportIntervalMs))
@@ -82,8 +83,33 @@ public final class PolyWireTelemetry {
                 });
 
         this.meter = meter;
-        log.info("OpenTelemetry metrics export enabled: OTLP/gRPC to {} every {}ms{}", otlpEndpoint, exportIntervalMs,
-                headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)");
+        log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}", protocol.toUpperCase(),
+                otlpEndpoint, exportIntervalMs, headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)");
+    }
+
+    /**
+     * gRPC is the default -- it's what {@code POLYWIRE_OTEL_ENDPOINT}'s historical default
+     * ({@code http://localhost:4317}) pointed at, and it's the lower-overhead choice when nothing
+     * forces the alternative. HTTP is the fallback for the environments gRPC doesn't reach:
+     * corporate proxies and L7 load balancers that only forward plain HTTP/HTTPS, and some
+     * serverless/sidecar setups that don't support long-lived HTTP/2 streams. Both exporters are
+     * already on the classpath via the single {@code opentelemetry-exporter-otlp} dependency, so
+     * this is a same-jar sibling-class swap, not a new integration.
+     */
+    private static MetricExporter buildExporter(String protocol, String endpoint, java.util.Map<String, String> headers) {
+        if ("http".equalsIgnoreCase(protocol)) {
+            var builder = OtlpHttpMetricExporter.builder().setEndpoint(endpoint);
+            headers.forEach(builder::addHeader);
+            return builder.build();
+        }
+        // Caller has already normalized anything other than "http" down to "grpc".
+        var builder = OtlpGrpcMetricExporter.builder().setEndpoint(endpoint);
+        // SaaS OTLP endpoints (New Relic's otlp.nr-data.net, Datadog's own OTLP intake if not
+        // routing through a local Agent) need an API-key header on every export request -- a
+        // local collector/agent (the more common enterprise pattern) needs none, hence this being
+        // optional rather than assumed.
+        headers.forEach(builder::addHeader);
+        return builder.build();
     }
 
     /**
@@ -152,12 +178,17 @@ public final class PolyWireTelemetry {
     }
 
     public static PolyWireTelemetry fromEnv() {
-        String endpoint = System.getenv().getOrDefault("POLYWIRE_OTEL_ENDPOINT", "http://localhost:4317");
+        String protocol = System.getenv().getOrDefault("POLYWIRE_OTEL_PROTOCOL", "grpc").toLowerCase(java.util.Locale.ROOT);
+        // The default endpoint's port depends on which protocol is in play -- 4317 is gRPC's
+        // OTLP convention, 4318 is HTTP's -- so this can't be one shared default computed before
+        // the protocol is known.
+        String defaultEndpoint = "http".equals(protocol) ? "http://localhost:4318" : "http://localhost:4317";
+        String endpoint = System.getenv().getOrDefault("POLYWIRE_OTEL_ENDPOINT", defaultEndpoint);
         if ("disabled".equalsIgnoreCase(endpoint)) {
             return null;
         }
         long intervalMs = parseLongEnv("POLYWIRE_OTEL_EXPORT_INTERVAL_MS", 5_000);
-        return new PolyWireTelemetry(endpoint, intervalMs, parseHeaders(System.getenv("POLYWIRE_OTEL_HEADERS")));
+        return new PolyWireTelemetry(protocol, endpoint, intervalMs, parseHeaders(System.getenv("POLYWIRE_OTEL_HEADERS")));
     }
 
     private static long parseLongEnv(String name, long defaultValue) {
