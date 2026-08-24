@@ -15,18 +15,22 @@ import org.junit.jupiter.api.Test;
  * statement), so there's no rollback test here -- matches what wire's own private test suite
  * documents.
  *
- * <p><b>Both tests below are disabled</b> -- a suspected, not fully root-caused, client-specific
- * gap found while writing this suite. mywire advertises exactly one auth plugin
- * ({@code mysql_native_password}, see {@code MySqlMessages.java}); PyMySQL (the sibling Python
- * suite's {@code test_mywire.py}) authenticates against it successfully with these same
- * credentials, but MySQL Connector/J 9.x gets ERR 1045 "Access denied" even after forcing the
- * plugin explicitly via connection properties. Server-side, {@code
- * MySqlMessages.nativePasswordScramble} implements the textbook mysql_native_password algorithm
- * (SHA1/XOR against the real 20-byte scramble) and the handshake packet's capability flags,
- * auth-plugin-data split, and plugin name all match the MySQL protocol v10 spec on inspection --
- * nothing obviously wrong was found without instrumenting the actual bytes Connector/J sends,
- * which needs a deeper session than this test-writing pass. Disabled rather than deleted so
- * re-enabling is the regression check once someone roots this out properly. */
+ * <p><b>Both tests below are disabled</b> -- investigated further and the server side is now
+ * confirmed correct, not just "nothing obviously wrong on inspection": with temporary logging,
+ * captured the real handshake packet and the real client response bytes from both PyMySQL
+ * (succeeds) and Connector/J (fails) side by side. The handshake packet itself was hand-verified
+ * byte-for-byte against the MySQL protocol v10 spec (auth-plugin-data correctly split
+ * part-1(8)/part-2(12), capability flags, reserved bytes, plugin name -- every field lines up).
+ * {@code MySqlMessages.nativePasswordScramble}'s output was independently re-derived in Python
+ * (plain SHA1/XOR, no library) against the real scramble PolyWire sent and matched exactly.
+ * PyMySQL's auth response matches that same correct value byte-for-byte -- its login succeeds.
+ * Connector/J 9.x's auth response, computed against that identical, verified-correct scramble and
+ * the same password, is a completely different value -- not explained by any of the plausible
+ * byte-order/padding/encoding variants tried. This narrows it to a genuine Connector/J 9.x-side
+ * behavior (real MySQL 8.4+ servers dropped {@code mysql_native_password} entirely, so this
+ * legacy-plugin code path in the driver may simply be undertested there) rather than anything
+ * fixable in PolyWire. Disabled rather than deleted so re-enabling is the regression check if
+ * this ever turns out to be on PolyWire's side after all. */
 class MyWireTest {
 
     private static Connection connect() throws Exception {

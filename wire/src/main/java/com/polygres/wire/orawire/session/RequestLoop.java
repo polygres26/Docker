@@ -445,14 +445,19 @@ public final class RequestLoop {
             fetchPosition = 0;
             ResponseWriter.writeDescribeInfo(w, openColumns);
 
-            long totalAvailable = openRows.size();
-            long rowsWritten = writeRows(w, request.numIters);
-            if (rowsWritten == totalAvailable && rowsWritten <= request.numIters) {
-
-                ResponseWriter.writeInlineExhaustionEnd(w, openCursorId, callNumber, "ORA-01403: no data found\n");
-            } else {
-                ResponseWriter.writeSuccessEnd(w, rowsWritten, openCursorId, callNumber);
-            }
+            // Always a plain success end, real row count included, even when this batch happens
+            // to exhaust the cursor (fewer rows existed than request.numIters asked for). A real
+            // Oracle client correctly infers "no more rows" from getting back fewer rows than it
+            // requested -- it doesn't need an inline ORA-01403 on the very call that also handed
+            // it real data. This used to call ResponseWriter.writeInlineExhaustionEnd, a
+            // hardcoded, captured byte blob with error 1403 baked in and no row-count field at
+            // all -- fine for python-oracledb's more forgiving parser, but a real bug against a
+            // real ojdbc client: "ORA-01403: no data found" even though the row is right there,
+            // confirmed live and reproducible (see docker/tests/java's OraWireTest javadoc for
+            // how this was found). Genuine exhaustion -- a FETCH call made after the cursor is
+            // already empty -- is unaffected and still correctly signaled via writeErrorEnd
+            // below; writeInlineExhaustionEnd itself has been removed as dead code.
+            ResponseWriter.writeSuccessEnd(w, writeRows(w, request.numIters), openCursorId, callNumber);
         } else {
 
             if (wantsCommit && !useNativeAutocommit) {

@@ -156,22 +156,6 @@ public final class ResponseWriter {
         w.writeUb4(0);
     }
 
-    private static final byte[] INLINE_EXHAUSTION_PREFIX_A = HexFormat.of().parseHex(
-            "080106033c77ac0001");
-    private static final byte[] INLINE_EXHAUSTION_PREFIX_B = HexFormat.of().parseHex(
-            "0000000000000401010208");
-    private static final byte[] INLINE_EXHAUSTION_MIDDLE = HexFormat.of().parseHex(
-            "010202057b000001010003000000000000000000000000030001010000000002057b0102010300");
-
-    public static void writeInlineExhaustionEnd(TtcWriter w, int cursorId, int callNumber, String message) {
-        w.writeRaw(INLINE_EXHAUSTION_PREFIX_A);
-        w.writeUint8(cursorId);
-        w.writeRaw(INLINE_EXHAUSTION_PREFIX_B);
-        w.writeUint8(callNumber);
-        w.writeRaw(INLINE_EXHAUSTION_MIDDLE);
-        w.writeStrWithLength(message);
-    }
-
     public static void writeErrorEnd(TtcWriter w, int errorNum, String message, int cursorId) {
         writeErrorEnd(w, errorNum, message, cursorId, 0);
     }

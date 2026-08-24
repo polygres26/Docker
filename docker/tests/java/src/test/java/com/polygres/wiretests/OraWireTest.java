@@ -7,32 +7,31 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.UUID;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /** orawire: real Oracle TNS/TTC wire protocol, real ojdbc client, translated to Postgres
  * underneath.
  *
- * <p>Known gaps, not silently worked around:
- * <ul>
- *   <li>DDL type translation doesn't cover Oracle-specific type syntax yet (e.g. NUMBER,
- *   VARCHAR2 -- {@code CREATE TABLE ... NUMBER} fails with "type does not exist" against the
- *   Postgres backend). These tests use ANSI-standard INTEGER/VARCHAR instead, which are valid in
- *   both dialects directly and don't need translation -- same workaround wire's own private
- *   integration tests already use.
- *   <li><b>A real, currently-reproducible orawire bug</b>, found while writing this suite: any
- *   {@code SELECT} against a real table via a real ojdbc client's {@code Statement.executeQuery}
- *   fails with {@code ORA-01403: no data found} -- deterministic, not a flake, and confirmed to
- *   also break wire's own private {@code OracleJdbcIntegrationTest} (unrelated to this test
- *   suite or the published Docker image; a regression or a gap that was never actually
- *   green). {@code SELECT ... FROM DUAL} is unaffected (see {@link #simpleSelectFromDual()}), so
- *   this is specific to real-table SELECTs. python-oracledb (see {@code test_orawire.py} in the
- *   sibling Python suite) is unaffected -- ojdbc's real TTC client combines DESCRIBE+EXECUTE+
- *   first-FETCH into one OALL8 round trip, a call shape orawire's response encoding apparently
- *   doesn't handle correctly, and python-oracledb's thin client doesn't use that same combined
- *   call. The two affected tests below are {@code @Disabled} rather than deleted -- re-enabling
- *   them is the regression check once this is actually fixed.
- * </ul> */
+ * <p>Known gap, not silently worked around: DDL type translation doesn't cover Oracle-specific
+ * type syntax yet (e.g. NUMBER, VARCHAR2 -- {@code CREATE TABLE ... NUMBER} fails with "type
+ * does not exist" against the Postgres backend). These tests use ANSI-standard INTEGER/VARCHAR
+ * instead, which are valid in both dialects directly and don't need translation -- same
+ * workaround wire's own private integration tests already use.
+ *
+ * <p><b>Found and fixed while writing this suite</b>: a real ojdbc client's {@code SELECT}
+ * against a real table used to fail with {@code ORA-01403: no data found} even when the row was
+ * there and committed -- deterministic, and confirmed at the time to also break wire's own
+ * private {@code OracleJdbcIntegrationTest}. Root cause: {@code RequestLoop.handleExecute}
+ * signaled cursor exhaustion via {@code ResponseWriter.writeInlineExhaustionEnd}, a hardcoded,
+ * captured TTC byte blob with error 1403 baked in and no row-count field at all, on *every*
+ * response where a query's last batch happened to exhaust the cursor -- including the common
+ * case where real rows were written in that very call. Real Oracle clients correctly infer "no
+ * more rows" from getting back fewer rows than requested; they don't need (and a real ojdbc
+ * client didn't tolerate) an inline hard error on the same response that also carried real data.
+ * Fixed by always sending a plain success end with the real row count instead;
+ * {@code writeInlineExhaustionEnd} was dead code afterward and has been removed.
+ * python-oracledb's more forgiving parser never surfaced this, which is why it went unnoticed
+ * until a real ojdbc client was exercised. */
 class OraWireTest {
 
     private static Connection connect() throws Exception {
@@ -50,8 +49,6 @@ class OraWireTest {
     }
 
     @Test
-    @Disabled("real, currently-reproducible orawire bug -- see class javadoc: ojdbc's combined "
-            + "DESCRIBE+EXECUTE for a real-table SELECT gets ORA-01403 no data found")
     void createInsertSelectRoundtrip() throws Exception {
         String table = "orawire_smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         try (Connection conn = connect()) {
@@ -72,8 +69,6 @@ class OraWireTest {
     }
 
     @Test
-    @Disabled("real, currently-reproducible orawire bug -- see class javadoc: ojdbc's combined "
-            + "DESCRIBE+EXECUTE for a real-table SELECT gets ORA-01403 no data found")
     void transactionRollback() throws Exception {
         String table = "orawire_rollback_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         try (Connection conn = connect()) {
