@@ -43,3 +43,39 @@ def test_get_update_delete_document():
     # unlike DELETE, which does 404 when there's nothing to delete.
     after_delete = c.get(index=index, id="1")
     assert after_delete["found"] is False
+
+
+def test_terms_aggregation_with_nested_avg_metric():
+    c = client()
+    index = f"smoke_{uuid.uuid4().hex[:8]}"
+    c.index(index=index, id="1", body={"category": "electronics", "price": 20.0}, refresh=True)
+    c.index(index=index, id="2", body={"category": "electronics", "price": 40.0}, refresh=True)
+    c.index(index=index, id="3", body={"category": "home", "price": 10.0}, refresh=True)
+
+    result = c.search(index=index, body={
+        "size": 0,
+        "aggs": {"by_category": {
+            "terms": {"field": "category", "size": 10},
+            "aggs": {"avg_price": {"avg": {"field": "price"}}},
+        }},
+    })
+    buckets = {b["key"]: b for b in result["aggregations"]["by_category"]["buckets"]}
+    assert buckets["electronics"]["doc_count"] == 2
+    assert buckets["electronics"]["avg_price"]["value"] == 30.0
+    assert buckets["home"]["doc_count"] == 1
+    assert buckets["home"]["avg_price"]["value"] == 10.0
+
+
+def test_hybrid_query_fuses_text_and_vector_scores():
+    c = client()
+    index = f"smoke_{uuid.uuid4().hex[:8]}"
+    c.index(index=index, id="1", body={"description": "a polywire gateway", "vector": [0.1, 0.2, 0.3, 0.4]}, refresh=True)
+    c.index(index=index, id="2", body={"description": "unrelated text", "vector": [0.9, 0.8, 0.1, 0.05]}, refresh=True)
+
+    result = c.search(index=index, body={"query": {"hybrid": {"queries": [
+        {"match": {"description": "polywire"}},
+        {"knn": {"vector": {"vector": [0.1, 0.2, 0.3, 0.4], "k": 2}}},
+    ]}}})
+    hits = result["hits"]["hits"]
+    # doc 1 matches both the text query and is an exact vector match -- it must rank first.
+    assert hits[0]["_id"] == "1"

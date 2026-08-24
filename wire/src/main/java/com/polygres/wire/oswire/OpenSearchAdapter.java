@@ -12,13 +12,18 @@ import java.util.List;
  * OpenSearch's specific wire shape. A future Qdrant adapter (see {@link SearchRequest}'s javadoc)
  * would be this same shape aimed at Qdrant's REST JSON instead, sharing everything downstream.
  *
- * <p>V1 query DSL coverage, per this feature's staged plan: {@code bool} (must/filter/should/
- * must_not), {@code term}, {@code range}, {@code match}, {@code match_all}, and the OpenSearch
- * k-NN plugin's {@code knn} query clause (<a href="https://opensearch.org/docs/latest/search-plugins/knn/">
- * {@code {"query": {"knn": {"&lt;field&gt;": {"vector": [...], "k": N}}}}}</a>). Aggregations and
- * hybrid (hybrid-query/multi-clause-with-knn) scoring are explicitly V2 -- see the class's
- * top-level javadoc in {@code SearchRequest} for why that's a deliberate staging choice, not an
- * oversight.
+ * <p>V1 query DSL coverage: {@code bool} (must/filter/should/must_not), {@code term},
+ * {@code range}, {@code match}, {@code match_all}, and the OpenSearch k-NN plugin's {@code knn}
+ * query clause (<a href="https://opensearch.org/docs/latest/search-plugins/knn/">
+ * {@code {"query": {"knn": {"&lt;field&gt;": {"vector": [...], "k": N}}}}}</a>), sort, pagination.
+ *
+ * <p>V2 adds: {@code aggs}/{@code aggregations} ({@code terms} buckets with nested
+ * {@code avg}/{@code sum}/{@code min}/{@code max}/{@code value_count} metrics, or a bare metric --
+ * see {@link #parseAggregations}), and the neural-search plugin's {@code hybrid} compound query
+ * ({@code {"query": {"hybrid": {"queries": [...]}}}}) -- see {@link #parseHybridQuery} and
+ * {@code PostgresSearchStore#searchHybrid}'s javadoc for the score-fusion algorithm. Real
+ * relevance/similarity scoring (not V1's flat {@code 1.0}/raw distance) is implemented in
+ * {@code PostgresSearchStore}, not here -- this class only ever translates the request shape.
  */
 public final class OpenSearchAdapter {
 
@@ -30,17 +35,22 @@ public final class OpenSearchAdapter {
         int from = body.has("from") ? body.get("from").getAsInt() : 0;
         List<String> projection = parseSource(body);
         List<SortField> sort = parseSort(body);
+        List<Aggregation> aggregations = parseAggregations(body);
 
+        if (body.has("query") && body.getAsJsonObject("query").has("hybrid")) {
+            return parseHybridQuery(index, body, projection, sort, size, from);
+        }
         if (body.has("query") && body.getAsJsonObject("query").has("knn")) {
-            return parseKnnQuery(index, body, projection, sort, size, from);
+            return parseKnnQuery(index, body, projection, sort, size, from, aggregations);
         }
 
         SearchFilter filter = body.has("query") ? parseQuery(body.getAsJsonObject("query")) : new SearchFilter.MatchAll();
-        return new SearchRequest(index, projection, filter, null, null, null, null, size, from, sort, List.of());
+        return new SearchRequest(index, projection, filter, null, null, null, null, size, from, sort,
+                aggregations, List.of());
     }
 
     private static SearchRequest parseKnnQuery(String index, JsonObject body, List<String> projection,
-            List<SortField> sort, int size, int from) {
+            List<SortField> sort, int size, int from, List<Aggregation> aggregations) {
         JsonObject knn = body.getAsJsonObject("query").getAsJsonObject("knn");
         String field = knn.keySet().iterator().next();
         JsonObject spec = knn.getAsJsonObject(field);
@@ -52,7 +62,37 @@ public final class OpenSearchAdapter {
         int k = spec.has("k") ? spec.get("k").getAsInt() : size;
         SearchFilter filter = spec.has("filter") ? parseQuery(spec.getAsJsonObject("filter")) : new SearchFilter.MatchAll();
         return new SearchRequest(index, projection, filter, null, vector, field,
-                SearchRequest.DistanceMetric.COSINE, k, from, sort, List.of());
+                SearchRequest.DistanceMetric.COSINE, k, from, sort, aggregations, List.of());
+    }
+
+    /**
+     * {@code {"query": {"hybrid": {"queries": [<clause>, <clause>, ...]}}}} -- real OpenSearch's
+     * neural-search hybrid query. Each element of {@code queries} is parsed exactly like a
+     * top-level {@code query} clause would be (including {@code knn}), becoming one complete,
+     * independent {@link SearchRequest} in {@link SearchRequest#hybridSubRequests()}; outer
+     * {@code sort}/pagination apply only to the fused result, not to any individual sub-query --
+     * see {@code PostgresSearchStore#searchHybrid}.
+     */
+    private static SearchRequest parseHybridQuery(String index, JsonObject body, List<String> projection,
+            List<SortField> sort, int size, int from) {
+        JsonArray subQueries = body.getAsJsonObject("query").getAsJsonObject("hybrid").getAsJsonArray("queries");
+        if (subQueries.isEmpty()) {
+            throw new OpenSearchException("parsing_exception", "hybrid query requires at least one entry in \"queries\"");
+        }
+        List<SearchRequest> subRequests = new ArrayList<>();
+        for (JsonElement e : subQueries) {
+            JsonObject clause = e.getAsJsonObject();
+            if (clause.has("knn")) {
+                JsonObject wrapped = new JsonObject();
+                wrapped.add("query", clause);
+                subRequests.add(parseKnnQuery(index, wrapped, projection, List.of(), size, 0, List.of()));
+            } else {
+                subRequests.add(new SearchRequest(index, projection, parseQuery(clause), null, null, null, null,
+                        size, 0, List.of(), List.of(), List.of()));
+            }
+        }
+        return new SearchRequest(index, projection, new SearchFilter.MatchAll(), null, null, null, null,
+                size, from, sort, List.of(), subRequests);
     }
 
     private static List<String> parseSource(JsonObject body) {
@@ -94,7 +134,7 @@ public final class OpenSearchAdapter {
     }
 
     /** Recursively compiles one OpenSearch query-DSL clause into {@link SearchFilter}. Only the
-     * clause names V1 documents are recognized -- an unrecognized clause name is rejected loudly
+     * clause names V1/V2 document are recognized -- an unrecognized clause name is rejected loudly
      * (not silently ignored, which would make a filtered search quietly return unfiltered
      * results) via {@link com.polygres.wire.oswire.OpenSearchException}. */
     static SearchFilter parseQuery(JsonObject query) {
@@ -131,8 +171,7 @@ public final class OpenSearchAdapter {
                     parseClauseList(bool, "should"), parseClauseList(bool, "must_not"));
         }
         throw new OpenSearchException("parsing_exception",
-                "oswire V1 supports match_all/term/range/match/bool queries (aggregations and other clause "
-                        + "types are not yet implemented) -- got: " + query.keySet());
+                "oswire supports match_all/term/range/match/bool/knn/hybrid queries -- got: " + query.keySet());
     }
 
     private static List<SearchFilter> parseClauseList(JsonObject bool, String key) {
@@ -208,8 +247,53 @@ public final class OpenSearchAdapter {
         return null;
     }
 
-    /** Renders a {@link SearchResult} into OpenSearch's real {@code _search} response shape. */
-    public static JsonObject renderSearchResponse(SearchResult result, long tookMillis) {
+    /**
+     * Parses OpenSearch's {@code aggs} (or its long-form alias {@code aggregations}) into
+     * {@link Aggregation}s. Recognizes {@code terms} (with {@code field}, {@code size}, and
+     * nested {@code aggs}/{@code aggregations}) and the five metric aggregations
+     * ({@code avg}/{@code sum}/{@code min}/{@code max}/{@code value_count}, each shaped
+     * {@code {"<name>": {"<type>": {"field": "<field>"}}}}). Same "unrecognized clause fails
+     * loudly" policy as {@link #parseQuery} -- an aggregation type this adapter doesn't recognize
+     * throws rather than silently omitting it from the response.
+     */
+    static List<Aggregation> parseAggregations(JsonObject body) {
+        JsonObject aggs = body.has("aggs") ? body.getAsJsonObject("aggs")
+                : body.has("aggregations") ? body.getAsJsonObject("aggregations") : null;
+        if (aggs == null) {
+            return List.of();
+        }
+        List<Aggregation> result = new ArrayList<>();
+        for (String name : aggs.keySet()) {
+            result.add(parseOneAggregation(name, aggs.getAsJsonObject(name)));
+        }
+        return result;
+    }
+
+    private static Aggregation parseOneAggregation(String name, JsonObject spec) {
+        if (spec.has("terms")) {
+            JsonObject terms = spec.getAsJsonObject("terms");
+            String field = terms.get("field").getAsString();
+            int size = terms.has("size") ? terms.get("size").getAsInt() : 10;
+            List<Aggregation> subAggs = parseAggregations(spec);
+            return new Aggregation.Terms(name, field, size, subAggs);
+        }
+        for (var entry : java.util.Map.of(
+                "avg", Aggregation.MetricType.AVG, "sum", Aggregation.MetricType.SUM,
+                "min", Aggregation.MetricType.MIN, "max", Aggregation.MetricType.MAX,
+                "value_count", Aggregation.MetricType.COUNT).entrySet()) {
+            if (spec.has(entry.getKey())) {
+                String field = spec.getAsJsonObject(entry.getKey()).get("field").getAsString();
+                return new Aggregation.Metric(name, entry.getValue(), field);
+            }
+        }
+        throw new OpenSearchException("parsing_exception",
+                "oswire V2 supports terms/avg/sum/min/max/value_count aggregations -- got: " + spec.keySet());
+    }
+
+    /** Renders a {@link SearchResult} into OpenSearch's real {@code _search} response shape.
+     * {@code typedKeys} controls whether aggregation result keys get real OpenSearch's
+     * {@code typed_keys} type prefix -- see {@link #typedKey}'s javadoc. */
+    public static JsonObject renderSearchResponse(SearchResult result, long tookMillis, boolean typedKeys) {
         JsonObject response = new JsonObject();
         response.addProperty("took", tookMillis);
         response.addProperty("timed_out", false);
@@ -227,8 +311,18 @@ public final class OpenSearchAdapter {
         total.addProperty("value", result.total());
         total.addProperty("relation", "eq");
         hitsWrapper.add("total", total);
-        double maxScore = result.hits().stream().mapToDouble(SearchHit::score).max().orElse(0.0);
-        hitsWrapper.addProperty("max_score", result.hits().isEmpty() ? (Double) null : maxScore);
+        // A ternary with one branch `(Double) null` and the other a primitive `double` unboxes the
+        // null branch and throws NPE at runtime -- Java picks a common numeric type for the
+        // conditional expression and unboxes both sides to get it, it doesn't stay boxed just
+        // because one literal branch was cast to Double. Found live: this had been latent since
+        // V1 (never exercised by a test with zero hits) until a size:0 aggregation-only request
+        // hit it. An explicit if/else avoids the unboxing entirely.
+        if (result.hits().isEmpty()) {
+            hitsWrapper.add("max_score", com.google.gson.JsonNull.INSTANCE);
+        } else {
+            double maxScore = result.hits().stream().mapToDouble(SearchHit::score).max().orElseThrow();
+            hitsWrapper.addProperty("max_score", maxScore);
+        }
 
         JsonArray hitsArray = new JsonArray();
         for (SearchHit hit : result.hits()) {
@@ -240,6 +334,52 @@ public final class OpenSearchAdapter {
         }
         hitsWrapper.add("hits", hitsArray);
         response.add("hits", hitsWrapper);
+
+        if (!result.aggregations().isEmpty()) {
+            JsonObject aggsWrapper = new JsonObject();
+            for (AggregationResult agg : result.aggregations()) {
+                aggsWrapper.add(key(agg, typedKeys), renderAggregationResult(agg, typedKeys));
+            }
+            response.add("aggregations", aggsWrapper);
+        }
         return response;
+    }
+
+    /**
+     * Real OpenSearch's {@code typed_keys} response format ({@code "<type>#<name>"} instead of a
+     * bare {@code "<name>"}) is opt-in per request via {@code ?typed_keys=true} -- NOT
+     * unconditional. Official high-level clients (confirmed live: {@code opensearch-java}) send
+     * that query param themselves because their strict typed deserializer requires it; low-level
+     * clients that hand back a plain response body (confirmed live: {@code opensearch-py} never
+     * sends the param) get real OpenSearch's own default, bare names. {@code typedKeys} is
+     * threaded down from the actual incoming request's query string
+     * ({@code OpenSearchWireServer#handleSearch}), not a fixed choice made here.
+     */
+    private static String key(AggregationResult agg, boolean typedKeys) {
+        return typedKeys ? agg.openSearchType() + "#" + agg.name() : agg.name();
+    }
+
+    private static JsonObject renderAggregationResult(AggregationResult agg, boolean typedKeys) {
+        JsonObject rendered = new JsonObject();
+        switch (agg) {
+            case AggregationResult.SingleValue(String ignoredName, Double value, String ignoredType) ->
+                    rendered.addProperty("value", value);
+            case AggregationResult.Buckets(String ignoredName, List<AggregationResult.Bucket> buckets, long sumOtherDocCount) -> {
+                JsonArray bucketsArray = new JsonArray();
+                for (AggregationResult.Bucket bucket : buckets) {
+                    JsonObject b = new JsonObject();
+                    b.addProperty("key", bucket.key());
+                    b.addProperty("doc_count", bucket.docCount());
+                    for (AggregationResult sub : bucket.subResults()) {
+                        b.add(key(sub, typedKeys), renderAggregationResult(sub, typedKeys));
+                    }
+                    bucketsArray.add(b);
+                }
+                rendered.addProperty("doc_count_error_upper_bound", 0);
+                rendered.addProperty("sum_other_doc_count", sumOtherDocCount);
+                rendered.add("buckets", bucketsArray);
+            }
+        }
+        return rendered;
     }
 }

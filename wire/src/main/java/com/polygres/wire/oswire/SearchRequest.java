@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * The internal representation every search-style wire protocol compiles its own query DSL into,
  * before a single line of SQL is generated. Today {@link OpenSearchAdapter} is the only producer
- * (parsing OpenSearch's {@code _search} JSON body) and {@code PostgresSearchPlanner} is the only
+ * (parsing OpenSearch's {@code _search} JSON body) and {@code PostgresSearchStore} is the only
  * consumer (turning it into a query against a real Postgres table) -- but that's the whole point
  * of having this type exist as its own class instead of inlining OpenSearch's JSON shape directly
  * into the planner: a second adapter (Qdrant's REST API is the one actually being planned for --
@@ -20,7 +20,7 @@ import java.util.List;
  * @param filter       the compiled filter/query tree -- see {@link SearchFilter}
  * @param textQuery    a bare full-text query string not already folded into {@code filter} (kept
  *                     separate so a future hybrid-search planner can weight it independently of
- *                     structural filters, per this feature's V2 plan)
+ *                     structural filters)
  * @param vector       the query vector for a k-NN search, or {@code null} for a non-vector query
  * @param vectorField  which field {@code vector} is compared against; required when
  *                     {@code vector} is non-null
@@ -28,9 +28,19 @@ import java.util.List;
  * @param topK         max results to return (OpenSearch's {@code size})
  * @param offset       results to skip (OpenSearch's {@code from})
  * @param sort         explicit sort fields; empty means "by relevance/distance score"
- * @param aggregations reserved for V2 (OpenSearch aggregations) -- always empty in V1, kept as a
- *                     field now so the planner's/adapter's public shape doesn't have to change
- *                     shape again when that lands
+ * @param aggregations bucket/metric aggregations to compute alongside (or instead of, for a
+ *                     {@code size:0} request) the hit list -- see {@link Aggregation}. Only
+ *                     supported for a plain structured (non-vector, non-hybrid) request in V2;
+ *                     {@link PostgresSearchStore} rejects the combination loudly rather than
+ *                     silently dropping the aggregation if both are requested together.
+ * @param hybridSubRequests non-empty only for a hybrid query ({@code {"query":{"hybrid":
+ *                     {"queries":[...]}}}}) -- each element is itself a complete
+ *                     {@code SearchRequest} (typically one text/filter query and one k-NN query),
+ *                     executed independently and score-fused by {@code PostgresSearchStore}; see
+ *                     its javadoc for the fusion algorithm. When non-empty, {@code filter}/
+ *                     {@code vector}/{@code aggregations} on the outer request are ignored --
+ *                     pagination ({@code topK}/{@code offset}) and {@code sort} still apply to the
+ *                     fused result.
  */
 public record SearchRequest(
         String collection,
@@ -43,11 +53,16 @@ public record SearchRequest(
         int topK,
         int offset,
         List<SortField> sort,
-        List<String> aggregations) {
+        List<Aggregation> aggregations,
+        List<SearchRequest> hybridSubRequests) {
 
     public enum DistanceMetric { COSINE, L2, DOT_PRODUCT }
 
     public boolean isVectorSearch() {
         return vector != null;
+    }
+
+    public boolean isHybrid() {
+        return !hybridSubRequests.isEmpty();
     }
 }

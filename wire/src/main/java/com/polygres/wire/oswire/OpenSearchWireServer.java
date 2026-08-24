@@ -46,6 +46,7 @@ public final class OpenSearchWireServer {
     private static final Pattern DOC_PATH = Pattern.compile("^/([^/]+)/_doc/([^/]+)/?$");
     private static final Pattern INDEX_PATH = Pattern.compile("^/([^/]+)/?$");
     private static final Pattern BULK_PATH = Pattern.compile("^(?:/([^/]+))?/_bulk/?$");
+    private static final Pattern REFRESH_PATH = Pattern.compile("^(?:/([^/]+))?/_refresh/?$");
 
     private final Server server;
     private final PostgresSearchStore store;
@@ -104,6 +105,10 @@ public final class OpenSearchWireServer {
             handleBulk(request, response, m.group(1));
             return;
         }
+        if ((m = REFRESH_PATH.matcher(target)).matches() && method.equals("POST")) {
+            handleRefresh(response, m.group(1));
+            return;
+        }
         if ((m = INDEX_PATH.matcher(target)).matches() && method.equals("PUT")) {
             handleCreateIndex(response, m.group(1));
             return;
@@ -119,7 +124,16 @@ public final class OpenSearchWireServer {
             SearchRequest searchRequest = OpenSearchAdapter.parseSearch(index, requestJson);
             SearchResult result = store.search(searchRequest);
             long tookMillis = (System.nanoTime() - start) / 1_000_000;
-            writeJson(response, 200, OpenSearchAdapter.renderSearchResponse(result, tookMillis));
+            // Real OpenSearch only prefixes aggregation response keys with their type
+            // ("sterms#name" instead of "name") when the request asks via ?typed_keys=true --
+            // not unconditionally. Official high-level clients (opensearch-java) always send that
+            // param themselves because their strict typed deserializer needs it; opensearch-py's
+            // low-level client (confirmed live: it never sends the param) returns bare names, and
+            // a caller reading the response as a plain dict expects that. Defaulting to real
+            // OpenSearch's own default (untyped) keeps that path's response shape correct instead
+            // of unconditionally breaking it to satisfy the strict client.
+            boolean typedKeys = "true".equalsIgnoreCase(request.getParameter("typed_keys"));
+            writeJson(response, 200, OpenSearchAdapter.renderSearchResponse(result, tookMillis, typedKeys));
             recordMetric("_search", com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ, index, start);
         } catch (OpenSearchException e) {
             writeError(response, 400, e.errorType, e.getMessage());
@@ -221,6 +235,26 @@ public final class OpenSearchWireServer {
         } catch (SQLException e) {
             writeError(response, 500, "postgres_exception", e.getMessage());
         }
+    }
+
+    /**
+     * Real OpenSearch's {@code _refresh} makes recent writes visible to search (Lucene segments
+     * are flushed on a delay by default). oswire has nothing to flush -- every write already
+     * commits directly to Postgres and is immediately visible to the very next {@code _search} --
+     * so this is a genuine, honest no-op, not a stub pretending to do work: there's no staleness
+     * window here for it to close. Still a real route, not a 404, because real clients call it
+     * routinely (the official {@code opensearch-java} client's {@code indices().refresh()}, and
+     * every example in OpenSearch's own docs after a write-then-immediately-search sequence) and
+     * would otherwise fail against oswire for no reason a caller could act on.
+     */
+    private void handleRefresh(HttpServletResponse response, String index) throws IOException {
+        JsonObject resp = new JsonObject();
+        JsonObject shards = new JsonObject();
+        shards.addProperty("total", 1);
+        shards.addProperty("successful", 1);
+        shards.addProperty("failed", 0);
+        resp.add("_shards", shards);
+        writeJson(response, 200, resp);
     }
 
     private void handleCreateIndex(HttpServletResponse response, String index) throws IOException {

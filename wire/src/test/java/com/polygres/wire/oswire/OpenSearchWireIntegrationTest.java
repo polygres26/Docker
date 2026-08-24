@@ -175,6 +175,79 @@ class OpenSearchWireIntegrationTest {
     }
 
     @Test
+    void termsAggregationGroupsWithNestedAvgMetric() throws IOException {
+        JsonObject result = search("{\"size\":0,\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category\",\"size\":10},"
+                + "\"aggs\":{\"avg_price\":{\"avg\":{\"field\":\"price\"}}}}}}");
+        assertEquals(0, result.getAsJsonObject("hits").getAsJsonArray("hits").size());
+        JsonArray buckets = result.getAsJsonObject("aggregations").getAsJsonObject("by_category").getAsJsonArray("buckets");
+        assertEquals(2, buckets.size());
+        for (var b : buckets) {
+            JsonObject bucket = b.getAsJsonObject();
+            double avgPrice = bucket.getAsJsonObject("avg_price").get("value").getAsDouble();
+            if ("electronics".equals(bucket.get("key").getAsString())) {
+                assertEquals(2, bucket.get("doc_count").getAsInt());
+                // (25.99 + 89.99) / 2
+                assertEquals(57.99, avgPrice, 0.01);
+            } else {
+                assertEquals("home", bucket.get("key").getAsString());
+                assertEquals(1, bucket.get("doc_count").getAsInt());
+                assertEquals(15.50, avgPrice, 0.01);
+            }
+        }
+    }
+
+    @Test
+    void matchQueryReturnsRealRelevanceScoreNotFlatOne() throws IOException {
+        JsonObject result = search("{\"query\":{\"match\":{\"description\":\"wireless\"}}}");
+        JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
+        assertEquals(1, hits.size());
+        double score = hits.get(0).getAsJsonObject().get("_score").getAsDouble();
+        // A real ts_rank value for a single-term match against a short description is well under
+        // 1.0 -- V1 always returned a flat 1.0 here regardless of the actual text.
+        assertTrue(score > 0.0 && score < 1.0, "expected a real ts_rank score in (0, 1), got " + score);
+    }
+
+    @Test
+    void knnScoreIsHigherIsBetterSimilarityNotRawDistance() throws IOException {
+        // Query vector is doc 1's own vector -- an exact match, so its similarity score must be
+        // (very close to) the maximum of 1.0, not V1's raw near-zero distance value.
+        JsonObject result = search("{\"query\":{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":3}}}}");
+        JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
+        JsonObject best = hits.get(0).getAsJsonObject();
+        assertEquals("1", best.get("_id").getAsString());
+        assertEquals(1.0, best.get("_score").getAsDouble(), 0.01);
+        // Every subsequent hit must score lower (higher-is-better ordering).
+        for (int i = 1; i < hits.size(); i++) {
+            assertTrue(hits.get(i - 1).getAsJsonObject().get("_score").getAsDouble()
+                    >= hits.get(i).getAsJsonObject().get("_score").getAsDouble());
+        }
+    }
+
+    @Test
+    void hybridQueryFusesTextAndVectorScores() throws IOException {
+        // doc 3 (Garden Hose) matches neither "wireless" nor is close to doc 1's vector, so it
+        // must rank behind doc 1, which is boosted by both sub-queries at once.
+        JsonObject result = search("{\"query\":{\"hybrid\":{\"queries\":["
+                + "{\"match\":{\"description\":\"wireless\"}},"
+                + "{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":3}}}"
+                + "]}}}");
+        JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
+        assertTrue(hits.size() >= 2, "expected at least 2 fused hits, got " + hits);
+        assertEquals("1", hits.get(0).getAsJsonObject().get("_id").getAsString());
+        double topScore = hits.get(0).getAsJsonObject().get("_score").getAsDouble();
+        double lastScore = hits.get(hits.size() - 1).getAsJsonObject().get("_score").getAsDouble();
+        assertTrue(topScore >= lastScore);
+    }
+
+    @Test
+    void aggregationsWithVectorSearchFailsLoudlyInsteadOfSilentlyDroppingAggs() throws IOException {
+        JsonObject result = search("{\"query\":{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":3}}},"
+                + "\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category\"}}}}");
+        assertEquals(400, result.get("__status").getAsInt());
+        assertEquals("action_request_validation_exception", result.getAsJsonObject("error").get("type").getAsString());
+    }
+
+    @Test
     void metricsEndpointReportsOswireTraffic() throws Exception {
         search("{\"query\":{\"match_all\":{}}}");
         HttpURLConnection metricsConn = (HttpURLConnection) URI
