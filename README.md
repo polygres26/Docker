@@ -37,7 +37,8 @@ docker run \
 Point it at a real Postgres backend via `POLYWIRE_PG_*`. Every other setting is an env var with a
 documented default — see `polywire/README.md` in this repo for the full port list and
 configuration reference. The admin app (Metrics, Topology, SQL Firewall, ACL, OAuth, LLM
-Configuration, and more) is served on port `19090`.
+configuration, and more) is baked into the image and served on port `19090` — no separate setup
+needed, just open it in a browser.
 
 ## Architecture
 
