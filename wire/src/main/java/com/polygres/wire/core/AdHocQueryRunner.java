@@ -49,7 +49,7 @@ public final class AdHocQueryRunner {
             backend.setAutoCommit(true);
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
                     new RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend, nativeRlsInitializer)));
-            Statement statement = new Statement(tenantId, SourceDialect.POLYWIRE_NATIVE, sql, bindParams, "default", null, accessContext);
+            Statement statement = new Statement(tenantId, SourceDialect.MCP, sql, bindParams, "default", null, accessContext);
             return Result.ofSuccess(pipeline.execute(statement));
         } catch (SQLException e) {
             return Result.ofError(e);

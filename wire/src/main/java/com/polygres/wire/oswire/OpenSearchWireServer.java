@@ -337,11 +337,29 @@ public final class OpenSearchWireServer {
                 defaultIndex == null ? "default" : defaultIndex, start);
     }
 
+    /**
+     * Also feeds the admin console's "RTT by outcome" card -- oswire has no result cache (see
+     * {@code PostgresSearchStore}'s javadoc: every {@code _search}/{@code _doc} call hits Postgres
+     * directly, there's no cache_hit case to report), so unlike pgwire/mongowire/dynamowire this
+     * only ever reports {@code pg_read}/{@code pg_write}, never {@code cache_hit} -- an honest
+     * absence, not a missing wire-up. (Found live: oswire showed up in "Wire protocol traffic" and
+     * "Top 10 SQL by cost" but was silently missing from "RTT by outcome" entirely, because this
+     * method only ever called {@code recordOperation}, never {@code recordRttOutcome} -- the two
+     * are separate calls into {@code SqlMetricsCollector}, and only the latter feeds that card.)
+     */
     private void recordMetric(String operation, com.polygres.wire.core.SqlMetricsCollector.StatementKind kind,
             String index, long startNanos) {
         if (sqlMetrics != null) {
             long elapsedNanos = System.nanoTime() - startNanos;
             sqlMetrics.recordOperation("oswire", index, kind, operation, elapsedNanos, elapsedNanos);
+            String outcome = switch (kind) {
+                case READ -> com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ;
+                case WRITE -> com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE;
+                case OTHER -> null;
+            };
+            if (outcome != null) {
+                sqlMetrics.recordRttOutcome("oswire", outcome, elapsedNanos);
+            }
         }
     }
 

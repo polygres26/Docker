@@ -25,7 +25,12 @@ public final class DialectTranslations {
             SourceDialect.MYSQL, DialectTranslations::normalizeMysql,
             SourceDialect.SQL_SERVER, DialectTranslations::normalizeSqlServer,
             
-            SourceDialect.POLYWIRE_NATIVE, DialectTranslations::renderIdentity);
+            SourceDialect.POLYWIRE_NATIVE, DialectTranslations::renderIdentity,
+            // MCP's execute_sql tool sends plain SQL already in Postgres dialect, same as gRPC's
+            // own native protocol (POLYWIRE_NATIVE) -- needs the same no-op identity normalizer,
+            // not the LLM-fallback path a missing NORMALIZERS entry would otherwise trigger for
+            // every single MCP query.
+            SourceDialect.MCP, DialectTranslations::renderIdentity);
 
     private static final Map<SourceDialect, Function<String, String>> RENDERERS = Map.of(
             SourceDialect.ORACLE, DialectTranslations::renderOracle,

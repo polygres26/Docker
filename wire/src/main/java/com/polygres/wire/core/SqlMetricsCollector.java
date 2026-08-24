@@ -271,6 +271,12 @@ public final class SqlMetricsCollector {
             case MYSQL -> "mywire";
             case SQL_SERVER -> "mssqlwire";
             case ORACLE -> "orawire";
+            // gRPC's own native driver protocol -- was indistinguishable from MCP traffic in
+            // every metrics view until SourceDialect.MCP was split out as its own value (see its
+            // javadoc); this case is what actually renames the dashboard label from the old
+            // "polywire_native" to something a reader recognizes.
+            case POLYWIRE_NATIVE -> "grpc";
+            case MCP -> "mcp";
             default -> dialect.name().toLowerCase(Locale.ROOT);
         };
     }
