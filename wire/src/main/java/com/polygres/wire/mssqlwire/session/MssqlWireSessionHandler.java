@@ -185,9 +185,10 @@ public final class MssqlWireSessionHandler implements Runnable {
                     }
                 }
                 case TdsPacketType.ATTENTION -> {
-                    
+                    // DONE_ATTN, not DONE_FINAL -- see TdsTokens' javadoc on doneAttnStatus for
+                    // why a plain DONE_FINAL here leaves real TDS clients hanging forever.
                     ByteArrayOutputStream body = new ByteArrayOutputStream();
-                    TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
+                    TdsTokens.writeDone(body, TdsTokens.doneAttnStatus(), 0, 0);
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
                 }
                 case TdsPacketType.RPC -> {

@@ -18,6 +18,16 @@ public final class TdsTokens {
     private static final int DONE_FINAL = 0x00;
     private static final int DONE_COUNT = 0x10;
     private static final int DONE_ERROR = 0x02;
+    // Per the TDS spec, a DONE token in response to an ATTENTION MUST have this bit set, or the
+    // client has no way to know its cancel/reset was actually acknowledged. Found live: two
+    // independent TDS client libraries (pymssql/FreeTDS, pytds) each send an ATTENTION packet
+    // before reusing a connection for a second query -- entirely standard, spec-correct client
+    // behavior -- and both hung forever waiting for an ack this server was never sending. Proven
+    // by capturing raw socket bytes: the plain DONE_FINAL response this handler used to send
+    // parses as perfectly valid TDS, just semantically wrong for this one case, so a byte-level
+    // sanity check alone wouldn't have caught it -- only watching what a real client actually does
+    // with it did.
+    private static final int DONE_ATTN = 0x20;
 
     private TdsTokens() {
     }
@@ -141,6 +151,10 @@ public final class TdsTokens {
 
     public static int doneFinalStatus() {
         return DONE_FINAL;
+    }
+
+    public static int doneAttnStatus() {
+        return DONE_ATTN;
     }
 
     private static void writeU16LE(ByteArrayOutputStream out, int v) {
