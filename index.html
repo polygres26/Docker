@@ -160,6 +160,22 @@
   ghcr.io/polygres26/polywire:latest</code>
       </div>
 
+      <h3 class="subhead">Architecture</h3>
+      <figure>
+        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline (frontends, firewall, router, QoS, dialect translation, rollup, cache, stats), each stage paired with the customer outcome it drives, backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end.</figcaption>
+      </figure>
+      <p class="rttNote">
+        <b>What gRPC is, on this diagram:</b> the one protocol here that isn't emulating a
+        foreign database — it's PolyWire's own native driver protocol, a thin, stateless
+        request/response API (one <code>Execute(sql, params)</code> call in, one result back, no
+        session handshake to maintain) for a client written specifically against PolyWire rather
+        than against Postgres, MySQL, or any of the others. It runs through the exact same shared
+        pipeline as every emulated protocol — same firewall, same QoS, same metrics — so choosing
+        it over pgwire buys a simpler client integration, not a separate, less-governed path to
+        your data.
+      </p>
+
       <h3 class="subhead">Admin console</h3>
       <figure>
         <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar for Topology, SQL Firewall, ACL, OAuth, Backends, Queues, Data Explorer, Router Rules, QoS, and LLM Configuration">
@@ -349,32 +365,20 @@
         statement for a rollup to match against and no rewriting happens for those three today.
       </p>
 
-      <h3 class="subhead">Architecture</h3>
-      <figure>
-        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline (frontends, firewall, router, QoS, dialect translation, rollup, cache, stats), each stage paired with the customer outcome it drives, backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end.</figcaption>
-      </figure>
-      <p class="rttNote">
-        <b>What gRPC is, on this diagram:</b> the one protocol here that isn't emulating a
-        foreign database — it's PolyWire's own native driver protocol, a thin, stateless
-        request/response API (one <code>Execute(sql, params)</code> call in, one result back, no
-        session handshake to maintain) for a client written specifically against PolyWire rather
-        than against Postgres, MySQL, or any of the others. It runs through the exact same shared
-        pipeline as every emulated protocol — same firewall, same QoS, same metrics — so choosing
-        it over pgwire buys a simpler client integration, not a separate, less-governed path to
-        your data.
-      </p>
-
       <h3 class="subhead">Observability: CloudWatch, Datadog, New Relic, Grafana, and more</h3>
       <p class="rttNote">
         PolyWire exposes two real, independent export surfaces — a Prometheus-format
-        <code>/metrics</code> endpoint and a periodic OTLP/gRPC metrics push — and how each
-        platform gets that data differs by platform. Some scrape <code>/metrics</code> directly,
-        some accept an OTLP push with no extra hop, and some (CloudWatch, Azure Monitor, GCP
-        Cloud Monitoring, AppDynamics) need an OpenTelemetry Collector in between to translate
-        into their native API. This is metrics only today — no traces or logs — and PolyWire
-        doesn't set a <code>service.name</code> resource attribute, so a receiving platform
-        identifies its data by the <code>polywire_*</code> metric-name prefix, not a service tag.
+        <code>/metrics</code> endpoint and a periodic OTLP metrics push, over either gRPC
+        (<code>:4317</code>, the default) or HTTP (<code>:4318</code>, set
+        <code>POLYWIRE_OTEL_PROTOCOL=http</code>) — and how each platform gets that data differs
+        by platform. Some scrape <code>/metrics</code> directly, some accept an OTLP push with no
+        extra hop, and some (CloudWatch, Azure Monitor, GCP Cloud Monitoring, AppDynamics) need an
+        OpenTelemetry Collector in between to translate into their native API. OTLP/HTTP exists
+        for the networks gRPC doesn't reach cleanly — corporate proxies and L7 load balancers that
+        only forward plain HTTP/HTTPS. This is metrics only today — no traces or logs — and
+        PolyWire doesn't set a <code>service.name</code> resource attribute, so a receiving
+        platform identifies its data by the <code>polywire_*</code> metric-name prefix, not a
+        service tag.
       </p>
 
       <figure>
@@ -388,9 +392,10 @@
             <tr><th>Env var</th><th>Default</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td>POLYWIRE_OTEL_ENDPOINT</td><td class="num">http://localhost:4317</td><td>OTLP/gRPC collector or backend endpoint</td></tr>
+            <tr><td>POLYWIRE_OTEL_PROTOCOL</td><td class="num">grpc</td><td><code>grpc</code> or <code>http</code></td></tr>
+            <tr><td>POLYWIRE_OTEL_ENDPOINT</td><td class="num">http://localhost:4317</td><td>Collector/backend endpoint (defaults to :4318 when protocol=http)</td></tr>
             <tr><td>POLYWIRE_OTEL_EXPORT_INTERVAL_MS</td><td class="num">5000</td><td>Push interval</td></tr>
-            <tr><td>POLYWIRE_OTEL_HEADERS</td><td class="num">—</td><td>Comma-separated key=value gRPC metadata (e.g. an API key)</td></tr>
+            <tr><td>POLYWIRE_OTEL_HEADERS</td><td class="num">—</td><td>Comma-separated key=value request headers (e.g. an API key)</td></tr>
             <tr><td>POLYWIRE_METRICS_PORT</td><td class="num">19090</td><td>Prometheus <code>/metrics</code> scrape port</td></tr>
             <tr><td>POLYWIRE_ADMIN_TOKEN</td><td class="num">—</td><td>Bearer auth on <code>/metrics</code>, if set</td></tr>
           </tbody>
