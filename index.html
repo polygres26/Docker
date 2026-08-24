@@ -82,9 +82,8 @@
       <p class="eyebrow">Polygres</p>
       <h1>PolyWire &amp; <span>PolyAdvisor</span></h1>
       <p class="lede">
-        Two tools for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: bridge your
-        existing application to Postgres while you migrate, and assess how hard that migration
-        actually is.
+        A secure, scalable, intelligent Postgres gateway for the enterprise — and the tool that
+        tells you how hard it'll be to get everything else onto Postgres in the first place.
       </p>
     </header>
 
@@ -95,27 +94,31 @@
       </div>
       <h2>PolyWire</h2>
       <p class="lede">
-        A mid-tier gateway that speaks <b>Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB,
-        and Amazon SQS</b> wire protocols on one side, and real Postgres on the other. Point an
-        existing application's connection string at PolyWire instead of its original database —
-        the app keeps its driver, its queries, its connection code — and the data ends up in
-        Postgres.
+        A secure, scalable, intelligent Postgres gateway for the enterprise — built for a world
+        where AI agents, not just applications, need governed access to your data. PolyWire
+        speaks <b>Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, Amazon SQS, gRPC, and
+        MCP</b> on one side, and real Postgres on the other, with a SQL firewall, ACL, QoS
+        admission control, and live observability in front of every one of them. Migration
+        compatibility is one use case among several — not the whole story.
       </p>
 
       <h3 class="subhead">Use cases</h3>
       <ul class="usecases">
-        <li><b>Mid-migration bridge.</b> Run PolyWire while PolyAdvisor (or another migration
-          tool) moves schema and data behind the scenes — old client code keeps working
-          unmodified throughout the cutover, no coordinated "flag day" rewrite required.</li>
-        <li><b>Permanent compatibility shim.</b> Some client code isn't worth touching — an old
-          MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and
-          let it keep speaking that protocol forever while everything actually lives in Postgres.</li>
+        <li><b>Governed access for AI agents.</b> An MCP frontend lets AI agents and modern
+          service architectures query Postgres directly — through the same SQL firewall, ACL,
+          and QoS controls as every other client, not a separate, unguarded path to your data.</li>
+        <li><b>A single, secure gateway across multiple data sources.</b> One admin surface — SQL
+          firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread
+          across five different databases' own tooling, each with its own access model.</li>
         <li><b>Standardizing on one database.</b> Different teams' applications speak different
           protocols against different databases. PolyWire lets every one of them land on the same
           Postgres, without every team rewriting its data layer first.</li>
-        <li><b>A single gateway across multiple data sources.</b> One admin surface — SQL
-          firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread
-          across five different databases' own tooling.</li>
+        <li><b>Permanent compatibility shim.</b> Some client code isn't worth touching — an old
+          MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and
+          let it keep speaking that protocol forever while everything actually lives in Postgres.</li>
+        <li><b>Mid-migration bridge.</b> Run PolyWire while PolyAdvisor (or another migration
+          tool) moves schema and data behind the scenes — old client code keeps working
+          unmodified throughout the cutover, no coordinated "flag day" rewrite required.</li>
       </ul>
 
       <div class="runblock">
