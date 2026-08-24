@@ -59,7 +59,7 @@
   .usecases li::before { content: "→"; color: var(--indigo); flex: none; font-size: 14px; line-height: 1.6; }
   .usecases .uc-body { display: block; }
   .usecases .uc-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
-  .usecases .uc-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; }
+  .usecases .uc-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; max-width: 68ch; }
 
   .runblock { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin: 0 0 8px; }
   .runblock p { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 12px; }
@@ -85,7 +85,7 @@
   .whatyouget li::before { content: "✓"; color: var(--teal); flex: none; font-size: 14px; line-height: 1.6; }
   .whatyouget .wg-body { display: block; }
   .whatyouget .wg-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
-  .whatyouget .wg-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; }
+  .whatyouget .wg-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; max-width: 68ch; }
 
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
   footer a { color: var(--indigo); }
@@ -116,8 +116,8 @@
       <p class="lede">
         A secure, scalable, intelligent Postgres gateway for the enterprise — built for a world
         where AI agents, not just applications, need governed access to your data. PolyWire
-        speaks <b>Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, Amazon SQS, gRPC, and
-        MCP</b> on one side, and real Postgres on the other, with a SQL firewall, ACL, QoS
+        speaks <b>Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, Amazon SQS, OpenSearch,
+        gRPC, and MCP</b> on one side, and real Postgres on the other, with a SQL firewall, ACL, QoS
         admission control, and live observability in front of every one of them. Migration
         compatibility is one use case among several — not the whole story.
       </p>
@@ -148,8 +148,8 @@
 
       <h3 class="subhead">Admin console</h3>
       <figure>
-        <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across eight wire protocols, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, and a cache-hit-vs-Postgres RTT breakdown, with a sidebar for Topology, SQL Firewall, ACL, OAuth, Backends, Queues, Data Explorer, Router Rules, QoS, and LLM Configuration">
-        <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol, per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT, deployment topology, SQL firewall rules, ACL, backends, queues, and LLM configuration for dialect translation, all in one place.</figcaption>
+        <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar for Topology, SQL Firewall, ACL, OAuth, Backends, Queues, Data Explorer, Router Rules, QoS, and LLM Configuration">
+        <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, deployment topology, SQL firewall rules, ACL, backends, queues, and LLM configuration for dialect translation, all in one place.</figcaption>
       </figure>
 
       <h3 class="subhead">Cache hit vs. Postgres round trip, per protocol</h3>
@@ -326,9 +326,19 @@
 
       <h3 class="subhead">Architecture</h3>
       <figure>
-        <img src="docs/architecture.png" alt="PolyWire architecture: nine client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane, executing against horizontally-sharded Postgres backends">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres.</figcaption>
+        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline (frontends, firewall, router, QoS, dialect translation, rollup, cache, stats), each stage paired with the customer outcome it drives, backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end.</figcaption>
       </figure>
+      <p class="rttNote">
+        <b>What gRPC is, on this diagram:</b> the one protocol here that isn't emulating a
+        foreign database — it's PolyWire's own native driver protocol, a thin, stateless
+        request/response API (one <code>Execute(sql, params)</code> call in, one result back, no
+        session handshake to maintain) for a client written specifically against PolyWire rather
+        than against Postgres, MySQL, or any of the others. It runs through the exact same shared
+        pipeline as every emulated protocol — same firewall, same QoS, same metrics — so choosing
+        it over pgwire buys a simpler client integration, not a separate, less-governed path to
+        your data.
+      </p>
 
       <h3 class="subhead">Multi-AZ deployment</h3>
       <figure>
