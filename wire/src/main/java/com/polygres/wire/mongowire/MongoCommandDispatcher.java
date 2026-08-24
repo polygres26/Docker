@@ -173,12 +173,16 @@ final class MongoCommandDispatcher {
         for (int i = 0; i < documents.size(); i++) {
             Document doc = BsonJson.toDocument(documents.get(i).asDocument());
             try {
-                Document stored = store.insertOne(db, collection, doc);
+                // No cache.invalidate() here, deliberately -- found live costing ~150-270us on
+                // every single insert (an Ignite cache op, not free even locally) to guard
+                // against a case that can't happen: a freshly successful INSERT (not an upsert)
+                // means this _id wasn't already in the table, and updateMany/deleteMany below
+                // already invalidate their own touched keys on every write, so any *prior*
+                // occupant of this _id (if it was ever deleted to free the id up for reuse) had
+                // its cache entry cleared by that delete already. By the time a fresh insert can
+                // reuse an _id, there is nothing stale left to invalidate.
+                store.insertOne(db, collection, doc);
                 inserted++;
-                if (cache != null) {
-                    
-                    cache.invalidate(MongoCache.key(db, collection, PostgresDocumentStore.idJsonFor(stored.get("_id"))));
-                }
             } catch (SQLException e) {
                 BsonDocument werr = new BsonDocument();
                 werr.put("index", new BsonInt32(i));
