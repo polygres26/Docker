@@ -76,6 +76,17 @@ public final class PgQueueStore {
     private final ConcurrentHashMap<String, Boolean> tableEnsured = new ConcurrentHashMap<>();
     private volatile List<String> lastLoggedShardGroup = null;
 
+    // queueAttributes() used to hit Postgres (a real _sqs_queues round trip) on every single
+    // ReceiveMessage call -- found live comparing SendMessage's server-side cost against
+    // ReceiveMessage's on an empty queue: ReceiveMessage was ~2x slower despite doing *less* real
+    // work (a claim UPDATE that matches nothing, vs. an actual INSERT), the same shape of gap
+    // describeTable() had for dynamowire and the translation cache had for orawire/mywire/
+    // mssqlwire. Unlike dynamowire's table schema, SQS queue attributes ARE mutable at runtime
+    // (SetQueueAttributes), so this cache is invalidated -- not just populated -- on every write:
+    // createQueue()/setQueueAttributes() (the latter delegates to the former) refresh it,
+    // deleteQueue() evicts it.
+    private final ConcurrentHashMap<String, QueueAttributes> attributesCache = new ConcurrentHashMap<>();
+
     public PgQueueStore(String host, int port, String database, String user, String password) {
         HikariConfig cfg = new HikariConfig();
         cfg.setJdbcUrl("jdbc:postgresql://" + host + ":" + port + "/" + database);
@@ -234,9 +245,21 @@ public final class PgQueueStore {
             }
             ps.executeUpdate();
         }
+        QueueAttributes stored = new QueueAttributes(attrs.visibilityTimeout(), isFifo, attrs.dlqQueueName(), attrs.maxReceiveCount());
+        attributesCache.put(queueName, stored);
     }
 
     public QueueAttributes queueAttributes(String queueName) throws SQLException {
+        QueueAttributes cached = attributesCache.get(queueName);
+        if (cached != null) {
+            return cached;
+        }
+        QueueAttributes loaded = loadQueueAttributes(queueName);
+        attributesCache.put(queueName, loaded);
+        return loaded;
+    }
+
+    private QueueAttributes loadQueueAttributes(String queueName) throws SQLException {
         try (Connection cat = borrowCatalogConnection();
                 PreparedStatement ps = cat.prepareStatement(
                         "SELECT visibility_timeout, is_fifo, dlq_queue_name, max_receive_count FROM _sqs_queues WHERE queue_name = ?")) {
@@ -264,6 +287,8 @@ public final class PgQueueStore {
                 PreparedStatement ps = cat.prepareStatement("DELETE FROM _sqs_queues WHERE queue_name = ?")) {
             ps.setString(1, queueName);
             ps.executeUpdate();
+        } finally {
+            attributesCache.remove(queueName);
         }
     }
 
