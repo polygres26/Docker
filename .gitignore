@@ -11,6 +11,11 @@ wire/web/node_modules/
 wire/web/dist/
 wire/web/.vite/
 
+docker/tests/python/.pytest_cache/
+docker/tests/python/__pycache__/
+docker/tests/python/venv/
+docker/tests/python/.venv/
+
 .DS_Store
 *.log
 
