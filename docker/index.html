@@ -182,44 +182,51 @@
             <tr>
               <td>Postgres (pgwire)</td>
               <td class="num">0.08 ms</td>
-              <td class="num">0.68 ms</td>
-              <td class="num">0.70 ms</td>
-              <td class="speedup">8.8×</td>
+              <td class="num">0.53 ms</td>
+              <td class="num">0.83 ms</td>
+              <td class="speedup">6.7×</td>
             </tr>
             <tr>
               <td>SQL Server (mssqlwire)</td>
               <td class="num">0.08 ms</td>
-              <td class="num">0.53 ms</td>
-              <td class="num">0.77 ms</td>
-              <td class="speedup">7.1×</td>
+              <td class="num">0.60 ms</td>
+              <td class="num">0.93 ms</td>
+              <td class="speedup">8.0×</td>
             </tr>
             <tr>
               <td>MySQL (mywire)</td>
-              <td class="num">0.05 ms</td>
-              <td class="num">0.42 ms</td>
-              <td class="num">0.67 ms</td>
-              <td class="speedup">8.4×</td>
+              <td class="num">0.08 ms</td>
+              <td class="num">0.74 ms</td>
+              <td class="num">0.73 ms</td>
+              <td class="speedup">9.3×</td>
             </tr>
             <tr>
               <td>Oracle (orawire)</td>
               <td class="num">0.08 ms</td>
-              <td class="num">0.50 ms</td>
-              <td class="num">0.53 ms</td>
-              <td class="speedup">6.7×</td>
+              <td class="num">0.57 ms</td>
+              <td class="num">0.60 ms</td>
+              <td class="speedup">7.6×</td>
             </tr>
             <tr>
               <td>MongoDB (mongowire)</td>
               <td class="num">0.10 ms</td>
               <td class="num">0.61 ms</td>
-              <td class="num">1.32 ms</td>
+              <td class="num">1.48 ms</td>
               <td class="speedup">5.9×</td>
             </tr>
             <tr>
               <td>DynamoDB (dynamowire)</td>
               <td class="num">0.07 ms</td>
-              <td class="num">0.50 ms</td>
-              <td class="num">0.90 ms</td>
-              <td class="speedup">7.5×</td>
+              <td class="num">0.60 ms</td>
+              <td class="num">0.95 ms</td>
+              <td class="speedup">9.0×</td>
+            </tr>
+            <tr>
+              <td>OpenSearch (oswire)</td>
+              <td class="num">—</td>
+              <td class="num">1.24 ms</td>
+              <td class="num">1.13 ms</td>
+              <td class="speedup">—</td>
             </tr>
           </tbody>
         </table>
@@ -233,7 +240,11 @@
         cache only covers exact-<code>_id</code> lookups) against a cached vs. uncached document,
         and <code>insertOne</code> for the write. For DynamoDB, <code>GetItem</code> by primary
         key (same exact-key-only caching) against a cached vs. uncached item, and
-        <code>PutItem</code> for the write.
+        <code>PutItem</code> for the write. For OpenSearch, a <code>term</code> <code>_search</code>
+        and an <code>index</code> (upsert) call via the real <code>opensearch-py</code> client —
+        oswire has no result cache at all (see the rollups/caching architecture above; every
+        <code>_search</code>/<code>_doc</code> call hits Postgres directly), so its cache-hit and
+        speedup cells are genuinely blank, not omitted data.
       </p>
 
       <h3 class="subhead">SQS: enqueue vs. dequeue</h3>
