@@ -144,6 +144,24 @@ public final class MetricsServer {
             ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
             com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
             com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, mcpMetrics, null);
+    }
+
+    /**
+     * As the full constructor above, plus {@code captureBuffer} -- when non-null, enables
+     * {@code GET /api/capture} (this instance's in-memory {@link com.polygres.wire.capture.WorkloadCaptureBuffer},
+     * see that class and {@code WorkloadCaptureStage}). {@code null} (every other constructor's
+     * default) means the route is absent, same "omitted, not an error" convention as every other
+     * optional dependency here.
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
+            com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
@@ -266,6 +284,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleNodes(request, response, options);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (captureBuffer != null && "/api/capture".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleCapture(request, response, captureBuffer);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -716,6 +746,61 @@ public final class MetricsServer {
             log.warn("queues admin API: database error", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    /**
+     * {@code GET /api/capture?since=<localSeq>&limit=<n>} -- a page of this instance's own
+     * {@link com.polygres.wire.capture.WorkloadCaptureBuffer}, oldest-first, {@code localSeq}
+     * strictly greater than {@code since} (default 0), capped at {@code limit} (default 1000).
+     * {@code WorkloadReplayer} calls this on every live node (discovered via {@code /api/nodes})
+     * and merges the results by {@code wallClock} to reconstruct one global arrival order across
+     * the fleet -- see {@link com.polygres.wire.capture.WorkloadCaptureBuffer}'s javadoc.
+     */
+    private static void handleCapture(HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        if (!"GET".equals(request.getMethod())) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            response.getWriter().write("{\"error\":\"no such route\"}");
+            return;
+        }
+        long since = parseLongParam(request.getParameter("since"), 0);
+        int limit = (int) parseLongParam(request.getParameter("limit"), 1000);
+        StringBuilder json = new StringBuilder("[");
+        boolean first = true;
+        for (com.polygres.wire.capture.WorkloadCaptureBuffer.Entry e : captureBuffer.since(since, limit)) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"localSeq\":").append(e.localSeq())
+                    .append(",\"wallClock\":").append(jsonString(e.wallClock().toString()))
+                    .append(",\"nodeId\":").append(jsonString(captureBuffer.nodeId()))
+                    .append(",\"protocol\":").append(jsonString(e.protocol()))
+                    .append(",\"tenantId\":").append(jsonString(e.tenantId()))
+                    .append(",\"sqlText\":").append(jsonString(e.sqlText()))
+                    .append(",\"targetBackend\":").append(jsonString(e.targetBackend()))
+                    .append(",\"bindParams\":[");
+            java.util.List<Object> params = e.bindParams();
+            for (int i = 0; i < params.size(); i++) {
+                if (i > 0) json.append(',');
+                Object p = params.get(i);
+                json.append(p == null ? "null" : jsonString(String.valueOf(p)));
+            }
+            json.append("]}");
+        }
+        json.append(']');
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(json.toString());
+    }
+
+    private static long parseLongParam(String raw, long defaultValue) {
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 

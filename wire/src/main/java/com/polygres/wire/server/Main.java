@@ -1,5 +1,6 @@
 package com.polygres.wire.server;
 
+import com.polygres.wire.capture.WorkloadCaptureStage;
 import com.polygres.wire.cluster.CacheStage;
 import com.polygres.wire.cluster.PolyWireCluster;
 import com.polygres.wire.config.ConfigStore;
@@ -184,6 +185,20 @@ public final class Main {
         log.info("firewall: {} rule(s) loaded from polywire_firewall_rules", initialFirewallRules.size());
         stages.add(firewallStage);
 
+        boolean captureEnabled = "true".equalsIgnoreCase(
+                System.getenv().getOrDefault("POLYWIRE_CAPTURE_ENABLED", "false"));
+        int captureBufferSize = parseIntEnv("POLYWIRE_CAPTURE_BUFFER_SIZE", 20_000);
+        com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer = captureEnabled
+                ? new com.polygres.wire.capture.WorkloadCaptureBuffer(java.util.UUID.randomUUID().toString(), captureBufferSize)
+                : null;
+        if (captureBuffer != null) {
+            stages.add(new WorkloadCaptureStage(captureBuffer));
+        }
+        log.info("workload capture: {} (set POLYWIRE_CAPTURE_ENABLED=true to record every statement, in "
+                + "arrival order, to an in-memory ring buffer of {} entries, readable via GET /api/capture "
+                + "and merged across every live instance by WorkloadReplayer)",
+                captureEnabled ? "enabled" : "disabled", captureBufferSize);
+
         RouterStage routerStage = RouterStage.fromConfig(
                 config.routerSchemaRules(),
                 config.routerPredicateRules(),
@@ -231,7 +246,7 @@ public final class Main {
         com.polygres.wire.mcp.McpMetricsCollector mcpMetrics = new com.polygres.wire.mcp.McpMetricsCollector();
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir, options, mcpMetrics);
+                adminWebDir, options, mcpMetrics, captureBuffer);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
