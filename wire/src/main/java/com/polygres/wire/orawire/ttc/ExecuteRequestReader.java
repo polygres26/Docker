@@ -49,7 +49,7 @@ public final class ExecuteRequestReader {
 
         r.readUint8();
         r.readUb4();
-        
+
         r.readUint8();
 
         r.readUint8();
@@ -57,7 +57,7 @@ public final class ExecuteRequestReader {
         r.readUint8();
         r.readUb4();
         r.readUint8();
-        
+
         r.readUint8();
         r.readUb4();
 
@@ -134,14 +134,29 @@ public final class ExecuteRequestReader {
             case TtcConstants.ORA_TYPE_NUM_VARCHAR -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             case TtcConstants.ORA_TYPE_NUM_NUMBER -> OracleNumberCodec.decode(bytes);
             case TtcConstants.ORA_TYPE_NUM_DATE, TtcConstants.ORA_TYPE_NUM_TIMESTAMP -> OracleDateCodec.decode(bytes);
-            
+
             case TtcConstants.ORA_TYPE_NUM_RAW -> bytes;
             default -> throw new UnsupportedOperationException("unsupported bind variable type: " + oraTypeNum);
         };
     }
 
     private static String readSqlText(TtcReader r, int sqlLength) {
-        byte[] bytes = r.readRawOrLengthPrefixedBytes(sqlLength);
+        // Deliberately readRawBytes, NOT readRawOrLengthPrefixedBytes -- real bug, found live
+        // testing against a genuine SQLcl client (not just JDBC): that method's "is there a
+        // redundant length-prefix byte here?" check guesses by comparing the *next* byte's value
+        // to sqlLength, and skips it if they match. For SQL text specifically that's unsound --
+        // the next byte is the first character of the statement itself, an arbitrary ASCII value,
+        // and when a statement happens to be exactly as many bytes long as the ASCII code of its
+        // own first character (e.g. a 67-byte "CREATE TABLE ..." statement -- 'C' is 67), the
+        // heuristic misfires, skips a real content byte, and misaligns every field parsed after
+        // it until the buffer runs out (an ArrayIndexOutOfBoundsException several fields later,
+        // nowhere near the actual bug). Confirmed empirically: a passing, unambiguous-length
+        // request's trace shows readRawOrLengthPrefixedBytes's guess never actually triggers for
+        // this field in practice (it consumes exactly sqlLength bytes with no skip) -- meaning the
+        // guess is a live hazard with no evidenced benefit here, unlike O5LogonHandler's username
+        // field (a separate call site, untouched), which is left as-is since there's no equivalent
+        // evidence that call site's use of the same heuristic is unsafe.
+        byte[] bytes = r.readRawBytes(sqlLength);
         return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 }
