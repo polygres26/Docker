@@ -27,13 +27,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      POLYWIRE_PG_HOST: postgres
-      POLYWIRE_PG_PORT: "5432"
-      POLYWIRE_PG_DATABASE: postgres
-      POLYWIRE_PG_USER: postgres
-      POLYWIRE_PG_PASSWORD: postgres
+      POLYWIRE_HOST: postgres
+      POLYWIRE_PORT: "5432"
+      POLYWIRE_DATABASE: postgres
+      POLYWIRE_USER: postgres
+      POLYWIRE_PASSWORD: postgres
       # POLYWIRE_AUTH_* is the *frontend* login credential every wire-protocol client
-      # authenticates with -- separate from POLYWIRE_PG_* above (how PolyWire itself reaches the
+      # authenticates with -- separate from POLYWIRE_* above (how PolyWire itself reaches the
       # real Postgres). Defaults to orapg/orapg if unset; set to postgres/postgres here so every
       # test below can just connect as user=postgres password=postgres, same as the backend.
       POLYWIRE_AUTH_USER: postgres
