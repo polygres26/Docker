@@ -49,6 +49,7 @@ public final class StatsCollectorStage implements PipelineStage {
             counters.statementCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
             sqlMetrics.record(statement.sourceDialect(), statement.targetBackend(), statement.sqlText(), elapsedNanos);
+            recordRttOutcome(statement, elapsedNanos);
             record(statement.tenantId(), false, elapsedNanos);
             return result;
         } catch (SQLException e) {
@@ -66,6 +67,26 @@ public final class StatsCollectorStage implements PipelineStage {
 
     public SqlMetricsCollector.Snapshot sqlMetricsSnapshot() {
         return sqlMetrics.snapshot();
+    }
+
+    /**
+     * Every statement that reaches this stage already missed the cache (or was never cacheable in
+     * the first place -- see {@code CacheStage}, which returns before this stage ever runs on a
+     * hit), so {@code elapsedNanos} here is a real Postgres round trip, not a cache lookup.
+     * Classifies it the same way {@link SqlMetricsCollector#record} already does internally, and
+     * skips {@code OTHER} statements (BEGIN/COMMIT/DDL/etc.) -- "Postgres read" and "Postgres
+     * write" timings are only meaningful for the statements that actually are one.
+     */
+    private void recordRttOutcome(Statement statement, long elapsedNanos) {
+        SqlMetricsCollector.StatementKind kind = SqlMetricsCollector.classify(statement.sqlText());
+        String outcome = switch (kind) {
+            case READ -> SqlMetricsCollector.OUTCOME_PG_READ;
+            case WRITE -> SqlMetricsCollector.OUTCOME_PG_WRITE;
+            case OTHER -> null;
+        };
+        if (outcome != null) {
+            sqlMetrics.recordRttOutcome(SqlMetricsCollector.protocolName(statement.sourceDialect()), outcome, elapsedNanos);
+        }
     }
 
     /**

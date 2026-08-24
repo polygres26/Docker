@@ -186,6 +186,17 @@ export interface WireMcpToolStat {
   avgMs: number
 }
 
+/** One row of the cache-hit vs. real-Postgres-read vs. real-Postgres-write timing breakdown --
+ * `outcome` is 'cache_hit' | 'pg_read' | 'pg_write'. Only present for protocols/outcomes that
+ * have actually happened at least once since the process started. */
+export interface WireRttOutcomeStat {
+  protocol: string
+  outcome: string
+  calls: number
+  totalMs: number
+  avgMs: number
+}
+
 export interface WireMetricsSummary {
   protocolCounts: Record<string, number>
   totalReads: number
@@ -198,6 +209,7 @@ export interface WireMetricsSummary {
   topSql: WireMetricsSql[]
   byBackend: WireMetricsBackend[]
   mcpTools: WireMcpToolStat[]
+  rttByOutcome: WireRttOutcomeStat[]
 }
 
 export async function getWireMetrics(): Promise<WireMetricsSummary> {

@@ -51,6 +51,12 @@ public final class CacheStage implements PipelineStage {
     
     private volatile IgniteCache<String, java.util.Set<String>> keysByTable;
 
+    // Set post-construction by Main -- the shared com.polygres.wire.core.SqlMetricsCollector
+    // doesn't exist yet when CacheStage is built (it needs the cache cluster up first). Nullable:
+    // a cache hit still works fine with no metrics collector attached, it just leaves the "cache
+    // hit" timing row unrecorded, same as before this feature existed.
+    private volatile com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
+
     public CacheStage(PolyWireCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
         this.cluster = cluster;
         this.cachePatterns = compilePatterns(cacheTablePatterns);
@@ -125,15 +131,26 @@ public final class CacheStage implements PipelineStage {
 
     private ExecutionResult handleCacheableSelect(Statement statement, PipelineChain next) throws SQLException {
         String key = cacheKey(statement);
+        long start = System.nanoTime();
         byte[] cachedBytes = resultCache.get(key);
         if (cachedBytes != null) {
+            long elapsedNanos = System.nanoTime() - start;
             log.debug("cache hit: {}", key);
+            if (sqlMetrics != null) {
+                sqlMetrics.recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.protocolName(statement.sourceDialect()),
+                        com.polygres.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, elapsedNanos);
+            }
             return deserialize(cachedBytes);
         }
         ExecutionResult result = next.proceed(statement);
         resultCache.put(key, serialize(result));
         recordKeyForTable(key, statement.sqlText());
         return result;
+    }
+
+    /** Called once from {@code Main} right after the shared collector is constructed. */
+    public void setSqlMetrics(com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
+        this.sqlMetrics = sqlMetrics;
     }
 
     private static byte[] serialize(ExecutionResult result) {

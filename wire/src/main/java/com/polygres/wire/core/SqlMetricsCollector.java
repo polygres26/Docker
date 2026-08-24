@@ -60,6 +60,17 @@ public final class SqlMetricsCollector {
     public record BackendStat(String backend, long calls, long reads, long writes, long totalMillis, long avgMillis) {
     }
 
+    /**
+     * One row of the "how long did each kind of outcome actually take" breakdown -- {@code
+     * outcome} is one of {@link #OUTCOME_CACHE_HIT}, {@link #OUTCOME_PG_READ}, or {@link
+     * #OUTCOME_PG_WRITE}. Separate from {@link SqlStat}/{@link BackendStat}: those answer "which
+     * statement/backend is expensive", this answers "is the cache actually saving us anything,
+     * per protocol" -- the comparison only means something once cache hits and real Postgres
+     * reads are timed the same way, side by side.
+     */
+    public record RttOutcomeStat(String protocol, String outcome, long calls, long totalMillis, long avgMillis) {
+    }
+
     public record Snapshot(
             Map<String, Long> protocolCounts,
             long totalReads,
@@ -92,9 +103,19 @@ public final class SqlMetricsCollector {
         final LongAdder totalNanos = new LongAdder();
     }
 
+    private static final class RttOutcomeEntry {
+        final LongAdder calls = new LongAdder();
+        final LongAdder totalNanos = new LongAdder();
+    }
+
+    public static final String OUTCOME_CACHE_HIT = "cache_hit";
+    public static final String OUTCOME_PG_READ = "pg_read";
+    public static final String OUTCOME_PG_WRITE = "pg_write";
+
     private final ConcurrentHashMap<String, LongAdder> byProtocol = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, SqlEntry> sqlStats = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, BackendEntry> byBackend = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RttOutcomeEntry> byRttOutcome = new ConcurrentHashMap<>();
     private final LongAdder totalReads = new LongAdder();
     private final LongAdder totalWrites = new LongAdder();
     private final LongAdder totalOther = new LongAdder();
@@ -197,6 +218,43 @@ public final class SqlMetricsCollector {
             entry.rttCalls.increment();
             entry.rttTotalNanos.add(rttNanos);
         }
+    }
+
+    /**
+     * Records how long one cache-hit, real-Postgres-read, or real-Postgres-write took, for one
+     * protocol -- see {@link #OUTCOME_CACHE_HIT}/{@link #OUTCOME_PG_READ}/{@link
+     * #OUTCOME_PG_WRITE}. Cardinality is bounded (a handful of protocols x 3 outcomes), so unlike
+     * {@link #sqlStats} this is safe to also expose as a Prometheus series. Fed from two places:
+     * {@code CacheStage.handleCacheableSelect}'s hit branch (the only place that today returns
+     * *before* {@link StatsCollectorStage#handle} ever runs, so without this call a cache hit
+     * left no timing trace anywhere), and {@link StatsCollectorStage#handle} itself for the
+     * pg_read/pg_write case -- both a cache miss and a naturally non-cacheable statement land
+     * there, and this class already has to classify the SQL text for {@link #totalReads}/{@link
+     * #totalWrites}, so reusing that classification costs nothing extra.
+     */
+    public void recordRttOutcome(String protocolName, String outcome, long elapsedNanos) {
+        if (outcome == null) {
+            return;
+        }
+        String key = (protocolName == null ? "unknown" : protocolName) + "|" + outcome;
+        RttOutcomeEntry entry = byRttOutcome.computeIfAbsent(key, k -> new RttOutcomeEntry());
+        entry.calls.increment();
+        entry.totalNanos.add(elapsedNanos);
+    }
+
+    public List<RttOutcomeStat> rttOutcomeSnapshot() {
+        List<RttOutcomeStat> stats = new ArrayList<>();
+        byRttOutcome.forEach((key, entry) -> {
+            int split = key.indexOf('|');
+            String protocol = key.substring(0, split);
+            String outcome = key.substring(split + 1);
+            long calls = entry.calls.sum();
+            long totalMs = entry.totalNanos.sum() / 1_000_000;
+            long avgMs = calls == 0 ? 0 : totalMs / calls;
+            stats.add(new RttOutcomeStat(protocol, outcome, calls, totalMs, avgMs));
+        });
+        stats.sort(Comparator.comparing(RttOutcomeStat::protocol).thenComparing(RttOutcomeStat::outcome));
+        return stats;
     }
 
     public static String protocolName(SourceDialect dialect) {

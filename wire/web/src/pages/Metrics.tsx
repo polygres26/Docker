@@ -329,6 +329,58 @@ export default function Metrics() {
           </div>
         )}
       </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardHeadRow}>
+          <p className={styles.cardTitle}>RTT by outcome</p>
+          <RefreshCw size={13} color="var(--muted)" />
+        </div>
+        <p className={styles.cardSubtitle}>
+          How long a cache hit takes vs. a real Postgres read or write, per wire protocol — the
+          number that says whether the cache is actually paying for itself.
+        </p>
+        {metrics.rttByOutcome.length === 0 ? (
+          <div className={styles.empty}>No cacheable or SQL traffic measured yet.</div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.sqlTable}>
+              <thead>
+                <tr>
+                  <th>Protocol</th>
+                  <th>Outcome</th>
+                  <th style={{ textAlign: 'right' }}>Calls</th>
+                  <th style={{ textAlign: 'right' }}>Avg time</th>
+                  <th style={{ textAlign: 'right' }}>Total time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.rttByOutcome.map((r) => (
+                  <tr key={`${r.protocol}-${r.outcome}`}>
+                    <td className={styles.sqlText}>{r.protocol}</td>
+                    <td className={styles.sqlText}>{outcomeLabel(r.outcome)}</td>
+                    <td className={styles.numCell}>{formatNumber(r.calls)}</td>
+                    <td className={styles.numCell}>{r.avgMs} ms</td>
+                    <td className={styles.numCell}>{formatNumber(r.totalMs)} ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+function outcomeLabel(outcome: string): string {
+  switch (outcome) {
+    case 'cache_hit':
+      return 'Cache hit'
+    case 'pg_read':
+      return 'Postgres read'
+    case 'pg_write':
+      return 'Postgres write'
+    default:
+      return outcome
+  }
 }

@@ -159,6 +159,9 @@ public final class Main {
         // like the SQL wire protocols do) so the traffic dashboard and every metrics export path
         // reflect all six wire protocols, not just the four that share the pipeline.
         com.polygres.wire.core.SqlMetricsCollector sqlMetrics = new com.polygres.wire.core.SqlMetricsCollector();
+        if (cacheStage != null) {
+            cacheStage.setSqlMetrics(sqlMetrics);
+        }
         StatsCollectorStage statsStage = new StatsCollectorStage(telemetry, sqlMetrics);
         if (telemetry != null) {
             telemetry.attachSqlMetrics(statsStage::sqlMetricsSnapshot);

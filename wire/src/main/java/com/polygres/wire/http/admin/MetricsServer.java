@@ -880,6 +880,18 @@ public final class MetricsServer {
                         .append('}');
             }
         }
+        json.append("],\"rttByOutcome\":[");
+        first = true;
+        for (var r : statsStage.sqlMetrics().rttOutcomeSnapshot()) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"protocol\":").append(jsonString(r.protocol()))
+                    .append(",\"outcome\":").append(jsonString(r.outcome()))
+                    .append(",\"calls\":").append(r.calls())
+                    .append(",\"totalMs\":").append(r.totalMillis())
+                    .append(",\"avgMs\":").append(r.avgMillis())
+                    .append('}');
+        }
         json.append("]}");
         return json.toString();
     }

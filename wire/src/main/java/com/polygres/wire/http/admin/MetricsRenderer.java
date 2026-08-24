@@ -91,6 +91,22 @@ public final class MetricsRenderer {
                     .append(String.format(Locale.ROOT, "%.6f", b.totalMillis() / 1000.0)).append('\n');
         }
 
+        // Cache-hit vs. real-Postgres-read vs. real-Postgres-write timing, per protocol -- bounded
+        // cardinality (a handful of protocols x 3 outcomes), unlike top-SQL above, so this is safe
+        // as a Prometheus series and doesn't need the JSON-only treatment.
+        out.append("# HELP polywire_rtt_seconds_total Cumulative time by outcome (cache_hit, pg_read, pg_write), per protocol.\n");
+        out.append("# TYPE polywire_rtt_seconds_total counter\n");
+        out.append("# HELP polywire_rtt_calls_total Sample count backing polywire_rtt_seconds_total, per protocol/outcome.\n");
+        out.append("# TYPE polywire_rtt_calls_total counter\n");
+        for (var r : statsStage.sqlMetrics().rttOutcomeSnapshot()) {
+            out.append("polywire_rtt_seconds_total{protocol=\"").append(escape(r.protocol()))
+                    .append("\",outcome=\"").append(escape(r.outcome())).append("\"} ")
+                    .append(String.format(Locale.ROOT, "%.6f", r.totalMillis() / 1000.0)).append('\n');
+            out.append("polywire_rtt_calls_total{protocol=\"").append(escape(r.protocol()))
+                    .append("\",outcome=\"").append(escape(r.outcome())).append("\"} ")
+                    .append(r.calls()).append('\n');
+        }
+
         if (mcpMetrics != null) {
             out.append("# HELP polywire_mcp_tool_calls_total MCP tool invocations, per tool.\n");
             out.append("# TYPE polywire_mcp_tool_calls_total counter\n");
