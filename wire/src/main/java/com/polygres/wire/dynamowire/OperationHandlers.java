@@ -145,7 +145,8 @@ final class OperationHandlers {
         Map<String, AttributeValue> item = PgItemStore.jsonToItem(req.getAsJsonObject("Item"));
         ExpressionContext ctx = ExpressionContext.parse(req);
         String cond = optString(req, "ConditionExpression");
-        Map<String, AttributeValue> old = store.putItem(schema, item, cond, ctx);
+        boolean needExisting = "ALL_OLD".equals(optString(req, "ReturnValues"));
+        Map<String, AttributeValue> old = store.putItem(schema, item, cond, ctx, needExisting);
         if (cache != null) {
             cache.invalidate(cacheKeyFor(schema, item));
         }
@@ -200,7 +201,8 @@ final class OperationHandlers {
         TableSchema schema = store.describeTable(req.get("TableName").getAsString());
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(req);
-        Map<String, AttributeValue> old = store.deleteItem(schema, key, optString(req, "ConditionExpression"), ctx);
+        boolean needExisting = "ALL_OLD".equals(optString(req, "ReturnValues"));
+        Map<String, AttributeValue> old = store.deleteItem(schema, key, optString(req, "ConditionExpression"), ctx, needExisting);
         if (cache != null) {
             cache.invalidate(cacheKeyFor(schema, key));
         }
@@ -304,13 +306,13 @@ final class OperationHandlers {
                 JsonObject writeReq = reqEl.getAsJsonObject();
                 if (writeReq.has("PutRequest")) {
                     Map<String, AttributeValue> item = PgItemStore.jsonToItem(writeReq.getAsJsonObject("PutRequest").getAsJsonObject("Item"));
-                    store.putItem(schema, item, null, new ExpressionContext());
+                    store.putItem(schema, item, null, new ExpressionContext(), false);
                     if (cache != null) {
                         cache.invalidate(cacheKeyFor(schema, item));
                     }
                 } else if (writeReq.has("DeleteRequest")) {
                     Map<String, AttributeValue> key = PgItemStore.jsonToItem(writeReq.getAsJsonObject("DeleteRequest").getAsJsonObject("Key"));
-                    store.deleteItem(schema, key, null, new ExpressionContext());
+                    store.deleteItem(schema, key, null, new ExpressionContext(), false);
                     if (cache != null) {
                         cache.invalidate(cacheKeyFor(schema, key));
                     }

@@ -366,13 +366,38 @@ public final class PgItemStore {
     }
 
     public Map<String, AttributeValue> putItem(TableSchema schema, Map<String, AttributeValue> item, String conditionExpr, ExpressionContext ctx) {
+        return putItem(schema, item, conditionExpr, ctx, true);
+    }
+
+    /**
+     * @param needExisting whether the caller actually wants the pre-write item back (real
+     *      DynamoDB only returns it when {@code ReturnValues=ALL_OLD} is requested). When a
+     *      caller doesn't need it AND there's no condition expression to evaluate against it
+     *      (the common case -- plain PutItem/BatchWriteItem with no ReturnValues), this skips the
+     *      {@code SELECT ... FOR UPDATE} entirely: it was running unconditionally before, on
+     *      every single PutItem, whether or not anything downstream ever looked at the result --
+     *      found live comparing PutItem's cost against a plain SQL INSERT's (PutItem was running
+     *      2 real round trips to INSERT's 1). A condition expression still forces the read, since
+     *      evaluating it needs the existing row regardless of whether the caller asked for it back.
+     */
+    public Map<String, AttributeValue> putItem(TableSchema schema, Map<String, AttributeValue> item, String conditionExpr,
+            ExpressionContext ctx, boolean needExisting) {
         String pg = pgTableName(schema.tableName());
         String pk = keyToken(item, schema.partitionKeyName());
         String sk = schema.hasSortKey() ? keyToken(item, schema.sortKeyName()) : "";
+        // A plain unconditional PutItem with nothing needing the pre-write row is a single
+        // statement with no cross-statement consistency to protect -- explicit
+        // setAutoCommit(false)+commit() around it was costing a real BEGIN/COMMIT round trip pair
+        // for nothing, on top of the SELECT this same investigation already removed above. Only
+        // pay for a real transaction when there's an actual read-then-write dependency (a
+        // condition to evaluate, or the caller wants the old value back atomically with the write).
+        boolean needsTransaction = conditionExpr != null || needExisting;
         try (Connection c = borrowShardConnection(pk)) {
-            c.setAutoCommit(false);
+            if (needsTransaction) {
+                c.setAutoCommit(false);
+            }
             try {
-                Map<String, AttributeValue> existing = readForUpdate(c, pg, pk, sk);
+                Map<String, AttributeValue> existing = needsTransaction ? readForUpdate(c, pg, pk, sk) : null;
                 if (conditionExpr != null && !ConditionExpressionEvaluator.evaluate(conditionExpr, existing, ctx)) {
                     c.rollback();
                     throw new DynamoException("ConditionalCheckFailedException", "The conditional request failed");
@@ -388,10 +413,14 @@ public final class PgItemStore {
                     ps.setString(4, json);
                     ps.executeUpdate();
                 }
-                c.commit();
+                if (needsTransaction) {
+                    c.commit();
+                }
                 return existing;
             } catch (RuntimeException | SQLException e) {
-                c.rollback();
+                if (needsTransaction) {
+                    c.rollback();
+                }
                 if (e instanceof DynamoException de) throw de;
                 throw new RuntimeException(e);
             }
@@ -429,13 +458,22 @@ public final class PgItemStore {
     }
 
     public Map<String, AttributeValue> deleteItem(TableSchema schema, Map<String, AttributeValue> key, String conditionExpr, ExpressionContext ctx) {
+        return deleteItem(schema, key, conditionExpr, ctx, true);
+    }
+
+    /** @param needExisting see {@link #putItem}'s javadoc -- same reasoning, same fix. */
+    public Map<String, AttributeValue> deleteItem(TableSchema schema, Map<String, AttributeValue> key, String conditionExpr,
+            ExpressionContext ctx, boolean needExisting) {
         String pg = pgTableName(schema.tableName());
         String pk = keyToken(key, schema.partitionKeyName());
         String sk = schema.hasSortKey() ? keyToken(key, schema.sortKeyName()) : "";
+        boolean needsTransaction = conditionExpr != null || needExisting;
         try (Connection c = borrowShardConnection(pk)) {
-            c.setAutoCommit(false);
+            if (needsTransaction) {
+                c.setAutoCommit(false);
+            }
             try {
-                Map<String, AttributeValue> existing = readForUpdate(c, pg, pk, sk);
+                Map<String, AttributeValue> existing = needsTransaction ? readForUpdate(c, pg, pk, sk) : null;
                 if (conditionExpr != null && !ConditionExpressionEvaluator.evaluate(conditionExpr, existing, ctx)) {
                     c.rollback();
                     throw new DynamoException("ConditionalCheckFailedException", "The conditional request failed");
@@ -445,10 +483,14 @@ public final class PgItemStore {
                     ps.setString(2, sk);
                     ps.executeUpdate();
                 }
-                c.commit();
+                if (needsTransaction) {
+                    c.commit();
+                }
                 return existing;
             } catch (RuntimeException | SQLException e) {
-                c.rollback();
+                if (needsTransaction) {
+                    c.rollback();
+                }
                 if (e instanceof DynamoException de) throw de;
                 throw new RuntimeException(e);
             }

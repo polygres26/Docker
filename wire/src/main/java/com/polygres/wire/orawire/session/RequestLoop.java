@@ -67,6 +67,15 @@ public final class RequestLoop {
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
     private volatile String lastSqlText;
+    // Separate from lastSqlText (which stays the raw pre-rewrite Oracle text, e.g. bind
+    // variables as ":1"/"name") specifically for RTT labeling -- recordRtt normalizes and looks
+    // up the SAME per-fingerprint entry the exec-time path already created, and that path
+    // records the REWRITTEN sql (rewritten.sql(), "?" placeholders) via Statement.of(). Using
+    // lastSqlText there looked plausible and compiled fine, but silently missed every lookup
+    // (different normalized string -> different map key), so orawire's per-query avgRttMs in
+    // /api/metrics/summary always came back null despite the overall counter being correct --
+    // found only by actually reading the API response, not from re-reading this code.
+    private volatile String lastRewrittenSqlText;
     private final FailedStatementLog failedStatementLog;
     private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
@@ -223,8 +232,8 @@ public final class RequestLoop {
             ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? e.toString() : e.getMessage(), openCursorId, callNumber);
         }
         sendData(w.toByteArray());
-        if (sqlMetrics != null && lastSqlText != null && isStatementShaped(functionCode)) {
-            sqlMetrics.recordRtt(SourceDialect.ORACLE, lastSqlText, System.nanoTime() - rttStart);
+        if (sqlMetrics != null && lastRewrittenSqlText != null && isStatementShaped(functionCode)) {
+            sqlMetrics.recordRtt(SourceDialect.ORACLE, lastRewrittenSqlText, System.nanoTime() - rttStart);
         }
         return logoff;
     }
@@ -396,6 +405,7 @@ public final class RequestLoop {
         BindVariableRewriter.Result rewritten = BindVariableRewriter.rewrite(primarySql);
         List<Object> binds = orderedBindValues(request.bindParams, rewritten.placeholderToBindIndex());
         Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
+        lastRewrittenSqlText = rewritten.sql();
         terminalExecutor.rebind(primaryConn);
         ExecutionResult result = reusablePipeline.execute(statement);
         openCursorId = nextCursorId++;
