@@ -68,10 +68,12 @@
   figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
   figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px; max-width: 78ch; }
 
-  .whatyouget { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 10px; }
-  .whatyouget li { display: flex; gap: 10px; font-size: 14.5px; color: var(--ink-dim); }
-  .whatyouget li::before { content: "✓"; color: var(--teal); flex: none; }
-  .whatyouget li b { color: var(--ink); font-weight: 600; }
+  .whatyouget { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
+  .whatyouget li { display: flex; gap: 12px; align-items: flex-start; }
+  .whatyouget li::before { content: "✓"; color: var(--teal); flex: none; font-size: 14px; line-height: 1.6; }
+  .whatyouget .wg-body { display: block; }
+  .whatyouget .wg-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
+  .whatyouget .wg-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; }
 
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
   footer a { color: var(--indigo); }
@@ -175,12 +177,10 @@
 
       <h3 class="subhead">What you get</h3>
       <ul class="whatyouget">
-        <li><b>Migration difficulty score and tier</b> — reproducible and rules-based.</li>
-        <li><b>Feature inventory</b> — PL/SQL packages, triggers, procedures, partitioning,
-          database links, scheduled jobs, and more, each weighted by real migration cost.</li>
-        <li><b>Downloadable findings report (PDF)</b> — built for sharing with a stakeholder.</li>
-        <li><b>Postgres sizing recommendation</b> — vCPUs, memory, storage, and IOPS, with a
-          plain-English reason behind every number.</li>
+        <li><span class="wg-body"><span class="wg-title">Migration difficulty score and tier</span><span class="wg-desc">Reproducible and rules-based.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Feature inventory</span><span class="wg-desc">PL/SQL packages, triggers, procedures, partitioning, database links, scheduled jobs, and more, each weighted by real migration cost.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Downloadable findings report (PDF)</span><span class="wg-desc">Built for sharing with a stakeholder.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Postgres sizing recommendation</span><span class="wg-desc">vCPUs, memory, storage, and IOPS, with a plain-English reason behind every number.</span></span></li>
       </ul>
 
       <div class="runblock">
