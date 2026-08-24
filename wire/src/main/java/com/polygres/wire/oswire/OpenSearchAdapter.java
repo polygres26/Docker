@@ -151,14 +151,25 @@ public final class OpenSearchAdapter {
         return clauses;
     }
 
+    /**
+     * A term/match value can arrive two ways depending on the client: the short form
+     * {@code {"term": {"field": "value"}}} sends the scalar directly; the "long form"
+     * {@code {"term": {"field": {"value": "value", "boost": 1.0}}}} wraps it in an object --
+     * real OpenSearch accepts both, and the official {@code opensearch-java} client always sends
+     * the long form (confirmed live: parsing the short-form assumption alone threw
+     * {@code Not a JSON Primitive} against a real client's request). Unwraps one level of
+     * {@code {"value": ...}} before falling through to plain-scalar handling either way.
+     */
     private static Object scalar(JsonElement e) {
-        if (e.getAsJsonPrimitive().isNumber()) {
-            return e.getAsDouble();
+        JsonElement value = (e.isJsonObject() && e.getAsJsonObject().has("value"))
+                ? e.getAsJsonObject().get("value") : e;
+        if (value.getAsJsonPrimitive().isNumber()) {
+            return value.getAsDouble();
         }
-        if (e.getAsJsonPrimitive().isBoolean()) {
-            return e.getAsBoolean();
+        if (value.getAsJsonPrimitive().isBoolean()) {
+            return value.getAsBoolean();
         }
-        return e.getAsString();
+        return value.getAsString();
     }
 
     /**
@@ -202,6 +213,14 @@ public final class OpenSearchAdapter {
         JsonObject response = new JsonObject();
         response.addProperty("took", tookMillis);
         response.addProperty("timed_out", false);
+        // Real OpenSearch's per-request shard-acknowledgement summary -- V1 has no shards to
+        // report against, but official clients require the field regardless (confirmed live with
+        // opensearch-java, same as OpenSearchWireServer#addVersionFields's _shards).
+        JsonObject shards = new JsonObject();
+        shards.addProperty("total", 1);
+        shards.addProperty("successful", 1);
+        shards.addProperty("failed", 0);
+        response.add("_shards", shards);
 
         JsonObject hitsWrapper = new JsonObject();
         JsonObject total = new JsonObject();

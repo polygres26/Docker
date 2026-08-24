@@ -5,3 +5,4 @@ pymssql>=2.3
 oracledb>=2.4
 pymongo>=4.9
 boto3>=1.35
+opensearch-py>=2.7

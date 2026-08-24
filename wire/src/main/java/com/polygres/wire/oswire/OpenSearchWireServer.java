@@ -144,6 +144,7 @@ public final class OpenSearchWireServer {
             resp.addProperty("_index", index);
             resp.addProperty("_id", id);
             resp.addProperty("result", "created");
+            addVersionFields(resp);
             writeJson(response, 201, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE, index, start);
         } catch (SQLException e) {
@@ -153,19 +154,52 @@ public final class OpenSearchWireServer {
         }
     }
 
+    /**
+     * {@code _version}/{@code _seq_no}/{@code _primary_term} are real OpenSearch's optimistic-
+     * concurrency-control fields -- V1 doesn't implement versioning (every write just overwrites,
+     * see {@code PostgresSearchStore#indexDocument}'s upsert), but official clients (confirmed
+     * live with {@code opensearch-java}: it throws a deserialization error without them --
+     * {@code Missing required property 'IndexResponse.primaryTerm'}) require these fields to be
+     * present in the response schema regardless. Reporting fixed placeholder values here is
+     * honest about what V1 actually does (no real versioning) while still being a response real
+     * clients can parse; a real optimistic-concurrency implementation is out of V1's scope.
+     */
+    private static void addVersionFields(JsonObject resp) {
+        resp.addProperty("_version", 1);
+        resp.addProperty("_seq_no", 0);
+        resp.addProperty("_primary_term", 1);
+        // Real OpenSearch's per-request shard-acknowledgement summary -- V1 has no shards to
+        // report against (one plain Postgres table, not a sharded index), but official clients
+        // require the field to be present in the response schema regardless (confirmed live:
+        // opensearch-java also throws without this one, after _version/_seq_no/_primary_term were
+        // added -- same "satisfy the schema honestly" reasoning as those).
+        JsonObject shards = new JsonObject();
+        shards.addProperty("total", 1);
+        shards.addProperty("successful", 1);
+        shards.addProperty("failed", 0);
+        resp.add("_shards", shards);
+    }
+
+    /**
+     * Real OpenSearch's {@code GET /<index>/_doc/<id>} returns HTTP 200 for a missing document
+     * too -- {@code {"found": false}}, no {@code _source} -- not a 404. Confirmed live: the
+     * official {@code opensearch-java} client's high-level {@code get()} throws on a non-2xx
+     * response, so returning 404 here (this endpoint's first version did) broke a real client
+     * that otherwise handles "not found" via the response body, exactly as real OpenSearch
+     * expects it to.
+     */
     private void handleGetDoc(HttpServletResponse response, String index, String id) throws IOException {
         long start = System.nanoTime();
         try {
             JsonObject doc = store.getDocument(index, id);
-            if (doc == null) {
-                writeError(response, 404, "document_missing_exception", "no document with id \"" + id + "\" in \"" + index + "\"");
-                return;
-            }
             JsonObject resp = new JsonObject();
             resp.addProperty("_index", index);
             resp.addProperty("_id", id);
-            resp.addProperty("found", true);
-            resp.add("_source", doc);
+            resp.addProperty("found", doc != null);
+            if (doc != null) {
+                addVersionFields(resp);
+                resp.add("_source", doc);
+            }
             writeJson(response, 200, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ, index, start);
         } catch (SQLException e) {
@@ -181,6 +215,7 @@ public final class OpenSearchWireServer {
             resp.addProperty("_index", index);
             resp.addProperty("_id", id);
             resp.addProperty("result", deleted ? "deleted" : "not_found");
+            addVersionFields(resp);
             writeJson(response, deleted ? 200 : 404, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE, index, start);
         } catch (SQLException e) {
@@ -234,12 +269,14 @@ public final class OpenSearchWireServer {
                         itemResult.addProperty("_index", index);
                         itemResult.addProperty("_id", id);
                         itemResult.addProperty("status", 201);
+                        addVersionFields(itemResult);
                     }
                     case "delete" -> {
                         boolean deleted = store.deleteDocument(index, id);
                         itemResult.addProperty("_index", index);
                         itemResult.addProperty("_id", id);
                         itemResult.addProperty("status", deleted ? 200 : 404);
+                        addVersionFields(itemResult);
                     }
                     default -> throw new OpenSearchException("action_request_validation_exception",
                             "oswire V1 bulk supports index/create/delete, not \"" + actionType + "\"");

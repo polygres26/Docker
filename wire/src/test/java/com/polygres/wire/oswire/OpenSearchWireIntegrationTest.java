@@ -160,8 +160,11 @@ class OpenSearchWireIntegrationTest {
         JsonObject doc4 = send("GET", "/products/_doc/4", null);
         assertEquals(true, doc4.get("found").getAsBoolean());
 
+        // Real OpenSearch's GET returns HTTP 200 with found=false for a missing document, not a
+        // 404 -- see OpenSearchWireServer#handleGetDoc's javadoc for why this matters live.
         JsonObject doc3 = send("GET", "/products/_doc/3", null);
-        assertEquals(404, doc3.get("__status").getAsInt());
+        assertEquals(200, doc3.get("__status").getAsInt());
+        assertEquals(false, doc3.get("found").getAsBoolean());
     }
 
     @Test
