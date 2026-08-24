@@ -52,10 +52,12 @@
   .tool > .lede { color: var(--ink-dim); font-size: 16px; max-width: 68ch; margin: 0 0 22px; }
   .tool > .lede b { color: var(--ink); font-weight: 600; }
 
-  .usecases { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 10px; }
-  .usecases li { display: flex; gap: 10px; font-size: 14.5px; color: var(--ink-dim); }
-  .usecases li::before { content: "→"; color: var(--indigo); flex: none; }
-  .usecases li b { color: var(--ink); font-weight: 600; }
+  .usecases { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
+  .usecases li { display: flex; gap: 12px; align-items: flex-start; }
+  .usecases li::before { content: "→"; color: var(--indigo); flex: none; font-size: 14px; line-height: 1.6; }
+  .usecases .uc-body { display: block; }
+  .usecases .uc-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
+  .usecases .uc-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6; }
 
   .runblock { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin: 0 0 8px; }
   .runblock p { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 12px; }
@@ -104,21 +106,11 @@
 
       <h3 class="subhead">Use cases</h3>
       <ul class="usecases">
-        <li><b>Governed access for AI agents.</b> An MCP frontend lets AI agents and modern
-          service architectures query Postgres directly — through the same SQL firewall, ACL,
-          and QoS controls as every other client, not a separate, unguarded path to your data.</li>
-        <li><b>A single, secure gateway across multiple data sources.</b> One admin surface — SQL
-          firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread
-          across five different databases' own tooling, each with its own access model.</li>
-        <li><b>Standardizing on one database.</b> Different teams' applications speak different
-          protocols against different databases. PolyWire lets every one of them land on the same
-          Postgres, without every team rewriting its data layer first.</li>
-        <li><b>Permanent compatibility shim.</b> Some client code isn't worth touching — an old
-          MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and
-          let it keep speaking that protocol forever while everything actually lives in Postgres.</li>
-        <li><b>Mid-migration bridge.</b> Run PolyWire while PolyAdvisor (or another migration
-          tool) moves schema and data behind the scenes — old client code keeps working
-          unmodified throughout the cutover, no coordinated "flag day" rewrite required.</li>
+        <li><span class="uc-body"><span class="uc-title">Governed access for AI agents</span><span class="uc-desc">An MCP frontend lets AI agents and modern service architectures query Postgres directly — through the same SQL firewall, ACL, and QoS controls as every other client, not a separate, unguarded path to your data.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">A single, secure gateway across multiple data sources</span><span class="uc-desc">One admin surface — SQL firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread across five different databases' own tooling, each with its own access model.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run PolyWire while PolyAdvisor (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
       </ul>
 
       <div class="runblock">
@@ -173,13 +165,8 @@
 
       <h3 class="subhead">Two ways to get an assessment</h3>
       <ul class="usecases">
-        <li><b>Connect a database.</b> A read-only connection profiles the real schema, feature
-          usage, and query workload directly — no data leaves your database, only metadata and
-          query statistics. Deterministic: run it twice, get the same score.</li>
-        <li><b>Upload a performance report.</b> Drop in an Oracle AWR report, a MySQL
-          performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for
-          you. A genuinely different kind of signal than a live connection — labeled as such
-          everywhere it shows up, never presented as equivalent.</li>
+        <li><span class="uc-body"><span class="uc-title">Connect a database</span><span class="uc-desc">A read-only connection profiles the real schema, feature usage, and query workload directly — no data leaves your database, only metadata and query statistics. Deterministic: run it twice, get the same score.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
       </ul>
 
       <h3 class="subhead">What you get</h3>
