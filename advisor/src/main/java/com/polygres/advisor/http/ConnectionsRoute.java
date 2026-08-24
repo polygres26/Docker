@@ -1,7 +1,7 @@
 package com.polygres.advisor.http;
 
 import com.google.gson.Gson;
-import com.polygres.advisor.catalog.OracleCatalogProfiler;
+import com.polygres.advisor.catalog.OracleObjectExplorer;
 import com.polygres.advisor.core.BackendTarget;
 import com.polygres.advisor.core.ConnectionRecord;
 import com.polygres.advisor.core.ConnectionStore;
@@ -217,7 +217,7 @@ public class ConnectionsRoute implements RouteHandler {
         String name = request.getParameter("name");
         if (type == null || name == null) { writeError(response, 400, "type and name query params are required."); return; }
 
-        PlsqlSummarizer summarizer = new PlsqlSummarizer(llmSettingsStore, new OracleCatalogProfiler());
+        PlsqlSummarizer summarizer = new PlsqlSummarizer(llmSettingsStore, new OracleObjectExplorer());
         PlsqlSummarizer.Result result = summarizer.summarize(target, name, type);
 
         Map<String, Object> body = new java.util.LinkedHashMap<>();

@@ -1,14 +1,25 @@
 package com.polygres.advisor.llm;
 
-import com.polygres.advisor.catalog.OracleCatalogProfiler;
+import com.polygres.advisor.catalog.ObjectExplorer;
 import com.polygres.advisor.core.BackendTarget;
 
 /**
- * Deep-reasoning use case: given one package/procedure/function's PL/SQL source (via {@link
- * OracleCatalogProfiler#fetchSource}), ask the configured PRIMARY LLM to summarize its intent and
- * flag Postgres-portability risks. This is the "explainer/rewrite-assist" layer the project plan
- * called out as explicitly downstream of {@link com.polygres.advisor.score.MigrationScorer} -- it
- * never feeds back into the deterministic score; it's read by a human reviewing the migration.
+ * Deep-reasoning use case: given one package/procedure/function's PL/SQL source (via the same
+ * {@link ObjectExplorer} the Objects tab itself uses to display it), ask the configured PRIMARY
+ * LLM to summarize its intent and flag Postgres-portability risks. This is the
+ * "explainer/rewrite-assist" layer the project plan called out as explicitly downstream of
+ * {@link com.polygres.advisor.score.MigrationScorer} -- it never feeds back into the
+ * deterministic score; it's read by a human reviewing the migration.
+ *
+ * <p>Deliberately takes an {@link ObjectExplorer}, not {@code OracleCatalogProfiler} (an earlier
+ * version of this class did, and had a real bug for it: {@code OracleCatalogProfiler#fetchSource}
+ * queries {@code USER_SOURCE}, which has no {@code OWNER} column and is implicitly scoped to the
+ * connecting session's own objects, while the Objects tab always passes cross-schema
+ * "OWNER.NAME" identifiers -- so summarizing anything selected from that tab silently returned
+ * "no source found", every time. {@link com.polygres.advisor.catalog.OracleObjectExplorer#fetchSource}
+ * is the correct source of truth here: it already splits the owner qualifier and queries
+ * {@code ALL_SOURCE}, so it resolves any object the connecting user has been granted visibility
+ * into -- not just ones it owns -- exactly matching what the Objects tab itself already shows.
  *
  * <p>Reads PRIMARY's (and, if configured, JUDGE's) settings from {@link LlmSettingsStore} rather
  * than an env var -- both roles are configured through the LLM configuration page, covering both
@@ -31,11 +42,11 @@ public class PlsqlSummarizer {
         """;
 
     private final LlmSettingsStore settingsStore;
-    private final OracleCatalogProfiler profiler;
+    private final ObjectExplorer explorer;
 
-    public PlsqlSummarizer(LlmSettingsStore settingsStore, OracleCatalogProfiler profiler) {
+    public PlsqlSummarizer(LlmSettingsStore settingsStore, ObjectExplorer explorer) {
         this.settingsStore = settingsStore;
-        this.profiler = profiler;
+        this.explorer = explorer;
     }
 
     public record Result(String summary, LlmJudge.Verdict judgeVerdict) {}
@@ -44,17 +55,10 @@ public class PlsqlSummarizer {
         LlmSettings primarySettings = settingsStore.get(LlmRole.PRIMARY);
         var primary = LlmProviderFactory.resolve(primarySettings);
 
-        // The Objects browser (OracleObjectExplorer#listObjects) always returns cross-schema
-        // "OWNER.NAME" identifiers so they stay unambiguous in a tree that spans every schema --
-        // but OracleCatalogProfiler#fetchSource queries USER_SOURCE, which has no OWNER column
-        // and is implicitly scoped to the connecting session's own objects. Passing the qualified
-        // name straight through never matches (NAME = 'OWNER.THING' against a column that only
-        // ever holds 'THING'), so summarizing anything selected from the Objects tab always
-        // silently returned "no source found" -- found live while testing this end to end. Strip
-        // the owner qualifier before the lookup, same convention OracleObjectExplorer's own
-        // splitOwner already uses.
-        String bareName = objectName.contains(".") ? objectName.substring(objectName.lastIndexOf('.') + 1) : objectName;
-        String source = profiler.fetchSource(target, bareName, objectType);
+        // explorer.fetchSource splits any "OWNER.NAME" qualifier itself and queries ALL_SOURCE --
+        // see this class's javadoc for why that (not USER_SOURCE) is the correct source of truth,
+        // and why it's a real bugfix, not a stylistic preference.
+        String source = explorer.fetchSource(target, objectName, objectType);
         if (source.isBlank()) {
             return new Result("No source found for " + objectType + " " + objectName + ".", null);
         }

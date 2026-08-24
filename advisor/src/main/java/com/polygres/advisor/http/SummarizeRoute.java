@@ -1,7 +1,7 @@
 package com.polygres.advisor.http;
 
 import com.google.gson.Gson;
-import com.polygres.advisor.catalog.OracleCatalogProfiler;
+import com.polygres.advisor.catalog.OracleObjectExplorer;
 import com.polygres.advisor.core.BackendTarget;
 import com.polygres.advisor.core.SourceDialect;
 import com.polygres.advisor.llm.LlmSettingsStore;
@@ -53,7 +53,7 @@ public class SummarizeRoute implements RouteHandler {
         }
 
         try {
-            PlsqlSummarizer summarizer = new PlsqlSummarizer(settingsStore, new OracleCatalogProfiler());
+            PlsqlSummarizer summarizer = new PlsqlSummarizer(settingsStore, new OracleObjectExplorer());
             PlsqlSummarizer.Result result = summarizer.summarize(target, req.objectName, req.objectType);
 
             Map<String, Object> body = new LinkedHashMap<>();
