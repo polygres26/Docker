@@ -408,7 +408,7 @@ public final class RequestLoop {
             openRows = result.rows();
             fetchPosition = 0;
             ResponseWriter.writeDescribeInfo(w, openColumns);
-            
+
             long totalAvailable = openRows.size();
             long rowsWritten = writeRows(w, request.numIters);
             if (rowsWritten == totalAvailable && rowsWritten <= request.numIters) {
@@ -418,7 +418,7 @@ public final class RequestLoop {
                 ResponseWriter.writeSuccessEnd(w, rowsWritten, openCursorId, callNumber);
             }
         } else {
-            
+
             if ((request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0) {
                 commitAll();
             }

@@ -5,12 +5,32 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public final class TranslationCacheStore {
 
     private static final Logger log = LoggerFactory.getLogger(TranslationCacheStore.class);
+
+    // recordAccess is pure hit-count/last-hit-at analytics -- nothing about whether a query can
+    // be served depends on it (that's TranslationCache, the in-memory map, already answered by
+    // the time this is called). It used to run synchronously in the request path, a real Postgres
+    // round trip on every translation-cache hit -- found live while chasing why orawire's
+    // cache-hit RTT was ~1ms against pgwire's <0.3ms despite sharing the exact same pipeline
+    // stages: DialectTranslationStage only does real work when source and target dialects differ,
+    // which for orawire (ORACLE -> POSTGRES backend) is every single statement, unlike pgwire
+    // (POSTGRES -> POSTGRES, an immediate no-op). This was the actual cost, not TTC encoding or
+    // per-request object allocation. Fire-and-forget on a background thread instead: a write
+    // landing a few milliseconds late (or being dropped under extreme backpressure, given the
+    // bounded queue) only makes hit_count/last_hit_at slightly stale, never wrong in a way
+    // anything else reads for correctness.
+    private static final ExecutorService RECORD_ACCESS_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "translation-cache-recorder");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final com.polygres.wire.server.ServerOptions options;
 
@@ -38,7 +58,21 @@ public final class TranslationCacheStore {
         }
     }
 
+    /**
+     * Queues the write and returns immediately -- see the class javadoc for why this is safe to
+     * do off the request path. Never throws back to the caller; a queueing or DB failure is
+     * logged and dropped, exactly as a failed synchronous attempt used to be swallowed here too.
+     */
     public void recordAccess(SourceDialect sourceDialect, SourceDialect targetDialect,
+            String originalSql, String translatedSql) {
+        try {
+            RECORD_ACCESS_EXECUTOR.submit(() -> recordAccessNow(sourceDialect, targetDialect, originalSql, translatedSql));
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            log.warn("translation cache store: recorder queue rejected a write for {}->{} -- dropped", sourceDialect, targetDialect);
+        }
+    }
+
+    private void recordAccessNow(SourceDialect sourceDialect, SourceDialect targetDialect,
             String originalSql, String translatedSql) {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
@@ -55,7 +89,7 @@ public final class TranslationCacheStore {
             ps.setString(5, translatedSql);
             ps.executeUpdate();
         } catch (Exception e) {
-            
+
             log.warn("translation cache store: could not record access for {}->{}: {}",
                     sourceDialect, targetDialect, e.getMessage());
         }
