@@ -1,5 +1,9 @@
 # PolyWire — Use Case & Deployment Guide
 
+> **This is a technical/internal reference** for operators and contributors — pipeline internals,
+> security, HA, deployment. If you're an application team looking to connect to PolyWire, start
+> with [`USER_GUIDE.md`](USER_GUIDE.md) instead.
+
 PolyWire is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
 client/server protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol,
 DynamoDB's HTTP/JSON API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and

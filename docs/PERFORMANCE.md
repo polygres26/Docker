@@ -1,5 +1,9 @@
 # PolyWire — Performance: SQL Statistics, RTT, and the Cache-Hit Latency Investigation
 
+> **This is a technical/internal reference** for operators and contributors, not application
+> teams — it goes into per-protocol wire-level detail. For a plain-language summary of what
+> PolyWire's caching gets you, see [`USER_GUIDE.md`](USER_GUIDE.md).
+
 This document covers two related things added/fixed in the same investigation:
 
 1. **SQL statistics and RTT (round-trip time) instrumentation** — a real, ongoing feature: every

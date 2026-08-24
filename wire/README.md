@@ -6,11 +6,10 @@ API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and ro
 them to real Postgres backend(s). It's wire-protocol compatibility for a pre- or post-migration
 cutover, not a schema/data migration tool itself.
 
-See [`../docs/POLYWIRE_GUIDE.md`](../docs/POLYWIRE_GUIDE.md) for the full architecture, security,
-caching, SQL statistics/RTT, and admin-UI guide, and
-[`../docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) for the latency investigation (seven real
-bottlenecks found and fixed, each with a live before/after benchmark) behind every performance
-claim in this repo.
+New here? Start with [`../docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) — what PolyWire does, why
+you'd use it, and how to point your app at it. [`../docs/POLYWIRE_GUIDE.md`](../docs/POLYWIRE_GUIDE.md)
+and [`../docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) are technical/internal references (pipeline
+internals, security, HA, the latency investigation) for operators and contributors.
 
 Point an existing app's connection string at PolyWire instead of its original database, and it
 translates and routes to real Postgres. Run it indefinitely as a permanent compatibility shim
