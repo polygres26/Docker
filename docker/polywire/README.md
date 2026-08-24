@@ -1,8 +1,9 @@
 # PolyWire — Docker
 
-Multi-stage build: a `maven:3.9-eclipse-temurin-21` stage builds the shaded jar
-(`target/polygres-wire.jar`), then an `eclipse-temurin:21-jre-jammy` runtime stage runs it —
-nothing beyond a JRE is needed at runtime, everything's already bundled into the shaded jar.
+Multi-stage build: a `node:22-alpine` stage builds the admin SPA (`wire/web`), a
+`maven:3.9-eclipse-temurin-21` stage builds the shaded jar (`target/polygres-wire.jar`), then an
+`eclipse-temurin:21-jre-jammy` runtime stage runs both — nothing beyond a JRE is needed at
+runtime, everything's already bundled into the shaded jar plus the built SPA's static files.
 
 ## Quick start
 
@@ -22,7 +23,18 @@ psql -h localhost -p 15432 -U postgres -d postgres
 
 Every other frontend (mywire 13306, orawire 11521, mssqlwire 14333, mongowire 27017, gRPC 7070,
 dynamowire 18000, MCP 18010) is published the same way — see `docker-compose.yml`'s port list.
-`/metrics` and `/config` are on 19090.
+The admin app (Metrics, Topology, SQL Firewall, ACL, OAuth, LLM configuration, and more) is on
+19090 — open it directly in a browser; `/metrics` and `/config` are separate JSON endpoints on
+the same port.
+
+## How the admin app gets served (no nginx)
+
+The image build has two stages that feed the runtime stage: a `node:22-alpine` stage builds
+`wire/web` to static files, and a `maven:3.9-eclipse-temurin-21` stage builds the backend jar.
+Both outputs land in the final `eclipse-temurin:21-jre-jammy` image; `POLYWIRE_ADMIN_WEB_DIR=/app/web`
+tells `MetricsServer` where to find the built SPA at startup, serving it via `SpaResourceHandler`
+on the same port as the admin JSON API (19090). Unset that env var (or point it at a directory
+that doesn't exist) and the same image runs API-only.
 
 ## Building the image standalone
 

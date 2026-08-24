@@ -1,10 +1,19 @@
 # PolyWire -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
-# dynamowire/gRPC/MCP). Build context is the repo root (see docker-compose.yml / the `docker build`
-# command in README.md) since this Dockerfile COPYs the wire/ module in explicitly -- wire/ is a
-# standalone Maven module (no parent pom, no reactor with advisor/), so only wire/ ever needs to be
-# in the build context, keeping rebuilds fast when advisor/ changes.
+# dynamowire/sqswire/gRPC/MCP) plus its own admin app (wire/web). Build context is the repo root
+# (see docker-compose.yml / the `docker build` command in README.md) since this Dockerfile COPYs
+# both wire/ and wire/web in explicitly -- wire/ is a standalone Maven module (no parent pom, no
+# reactor with advisor/), so only wire/ ever needs to be in the build context, keeping rebuilds
+# fast when advisor/ changes.
 
-# ---- build stage ----
+# ---- build the admin SPA ----
+FROM node:22-alpine AS web-build
+WORKDIR /build
+COPY wire/web/package.json wire/web/package-lock.json ./
+RUN npm ci
+COPY wire/web/ .
+RUN npm run build
+
+# ---- build the backend ----
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 
@@ -25,6 +34,13 @@ WORKDIR /app
 RUN groupadd --system polywire && useradd --system --gid polywire --home-dir /app polywire
 
 COPY --from=build /build/target/polygres-wire.jar /app/polygres-wire.jar
+COPY --from=web-build /build/dist /app/web
+
+# POLYWIRE_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
+# its own embedded Jetty (SpaResourceHandler) on the admin/metrics port -- unset this env var to
+# run API-only (the JSON admin API still works either way; this only controls whether the browser
+# UI is also served on the same port).
+ENV POLYWIRE_ADMIN_WEB_DIR=/app/web
 RUN chown -R polywire:polywire /app
 USER polywire
 

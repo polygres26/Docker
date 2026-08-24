@@ -53,7 +53,7 @@ services:
       - "7070:7070"   # gRPC (PolyWire's own native driver protocol)
       - "18000:18000" # dynamowire (DynamoDB HTTP/JSON)
       - "18010:18010" # MCP (Model Context Protocol)
-      - "19090:19090" # /metrics, /config (admin HTTP)
+      - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 
 volumes:
   polywire-postgres-data:
