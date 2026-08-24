@@ -106,10 +106,7 @@ export default function Topology() {
           <div>
             <h1 className={styles.heroTitle}>PolyWire topology</h1>
             <p className={styles.heroSubtitle}>
-              Every PolyWire instance heartbeats its identity to the shared config Postgres every ~10s.
-              A node is marked <strong>stale</strong> once its heartbeat is more than 30s old — it could be
-              down, or just a slow network blip. This is a separate, simpler mechanism from Ignite's
-              distributed cache mesh membership, and doesn't reflect who's actually joined that cluster.
+              Every PolyWire instance in this deployment, grouped by zone.
             </p>
           </div>
           <div className={styles.heroBadge}>

@@ -251,11 +251,7 @@ export default function Metrics() {
           <RefreshCw size={13} color="var(--muted)" />
         </div>
         <p className={styles.cardSubtitle}>
-          Ranked by cumulative execution time (calls × avg latency) — the statements actually costing you compute.
-          <strong> Avg RTT</strong> is the full request-read-to-response-written span (server-side, not network) —
-          "—" shows up only for pgwire's Bind step, which runs the query but sends nothing back (a separate,
-          client-paced Execute streams the result, so joining the two would count client think-time as latency).
-          Execute itself, and every other protocol including orawire's Fetch, reports a real sample.
+          Your most expensive statements, ranked by total time spent.
         </p>
         {metrics.topSql.length === 0 ? (
           <div className={styles.empty}>No SQL captured yet.</div>
