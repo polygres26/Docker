@@ -407,7 +407,33 @@ public final class RequestLoop {
         Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
         lastRewrittenSqlText = rewritten.sql();
         terminalExecutor.rebind(primaryConn);
-        ExecutionResult result = reusablePipeline.execute(statement);
+
+        // The client's own EXEC_OPTION_COMMIT bit says exactly what it wants for THIS statement
+        // (oracledb sets it when the caller's connection.autocommit is True) -- when nothing else
+        // needs primaryConn's explicit-transaction mode (no dual Oracle connection, no shadow
+        // replicas, no XA transaction: none of which apply here since dual implies
+        // authoritativeIsOracle or a different primaryConn entirely), honor that per-statement
+        // instead of always running in manual-commit mode and paying for a separate real Postgres
+        // COMMIT round trip afterward via commitAll(). Toggling autoCommit here costs nothing on
+        // its own (pgjdbc only talks to the server for it when there's an open transaction to
+        // close, and there never is one right before a freshly claimed statement) -- the
+        // statement itself now commits as part of its own single round trip, same as pgwire's
+        // plain autocommit INSERT. Found live: this was the single largest remaining cost between
+        // orawire and pgwire/mywire/mssqlwire's write latency, once the translation-cache and
+        // per-call pipeline-construction costs earlier in this investigation were already fixed.
+        boolean wantsCommit = (request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0;
+        boolean useNativeAutocommit = wantsCommit && !dual && replicaConnections.isEmpty() && xaTransaction == null;
+        ExecutionResult result;
+        if (useNativeAutocommit) {
+            primaryConn.setAutoCommit(true);
+            try {
+                result = reusablePipeline.execute(statement);
+            } finally {
+                primaryConn.setAutoCommit(false);
+            }
+        } else {
+            result = reusablePipeline.execute(statement);
+        }
         openCursorId = nextCursorId++;
         if (bindTypes != null) {
             statementSignatures.put(openCursorId, new StatementSignature(request.sqlText, bindTypes));
@@ -422,14 +448,14 @@ public final class RequestLoop {
             long totalAvailable = openRows.size();
             long rowsWritten = writeRows(w, request.numIters);
             if (rowsWritten == totalAvailable && rowsWritten <= request.numIters) {
-                
+
                 ResponseWriter.writeInlineExhaustionEnd(w, openCursorId, callNumber, "ORA-01403: no data found\n");
             } else {
                 ResponseWriter.writeSuccessEnd(w, rowsWritten, openCursorId, callNumber);
             }
         } else {
 
-            if ((request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0) {
+            if (wantsCommit && !useNativeAutocommit) {
                 commitAll();
             }
             ResponseWriter.writeSuccessEnd(w, result.updateCount(), openCursorId, callNumber);
