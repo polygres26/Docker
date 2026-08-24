@@ -70,6 +70,16 @@
   figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
   figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px; max-width: 78ch; }
 
+  .rttNote { color: var(--ink-dim); font-size: 13.5px; max-width: 68ch; margin: 0 0 16px; }
+  .rttTableWrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; margin: 0 0 8px; }
+  table.rttTable { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 560px; }
+  table.rttTable th, table.rttTable td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.rttTable th:first-child, table.rttTable td:first-child { text-align: left; }
+  table.rttTable thead th { color: var(--ink-faint); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--paper-raised); }
+  table.rttTable tbody tr:last-child td { border-bottom: none; }
+  table.rttTable td.num { font-family: var(--mono); }
+  table.rttTable td.speedup { color: var(--teal); font-family: var(--mono); font-weight: 600; }
+
   .whatyouget { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
   .whatyouget li { display: flex; gap: 12px; align-items: flex-start; }
   .whatyouget li::before { content: "✓"; color: var(--teal); flex: none; font-size: 14px; line-height: 1.6; }
@@ -126,12 +136,12 @@
       </ul>
 
       <div class="runblock">
-        <p>Quick start — point it at a real Postgres backend via <code style="display:inline;padding:1px 6px;">POLYWIRE_PG_*</code>:</p>
+        <p>Quick start — point it at a real Postgres backend via <code style="display:inline;padding:1px 6px;">POLYWIRE_*</code>:</p>
         <code>docker run \
   -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
   -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
-  -e POLYWIRE_PG_HOST=&lt;host&gt; \
-  -e POLYWIRE_PG_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_HOST=&lt;host&gt; \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code>
       </div>
 
@@ -140,6 +150,59 @@
         <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic, reads/writes per second, statement counts, and average RTT, with a sidebar for Topology, SQL Firewall, ACL, OAuth, Backends, Queues, Data Explorer, Router Rules, QoS, and LLM Configuration">
         <figcaption>PolyWire ships its own admin app — live traffic metrics, deployment topology, SQL firewall rules, ACL, backends, queues, and LLM configuration for dialect translation, all in one place.</figcaption>
       </figure>
+
+      <h3 class="subhead">Cache hit vs. Postgres round trip, per protocol</h3>
+      <p class="rttNote">
+        The same admin console tracks this per wire protocol: how long a cache hit takes against
+        a real Postgres read or write. Measured on a local loopback deployment (client, PolyWire,
+        and Postgres all on one machine) with the result cache enabled on one table, 30 samples
+        per cell — the point isn't the absolute millisecond figures, which shrink further over a
+        real network, it's that the cache consistently wins by 5–15x, on every protocol PolyWire
+        speaks, without any application-side caching code.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable">
+          <thead>
+            <tr>
+              <th>Protocol</th>
+              <th>Cache hit</th>
+              <th>Postgres read</th>
+              <th>Postgres write</th>
+              <th>Cache speedup</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Postgres (pgwire)</td>
+              <td class="num">0.07 ms</td>
+              <td class="num">1.06 ms</td>
+              <td class="num">1.13 ms</td>
+              <td class="speedup">15.1×</td>
+            </tr>
+            <tr>
+              <td>SQL Server (mssqlwire)</td>
+              <td class="num">0.07 ms</td>
+              <td class="num">0.65 ms</td>
+              <td class="num">0.47 ms</td>
+              <td class="speedup">9.3×</td>
+            </tr>
+            <tr>
+              <td>MySQL (mywire)</td>
+              <td class="num">0.06 ms</td>
+              <td class="num">0.35 ms</td>
+              <td class="num">0.87 ms</td>
+              <td class="speedup">5.8×</td>
+            </tr>
+            <tr>
+              <td>Oracle (orawire)</td>
+              <td class="num">0.07 ms</td>
+              <td class="num">0.35 ms</td>
+              <td class="num">0.27 ms</td>
+              <td class="speedup">5.0×</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h3 class="subhead">Architecture</h3>
       <figure>
