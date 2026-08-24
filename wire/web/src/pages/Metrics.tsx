@@ -291,6 +291,44 @@ export default function Metrics() {
           </div>
         )}
       </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardHeadRow}>
+          <p className={styles.cardTitle}>MCP tool calls</p>
+          <RefreshCw size={13} color="var(--muted)" />
+        </div>
+        <p className={styles.cardSubtitle}>
+          Every tool call handled by the MCP server, with server-side time and error counts.
+        </p>
+        {metrics.mcpTools.length === 0 ? (
+          <div className={styles.empty}>No MCP tool calls yet.</div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.sqlTable}>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th style={{ textAlign: 'right' }}>Calls</th>
+                  <th style={{ textAlign: 'right' }}>Errors</th>
+                  <th style={{ textAlign: 'right' }}>Avg time</th>
+                  <th style={{ textAlign: 'right' }}>Total time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.mcpTools.map((t) => (
+                  <tr key={t.tool}>
+                    <td className={styles.sqlText}>{t.tool}</td>
+                    <td className={styles.numCell}>{formatNumber(t.calls)}</td>
+                    <td className={styles.numCell}>{t.errors > 0 ? t.errors : '—'}</td>
+                    <td className={styles.numCell}>{t.avgMs} ms</td>
+                    <td className={styles.numCell}>{formatNumber(t.totalMs)} ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

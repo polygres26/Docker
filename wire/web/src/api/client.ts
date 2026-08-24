@@ -178,6 +178,14 @@ export interface WireMetricsBackend {
   avgMs: number
 }
 
+export interface WireMcpToolStat {
+  tool: string
+  calls: number
+  errors: number
+  totalMs: number
+  avgMs: number
+}
+
 export interface WireMetricsSummary {
   protocolCounts: Record<string, number>
   totalReads: number
@@ -189,6 +197,7 @@ export interface WireMetricsSummary {
   rttSamples: number
   topSql: WireMetricsSql[]
   byBackend: WireMetricsBackend[]
+  mcpTools: WireMcpToolStat[]
 }
 
 export async function getWireMetrics(): Promise<WireMetricsSummary> {

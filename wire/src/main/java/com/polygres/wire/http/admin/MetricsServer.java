@@ -126,6 +126,24 @@ public final class MetricsServer {
             ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
             com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
             com.polygres.wire.server.ServerOptions options) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, null);
+    }
+
+    /**
+     * As the full constructor above, plus {@code mcpMetrics} -- the shared
+     * {@link com.polygres.wire.mcp.McpMetricsCollector} instance {@code Main} also passes to
+     * {@code PolyWireMcpServer}, so both read/write the same per-tool call counts. {@code null}
+     * (every other constructor's default) means MCP metrics are omitted from both
+     * {@code /api/metrics/summary} and {@code /metrics} -- harmless, not an error, for any caller
+     * that genuinely has no MCP server running.
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
@@ -152,7 +170,7 @@ public final class MetricsServer {
                     return;
                 }
                 if ("/metrics".equals(target)) {
-                    String body = MetricsRenderer.render(statsStage, qosStage);
+                    String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("text/plain; version=0.0.4; charset=utf-8");
                     response.getWriter().write(body);
@@ -187,7 +205,7 @@ public final class MetricsServer {
                     }
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
-                    response.getWriter().write(renderMetricsSummary(statsStage));
+                    response.getWriter().write(renderMetricsSummary(statsStage, mcpMetrics));
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -804,7 +822,8 @@ public final class MetricsServer {
                 + ",\"payload\":" + version.payload().toJson() + "}";
     }
 
-    private static String renderMetricsSummary(StatsCollectorStage statsStage) {
+    private static String renderMetricsSummary(StatsCollectorStage statsStage,
+            com.polygres.wire.mcp.McpMetricsCollector mcpMetrics) {
         com.polygres.wire.core.SqlMetricsCollector.Snapshot snap = statsStage.sqlMetricsSnapshot();
         StringBuilder json = new StringBuilder("{");
         json.append("\"protocolCounts\":{");
@@ -846,6 +865,20 @@ public final class MetricsServer {
                     .append(",\"totalMs\":").append(b.totalMillis())
                     .append(",\"avgMs\":").append(b.avgMillis())
                     .append('}');
+        }
+        json.append("],\"mcpTools\":[");
+        if (mcpMetrics != null) {
+            boolean firstTool = true;
+            for (var t : mcpMetrics.snapshot()) {
+                if (!firstTool) json.append(',');
+                firstTool = false;
+                json.append("{\"tool\":").append(jsonString(t.toolName()))
+                        .append(",\"calls\":").append(t.calls())
+                        .append(",\"errors\":").append(t.errors())
+                        .append(",\"totalMs\":").append(t.totalMillis())
+                        .append(",\"avgMs\":").append(t.avgMillis())
+                        .append('}');
+            }
         }
         json.append("]}");
         return json.toString();

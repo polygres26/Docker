@@ -222,9 +222,13 @@ public final class Main {
         // POLYWIRE_ADMIN_WEB_DIR: path to the built wire/web SPA (its `dist/`). Opt-in, same
         // pattern as advisor's POLYGRES_ADVISOR_WEB_DIR -- unset means API-only.
         String adminWebDir = System.getenv("POLYWIRE_ADMIN_WEB_DIR");
+        // Constructed here (before both MetricsServer and the MCP server below, whichever order
+        // they end up in) so both share the exact same instance -- MetricsServer reads it,
+        // PolyWireMcpServer writes to it, from its single tools/call dispatch point.
+        com.polygres.wire.mcp.McpMetricsCollector mcpMetrics = new com.polygres.wire.mcp.McpMetricsCollector();
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir, options);
+                adminWebDir, options, mcpMetrics);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
@@ -311,7 +315,8 @@ public final class Main {
 
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
-                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"), oauth);
+                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"),
+                oauth, mcpMetrics);
         mcpServer.start();
         log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
 

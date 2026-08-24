@@ -40,6 +40,7 @@ public final class PolyWireMcpServer {
     private final com.polygres.wire.http.auth.AccessContextResolver oauth;
     private final Server server;
     private final List<RegisteredFunctionTool> functionTools;
+    private final McpMetricsCollector metrics;
 
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
@@ -50,11 +51,25 @@ public final class PolyWireMcpServer {
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.polygres.wire.http.auth.AccessContextResolver oauth) {
+        this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, new McpMetricsCollector());
+    }
+
+    /**
+     * Full constructor -- adds {@code metrics}, the shared {@link McpMetricsCollector} instance
+     * {@code MetricsServer} reads from to render {@code /api/metrics/summary}'s {@code mcpTools}
+     * field and {@code /metrics}' {@code polywire_mcp_tool_*} series. Passed in (not constructed
+     * internally and exposed via a getter) so both this class and {@code MetricsServer} share the
+     * exact same instance regardless of which one {@code Main} happens to construct first.
+     */
+    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+            BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
         this.connectionGate = connectionGate;
         this.oauth = oauth;
+        this.metrics = metrics;
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -214,6 +229,8 @@ public final class PolyWireMcpServer {
         JsonObject arguments = params.has("arguments") && params.get("arguments").isJsonObject()
                 ? params.getAsJsonObject("arguments") : new JsonObject();
 
+        long startNanos = System.nanoTime();
+        boolean isError = true;
         try (Connection backend = PgConnections.open(options)) {
             AdHocQueryRunner.Result result = switch (toolName) {
                 case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
@@ -224,9 +241,12 @@ public final class PolyWireMcpServer {
                 case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
                 default -> runRegisteredTool(backend, toolName, arguments, accessContext);
             };
+            isError = !result.success();
             writeResult(response, id, toolCallResult(result));
         } catch (RuntimeException | java.sql.SQLException e) {
             writeError(response, id, -32602, e.getMessage());
+        } finally {
+            metrics.record(toolName, System.nanoTime() - startNanos, isError);
         }
     }
 

@@ -9,6 +9,11 @@ import java.util.Map;
 public final class MetricsRenderer {
 
     public static String render(StatsCollectorStage statsStage, QosControlStage qosStage) {
+        return render(statsStage, qosStage, null);
+    }
+
+    public static String render(StatsCollectorStage statsStage, QosControlStage qosStage,
+            com.polygres.wire.mcp.McpMetricsCollector mcpMetrics) {
         Map<String, StatsCollectorStage.Counters> byTenant = statsStage.snapshot();
         StringBuilder out = new StringBuilder();
 
@@ -84,6 +89,27 @@ public final class MetricsRenderer {
                     .append(b.calls()).append('\n');
             out.append("polywire_backend_statement_duration_seconds_total{backend=\"").append(escape(b.backend())).append("\"} ")
                     .append(String.format(Locale.ROOT, "%.6f", b.totalMillis() / 1000.0)).append('\n');
+        }
+
+        if (mcpMetrics != null) {
+            out.append("# HELP polywire_mcp_tool_calls_total MCP tool invocations, per tool.\n");
+            out.append("# TYPE polywire_mcp_tool_calls_total counter\n");
+            for (var t : mcpMetrics.snapshot()) {
+                out.append("polywire_mcp_tool_calls_total{tool=\"").append(escape(t.toolName())).append("\"} ")
+                        .append(t.calls()).append('\n');
+            }
+            out.append("# HELP polywire_mcp_tool_errors_total MCP tool invocations that returned an error, per tool.\n");
+            out.append("# TYPE polywire_mcp_tool_errors_total counter\n");
+            for (var t : mcpMetrics.snapshot()) {
+                out.append("polywire_mcp_tool_errors_total{tool=\"").append(escape(t.toolName())).append("\"} ")
+                        .append(t.errors()).append('\n');
+            }
+            out.append("# HELP polywire_mcp_tool_latency_seconds_total Cumulative MCP tool server-side time, per tool.\n");
+            out.append("# TYPE polywire_mcp_tool_latency_seconds_total counter\n");
+            for (var t : mcpMetrics.snapshot()) {
+                out.append("polywire_mcp_tool_latency_seconds_total{tool=\"").append(escape(t.toolName())).append("\"} ")
+                        .append(String.format(Locale.ROOT, "%.6f", t.totalMillis() / 1000.0)).append('\n');
+            }
         }
 
         return out.toString();
