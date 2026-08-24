@@ -47,7 +47,7 @@ USER polywire
 # Every TCP/HTTP frontend PolyWire can start -- see ServerOptions.java/Main.java for the full,
 # authoritative list and each one's real default. Not all are reachable unless published (see
 # docker-compose.yml's own port list for which ones this compose setup actually exposes).
-EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 18010 19090
+EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090
 
 # --add-opens flags: required by embedded Apache Ignite (CacheStage, only actually started when
 # POLYWIRE_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base

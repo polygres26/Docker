@@ -316,6 +316,23 @@ public final class Main {
                     sqsWirePort, e);
         }
 
+        int osWirePort = parseIntEnv("POLYWIRE_OSWIRE_PORT", 9200);
+        // V1: OpenSearch-compatible _search/documents/_bulk backed by plain Postgres -- see
+        // OpenSearchWireServer's javadoc for exactly what's covered and the internal Search IR
+        // (SearchRequest) this is staged to let a future Qdrant adapter reuse. Wrapped the same
+        // way dynamowire/sqswire are: an oswire-only misconfiguration logs loudly and leaves
+        // oswire off, without affecting any other wire protocol this process serves.
+        try {
+            com.polygres.wire.oswire.OpenSearchWireServer osWireServer = new com.polygres.wire.oswire.OpenSearchWireServer(
+                    osWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
+            osWireServer.start();
+            log.info("polywire listening for OpenSearch HTTP/JSON (oswire) on port {}", osWirePort);
+        } catch (Exception e) {
+            log.error("oswire failed to start on port {} -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring oswire back.",
+                    osWirePort, e);
+        }
+
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"),

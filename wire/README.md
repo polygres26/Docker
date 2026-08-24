@@ -51,6 +51,7 @@ below for pointing it at a real backend.
 | mongowire | MongoDB wire protocol | 27017 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 |
 | sqswire | Amazon SQS HTTP/JSON API | 9324 |
+| oswire | OpenSearch HTTP/JSON API (`_search`/documents/`_bulk`) | 9200 |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 |
 | Admin / metrics | HTTP | 19090 |

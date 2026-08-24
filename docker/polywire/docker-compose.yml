@@ -52,6 +52,8 @@ services:
       - "27017:27017" # mongowire (MongoDB wire protocol)
       - "7070:7070"   # gRPC (PolyWire's own native driver protocol)
       - "18000:18000" # dynamowire (DynamoDB HTTP/JSON)
+      - "9324:9324"   # sqswire (Amazon SQS HTTP/JSON)
+      - "9200:9200"   # oswire (OpenSearch HTTP/JSON)
       - "18010:18010" # MCP (Model Context Protocol)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 
