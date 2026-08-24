@@ -92,8 +92,16 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 ## High availability
 
 Config-primary failover (`POLYWIRE_PG_STANDBY_HOST`) with automatic failback probing. Sharding via
-`POLYWIRE_SHARD_BACKENDS` with scatter-gather query fan-out. See the full deployment guide for
-what's still open before a real multi-AZ production deploy.
+`POLYWIRE_SHARD_BACKENDS` with scatter-gather query fan-out.
+
+![PolyWire multi-AZ cloud deployment: client applications behind a hyperscaler Network Load Balancer, fanning out to stateless PolyWire instances in three availability zones, each zone holding a primary or backup copy of cached entries with backup-copy replication across zones, a config-primary Postgres with a standby for automatic failover pushing LISTEN/NOTIFY config to every zone, and a data-plane Postgres shard/replica per zone](docs/deployment.png)
+
+This is the target topology, not the current state everywhere in it: the NLB fan-out, stateless
+instance scaling, and config-primary failover shown above all work today. The cross-zone backup
+replication for cached entries (dotted lines between zones) does not yet -- it's verified on a
+local 2-node cluster, but real multi-AZ deployment still needs cloud-native cluster discovery,
+AZ-aware backup placement, and TLS between cache nodes, none of which exist yet. See the full
+deployment guide for what's still open before a real multi-AZ production deploy.
 
 ## Building
 
