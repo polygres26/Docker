@@ -14,8 +14,8 @@ const MIGRATION_ROUTES = ['/connections', '/reports', '/sizing']
 /**
  * Shell for every authenticated route. Two top-level groups: Migration -- Advisor's own
  * per-database assessment tools (Connections, Reports, Sizing, tabbed on one another, see
- * AdvisorTabs), and Shared -- config that isn't specific to any one tool. LLM configuration
- * lives here since it drives Advisor's migration-report narrative generation.
+ * AdvisorTabs), and Configuration -- settings that aren't specific to any one tool. LLM lives
+ * here since it drives Advisor's migration-report narrative generation.
  */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -52,11 +52,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className={styles.railDivider} />
 
         <div className={styles.railSection}>
-          <div className={styles.railSectionLabel}>Shared</div>
+          <div className={styles.railSectionLabel}>Configuration</div>
           <div className={styles.railGroup}>
             <NavLink to="/llm-settings" className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
               <Cpu size={17} strokeWidth={1.8} />
-              LLM configuration
+              LLM
             </NavLink>
           </div>
         </div>

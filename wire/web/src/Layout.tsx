@@ -37,7 +37,7 @@ const GROUPS = [
   {
     label: 'Configuration',
     items: [
-      { to: '/llm-config', label: 'LLM Configuration', icon: Cpu },
+      { to: '/llm-config', label: 'LLM', icon: Cpu },
     ],
   },
 ]
