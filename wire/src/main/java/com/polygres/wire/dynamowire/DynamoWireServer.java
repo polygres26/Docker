@@ -87,7 +87,7 @@ public final class DynamoWireServer {
             com.polygres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
             com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
-        this.handlers = new OperationHandlers(store, cache);
+        this.handlers = new OperationHandlers(store, cache, sqlMetrics);
         this.sqlMetrics = sqlMetrics;
         com.polygres.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
                 new com.polygres.wire.dynamowire.auth.SigV4Verifier(awsIamCredentials);

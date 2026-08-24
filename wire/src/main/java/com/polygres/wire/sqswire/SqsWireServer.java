@@ -132,7 +132,30 @@ public final class SqsWireServer {
                     long elapsedNanos = System.nanoTime() - start;
                     sqlMetrics.recordOperation("sqswire", backendLabel, kind, operation, elapsedNanos, elapsedNanos);
                 }
+                recordEnqueueDequeue(operation, System.nanoTime() - start);
             }
+        }
+    }
+
+    /**
+     * sqswire has no cache layer (see SqlMetricsCollector.OUTCOME_ENQUEUE/OUTCOME_DEQUEUE's
+     * javadoc), so instead of the cache_hit/pg_read/pg_write breakdown the other protocols get,
+     * it reports the queue-specific split the caller asked for: SendMessage is the enqueue side,
+     * ReceiveMessage is the dequeue side. Everything else (DeleteMessage, queue admin ops, etc.)
+     * is intentionally left out of this breakdown -- it's neither an enqueue nor a dequeue, it's
+     * still tracked via the plain READ/WRITE kind above.
+     */
+    private void recordEnqueueDequeue(String operation, long elapsedNanos) {
+        if (sqlMetrics == null) {
+            return;
+        }
+        String outcome = switch (operation) {
+            case "SendMessage" -> com.polygres.wire.core.SqlMetricsCollector.OUTCOME_ENQUEUE;
+            case "ReceiveMessage" -> com.polygres.wire.core.SqlMetricsCollector.OUTCOME_DEQUEUE;
+            default -> null;
+        };
+        if (outcome != null) {
+            sqlMetrics.recordRttOutcome("sqswire", outcome, elapsedNanos);
         }
     }
 
@@ -398,6 +421,7 @@ public final class SqsWireServer {
                     long elapsedNanos = System.nanoTime() - start;
                     sqlMetrics.recordOperation("sqswire", backendLabel, kind, action, elapsedNanos, elapsedNanos);
                 }
+                recordEnqueueDequeue(action, System.nanoTime() - start);
             }
         }
     }

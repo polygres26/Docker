@@ -380,6 +380,10 @@ function outcomeLabel(outcome: string): string {
       return 'Postgres read'
     case 'pg_write':
       return 'Postgres write'
+    case 'enqueue':
+      return 'Enqueue'
+    case 'dequeue':
+      return 'Dequeue'
     default:
       return outcome
   }

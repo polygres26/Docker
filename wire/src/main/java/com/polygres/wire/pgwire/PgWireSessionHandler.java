@@ -62,10 +62,24 @@ public final class PgWireSessionHandler implements Runnable {
     private final Map<String, String> preparedStatements = new LinkedHashMap<>();
     private final Map<String, Portal> portals = new LinkedHashMap<>();
     private boolean skipUntilSync;
-    
+
     private volatile String lastExtendedSql;
 
+    // Tracks transaction state locally instead of asking the JDBC driver (connection.getAutoCommit())
+    // on every single statement -- readyForQueryStatus() used to do that unconditionally, which is a
+    // real driver/socket call, not a free field read. handleTransactionControl is the only place this
+    // ever changes, so mirroring its transitions here is exact, not a heuristic.
+    private boolean inTransaction;
+
     private static final Pattern DOLLAR_PARAM = Pattern.compile("\\$(\\d+)");
+
+    // Cheap prefilter for handleTransactionControl -- anchored, case-insensitive, matches only the
+    // five verbs that can possibly be transaction control. Lets every ordinary SELECT/INSERT/UPDATE/
+    // DELETE statement (the overwhelming majority of traffic) skip the strip/substring/split/
+    // toUpperCase chain entirely and fall straight through on this one regex match, the same
+    // fast-reject shape mywire/mssqlwire already use for their own per-statement SET-statement check.
+    private static final Pattern TXN_CONTROL_PREFIX = Pattern.compile(
+            "^\\s*(begin|start|commit|end|rollback)\\b", Pattern.CASE_INSENSITIVE);
 
     private record Portal(String sqlText, ExecutionResult result, int[] nextRow) {
         Portal(String sqlText, ExecutionResult result) {
@@ -137,25 +151,27 @@ public final class PgWireSessionHandler implements Runnable {
     }
 
     private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
-        
-        String stripped = sql.strip();
-        if (stripped.endsWith(";")) {
-            stripped = stripped.substring(0, stripped.length() - 1).stripTrailing();
+        Matcher prefix = TXN_CONTROL_PREFIX.matcher(sql);
+        if (!prefix.find()) {
+            return false;
         }
-        String verb = stripped.split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT);
+        String verb = prefix.group(1).toUpperCase(java.util.Locale.ROOT);
         switch (verb) {
             case "BEGIN", "START" -> {
                 connection.setAutoCommit(false);
+                inTransaction = true;
                 routingExecutor.beginTransaction();
             }
             case "COMMIT", "END" -> {
                 connection.commit();
                 connection.setAutoCommit(true);
+                inTransaction = false;
                 routingExecutor.endTransaction(true);
             }
             case "ROLLBACK" -> {
                 connection.rollback();
                 connection.setAutoCommit(true);
+                inTransaction = false;
                 routingExecutor.endTransaction(false);
             }
             default -> {
@@ -165,12 +181,14 @@ public final class PgWireSessionHandler implements Runnable {
         return true;
     }
 
-    private static char readyForQueryStatus(Connection connection) {
-        try {
-            return connection != null && !connection.getAutoCommit() ? 'T' : 'I';
-        } catch (SQLException ignoredStatusIsBestEffort) {
-            return 'I';
-        }
+    /**
+     * Reads locally-tracked state instead of {@code connection.getAutoCommit()} -- that used to be
+     * called on every statement's reply, a real JDBC/driver call (and potentially a socket round
+     * trip) for something {@link #handleTransactionControl} already knows exactly, and is the only
+     * place that ever changes it.
+     */
+    private char readyForQueryStatus() {
+        return inTransaction ? 'T' : 'I';
     }
 
     private record StartupStreams(DataInputStream in, DataOutputStream out) {
@@ -336,7 +354,7 @@ public final class PgWireSessionHandler implements Runnable {
 
     private void handleSync(DataOutputStream out) throws IOException {
         skipUntilSync = false;
-        PgMessages.writeReadyForQuery(out, readyForQueryStatus(sessionConnection));
+        PgMessages.writeReadyForQuery(out, readyForQueryStatus());
         out.flush();
     }
 
@@ -489,7 +507,7 @@ public final class PgWireSessionHandler implements Runnable {
             Connection backend = sessionConnection();
             if (handleTransactionControl(backend, sql)) {
                 PgMessages.writeCommandComplete(out, sql.strip().split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT));
-                PgMessages.writeReadyForQuery(out, readyForQueryStatus(backend));
+                PgMessages.writeReadyForQuery(out, readyForQueryStatus());
                 out.flush();
                 return;
             }
@@ -505,7 +523,7 @@ public final class PgWireSessionHandler implements Runnable {
             } else {
                 PgMessages.writeCommandComplete(out, commandTag(sql, (int) result.updateCount()));
             }
-            PgMessages.writeReadyForQuery(out, readyForQueryStatus(backend));
+            PgMessages.writeReadyForQuery(out, readyForQueryStatus());
             out.flush();
         } catch (SQLException e) {
             

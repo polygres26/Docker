@@ -165,11 +165,20 @@ final class MongoCommandDispatcher {
                 + "pipeline or index/admin commands)", 59);
     }
 
+    /** Shared by every read/write branch below -- one sample per Mongo command, same granularity
+     * {@link #dispatch} already uses for {@code recordOperation}. No-op if metrics are disabled. */
+    private void recordRttOutcome(String outcome, long elapsedNanos) {
+        if (sqlMetrics != null) {
+            sqlMetrics.recordRttOutcome("mongowire", outcome, elapsedNanos);
+        }
+    }
+
     private BsonDocument insert(BsonDocument command, String db) throws SQLException {
         String collection = command.getString("insert").getValue();
         BsonArray documents = command.getArray("documents");
         int inserted = 0;
         List<BsonDocument> writeErrors = new ArrayList<>();
+        long writeStart = System.nanoTime();
         for (int i = 0; i < documents.size(); i++) {
             Document doc = BsonJson.toDocument(documents.get(i).asDocument());
             try {
@@ -190,6 +199,7 @@ final class MongoCommandDispatcher {
                 writeErrors.add(werr);
             }
         }
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(inserted));
         if (!writeErrors.isEmpty()) {
@@ -207,18 +217,24 @@ final class MongoCommandDispatcher {
         String idJson = cache != null ? MongoQueryTranslator.exactIdEquality(filter) : null;
         if (idJson != null) {
             String cacheKey = MongoCache.key(db, collection, idJson);
+            long cacheStart = System.nanoTime();
             Document cached = cache.get(cacheKey);
             if (cached != null) {
                 log.debug("mongowire cache hit: {}", cacheKey);
+                recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - cacheStart);
                 docs = List.of(cached);
             } else {
+                long readStart = System.nanoTime();
                 docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
+                recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
                 if (!docs.isEmpty()) {
                     cache.put(cacheKey, docs.get(0));
                 }
             }
         } else {
+            long readStart = System.nanoTime();
             docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
+            recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
         }
 
         BsonArray firstBatch = new BsonArray();
@@ -240,6 +256,7 @@ final class MongoCommandDispatcher {
         BsonArray updates = command.getArray("updates");
         int matched = 0;
         int modified = 0;
+        long writeStart = System.nanoTime();
         for (BsonValue u : updates) {
             BsonDocument spec = u.asDocument();
             BsonDocument filter = spec.getDocument("q", new BsonDocument());
@@ -255,6 +272,7 @@ final class MongoCommandDispatcher {
                 }
             }
         }
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(matched));
         reply.put("nModified", new BsonInt32(modified));
@@ -265,6 +283,7 @@ final class MongoCommandDispatcher {
         String collection = command.getString("delete").getValue();
         BsonArray deletes = command.getArray("deletes");
         int deleted = 0;
+        long writeStart = System.nanoTime();
         for (BsonValue d : deletes) {
             BsonDocument spec = d.asDocument();
             BsonDocument filter = spec.getDocument("q", new BsonDocument());
@@ -278,6 +297,7 @@ final class MongoCommandDispatcher {
                 }
             }
         }
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(deleted));
         return reply;

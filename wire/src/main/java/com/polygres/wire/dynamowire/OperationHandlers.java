@@ -17,10 +17,24 @@ final class OperationHandlers {
 
     private final PgItemStore store;
     private final DynamoCache cache;
+    private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     OperationHandlers(PgItemStore store, DynamoCache cache) {
+        this(store, cache, null);
+    }
+
+    OperationHandlers(PgItemStore store, DynamoCache cache, com.polygres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.cache = cache;
+        this.sqlMetrics = sqlMetrics;
+    }
+
+    /** Only getItem consults the cache today (Query/Scan/BatchGetItem don't), so this is the one
+     * spot that needs to distinguish a cache hit from a real Postgres round trip. */
+    private void recordRttOutcome(String outcome, long elapsedNanos) {
+        if (sqlMetrics != null) {
+            sqlMetrics.recordRttOutcome("dynamowire", outcome, elapsedNanos);
+        }
     }
 
     private String cacheKeyFor(TableSchema schema, Map<String, AttributeValue> attrs) {
@@ -146,7 +160,9 @@ final class OperationHandlers {
         ExpressionContext ctx = ExpressionContext.parse(req);
         String cond = optString(req, "ConditionExpression");
         boolean needExisting = "ALL_OLD".equals(optString(req, "ReturnValues"));
+        long writeStart = System.nanoTime();
         Map<String, AttributeValue> old = store.putItem(schema, item, cond, ctx, needExisting);
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         if (cache != null) {
             cache.invalidate(cacheKeyFor(schema, item));
         }
@@ -164,8 +180,10 @@ final class OperationHandlers {
         JsonObject resp = new JsonObject();
         if (cache != null) {
             String cacheKey = cacheKeyFor(schema, key);
+            long cacheStart = System.nanoTime();
             String cachedJson = cache.get(cacheKey);
             if (cachedJson != null) {
+                recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - cacheStart);
                 JsonObject cachedItem = JsonParser.parseString(cachedJson).getAsJsonObject();
                 // Fast path: no projection means the cached JSON is already exactly the response
                 // shape -- skip the round-trip through Map<String,AttributeValue> and back that
@@ -181,7 +199,9 @@ final class OperationHandlers {
                 }
                 return resp;
             }
+            long readStart = System.nanoTime();
             Map<String, AttributeValue> item = store.getItem(schema, key);
+            recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
             if (item != null) {
                 cache.put(cacheKey, PgItemStore.itemToJson(item).toString());
                 item = applyProjection(item, projectionExpr, ExpressionContext.parse(req));
@@ -189,7 +209,9 @@ final class OperationHandlers {
             }
             return resp;
         }
+        long readStart = System.nanoTime();
         Map<String, AttributeValue> item = store.getItem(schema, key);
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
         if (item != null) {
             item = applyProjection(item, projectionExpr, ExpressionContext.parse(req));
             resp.add("Item", PgItemStore.itemToJson(item));
@@ -202,7 +224,9 @@ final class OperationHandlers {
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(req);
         boolean needExisting = "ALL_OLD".equals(optString(req, "ReturnValues"));
+        long writeStart = System.nanoTime();
         Map<String, AttributeValue> old = store.deleteItem(schema, key, optString(req, "ConditionExpression"), ctx, needExisting);
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         if (cache != null) {
             cache.invalidate(cacheKeyFor(schema, key));
         }
@@ -218,7 +242,9 @@ final class OperationHandlers {
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
         ExpressionContext ctx = ExpressionContext.parse(req);
         String updateExpr = req.get("UpdateExpression").getAsString();
+        long writeStart = System.nanoTime();
         Map<String, AttributeValue> newItem = store.updateItem(schema, key, updateExpr, optString(req, "ConditionExpression"), ctx);
+        recordRttOutcome(com.polygres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         if (cache != null) {
             cache.invalidate(cacheKeyFor(schema, key));
         }

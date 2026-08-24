@@ -111,6 +111,11 @@ public final class SqlMetricsCollector {
     public static final String OUTCOME_CACHE_HIT = "cache_hit";
     public static final String OUTCOME_PG_READ = "pg_read";
     public static final String OUTCOME_PG_WRITE = "pg_write";
+    /** sqswire has no cache layer at all (see {@code PgQueueStore}) -- a queue's whole point is
+     * that every enqueue/dequeue is a real state change, nothing is safely repeatable from a
+     * cache. So instead of cache_hit/pg_read/pg_write, sqswire reports these two outcomes. */
+    public static final String OUTCOME_ENQUEUE = "enqueue";
+    public static final String OUTCOME_DEQUEUE = "dequeue";
 
     private final ConcurrentHashMap<String, LongAdder> byProtocol = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, SqlEntry> sqlStats = new ConcurrentHashMap<>();
