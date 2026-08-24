@@ -155,11 +155,16 @@
       <p class="rttNote">
         The same admin console tracks this per wire protocol: how long a cache hit takes against
         a real Postgres read or write. Measured on a local loopback deployment (client, PolyWire,
-        and Postgres all on one machine), 30+ samples per cell, protocol order rotated between
-        runs so no single protocol absorbs JVM/connection-pool warm-up cost — the point isn't the
+        and Postgres all on one machine), 30+ samples per cell — every protocol's connections were
+        opened together and warmed with an equal number of throwaway calls each before any sample
+        was taken, then measured in round-robin order (one call per protocol, repeated) rather
+        than one protocol's whole run before the next. An earlier pass here that measured each
+        protocol in its own sequential block produced skewed numbers — whichever protocol ran
+        first absorbed the JVM's own warm-up cost — so it's corrected below. The point isn't the
         absolute millisecond figures, which shrink further over a real network, it's that the
         cache consistently wins on every protocol PolyWire speaks, without any application-side
-        caching code.
+        caching code, and that a real Postgres round trip costs about the same regardless of which
+        wire protocol asked for it.
       </p>
       <div class="rttTableWrap">
         <table class="rttTable">
@@ -175,45 +180,45 @@
           <tbody>
             <tr>
               <td>Postgres (pgwire)</td>
-              <td class="num">0.07 ms</td>
-              <td class="num">0.43 ms</td>
-              <td class="num">0.37 ms</td>
-              <td class="speedup">6.4×</td>
+              <td class="num">0.08 ms</td>
+              <td class="num">0.68 ms</td>
+              <td class="num">0.70 ms</td>
+              <td class="speedup">8.8×</td>
             </tr>
             <tr>
               <td>SQL Server (mssqlwire)</td>
-              <td class="num">0.07 ms</td>
-              <td class="num">0.43 ms</td>
-              <td class="num">0.33 ms</td>
-              <td class="speedup">6.4×</td>
+              <td class="num">0.08 ms</td>
+              <td class="num">0.53 ms</td>
+              <td class="num">0.77 ms</td>
+              <td class="speedup">7.1×</td>
             </tr>
             <tr>
               <td>MySQL (mywire)</td>
-              <td class="num">0.10 ms</td>
-              <td class="num">0.41 ms</td>
-              <td class="num">0.40 ms</td>
-              <td class="speedup">4.1×</td>
+              <td class="num">0.05 ms</td>
+              <td class="num">0.42 ms</td>
+              <td class="num">0.67 ms</td>
+              <td class="speedup">8.4×</td>
             </tr>
             <tr>
               <td>Oracle (orawire)</td>
-              <td class="num">0.07 ms</td>
-              <td class="num">0.37 ms</td>
-              <td class="num">0.23 ms</td>
-              <td class="speedup">5.5×</td>
+              <td class="num">0.08 ms</td>
+              <td class="num">0.50 ms</td>
+              <td class="num">0.53 ms</td>
+              <td class="speedup">6.7×</td>
             </tr>
             <tr>
               <td>MongoDB (mongowire)</td>
-              <td class="num">0.07 ms</td>
-              <td class="num">0.74 ms</td>
-              <td class="num">1.74 ms</td>
-              <td class="speedup">10.9×</td>
+              <td class="num">0.10 ms</td>
+              <td class="num">0.61 ms</td>
+              <td class="num">1.32 ms</td>
+              <td class="speedup">5.9×</td>
             </tr>
             <tr>
               <td>DynamoDB (dynamowire)</td>
-              <td class="num">0.03 ms</td>
-              <td class="num">1.03 ms</td>
-              <td class="num">1.39 ms</td>
-              <td class="speedup">31.0×</td>
+              <td class="num">0.07 ms</td>
+              <td class="num">0.50 ms</td>
+              <td class="num">0.90 ms</td>
+              <td class="speedup">7.5×</td>
             </tr>
           </tbody>
         </table>
@@ -236,7 +241,13 @@
         change, nothing is safely repeatable from a cache — so instead of the cache-hit breakdown
         above, it reports the two halves of the queue lifecycle separately. Workload:
         <code>SendMessage</code> (enqueue) and <code>ReceiveMessage</code> (dequeue) via boto3's
-        SQS client, 30 samples each, same loopback deployment.
+        SQS client, 40 samples each, warmed and round-robined the same way as the table above.
+        sqswire runs the AWS-style JSON-over-HTTP API real SQS also uses, not a raw binary wire
+        protocol like the other six — the modest premium over the table above (roughly 1.5–2x a
+        Postgres round trip via pgwire, not the much larger gap an earlier, less careful
+        measurement pass here showed) is HTTP request/response framing and JSON parsing on every
+        call, not the queue logic itself: SendMessage and ReceiveMessage are each a single SQL
+        statement against Postgres, same as the tables above.
       </p>
       <div class="rttTableWrap">
         <table class="rttTable">
@@ -250,8 +261,8 @@
           <tbody>
             <tr>
               <td>Amazon SQS (sqswire)</td>
-              <td class="num">1.30 ms</td>
-              <td class="num">1.43 ms</td>
+              <td class="num">1.18 ms</td>
+              <td class="num">1.25 ms</td>
             </tr>
           </tbody>
         </table>
