@@ -355,6 +355,7 @@ public final class Main {
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
@@ -373,6 +374,7 @@ public final class Main {
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
@@ -391,6 +393,7 @@ public final class Main {
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
@@ -411,6 +414,7 @@ public final class Main {
                     mongoPort);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
@@ -429,6 +433,7 @@ public final class Main {
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
@@ -447,6 +452,7 @@ public final class Main {
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket plainSocket = serverSocket.accept();
+                plainSocket.setTcpNoDelay(true);
                 if (!connectionGate.acceptTcp(plainSocket)) {
                     continue;
                 }

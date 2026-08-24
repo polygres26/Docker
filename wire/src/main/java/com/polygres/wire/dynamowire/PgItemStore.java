@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -68,6 +69,16 @@ public final class PgItemStore {
     private final HikariDataSource legacyDs;
     private final BackendRegistry backendRegistry;
     private volatile List<String> lastLoggedShardGroup = null;
+
+    // describeTable() used to hit Postgres (a real network round trip against _dynamo_tables) on
+    // EVERY GetItem/PutItem/etc call, including cache hits that never touch the item table at
+    // all -- found live while chasing a sub-0.3ms cache-hit RTT target: this was the actual
+    // dominant cost, not JSON parsing or the item cache itself. Table schema is set once at
+    // CreateTable and Dynamo's API has no way to change a table's key schema afterward, so it's
+    // safe to cache indefinitely until DeleteTable (or CreateTable itself, which populates it
+    // fresh). Keyed by table name only -- schema is identical regardless of which shard backend
+    // ends up serving a given item.
+    private final ConcurrentHashMap<String, TableSchema> schemaCache = new ConcurrentHashMap<>();
 
     public PgItemStore(String host, int port, String database, String user, String password) {
         HikariConfig cfg = new HikariConfig();
@@ -259,7 +270,9 @@ public final class PgItemStore {
                     st.execute("CREATE INDEX IF NOT EXISTS " + pg + "_pk_sknum_idx ON " + pg + " (pk_value, sk_num)");
                 }
             }
-            return new TableSchema(tableName, pkName, pkType, skName, skType, "ACTIVE", now);
+            TableSchema schema = new TableSchema(tableName, pkName, pkType, skName, skType, "ACTIVE", now);
+            schemaCache.put(tableName, schema);
+            return schema;
         } catch (SQLException e) {
             throw new RuntimeException("CreateTable failed for " + tableName, e);
         }
@@ -287,10 +300,26 @@ public final class PgItemStore {
             }
         } catch (SQLException e) {
             throw new RuntimeException("DeleteTable failed for " + tableName, e);
+        } finally {
+            schemaCache.remove(tableName);
         }
     }
 
     public TableSchema describeTable(String tableName) {
+        TableSchema cached = schemaCache.get(tableName);
+        if (cached != null) {
+            return cached;
+        }
+        TableSchema loaded = loadTableSchema(tableName);
+        // A benign race with a concurrent DeleteTable is fine either way here: if delete's
+        // invalidation (schemaCache.remove) already ran, this put just re-adds a schema for a
+        // table that's mid-delete -- the next DeleteTable-triggered invalidation (or this same
+        // one, if it hasn't happened yet) cleans it up; nothing reads a torn/partial value.
+        schemaCache.put(tableName, loaded);
+        return loaded;
+    }
+
+    private TableSchema loadTableSchema(String tableName) {
         try (Connection c = borrowCatalogConnection();
                 var ps = c.prepareStatement("SELECT pk_name, pk_type, sk_name, sk_type, status, creation_time_millis FROM _dynamo_tables WHERE table_name = ?")) {
             ps.setString(1, tableName);

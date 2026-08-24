@@ -39,6 +39,14 @@ public final class CacheStage implements PipelineStage {
     private volatile List<Pattern> cachePatterns;
     private volatile long ttlMillis;
     
+    // Deliberately byte[], not a typed IgniteCache<String, ExecutionResult> -- tried that (to
+    // skip the manual serialize/deserialize below and let Ignite's own marshaller handle it) in
+    // pursuit of a sub-0.3ms cache-hit target, and it crashed real requests: Ignite's reflective
+    // marshaller path throws "can't get field offset on a record class" for ExecutionResult
+    // specifically because it's a Java record, not a plain class. Caught live, reverted. A safe
+    // version of that idea would need either a non-record DTO or a custom Ignite Binary type
+    // registration -- not attempted here given the correctness risk of hand-rolling encoding for
+    // arbitrary JDBC row values (Object cells can be nearly any JDBC type) under time pressure.
     private volatile IgniteCache<String, byte[]> resultCache;
     
     private volatile IgniteCache<String, java.util.Set<String>> keysByTable;

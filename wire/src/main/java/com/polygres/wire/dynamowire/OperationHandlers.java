@@ -159,24 +159,38 @@ final class OperationHandlers {
     private JsonObject getItem(JsonObject req) {
         TableSchema schema = store.describeTable(req.get("TableName").getAsString());
         Map<String, AttributeValue> key = PgItemStore.jsonToItem(req.getAsJsonObject("Key"));
-        Map<String, AttributeValue> item;
+        String projectionExpr = optString(req, "ProjectionExpression");
+        JsonObject resp = new JsonObject();
         if (cache != null) {
             String cacheKey = cacheKeyFor(schema, key);
             String cachedJson = cache.get(cacheKey);
             if (cachedJson != null) {
-                item = PgItemStore.jsonToItem(JsonParser.parseString(cachedJson).getAsJsonObject());
-            } else {
-                item = store.getItem(schema, key);
-                if (item != null) {
-                    cache.put(cacheKey, PgItemStore.itemToJson(item).toString());
+                JsonObject cachedItem = JsonParser.parseString(cachedJson).getAsJsonObject();
+                // Fast path: no projection means the cached JSON is already exactly the response
+                // shape -- skip the round-trip through Map<String,AttributeValue> and back that
+                // the miss path (and the projected case below) still need. Found live while
+                // chasing cache-hit latency: this was a real, avoidable second cost on top of
+                // describeTable's uncached DB round trip (see PgItemStore's schemaCache).
+                if (projectionExpr == null) {
+                    resp.add("Item", cachedItem);
+                } else {
+                    Map<String, AttributeValue> projected = applyProjection(
+                            PgItemStore.jsonToItem(cachedItem), projectionExpr, ExpressionContext.parse(req));
+                    resp.add("Item", PgItemStore.itemToJson(projected));
                 }
+                return resp;
             }
-        } else {
-            item = store.getItem(schema, key);
+            Map<String, AttributeValue> item = store.getItem(schema, key);
+            if (item != null) {
+                cache.put(cacheKey, PgItemStore.itemToJson(item).toString());
+                item = applyProjection(item, projectionExpr, ExpressionContext.parse(req));
+                resp.add("Item", PgItemStore.itemToJson(item));
+            }
+            return resp;
         }
-        JsonObject resp = new JsonObject();
+        Map<String, AttributeValue> item = store.getItem(schema, key);
         if (item != null) {
-            item = applyProjection(item, optString(req, "ProjectionExpression"), ExpressionContext.parse(req));
+            item = applyProjection(item, projectionExpr, ExpressionContext.parse(req));
             resp.add("Item", PgItemStore.itemToJson(item));
         }
         return resp;

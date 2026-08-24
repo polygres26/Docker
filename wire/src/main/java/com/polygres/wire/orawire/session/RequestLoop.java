@@ -70,6 +70,17 @@ public final class RequestLoop {
     private final FailedStatementLog failedStatementLog;
     private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
+    // Built once per session and reused across every Execute, instead of a fresh
+    // JdbcBackendExecutor + RoutingBackendExecutor + StatementPipeline object graph per call --
+    // same pattern PgWireSessionHandler already uses. primaryConn is stable across a session's
+    // Execute calls (LazyPooledConnection caches the physical Connection after its first open,
+    // and dual/authoritativeIsOracle can't change mid-session), so rebind() is enough; no need to
+    // rebuild the chain. This also fixes a latent gap: a fresh RoutingBackendExecutor per call
+    // meant it could never accumulate its own cross-statement transaction/cursor routing state
+    // within one session -- reusing one now matches how pgwire's already behaves.
+    private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
+    private final StatementPipeline reusablePipeline;
+
     private record StatementSignature(String sql, int[] bindTypes) {
     }
 
@@ -100,6 +111,8 @@ public final class RequestLoop {
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
+        this.reusablePipeline = new StatementPipeline(sharedStages,
+                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
     }
 
     public void run() throws IOException {
@@ -383,9 +396,8 @@ public final class RequestLoop {
         BindVariableRewriter.Result rewritten = BindVariableRewriter.rewrite(primarySql);
         List<Object> binds = orderedBindValues(request.bindParams, rewritten.placeholderToBindIndex());
         Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
-        StatementPipeline pipeline = new StatementPipeline(sharedStages,
-                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(primaryConn)));
-        ExecutionResult result = pipeline.execute(statement);
+        terminalExecutor.rebind(primaryConn);
+        ExecutionResult result = reusablePipeline.execute(statement);
         openCursorId = nextCursorId++;
         if (bindTypes != null) {
             statementSignatures.put(openCursorId, new StatementSignature(request.sqlText, bindTypes));
