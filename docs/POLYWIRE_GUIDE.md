@@ -284,12 +284,24 @@ sequenceDiagram
 `RoutingBackendExecutor` fans a matching query out to all of them and merges results — useful
 for read-side aggregate queries across horizontally-partitioned Postgres backends.
 
-### 4.3 What HA does *not* cover yet
+### 4.3 Multi-AZ distributed cache
 
-Cross-AZ distributed cache (Ignite) placement is verified locally (2-node) but not yet
-cloud-native — AZ-aware backup placement, cloud discovery (not static IP lists), and TLS
-between cache nodes are open follow-up work before a real multi-AZ production deploy. Treat
-single-AZ or single-host as the currently-proven HA envelope.
+The distributed cache (Ignite, `com.polygres.wire.cluster.PolyWireCluster`) is cloud-native and
+AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
+static IP list), a configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1) whose
+placement is AZ-aware — a cache entry's backup never lands on a node in the same
+`POLYWIRE_AVAILABILITY_ZONE` as its primary, live-proven by
+`PolyWireClusterAzBackupPlacementTest` (three real Ignite nodes, not a simulation) — and TLS
+between cache nodes via `POLYWIRE_TLS_KEYSTORE`, live-verified both positive (two nodes on the
+same keystore form one cluster) and negative (a third node on a different keystore fails the
+handshake and never joins).
+
+What's still genuinely open: the S3/GCS/Azure discovery finders are verified against the real
+Ignite classes but not yet exercised against real cloud storage (no cloud credentials available
+to test with in this environment — static discovery is the only mode live-tested end to end), AZ
+is operator-supplied rather than auto-detected from cloud instance-metadata, and split-brain
+behavior under a network partition is unaddressed (backup placement guarantees each AZ *would*
+hold a full copy if reachable, not that reads stay consistent during a partition).
 
 ---
 
@@ -357,8 +369,9 @@ flowchart TB
   Key Vault) or a Kubernetes `Secret`, injected as env vars — never baked into the image.
 - **What's still cloud-*agnostic* by design**: PolyWire has no hard dependency on any one
   cloud's networking primitives — it only needs TCP reachability to its Postgres backends and,
-  optionally, an OIDC issuer and/or AWS IAM for auth. Cross-AZ cache placement is the one piece
-  still marked open (§4.3) before treating a specific cloud's multi-AZ topology as fully proven.
+  optionally, an OIDC issuer and/or AWS IAM for auth. Cross-AZ cache placement (§4.3) is
+  implemented and tested for all three; only live end-to-end verification against real cloud
+  storage for the S3/GCS/Azure discovery finders remains open.
 
 ---
 

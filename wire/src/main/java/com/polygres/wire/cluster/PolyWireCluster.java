@@ -219,7 +219,7 @@ public final class PolyWireCluster {
         }
         CacheConfiguration<String, T> cfg = new CacheConfiguration<>(name);
         cfg.setCacheMode(CacheMode.PARTITIONED);
-        cfg.setBackups(1);
+        cfg.setBackups(backupCountFromEnv());
         if (availabilityZone != null) {
             RendezvousAffinityFunction affinity = new RendezvousAffinityFunction();
             affinity.setAffinityBackupFilter(new ClusterNodeAttributeAffinityBackupFilter(AZ_ATTRIBUTE));
@@ -230,6 +230,31 @@ public final class PolyWireCluster {
                     new javax.cache.expiry.Duration(TimeUnit.MILLISECONDS, ttlMillis)));
         }
         return ignite.getOrCreateCache(cfg);
+    }
+
+    // POLYWIRE_CLUSTER_CACHE_BACKUPS: how many backup copies Ignite keeps of each cache entry,
+    // in addition to the primary -- 1 (the prior hardcoded default) means every entry survives
+    // exactly one node/AZ loss; raise it for a larger multi-AZ deployment that wants to survive
+    // more than one simultaneous zone loss. Combined with the AZ-aware affinity backup filter
+    // above, each backup still lands on a node in a different AZ than the primary (and, with
+    // more than one backup, different from each other where the topology allows it), not just a
+    // different node in the same AZ.
+    private static int backupCountFromEnv() {
+        String value = System.getenv("POLYWIRE_CLUSTER_CACHE_BACKUPS");
+        if (value == null || value.isBlank()) {
+            return 1;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            if (parsed < 0) {
+                throw new NumberFormatException("negative");
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            log.warn("POLYWIRE_CLUSTER_CACHE_BACKUPS={} is not a valid non-negative integer -- using default 1",
+                    value);
+            return 1;
+        }
     }
 
     public long nextSequence(String name) {

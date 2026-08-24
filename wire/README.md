@@ -96,12 +96,16 @@ Config-primary failover (`POLYWIRE_PG_STANDBY_HOST`) with automatic failback pro
 
 ![PolyWire multi-AZ cloud deployment: client applications behind a hyperscaler Network Load Balancer, fanning out to stateless PolyWire instances in three availability zones, each zone holding a primary or backup copy of cached entries with backup-copy replication across zones, a config-primary Postgres with a standby for automatic failover pushing LISTEN/NOTIFY config to every zone, and a data-plane Postgres shard/replica per zone](docs/deployment.png)
 
-This is the target topology, not the current state everywhere in it: the NLB fan-out, stateless
-instance scaling, and config-primary failover shown above all work today. The cross-zone backup
-replication for cached entries (dotted lines between zones) does not yet -- it's verified on a
-local 2-node cluster, but real multi-AZ deployment still needs cloud-native cluster discovery,
-AZ-aware backup placement, and TLS between cache nodes, none of which exist yet. See the full
-deployment guide for what's still open before a real multi-AZ production deploy.
+Every piece of this diagram is real today, including the cross-zone cache backup replication:
+cloud-native cluster discovery (`POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure`), AZ-aware
+backup placement (a cache entry's backup never lands in the same AZ as its primary -- live-proven
+by `PolyWireClusterAzBackupPlacementTest`, three real Ignite nodes, not a simulation), a
+configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1), and TLS between cache
+nodes (`POLYWIRE_TLS_KEYSTORE`) are all implemented and tested. What's genuinely still open: the
+S3/GCS/Azure discovery finders are verified against the real Ignite classes but not yet exercised
+against real cloud storage (no cloud credentials available to test with), and AZ is
+operator-supplied (`POLYWIRE_AVAILABILITY_ZONE`) rather than auto-detected from cloud
+instance-metadata. See the full deployment guide for the complete verification detail.
 
 ## Building
 
