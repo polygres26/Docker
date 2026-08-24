@@ -63,7 +63,7 @@
 
   .runblock { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin: 0 0 8px; }
   .runblock p { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 12px; }
-  .runblock code { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; color: var(--ink); }
+  .runblock code { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; color: var(--ink); white-space: pre; }
 
   h3.subhead { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.01em; }
   figure { margin: 24px 0 32px; }
@@ -130,6 +130,7 @@
         <li><span class="uc-body"><span class="uc-title">Horizontal sharding</span><span class="uc-desc">Route requests across multiple Postgres backends by schema, predicate, or value-based rules, with scatter-gather fan-out and result merging for queries that span shards — without every application knowing which shard owns what.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Query result caching</span><span class="uc-desc">An embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres — no application-side caching code to write or invalidate.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run PolyWire while PolyAdvisor (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
@@ -267,6 +268,51 @@
           </tbody>
         </table>
       </div>
+
+      <h3 class="subhead">Rollups: pre-aggregated tables, kept fresh automatically</h3>
+      <p class="rttNote">
+        A rollup is a real Postgres table PolyWire creates and keeps current for you — the
+        materialized result of a <code>GROUP BY</code>/aggregate query you define once, not a view
+        and not something your application maintains by hand. Define it in YAML (a
+        <code>POLYWIRE_ROLLUP_DEFINITIONS_FILE</code>, or the same field via the admin API):
+      </p>
+      <div class="runblock">
+        <code>rollups:
+  - name: daily_order_totals
+    backend: primary
+    source_table: orders
+    group_by:
+      - customer_id
+      - order_date
+    aggregations:
+      - "SUM(amount) AS total_amount"
+      - "COUNT(*) AS order_count"
+    refresh_interval_minutes: 15
+    max_staleness_minutes: 30</code>
+      </div>
+      <p class="rttNote">
+        Every 15 minutes, PolyWire runs exactly the SQL you'd write by hand to keep this current —
+        <code>DROP TABLE IF EXISTS polywire_rollup_daily_order_totals;</code> then
+        <code>CREATE TABLE polywire_rollup_daily_order_totals AS SELECT customer_id, order_date,
+        SUM(amount) AS total_amount, COUNT(*) AS order_count FROM orders GROUP BY customer_id,
+        order_date;</code> — against the real <code>orders</code> table, on the backend named
+        <code>primary</code>. <code>max_staleness_minutes</code> is the cutoff past which PolyWire
+        stops trusting that table for acceleration until the next refresh succeeds.
+      </p>
+      <p class="rttNote">
+        <b>Acceleration is automatic, and it's real query planning, not string substitution.</b>
+        PolyWire embeds <a href="https://calcite.apache.org/" target="_blank"
+        rel="noopener">Apache Calcite</a> — a genuine SQL parser, validator, and relational query
+        planner — inside its own pipeline. When a client sends an aggregate query against
+        <code>orders</code>, PolyWire parses it, checks whether a fresh rollup's source table is
+        mentioned, and only rewrites the query to read from
+        <code>polywire_rollup_daily_order_totals</code> instead when Calcite's materialized-view
+        matcher can actually prove that substitution is valid for that specific query shape. Your
+        application still just queries <code>orders</code> — it never has to know the rollup
+        exists. If the rollup is stale, doesn't apply, or the rewrite can't be proven safe for that
+        query, PolyWire falls straight through to the real table unchanged — a rollup can only ever
+        make a matching query faster, never make an unmatched one wrong.
+      </p>
 
       <h3 class="subhead">Architecture</h3>
       <figure>
