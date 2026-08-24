@@ -61,7 +61,7 @@ public final class BackendRegistry {
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
             log.info("backend registry: no POLYWIRE_BACKENDS configured -- registered the single "
-                    + "implicit POLYWIRE_PG_* backend as '{}' so routing/translation has a fallback target",
+                    + "implicit POLYWIRE_* backend as '{}' so routing/translation has a fallback target",
                     DEFAULT_BACKEND_NAME);
         }
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()

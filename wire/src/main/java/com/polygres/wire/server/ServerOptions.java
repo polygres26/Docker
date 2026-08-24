@@ -131,14 +131,14 @@ public final class ServerOptions {
         
         int httpsPort = parseIntEnv("POLYWIRE_HTTPS_PORT", 8443);
 
-        String pgHost = System.getenv().getOrDefault("POLYWIRE_PG_HOST", "localhost");
-        int pgPort = parseIntEnv("POLYWIRE_PG_PORT", 5432);
-        String pgDatabase = System.getenv().getOrDefault("POLYWIRE_PG_DATABASE", "postgres");
-        String pgUser = System.getenv("POLYWIRE_PG_USER");
-        String pgPassword = System.getenv("POLYWIRE_PG_PASSWORD");
-        
-        String pgStandbyHost = System.getenv("POLYWIRE_PG_STANDBY_HOST");
-        int pgStandbyPort = parseIntEnv("POLYWIRE_PG_STANDBY_PORT", pgPort);
+        String pgHost = System.getenv().getOrDefault("POLYWIRE_HOST", "localhost");
+        int pgPort = parseIntEnv("POLYWIRE_PORT", 5432);
+        String pgDatabase = System.getenv().getOrDefault("POLYWIRE_DATABASE", "postgres");
+        String pgUser = System.getenv("POLYWIRE_USER");
+        String pgPassword = System.getenv("POLYWIRE_PASSWORD");
+
+        String pgStandbyHost = System.getenv("POLYWIRE_STANDBY_HOST");
+        int pgStandbyPort = parseIntEnv("POLYWIRE_STANDBY_PORT", pgPort);
 
         return new ServerOptions(orawireListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
                 pgStandbyHost, pgStandbyPort,

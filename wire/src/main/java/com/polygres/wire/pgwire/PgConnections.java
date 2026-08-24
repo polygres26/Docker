@@ -62,7 +62,7 @@ public final class PgConnections {
         if (failbackProbe != null) {
             return;
         }
-        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("POLYWIRE_PG_FAILBACK_CHECK_SECONDS", "10"));
+        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("POLYWIRE_FAILBACK_CHECK_SECONDS", "10"));
         failbackProbe = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "pg-failback-probe");
             t.setDaemon(true);

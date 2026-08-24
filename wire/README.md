@@ -37,7 +37,7 @@ mvn package -DskipTests
 scripts/run.sh
 ```
 
-No `POLYWIRE_PG_*` env vars set defaults to `localhost:5432`; see [Configuration](#configuration)
+No `POLYWIRE_*` env vars set defaults to `localhost:5432`; see [Configuration](#configuration)
 below for pointing it at a real backend.
 
 ## Protocol frontends
@@ -65,9 +65,9 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 
 | Variable | Purpose |
 |---|---|
-| `POLYWIRE_PG_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `polywire_config`, `polywire_firewall_rules`, and control-plane state |
+| `POLYWIRE_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `polywire_config`, `polywire_firewall_rules`, and control-plane state |
 | `POLYWIRE_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
-| `POLYWIRE_PG_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
+| `POLYWIRE_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
 | `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups |
 | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Allowlist gating what hosts `POLYWIRE_BACKENDS` can register — env-var only, never DB-writable |
 | `POLYWIRE_ACL_RULES` | IP/CIDR allow-deny rules |
@@ -91,7 +91,7 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 
 ## High availability
 
-Config-primary failover (`POLYWIRE_PG_STANDBY_HOST`) with automatic failback probing. Sharding via
+Config-primary failover (`POLYWIRE_STANDBY_HOST`) with automatic failback probing. Sharding via
 `POLYWIRE_SHARD_BACKENDS` with scatter-gather query fan-out.
 
 ![PolyWire multi-AZ cloud deployment: client applications behind a hyperscaler Network Load Balancer, fanning out to stateless PolyWire instances in three availability zones, each zone holding a primary or backup copy of cached entries with backup-copy replication across zones, a config-primary Postgres with a standby for automatic failover pushing LISTEN/NOTIFY config to every zone, and a data-plane Postgres shard/replica per zone](docs/deployment.png)

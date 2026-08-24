@@ -110,7 +110,7 @@ flowchart TB
   and `polywire_firewall_rules` (mutable, DBA-managed) are real tables in a designated
   "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running PolyWire process
   within milliseconds — no restart to change a firewall rule or add a backend.
-- **Config-primary vs. data plane**: the `POLYWIRE_PG_*` env vars point at the single Postgres
+- **Config-primary vs. data plane**: the `POLYWIRE_*` env vars point at the single Postgres
   that holds control-plane tables. `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` are the
   separate, explicitly-registered data-plane shard targets actual queries are routed to — the
   config-primary is never automatically one of the shards.
@@ -284,7 +284,7 @@ sequenceDiagram
     P--xPW: connection refused
     PW->>S: failover — retry on standby
     S-->>PW: result
-    Note over PW: onStandby=true, background probe\nchecks primary every POLYWIRE_PG_FAILBACK_CHECK_SECONDS
+    Note over PW: onStandby=true, background probe\nchecks primary every POLYWIRE_FAILBACK_CHECK_SECONDS
     loop every N seconds
         PW->>P: probe
     end
@@ -293,13 +293,13 @@ sequenceDiagram
     Note over PW: onStandby=false — failback,\nnew queries go to primary again
 ```
 
-- Configured via `POLYWIRE_PG_STANDBY_HOST`/`POLYWIRE_PG_STANDBY_PORT`. Applies to both the
+- Configured via `POLYWIRE_STANDBY_HOST`/`POLYWIRE_STANDBY_PORT`. Applies to both the
   control-plane connection (`polywire_config`/firewall rules) and, via `BackendTarget`'s
   `failoverOptions`, the actual query-execution path for the synthetic default backend.
 - Explicitly-named shard backends (`POLYWIRE_BACKENDS`) do **not** get automatic failover — a
   named shard isn't presumed to be a replica pair of another named shard; pair them yourself
   at the infrastructure layer (e.g. a PgBouncer/HAProxy VIP per shard) if needed.
-- Failback is automatic, probed in the background (`POLYWIRE_PG_FAILBACK_CHECK_SECONDS`, default
+- Failback is automatic, probed in the background (`POLYWIRE_FAILBACK_CHECK_SECONDS`, default
   10s) — no manual intervention once the primary recovers.
 
 ### 4.2 Sharding / scatter-gather
@@ -382,7 +382,7 @@ flowchart TB
 
 - **PolyWire itself is stateless** — every pod reads its live config from the same
   config-primary Postgres via `LISTEN/NOTIFY`, so horizontal scaling is just "add more pods
-  pointed at the same `POLYWIRE_PG_*`." No sticky sessions needed at the LB beyond normal TCP
+  pointed at the same `POLYWIRE_*`." No sticky sessions needed at the LB beyond normal TCP
   connection affinity for the life of one client session.
 - **`POLYWIRE_TRUSTED_BACKEND_HOSTS`** must be set at deploy time (env var / secret /
   Kubernetes `NetworkPolicy`-equivalent) — this is infrastructure config, not something to put
@@ -391,7 +391,7 @@ flowchart TB
   `docker/polyadvisor/`, push to a registry (e.g. `ghcr.io` — see the repo root
   `.env.example` for the token fields needed), deploy via your platform's normal rolling
   update mechanism (ECS service, GKE/EKS Deployment, etc.).
-- **Secrets**: `POLYWIRE_PG_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
+- **Secrets**: `POLYWIRE_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
   the registry token belong in your cloud's secret manager (Secrets Manager, Secret Manager,
   Key Vault) or a Kubernetes `Secret`, injected as env vars — never baked into the image.
 - **What's still cloud-*agnostic* by design**: PolyWire has no hard dependency on any one
@@ -488,8 +488,8 @@ Every frontend above feeds the same shared pipeline, in this order:
 |---|---|
 | Dual config source | Every setting readable from an env var **or** `polywire_config` — pick per-deployment |
 | Hot reload | `LISTEN/NOTIFY` on `polywire_config_changed` and the firewall table's own trigger — no restart for any config change |
-| Config-primary designation | `POLYWIRE_PG_*` names the one Postgres holding control-plane tables, separate from data-plane shard backends (§2.2) |
-| Config-primary HA failover | `POLYWIRE_PG_STANDBY_HOST`/`_PORT`, automatic failover + failback probe (§4.1) |
+| Config-primary designation | `POLYWIRE_*` names the one Postgres holding control-plane tables, separate from data-plane shard backends (§2.2) |
+| Config-primary HA failover | `POLYWIRE_STANDBY_HOST`/`_PORT`, automatic failover + failback probe (§4.1) |
 | Postgres stored-procedure config API | Wraps `polywire_config`/firewall inserts with validation, for teams that prefer calling a procedure over hand-writing DML |
 | Backend registry | `POLYWIRE_BACKENDS` — named additional Postgres targets beyond the implicit default |
 | Sharding / scatter-gather | `POLYWIRE_SHARD_BACKENDS` — fan a query to a named group, merge via `RollupStage` (§4.2) |

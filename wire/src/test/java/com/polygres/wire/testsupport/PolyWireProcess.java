@@ -79,11 +79,11 @@ public final class PolyWireProcess implements AutoCloseable {
         private final Map<String, Integer> ports = new LinkedHashMap<>();
 
         public Builder pgBackend(String host, int port, String database, String user, String password) {
-            env.put("POLYWIRE_PG_HOST", host);
-            env.put("POLYWIRE_PG_PORT", String.valueOf(port));
-            env.put("POLYWIRE_PG_DATABASE", database);
-            env.put("POLYWIRE_PG_USER", user);
-            env.put("POLYWIRE_PG_PASSWORD", password);
+            env.put("POLYWIRE_HOST", host);
+            env.put("POLYWIRE_PORT", String.valueOf(port));
+            env.put("POLYWIRE_DATABASE", database);
+            env.put("POLYWIRE_USER", user);
+            env.put("POLYWIRE_PASSWORD", password);
             env.put("POLYWIRE_AUTH_USER", user);
             env.put("POLYWIRE_AUTH_PASSWORD", password);
             // Default QoS (rate=5/s burst=5, maxWaitMs=0) is tuned for production traffic shaping,

@@ -61,7 +61,7 @@ public final class PgRoleAuthCache {
             }
         } catch (Exception e) {
             throw new RuntimeException("PgRoleAuthCache: failed to query pg_authid "
-                    + "(the POLYWIRE_PG_* admin connection must be a real superuser -- pg_authid.rolpassword "
+                    + "(the POLYWIRE_* admin connection must be a real superuser -- pg_authid.rolpassword "
                     + "is superuser-only)", e);
         }
         verifiersByRole = fresh;
