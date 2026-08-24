@@ -3,6 +3,7 @@ import {
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
+import logo from './assets/logo.png'
 import styles from './Layout.module.css'
 
 // Migration's own three pages (Connections, Reports, Sizing) live behind one sidebar entry --
@@ -29,7 +30,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className={styles.shell}>
       <nav className={styles.rail}>
         <div className={styles.railBrand}>
-          <div className={styles.railMark}>PG</div>
+          <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
             <span className={styles.railBrandTitle}>Polygres</span>
             <span className={styles.railBrandSub}>Advisor</span>

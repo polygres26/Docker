@@ -26,15 +26,8 @@
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  background: var(--rail-accent);
-  color: var(--rail-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 800;
-  font-size: 13px;
   flex: none;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  object-fit: cover;
 }
 
 .railBrandText { display: flex; flex-direction: column; line-height: 1.2; }

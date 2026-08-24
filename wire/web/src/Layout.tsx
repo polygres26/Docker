@@ -3,6 +3,7 @@ import {
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { clearConnection } from './api/client'
+import logo from './assets/logo.png'
 import styles from './Layout.module.css'
 
 // Four groups matching the three questions someone actually has when they open PolyWire's admin
@@ -56,7 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className={styles.shell}>
       <nav className={styles.rail}>
         <div className={styles.railBrand}>
-          <div className={styles.railMark}>PW</div>
+          <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
             <span className={styles.railBrandTitle}>PolyWire</span>
             <span className={styles.railBrandSub}>Admin console</span>
