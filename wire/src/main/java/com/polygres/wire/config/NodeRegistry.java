@@ -49,8 +49,20 @@ public final class NodeRegistry {
         this.options = options;
         this.adminPort = adminPort;
         this.host = resolveHost();
-        this.zone = System.getenv("POLYWIRE_ZONE");
+        this.zone = resolveZone(this.host);
         this.version = version;
+    }
+
+    // POLYWIRE_ZONE is how an operator names a real availability zone/region ("us-east-1a",
+    // "zone-b", whatever their cloud or scheme calls it) -- there's no portable way to detect
+    // that automatically across AWS/GCP/Azure/on-prem/a laptop, so it's opt-in. When it's not
+    // set (the common case for local dev and single-machine runs), fall back to this node's own
+    // hostname as the group label instead of a generic "unknown" bucket or, worse, a fabricated
+    // cloud-sounding placeholder like "us-east-1" that would be actively misleading on a laptop.
+    // One real machine not in a zoned deployment is its own honest group of one.
+    private static String resolveZone(String host) {
+        String zone = System.getenv("POLYWIRE_ZONE");
+        return (zone != null && !zone.isBlank()) ? zone : host;
     }
 
     private static String resolveHost() {
