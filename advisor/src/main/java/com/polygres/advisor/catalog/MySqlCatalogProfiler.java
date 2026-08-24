@@ -116,6 +116,12 @@ public class MySqlCatalogProfiler implements CatalogProfiler {
         syntaxCounts.put("ON DUPLICATE KEY UPDATE", 0);
         syntaxCounts.put("GROUP_CONCAT", 0);
         syntaxCounts.put("STRAIGHT_JOIN", 0);
+        syntaxCounts.put("GET_LOCK/RELEASE_LOCK", 0);
+        syntaxCounts.put("FOUND_ROWS/SQL_CALC_FOUND_ROWS", 0);
+        syntaxCounts.put("MATCH ... AGAINST (fulltext)", 0);
+        syntaxCounts.put("REPLACE INTO", 0);
+        syntaxCounts.put("LOAD_FILE/INTO OUTFILE", 0);
+        syntaxCounts.put("JSON_* functions", 0);
 
         try (ResultSet rs = statement.executeQuery(
                 "SELECT routine_definition AS body FROM information_schema.routines WHERE routine_schema = DATABASE() "
@@ -128,6 +134,12 @@ public class MySqlCatalogProfiler implements CatalogProfiler {
                 if (upper.contains("ON DUPLICATE KEY UPDATE")) syntaxCounts.merge("ON DUPLICATE KEY UPDATE", 1, Integer::sum);
                 if (upper.contains("GROUP_CONCAT")) syntaxCounts.merge("GROUP_CONCAT", 1, Integer::sum);
                 if (upper.contains("STRAIGHT_JOIN")) syntaxCounts.merge("STRAIGHT_JOIN", 1, Integer::sum);
+                if (upper.contains("GET_LOCK") || upper.contains("RELEASE_LOCK")) syntaxCounts.merge("GET_LOCK/RELEASE_LOCK", 1, Integer::sum);
+                if (upper.contains("FOUND_ROWS") || upper.contains("SQL_CALC_FOUND_ROWS")) syntaxCounts.merge("FOUND_ROWS/SQL_CALC_FOUND_ROWS", 1, Integer::sum);
+                if (upper.contains("MATCH") && upper.contains("AGAINST")) syntaxCounts.merge("MATCH ... AGAINST (fulltext)", 1, Integer::sum);
+                if (upper.contains("REPLACE INTO")) syntaxCounts.merge("REPLACE INTO", 1, Integer::sum);
+                if (upper.contains("LOAD_FILE") || upper.contains("INTO OUTFILE")) syntaxCounts.merge("LOAD_FILE/INTO OUTFILE", 1, Integer::sum);
+                if (upper.contains("JSON_")) syntaxCounts.merge("JSON_* functions", 1, Integer::sum);
             }
         }
 

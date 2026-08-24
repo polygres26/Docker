@@ -110,6 +110,17 @@ class MigrationScorerTest {
     }
 
     @Test
+    void mysqlLoadFileIntoOutfileScoresAsTheHighestMySqlSyntaxRisk() {
+        // Filesystem access from SQL -- same risk class as Oracle's UTL_FILE, and the highest
+        // weight in MYSQL_SYNTAX_WEIGHT.
+        CatalogSnapshot s = snapshot(SourceDialect.MYSQL);
+        s.syntaxConstructUsage.put("LOAD_FILE/INTO OUTFILE", 1);
+        MigrationScoreReport report = new MigrationScorer().score(s);
+
+        assertEquals(6, findingFor(report, "Syntax: LOAD_FILE/INTO OUTFILE").orElseThrow().points());
+    }
+
+    @Test
     void mysqlUnrecognizedSyntaxConstructFallsBackToDefaultWeightOfTwo() {
         CatalogSnapshot s = snapshot(SourceDialect.MYSQL);
         s.syntaxConstructUsage.put("SOME_FUTURE_CONSTRUCT", 4);
@@ -121,17 +132,39 @@ class MigrationScorerTest {
     // -- SQL Server ---------------------------------------------------------------------------
 
     @Test
-    void sqlServerHasNoBuiltinPackageRubricUnlikeOracleAndMySql() {
-        // The gap this test exists to pin down: SQL_SERVER_SYNTAX_WEIGHT covers only 4 syntax
-        // patterns, with no equivalent to Oracle's 15-entry DBMS_* builtin-package table or
-        // MySQL's storage-engine table. builtinPackageUsage is silently never consulted by
-        // scoreSqlServer at all -- populating it must not change the score.
+    void sqlServerBuiltinFeatureUsageIsScoredWithItsSpecificWeight() {
+        // Previously a real gap (see git history for this test): scoreSqlServer never consulted
+        // builtinPackageUsage at all, so SQL Server's rubric was four syntax patterns and nothing
+        // else -- no equivalent to Oracle's 15-entry DBMS_* table or MySQL's storage-engine table.
+        // SqlServerCatalogProfiler now populates builtinPackageUsage from real sys.* catalog
+        // metadata (CLR assemblies, Service Broker queues, ROWVERSION columns, temporal tables,
+        // HIERARCHYID, spatial columns), and scoreSqlServer now scores it, same shape as the other
+        // two dialects.
         CatalogSnapshot s = snapshot(SourceDialect.SQL_SERVER);
-        s.builtinPackageUsage.put("xp_cmdshell", 5);
+        s.builtinPackageUsage.put("Service Broker queue", 1); // weighted 12 -- the highest SQL Server builtin-feature weight
         MigrationScoreReport report = new MigrationScorer().score(s);
 
-        assertEquals(0, report.totalScore, "SQL Server scoring has no rubric for builtinPackageUsage at all -- this is a real coverage gap, not a bug in this test");
-        assertTrue(report.findings.isEmpty());
+        ScoreFinding finding = findingFor(report, "Service Broker queue").orElseThrow();
+        assertEquals(12, finding.points());
+        assertEquals(12, report.totalScore);
+    }
+
+    @Test
+    void sqlServerUnrecognizedBuiltinFeatureFallsBackToDefaultWeightOfFive() {
+        CatalogSnapshot s = snapshot(SourceDialect.SQL_SERVER);
+        s.builtinPackageUsage.put("Some future sys.* feature", 2);
+        MigrationScoreReport report = new MigrationScorer().score(s);
+
+        assertEquals(5, findingFor(report, "Some future sys.* feature").orElseThrow().weightPerUnit());
+    }
+
+    @Test
+    void sqlServerXpCmdshellScoresAsTheHighestSyntaxRiskAlongsideOpenqueryOpenrowset() {
+        CatalogSnapshot s = snapshot(SourceDialect.SQL_SERVER);
+        s.syntaxConstructUsage.put("xp_cmdshell", 1);
+        MigrationScoreReport report = new MigrationScorer().score(s);
+
+        assertEquals(10, findingFor(report, "Syntax: xp_cmdshell").orElseThrow().points());
     }
 
     @Test

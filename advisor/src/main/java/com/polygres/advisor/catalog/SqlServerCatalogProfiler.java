@@ -43,10 +43,56 @@ public class SqlServerCatalogProfiler implements CatalogProfiler {
 
             profileScheduledJobs(connection, statement, snapshot);
             profileSourceText(statement, snapshot);
+            profileBuiltinFeatureUsage(statement, snapshot);
             profileSchemaSize(statement, snapshot);
         }
 
         return snapshot;
+    }
+
+    /**
+     * Catalog-metadata-based portability-risk features -- exact counts from {@code sys.*} views,
+     * not a text-scan heuristic, for the same reason {@link #tableCount}/{@link #viewCount} etc.
+     * aren't text-scanned either: these are structural properties of columns/tables/objects, not
+     * something that shows up in a routine body. Surfaced through {@link CatalogSnapshot#builtinPackageUsage}
+     * (same generic "count by category" shape {@link MySqlCatalogProfiler}'s engine-mix scan
+     * already uses) so {@code MigrationScorer} can weight them without a SQL-Server-specific field
+     * for each one -- previously this map was populated by nothing at all for SQL Server, so
+     * {@code scoreSqlServer} had no rubric to score it against; see {@code MYSQL_ENGINE_WEIGHT}'s
+     * sibling table in {@code MigrationScorer} for the corresponding weights now that this exists.
+     */
+    private void profileBuiltinFeatureUsage(Statement statement, CatalogSnapshot snapshot) {
+        profileOneFeature(statement, snapshot, "CLR assembly",
+            "SELECT COUNT(*) FROM sys.assemblies WHERE is_user_defined = 1");
+        profileOneFeature(statement, snapshot, "Service Broker queue",
+            "SELECT COUNT(*) FROM sys.service_queues WHERE is_ms_shipped = 0");
+        // 'timestamp' is the internal type name for both TIMESTAMP and ROWVERSION.
+        profileOneFeature(statement, snapshot, "ROWVERSION/TIMESTAMP column",
+            "SELECT COUNT(*) FROM sys.columns c JOIN sys.types t ON c.system_type_id = t.system_type_id "
+          + "WHERE t.name = 'timestamp'");
+        // 2 = system-versioned temporal table.
+        profileOneFeature(statement, snapshot, "Temporal table (SYSTEM_VERSIONING)",
+            "SELECT COUNT(*) FROM sys.tables WHERE temporal_type = 2");
+        profileOneFeature(statement, snapshot, "HIERARCHYID column",
+            "SELECT COUNT(*) FROM sys.columns c JOIN sys.types t ON c.user_type_id = t.user_type_id "
+          + "WHERE t.name = 'hierarchyid'");
+        profileOneFeature(statement, snapshot, "Spatial column (geography/geometry)",
+            "SELECT COUNT(*) FROM sys.columns c JOIN sys.types t ON c.user_type_id = t.user_type_id "
+          + "WHERE t.name IN ('geography', 'geometry')");
+    }
+
+    /** Each feature is its own defensively-queried statement -- a permission gap or an
+     * edition that lacks one sys.* view (e.g. Service Broker isn't in every edition) must not
+     * take out every other feature's count along with it. */
+    private void profileOneFeature(Statement statement, CatalogSnapshot snapshot, String feature, String sql) {
+        try (ResultSet rs = statement.executeQuery(sql)) {
+            if (rs.next()) {
+                int count = rs.getInt(1);
+                if (count > 0) snapshot.builtinPackageUsage.put(feature, count);
+            }
+        } catch (SQLException e) {
+            snapshot.warnings.add("Could not check for \"" + feature + "\" usage: " + e.getMessage());
+        }
     }
 
     private void profileVersion(Statement statement, CatalogSnapshot snapshot) throws SQLException {
@@ -89,6 +135,9 @@ public class SqlServerCatalogProfiler implements CatalogProfiler {
         syntaxCounts.put("OUTER/CROSS APPLY", 0);
         syntaxCounts.put("OPENQUERY/OPENROWSET", 0);
         syntaxCounts.put("WITH (NOLOCK)", 0);
+        syntaxCounts.put("xp_cmdshell", 0);
+        syntaxCounts.put("PIVOT/UNPIVOT", 0);
+        syntaxCounts.put("sp_executesql (dynamic SQL)", 0);
 
         try (ResultSet rs = statement.executeQuery("SELECT definition FROM sys.sql_modules")) {
             while (rs.next()) {
@@ -99,6 +148,9 @@ public class SqlServerCatalogProfiler implements CatalogProfiler {
                 if (upper.contains("OUTER APPLY") || upper.contains("CROSS APPLY")) syntaxCounts.merge("OUTER/CROSS APPLY", 1, Integer::sum);
                 if (upper.contains("OPENQUERY") || upper.contains("OPENROWSET")) syntaxCounts.merge("OPENQUERY/OPENROWSET", 1, Integer::sum);
                 if (upper.contains("NOLOCK")) syntaxCounts.merge("WITH (NOLOCK)", 1, Integer::sum);
+                if (upper.contains("XP_CMDSHELL")) syntaxCounts.merge("xp_cmdshell", 1, Integer::sum);
+                if (upper.contains(" PIVOT") || upper.contains(" UNPIVOT")) syntaxCounts.merge("PIVOT/UNPIVOT", 1, Integer::sum);
+                if (upper.contains("SP_EXECUTESQL")) syntaxCounts.merge("sp_executesql (dynamic SQL)", 1, Integer::sum);
             }
         }
 

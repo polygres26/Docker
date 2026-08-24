@@ -57,19 +57,42 @@ public class MigrationScorer {
         "ENGINE=FEDERATED", 10  // remote-table proxying -- needs postgres_fdw reconfiguration, hard
     );
 
-    private static final Map<String, Integer> MYSQL_SYNTAX_WEIGHT = Map.of(
-        "ON DUPLICATE KEY UPDATE", 3,  // rewrite to INSERT ... ON CONFLICT
-        "GROUP_CONCAT", 2,             // rewrite to STRING_AGG
-        "STRAIGHT_JOIN", 2             // planner hint with no direct Postgres equivalent -- drop or restructure
+    private static final Map<String, Integer> MYSQL_SYNTAX_WEIGHT = Map.ofEntries(
+        Map.entry("ON DUPLICATE KEY UPDATE", 3),      // rewrite to INSERT ... ON CONFLICT
+        Map.entry("GROUP_CONCAT", 2),                 // rewrite to STRING_AGG
+        Map.entry("STRAIGHT_JOIN", 2),                // planner hint with no direct Postgres equivalent -- drop or restructure
+        Map.entry("GET_LOCK/RELEASE_LOCK", 3),        // pg_advisory_lock covers the concept, API/semantics differ enough to need review
+        Map.entry("FOUND_ROWS/SQL_CALC_FOUND_ROWS", 2), // rewrite to COUNT(*) OVER() or a second query
+        Map.entry("MATCH ... AGAINST (fulltext)", 5), // Postgres has native full-text (tsvector), but a different API -- real rewrite, not a drop-in
+        Map.entry("REPLACE INTO", 3),                 // rewrite to INSERT ... ON CONFLICT DO UPDATE, same effort class as ON DUPLICATE KEY UPDATE
+        Map.entry("LOAD_FILE/INTO OUTFILE", 6),        // filesystem access from SQL -- no direct Postgres equivalent, same risk class as Oracle's UTL_FILE
+        Map.entry("JSON_* functions", 3)               // MySQL's JSON_* function surface differs from Postgres jsonb's operator/function set
     );
 
-    // -- SQL Server weight table --------------------------------------------------------------
+    // -- SQL Server weight tables --------------------------------------------------------------
+
+    /** Structural/catalog-detected features -- populated by {@code SqlServerCatalogProfiler#profileBuiltinFeatureUsage},
+     * the same generic "count by category" shape {@code builtinPackageUsage} already carries for
+     * Oracle's DBMS_* packages and MySQL's storage engines. Previously nothing populated this map
+     * for SQL Server and {@code scoreSqlServer} never consulted it -- SQL Server's rubric was, in
+     * effect, four syntax patterns and nothing else. */
+    private static final Map<String, Integer> SQLSERVER_BUILTIN_WEIGHT = Map.of(
+        "CLR assembly", 10,                          // .NET CLR procs/functions -- no Postgres equivalent, needs a full rewrite (plpython/plperl at best)
+        "Service Broker queue", 12,                  // async message queuing -- no direct equivalent, same effort class as Oracle's DBMS_AQ
+        "ROWVERSION/TIMESTAMP column", 4,             // no auto-updating binary version column in Postgres -- needs a trigger-based emulation
+        "Temporal table (SYSTEM_VERSIONING)", 6,      // Postgres has no native system-versioned temporal tables -- needs trigger-based history tracking
+        "HIERARCHYID column", 5,                      // no direct type -- typically re-modeled with the ltree extension
+        "Spatial column (geography/geometry)", 4      // PostGIS covers the concept, but it's a different extension/API surface, not a drop-in type
+    );
 
     private static final Map<String, Integer> SQLSERVER_SYNTAX_WEIGHT = Map.of(
         "MERGE statement", 5,          // Postgres 15+ has MERGE too, but semantics/locking differ enough to need review
         "OUTER/CROSS APPLY", 4,        // rewrite to LATERAL join
         "OPENQUERY/OPENROWSET", 8,     // needs postgres_fdw reconfiguration, hard
-        "WITH (NOLOCK)", 2             // no direct equivalent; usually just dropped, but changes isolation semantics
+        "WITH (NOLOCK)", 2,            // no direct equivalent; usually just dropped, but changes isolation semantics
+        "xp_cmdshell", 10,             // OS shell execution from SQL -- security-sensitive, no Postgres equivalent, needs external orchestration
+        "PIVOT/UNPIVOT", 3,            // rewrite to FILTER/crosstab (tablefunc extension) or manual CASE aggregation
+        "sp_executesql (dynamic SQL)", 2 // maps reasonably to EXECUTE, generally mappable
     );
 
     public MigrationScoreReport score(CatalogSnapshot s) {
@@ -144,6 +167,10 @@ public class MigrationScorer {
         add(report, "Linked servers", s.dbLinkCount, 10, "Needs postgres_fdw/dblink reconfiguration per linked server.");
         add(report, "SQL Server Agent jobs", s.scheduledJobCount, 8, "No direct Postgres equivalent -- known hard gap.");
         add(report, "Partitioned tables", s.partitionedTableCount, 4, "Postgres declarative partitioning differs structurally.");
+
+        s.builtinPackageUsage.forEach((feature, count) ->
+            add(report, feature, count, SQLSERVER_BUILTIN_WEIGHT.getOrDefault(feature, 5),
+                "Structural feature found via sys.* catalog metadata."));
 
         s.syntaxConstructUsage.forEach((construct, hits) ->
             add(report, "Syntax: " + construct, hits, SQLSERVER_SYNTAX_WEIGHT.getOrDefault(construct, 3),
