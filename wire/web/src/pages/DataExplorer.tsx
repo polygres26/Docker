@@ -5,17 +5,17 @@ import {
   type BackendInfo, type QueryResult, type TableInfo,
   listBackendTables, listBackends, runBackendQuery,
 } from '../api/client'
-import styles from './WireDataExplorer.module.css'
+import styles from './DataExplorer.module.css'
 
 /**
  * Object browser + ad-hoc SQL console for PolyWire's configured backends -- pick a backend,
  * browse its schemas/tables in the left pane, click one to preview it, or write any SQL in the
- * console and run it. Talks to com.polygres.wire.core.DataExplorer via the admin API (proxied
- * through Advisor); see that class's javadoc for why this bypasses SQL Firewall/ACL by design
- * (it's an admin tool, not a client-facing wire protocol) and is gated by the same admin token
- * as the rest of PolyWire's config surface.
+ * console and run it. Talks straight to com.polygres.wire.core.DataExplorer via the admin API;
+ * see that class's javadoc for why this bypasses SQL Firewall/ACL by design (it's an admin tool,
+ * not a client-facing wire protocol) and is gated by the same admin token as the rest of
+ * PolyWire's config surface.
  */
-export default function WireDataExplorer() {
+export default function DataExplorer() {
   const [backends, setBackends] = useState<BackendInfo[] | null>(null);
   const [backend, setBackend] = useState<string>('')
   const [tables, setTables] = useState<TableInfo[] | null>(null)
@@ -81,7 +81,7 @@ export default function WireDataExplorer() {
       <div className={styles.page}>
         <h1 style={{ fontSize: 22, marginBottom: 4 }}>Data explorer</h1>
         <p style={{ color: 'var(--muted)', fontSize: 13 }}>
-          No backends configured yet. Add one on the <Link to="/wire-backends">Backends</Link> page first.
+          No backends configured yet. Add one on the <Link to="/backends">Backends</Link> page first.
         </p>
       </div>
     )

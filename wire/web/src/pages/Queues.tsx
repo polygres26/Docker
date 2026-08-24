@@ -68,7 +68,7 @@ function QueueRow({ queue, onDeleted }: { queue: QueueInfo; onDeleted: (name: st
  * that's stale the instant it's read anyway, so a short poll is simpler than plumbing
  * server-sent events for it.
  */
-export default function WireQueues() {
+export default function Queues() {
   const [queues, setQueues] = useState<QueueInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -101,8 +101,7 @@ export default function WireQueues() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Queues</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         sqswire's Amazon SQS-compatible queues, backed by Postgres (pgmq-style storage, no
-        extension required). Depth refreshes every {REFRESH_MS / 1000}s. Not configured yet? Set
-        the connection on the <a href="/wire-settings">Wire connection</a> page first.
+        extension required). Depth refreshes every {REFRESH_MS / 1000}s.
       </p>
 
       {error && <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>}

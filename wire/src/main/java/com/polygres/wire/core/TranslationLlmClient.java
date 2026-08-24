@@ -31,6 +31,41 @@ public final class TranslationLlmClient {
         this.model = model;
     }
 
+    /**
+     * Builds a client from {@code polywire_config}'s dynamic LLM settings (see
+     * {@link com.polygres.wire.config.PolyWireConfig#llmProvider()} et al.), falling back to the
+     * {@code POLYWIRE_LLM_*} env vars for any field the config store hasn't been given a value
+     * for yet -- so a bare env-var deployment (no admin UI, no {@code polywire_config} row for
+     * these fields) keeps working exactly as before, while any field actually set through
+     * {@code /api/llm-config} takes precedence over its env-var equivalent.
+     *
+     * <p>Returns {@code null} when {@code provider} is {@code "none"} -- see
+     * {@link DialectTranslationStage#translateWithFallback} for why {@code null} here means "skip
+     * the LLM fallback entirely" rather than "fall back to env vars silently".
+     */
+    public static TranslationLlmClient fromConfig(String provider, String apiKey, String baseUrl, String model) {
+        if ("none".equalsIgnoreCase(provider)) {
+            return null;
+        }
+        String resolvedApiKey = firstNonBlank(apiKey, System.getenv("POLYWIRE_LLM_API_KEY"));
+        String resolvedBaseUrl = firstNonBlank(baseUrl, System.getenv("POLYWIRE_LLM_BASE_URL"));
+        String resolvedModel = firstNonBlank(model, System.getenv("POLYWIRE_LLM_MODEL"));
+        if ("openai".equalsIgnoreCase(provider) && (resolvedBaseUrl == null || resolvedBaseUrl.isBlank())) {
+            resolvedBaseUrl = "https://api.openai.com/v1";
+        }
+        if (resolvedBaseUrl == null || resolvedBaseUrl.isBlank()) {
+            resolvedBaseUrl = "http://127.0.0.1:8080/v1";
+        }
+        if (resolvedModel == null || resolvedModel.isBlank()) {
+            resolvedModel = "qwen2.5-1.5b-instruct";
+        }
+        return new TranslationLlmClient(resolvedApiKey, resolvedBaseUrl, resolvedModel);
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        return (primary != null && !primary.isBlank()) ? primary : fallback;
+    }
+
     public String translate(String sqlText, SourceDialect from, SourceDialect to) throws Exception {
         String systemPrompt = "You are a SQL dialect translator. Translate the user's " + from
                 + " SQL statement into equivalent " + to + " SQL. Reply with ONLY the translated SQL "

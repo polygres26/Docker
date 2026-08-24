@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
@@ -7,7 +6,7 @@ import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
  * AccessContextResolver reloads. Setting an issuer turns on bearer-token auth for the HTTP-facing
  * surfaces (admin API, MCP, DynamoDB wire); leaving it blank keeps OAuth disabled.
  */
-export default function WireOAuth() {
+export default function OAuth() {
   const [issuer, setIssuer] = useState('')
   const [audience, setAudience] = useState('')
   const [userIdClaim, setUserIdClaim] = useState('')
@@ -54,8 +53,7 @@ export default function WireOAuth() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>OAuth / OIDC</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         Bearer-token verification for PolyWire's HTTP-facing surfaces. Leave the issuer blank to
-        keep OAuth disabled. Not configured yet? Set the connection on the{' '}
-        <Link to="/wire-settings">Wire connection</Link> page first.
+        keep OAuth disabled.
       </p>
 
       {error && (

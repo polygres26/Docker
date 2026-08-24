@@ -7,6 +7,10 @@ advisor/web/dist/
 advisor/web/.vite/
 advisor/web/.oxlintrc.json.bak
 
+wire/web/node_modules/
+wire/web/dist/
+wire/web/.vite/
+
 .DS_Store
 *.log
 

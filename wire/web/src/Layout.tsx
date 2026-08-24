@@ -1,0 +1,94 @@
+import {
+  Activity, Cpu, KeyRound, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties,
+} from 'lucide-react'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { clearConnection } from './api/client'
+import styles from './Layout.module.css'
+
+// Four groups matching the three questions someone actually has when they open PolyWire's admin
+// UI ("what's happening", "who's allowed to do what", "where does traffic go and how fast"),
+// plus Configuration for settings that aren't specific to any one of those.
+const GROUPS = [
+  {
+    label: 'Monitoring',
+    items: [
+      { to: '/metrics', label: 'Metrics', icon: Activity },
+    ],
+  },
+  {
+    label: 'Security',
+    items: [
+      { to: '/firewall', label: 'SQL Firewall', icon: Shield },
+      { to: '/acl', label: 'ACL', icon: Network },
+      { to: '/oauth', label: 'OAuth', icon: KeyRound },
+    ],
+  },
+  {
+    label: 'Traffic',
+    items: [
+      { to: '/backends', label: 'Backends', icon: Server },
+      { to: '/queues', label: 'Queues', icon: ListOrdered },
+      { to: '/data', label: 'Data explorer', icon: TableProperties },
+      { to: '/router', label: 'Router rules', icon: Route },
+      { to: '/qos', label: 'QoS', icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: 'Configuration',
+    items: [
+      { to: '/llm-config', label: 'LLM Configuration', icon: Cpu },
+    ],
+  },
+]
+
+/** Shell for every connected route: labeled, grouped sidebar + topbar, matching advisor/web's
+ * Layout but scoped to PolyWire alone -- there's no Migration/Advisor product sharing this rail. */
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
+
+  function handleDisconnect() {
+    clearConnection()
+    navigate('/connect')
+  }
+
+  return (
+    <div className={styles.shell}>
+      <nav className={styles.rail}>
+        <div className={styles.railBrand}>
+          <div className={styles.railMark}>PW</div>
+          <div className={styles.railBrandText}>
+            <span className={styles.railBrandTitle}>PolyWire</span>
+            <span className={styles.railBrandSub}>Admin console</span>
+          </div>
+        </div>
+
+        {GROUPS.map((group) => (
+          <div key={group.label} className={styles.railSection}>
+            <div className={styles.railSectionLabel}>{group.label}</div>
+            <div className={styles.railGroup}>
+              {group.items.map(({ to, label, icon: Icon }) => (
+                <NavLink key={to} to={to} className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
+                  <Icon size={17} strokeWidth={1.8} />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className={styles.railSpacer} />
+
+        <button onClick={handleDisconnect} className={styles.railItem} style={{ marginTop: 8 }}>
+          <LogOut size={17} strokeWidth={1.8} />
+          Disconnect
+        </button>
+      </nav>
+      <div className={styles.main}>
+        <div className={styles.topbar}>
+          <div className={styles.crumb}>polywire admin</div>
+        </div>
+        <div className={styles.content}>{children}</div>
+      </div>
+    </div>
+  )
+}

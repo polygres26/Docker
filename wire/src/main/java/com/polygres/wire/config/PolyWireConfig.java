@@ -25,7 +25,11 @@ public record PolyWireConfig(
         String oauthAudience,
         String oauthUserIdClaim,
         String oauthRolesClaim,
-        String awsIamCredentials) {
+        String awsIamCredentials,
+        String llmProvider,
+        String llmApiKey,
+        String llmBaseUrl,
+        String llmModel) {
 
     public static PolyWireConfig fromEnvDefaults() {
         return new PolyWireConfig(
@@ -50,7 +54,11 @@ public record PolyWireConfig(
                 System.getenv("POLYWIRE_OAUTH_AUDIENCE"),
                 System.getenv("POLYWIRE_OAUTH_USERID_CLAIM"),
                 System.getenv("POLYWIRE_OAUTH_ROLES_CLAIM"),
-                System.getenv("POLYWIRE_AWS_IAM_CREDENTIALS"));
+                System.getenv("POLYWIRE_AWS_IAM_CREDENTIALS"),
+                System.getenv("POLYWIRE_LLM_PROVIDER"),
+                System.getenv("POLYWIRE_LLM_API_KEY"),
+                System.getenv("POLYWIRE_LLM_BASE_URL"),
+                System.getenv("POLYWIRE_LLM_MODEL"));
     }
 
     public String toJson() {
@@ -77,6 +85,10 @@ public record PolyWireConfig(
         fields.put("oauthUserIdClaim", oauthUserIdClaim);
         fields.put("oauthRolesClaim", oauthRolesClaim);
         fields.put("awsIamCredentials", awsIamCredentials);
+        fields.put("llmProvider", llmProvider);
+        fields.put("llmApiKey", llmApiKey);
+        fields.put("llmBaseUrl", llmBaseUrl);
+        fields.put("llmModel", llmModel);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -115,7 +127,11 @@ public record PolyWireConfig(
                 fields.get("oauthAudience"),
                 fields.get("oauthUserIdClaim"),
                 fields.get("oauthRolesClaim"),
-                fields.get("awsIamCredentials"));
+                fields.get("awsIamCredentials"),
+                fields.get("llmProvider"),
+                fields.get("llmApiKey"),
+                fields.get("llmBaseUrl"),
+                fields.get("llmModel"));
     }
 
     private static String quote(String value) {

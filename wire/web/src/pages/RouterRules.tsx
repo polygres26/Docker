@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
@@ -8,7 +7,7 @@ import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
  * treatment as the SQL Firewall page's regex field: these formats are compact and specific enough
  * that reproducing PolyWire's own grammar directly is more honest than a leaky friendly widget.
  */
-export default function WireRouterRules() {
+export default function RouterRules() {
   const [schemaRules, setSchemaRules] = useState('')
   const [predicateRules, setPredicateRules] = useState('')
   const [valueShardRules, setValueShardRules] = useState('')
@@ -54,8 +53,7 @@ export default function WireRouterRules() {
     <div style={{ maxWidth: 720 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Router rules</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Decides which backend a statement goes to. Not configured yet? Set the connection on the{' '}
-        <Link to="/wire-settings">Wire connection</Link> page first.
+        Decides which backend a statement goes to.
       </p>
 
       {error && (

@@ -73,11 +73,12 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
-    // Only these two fields ever carry a credential -- backends' "name=url|user|password" spec
-    // embeds a literal password inline, and awsIamCredentials is exactly what it sounds like.
-    // Everything else in PolyWireConfig (QoS, router rules, ACL, OAuth issuer/audience/claims) is
-    // config, not secret, and stays as plain JSON so the column's still a real jsonb document a
-    // human can read by eye. See com.polygres.wire.secrets.FieldCipher's javadoc for the
+    // Only these three fields ever carry a credential -- backends' "name=url|user|password" spec
+    // embeds a literal password inline, awsIamCredentials is exactly what it sounds like, and
+    // llmApiKey is the dialect-translation LLM fallback's API key. Everything else in
+    // PolyWireConfig (QoS, router rules, ACL, OAuth issuer/audience/claims, llmProvider/llmBaseUrl/
+    // llmModel) is config, not secret, and stays as plain JSON so the column's still a real jsonb
+    // document a human can read by eye. See com.polygres.wire.secrets.FieldCipher's javadoc for the
     // encv1:-prefix / plaintext-passthrough scheme that makes this a no-op migration.
     private static PolyWireConfig encryptSecretFields(PolyWireConfig c) {
         return new PolyWireConfig(
@@ -88,7 +89,9 @@ public final class ConfigStore implements AutoCloseable {
                 c.rollupDefinitionsYaml(),
                 c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),
                 c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim(),
-                com.polygres.wire.secrets.FieldCipher.encrypt(c.awsIamCredentials()));
+                com.polygres.wire.secrets.FieldCipher.encrypt(c.awsIamCredentials()),
+                c.llmProvider(), com.polygres.wire.secrets.FieldCipher.encrypt(c.llmApiKey()),
+                c.llmBaseUrl(), c.llmModel());
     }
 
     private static PolyWireConfig decryptSecretFields(PolyWireConfig c) {
@@ -100,7 +103,9 @@ public final class ConfigStore implements AutoCloseable {
                 c.rollupDefinitionsYaml(),
                 c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),
                 c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim(),
-                com.polygres.wire.secrets.FieldCipher.decrypt(c.awsIamCredentials()));
+                com.polygres.wire.secrets.FieldCipher.decrypt(c.awsIamCredentials()),
+                c.llmProvider(), com.polygres.wire.secrets.FieldCipher.decrypt(c.llmApiKey()),
+                c.llmBaseUrl(), c.llmModel());
     }
 
     public void listen(Consumer<Version> callback) throws SQLException {

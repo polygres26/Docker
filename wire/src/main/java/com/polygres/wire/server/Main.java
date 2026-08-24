@@ -193,7 +193,13 @@ public final class Main {
         stages.add(qosStage);
         TranslationCacheStore translationCacheStore = new TranslationCacheStore(options);
         translationCacheStore.ensureSchema();
-        stages.add(new DialectTranslationStage(backendRegistry, translationCacheStore));
+        com.polygres.wire.core.TranslationLlmClient initialLlmClient = com.polygres.wire.core.TranslationLlmClient
+                .fromConfig(config.llmProvider(), config.llmApiKey(), config.llmBaseUrl(), config.llmModel());
+        DialectTranslationStage dialectTranslationStage = new DialectTranslationStage(
+                backendRegistry, new com.polygres.wire.core.TranslationCache(), initialLlmClient, translationCacheStore);
+        log.info("dialect translation LLM fallback: provider={} ({})", config.llmProvider() == null ? "(env/default)" : config.llmProvider(),
+                initialLlmClient == null ? "disabled" : "enabled");
+        stages.add(dialectTranslationStage);
         stages.add(rollupStage);
         if (cacheStage != null) {
             stages.add(cacheStage);
@@ -212,7 +218,12 @@ public final class Main {
                 config.oauthIssuer(), config.oauthAudience(), config.oauthUserIdClaim(), config.oauthRolesClaim());
 
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get, connectionGate, oauth, firewallRuleStore, configStore, backendRegistry);
+        // POLYWIRE_ADMIN_WEB_DIR: path to the built wire/web SPA (its `dist/`). Opt-in, same
+        // pattern as advisor's POLYGRES_ADVISOR_WEB_DIR -- unset means API-only.
+        String adminWebDir = System.getenv("POLYWIRE_ADMIN_WEB_DIR");
+        MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
+                connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
+                adminWebDir);
         metricsServer.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
@@ -324,6 +335,7 @@ public final class Main {
                     com.polygres.wire.acl.ConnectionGate.parseTrustedProxies(c.aclTrustedProxies()));
             oauth.reload(c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim());
             awsIamCredentials.reload(c.awsIamCredentials());
+            dialectTranslationStage.reconfigureLlm(c.llmProvider(), c.llmApiKey(), c.llmBaseUrl(), c.llmModel());
             log.info("config: version {} applied (qos rate={}/s burst={}, {} router rule set(s), "
                             + "{} backend(s), cache={}, {} rollup definition(s), acl={} rule(s), "
                             + "oauth={}, awsIam={} credential(s))",

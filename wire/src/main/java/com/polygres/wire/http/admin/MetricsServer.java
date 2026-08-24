@@ -95,13 +95,35 @@ public final class MetricsServer {
             Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
             com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
             ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, null, null);
+    }
+
+    /**
+     * Full constructor -- adds the {@link DialectTranslationStage} reference {@code /api/llm-config}
+     * needs to hot-apply a PUT without waiting for the next {@code polywire_config} LISTEN/NOTIFY
+     * round-trip, and {@code adminWebDir} (see {@code POLYWIRE_ADMIN_WEB_DIR} in {@code Main}), the
+     * built {@code wire/web} SPA's {@code dist/} directory. When set, static assets are served by
+     * {@link SpaResourceHandler} for anything this handler doesn't claim -- same "embedded Jetty
+     * does both jobs" approach as advisor's {@code AdvisorHttpServer}/{@code SpaResourceHandler}.
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
         // than threading sqswire's own store across process wiring just for this read-only page.
         this.queueStore = backendRegistry == null ? null : new com.polygres.wire.sqswire.PgQueueStore(backendRegistry);
         this.server = new Server(port);
-        server.setHandler(new AbstractHandler() {
+        boolean servesSpa = adminWebDir != null && !adminWebDir.isBlank()
+                && java.nio.file.Files.isDirectory(java.nio.file.Path.of(adminWebDir));
+        if (adminWebDir != null && !adminWebDir.isBlank() && !servesSpa) {
+            log.warn("POLYWIRE_ADMIN_WEB_DIR={} is not a directory -- serving API only", adminWebDir);
+        }
+        AbstractHandler api = new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
                     HttpServletResponse response) throws java.io.IOException {
@@ -203,10 +225,35 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && "/api/llm-config".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleLlmConfig(request, response, configStore, dialectTranslationStage);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (servesSpa) {
+                    // Not one of ours -- leave unhandled so the HandlerList's next handler (the
+                    // SPA static-file server) gets a chance, instead of 404ing it ourselves. See
+                    // SpaResourceHandler's javadoc.
+                    return;
+                }
                 response.setStatus(HttpServletResponse.SC_NOT_FOUND);
                 baseRequest.setHandled(true);
             }
-        });
+        };
+        if (servesSpa) {
+            org.eclipse.jetty.server.handler.HandlerList handlers = new org.eclipse.jetty.server.handler.HandlerList();
+            handlers.setHandlers(new org.eclipse.jetty.server.Handler[] {api, new SpaResourceHandler(adminWebDir)});
+            server.setHandler(handlers);
+        } else {
+            server.setHandler(api);
+        }
     }
 
     private static boolean bearerTokenValid(HttpServletRequest request, String adminToken) {
@@ -321,7 +368,11 @@ public final class MetricsServer {
                         field(body, "oauthAudience", current.oauthAudience()),
                         field(body, "oauthUserIdClaim", current.oauthUserIdClaim()),
                         field(body, "oauthRolesClaim", current.oauthRolesClaim()),
-                        field(body, "awsIamCredentials", current.awsIamCredentials()));
+                        field(body, "awsIamCredentials", current.awsIamCredentials()),
+                        field(body, "llmProvider", current.llmProvider()),
+                        field(body, "llmApiKey", current.llmApiKey()),
+                        field(body, "llmBaseUrl", current.llmBaseUrl()),
+                        field(body, "llmModel", current.llmModel()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.polygres.wire.acl.ClientAcl.parse(updated.aclRules());
@@ -334,6 +385,89 @@ public final class MetricsServer {
             }
         } catch (java.sql.SQLException e) {
             log.warn("config admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        } catch (IllegalArgumentException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+        }
+    }
+
+    /**
+     * {@code GET}/{@code PUT /api/llm-config} -- the dialect-translation LLM fallback's runtime
+     * settings (provider/apiKey/baseUrl/model), stored as four more fields on the same
+     * {@code polywire_config} row {@code /api/config} manages (see {@link PolyWireConfig}). Kept
+     * as its own route rather than folded into {@code /api/config} because the response shape is
+     * deliberately different: {@code GET} never echoes the decrypted {@code apiKey} back (only
+     * {@code apiKeySet: boolean}), mirroring PolyAdvisor's {@code LlmSettingsStore}/{@code
+     * WireConnectionStore} "the browser never has the real secret to send back" convention. A
+     * PUT with a blank/omitted {@code apiKey} keeps whatever key is already stored -- same
+     * convention as {@code WireConnectionStore#save}.
+     *
+     * <p>On a successful PUT, also calls {@code dialectTranslationStage.reconfigureLlm(...)}
+     * directly so the change is live immediately for this process, rather than only after the
+     * next {@code polywire_config} LISTEN/NOTIFY round-trip lands (every other process listening
+     * on the same config still picks it up that way).
+     */
+    private static void handleLlmConfig(HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore, com.polygres.wire.core.DialectTranslationStage dialectTranslationStage)
+            throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        try {
+            if ("GET".equals(request.getMethod())) {
+                PolyWireConfig current = configStore.readLatest()
+                        .map(ConfigStore.Version::payload)
+                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"provider\":" + jsonString(current.llmProvider())
+                        + ",\"baseUrl\":" + jsonString(current.llmBaseUrl())
+                        + ",\"model\":" + jsonString(current.llmModel())
+                        + ",\"apiKeySet\":" + (current.llmApiKey() != null && !current.llmApiKey().isBlank())
+                        + "}");
+            } else if ("PUT".equals(request.getMethod())) {
+                JsonObject body = readJsonBody(request);
+                PolyWireConfig current = configStore.readLatest()
+                        .map(ConfigStore.Version::payload)
+                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                String newProvider = field(body, "provider", current.llmProvider());
+                if (newProvider != null && !newProvider.isBlank()
+                        && !newProvider.equalsIgnoreCase("openai")
+                        && !newProvider.equalsIgnoreCase("custom")
+                        && !newProvider.equalsIgnoreCase("none")) {
+                    throw new IllegalArgumentException("provider must be 'openai', 'custom', or 'none'");
+                }
+                // Blank/omitted apiKey keeps the currently-stored key -- the browser never has the
+                // real decrypted key to send back in the first place, so "unchanged" must be the
+                // default, not "blank it out". Only a non-blank apiKey in the body overwrites it.
+                String newApiKey = body.has("apiKey") && !optionalString(body, "apiKey").isBlank()
+                        ? optionalString(body, "apiKey")
+                        : current.llmApiKey();
+                String newBaseUrl = field(body, "baseUrl", current.llmBaseUrl());
+                String newModel = field(body, "model", current.llmModel());
+                PolyWireConfig updated = new PolyWireConfig(
+                        current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
+                        current.qosClassLimits(), current.qosPoolWaitThreshold(),
+                        current.cacheTables(), current.cacheTtlMs(),
+                        current.backends(), current.shardBackends(),
+                        current.routerSchemaRules(), current.routerPredicateRules(),
+                        current.routerValueShardRules(), current.routerShardTables(),
+                        current.rollupDefinitionsYaml(),
+                        current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
+                        current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
+                        current.oauthRolesClaim(), current.awsIamCredentials(),
+                        newProvider, newApiKey, newBaseUrl, newModel);
+                long version = configStore.write(updated);
+                if (dialectTranslationStage != null) {
+                    dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
+                }
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"ok\":true,\"version\":" + version + "}");
+            } else {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("llm-config admin API: database error", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
         } catch (IllegalArgumentException e) {

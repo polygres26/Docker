@@ -11,7 +11,11 @@ public final class DialectTranslationStage implements PipelineStage {
 
     private final BackendRegistry registry;
     private final TranslationCache cache;
-    private final TranslationLlmClient llmClient;
+    // volatile: reconfigureLlm() swaps this from the polywire_config LISTEN/NOTIFY callback on a
+    // different thread than the pipeline threads that read it via handle()/translateWithFallback.
+    // null means "no LLM fallback configured" (provider=none, or a config-store client that
+    // failed to build) -- see translateWithFallback's null-llmClient handling below.
+    private volatile TranslationLlmClient llmClient;
     private final TranslationCacheStore cacheStore;
 
     public DialectTranslationStage(BackendRegistry registry) {
@@ -32,6 +36,18 @@ public final class DialectTranslationStage implements PipelineStage {
         this.cache = cache;
         this.llmClient = llmClient;
         this.cacheStore = cacheStore;
+    }
+
+    /**
+     * Hot-reload hook for {@code polywire_config}'s LLM settings, called from the same
+     * {@code ConfigStore#listen} callback every other stage reconfigures from (see
+     * {@code Main#main}) -- no restart needed to pick up a provider/apiKey/baseUrl/model change
+     * made through {@code /api/llm-config}. Delegates to {@link TranslationLlmClient#fromConfig}
+     * for the "config value wins, env var is the bootstrap fallback, provider=none disables the
+     * LLM fallback entirely" precedence rules.
+     */
+    public void reconfigureLlm(String provider, String apiKey, String baseUrl, String model) {
+        this.llmClient = TranslationLlmClient.fromConfig(provider, apiKey, baseUrl, model);
     }
 
     @Override
@@ -85,6 +101,16 @@ public final class DialectTranslationStage implements PipelineStage {
                 cacheStore.recordAccess(fromDialect, targetDialect, sqlText, rewritten);
             }
             return rewritten;
+        }
+
+        if (llmClient == null) {
+            // provider=none (or no LLM ever configured) -- the AST rewriter above is the only
+            // translator, and it just returned null for this statement. Surface that as an
+            // UntranslatableQueryException directly rather than silently doing nothing: "none"
+            // means "no fallback", not "pretend it succeeded".
+            throw new UntranslatableQueryException(sqlText, fromDialect, targetDialect,
+                    "no LLM fallback translator configured (provider=none) and the deterministic "
+                            + "AST rewriter could not translate this statement");
         }
 
         String llmTranslated;

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
@@ -8,7 +7,7 @@ import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
  * pgwire/mysqlwire/mssqlwire/mongowire). A save appends a new polywire_config version; every
  * running PolyWire process picks it up within milliseconds over LISTEN/NOTIFY, no restart.
  */
-export default function WireAclRules() {
+export default function AclRules() {
   const [rules, setRules] = useState('')
   const [trustedProxies, setTrustedProxies] = useState('')
   const [ppv2Enabled, setPpv2Enabled] = useState(false)
@@ -54,8 +53,7 @@ export default function WireAclRules() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>ACL: IP / CIDR access</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         One rule per line, checked top to bottom — the first matching CIDR wins. No rules means
-        every client is allowed. Not configured yet? Set the connection on the{' '}
-        <Link to="/wire-settings">Wire connection</Link> page first.
+        every client is allowed.
       </p>
 
       {error && (

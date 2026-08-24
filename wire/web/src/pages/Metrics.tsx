@@ -2,7 +2,7 @@ import { ArrowDownToLine, ArrowUpFromLine, Gauge, Link as LinkIcon, RefreshCw, T
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type WireMetricsSummary, getWireMetrics } from '../api/client'
-import styles from './WireMetrics.module.css'
+import styles from './Metrics.module.css'
 
 const PROTOCOL_COLORS: Record<string, string> = {
   pgwire: '#1f7a63',
@@ -29,7 +29,7 @@ function formatNumber(n: number): string {
  * reads/sec vs writes/sec split, and the top 10 most expensive SQL shapes by cumulative execution
  * time. Polls the admin API every 5s -- cheap, and "live" is the point of this page.
  */
-export default function WireMetrics() {
+export default function Metrics() {
   const [metrics, setMetrics] = useState<WireMetricsSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -51,9 +51,6 @@ export default function WireMetrics() {
       <div className={styles.page}>
         <h1 style={{ fontSize: 22, marginBottom: 4 }}>Metrics</h1>
         <p style={{ color: 'var(--error, crimson)', fontSize: 13 }}>{error}</p>
-        <p style={{ fontSize: 13, color: 'var(--muted)' }}>
-          Not configured yet? Set the connection on the <Link to="/wire-settings">Wire connection</Link> page first.
-        </p>
       </div>
     )
   }
@@ -203,7 +200,7 @@ export default function WireMetrics() {
           <p className={styles.cardTitle}>Traffic by backend</p>
         </div>
         <p className={styles.cardSubtitle}>
-          Where statements actually landed, by routing target — see <Link to="/wire-backends">Backends</Link> to
+          Where statements actually landed, by routing target — see <Link to="/backends">Backends</Link> to
           change what's configured.
         </p>
         {metrics.byBackend.length === 0 ? (

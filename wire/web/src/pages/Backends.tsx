@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   type BackendInfo, type BackendTestResult, type WireConfig,
   getWireConfig, listBackends, saveWireConfig, testBackendConnection, testConfiguredBackend,
@@ -114,7 +113,7 @@ function ConfiguredBackendRow({ backend }: { backend: BackendInfo }) {
  * name per line here, `,`-joined on the wire). See BackendRegistry.fromConfig for the exact
  * grammar and the POLYWIRE_TRUSTED_BACKEND_HOSTS allowlist check every entry has to clear.
  */
-export default function WireBackends() {
+export default function Backends() {
   const [backends, setBackends] = useState('')
   const [shardBackends, setShardBackends] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -164,8 +163,7 @@ export default function WireBackends() {
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         Named Postgres targets the router can send statements to. Each entry's host must already
         be in <code>POLYWIRE_TRUSTED_BACKEND_HOSTS</code> on the PolyWire process, or it's
-        silently skipped. Not configured yet? Set the connection on the{' '}
-        <Link to="/wire-settings">Wire connection</Link> page first.
+        silently skipped.
       </p>
 
       {error && (

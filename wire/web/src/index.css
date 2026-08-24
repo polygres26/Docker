@@ -1,0 +1,145 @@
+/*
+ * Design tokens -- switched from the original forest/teal palette to a deep-blue "admin console"
+ * scheme (navy rail, cobalt accent) per direct design direction. Same token shape as before
+ * (--rail-* for the always-dark nav rail, --accent/--*-soft pairs for semantic states) so every
+ * component built against these names needed zero changes, just a new palette underneath.
+ *
+ * Severity tokens (--easy/--medium/--hard, used by the Findings dashboard) still map onto the
+ * three semantic states: --easy = --accent, --medium = warm amber, --hard = red.
+ */
+:root {
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --text: #172033;
+  --muted: #5c6b85;
+  --border: #dde3ef;
+  --accent: #2f5fb8;
+  --accent-strong: #24478f;
+  --accent-soft: #e6edfa;
+  --hard: #c0392b;
+  --hard-soft: #fbeae8;
+  --medium: #b9770e;
+  --medium-soft: #fbf1e0;
+  --easy: var(--accent);
+  --easy-soft: var(--accent-soft);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.06);
+
+  /* The rail: constant across themes, always-dark "instrument panel" navy. */
+  --rail-bg: #101a2e;
+  --rail-ink: #dce6f7;
+  --rail-ink-dim: #7c8bab;
+  --rail-hover: #17253f;
+  --rail-active: #1d2f4f;
+  --rail-accent: #5b8ff0;
+  --rail-rule: #1c2a45;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1220;
+    --panel: #141b2e;
+    --text: #e6ecf9;
+    --muted: #93a1c2;
+    --border: #26314c;
+    --accent: #6c96e6;
+    --accent-strong: #8fb0ee;
+    --accent-soft: #1a2740;
+    --hard: #e58a7e;
+    --hard-soft: #3a201e;
+    --medium: #dba85f;
+    --medium-soft: #332508;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1220; --panel: #141b2e; --text: #e6ecf9; --muted: #93a1c2; --border: #26314c;
+  --accent: #6c96e6; --accent-strong: #8fb0ee; --accent-soft: #1a2740;
+  --hard: #e58a7e; --hard-soft: #3a201e; --medium: #dba85f; --medium-soft: #332508;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  --bg: #eef1f6; --panel: #ffffff; --text: #172033; --muted: #5c6b85; --border: #dde3ef;
+  --accent: #2f5fb8; --accent-strong: #24478f; --accent-soft: #e6edfa;
+  --hard: #c0392b; --hard-soft: #fbeae8; --medium: #b9770e; --medium-soft: #fbf1e0;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
+
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+button { font: inherit; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease; }
+input, textarea { font: inherit; }
+a { color: var(--accent); }
+
+::selection { background: var(--accent); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+.app-shell { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 13px; color: var(--muted); }
+.field input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 14px;
+}
+.field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) { background: var(--accent-strong); }
+button.primary:disabled { opacity: 0.6; cursor: default; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+.tier-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 650;
+  font-size: 12.5px;
+}

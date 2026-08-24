@@ -1,6 +1,5 @@
 import { Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   type FirewallRule,
   createFirewallRule,
@@ -10,11 +9,11 @@ import {
 } from '../api/client'
 
 /**
- * SQL Firewall rule management -- create/edit/delete against
- * `polywire_firewall_rules`, proxied through Advisor to PolyWire's admin API. Changes take effect
- * on every running PolyWire process within milliseconds (LISTEN/NOTIFY), no restart.
+ * SQL Firewall rule management -- create/edit/delete against `polywire_firewall_rules`, straight
+ * against PolyWire's own admin API. Changes take effect on every running PolyWire process within
+ * milliseconds (LISTEN/NOTIFY), no restart.
  */
-export default function WireFirewallRules() {
+export default function FirewallRules() {
   const [rules, setRules] = useState<FirewallRule[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<FirewallRule | 'new' | null>(null)
@@ -39,9 +38,7 @@ export default function WireFirewallRules() {
     <div style={{ maxWidth: 900 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>SQL Firewall</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Rules are checked in priority order (lowest first); the first match wins. Not configured
-        yet? Set the connection on the{' '}
-        <Link to="/wire-settings">Wire connection</Link> page first.
+        Rules are checked in priority order (lowest first); the first match wins.
       </p>
 
       {error && (

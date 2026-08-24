@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
  * QoS / rate limiting -- edits the five `polywire_config.qos*` fields QosControlStage.fromConfig
  * parses. Applies per session-class token buckets in front of every backend pool.
  */
-export default function WireQos() {
+export default function Qos() {
   const [ratePerSec, setRatePerSec] = useState('')
   const [burst, setBurst] = useState('')
   const [maxWaitMs, setMaxWaitMs] = useState('')
@@ -55,9 +54,7 @@ export default function WireQos() {
     <div style={{ maxWidth: 560 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>QoS / rate limiting</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Token-bucket rate limiting applied before a statement reaches a backend pool. Not
-        configured yet? Set the connection on the <Link to="/wire-settings">Wire connection</Link>{' '}
-        page first.
+        Token-bucket rate limiting applied before a statement reaches a backend pool.
       </p>
 
       {error && (
