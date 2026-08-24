@@ -2,9 +2,13 @@
 
 PolyWire is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
 client/server protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol,
-DynamoDB's HTTP/JSON API, gRPC, and MCP to clients — translating and routing every one of them
-to real Postgres backend(s). It's wire-protocol compatibility for a pre- or post-migration
-cutover, not a schema/data migration tool itself.
+DynamoDB's HTTP/JSON API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and
+routing every one of them to real Postgres backend(s). It's wire-protocol compatibility for a
+pre- or post-migration cutover, not a schema/data migration tool itself.
+
+> **Performance**: every number claimed anywhere in this guide about latency, caching, or RTT is
+> backed by a live before/after benchmark against a real client library, documented in
+> [`PERFORMANCE.md`](PERFORMANCE.md) — not estimated.
 
 > **On screenshots**: PolyWire is a headless gateway process — there's no UI to screenshot.
 > Its "surface" is protocol traffic and the admin/metrics HTTP endpoint (`:19090`); once you
@@ -37,37 +41,43 @@ flowchart TB
         PgCli["Postgres wire v3\n(psql, JDBC, etc.)"]
         MongoCli["MongoDB wire\nprotocol"]
         DdbCli["DynamoDB\nHTTP/JSON API"]
+        SqsCli["Amazon SQS\nHTTP/JSON API"]
         GrpcCli["gRPC"]
         McpCli["MCP client\n(AI agent tools)"]
     end
 
     subgraph PolyWire["PolyWire process — one shared pipeline"]
         direction TB
-        FE["Frontends\norawire:1521/2484 · mywire:3306\nmssqlwire:1433 · pgwire:5432\nmongowire:27017 · dynamowire:8000\ngRPC:7070/17071 · MCP:8010"]
+        FE["Frontends\norawire:1521/2484 · mywire:3306\nmssqlwire:1433 · pgwire:5432\nmongowire:27017 · dynamowire:18000\nsqswire:9324 · gRPC:7070/17071 · MCP:18010"]
         FW["FirewallStage\n(policy from Postgres)"]
         RT["RouterStage\n(shard/backend selection)"]
         QOS["QosControlStage\n(admission control)"]
         DT["DialectTranslationStage\n(SQL rewrite per protocol)"]
         RU["RollupStage"]
-        CA["CacheStage"]
-        ST["StatsCollectorStage"]
+        CA["CacheStage\n(SQL result cache)"]
+        ST["StatsCollectorStage\n(exec time + RTT)"]
         FE --> FW --> RT --> QOS --> DT --> RU --> CA --> ST
     end
 
+    Ign[("Embedded Ignite\ndistributed cache\nSQL result / GetItem / find")]
     Cfg[("polywire_config /\npolywire_firewall_rules\n(control-plane Postgres)")]
     PG1[("Postgres shard 1")]
     PG2[("Postgres shard 2 / N")]
 
-    OraCli & MyCli & MsCli & PgCli & MongoCli & DdbCli & GrpcCli & McpCli --> FE
+    OraCli & MyCli & MsCli & PgCli & MongoCli & DdbCli & SqsCli & GrpcCli & McpCli --> FE
+    CA <-.cache get/put.-> Ign
     ST -->|SQL| PG1
     ST -->|SQL| PG2
     Cfg -.LISTEN/NOTIFY\nhot reload.-> FW
     Cfg -.LISTEN/NOTIFY.-> RT
 ```
 
-- **One pipeline, many faces**: every frontend (Oracle, MySQL, SQL Server, Mongo, DynamoDB,
-  gRPC, MCP, native Postgres) feeds the *same* `StatementPipeline` instance — firewall,
-  routing, QoS, translation, caching, and stats are protocol-agnostic.
+- **One pipeline, many faces**: every SQL-shaped frontend (Oracle, MySQL, SQL Server, native
+  Postgres, gRPC) feeds the *same* `StatementPipeline` instance — firewall, routing, QoS,
+  translation, caching, and stats are protocol-agnostic. mongowire/dynamowire/sqswire don't build
+  a SQL `Statement` (there's no dialect to translate), so they feed the shared metrics collector
+  directly at their own single dispatch choke point instead — same dashboard, same `/api/metrics/
+  summary`, different entry point. See §9 for the caching layer and §10 for what gets measured.
 - **Config lives in Postgres, not just env vars**: `polywire_config` (versioned, insert-only)
   and `polywire_firewall_rules` (mutable, DBA-managed) are real tables in a designated
   "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running PolyWire process
@@ -355,7 +365,7 @@ flowchart TB
 | Image | 1 — `docker/polywire/Dockerfile` |
 | Base (build) | `maven:3.9-eclipse-temurin-21` |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` |
-| Published ports | 15432 (pgwire), 13306 (mywire), 11521/2484 (orawire plaintext/TLS), 14333 (mssqlwire), 27017 (mongowire), 7070/17071 (gRPC plaintext/TLS), 18000 (dynamowire), 18010 (MCP), 19090 (admin/metrics) |
+| Published ports | 15432 (pgwire), 13306 (mywire), 11521/2484 (orawire plaintext/TLS), 14333 (mssqlwire), 27017 (mongowire), 7070/17071 (gRPC plaintext/TLS), 18000 (dynamowire), 9324 (sqswire), 18010 (MCP), 19090 (admin/metrics) |
 | Persistent state | none in the image — all state lives in the external config-primary Postgres |
 | `.dockerignore` | repo-root only — `docker-compose.yml` sets `context: ../..`, and classic Docker only honors a root-level `.dockerignore` |
 
@@ -378,7 +388,8 @@ docker build -f docker/polywire/Dockerfile -t polywire:latest .
 | orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated; both plaintext and TLS listeners run together |
 | mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated |
 | mongowire | MongoDB wire protocol | 27017 | document ops mapped to SQL |
-| dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL |
+| dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
+| sqswire | Amazon SQS HTTP/JSON API | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); FIFO queues, DLQ/redrive, both JSON-1.1 and legacy XML protocols; sharded by queue name |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | see §8.5 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
@@ -436,7 +447,85 @@ Every frontend above feeds the same shared pipeline, in this order:
 
 ---
 
-## 9. Use case matrix
+## 9. Caching
+
+An embedded Apache Ignite node (single-node cache-only mode by default; see §4.3 for the
+multi-AZ caveat) backs three independent caches, one per data shape:
+
+| Cache | Backs | Key | What it stores | Invalidated by |
+|---|---|---|---|---|
+| `CacheStage`'s result cache | SQL frontends (pgwire/mywire/mssqlwire/orawire/gRPC) | tenant + backend + normalized SQL + binds | full `ExecutionResult` (rows), via `ObjectOutputStream` | write statements matching `POLYWIRE_CACHE_TABLES` |
+| `DynamoCache` | dynamowire | table + partition/sort key | the item's JSON | `PutItem`/`DeleteItem`/`UpdateItem` on that key |
+| `MongoCache` | mongowire | db + collection + `_id` | the `Document` object directly | `updateMany`/`deleteMany` on that `_id` |
+
+- **Opt-in, not automatic**: `POLYWIRE_CACHE_TABLES` (SQL) is a table allowlist — nothing is
+  cached until named. `POLYWIRE_DYNAMOWIRE_CACHE_ENABLED`/`POLYWIRE_MONGOWIRE_CACHE_ENABLED`
+  default **on**, but only for exact-key lookups (`GetItem`, `find({_id: ...})`) — never a
+  `Scan`/`Query`/filtered `find`, since those have no single cache key to invalidate correctly.
+- **`CacheStage` deliberately does *not* use a typed Ignite value** — tried it (to skip the
+  manual `ObjectOutputStream` serialization below), and it crashed real requests: Ignite's
+  reflective marshaller doesn't support Java `record` types (`ExecutionResult` is one). Reverted;
+  see [`PERFORMANCE.md`](PERFORMANCE.md) §4 for the full story.
+- **TTL, not size-bounded**: each cache has a configurable TTL (`POLYWIRE_CACHE_TTL_MS` /
+  `POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS` / `POLYWIRE_MONGOWIRE_CACHE_TTL_MS`, default 30s) rather
+  than an LRU eviction policy.
+- **A cache hit bypasses `StatsCollectorStage`** for the SQL result cache specifically —
+  `CacheStage` sits earlier in the pipeline and returns immediately on a hit, so SQL cache hits
+  don't currently appear in `/api/metrics/summary`'s exec-time/RTT breakdown (a known blind spot,
+  not a bug — DynamoDB/Mongo's caches sit differently and don't have this gap; see
+  [`PERFORMANCE.md`](PERFORMANCE.md) §1.2).
+
+---
+
+## 10. SQL Statistics & RTT
+
+Every protocol's traffic is measured, not estimated — `SqlMetricsCollector` tracks two distinct
+numbers per normalized statement/operation (fingerprinted `pg_stat_statements`-style: literals
+replaced with `?`, so `WHERE id = 7` and `WHERE id = 42` share one bucket):
+
+- **Exec time** — time inside the pipeline/backend round trip.
+- **RTT** — the fuller request-read-to-response-written span, including response serialization
+  and the socket write. This is **server-side round trip** (the same thing a reverse proxy's
+  `$request_time` means), not network RTT to the client — no server can measure that about
+  itself.
+
+Exposed at `GET /api/metrics/summary` (admin HTTP, bearer-token gated) — top-10 statements by
+cumulative cost, per-backend breakdown, reads/writes-per-sec, protocol counts — and rendered on
+the Metrics page in the admin UI (§11) with an "Avg RTT" tile and column, showing **"—"** rather
+than a misleading `0ms` wherever a call site genuinely doesn't report RTT (pgwire's `Bind` step,
+by design — see [`PERFORMANCE.md`](PERFORMANCE.md) §1.2 for exactly why).
+
+Full methodology, per-protocol coverage table, and the seven real bottlenecks this
+instrumentation found (each with a live before/after benchmark) are in
+[`PERFORMANCE.md`](PERFORMANCE.md).
+
+---
+
+## 11. Admin UI
+
+A React/TS/Vite app (`advisor/web`, served by the Advisor process, proxying server-to-server to
+PolyWire's admin API — the browser never sees PolyWire's admin token) gives PolyWire a real
+operator UI on top of the HTTP endpoints in §8.3/§9/§10:
+
+| Page | Backs onto |
+|---|---|
+| Metrics | `/api/metrics/summary` — live traffic dashboard, top-SQL-by-cost, per-backend breakdown, Avg RTT (§10) |
+| SQL Firewall | `polywire_firewall_rules` CRUD (§3.3) |
+| ACL | `polywire_config.aclRules`/PPv2 settings (§3.1) |
+| OAuth | OIDC issuer/audience/claim-mapping config (§3.4) |
+| Backends | `POLYWIRE_BACKENDS`/shard-group config, plus a connectivity-test API (probe a candidate `jdbcUrl` before saving it, or re-check an already-configured one) |
+| Queues | sqswire's queues — live depth (visible/in-flight), FIFO/DLQ attributes, resolved shard backend, delete action; polls every 5s |
+| Data Explorer | object browser + ad-hoc SQL console against any configured backend, bypassing the wire pipeline (firewall/ACL don't apply — gated the same way as every other admin route instead) |
+| Router rules | `RouterStage` schema/predicate/value-shard rules |
+| QoS | admission-control rate/burst/per-class limits |
+
+Every mutating admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check; the admin
+API is meant to be called server-to-server (by Advisor's own backend on behalf of an
+authenticated operator session), not directly from a browser.
+
+---
+
+## 12. Use case matrix
 
 | Scenario | Feature | Notes |
 |---|---|---|

@@ -2,9 +2,15 @@
 
 A mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL client/server
 protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol, DynamoDB's HTTP/JSON
-API, gRPC, and MCP to clients — translating and routing every one of them to real Postgres
-backend(s). It's wire-protocol compatibility for a pre- or post-migration cutover, not a
-schema/data migration tool itself.
+API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and routing every one of
+them to real Postgres backend(s). It's wire-protocol compatibility for a pre- or post-migration
+cutover, not a schema/data migration tool itself.
+
+See [`../docs/POLYWIRE_GUIDE.md`](../docs/POLYWIRE_GUIDE.md) for the full architecture, security,
+caching, SQL statistics/RTT, and admin-UI guide, and
+[`../docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) for the latency investigation (seven real
+bottlenecks found and fixed, each with a live before/after benchmark) behind every performance
+claim in this repo.
 
 Point an existing app's connection string at PolyWire instead of its original database, and it
 translates and routes to real Postgres. Run it indefinitely as a permanent compatibility shim
@@ -45,6 +51,7 @@ below for pointing it at a real backend.
 | mssqlwire | SQL Server TDS | 14333 |
 | mongowire | MongoDB wire protocol | 27017 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 |
+| sqswire | Amazon SQS HTTP/JSON API | 9324 |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 |
 | Admin / metrics | HTTP | 19090 |
