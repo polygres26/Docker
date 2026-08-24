@@ -302,3 +302,24 @@ export async function saveLlmConfig(cfg: {
 }): Promise<LlmConfigStatus> {
   return api('/api/llm-config', { method: 'PUT', body: JSON.stringify(cfg) })
 }
+
+// --- Node topology / heartbeats: /api/nodes ---
+// New admin endpoint, built concurrently by a separate agent -- not yet visible in
+// MetricsServer.java at the time this client was written. Contract per the spec this page was
+// built against: each PolyWire instance heartbeats its identity to the shared config Postgres
+// every ~10s; a node is "stale" if it hasn't heartbeated in 30s.
+
+export interface NodeInfo {
+  nodeId: string
+  host: string
+  adminPort: number
+  zone: string | null
+  version: string
+  startedAt: string
+  lastHeartbeat: string
+  status: 'up' | 'stale'
+}
+
+export async function listNodes(): Promise<NodeInfo[]> {
+  return api('/api/nodes')
+}

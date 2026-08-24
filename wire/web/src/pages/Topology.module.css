@@ -1,0 +1,191 @@
+.page {
+  max-width: 1180px;
+}
+
+.hero {
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent) 60%, #2f9c84);
+  border-radius: 16px;
+  padding: 28px 32px;
+  color: #f2fbf8;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-md);
+}
+
+.heroTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.heroTitle {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.heroSubtitle {
+  font-size: 13px;
+  opacity: 0.85;
+  margin: 0;
+  max-width: 760px;
+}
+
+.heroBadge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  white-space: nowrap;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6cf0c2;
+  box-shadow: 0 0 0 3px rgba(108, 240, 194, 0.25);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.heroStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.heroStat {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.heroStatLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
+.heroStatValue {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.heroStatSub {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.cardHeadRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+}
+
+.cardTitle {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.cardCount {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.nodeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.nodeCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+}
+
+.nodeCardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.nodeHost {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nodeId {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.nodeMetaRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+.statusBadge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.statusUp {
+  background: rgba(31, 122, 99, 0.15);
+  color: #1f7a63;
+}
+
+.statusStale {
+  background: rgba(194, 98, 47, 0.15);
+  color: #c2622f;
+}

@@ -53,6 +53,7 @@ public final class Main {
 
         ConfigStore configStore = new ConfigStore(options);
         configStore.ensureSchema();
+        com.polygres.wire.config.NodeRegistry.ensureSchema(options);
         ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
         if (initialVersion == null) {
             
@@ -223,8 +224,16 @@ public final class Main {
         String adminWebDir = System.getenv("POLYWIRE_ADMIN_WEB_DIR");
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir);
+                adminWebDir, options);
         metricsServer.start();
+
+        // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
+        // read back via GET /api/nodes -- see NodeRegistry's javadoc. "dev" is a placeholder;
+        // there's no existing polywire release-version constant anywhere else in the codebase to
+        // reuse (mongowire/MCP each stamp their own unrelated protocol-version strings).
+        com.polygres.wire.config.NodeRegistry nodeRegistry =
+                new com.polygres.wire.config.NodeRegistry(options, metricsPort, "dev");
+        nodeRegistry.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
         ExecutorService listenerExecutor = Executors.newCachedThreadPool();

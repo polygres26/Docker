@@ -1,5 +1,5 @@
 import {
-  Activity, Cpu, KeyRound, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties,
+  Activity, Cpu, KeyRound, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties, Waypoints,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { clearConnection } from './api/client'
@@ -13,6 +13,7 @@ const GROUPS = [
     label: 'Monitoring',
     items: [
       { to: '/metrics', label: 'Metrics', icon: Activity },
+      { to: '/topology', label: 'Topology', icon: Waypoints },
     ],
   },
   {

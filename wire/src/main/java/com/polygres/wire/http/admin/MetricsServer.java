@@ -112,6 +112,20 @@ public final class MetricsServer {
             com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
             ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
             com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, null);
+    }
+
+    /**
+     * As the full constructor above, plus {@code options} -- when non-null, enables
+     * {@code GET /api/nodes} (deployment-topology visibility, see {@link com.polygres.wire.config.NodeRegistry}).
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
@@ -222,6 +236,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleQueues(target, request, response, queueStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (options != null && "/api/nodes".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleNodes(request, response, options);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -670,6 +696,46 @@ public final class MetricsServer {
             }
         } catch (java.sql.SQLException e) {
             log.warn("queues admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    /**
+     * {@code GET /api/nodes} -- one row per live-or-recently-live polywire instance, from
+     * {@code polywire_nodes} (see {@link com.polygres.wire.config.NodeRegistry}). Sorted by zone
+     * then host for a stable, readable order; {@code status} is {@code "up"} if the row's
+     * heartbeat is within the last 30s, else {@code "stale"}.
+     */
+    private static void handleNodes(HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.server.ServerOptions options) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        if (!"GET".equals(request.getMethod())) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            response.getWriter().write("{\"error\":\"no such route\"}");
+            return;
+        }
+        try {
+            StringBuilder json = new StringBuilder("[");
+            boolean first = true;
+            for (com.polygres.wire.config.NodeRegistry.NodeRow row : com.polygres.wire.config.NodeRegistry.listAll(options)) {
+                if (!first) json.append(',');
+                first = false;
+                json.append("{\"nodeId\":").append(jsonString(row.nodeId().toString()))
+                        .append(",\"host\":").append(jsonString(row.host()))
+                        .append(",\"adminPort\":").append(row.adminPort())
+                        .append(",\"zone\":").append(jsonString(row.zone()))
+                        .append(",\"version\":").append(jsonString(row.version()))
+                        .append(",\"startedAt\":").append(jsonString(row.startedAt().toString()))
+                        .append(",\"lastHeartbeat\":").append(jsonString(row.lastHeartbeat().toString()))
+                        .append(",\"status\":").append(jsonString(row.status()))
+                        .append('}');
+            }
+            json.append(']');
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(json.toString());
+        } catch (java.sql.SQLException e) {
+            log.warn("nodes admin API: database error", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
         }

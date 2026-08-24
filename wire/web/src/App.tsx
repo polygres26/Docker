@@ -3,6 +3,7 @@ import { getStoredConnection } from './api/client'
 import Layout from './Layout'
 import Connect from './pages/Connect'
 import Metrics from './pages/Metrics'
+import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
 import OAuth from './pages/OAuth'
@@ -28,6 +29,7 @@ export default function App() {
     <Routes>
       <Route path="/connect" element={<Connect />} />
       <Route path="/metrics" element={<RequireAuth><Metrics /></RequireAuth>} />
+      <Route path="/topology" element={<RequireAuth><Topology /></RequireAuth>} />
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />
       <Route path="/oauth" element={<RequireAuth><OAuth /></RequireAuth>} />
