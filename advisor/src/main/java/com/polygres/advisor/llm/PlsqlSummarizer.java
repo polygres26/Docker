@@ -44,7 +44,17 @@ public class PlsqlSummarizer {
         LlmSettings primarySettings = settingsStore.get(LlmRole.PRIMARY);
         var primary = LlmProviderFactory.resolve(primarySettings);
 
-        String source = profiler.fetchSource(target, objectName, objectType);
+        // The Objects browser (OracleObjectExplorer#listObjects) always returns cross-schema
+        // "OWNER.NAME" identifiers so they stay unambiguous in a tree that spans every schema --
+        // but OracleCatalogProfiler#fetchSource queries USER_SOURCE, which has no OWNER column
+        // and is implicitly scoped to the connecting session's own objects. Passing the qualified
+        // name straight through never matches (NAME = 'OWNER.THING' against a column that only
+        // ever holds 'THING'), so summarizing anything selected from the Objects tab always
+        // silently returned "no source found" -- found live while testing this end to end. Strip
+        // the owner qualifier before the lookup, same convention OracleObjectExplorer's own
+        // splitOwner already uses.
+        String bareName = objectName.contains(".") ? objectName.substring(objectName.lastIndexOf('.') + 1) : objectName;
+        String source = profiler.fetchSource(target, bareName, objectType);
         if (source.isBlank()) {
             return new Result("No source found for " + objectType + " " + objectName + ".", null);
         }
