@@ -58,6 +58,12 @@ against the real client libraries but not yet exercised against real cloud stora
 credentials available to test with), and each node's zone is operator-supplied rather than
 auto-detected.
 
+## Verify it works
+
+`tests/` has basic smoke tests for every wire protocol — real client libraries (Python and Java),
+running against these published images directly, no source checkout required. See
+[`tests/README.md`](tests/README.md).
+
 ## Image packaging reference
 
 `polywire/` and `polyadvisor/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
