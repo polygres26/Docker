@@ -4,7 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.polygres.wire.audit.AuditEvent;
+import com.polygres.wire.audit.AuditLog;
 import com.polygres.wire.core.AccessContext;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -121,5 +124,27 @@ class MetricsServerAdminRoleTest {
     void bearerTokenValidIsDisabledWhenNoAdminTokenConfigured() {
         assertFalse(MetricsServer.bearerTokenValid("Bearer anything", null));
         assertFalse(MetricsServer.bearerTokenValid("Bearer anything", ""));
+    }
+
+    @Test
+    void adminActionBySsoIdentityIsAttributedToTheRealUser() {
+        AuditLog auditLog = new AuditLog();
+        AccessContext ctx = new AccessContext("alice@example.com", Set.of("admin"), java.util.Map.of());
+        MetricsServer.recordAdminAction(auditLog, ctx, "PUT", "/api/config");
+        List<AuditEvent> events = auditLog.recent(10);
+        assertEquals(1, events.size());
+        assertEquals(AuditEvent.Type.ADMIN_ACTION, events.get(0).type());
+        assertEquals("alice@example.com", events.get(0).userId());
+        assertEquals("PUT /api/config", events.get(0).summary());
+    }
+
+    @Test
+    void adminActionByTheSharedTokenIsAttributedPlainlyNotToAFakeUser() {
+        AuditLog auditLog = new AuditLog();
+        MetricsServer.recordAdminAction(auditLog, AccessContext.ANONYMOUS, "DELETE", "/api/queues/orders");
+        List<AuditEvent> events = auditLog.recent(10);
+        assertEquals(1, events.size());
+        assertEquals("shared-admin-token", events.get(0).userId());
+        assertEquals("DELETE /api/queues/orders", events.get(0).summary());
     }
 }

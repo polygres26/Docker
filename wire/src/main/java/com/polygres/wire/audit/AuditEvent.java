@@ -15,6 +15,7 @@ public record AuditEvent(Instant timestamp, Type type, String userId, String sum
         SCIM_USER_DEPROVISIONED,
         SCIM_USER_DELETED,
         ADMIN_LOGIN,
+        ADMIN_ACTION,
         DB_LOGIN_SUCCEEDED,
         DB_LOGIN_FAILED,
 

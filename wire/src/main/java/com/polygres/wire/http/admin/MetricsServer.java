@@ -260,13 +260,37 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
-                AccessContext accessContext = oauth.enforce(request, response);
-                if (accessContext == null) {
-                    baseRequest.setHandled(true);
-                    return;
+                // The shared POLYWIRE_ADMIN_TOKEN path is checked and, on a match, taken FIRST --
+                // before oauth.enforce() ever runs -- so it keeps working unchanged even when SSO
+                // is also configured. oauth.enforce() rejects any Authorization header that isn't
+                // a parseable JWT once an issuer is set; without this ordering, presenting the
+                // plain admin token with SSO enabled would 401 before ever reaching the token
+                // check below. This is the "simple setup stays available" guarantee, not
+                // incidental behavior.
+                String authHeader = request.getHeader("Authorization");
+                AccessContext accessContext;
+                AdminRole role;
+                if (bearerTokenValid(authHeader, adminToken)) {
+                    role = AdminRole.ADMIN;
+                    accessContext = AccessContext.ANONYMOUS;
+                } else {
+                    accessContext = oauth.enforce(request, response);
+                    if (accessContext == null) {
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    role = resolveAdminRole(authHeader, accessContext, adminToken, adminRoleNames, viewerRoleNames);
                 }
-                AdminRole role = resolveAdminRole(request.getHeader("Authorization"), accessContext, adminToken,
-                        adminRoleNames, viewerRoleNames);
+                // Attributes mutating admin calls to a real person when the caller authenticated
+                // via SSO (accessContext.userId(), e.g. an Okta/Entra email or sub claim) instead
+                // of collapsing every action to "someone with the shared token." A caller using
+                // the shared POLYWIRE_ADMIN_TOKEN has no per-user identity to attribute to -- that
+                // limitation is recorded plainly as "shared-admin-token" rather than hidden. Reads
+                // (GET/HEAD) aren't recorded here -- audit is for changes, not every poll.
+                if (auditLog != null && role == AdminRole.ADMIN && target.startsWith("/api/")
+                        && !"GET".equalsIgnoreCase(request.getMethod()) && !"HEAD".equalsIgnoreCase(request.getMethod())) {
+                    recordAdminAction(auditLog, accessContext, request.getMethod(), target);
+                }
                 if ("/metrics".equals(target)) {
                     String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
                     response.setStatus(HttpServletResponse.SC_OK);
@@ -486,6 +510,17 @@ public final class MetricsServer {
     /** GET/HEAD (read) requests need at least {@code VIEWER}; every other HTTP method (the
      * mutating routes -- config PUT, firewall rule CRUD, backend drain/undrain/query, queue
      * delete, LLM config PUT) needs full {@code ADMIN}. */
+    /** Records one mutating admin call to {@code auditLog}, attributed to the real SSO identity
+     * when one resolved this request, or to the literal {@code "shared-admin-token"} placeholder
+     * when the caller used {@code POLYWIRE_ADMIN_TOKEN} instead (which carries no per-user
+     * identity to attribute to). */
+    static void recordAdminAction(com.polygres.wire.audit.AuditLog auditLog, AccessContext accessContext,
+            String httpMethod, String target) {
+        String userId = accessContext == null || accessContext.isAnonymous() ? "shared-admin-token" : accessContext.userId();
+        auditLog.record(com.polygres.wire.audit.AuditEvent.of(
+                com.polygres.wire.audit.AuditEvent.Type.ADMIN_ACTION, userId, httpMethod + " " + target));
+    }
+
     static boolean authorized(String httpMethod, AdminRole role) {
         if ("GET".equalsIgnoreCase(httpMethod) || "HEAD".equalsIgnoreCase(httpMethod)) {
             return role != AdminRole.NONE;
@@ -1336,6 +1371,10 @@ public final class MetricsServer {
         server.start();
         log.info("polywire /metrics endpoint listening on port {}", ((org.eclipse.jetty.server.ServerConnector)
                 server.getConnectors()[0]).getPort());
+    }
+
+    public void stop() throws Exception {
+        server.stop();
     }
 
 }
