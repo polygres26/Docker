@@ -241,12 +241,18 @@ curl -s localhost:9200/_search                     # OpenSearch wire</code>
       </p>
 
       <h3 class="subhead" id="pillars">One gateway. One policy plane.<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Migration is one reason to run PolyWire — not the only one. Some teams run it
+        indefinitely: a permanent multi-protocol layer in front of Postgres, not a bridge to
+        somewhere else.
+      </p>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Migrate without rewriting</h4><p>Keep Oracle, MySQL, SQL Server, and MongoDB clients exactly as they are while you move the backend to Postgres.</p></div>
-        <div class="obsCard"><h4>One gateway for Postgres</h4><p>Firewall, routing, QoS, pooling, caching, sharding, and observability — one admin surface instead of five databases' own tooling.</p></div>
+        <div class="obsCard"><h4>Speak any protocol, run one database</h4><p>Keep Oracle, MySQL, SQL Server, MongoDB, and OpenSearch clients exactly as they are — whether you're migrating off them entirely or standardizing on Postgres permanently while every protocol keeps working.</p></div>
+        <div class="obsCard"><h4>One gateway for Postgres</h4><p>Firewall, routing, QoS, pooling, caching, sharding, and observability — one admin surface instead of five databases' own tooling, for as long as you run it.</p></div>
         <div class="obsCard"><h4>Built for applications and AI agents</h4><p>Traditional drivers and MCP go through the exact same governed execution path — not a separate, unguarded route to your data.</p></div>
+        <div class="obsCard"><h4>A real connection and caching layer</h4><p>Bounded connection pooling (the PgBouncer problem, solved in the same gateway), and PolyCache serving repeat reads without a Postgres round trip — value that has nothing to do with migration.</p></div>
       </div>
-      <p class="rttNote"><a href="polywire.html#outcomes">Explore all PolyWire capabilities →</a></p>
+      <p class="rttNote"><a href="polywire.html">Explore all PolyWire capabilities →</a></p>
 
       <h3 class="subhead" id="comparison">Why PolyWire?<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
       <div class="rttTableWrap">
