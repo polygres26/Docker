@@ -119,7 +119,36 @@
   .runblock p { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 12px; }
   .runblock code { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; color: var(--ink); white-space: pre; }
 
-  h3.subhead { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.01em; }
+  h3.subhead { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.01em; scroll-margin-top: 64px; }
+  h3.subhead .permalink { margin-left: 8px; color: var(--ink-faint); text-decoration: none; font-weight: 400; opacity: 0; transition: opacity 0.12s; }
+  h3.subhead:hover .permalink, h3.subhead .permalink:focus { opacity: 1; }
+  .tool[id], section#faq { scroll-margin-top: 64px; }
+
+  /* Sticky top nav -- section links + active-section highlight (see the IntersectionObserver
+     script near the end of <body>). Collapses to a horizontal scroller on narrow viewports
+     instead of a hamburger menu -- only 4 links, not worth the extra JS/state. */
+  .siteNav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .siteNav .siteNavInner { max-width: 900px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; gap: 4px; overflow-x: auto; }
+  .siteNav a { flex: none; font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); text-decoration: none; padding: 14px 10px; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .siteNav a:hover { color: var(--ink); }
+  .siteNav a.active { color: var(--indigo); border-bottom-color: var(--indigo); }
+
+  /* "On this page" -- a <details> disclosure right under a section's lede, not a persistent
+     sidebar: the page's own content column is a fixed 900px, and this project's sections range
+     from 4 to 11 subheads, so a collapsible list beats permanent sidebar chrome that's mostly
+     empty space on the short sections. */
+  details.onThisPage { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 24px; background: var(--paper-raised); }
+  details.onThisPage summary { cursor: pointer; padding: 10px 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.04em; list-style: none; }
+  details.onThisPage summary::-webkit-details-marker { display: none; }
+  details.onThisPage summary::before { content: "▸"; display: inline-block; margin-right: 6px; transition: transform 0.12s; }
+  details.onThisPage[open] summary::before { transform: rotate(90deg); }
+  details.onThisPage .otpList { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 14px 14px; margin: 0; }
+  details.onThisPage .otpList a { font-size: 13px; color: var(--ink); text-decoration: none; }
+  details.onThisPage .otpList a:hover { color: var(--indigo); text-decoration: underline; }
+
+  #backToTop { position: fixed; right: 20px; bottom: 20px; z-index: 20; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink-dim); font-size: 16px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+  #backToTop.show { opacity: 1; pointer-events: auto; }
+  #backToTop:hover { color: var(--indigo); border-color: var(--indigo); }
   figure { margin: 24px 0 32px; }
   figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
   figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px;  }
@@ -157,6 +186,14 @@
 </style>
 </head>
 <body>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="#polywire">PolyWire</a>
+      <a href="#polyadvisor">PolyAdvisor</a>
+      <a href="#faq">FAQ</a>
+      <a href="CONNECTING.md">Connecting</a>
+    </div>
+  </nav>
   <div class="wrap">
     <header>
       <div class="brandRow">
@@ -186,7 +223,24 @@
         compatibility is one use case among several — not the whole story.
       </p>
 
-      <h3 class="subhead">Use cases</h3>
+      <details class="onThisPage">
+        <summary>On this page</summary>
+        <ul class="otpList">
+          <li><a href="#use-cases">Use cases</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#admin-console-polywire">Admin console</a></li>
+          <li><a href="#cache-vs-round-trip">Cache vs. round trip</a></li>
+          <li><a href="#sharding">Sharding</a></li>
+          <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
+          <li><a href="#rollups">Rollups</a></li>
+          <li><a href="#observability">Observability</a></li>
+          <li><a href="#multi-az">Multi-AZ deployment</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#outages">Planned/unplanned outages</a></li>
+        </ul>
+      </details>
+
+      <h3 class="subhead" id="use-cases">Use cases<a class="permalink" href="#use-cases" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">Governed access for AI agents</span><span class="uc-desc">An MCP frontend lets AI agents and modern service architectures query Postgres directly — through the same SQL firewall, ACL, and QoS controls as every other client, not a separate, unguarded path to your data.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">A single, secure gateway across multiple data sources</span><span class="uc-desc">One admin surface — SQL firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread across five different databases' own tooling, each with its own access model.</span></span></li>
@@ -216,7 +270,7 @@
         PostgreSQL — see <a href="CONNECTING.md">CONNECTING.md</a>.
       </p>
 
-      <h3 class="subhead">Architecture</h3>
+      <h3 class="subhead" id="architecture">Architecture<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
         <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically.</figcaption>
@@ -232,13 +286,13 @@
         your data.
       </p>
 
-      <h3 class="subhead">Admin console</h3>
+      <h3 class="subhead" id="admin-console-polywire">Admin console<a class="permalink" href="#admin-console-polywire" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, traffic by backend (routing/sharding target), and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar grouped into four real labeled sections — Monitoring (Metrics, Topology), Security (SQL Firewall, ACL, OAuth), Traffic (Backends, Queues, Data Explorer, Router Rules — where shard/routing targets are configured, QoS), and Configuration (LLM)">
         <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, and a sidebar that groups controls the same way this page does: Security (SQL firewall, ACL, OAuth) as its own labeled section, Router Rules for sharding/routing targets under Traffic, deployment topology, backends, queues, and LLM configuration for dialect translation — all in one place, not scattered across each protocol's own tooling.</figcaption>
       </figure>
 
-      <h3 class="subhead">Cache hit vs. Postgres round trip, per protocol</h3>
+      <h3 class="subhead" id="cache-vs-round-trip">Cache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         The same admin console tracks this per wire protocol: how long a cache hit takes against
         a real Postgres read or write. Measured on a local loopback deployment (client, PolyWire,
@@ -333,7 +387,7 @@
         speedup cells are genuinely blank, not omitted data.
       </p>
 
-      <h3 class="subhead">Sharding: by real bound values, across every protocol that has one</h3>
+      <h3 class="subhead" id="sharding">Sharding: by real bound values, across every protocol that has one<a class="permalink" href="#sharding" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         PolyWire routes by a real bound parameter value — not just SQL text — across
         <b>Postgres, Oracle, SQL Server, and MySQL</b> wire protocols, decoding each protocol's
@@ -378,7 +432,7 @@
         automatically today.
       </p>
 
-      <h3 class="subhead">SQS: enqueue vs. dequeue</h3>
+      <h3 class="subhead" id="sqs-enqueue-dequeue">SQS: enqueue vs. dequeue<a class="permalink" href="#sqs-enqueue-dequeue" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         sqswire has no result cache — a queue's whole point is that every message is a real state
         change, nothing is safely repeatable from a cache — so instead of the cache-hit breakdown
@@ -411,7 +465,7 @@
         </table>
       </div>
 
-      <h3 class="subhead">Rollups: pre-aggregated tables, kept fresh automatically</h3>
+      <h3 class="subhead" id="rollups">Rollups: pre-aggregated tables, kept fresh automatically<a class="permalink" href="#rollups" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A rollup is a real Postgres table PolyWire creates and keeps current for you — the
         materialized result of a <code>GROUP BY</code>/aggregate query you define once, not a view
@@ -465,7 +519,7 @@
         statement for a rollup to match against and no rewriting happens for those three today.
       </p>
 
-      <h3 class="subhead">Observability: CloudWatch, Datadog, New Relic, Grafana, and more</h3>
+      <h3 class="subhead" id="observability">Observability: CloudWatch, Datadog, New Relic, Grafana, and more<a class="permalink" href="#observability" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         PolyWire exposes two real, independent export surfaces — a Prometheus-format
         <code>/metrics</code> endpoint and a periodic OTLP metrics push, over either gRPC
@@ -545,13 +599,13 @@
         </div>
       </div>
 
-      <h3 class="subhead">Multi-AZ deployment</h3>
+      <h3 class="subhead" id="multi-az">Multi-AZ deployment<a class="permalink" href="#multi-az" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/deployment.png" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, stateless instances per zone holding primary or backup cache copies, a config-primary Postgres with standby failover">
         <figcaption>Every piece of this is real and tested today, including the cross-zone cache backup replication — a cache entry's backup copy is placed on a node in a different availability zone than its primary, proven by a live test with real cache nodes. Cluster discovery works across a static seed list or AWS/GCP/Azure storage; connections between cache nodes can be TLS-encrypted.</figcaption>
       </figure>
 
-      <h3 class="subhead">Security</h3>
+      <h3 class="subhead" id="security">Security<a class="permalink" href="#security" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Every layer below is real, running code — not roadmap. Each item states its actual scope
         plainly, including the parts that are opt-in or narrower than the feature name might
@@ -588,7 +642,7 @@
         into RLS at all — every session there still shares one backend credential.
       </p>
 
-      <h3 class="subhead">Planned and unplanned outages</h3>
+      <h3 class="subhead" id="outages">Planned and unplanned outages<a class="permalink" href="#outages" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A Postgres backend going down for a patch shouldn't take your application down with it —
         whether you chose the timing or not. PolyWire tells the two cases apart deliberately: a
@@ -632,13 +686,23 @@
         actually happens.
       </p>
 
-      <h3 class="subhead">Two ways to get an assessment</h3>
+      <details class="onThisPage">
+        <summary>On this page</summary>
+        <ul class="otpList">
+          <li><a href="#two-ways-to-assess">Two ways to get an assessment</a></li>
+          <li><a href="#what-you-get">What you get</a></li>
+          <li><a href="#llm-assist">Connecting with an LLM's help</a></li>
+          <li><a href="#admin-console-polyadvisor">Admin console</a></li>
+        </ul>
+      </details>
+
+      <h3 class="subhead" id="two-ways-to-assess">Two ways to get an assessment<a class="permalink" href="#two-ways-to-assess" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">Connect a database</span><span class="uc-desc">A read-only connection profiles the real schema, feature usage, and query workload directly — no data leaves your database, only metadata and query statistics. Deterministic: run it twice, get the same score.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
       </ul>
 
-      <h3 class="subhead">What you get</h3>
+      <h3 class="subhead" id="what-you-get">What you get<a class="permalink" href="#what-you-get" aria-label="Link to this section">#</a></h3>
       <ul class="whatyouget">
         <li><span class="wg-body"><span class="wg-title">Migration difficulty score and tier</span><span class="wg-desc">Reproducible and rules-based — run it twice against the same database, get the same score and the same itemized breakdown behind it.</span></span></li>
         <li><span class="wg-body"><span class="wg-title">Feature inventory</span><span class="wg-desc">PL/SQL packages, triggers, procedures, partitioning, database links, scheduled jobs, and more, each weighted by real migration cost.</span></span></li>
@@ -662,7 +726,7 @@
   ghcr.io/polygres26/polyadvisor:latest</code>
       </div>
 
-      <h3 class="subhead">Connecting, exploring, and reviewing PL/SQL with an LLM's help</h3>
+      <h3 class="subhead" id="llm-assist">Connecting, exploring, and reviewing PL/SQL with an LLM's help<a class="permalink" href="#llm-assist" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
         reference into Vault or CyberArk if you'd rather not store the secret in PolyAdvisor at
@@ -691,7 +755,7 @@
         <figcaption>A real Oracle procedure's source (left: cursor <code>FOR UPDATE</code> loop, <code>DBMS_OUTPUT</code>, exception handling) and the LLM's live output below it — a summary, the specific constructs that need manual attention when porting to Postgres, and an effort estimate. Explanation and risk-flagging, not automated translation.</figcaption>
       </figure>
 
-      <h3 class="subhead">Admin console</h3>
+      <h3 class="subhead" id="admin-console-polyadvisor">Admin console<a class="permalink" href="#admin-console-polyadvisor" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/admin-polyadvisor.png" alt="PolyAdvisor's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
         <figcaption>PolyAdvisor's Findings dashboard against a real MySQL 8.0 connection — complexity tier, overall score, feature inventory, and the itemized per-feature breakdown behind that score, each line with its own point cost and reasoning. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
@@ -713,6 +777,8 @@
         <li><span class="uc-body"><span class="uc-title">Does PolyWire support row-level security?</span><span class="uc-desc">Yes, for the Postgres, SQL Server, Oracle, and MySQL wire protocols — a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering. See "Security" above for the exact authentication requirements this needs.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API stops routing new statements to that backend in favor of a configured fallback, waits for a real zero-replication-lag cutover, and only then confirms the switchover is safe to proceed — see "Planned and unplanned outages" above.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Can PolyWire connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?</span><span class="uc-desc">Yes — see <a href="CONNECTING.md">CONNECTING.md</a> for a worked example and the real provider-specific gotchas (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI) for each.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does PolyWire cache query results?</span><span class="uc-desc">Yes — an embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres, with no application-side caching code to write or invalidate. See "Cache hit vs. Postgres round trip, per protocol" above for real measured numbers across every protocol.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">What security features does PolyWire actually have wired in, not just documented?</span><span class="uc-desc">A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth — each scoped honestly, including what's opt-in or narrower than the feature name might suggest. See "Security" above for the exact scope of each.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is PolyAdvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it.</span></span></li>
       </ul>
     </section>
@@ -756,6 +822,16 @@
         },
         {
           "@type": "Question",
+          "name": "Does PolyWire cache query results?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- an embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres, with no application-side caching code to write or invalidate." }
+        },
+        {
+          "@type": "Question",
+          "name": "What security features does PolyWire actually have wired in, not just documented?",
+          "acceptedAnswer": { "@type": "Answer", "text": "A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth -- each scoped honestly, including what's opt-in or narrower than the feature name might suggest." }
+        },
+        {
+          "@type": "Question",
           "name": "Is PolyAdvisor's migration score generated by an LLM?",
           "acceptedAnswer": { "@type": "Answer", "text": "No -- it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it." }
         }
@@ -763,5 +839,40 @@
     }
     </script>
   </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+
+  <script>
+    (function () {
+      var backToTop = document.getElementById('backToTop');
+      backToTop.addEventListener('click', function () {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+      window.addEventListener('scroll', function () {
+        backToTop.classList.toggle('show', window.scrollY > 600);
+      }, { passive: true });
+
+      // Active-section highlight in the sticky nav -- whichever top-level section (#polywire/
+      // #polyadvisor/#faq) is most visible gets the active style; falls back to nothing selected
+      // above the first section (still on the header) rather than guessing.
+      var navLinks = document.querySelectorAll('.siteNav a[href^="#"]');
+      var sections = Array.prototype.map.call(navLinks, function (a) {
+        return document.querySelector(a.getAttribute('href'));
+      }).filter(Boolean);
+      if ('IntersectionObserver' in window && sections.length) {
+        var observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            var link = document.querySelector('.siteNav a[href="#' + entry.target.id + '"]');
+            if (!link) return;
+            if (entry.isIntersecting) {
+              navLinks.forEach(function (a) { a.classList.remove('active'); });
+              link.classList.add('active');
+            }
+          });
+        }, { rootMargin: '-64px 0px -70% 0px' });
+        sections.forEach(function (s) { observer.observe(s); });
+      }
+    })();
+  </script>
 </body>
 </html>
