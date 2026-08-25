@@ -110,7 +110,10 @@ final class PostgresDocumentStore {
         List<String> group = currentShardGroup();
         List<String> names = group.isEmpty() ? List.of(BackendRegistry.DEFAULT_BACKEND_NAME) : group;
         for (String name : names) {
-            BackendTarget target = backendRegistry.get(name);
+            // resolveForRouting, not get -- lets a DRAINING/DOWN shard transparently redirect to
+            // its configured fallback, same switchover/failover mechanism pgwire/mssqlwire/
+            // mywire/orawire already use (see BackendRegistry.resolveForRouting's javadoc).
+            BackendTarget target = backendRegistry.resolveForRouting(name);
             if (target != null) {
                 connections.add(target.open());
             }
@@ -126,7 +129,7 @@ final class PostgresDocumentStore {
         logShardGroupIfChanged();
         List<String> group = currentShardGroup();
         String backendName = group.isEmpty() ? BackendRegistry.DEFAULT_BACKEND_NAME : ShardingStrategy.hash(group).resolve(idJson);
-        BackendTarget target = backendRegistry.get(backendName);
+        BackendTarget target = backendRegistry.resolveForRouting(backendName);
         if (target == null) {
             throw new IllegalStateException("mongowire: resolved shard backend \"" + backendName + "\" is not configured");
         }
@@ -145,17 +148,24 @@ final class PostgresDocumentStore {
         return quoteIdent(db) + "." + quoteIdent(collection);
     }
 
-    /** Ensures the collection's table exists on every backend a document could land on. */
+    /** Ensures the collection's table exists on every backend a document could currently land on.
+     * Cached per (collection, physical backend URL) pair, not per collection alone -- a flat
+     * per-collection cache would mean a backend that only starts receiving this collection's
+     * writes LATER (a switchover's fallback taking over after this collection was already ensured
+     * against its primary, or a shard added to an existing group) never gets the table created on
+     * it at all, and every write there would fail with "relation does not exist". */
     private void ensureTable(String db, String collection) throws SQLException {
-        String key = db + "." + collection;
-        if (ensuredTables.putIfAbsent(key, Boolean.TRUE) != null) {
-            return;
-        }
         for (Connection conn : allBackendConnections()) {
-            try (conn; var st = conn.createStatement()) {
-                st.execute("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(db));
-                st.execute("CREATE TABLE IF NOT EXISTS " + qualifiedTable(db, collection)
-                        + " (id text PRIMARY KEY, doc jsonb NOT NULL)");
+            try (conn) {
+                String key = db + "." + collection + "@" + conn.getMetaData().getURL();
+                if (ensuredTables.putIfAbsent(key, Boolean.TRUE) != null) {
+                    continue;
+                }
+                try (var st = conn.createStatement()) {
+                    st.execute("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(db));
+                    st.execute("CREATE TABLE IF NOT EXISTS " + qualifiedTable(db, collection)
+                            + " (id text PRIMARY KEY, doc jsonb NOT NULL)");
+                }
             }
         }
     }

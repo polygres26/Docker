@@ -115,7 +115,8 @@ public final class PostgresSearchStore {
     }
 
     private BackendTarget defaultTarget() {
-        BackendTarget target = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+        // resolveForRouting, not get -- see BackendRegistry.resolveForRouting's javadoc.
+        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
         if (target == null) {
             throw new IllegalStateException("oswire: no default backend configured");
         }
@@ -137,7 +138,7 @@ public final class PostgresSearchStore {
         }
         List<BackendTarget> targets = new ArrayList<>();
         for (String name : group) {
-            BackendTarget target = backendRegistry.get(name);
+            BackendTarget target = backendRegistry.resolveForRouting(name);
             if (target == null) {
                 throw new IllegalStateException("oswire: shard group references unknown backend \"" + name + "\"");
             }
@@ -152,7 +153,7 @@ public final class PostgresSearchStore {
             return defaultTarget();
         }
         String shardName = ShardingStrategy.hash(group).resolve(docId);
-        BackendTarget target = backendRegistry.get(shardName);
+        BackendTarget target = backendRegistry.resolveForRouting(shardName);
         if (target == null) {
             throw new IllegalStateException("oswire: shard group references unknown backend \"" + shardName + "\"");
         }
@@ -169,15 +170,20 @@ public final class PostgresSearchStore {
 
     /** Idempotent; called on every write and on explicit {@code PUT /<index>} so a collection
      * never has to be pre-declared. Cached per-process so a hot write path isn't re-issuing
-     * {@code CREATE TABLE IF NOT EXISTS} every call. */
+     * {@code CREATE TABLE IF NOT EXISTS} every call. Cached per (collection, physical backend
+     * jdbcUrl) pair, not per collection alone -- a flat per-collection cache would mean a backend
+     * that only starts receiving this collection's writes LATER (a switchover's fallback taking
+     * over after this collection was already ensured against its primary, or a shard added to an
+     * existing group) never gets the table created on it at all. */
     public void ensureCollection(String collection) throws SQLException {
         String table = pgTableName(collection);
-        if (ensuredCollections.putIfAbsent(table, Boolean.TRUE) != null) {
-            return;
-        }
         // Created on every shard target (matching dynamowire/sqswire's createTable) -- a document
         // can hash to any shard, so every shard needs the table before any write to it can land.
         for (BackendTarget target : allShardTargets()) {
+            String key = table + "@" + target.jdbcUrl();
+            if (ensuredCollections.putIfAbsent(key, Boolean.TRUE) != null) {
+                continue;
+            }
             try (Connection c = open(target); var st = c.createStatement()) {
                 st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
                         + "doc_id TEXT PRIMARY KEY, "

@@ -74,6 +74,7 @@ public final class PgQueueStore {
     private final HikariDataSource legacyDs;
     private final BackendRegistry backendRegistry;
     private final ConcurrentHashMap<String, Boolean> tableEnsured = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> catalogEnsured = new ConcurrentHashMap<>();
     private volatile List<String> lastLoggedShardGroup = null;
 
     // queueAttributes() used to hit Postgres (a real _sqs_queues round trip) on every single
@@ -96,14 +97,27 @@ public final class PgQueueStore {
         cfg.setMaximumPoolSize(8);
         this.legacyDs = new HikariDataSource(cfg);
         this.backendRegistry = null;
-        ensureCatalog(borrowCatalogConnection());
+        ensureCatalogEagerly();
     }
 
     public PgQueueStore(BackendRegistry backendRegistry) {
         this.legacyDs = null;
         this.backendRegistry = backendRegistry;
         logShardGroupIfChanged();
-        ensureCatalog(borrowCatalogConnection());
+        // Registry mode's own borrowCatalogConnection() already calls ensureCatalog on every
+        // resolution (see its javadoc) -- this eager call is only load-bearing for legacy mode,
+        // where borrowCatalogConnection() never calls it since there's only ever one fixed
+        // backend. Harmless (and cheap -- ensureCatalog is cached per URL) to call unconditionally
+        // either way, so both constructors share it rather than duplicating the branch.
+        ensureCatalogEagerly();
+    }
+
+    private void ensureCatalogEagerly() {
+        try (Connection conn = legacyDs != null ? legacyDs.getConnection() : borrowCatalogConnection()) {
+            ensureCatalog(conn);
+        } catch (SQLException e) {
+            throw new RuntimeException("sqswire: failed to create _sqs_queues catalog", e);
+        }
     }
 
     private List<String> currentShardGroup() {
@@ -137,9 +151,10 @@ public final class PgQueueStore {
         }
         logShardGroupIfChanged();
         String backendName = resolveBackendFor(queueName);
-        BackendTarget target = backendRegistry.get(backendName);
+        // resolveForRouting, not get -- see BackendRegistry.resolveForRouting's javadoc.
+        BackendTarget target = backendRegistry.resolveForRouting(backendName);
         if (target == null) {
-            target = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+            target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
         }
         if (target == null) {
             throw new IllegalStateException("sqswire: no backend named \"" + backendName
@@ -159,36 +174,48 @@ public final class PgQueueStore {
             if (legacyDs != null) {
                 return legacyDs.getConnection();
             }
-            BackendTarget target = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+            BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
             if (target == null) {
                 List<String> group = currentShardGroup();
                 if (!group.isEmpty()) {
                     log.warn("sqswire: \"{}\" is not a configured backend -- falling back to \"{}\" for the "
                             + "queue-attributes catalog. Configure a \"default=...\" backend entry to avoid this.",
                             BackendRegistry.DEFAULT_BACKEND_NAME, group.get(0));
-                    target = backendRegistry.get(group.get(0));
+                    target = backendRegistry.resolveForRouting(group.get(0));
                 }
             }
             if (target == null) {
                 throw new IllegalStateException("sqswire: no \"" + BackendRegistry.DEFAULT_BACKEND_NAME + "\" backend registered");
             }
-            return target.open();
+            Connection conn = target.open();
+            ensureCatalog(conn);
+            return conn;
         } catch (SQLException e) {
             throw new RuntimeException("sqswire: failed to open catalog connection", e);
         }
     }
 
-    private void ensureCatalog(Connection conn) {
-        try (conn; var st = conn.createStatement()) {
+    /** Idempotent per physical backend (cached by JDBC URL, same technique as {@link
+     * #ensureTable}) -- called from {@link #borrowCatalogConnection} on every resolution, not just
+     * once at construction, so a switchover's fallback (a genuinely separate Postgres, not
+     * necessarily a replica sharing the primary's schema) gets the catalog table the first time
+     * routing actually lands there, not never. Does NOT close {@code conn} -- unlike the old
+     * construction-time-only call, the caller (borrowCatalogConnection) owns and returns it for
+     * real use. */
+    private void ensureCatalog(Connection conn) throws SQLException {
+        String key = conn.getMetaData().getURL();
+        if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
+            return;
+        }
+        try (var st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS _sqs_queues ("
                     + "queue_name TEXT PRIMARY KEY, "
                     + "visibility_timeout INT NOT NULL DEFAULT 30, "
                     + "is_fifo BOOLEAN NOT NULL DEFAULT false, "
                     + "dlq_queue_name TEXT, "
                     + "max_receive_count INT)");
-        } catch (SQLException e) {
-            throw new RuntimeException("sqswire: failed to create _sqs_queues catalog", e);
         }
+        catalogEnsured.put(key, Boolean.TRUE);
     }
 
     private static String safeTableName(String queueName) {

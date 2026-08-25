@@ -79,6 +79,7 @@ public final class PgItemStore {
     // fresh). Keyed by table name only -- schema is identical regardless of which shard backend
     // ends up serving a given item.
     private final ConcurrentHashMap<String, TableSchema> schemaCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> catalogEnsured = new ConcurrentHashMap<>();
 
     public PgItemStore(String host, int port, String database, String user, String password) {
         HikariConfig cfg = new HikariConfig();
@@ -89,7 +90,7 @@ public final class PgItemStore {
         cfg.setMaximumPoolSize(8);
         this.legacyDs = new HikariDataSource(cfg);
         this.backendRegistry = null;
-        ensureCatalog(borrowCatalogConnection());
+        ensureCatalogEagerly();
     }
 
     /**
@@ -106,7 +107,20 @@ public final class PgItemStore {
         this.legacyDs = null;
         this.backendRegistry = backendRegistry;
         logShardGroupIfChanged();
-        ensureCatalog(borrowCatalogConnection());
+        // Registry mode's own borrowCatalogConnection() already calls ensureCatalog on every
+        // resolution (see its javadoc) -- this eager call is only load-bearing for legacy mode,
+        // where borrowCatalogConnection() never calls it since there's only ever one fixed
+        // backend. Harmless (and cheap -- ensureCatalog is cached per URL) either way, so both
+        // constructors share it rather than duplicating the branch.
+        ensureCatalogEagerly();
+    }
+
+    private void ensureCatalogEagerly() {
+        try (Connection conn = legacyDs != null ? legacyDs.getConnection() : borrowCatalogConnection()) {
+            ensureCatalog(conn);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to initialize _dynamo_tables catalog", e);
+        }
     }
 
     private List<String> currentShardGroup() {
@@ -173,12 +187,15 @@ public final class PgItemStore {
                 return legacyDs.getConnection();
             }
             String catalogBackendName = currentCatalogBackendName();
-            BackendTarget target = backendRegistry.get(catalogBackendName);
+            // resolveForRouting, not get -- see BackendRegistry.resolveForRouting's javadoc.
+            BackendTarget target = backendRegistry.resolveForRouting(catalogBackendName);
             if (target == null) {
                 throw new IllegalStateException("dynamowire: catalog backend \"" + catalogBackendName
                         + "\" is not a configured backend");
             }
-            return target.open();
+            Connection conn = target.open();
+            ensureCatalog(conn);
+            return conn;
         } catch (SQLException e) {
             throw new RuntimeException("Failed to open catalog connection", e);
         }
@@ -191,7 +208,7 @@ public final class PgItemStore {
         }
         logShardGroupIfChanged();
         String backendName = resolveBackendFor(pkValue);
-        BackendTarget target = backendRegistry.get(backendName);
+        BackendTarget target = backendRegistry.resolveForRouting(backendName);
         if (target == null) {
             throw new IllegalStateException("dynamowire: resolved shard backend \"" + backendName
                     + "\" is not configured");
@@ -204,7 +221,7 @@ public final class PgItemStore {
         List<String> group = currentShardGroup();
         List<String> names = group.isEmpty() ? List.of(currentCatalogBackendName()) : group;
         for (String name : names) {
-            BackendTarget target = backendRegistry.get(name);
+            BackendTarget target = backendRegistry.resolveForRouting(name);
             if (target == null) {
                 continue;
             }
@@ -213,8 +230,18 @@ public final class PgItemStore {
         return connections;
     }
 
-    private void ensureCatalog(Connection c) {
-        try (c; var st = c.createStatement()) {
+    /** Idempotent per physical backend (cached by JDBC URL, same technique as sqswire's {@code
+     * PgQueueStore#ensureTable}) -- called from {@link #borrowCatalogConnection} on every
+     * resolution, not just once at construction, so a switchover's fallback (a genuinely separate
+     * Postgres, not necessarily a replica sharing the primary's schema) gets the catalog table the
+     * first time routing actually lands there, not never. Does NOT close {@code c} -- the caller
+     * owns and returns it for real use. */
+    private void ensureCatalog(Connection c) throws SQLException {
+        String key = c.getMetaData().getURL();
+        if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
+            return;
+        }
+        try (var st = c.createStatement()) {
             st.execute("""
                 CREATE TABLE IF NOT EXISTS _dynamo_tables (
                     table_name text PRIMARY KEY,
@@ -227,9 +254,8 @@ public final class PgItemStore {
                     creation_time_millis bigint NOT NULL
                 )
                 """);
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to initialize _dynamo_tables catalog", e);
         }
+        catalogEnsured.put(key, Boolean.TRUE);
     }
 
     private static String pgTableName(String dynamoTableName) {
