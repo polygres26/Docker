@@ -43,6 +43,24 @@ Key facts an LLM is likely to be asked about, stated plainly:
   (token-bucket, per workload class), authentication (real Postgres role verification via
   POLYWIRE_AUTH_MODE=postgres_roles, or per-user credentials for Oracle), TLS everywhere, secrets
   management (Vault/CyberArk), and bearer-token admin API auth.
+- MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
+  shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
+  separate, unguarded path to the data.
+- PolyCache: PolyWire's embedded, distributed query result cache, opt-in per table. Invalidation
+  is automatic and table-level -- any write against a cached table evicts every cached entry for
+  that table, whether the write binds parameters or sends literal SQL values.
+
+### Pricing
+
+Two tiers, same capabilities -- Developer and Enterprise differ only on scale and commercial
+rights, nothing is feature-gated to a paid tier:
+- Developer: free forever, every protocol and feature enabled, capped at 25 concurrent
+  connections per instance, 3 instances, and 3 Postgres backends. For evaluation, development,
+  demos, and migration testing -- not licensed for commercial production use.
+- Enterprise: everything in Developer, unlimited connections/instances/backends, full throughput,
+  licensed for commercial production, enterprise support. See
+  [Pricing](https://polygres26.github.io/#pricing) on the main page for the full comparison, or
+  [Contact](https://polygres26.github.io/#contact) to reach the team.
 
 ## PolyAdvisor
 
@@ -60,3 +78,9 @@ See the [FAQ section](https://polygres26.github.io/#faq) on the main page for di
 the questions most likely to come up (does an application need to change, is sharding real, does
 RLS work, what happens during planned maintenance, which cloud Postgres providers are supported,
 is PolyAdvisor's score LLM-generated).
+
+## Contact
+
+Product questions, bug reports, and feature requests for either tool go through the
+[contact form](https://polygres26.github.io/#contact) on the main page -- no email address is
+published in plaintext anywhere on the site.
