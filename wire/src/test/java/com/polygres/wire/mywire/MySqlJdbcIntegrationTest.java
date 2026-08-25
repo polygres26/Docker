@@ -150,4 +150,58 @@ class MySqlJdbcIntegrationTest {
             }
         }
     }
+
+    /** Phase 4 of the error-code plan: proves {@code SqlStateErrorMapper}/{@code
+     * DialectErrorMessages} work correctly over the real mywire wire protocol too, not just
+     * orawire -- a real MySQL client creating a table that already exists must see MySQL's own
+     * real error number and wording, not Postgres's. */
+    @Test
+    void creatingATableThatAlreadyExistsReturnsARealMySqlError1050() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE mysql_jdbc_dup_it (id INTEGER PRIMARY KEY)");
+                conn.commit();
+
+                SQLException duplicate = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.execute("CREATE TABLE mysql_jdbc_dup_it (id INTEGER PRIMARY KEY)"),
+                        "creating a table under a name that already exists must fail");
+                assertEquals(1050, duplicate.getErrorCode(), "must be real MySQL 1050 (ER_TABLE_EXISTS_ERROR)");
+                assertTrue(duplicate.getMessage() != null && duplicate.getMessage().contains("already exists"),
+                        "client should see MySQL's own real wording, not Postgres's -- got: " + duplicate.getMessage());
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE mysql_jdbc_dup_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
+
+    @Test
+    void aNotNullViolationReturnsARealMySqlError1048() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE mysql_jdbc_notnull_it (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL)");
+                conn.commit();
+
+                SQLException violation = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.executeUpdate("INSERT INTO mysql_jdbc_notnull_it (id, name) VALUES (1, NULL)"),
+                        "inserting NULL into a NOT NULL column must fail");
+                assertEquals(1048, violation.getErrorCode(), "must be real MySQL 1048 (ER_BAD_NULL_ERROR)");
+                assertEquals("Column 'name' cannot be null", violation.getMessage(),
+                        "client should see MySQL's own real wording, with the real column name");
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE mysql_jdbc_notnull_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
 }

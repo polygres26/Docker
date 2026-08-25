@@ -144,4 +144,60 @@ class MssqlJdbcIntegrationTest {
             }
         }
     }
+
+    /** Phase 4 of the error-code plan: proves {@code SqlStateErrorMapper}/{@code
+     * DialectErrorMessages} work correctly over the real mssqlwire wire protocol too, not just
+     * orawire -- a real SQL Server client creating an object that already exists must see SQL
+     * Server's own real error number and wording, not Postgres's. */
+    @Test
+    void creatingAnObjectThatAlreadyExistsReturnsARealSqlServerError2714() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE mssql_jdbc_dup_it (id INTEGER PRIMARY KEY)");
+                conn.commit();
+
+                SQLException duplicate = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.execute("CREATE TABLE mssql_jdbc_dup_it (id INTEGER PRIMARY KEY)"),
+                        "creating an object under a name that already exists must fail");
+                assertEquals(2714, duplicate.getErrorCode(), "must be real SQL Server error 2714");
+                assertEquals("There is already an object named 'mssql_jdbc_dup_it' in the database.",
+                        duplicate.getMessage(),
+                        "client should see SQL Server's own real wording, with the real object name");
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE mssql_jdbc_dup_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
+
+    @Test
+    void aNotNullViolationReturnsARealSqlServerError515() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE mssql_jdbc_notnull_it (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL)");
+                conn.commit();
+
+                SQLException violation = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.executeUpdate("INSERT INTO mssql_jdbc_notnull_it (id, name) VALUES (1, NULL)"),
+                        "inserting NULL into a NOT NULL column must fail");
+                assertEquals(515, violation.getErrorCode(), "must be real SQL Server error 515");
+                assertEquals("Cannot insert the value NULL into column 'name', table 'mssql_jdbc_notnull_it'; "
+                        + "column does not allow nulls.", violation.getMessage(),
+                        "client should see SQL Server's own real wording, with the real column and table name");
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE mssql_jdbc_notnull_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
 }
