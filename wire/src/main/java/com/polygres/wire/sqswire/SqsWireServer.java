@@ -109,10 +109,12 @@ public final class SqsWireServer {
             writeError(response, e.status, e.sqsErrorType, e.getMessage());
         } catch (SQLException e) {
             log.warn("sqswire: Postgres error servicing {}: {}", operation, e.getMessage());
-            writeError(response, 500, "InternalError", "Postgres error: " + e.getMessage());
+            writeError(response, SqsErrorMapper.status(e.getSQLState()),
+                    SqsErrorMapper.jsonErrorType(e.getSQLState()), "Postgres error: " + e.getMessage());
         } catch (RuntimeException e) {
             log.error("sqswire operation {} failed", operation, e);
-            writeError(response, 500, "InternalError", String.valueOf(e.getMessage()));
+            writeError(response, SqsErrorMapper.DEFAULT_STATUS, SqsErrorMapper.DEFAULT_ERROR_TYPE,
+                    String.valueOf(e.getMessage()));
         } finally {
             if (sqlMetrics != null) {
                 var kind = switch (operation) {
@@ -403,10 +405,12 @@ public final class SqsWireServer {
             writeLegacyError(response, e.status, e.sqsErrorType, e.getMessage());
         } catch (SQLException e) {
             log.warn("sqswire (legacy protocol): Postgres error servicing {}: {}", action, e.getMessage());
-            writeLegacyError(response, 500, "InternalError", "Postgres error: " + e.getMessage());
+            writeLegacyError(response, SqsErrorMapper.status(e.getSQLState()),
+                    SqsErrorMapper.legacyErrorCode(e.getSQLState()), "Postgres error: " + e.getMessage());
         } catch (RuntimeException e) {
             log.error("sqswire (legacy protocol) operation {} failed", action, e);
-            writeLegacyError(response, 500, "InternalError", String.valueOf(e.getMessage()));
+            writeLegacyError(response, SqsErrorMapper.DEFAULT_STATUS, SqsErrorMapper.DEFAULT_ERROR_TYPE,
+                    String.valueOf(e.getMessage()));
         } finally {
             if (sqlMetrics != null) {
                 var kind = switch (action) {
