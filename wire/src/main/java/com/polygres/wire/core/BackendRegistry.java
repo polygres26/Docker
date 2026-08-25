@@ -81,6 +81,19 @@ public final class BackendRegistry {
                             + "configured backend is unaffected.", name, url);
                     continue;
                 }
+                // License-tier backend cap (see com.polygres.wire.license.License#maxBackends) --
+                // checked against targets.size() BEFORE this entry, not after, so a spec with
+                // exactly the cap's worth of backends still registers all of them; the first entry
+                // past the cap is what gets skipped, same "skip this one entry, not fatal" pattern
+                // as the trusted-host check just above.
+                int maxBackends = com.polygres.wire.license.License.current().maxBackends();
+                if (targets.size() >= maxBackends && !targets.containsKey(name)) {
+                    log.warn("license: REFUSING to register backend '{}' -- Developer edition is capped at {} "
+                            + "Postgres backends (see the Pricing section of the docs for Enterprise, which has "
+                            + "no backend limit). This entry is skipped, not fatal; every other configured "
+                            + "backend up to the cap is unaffected.", name, maxBackends);
+                    continue;
+                }
                 targets.put(name, new BackendTarget(name, url, user, password, null, fallbackName));
             }
         } else if (defaultTarget != null) {

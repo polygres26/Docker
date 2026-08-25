@@ -141,6 +141,23 @@ public final class NodeRegistry {
         }
     }
 
+    /** How many instances are live RIGHT NOW, cluster-wide -- the license-tier instance cap's
+     * enforcement primitive (see {@code Main}'s startup sequence and {@code
+     * com.polygres.wire.license.License#maxInstances}). Deliberately a cheap {@code count(*)}
+     * rather than routing through {@link #listAll} and counting rows -- called once at startup,
+     * before this instance's own heartbeat has been written yet, so it counts every OTHER
+     * currently-live instance; the caller adds 1 for itself. Same 30s "up" freshness window
+     * {@link #listAll} uses for its own status column, not the 24h hard-delete threshold {@link
+     * #heartbeatOnce} prunes with -- a node that stopped heartbeating 40s ago shouldn't still
+     * occupy a Developer-tier instance slot just because its stale row hasn't been swept yet. */
+    public static int countLive(com.polygres.wire.server.ServerOptions options) throws SQLException {
+        try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery(
+                        "SELECT count(*) FROM polywire_nodes WHERE last_heartbeat > now() - interval '30 seconds'")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
     /** Read side for {@code GET /api/nodes} -- all rows, sorted by zone then host. */
     public static List<NodeRow> listAll(com.polygres.wire.server.ServerOptions options) throws SQLException {
         List<NodeRow> rows = new ArrayList<>();

@@ -1,11 +1,13 @@
 package com.polygres.wire.acl;
 
+import com.polygres.wire.license.License;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,9 +18,20 @@ public final class ConnectionGate {
     public static final ConnectionGate DISABLED = new ConnectionGate(ClientAcl.DISABLED, false, List.of());
 
     private final ClientAcl acl;
-    
+
     private volatile boolean ppv2Enabled;
     private volatile List<Cidr> trustedProxies;
+
+    // License-tier connection cap -- deliberately independent of the `this == DISABLED` shortcut
+    // both acceptTcp/acceptHttp start with: a Developer-tier instance with no ACL rules configured
+    // at all must still be capped, so this check can't live behind "ACL is disabled, allow
+    // everything." Scoped to acceptTcp only (pgwire/mywire/mssqlwire/orawire/mongowire -- the real
+    // persistent, session-oriented connections) -- deliberately NOT applied in acceptHttp, since
+    // dynamowire/sqswire/oswire/the admin API/MCP are stateless HTTP request/response, where
+    // "concurrent connections" isn't the meaningful unit the pricing plan's cap describes. Every
+    // accepted TCP session must eventually call release() exactly once (Main.java wraps each
+    // submitted session Runnable in try/finally to guarantee this) or the count only ever grows.
+    private final AtomicInteger liveConnections = new AtomicInteger(0);
 
     private ConnectionGate(ClientAcl acl, boolean ppv2Enabled, List<Cidr> trustedProxies) {
         this.acl = acl;
@@ -28,6 +41,14 @@ public final class ConnectionGate {
 
     public static ConnectionGate create(ClientAcl acl, boolean ppv2Enabled, List<Cidr> trustedProxies) {
         return new ConnectionGate(acl, ppv2Enabled, List.copyOf(trustedProxies));
+    }
+
+    /** Call exactly once for every {@link #acceptTcp} that returned {@code true}, once that
+     * session's socket has actually closed -- Main.java does this via a try/finally around each
+     * submitted session {@code Runnable}, not inside any individual session handler class, so no
+     * per-protocol session handler needed to change to get this enforced uniformly. */
+    public void release() {
+        liveConnections.decrementAndGet();
     }
 
     public ClientAcl acl() {
@@ -73,6 +94,18 @@ public final class ConnectionGate {
     }
 
     public boolean acceptTcp(Socket socket) {
+        int max = License.current().maxConnectionsPerInstance();
+        // Optimistic increment-then-check (not check-then-increment) so two concurrent accepts
+        // racing the last free slot can't both read "24, still room" and both proceed -- whichever
+        // loses the race sees its own increment push the count over max and backs out via
+        // decrementAndGet(), not the other thread's.
+        int afterIncrement = liveConnections.incrementAndGet();
+        if (afterIncrement > max) {
+            log.warn("license: rejecting connection from {} -- Developer edition is capped at {} "
+                    + "concurrent connections per instance (see the Pricing section of the docs "
+                    + "for Enterprise, which has no connection limit)", socket.getInetAddress(), max);
+            return rejectTcp(socket);
+        }
         if (this == DISABLED) {
             return true;
         }
@@ -85,22 +118,19 @@ public final class ConnectionGate {
                 if (!currentTrustedProxies.isEmpty() && !matchesAny(rawPeer, currentTrustedProxies)) {
                     log.warn("ACL: rejecting connection from {} -- PPv2 is enabled on this listener but this peer "
                             + "is not in POLYWIRE_ACL_TRUSTED_PROXIES", rawPeer);
-                    closeQuietly(socket);
-                    return false;
+                    return rejectTcp(socket);
                 }
                 ProxyProtocolV2.Result header = ProxyProtocolV2.readHeader(socket.getInputStream());
-                
+
                 effectiveClient = header.sourceAddress().orElse(rawPeer);
             }
         } catch (IOException e) {
             log.warn("ACL: rejecting connection from {} -- {}", rawPeer, e.getMessage());
-            closeQuietly(socket);
-            return false;
+            return rejectTcp(socket);
         }
         if (!acl.isAllowed(effectiveClient)) {
             log.warn("ACL: rejecting connection from {}", effectiveClient);
-            closeQuietly(socket);
-            return false;
+            return rejectTcp(socket);
         }
         return true;
     }
@@ -151,6 +181,15 @@ public final class ConnectionGate {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /** Every rejection path in {@link #acceptTcp} routes through here -- a socket that's rejected
+     * never gets a session, so it must never hold a slot in {@link #liveConnections} either.
+     * Always returns {@code false}, so a caller can just {@code return rejectTcp(socket);}. */
+    private boolean rejectTcp(Socket socket) {
+        liveConnections.decrementAndGet();
+        closeQuietly(socket);
+        return false;
     }
 
     private static void closeQuietly(Socket socket) {

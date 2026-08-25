@@ -55,6 +55,34 @@ public final class Main {
         ConfigStore configStore = new ConfigStore(options);
         configStore.ensureSchema();
         com.polygres.wire.config.NodeRegistry.ensureSchema(options);
+
+        // License-tier instance cap -- checked here, before ANYTHING else starts (no config
+        // bootstrap, no backend registry, no accept loop), since a Developer-tier install already
+        // at its instance cap should refuse to come up at all, not partially start and then reject
+        // connections. Counts every OTHER currently-live instance via the same polywire_nodes
+        // table NodeRegistry.start() will begin heartbeating into further down -- this instance's
+        // own row doesn't exist yet, so +1 for itself is exact, not an estimate.
+        com.polygres.wire.license.License license = com.polygres.wire.license.License.current();
+        if (license.tier() == com.polygres.wire.license.LicenseTier.DEVELOPER) {
+            int liveElsewhere = com.polygres.wire.config.NodeRegistry.countLive(options);
+            int max = license.maxInstances();
+            if (liveElsewhere + 1 > max) {
+                log.error("license: refusing to start -- Developer edition is capped at {} PolyWire "
+                        + "instance(s), and {} are already live (this would be number {}). Stop one of "
+                        + "the running instances, or set POLYWIRE_LICENSE_KEY to an Enterprise license, "
+                        + "which has no instance limit. See the Pricing section of the docs.",
+                        max, liveElsewhere, liveElsewhere + 1);
+                System.exit(1);
+                return;
+            }
+            log.info("license: Developer edition -- {} of {} instance slot(s) now in use, capped at "
+                    + "{} concurrent connections/instance and {} Postgres backend(s). Free forever; "
+                    + "not licensed for commercial production use. See the Pricing section of the docs.",
+                    liveElsewhere + 1, max, license.maxConnectionsPerInstance(), license.maxBackends());
+        } else {
+            log.info("license: Enterprise edition verified for '{}'{} -- no Developer-tier limits apply",
+                    license.licensedTo(), license.expiresAt() == null ? " (perpetual)" : " (expires " + license.expiresAt() + ")");
+        }
         ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
         if (initialVersion == null) {
             
@@ -454,6 +482,23 @@ public final class Main {
         return value == null || value.isBlank() ? defaultValue : Long.parseLong(value);
     }
 
+    /** Every TCP session handler ({@code PgWireSessionHandler}, {@code MySqlWireSessionHandler},
+     * etc.) gets submitted through here rather than a bare {@code sessionExecutor.submit(handler)}
+     * -- {@code connectionGate.acceptTcp} increments its live-connection count on accept (see its
+     * javadoc), and this is the one place that guarantees the matching {@code release()} on every
+     * exit path (normal return, an uncaught exception, doesn't matter), without needing to touch
+     * any individual session handler's own {@code run()} method. */
+    private static void submitSession(ExecutorService sessionExecutor, com.polygres.wire.acl.ConnectionGate connectionGate,
+            Runnable session) {
+        sessionExecutor.submit(() -> {
+            try {
+                session.run();
+            } finally {
+                connectionGate.release();
+            }
+        });
+    }
+
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
             com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate,
@@ -467,7 +512,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
+                submitSession(sessionExecutor, connectionGate, new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
             }
         } catch (IOException e) {
             log.error("Postgres wire listener on port {} failed", options.pgWireListenPort(), e);
@@ -486,7 +531,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
+                submitSession(sessionExecutor, connectionGate, new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
             }
         } catch (IOException e) {
             log.error("MySQL wire listener on port {} failed", options.myWireListenPort(), e);
@@ -506,7 +551,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
+                submitSession(sessionExecutor, connectionGate, new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
             }
         } catch (IOException e) {
             log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);
@@ -527,7 +572,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
+                submitSession(sessionExecutor, connectionGate, new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
             }
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);
@@ -546,7 +591,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
+                submitSession(sessionExecutor, connectionGate, new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
             }
         } catch (IOException e) {
             log.error("Oracle wire listener on port {} failed", options.listenPort(), e);
@@ -569,7 +614,7 @@ public final class Main {
                 SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
                         plainSocket, null, plainSocket.getPort(), true);
                 tlsSocket.setUseClientMode(false);
-                sessionExecutor.submit(new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
+                submitSession(sessionExecutor, connectionGate, new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
             }
         } catch (IOException e) {
             log.error("Oracle wire TCPS listener on port {} failed", options.tlsPort(), e);
