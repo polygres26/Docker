@@ -178,6 +178,20 @@
   .whatyouget .wg-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
   .whatyouget .wg-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6;  }
 
+  .pricingGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 24px; }
+  @media (max-width: 620px) { .pricingGrid { grid-template-columns: 1fr; } }
+  .priceCard { border: 1px solid var(--line); border-radius: 14px; padding: 24px; background: var(--paper-raised); }
+  .priceCard.enterprise { border-color: var(--indigo); background: var(--indigo-soft); }
+  .priceCard h3 { margin: 0 0 4px; font-size: 20px; }
+  .priceCard .priceTag { font-family: var(--mono); font-size: 28px; font-weight: 700; color: var(--ink); margin: 0 0 4px; }
+  .priceCard .priceTag small { font-size: 13px; font-weight: 400; color: var(--ink-dim); }
+  .priceCard .priceSub { color: var(--ink-dim); font-size: 13px; margin: 0 0 18px; }
+  .priceCard ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+  .priceCard li { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+  .priceCard li::before { content: "✓"; color: var(--teal); flex: none; font-weight: 700; }
+  .priceCard li.limit::before { content: "△"; color: var(--amber); }
+  .pricingNote { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 16px; }
+
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
   footer a { color: var(--indigo); }
   a { color: var(--indigo); }
@@ -187,6 +201,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="#polywire">PolyWire</a>
+      <a href="#pricing">Pricing</a>
       <a href="#polyadvisor">PolyAdvisor</a>
       <a href="#faq">FAQ</a>
       <a href="CONNECTING.md">Connecting</a>
@@ -674,9 +689,64 @@
       </p>
     </section>
 
-    <section class="tool" id="polyadvisor">
+    <section class="tool" id="pricing">
       <div class="kicker">
         <span class="num">02</span>
+      </div>
+      <h2>Pricing</h2>
+      <p class="lede">
+        Same PolyWire, same protocols, same capabilities — Developer and Enterprise differ on
+        scale and commercial rights, not features. Nothing that makes PolyWire what it is —
+        SQL translation, the firewall, sharding, QoS, caching, HA/failover — is held back for a
+        paid tier: an evaluation on Developer proves the exact architecture you'd run in
+        production.
+      </p>
+      <div class="pricingGrid">
+        <div class="priceCard">
+          <h3>Developer</h3>
+          <p class="priceTag">$0 <small>/ forever</small></p>
+          <p class="priceSub">For evaluation, development, demos, and migration testing.</p>
+          <ul>
+            <li>All ten protocols — Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, gRPC, MCP</li>
+            <li>SQL translation, dialect rewrite, and rollup acceleration</li>
+            <li>SQL firewall, connection ACL, and every policy engine</li>
+            <li>Routing and sharding, all strategies</li>
+            <li>QoS admission control</li>
+            <li>Query result caching</li>
+            <li>Prometheus <code style="display:inline;padding:1px 6px;">/metrics</code> and OTEL export</li>
+            <li>HA, config propagation, and planned/unplanned failover — up to 3 instances</li>
+            <li class="limit">Up to 25 concurrent client connections per instance</li>
+            <li class="limit">Up to 3 Postgres backends</li>
+            <li class="limit">Community support only</li>
+            <li class="limit">Not licensed for commercial production use</li>
+          </ul>
+        </div>
+        <div class="priceCard enterprise">
+          <h3>Enterprise</h3>
+          <p class="priceTag">Contact us</p>
+          <p class="priceSub">For production deployments of any size.</p>
+          <ul>
+            <li>Everything in Developer, unrestricted</li>
+            <li>Unlimited concurrent client connections</li>
+            <li>Unlimited PolyWire instances</li>
+            <li>Unlimited Postgres backends</li>
+            <li>Full throughput, no admission-control ceiling beyond what you configure</li>
+            <li>Licensed for commercial production use</li>
+            <li>Enterprise support</li>
+          </ul>
+        </div>
+      </div>
+      <p class="pricingNote">
+        Developer's connection/instance/backend limits are real, locally-enforced caps — not a
+        time-limited trial and not a phone-home metering service. They're enough to run
+        applications, demos, benchmarks, and a genuine three-instance HA/failover test; a
+        meaningful production deployment will reach them quickly by design.
+      </p>
+    </section>
+
+    <section class="tool" id="polyadvisor">
+      <div class="kicker">
+        <span class="num">03</span>
         <span class="badge">ghcr.io/polygres26/polyadvisor</span>
       </div>
       <h2>PolyAdvisor</h2>
@@ -777,7 +847,7 @@
 
     <section class="tool" id="faq">
       <div class="kicker">
-        <span class="num">03</span>
+        <span class="num">04</span>
       </div>
       <h2>Common questions</h2>
       <ul class="usecases">
@@ -788,6 +858,7 @@
         <li><span class="uc-body"><span class="uc-title">Can PolyWire connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?</span><span class="uc-desc">Yes — see <a href="CONNECTING.md">CONNECTING.md</a> for a worked example and the real provider-specific gotchas (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI) for each.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Does PolyWire cache query results?</span><span class="uc-desc">Yes — an embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres, with no application-side caching code to write or invalidate. See "Cache hit vs. Postgres round trip, per protocol" above for real measured numbers across every protocol.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">What security features does PolyWire actually have wired in, not just documented?</span><span class="uc-desc">A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth — each scoped honestly, including what's opt-in or narrower than the feature name might suggest. See "Security" above for the exact scope of each.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is PolyWire free to use?</span><span class="uc-desc">Yes — the Developer edition is free forever with every protocol and every feature enabled, capped at 25 concurrent connections per instance, 3 instances, and 3 Postgres backends, for evaluation and development use. See "Pricing" above for the full comparison against Enterprise.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is PolyAdvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it.</span></span></li>
       </ul>
     </section>
@@ -838,6 +909,11 @@
           "@type": "Question",
           "name": "What security features does PolyWire actually have wired in, not just documented?",
           "acceptedAnswer": { "@type": "Answer", "text": "A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth -- each scoped honestly, including what's opt-in or narrower than the feature name might suggest." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is PolyWire free to use?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- the Developer edition is free forever with every protocol and every feature enabled, capped at 25 concurrent connections per instance, 3 instances, and 3 Postgres backends, for evaluation and development use." }
         },
         {
           "@type": "Question",
