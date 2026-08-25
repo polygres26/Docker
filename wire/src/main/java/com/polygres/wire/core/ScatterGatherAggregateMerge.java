@@ -96,9 +96,7 @@ final class ScatterGatherAggregateMerge {
             }
             String funcName = fn.group(1).toUpperCase(Locale.ROOT);
             if (!MERGEABLE_AGGREGATES.contains(funcName)) {
-                throw new SQLException("scatter-gather: \"" + funcName + "(...)\" is not a supported "
-                        + "aggregate for cross-shard merging (only COUNT/SUM/AVG/MIN/MAX) -- "
-                        + "run this against a single shard instead of a shard group");
+                throw ErrorCatalog.sqlException("ERR_SCATTER_UNSUPPORTED_AGGREGATE", funcName);
             }
             int argStart = fn.end();
             int argEnd = matchingCloseParen(withoutAlias, argStart - 1);
@@ -107,9 +105,7 @@ final class ScatterGatherAggregateMerge {
             }
             String arg = withoutAlias.substring(argStart, argEnd).strip();
             if (arg.toUpperCase(Locale.ROOT).startsWith("DISTINCT ") || arg.equalsIgnoreCase("DISTINCT")) {
-                throw new SQLException("scatter-gather: " + funcName + "(DISTINCT ...) can't be correctly "
-                        + "merged across shards (a distinct count/aggregate needs the full set of values, "
-                        + "not a per-shard partial) -- run this against a single shard instead of a shard group");
+                throw ErrorCatalog.sqlException("ERR_SCATTER_DISTINCT_UNSUPPORTED", funcName);
             }
             anyAggregate = true;
             AggKind kind = AggKind.valueOf(funcName);

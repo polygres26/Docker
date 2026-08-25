@@ -29,7 +29,7 @@ public final class DbLinkStage implements PipelineStage {
                 BackendTarget target = registry.get(linkName);
                 if (target == null) {
                     
-                    throw new SQLException("ORA-02019: database link not found: " + linkName);
+                    throw ErrorCatalog.sqlException("ERR_DBLINK_NOT_FOUND", linkName);
                 }
                 
                 String rewritten = sql.substring(0, matcher.start(2) - 1) + sql.substring(matcher.end(2));

@@ -1,6 +1,7 @@
 package com.polygres.wire.xa;
 
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.ErrorCatalog;
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.XAConnection;
@@ -15,8 +16,7 @@ public final class XaBackendFactory {
     public static XaBranch open(BackendTarget target) throws SQLException {
         String url = target.jdbcUrl();
         if (url == null || !url.startsWith("jdbc:postgresql:")) {
-            throw new SQLException("XA unsupported for backend \"" + target.name()
-                    + "\": not a Postgres JDBC URL (" + url + ") — PolyWire's XA coordinator is Postgres-only");
+            throw ErrorCatalog.sqlException("ERR_XA_NOT_POSTGRES_URL", target.name(), url);
         }
         return openInternal(url, target.user(), target.password());
     }
@@ -30,8 +30,7 @@ public final class XaBackendFactory {
      * whatever that name currently resolves to. */
     public static XaBranch openDirect(String jdbcUrl, String user, String password) throws SQLException {
         if (jdbcUrl == null || !jdbcUrl.startsWith("jdbc:postgresql:")) {
-            throw new SQLException("XA unsupported: not a Postgres JDBC URL (" + jdbcUrl
-                    + ") — PolyWire's XA coordinator is Postgres-only");
+            throw ErrorCatalog.sqlException("ERR_XA_NOT_POSTGRES_URL_DIRECT", jdbcUrl);
         }
         return openInternal(jdbcUrl, user, password);
     }

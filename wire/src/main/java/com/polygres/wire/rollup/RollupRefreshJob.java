@@ -2,6 +2,7 @@ package com.polygres.wire.rollup;
 
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.ErrorCatalog;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -64,8 +65,7 @@ public final class RollupRefreshJob implements AutoCloseable {
     private void refresh(RollupDefinition def) throws SQLException {
         BackendTarget target = backendRegistry.get(def.backendName());
         if (target == null) {
-            throw new SQLException("rollup \"" + def.name() + "\" references backend \"" + def.backendName()
-                    + "\", which isn't a configured POLYWIRE_BACKENDS entry");
+            throw ErrorCatalog.sqlException("ERR_ROLLUP_UNKNOWN_BACKEND", def.name(), def.backendName());
         }
         try (Connection connection = target.open(); Statement st = connection.createStatement()) {
             st.executeUpdate(def.dropTableSql());

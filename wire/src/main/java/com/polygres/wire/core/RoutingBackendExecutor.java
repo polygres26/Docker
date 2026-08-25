@@ -129,7 +129,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         }
         BackendTarget target = registry.resolveForRouting(targetName);
         if (target == null) {
-            throw new SQLException("router assigned unknown backend \"" + targetName + "\"");
+            throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", targetName);
         }
         if (transactionConnections == null) {
             return executeOnFreshConnection(target, statement);
@@ -155,11 +155,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     private ExecutionResult executeScatterGather(Statement statement) throws SQLException {
         if (!statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {
-            throw new SQLException("scatter-gather only supports SELECT, got: " + statement.sqlText());
+            throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
         }
         List<String> shardNames = registry.shardGroup();
         if (shardNames.isEmpty()) {
-            throw new SQLException("router assigned scatter-gather but POLYWIRE_SHARD_BACKENDS is not configured");
+            throw ErrorCatalog.sqlException("ERR_SCATTER_NOT_CONFIGURED");
         }
 
         // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this
@@ -187,7 +187,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             for (String shardName : shardNames) {
                 BackendTarget target = registry.resolveForRouting(shardName);
                 if (target == null) {
-                    throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
+                    throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
                 }
                 Statement rewritten = statement.withSqlText(plan.rewrittenSql());
                 ExecutionResult shardResult = executeOnFreshConnection(target, rewritten);
@@ -201,7 +201,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             for (String shardName : shardNames) {
                 BackendTarget target = registry.resolveForRouting(shardName);
                 if (target == null) {
-                    throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
+                    throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
                 }
                 ExecutionResult result = executeOnFreshConnection(target, coreStatement);
                 if (columns == null) {

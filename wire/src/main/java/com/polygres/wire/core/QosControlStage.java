@@ -88,7 +88,7 @@ public final class QosControlStage implements PipelineStage {
         if (!bucket.awaitToken(limit)) {
             counters.rejected().increment();
             record(statement.tenantId(), workloadClass, false);
-            throw new SQLException("rate limit exceeded for workload class \"" + workloadClass + "\"", "57014");
+            throw ErrorCatalog.sqlExceptionWithState("ERR_QOS_RATE_LIMIT", "57014", workloadClass);
         }
 
         String targetBackend = statement.targetBackend();
@@ -97,8 +97,8 @@ public final class QosControlStage implements PipelineStage {
             if (poolStats != null && poolStats.threadsAwaitingConnection() >= poolWaitThreshold) {
                 counters.rejected().increment();
                 record(statement.tenantId(), workloadClass, false);
-                throw new SQLException("backend \"" + targetBackend + "\" pool saturated ("
-                        + poolStats.threadsAwaitingConnection() + " already waiting)", "57014");
+                throw ErrorCatalog.sqlExceptionWithState("ERR_QOS_POOL_SATURATED", "57014",
+                        targetBackend, poolStats.threadsAwaitingConnection());
             }
         }
 

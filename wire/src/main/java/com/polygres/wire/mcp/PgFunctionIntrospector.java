@@ -1,5 +1,6 @@
 package com.polygres.wire.mcp;
 
+import com.polygres.wire.core.ErrorCatalog;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -28,7 +29,7 @@ final class PgFunctionIntrospector {
             stmt.setString(2, functionName);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (!rs.next()) {
-                    throw new SQLException("no such function/procedure: " + schema + "." + functionName, "42883");
+                    throw ErrorCatalog.sqlExceptionWithState("ERR_FUNCTION_NOT_FOUND", "42883", schema, functionName);
                 }
                 specificName = rs.getString("specific_name");
                 isProcedure = "PROCEDURE".equalsIgnoreCase(rs.getString("routine_type"));

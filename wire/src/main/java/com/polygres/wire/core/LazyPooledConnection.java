@@ -36,7 +36,7 @@ public final class LazyPooledConnection implements AutoCloseable {
             if (schemaUsername != null) {
                 String schema = schemaUsername.toLowerCase();
                 if (!SAFE_IDENTIFIER.matcher(schema).matches()) {
-                    throw new SQLException("unsupported username as schema name: " + schemaUsername);
+                    throw ErrorCatalog.sqlException("ERR_UNSUPPORTED_SCHEMA_USERNAME", schemaUsername);
                 }
                 try (Statement stmt = current.createStatement()) {
                     stmt.execute("SET search_path TO \"" + schema + "\", public");

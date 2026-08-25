@@ -148,8 +148,7 @@ final class ScatterGatherOrderLimit {
             if (ordinal >= 1 && ordinal <= columns.size()) {
                 return ordinal - 1;
             }
-            throw new SQLException("scatter-gather: ORDER BY position " + ordinal
-                    + " is out of range for a " + columns.size() + "-column result");
+            throw ErrorCatalog.sqlException("ERR_SCATTER_ORDERBY_POSITION_RANGE", ordinal, columns.size());
         }
         String unquoted = trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2
                 ? trimmed.substring(1, trimmed.length() - 1)
@@ -159,10 +158,7 @@ final class ScatterGatherOrderLimit {
                 return i;
             }
         }
-        throw new SQLException("scatter-gather: ORDER BY \"" + ref + "\" doesn't match any result column by "
-                + "name or position -- cross-shard ORDER BY can only be applied to an actual selected "
-                + "column/alias, not an arbitrary expression; run this against a single shard instead of "
-                + "a shard group if you need to sort by an expression");
+        throw ErrorCatalog.sqlException("ERR_SCATTER_ORDERBY_NO_MATCH", ref);
     }
 
     @SuppressWarnings("unchecked")

@@ -68,8 +68,8 @@ public final class AccessControlStage implements PipelineStage {
                 audit(com.polygres.wire.audit.AuditEvent.Type.ACCESS_DENIED, accessContext.userId(),
                         "missing required attribute \"" + rule.requiredAttribute() + "\" for a row-restricted table",
                         java.util.Map.of("filterColumn", rule.filterColumn()));
-                throw new SQLException("statement rejected: missing required access attribute \""
-                        + rule.requiredAttribute() + "\" for a row-restricted table", "42501");
+                throw ErrorCatalog.sqlExceptionWithState(
+                        "ERR_ACCESS_MISSING_ATTRIBUTE", "42501", rule.requiredAttribute());
             }
             WhereClauseInjector.Injected injected = WhereClauseInjector.inject(
                     statement.sqlText(), statement.bindParams(), rule.filterColumn(), value);
@@ -104,8 +104,8 @@ public final class AccessControlStage implements PipelineStage {
                             accessContext.attributes());
                     audit(com.polygres.wire.audit.AuditEvent.Type.ACCESS_DENIED, accessContext.userId(),
                             "not entitled to column \"" + column + "\"", java.util.Map.of("column", column));
-                    throw new SQLException(
-                            "statement rejected: caller is not entitled to column \"" + column + "\"", "42501");
+                    throw ErrorCatalog.sqlExceptionWithState(
+                            "ERR_ACCESS_COLUMN_NOT_ENTITLED", "42501", column);
                 }
             }
         }

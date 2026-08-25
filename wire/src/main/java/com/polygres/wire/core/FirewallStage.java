@@ -95,7 +95,7 @@ public final class FirewallStage implements PipelineStage {
         String sql = statement.sqlText();
         if (STACKED_QUERY.matcher(sql).find()) {
             log.warn("firewall: rejecting statement -- stacked-query pattern detected");
-            throw new SQLException("statement rejected by firewall: stacked query detected", "42000");
+            throw ErrorCatalog.sqlExceptionWithState("ERR_FIREWALL_STACKED_QUERY", "42000");
         }
         String statementType = detectStatementType(sql);
         List<Rule> currentRules = rules;
@@ -104,8 +104,8 @@ public final class FirewallStage implements PipelineStage {
                 if (rule.action() == Action.DENY) {
                     log.warn("firewall: rejecting statement -- matched deny rule id={} ({})",
                             rule.id(), rule.description() == null ? "no description" : rule.description());
-                    throw new SQLException("statement rejected by firewall rule"
-                            + (rule.description() == null ? "" : ": " + rule.description()), "42000");
+                    throw ErrorCatalog.sqlExceptionWithState("ERR_FIREWALL_RULE_MATCH", "42000",
+                            rule.description() == null ? "" : ": " + rule.description());
                 }
                 break;
             }

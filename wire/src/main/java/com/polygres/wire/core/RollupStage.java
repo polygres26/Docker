@@ -139,7 +139,7 @@ public final class RollupStage implements PipelineStage {
             RelRoot root = planner.rel(validated);
             return root.rel;
         } catch (Exception e) {
-            throw new SQLException("rollup: failed to plan \"" + sql + "\": " + e.getMessage(), e);
+            throw ErrorCatalog.sqlExceptionWithCause("ERR_ROLLUP_PLAN_FAILED", e, sql, e.getMessage());
         }
     }
 }

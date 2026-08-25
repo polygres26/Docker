@@ -1,5 +1,6 @@
 package com.polygres.wire.orawire.backend;
 
+import com.polygres.wire.core.ErrorCatalog;
 import com.polygres.wire.server.ServerOptions;
 
 import java.sql.Connection;
@@ -76,7 +77,7 @@ public final class NativeOracleExecutor implements AutoCloseable {
 
     public NativeQueryResult fetchMore(int fetchArraySize) throws SQLException {
         if (openResultSet == null) {
-            throw new SQLException("fetchMore() with no open native cursor");
+            throw ErrorCatalog.sqlException("ERR_NATIVE_NO_OPEN_CURSOR");
         }
         session.clear();
         if (fetchArraySize > 0) {
@@ -140,7 +141,7 @@ public final class NativeOracleExecutor implements AutoCloseable {
             session = captureProxy.expectNextSession();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new SQLException("interrupted waiting for native capture session", e);
+            throw ErrorCatalog.sqlExceptionWithCause("ERR_NATIVE_CAPTURE_INTERRUPTED", e);
         }
         try {
             connection = connectFuture.join();
@@ -148,7 +149,7 @@ public final class NativeOracleExecutor implements AutoCloseable {
             if (e.getCause() instanceof SQLException sqlEx) {
                 throw sqlEx;
             }
-            throw new SQLException("native connect failed", e.getCause());
+            throw ErrorCatalog.sqlExceptionWithCause("ERR_NATIVE_CONNECT_FAILED", e.getCause());
         }
         connection.setAutoCommit(true);
         session.clear();
