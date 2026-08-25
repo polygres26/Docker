@@ -54,7 +54,13 @@ public final class SqsErrorMapper {
             // not because the string actually changes.
             Map.entry("57P01", new NativeError(DEFAULT_ERROR_TYPE, DEFAULT_ERROR_TYPE, DEFAULT_STATUS)),
             Map.entry("08006", new NativeError(DEFAULT_ERROR_TYPE, DEFAULT_ERROR_TYPE, DEFAULT_STATUS)),
-            Map.entry("53300", new NativeError(DEFAULT_ERROR_TYPE, DEFAULT_ERROR_TYPE, DEFAULT_STATUS)));
+            Map.entry("53300", new NativeError(DEFAULT_ERROR_TYPE, DEFAULT_ERROR_TYPE, DEFAULT_STATUS)),
+
+            // sqlclient_unable_to_establish_sqlconnection -- a NEW connection attempt failing to
+            // establish (distinct from 08006/57P01's already-open-connection-dying), confirmed
+            // live via mongowire's retryable-reads hitting this specific code on its retry attempt
+            // once the backend is genuinely down -- see SqlStateErrorMapper's matching entry.
+            Map.entry("08001", new NativeError(DEFAULT_ERROR_TYPE, DEFAULT_ERROR_TYPE, DEFAULT_STATUS)));
 
     public static String jsonErrorType(String sqlState) {
         NativeError n = sqlState == null ? null : TABLE.get(sqlState);

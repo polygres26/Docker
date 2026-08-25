@@ -128,7 +128,16 @@ public final class SqlStateErrorMapper {
             // up for a driver's disconnect-and-reconnect logic to key off (ORA-03113 is the
             // canonical example: Oracle drivers check for it specifically to decide whether to
             // transparently reconnect rather than surface the error to the application).
-            Map.entry("57P01", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)));
+            Map.entry("57P01", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)),
+
+            // sqlclient_unable_to_establish_sqlconnection -- distinct from 08006/57P01 above (an
+            // already-open connection dying) in that this is a NEW connection attempt failing to
+            // even establish, once the backend is genuinely down. Confirmed live while verifying
+            // mongowire's own connection-lost coverage: a client with automatic retry (MongoDB's
+            // retryable reads, on by default) hits this SQLSTATE specifically on its retry attempt,
+            // after the first attempt already got 57P01 -- HikariCP's own pool-exhaustion exception
+            // carries this code once it can no longer open a fresh physical connection at all.
+            Map.entry("08001", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)));
 
     // foreign_key_violation (23503) is the one SQLSTATE in this table where Postgres genuinely
     // collapses a real distinction Oracle and MySQL both keep: an INSERT/UPDATE whose new row

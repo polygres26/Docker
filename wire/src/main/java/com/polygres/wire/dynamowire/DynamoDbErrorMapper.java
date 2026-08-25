@@ -69,7 +69,13 @@ public final class DynamoDbErrorMapper {
             // than falling through to the generic common-AWS InternalFailure default.
             Map.entry("57P01", new NativeError("InternalServerError", 500)),
             Map.entry("08006", new NativeError("InternalServerError", 500)),
-            Map.entry("53300", new NativeError("InternalServerError", 500)));
+            Map.entry("53300", new NativeError("InternalServerError", 500)),
+
+            // sqlclient_unable_to_establish_sqlconnection -- a NEW connection attempt failing to
+            // establish (distinct from 08006/57P01's already-open-connection-dying), confirmed
+            // live via mongowire's retryable-reads hitting this specific code on its retry attempt
+            // once the backend is genuinely down -- see SqlStateErrorMapper's matching entry.
+            Map.entry("08001", new NativeError("InternalServerError", 500)));
 
     public static String errorType(String sqlState) {
         NativeError n = sqlState == null ? null : TABLE.get(sqlState);

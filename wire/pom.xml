@@ -57,7 +57,12 @@
     <jetty.version>11.0.24</jetty.version>
     <hikaricp.version>5.1.0</hikaricp.version>
     <opentelemetry.version>1.43.0</opentelemetry.version>
-    <bson.version>5.2.1</bson.version>
+    <!-- Kept in lockstep with mongodb-driver-sync's own version below (both org.mongodb
+         artifacts): a mismatch here is a real, silent binary-incompatibility trap. An older
+         bson.jar on the classpath alongside a newer mongodb-driver-sync produced a genuine
+         NoSuchMethodError (org.bson.ByteBuf.putInt(int)) at runtime, not a compile-time error,
+         caught by MongoErrorMappingIntegrationTest actually running against a real driver. -->
+    <bson.version>5.5.1</bson.version>
   </properties>
 
   <dependencies>
@@ -311,6 +316,16 @@
       <groupId>org.opensearch.client</groupId>
       <artifactId>opensearch-rest-client</artifactId>
       <version>2.12.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- The real MongoDB client driver, test scope only. The main-scope org.mongodb:bson
+           dependency elsewhere in this file is BSON-codec-only, explicitly not this; see that
+           dependency's own comment. This is the first real MongoDB client library any mongowire
+           test has been verified against (mongowire has no integration test at all before this). -->
+      <groupId>org.mongodb</groupId>
+      <artifactId>mongodb-driver-sync</artifactId>
+      <version>5.5.1</version>
       <scope>test</scope>
     </dependency>
   </dependencies>

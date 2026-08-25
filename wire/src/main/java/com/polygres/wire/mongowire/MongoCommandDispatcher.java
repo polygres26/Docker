@@ -55,7 +55,8 @@ final class MongoCommandDispatcher {
             return error(badFilter.getMessage(), 9);
         } catch (SQLException e) {
             log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
-            return error("Postgres error: " + e.getMessage(), 8);
+            return error("Postgres error: " + e.getMessage(),
+                    MongoErrorMapper.code(e.getSQLState()), MongoErrorMapper.codeName(e.getSQLState()));
         } finally {
             // Only the real data-plane commands -- hello/ping/buildinfo/etc. are driver handshake
             // noise on every connection, not something a traffic dashboard should show as
@@ -152,10 +153,22 @@ final class MongoCommandDispatcher {
     }
 
     private static BsonDocument error(String message, int code) {
+        return error(message, code, null);
+    }
+
+    /** {@code codeName} is real MongoDB's own second, string-typed identifier for the same error
+     * -- a genuine command-error reply always carries both, not code alone (see {@link
+     * MongoErrorMapper}'s javadoc). Callers that only have a bare numeric code (the handful of
+     * fixed, hand-picked codes elsewhere in this class, like {@link #commandNotFound}) pass {@code
+     * null} via the other overload rather than inventing a codeName that isn't real. */
+    private static BsonDocument error(String message, int code, String codeName) {
         BsonDocument doc = new BsonDocument();
         doc.put("ok", new BsonDouble(0.0));
         doc.put("errmsg", new BsonString(message));
         doc.put("code", new BsonInt32(code));
+        if (codeName != null) {
+            doc.put("codeName", new BsonString(codeName));
+        }
         return doc;
     }
 
@@ -195,6 +208,12 @@ final class MongoCommandDispatcher {
             } catch (SQLException e) {
                 BsonDocument werr = new BsonDocument();
                 werr.put("index", new BsonInt32(i));
+                // Real MongoDB per-item writeErrors always carry code/codeName, not just errmsg --
+                // this was missing entirely before, so a real driver's own per-item error handling
+                // (pymongo's BulkWriteError.details['writeErrors'][i]['code'], etc.) had nothing
+                // to key off.
+                werr.put("code", new BsonInt32(MongoErrorMapper.code(e.getSQLState())));
+                werr.put("codeName", new BsonString(MongoErrorMapper.codeName(e.getSQLState())));
                 werr.put("errmsg", new BsonString(e.getMessage()));
                 writeErrors.add(werr);
             }

@@ -47,7 +47,13 @@ public final class OpenSearchErrorMapper {
             // can't be reached to service the request.
             Map.entry("57P01", new NativeError("no_shard_available_action_exception", 503)),
             Map.entry("08006", new NativeError("no_shard_available_action_exception", 503)),
-            Map.entry("53300", new NativeError("no_shard_available_action_exception", 503)));
+            Map.entry("53300", new NativeError("no_shard_available_action_exception", 503)),
+
+            // sqlclient_unable_to_establish_sqlconnection -- a NEW connection attempt failing to
+            // establish (distinct from 08006/57P01's already-open-connection-dying), confirmed
+            // live via mongowire's retryable-reads hitting this specific code on its retry attempt
+            // once the backend is genuinely down -- see SqlStateErrorMapper's matching entry.
+            Map.entry("08001", new NativeError("no_shard_available_action_exception", 503)));
 
     public static String errorType(String sqlState) {
         NativeError n = sqlState == null ? null : TABLE.get(sqlState);
