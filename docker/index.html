@@ -545,14 +545,13 @@
         <li><span class="uc-body"><span class="uc-title">Crash-safe recovery, even after a switchover</span><span class="uc-desc">An in-doubt two-phase-commit branch records the exact backend (jdbc URL, user, password) it was prepared against, not just its name — so if that name gets repointed to a different physical target between the crash and the next restart (a switchover, a credential rotation, a config edit), startup recovery still reconnects to where the branch actually lives, not wherever the name currently resolves to.</span></span></li>
       </ul>
       <p class="rttNote">
-        <b>Scope: the Postgres, SQL Server, MySQL, and Oracle wire protocols only.</b> Drain/
-        undrain, fallback redirection, and auto-failover all act on the same statement-routing
-        layer those four protocols share. The DynamoDB, MongoDB, SQS, and OpenSearch wire
-        protocols resolve backends directly by name today and don't participate in this yet — a
-        backend serving one of those protocols can still be drained from the admin API's point of
-        view (its connection pool empties the same way), but traffic on those four protocols keeps
-        connecting to it directly regardless of drain/down state until routing-layer support is
-        added for them too.
+        <b>Every wire protocol participates — Postgres, SQL Server, MySQL, Oracle, MongoDB,
+        DynamoDB, SQS, and OpenSearch alike.</b> Drain/undrain, fallback redirection, and
+        auto-failover all resolve backends through the same registry lookup every protocol's
+        store now shares. A backend that starts serving traffic for the first time after a
+        switchover — a fallback that's a genuinely separate Postgres, not necessarily a replica —
+        gets its schema/catalog tables created there automatically the first time routing actually
+        lands on it, not never.
       </p>
     </section>
 
