@@ -264,7 +264,7 @@
           <li><a href="#use-cases">Use cases</a></li>
           <li><a href="#architecture">Architecture</a></li>
           <li><a href="#admin-console-polywire">Admin console</a></li>
-          <li><a href="#cache-vs-round-trip">Cache vs. round trip</a></li>
+          <li><a href="#cache-vs-round-trip">PolyCache vs. round trip</a></li>
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
           <li><a href="#rollups">Rollups</a></li>
@@ -280,7 +280,7 @@
         <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
         <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall.</p></div>
         <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real Postgres access through the same SQL firewall, ACL, and QoS controls as every other client — not a separate, unguarded path to your data.</p></div>
-        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, caching, and rollups.</p></div>
+        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, PolyCache, and rollups.</p></div>
         <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
         <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
         <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
@@ -294,7 +294,7 @@
         <li><span class="uc-body"><span class="uc-title">Connection pooling for Postgres</span><span class="uc-desc">Every backend is fronted by a bounded connection pool — many client connections share a small, fixed set of real Postgres connections, the same problem PgBouncer solves, built into the same gateway that's already translating and firewalling the traffic.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Horizontal sharding, by real bound values</span><span class="uc-desc">Route by schema, predicate, or a real bound parameter value — decoded from each protocol's own wire format across Postgres, Oracle, SQL Server, and MySQL, not just SQL text — with genuine cross-shard merge (not concatenation) for aggregates, sorted/paginated hits, and DynamoDB/MongoDB/SQS/OpenSearch sharding alongside SQL. See "Sharding" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Query result caching</span><span class="uc-desc">An embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Query result caching (PolyCache)</span><span class="uc-desc">PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
@@ -339,9 +339,10 @@
         <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, and a sidebar that groups controls the same way this page does: Security (SQL firewall, ACL, OAuth) as its own labeled section, Router Rules for sharding/routing targets under Traffic, deployment topology, backends, queues, and LLM configuration for dialect translation — all in one place, not scattered across each protocol's own tooling.</figcaption>
       </figure>
 
-      <h3 class="subhead" id="cache-vs-round-trip">Cache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="cache-vs-round-trip">PolyCache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        The same admin console tracks this per wire protocol: how long a cache hit takes against
+        <b>PolyCache</b> is PolyWire's embedded, distributed query result cache — the same admin
+        console tracks this per wire protocol: how long a cache hit takes against
         a real Postgres read or write. Measured on a local loopback deployment (client, PolyWire,
         and Postgres all on one machine), 30+ samples per cell — every protocol's connections were
         opened together and warmed with an equal number of throwaway calls each before any sample
@@ -735,7 +736,7 @@
             <li>SQL firewall, connection ACL, and every policy engine</li>
             <li>Routing and sharding, all strategies</li>
             <li>QoS admission control</li>
-            <li>Query result caching</li>
+            <li>Query result caching (PolyCache)</li>
             <li>Prometheus <code style="display:inline;padding:1px 6px;">/metrics</code> and OTEL export</li>
             <li>HA, config propagation, and planned/unplanned failover — up to 3 instances</li>
             <li class="limit">Up to 25 concurrent client connections per instance</li>
@@ -879,7 +880,7 @@
         <li><span class="uc-body"><span class="uc-title">Does PolyWire support row-level security?</span><span class="uc-desc">Yes, for the Postgres, SQL Server, Oracle, and MySQL wire protocols — a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering. See "Security" above for the exact authentication requirements this needs.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API stops routing new statements to that backend in favor of a configured fallback, waits for a real zero-replication-lag cutover, and only then confirms the switchover is safe to proceed — see "Planned and unplanned outages" above.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Can PolyWire connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?</span><span class="uc-desc">Yes — see <a href="CONNECTING.md">CONNECTING.md</a> for a worked example and the real provider-specific gotchas (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI) for each.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does PolyWire cache query results?</span><span class="uc-desc">Yes — an embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level: any write against a cached table evicts every cached entry for that table, whether the write binds parameters or sends literal SQL values — no application-side caching code to write or invalidate. See "Cache hit vs. Postgres round trip, per protocol" above for real measured numbers across every protocol.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does PolyWire cache query results?</span><span class="uc-desc">Yes — PolyCache, PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level: any write against a cached table evicts every cached entry for that table, whether the write binds parameters or sends literal SQL values — no application-side caching code to write or invalidate. See "PolyCache hit vs. Postgres round trip, per protocol" above for real measured numbers across every protocol.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">What security features does PolyWire actually have wired in, not just documented?</span><span class="uc-desc">A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth — each scoped honestly, including what's opt-in or narrower than the feature name might suggest. See "Security" above for the exact scope of each.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is PolyWire free to use?</span><span class="uc-desc">Yes — the Developer edition is free forever with every protocol and every feature enabled, capped at 25 concurrent connections per instance, 3 instances, and 3 Postgres backends, for evaluation and development use. See "Pricing" above for the full comparison against Enterprise.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is PolyAdvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it.</span></span></li>
@@ -968,7 +969,7 @@
         {
           "@type": "Question",
           "name": "Does PolyWire cache query results?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- an embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level: any write against a cached table evicts every cached entry for that table, whether the write binds parameters or sends literal SQL values." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- PolyCache, PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level: any write against a cached table evicts every cached entry for that table, whether the write binds parameters or sends literal SQL values." }
         },
         {
           "@type": "Question",
