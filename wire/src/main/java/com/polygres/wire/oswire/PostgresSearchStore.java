@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.ShardingStrategy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -66,10 +67,25 @@ import org.slf4j.LoggerFactory;
  * k-NN sub-query), so a hybrid query combining {@code match} and {@code knn} gets real full-text
  * relevance fused with real vector similarity.
  *
- * <p>No sharding yet, unlike dynamowire/sqswire/mongowire -- V1/V2 always resolve
- * {@link BackendRegistry#DEFAULT_BACKEND_NAME}. Search doesn't have dynamowire's natural
- * per-item partition key to shard by (a query can span the whole collection), so sharding this
- * store is a genuinely separate design question, deliberately deferred rather than half-done.
+ * <p><b>Sharding</b> (V3): {@code doc_id} hashes across {@code backendRegistry.shardGroup()} for
+ * {@link #indexDocument}/{@link #getDocument}/{@link #deleteDocument} -- the same
+ * {@link ShardingStrategy#hash} every other sharded store (dynamowire/mongowire/sqswire) already
+ * uses, applied to the one key a document lookup always has. Structured search (not vector, not
+ * hybrid -- see below) fans out to every shard and merges centrally via
+ * {@link SearchScatterMerge}: hits are globally re-sorted/re-paginated, {@code total} is summed,
+ * and aggregations are merged per {@link Aggregation.MetricType} (including a real weighted merge
+ * for {@code AVG}, not an average-of-averages -- see {@link SearchScatterMerge}'s javadoc).
+ * {@code ensureCollection} creates the table on every shard backend (plus, unlike
+ * dynamowire/sqswire, no separate always-default catalog table is needed here -- there's no
+ * search-side metadata to keep off the shard group).
+ *
+ * <p><b>Not yet sharded, deliberately refused rather than silently wrong when a shard group is
+ * configured:</b> vector (k-NN) search and hybrid search. Both are real, separate design problems
+ * -- k-NN's linear scan would need per-shard candidate gathering with the same correctness-over-
+ * pushdown care structured search's merge already takes, and hybrid search's score fusion runs
+ * over an already-limited per-sub-query candidate pool that interacts with sharding in a way that
+ * needs its own pass, not a quick extension of this one. Both throw a clear
+ * {@link OpenSearchException} rather than quietly returning only the default backend's rows.
  */
 public final class PostgresSearchStore {
 
@@ -91,11 +107,56 @@ public final class PostgresSearchStore {
     }
 
     private Connection open() throws SQLException {
+        return open(defaultTarget());
+    }
+
+    private Connection open(BackendTarget target) throws SQLException {
+        return target.open();
+    }
+
+    private BackendTarget defaultTarget() {
         BackendTarget target = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
         if (target == null) {
             throw new IllegalStateException("oswire: no default backend configured");
         }
-        return target.open();
+        return target;
+    }
+
+    private List<String> shardGroup() {
+        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+    }
+
+    /** Every shard target, resolved fresh from the registry -- live-reloadable, matching
+     * dynamowire/sqswire's own "re-read on every call" convention. Falls back to
+     * {@code [defaultTarget()]} when no shard group is configured, so callers can always iterate
+     * "the shards this collection lives on" without a separate unsharded branch. */
+    private List<BackendTarget> allShardTargets() {
+        List<String> group = shardGroup();
+        if (group.isEmpty()) {
+            return List.of(defaultTarget());
+        }
+        List<BackendTarget> targets = new ArrayList<>();
+        for (String name : group) {
+            BackendTarget target = backendRegistry.get(name);
+            if (target == null) {
+                throw new IllegalStateException("oswire: shard group references unknown backend \"" + name + "\"");
+            }
+            targets.add(target);
+        }
+        return targets;
+    }
+
+    private BackendTarget targetForDoc(String docId) {
+        List<String> group = shardGroup();
+        if (group.isEmpty()) {
+            return defaultTarget();
+        }
+        String shardName = ShardingStrategy.hash(group).resolve(docId);
+        BackendTarget target = backendRegistry.get(shardName);
+        if (target == null) {
+            throw new IllegalStateException("oswire: shard group references unknown backend \"" + shardName + "\"");
+        }
+        return target;
     }
 
     static String pgTableName(String collection) {
@@ -114,19 +175,23 @@ public final class PostgresSearchStore {
         if (ensuredCollections.putIfAbsent(table, Boolean.TRUE) != null) {
             return;
         }
-        try (Connection c = open(); var st = c.createStatement()) {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
-                    + "doc_id TEXT PRIMARY KEY, "
-                    + "source JSONB NOT NULL, "
-                    + "embedding JSONB, "
-                    + "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+        // Created on every shard target (matching dynamowire/sqswire's createTable) -- a document
+        // can hash to any shard, so every shard needs the table before any write to it can land.
+        for (BackendTarget target : allShardTargets()) {
+            try (Connection c = open(target); var st = c.createStatement()) {
+                st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
+                        + "doc_id TEXT PRIMARY KEY, "
+                        + "source JSONB NOT NULL, "
+                        + "embedding JSONB, "
+                        + "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+            }
         }
     }
 
     public void indexDocument(String collection, String docId, JsonObject source, float[] vector) throws SQLException {
         ensureCollection(collection);
         String table = pgTableName(collection);
-        try (Connection c = open();
+        try (Connection c = open(targetForDoc(docId));
                 var ps = c.prepareStatement("INSERT INTO " + table + " (doc_id, source, embedding, updated_at) "
                         + "VALUES (?, ?::jsonb, ?::jsonb, now()) "
                         + "ON CONFLICT (doc_id) DO UPDATE SET source = EXCLUDED.source, "
@@ -141,7 +206,7 @@ public final class PostgresSearchStore {
     public JsonObject getDocument(String collection, String docId) throws SQLException {
         ensureCollection(collection);
         String table = pgTableName(collection);
-        try (Connection c = open();
+        try (Connection c = open(targetForDoc(docId));
                 var ps = c.prepareStatement("SELECT source FROM " + table + " WHERE doc_id = ?")) {
             ps.setString(1, docId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -154,7 +219,7 @@ public final class PostgresSearchStore {
     public boolean deleteDocument(String collection, String docId) throws SQLException {
         ensureCollection(collection);
         String table = pgTableName(collection);
-        try (Connection c = open();
+        try (Connection c = open(targetForDoc(docId));
                 var ps = c.prepareStatement("DELETE FROM " + table + " WHERE doc_id = ?")) {
             ps.setString(1, docId);
             return ps.executeUpdate() > 0;
@@ -164,8 +229,14 @@ public final class PostgresSearchStore {
     public SearchResult search(SearchRequest request) throws SQLException {
         ensureCollection(request.collection());
         String table = pgTableName(request.collection());
+        boolean sharded = !shardGroup().isEmpty();
 
         if (request.isHybrid()) {
+            if (sharded) {
+                throw new OpenSearchException("action_request_validation_exception",
+                        "oswire: hybrid search across a sharded collection is not supported yet -- see "
+                                + "PostgresSearchStore's class javadoc");
+            }
             if (!request.aggregations().isEmpty()) {
                 throw new OpenSearchException("action_request_validation_exception",
                         "oswire V2 doesn't support aggregations on a hybrid query -- run the aggregation as its "
@@ -174,6 +245,11 @@ public final class PostgresSearchStore {
             return searchHybrid(request);
         }
         if (request.isVectorSearch()) {
+            if (sharded) {
+                throw new OpenSearchException("action_request_validation_exception",
+                        "oswire: k-NN (vector) search across a sharded collection is not supported yet -- see "
+                                + "PostgresSearchStore's class javadoc");
+            }
             if (!request.aggregations().isEmpty()) {
                 throw new OpenSearchException("action_request_validation_exception",
                         "oswire V2 doesn't support aggregations on a k-NN query -- run the aggregation as its own "
@@ -183,12 +259,67 @@ public final class PostgresSearchStore {
             return searchByVector(table, request, where);
         }
         SqlFragment where = compileFilter(request.filter());
+        if (sharded) {
+            return searchStructuredSharded(table, request, where);
+        }
         SearchResult result = searchStructured(table, request, where);
         if (request.aggregations().isEmpty()) {
             return result;
         }
         List<AggregationResult> aggs = runAggregations(table, where, request.aggregations());
         return new SearchResult(result.hits(), result.total(), aggs);
+    }
+
+    /** Fans out a structured (non-vector, non-hybrid) search across every shard and merges
+     * centrally via {@link SearchScatterMerge} -- see this class's javadoc for the trade-offs
+     * (fetch-everything-then-merge, real weighted AVG). Each shard's own hit fetch is unpaginated
+     * (no LIMIT/OFFSET) since the global top-K can only be known after every shard's candidates
+     * are gathered; each shard's aggregation request runs the {@link SearchScatterMerge#expandForSharding}
+     * expanded shape so AVG can be merged correctly afterward. */
+    private SearchResult searchStructuredSharded(String table, SearchRequest request, SqlFragment where) throws SQLException {
+        List<BackendTarget> shards = allShardTargets();
+        List<SearchResult> perShardHits = new ArrayList<>();
+        List<List<AggregationResult>> perShardAggs = new ArrayList<>();
+        List<Aggregation> expandedAggs = SearchScatterMerge.expandForSharding(request.aggregations());
+        for (BackendTarget target : shards) {
+            perShardHits.add(searchStructuredForShard(target, table, request, where));
+            if (!expandedAggs.isEmpty()) {
+                perShardAggs.add(runAggregations(target, table, where, expandedAggs));
+            }
+        }
+        Comparator<SearchHit> comparator = SearchScatterMerge.comparatorFor(request.sort());
+        SearchResult merged = SearchScatterMerge.mergeHits(perShardHits, comparator, request.offset(), request.topK());
+        if (request.aggregations().isEmpty()) {
+            return merged;
+        }
+        List<AggregationResult> mergedAggs = SearchScatterMerge.mergeAcrossShards(request.aggregations(), perShardAggs);
+        return new SearchResult(merged.hits(), merged.total(), mergedAggs);
+    }
+
+    /** As {@link #searchStructured}, but against one specific shard and with no LIMIT/OFFSET --
+     * every matching row on this shard, for the caller to merge across all shards. */
+    private SearchResult searchStructuredForShard(BackendTarget target, String table, SearchRequest request,
+            SqlFragment where) throws SQLException {
+        ScoreFragment score = compileScore(request.filter());
+        String selectSql = "SELECT doc_id, source, (" + score.expr() + ") AS score FROM " + table + " WHERE " + where.sql();
+        try (Connection c = open(target)) {
+            long total;
+            try (var ps = prepare(c, "SELECT count(*) FROM " + table + " WHERE " + where.sql(), where.params());
+                    ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                total = rs.getLong(1);
+            }
+            List<SearchHit> hits = new ArrayList<>();
+            List<Object> params = new ArrayList<>(score.params());
+            params.addAll(where.params());
+            try (var ps = prepare(c, selectSql, params); ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    hits.add(new SearchHit(rs.getString(1), rs.getDouble(3),
+                            JsonParser.parseString(rs.getString(2)).getAsJsonObject()));
+                }
+            }
+            return new SearchResult(hits, total);
+        }
     }
 
     private SearchResult searchStructured(String table, SearchRequest request, SqlFragment where) throws SQLException {
@@ -425,7 +556,12 @@ public final class PostgresSearchStore {
      */
     private List<AggregationResult> runAggregations(String table, SqlFragment where, List<Aggregation> aggregations)
             throws SQLException {
-        try (Connection c = open()) {
+        return runAggregations(defaultTarget(), table, where, aggregations);
+    }
+
+    private List<AggregationResult> runAggregations(BackendTarget target, String table, SqlFragment where,
+            List<Aggregation> aggregations) throws SQLException {
+        try (Connection c = open(target)) {
             List<AggregationResult> results = new ArrayList<>();
             for (Aggregation agg : aggregations) {
                 results.add(runOneAggregation(c, table, where, agg));
