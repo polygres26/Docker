@@ -195,13 +195,27 @@
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
   footer a { color: var(--indigo); }
   a { color: var(--indigo); }
-  .contactCard { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); }
-  .contactCard p { margin: 0; color: var(--ink-dim); font-size: 15px; max-width: 46ch; }
-  .contactCard p b { color: var(--ink); font-weight: 600; }
-  #revealEmailBtn { font: inherit; font-weight: 600; font-size: 14px; padding: 11px 18px; border-radius: 7px; border: 1px solid var(--indigo); background: var(--indigo-soft); color: var(--indigo); cursor: pointer; white-space: nowrap; }
-  #revealEmailBtn:hover { background: var(--indigo); color: #fff; }
-  #emailReveal { font-family: var(--mono); font-size: 15px; }
-  #emailReveal a { color: var(--indigo); }
+  .contactForm { max-width: 520px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); display: flex; flex-direction: column; gap: 16px; }
+  .formRow { display: flex; flex-direction: column; gap: 6px; }
+  .formRow label { font-size: 13px; font-weight: 600; color: var(--ink-dim); }
+  .formRow input, .formRow select, .formRow textarea {
+    font: inherit; font-size: 14px; padding: 9px 11px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink); resize: vertical;
+  }
+  .formRow input:focus, .formRow select:focus, .formRow textarea:focus {
+    outline: none; border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-soft);
+  }
+  .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  #contactSubmitBtn {
+    align-self: flex-start; font: inherit; font-weight: 600; font-size: 14px;
+    padding: 11px 22px; border-radius: 7px; border: 1px solid var(--indigo);
+    background: var(--indigo); color: #fff; cursor: pointer;
+  }
+  #contactSubmitBtn:hover { opacity: 0.9; }
+  #contactSubmitBtn:disabled { opacity: 0.6; cursor: default; }
+  #contactStatus { margin: 0; font-size: 13px; min-height: 1.4em; }
+  #contactStatus.ok { color: #2e7d4f; }
+  #contactStatus.err { color: #c0392b; }
 </style>
 </head>
 <body>
@@ -879,15 +893,38 @@
       <p class="lede">
         Questions about either tool, or something not working right? We read everything sent here.
       </p>
-      <div class="contactCard">
-        <p><b>Product questions, bug reports, feature requests</b> — for either PolyWire or
-          PolyAdvisor. Include what you were trying to do and, for a bug, what you expected vs.
-          what happened.</p>
-        <div>
-          <button type="button" id="revealEmailBtn">Show contact email</button>
-          <div id="emailReveal" aria-live="polite"></div>
+      <p class="lede" style="margin-bottom: 18px;">
+        <b>Product questions, bug reports, feature requests</b> — for either PolyWire or
+        PolyAdvisor. Include what you were trying to do and, for a bug, what you expected vs.
+        what happened. Goes straight to the team, no email address to copy or scrape.
+      </p>
+      <form id="contactForm" class="contactForm" action="https://formspree.io/f/mljrqbna" method="POST">
+        <div class="formRow">
+          <label for="contactName">Name</label>
+          <input type="text" id="contactName" name="name" required>
         </div>
-      </div>
+        <div class="formRow">
+          <label for="contactEmail">Your email</label>
+          <input type="email" id="contactEmail" name="_replyto" required>
+        </div>
+        <div class="formRow">
+          <label for="contactSubject">What's this about</label>
+          <select id="contactSubject" name="subject">
+            <option>PolyWire question</option>
+            <option>PolyAdvisor question</option>
+            <option>Bug report</option>
+            <option>Feature request</option>
+            <option>Something else</option>
+          </select>
+        </div>
+        <div class="formRow">
+          <label for="contactMessage">Message</label>
+          <textarea id="contactMessage" name="message" rows="5" required></textarea>
+        </div>
+        <input type="text" name="_gotcha" class="hp-field" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button type="submit" id="contactSubmitBtn">Send</button>
+        <p id="contactStatus" role="status" aria-live="polite"></p>
+      </form>
     </section>
 
     <footer>
@@ -985,26 +1022,44 @@
         sections.forEach(function (s) { observer.observe(s); });
       }
 
-      // Contact email: never present as plaintext in the HTML (no "mailto:", no "@" next to a
-      // domain anywhere in the source) -- assembled from separate character-code arrays only
-      // once a real visitor clicks the button, then rendered as a normal mailto link. This isn't
-      // meant to stop a human copying it out of the rendered page, only to stop the dumb scrapers
-      // that regex raw HTML/JS source for an email pattern without executing a click.
-      var revealBtn = document.getElementById('revealEmailBtn');
-      var revealTarget = document.getElementById('emailReveal');
-      var userCodes = [112, 111, 115, 116, 103, 114, 101, 115, 50, 54];
-      var domainCodes = [103, 109, 97, 105, 108, 46, 99, 111, 109];
-      revealBtn.addEventListener('click', function () {
-        var user = String.fromCharCode.apply(null, userCodes);
-        var domain = String.fromCharCode.apply(null, domainCodes);
-        var address = user + '@' + domain;
-        var link = document.createElement('a');
-        link.href = 'mailto:' + address;
-        link.textContent = address;
-        revealTarget.textContent = '';
-        revealTarget.appendChild(link);
-        revealBtn.remove();
-      });
+      // Contact form: submits to Formspree via fetch (not a plain form POST) so the visitor
+      // never leaves the page or sees Formspree's own confirmation page -- just an inline
+      // status message here. No email address appears anywhere in this page's source at all;
+      // Formspree endpoint ID below is the only thing that maps to a real inbox,
+      // and that mapping lives in Formspree's dashboard, not in anything scrapable here. The
+      // hidden `_gotcha` field is Formspree's own honeypot -- a real visitor never sees or fills
+      // it (see .hp-field's off-screen CSS), so anything that does is treated as spam and dropped
+      // silently on Formspree's side before it ever reaches the inbox.
+      var contactForm = document.getElementById('contactForm');
+      var contactStatus = document.getElementById('contactStatus');
+      var contactSubmitBtn = document.getElementById('contactSubmitBtn');
+      if (contactForm) {
+        contactForm.addEventListener('submit', function (e) {
+          e.preventDefault();
+          contactSubmitBtn.disabled = true;
+          contactStatus.className = '';
+          contactStatus.textContent = 'Sending…';
+          fetch(contactForm.action, {
+            method: 'POST',
+            body: new FormData(contactForm),
+            headers: { 'Accept': 'application/json' }
+          }).then(function (response) {
+            if (response.ok) {
+              contactForm.reset();
+              contactStatus.className = 'ok';
+              contactStatus.textContent = "Sent -- thanks, we'll get back to you.";
+            } else {
+              contactStatus.className = 'err';
+              contactStatus.textContent = 'Something went wrong sending that. Try again in a moment.';
+            }
+          }).catch(function () {
+            contactStatus.className = 'err';
+            contactStatus.textContent = 'Something went wrong sending that. Try again in a moment.';
+          }).finally(function () {
+            contactSubmitBtn.disabled = false;
+          });
+        });
+      }
     })();
   </script>
 </body>
