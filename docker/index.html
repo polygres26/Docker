@@ -173,6 +173,19 @@
 
   .bridgeKicker { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
 
+  /* Flagship terminal demo -- a real, reproducible-shaped transcript (illustrative row values,
+     everything else real: the client, the protocol, the path), not a recorded video. */
+  .termWindow { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); margin: 16px 0 18px; background: #1b2430; }
+  .termBar { display: flex; gap: 6px; padding: 10px 14px; background: #10151d; }
+  .termDot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+  .termDot.r { background: #ff5f57; }
+  .termDot.y { background: #febc2e; }
+  .termDot.g { background: #28c840; }
+  .termBody { margin: 0; padding: 18px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: #d7dee8; overflow-x: auto; white-space: pre; }
+  .demoFlow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; font-family: var(--mono); font-size: 13.5px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 8px; text-align: center; }
+  .demoFlow span:not(.rewireArrow) { color: var(--ink-dim); }
+  .demoFlow span:first-child { color: var(--ink); font-weight: 700; }
+
   .tool { margin: 64px 0; padding-top: 48px; border-top: 1px solid var(--line); }
   .tool:first-of-type { margin-top: 48px; }
   .kicker { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -357,6 +370,35 @@
         <span class="badge">ghcr.io/polygres26/polywire</span>
       </div>
       <h2>PolyWire</h2>
+
+      <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
+      <div class="termWindow">
+        <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+        <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQLcl: Release 23.4 Production
+
+SQL&gt; SELECT * FROM orders;
+
+ORDER_ID  CUSTOMER_ID  AMOUNT
+--------  -----------  -------
+    1001           42   129.99
+    1002           57    89.50
+
+2 rows selected.
+
+SQL&gt;</pre>
+      </div>
+      <div class="demoFlow">
+        <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+      </div>
+      <p class="rttNote">
+        <i>Oracle client. Oracle wire protocol. PostgreSQL database. No client rewrite.</i>
+        Table contents above are illustrative — the query, protocol, and path are exactly real.
+        Raw <code>sqlplus</code> isn't in this demo on purpose: it still hangs on a deeper
+        protocol-negotiation step orawire doesn't fully handle yet — SQLcl and JDBC clients are
+        what's actually verified working today, and this page only shows what's real.
+      </p>
 
       <h3 class="subhead" id="rewire">Don't rewrite. Rewire.<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
