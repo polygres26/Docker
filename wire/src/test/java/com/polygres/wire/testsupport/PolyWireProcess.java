@@ -195,6 +195,22 @@ public final class PolyWireProcess implements AutoCloseable {
         throw new IllegalStateException("could not find a free port after 20 attempts");
     }
 
+    /** Forcibly (SIGKILL, not a graceful shutdown) kills the PolyWire process itself while it may
+     * still have live client sessions -- for tests proving what a real client sees when the
+     * SERVER dies out from under it, as opposed to {@link #close}'s graceful teardown (which no
+     * real client would ever observe mid-session) or {@code RealPostgres#stop}'s simulated
+     * BACKEND outage (a live PolyWire process still running to translate/forward the error).
+     * There is nothing left running to send a graceful in-protocol error frame once this returns
+     * -- a real client's own transport-level disconnect detection is what's actually being
+     * tested, the same detection a real Oracle/MySQL/SQL Server client already relies on for its
+     * own server dying, not something PolyWire can hand-craft after the fact. */
+    public void kill() throws InterruptedException {
+        if (process != null && process.isAlive()) {
+            process.destroyForcibly();
+            process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
     @Override
     public void close() {
         if (process != null && process.isAlive()) {

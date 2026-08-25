@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -140,6 +141,115 @@ class BackendConnectionLostIntegrationTest {
                             "a statement against a genuinely dead backend connection must fail");
                     assertEquals("57P01", lost.getSQLState(),
                             "a real Postgres client should see Postgres's own real SQLSTATE unchanged");
+                } finally {
+                    primary.resume();
+                }
+            }
+        }
+    }
+
+    /** The OTHER direction: what does a real client see if PolyWire ITSELF dies mid-session, not
+     * the backend Postgres? There's nothing running server-side once {@link PolyWireProcess#kill}
+     * returns to send a graceful in-protocol error frame the way the other tests in this class
+     * prove for a backend outage -- so this deliberately does NOT assert a specific SQLSTATE/error
+     * code the way those do. A real client's own transport-level disconnect detection is what
+     * actually fires here (the same detection every real driver already relies on for its real
+     * target server dying outright), and this test's job is just confirming that detection
+     * genuinely fires -- the statement fails, the client doesn't hang forever waiting on a
+     * response that's never coming. */
+    @Test
+    void oracleClientDetectsPolyWireItselfDyingMidSession() throws Exception {
+        try (RealPostgres primary = RealPostgres.start()) {
+            PolyWireProcess polywire = PolyWireProcess.builder()
+                    .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
+                    .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .start();
+
+            String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+            try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
+                try (Statement warmup = conn.createStatement()) {
+                    warmup.execute("SELECT 1 FROM DUAL");
+                }
+
+                polywire.kill();
+
+                assertThrows(SQLException.class,
+                        () -> {
+                            try (Statement st = conn.createStatement()) {
+                                st.execute("SELECT 1 FROM DUAL");
+                            }
+                        },
+                        "a statement against a genuinely dead PolyWire process must fail, not hang -- "
+                                + "the client's own transport-level disconnect detection, since there's "
+                                + "no server left running to send a graceful error frame");
+            }
+        }
+    }
+
+    /** Your second question, precisely: what happens when a client is actively mid-fetch (a query
+     * already IN FLIGHT, not the next statement issued after already knowing the backend is dead)
+     * and Postgres dies WHILE that call is blocked waiting on it? Real timing, not simulated: a
+     * background thread starts a genuinely slow query (pg_sleep), the main thread stops Postgres
+     * shortly after it's actually running server-side (confirmed via pg_stat_activity, not a fixed
+     * sleep guess), and the already-blocked query call is what's asserted on -- proving the SAME
+     * 57P01-\>ORA-03113 signal reaches an in-flight call, not just a subsequently-issued one. */
+    @Test
+    void anInFlightQueryGetsTheSameOra03113WhenPostgresDiesMidExecution() throws Exception {
+        try (RealPostgres primary = RealPostgres.start();
+                PolyWireProcess polywire = PolyWireProcess.builder()
+                        .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
+                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .start()) {
+
+            String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+            try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
+                try (Statement warmup = conn.createStatement()) {
+                    warmup.execute("SELECT 1 FROM DUAL");
+                }
+
+                CompletableFuture<SQLException> inFlightFailure = CompletableFuture.supplyAsync(() -> {
+                    try (Statement st = conn.createStatement()) {
+                        st.execute("SELECT pg_sleep(30) FROM DUAL");
+                        return null;
+                    } catch (SQLException e) {
+                        return e;
+                    }
+                });
+
+                // Confirm the query is genuinely running server-side (not just "sent") before
+                // pulling the rug out -- via a SEPARATE admin connection straight to Postgres, not
+                // through PolyWire, so this check can't itself be affected by what we're about to
+                // do to the backend.
+                try (Connection admin = DriverManager.getConnection(primary.jdbcUrl(), primary.username(), primary.password())) {
+                    long deadline = System.currentTimeMillis() + 10_000;
+                    boolean running = false;
+                    while (System.currentTimeMillis() < deadline && !running) {
+                        try (Statement check = admin.createStatement();
+                                var rs = check.executeQuery(
+                                        "SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep%'")) {
+                            running = rs.next() && rs.getInt(1) > 0;
+                        }
+                        if (!running) {
+                            Thread.sleep(100);
+                        }
+                    }
+                    assertTrue(running, "the pg_sleep query must actually be running server-side before we stop Postgres");
+                }
+
+                primary.stop();
+                try {
+                    SQLException lost = inFlightFailure.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                    assertNotNull(lost, "the already-in-flight query must fail, not silently return/hang");
+                    assertEquals(3113, lost.getErrorCode(),
+                            "an in-flight query gets the same real ORA-03113 as a subsequently-issued "
+                                    + "one -- the driver's reconnect logic doesn't care which shape of "
+                                    + "call was interrupted");
                 } finally {
                     primary.resume();
                 }
