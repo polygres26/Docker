@@ -505,25 +505,31 @@
         <li><span class="uc-body"><span class="uc-title">SQL firewall</span><span class="uc-desc">Allow/deny rules matched on statement type, table (glob), and a SQL regex, stored in Postgres and pushed live to every node over LISTEN/NOTIFY — no restart to change a rule. Stacked-query injection (<code>SELECT ...; DROP TABLE ...</code>) is blocked unconditionally, independent of any rule. Rules are process-wide today, not yet per-tenant or per-role, and the only actions are allow/deny — no rate-limit or log-only action.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Connection ACL</span><span class="uc-desc">CIDR allow/deny lists, fail-closed once any rule is configured, enforced at accept time on every TCP wire protocol, every HTTP endpoint, and gRPC. PROXY protocol v2 preserves the real client IP behind a load balancer. Configure <code>POLYWIRE_ACL_TRUSTED_PROXIES</code> for HTTP endpoints — without it, the first <code>X-Forwarded-For</code> hop is trusted, which a client in front of an untrusted proxy could spoof.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">A real token-bucket limiter — rate, burst, and max-wait, configurable per workload class (query/write/ddl/txn) — plus shedding when a backend's connection pool is saturated. Today the limiter is per-workload-class and process-wide, not yet per-tenant or per-client.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and PolyWire verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). Without it, every protocol falls back to one shared username/password. MySQL and Oracle wire protocols only support that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and PolyWire verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>POLYWIRE_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">TLS everywhere</span><span class="uc-desc">In-band TLS for Postgres, MySQL, and SQL Server wire protocols (standard client <code>sslmode</code>/encryption settings just work), a dedicated TCPS port for Oracle, TLS for gRPC, and mutual TLS between cluster nodes for cache traffic — all from one PKCS12 keystore. Client-certificate authentication isn't implemented yet; TLS today verifies the server to the client, not the client to the server.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>POLYGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and PolyWire logs a warning at startup saying so.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API is bearer-token authenticated (<code>POLYWIRE_ADMIN_TOKEN</code>, constant-time compare) and fails closed — unset the token and the whole surface is unreachable, not open. The one exception: <code>/metrics</code> itself isn't behind the admin token (only ACL/OAuth, both off by default) — put it behind your own network boundary if Prometheus scrape access shouldn't be public.</span></span></li>
       </ul>
       <p class="rttNote">
-        <b>Row-level security, for real:</b> under <code>POLYWIRE_AUTH_MODE=postgres_roles</code>,
-        every Postgres and SQL Server login sets <code>polywire.user_id</code> as a session GUC on
-        the backend connection before each statement — filtering is enforced by your own Postgres
-        RLS policies (<code>USING (owner_user = current_setting('polywire.user_id'))</code>-style),
-        not by PolyWire rewriting SQL. One requirement RLS makes non-negotiable: PolyWire's own
-        backend role must not be a superuser or the table owner — either bypasses every RLS policy
-        unconditionally, no matter what the session GUC says. Grant it <code>SELECT</code> on
-        <code>pg_authid</code> and on the tables it serves instead. Every login — success or
-        failure, real role or shared credential — is recorded to a tamper-evident audit log,
-        readable live via the bearer-token-authenticated <code>GET /api/audit</code> admin route.
-        Column-masking and attribute-based row filtering beyond native RLS (the
-        <code>AccessControlStage</code> engine) are real, reviewed code, not yet wired to a
-        config surface — out of scope until an identity-to-attribute mapping exists.
+        <b>Row-level security, for real:</b> under <code>POLYWIRE_AUTH_MODE=postgres_roles</code>
+        (Postgres, SQL Server) or <code>POLYWIRE_AUTH_CREDENTIALS</code> (Oracle), every login sets
+        <code>polywire.user_id</code> as a session GUC on the backend connection before each
+        statement — filtering is enforced by your own Postgres RLS policies
+        (<code>USING (owner_user = current_setting('polywire.user_id'))</code>-style), not by
+        PolyWire rewriting SQL. This holds even fronted by the Oracle wire protocol: orawire's SQL
+        translation always executes against Postgres, so the same Postgres RLS mechanism applies —
+        no separate Oracle VPD/<code>SYS_CONTEXT</code> setup needed, since there's no real Oracle
+        database in this path for VPD to run against. One requirement RLS makes non-negotiable:
+        PolyWire's own backend role must not be a superuser or the table owner — either bypasses
+        every RLS policy unconditionally, no matter what the session GUC says. Grant it
+        <code>SELECT</code> on <code>pg_authid</code> and on the tables it serves instead. Every
+        login — success or failure, real identity or shared credential — is recorded to a
+        tamper-evident audit log, readable live via the bearer-token-authenticated
+        <code>GET /api/audit</code> admin route. Column-masking and attribute-based row filtering
+        beyond native RLS (the <code>AccessControlStage</code> engine) are real, reviewed code, not
+        yet wired to a config surface — out of scope until an identity-to-attribute mapping exists.
+        MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't yet propagate identity
+        into RLS at all — every session there still shares one backend credential.
       </p>
     </section>
 
