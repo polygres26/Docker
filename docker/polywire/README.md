@@ -27,6 +27,15 @@ The admin app (Metrics, Topology, SQL Firewall, ACL, OAuth, LLM configuration, a
 19090 — open it directly in a browser; `/metrics` and `/config` are separate JSON endpoints on
 the same port.
 
+## Connecting to a real Postgres
+
+The compose file above stands up its own Postgres for a self-contained demo. To point PolyWire at
+an existing Postgres instead — on-prem, Supabase, Amazon RDS, Google Cloud SQL, or Azure Database
+for PostgreSQL — see **[../CONNECTING.md](../CONNECTING.md)** for a copy-pasteable `docker run`/
+`docker-compose.yml` per target, plus the real, provider-specific gotchas each one hits (Supabase's
+IPv6-only direct connection and pooler username shape, Azure's mandatory TLS, RDS/Cloud SQL's
+network allowlisting, and more).
+
 ## How the admin app gets served (no nginx)
 
 The image build has two stages that feed the runtime stage: a `node:22-alpine` stage builds

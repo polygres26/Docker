@@ -159,6 +159,16 @@
   -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code>
       </div>
+      <p class="rttNote">
+        That works as-is against an existing on-prem Postgres. Connecting to a managed provider
+        needs a couple of provider-specific details — <b>Supabase's pooler needs a
+        <code>postgres.&lt;project-ref&gt;</code> username</b> (its direct connection is IPv6-only
+        in most regions, unreachable from a typical Docker host), and <b>Supabase and Azure both
+        require <code>POLYWIRE_PG_SSLMODE=require</code></b> — they reject a plaintext connection
+        outright. Full copy-pasteable commands, network/firewall requirements, and every gotcha for
+        on-prem, Supabase, Amazon RDS, Google Cloud SQL, and Azure Database for PostgreSQL:
+        <a href="CONNECTING.md">CONNECTING.md</a>.
+      </p>
 
       <h3 class="subhead">Architecture</h3>
       <figure>
