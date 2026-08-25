@@ -4,7 +4,57 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Polygres — PolyWire &amp; PolyAdvisor</title>
-<meta name="description" content="Polygres: a multi-protocol Postgres gateway (PolyWire) and migration assessment (PolyAdvisor).">
+<meta name="description" content="PolyWire: one wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to a single real Postgres database, unmodified — with a SQL firewall, sharding, RLS, and planned/unplanned failover built in. PolyAdvisor scores how hard your migration to Postgres will be.">
+<link rel="canonical" href="https://polygres26.github.io/">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Twitter Card -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://polygres26.github.io/">
+<meta property="og:title" content="PolyWire & PolyAdvisor — Polygres">
+<meta property="og:description" content="A wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to one real Postgres, unmodified — plus a rules-based migration-difficulty assessor.">
+<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PolyWire & PolyAdvisor — Polygres">
+<meta name="twitter:description" content="A wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to one real Postgres, unmodified — plus a rules-based migration-difficulty assessor.">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+
+<!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
+     from prose. Kept to claims already stated in the page body -- nothing here that isn't said,
+     with the same level of confidence, somewhere in the visible text below. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "PolyWire",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows (Docker)",
+      "description": "A wire-protocol gateway: Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP clients connect unmodified, and PolyWire executes against one real Postgres database on the other side. Includes a SQL firewall, connection ACL, QoS admission control, sharding, row-level security, and planned/unplanned backend failover.",
+      "url": "https://polygres26.github.io/#polywire",
+      "image": "https://polygres26.github.io/docs/architecture.png",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "softwareHelp": "https://polygres26.github.io/CONNECTING.md"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "PolyAdvisor",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows (Docker)",
+      "description": "A rules-based (not LLM-generated) migration-difficulty assessor for moving an Oracle, MySQL, MariaDB, or SQL Server database to Postgres -- scores difficulty, breaks down what drives the score, and recommends Postgres sizing. Reproducible: running it twice against the same database gives the same answer.",
+      "url": "https://polygres26.github.io/#polyadvisor",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    },
+    {
+      "@type": "Organization",
+      "name": "Polygres",
+      "url": "https://polygres26.github.io/",
+      "logo": "https://polygres26.github.io/docs/logo.png"
+    }
+  ]
+}
+</script>
 <style>
   :root {
     --paper: #ffffff;
@@ -746,12 +796,66 @@
       </figure>
     </section>
 
+    <section class="tool" id="faq">
+      <div class="kicker">
+        <span class="num">03</span>
+      </div>
+      <h2>Common questions</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">Does my application need to change to use PolyWire?</span><span class="uc-desc">No — each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is PolyWire's sharding real, or just SQL text matching?</span><span class="uc-desc">Real: it decodes each protocol's own native binary bind-parameter encoding (not just SQL text) to route by an actual bound value, and merges cross-shard aggregates/sorted results centrally rather than concatenating per-shard results. See "Sharding" above for exactly which protocols and query shapes are covered.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does PolyWire support row-level security?</span><span class="uc-desc">Yes, for the Postgres, SQL Server, Oracle, and MySQL wire protocols — a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering. See "Security" above for the exact authentication requirements this needs.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API stops routing new statements to that backend in favor of a configured fallback, waits for a real zero-replication-lag cutover, and only then confirms the switchover is safe to proceed — see "Planned and unplanned outages" above.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Can PolyWire connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?</span><span class="uc-desc">Yes — see <a href="CONNECTING.md">CONNECTING.md</a> for a worked example and the real provider-specific gotchas (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI) for each.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is PolyAdvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it.</span></span></li>
+      </ul>
+    </section>
+
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="README.md">README.md</a> and
       <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
       in this repo.
     </footer>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does my application need to change to use PolyWire?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No -- each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is PolyWire's sharding real, or just SQL text matching?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Real: it decodes each protocol's own native binary bind-parameter encoding (not just SQL text) to route by an actual bound value, and merges cross-shard aggregates/sorted results centrally rather than concatenating per-shard results." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does PolyWire support row-level security?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes, for the Postgres, SQL Server, Oracle, and MySQL wire protocols -- a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering." }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens if the backend Postgres needs planned maintenance?",
+          "acceptedAnswer": { "@type": "Answer", "text": "A drain API stops routing new statements to that backend in favor of a configured fallback, waits for a real zero-replication-lag cutover, and only then confirms the switchover is safe to proceed." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can PolyWire connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- each has a worked example and its real provider-specific gotchas documented (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI)." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is PolyAdvisor's migration score generated by an LLM?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No -- it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it." }
+        }
+      ]
+    }
+    </script>
   </div>
 </body>
 </html>
