@@ -35,7 +35,24 @@ public final class XaRecoveryLog {
 
     private static final Logger log = LoggerFactory.getLogger(XaRecoveryLog.class);
 
-    public record Branch(String gtridHex, int branchIndex, String backendName) {
+    /** {@code backendJdbcUrl}/{@code backendUser}/{@code backendPassword} are the EXACT target
+     * this branch was opened against at prepare time (captured in {@code XaTransaction}, see its
+     * {@code branchTargets} javadoc) -- Phase 4b of the switchover design. All three are null for
+     * a row written before this existed, or if the branch was ever added via the name-only {@code
+     * XaTransaction.addBranch(String, XAResource)} test overload; {@link XaRecovery} falls back to
+     * resolving {@code backendName} through the live {@code BackendRegistry} in that case, exactly
+     * as it always has. When present, recovery reconnects directly to these three values instead,
+     * immune to {@code backendName} having been repointed to a different physical target (a
+     * switchover, a credential rotation, a config edit) since this branch was prepared. */
+    public record Branch(String gtridHex, int branchIndex, String backendName,
+            String backendJdbcUrl, String backendUser, String backendPassword) {
+
+        /** Convenience for a caller (tests, the name-only addBranch path) that only ever needs the
+         * pre-Phase-4b shape -- equivalent to the fullest constructor with the captured-identity
+         * fields all null. */
+        public Branch(String gtridHex, int branchIndex, String backendName) {
+            this(gtridHex, branchIndex, backendName, null, null, null);
+        }
     }
 
     private final com.polygres.wire.server.ServerOptions options;
@@ -53,6 +70,14 @@ public final class XaRecoveryLog {
                     + "created_at timestamptz NOT NULL DEFAULT now(), "
                     + "resolved_at timestamptz, "
                     + "PRIMARY KEY (gtrid_hex, branch_index))");
+            // Added for Phase 4b (see Branch's javadoc) -- ADD COLUMN IF NOT EXISTS so an
+            // already-deployed polywire_xa_log table (from before this existed) picks these up on
+            // the next restart without a separate migration step. All three stay nullable: an
+            // existing unresolved row from before this migration simply has none of them, and
+            // XaRecovery already falls back to name-based resolution in exactly that case.
+            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_jdbc_url text");
+            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_user text");
+            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_password text");
         } catch (SQLException e) {
             log.warn("xa recovery log: could not ensure polywire_xa_log schema exists -- in-doubt "
                     + "transactions from a coordinator crash will NOT be recoverable until this is fixed", e);
@@ -64,12 +89,19 @@ public final class XaRecoveryLog {
     public void logDecided(String gtridHex, List<Branch> branches) {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_xa_log (gtrid_hex, branch_index, backend_name) VALUES (?, ?, ?) "
+                        "INSERT INTO polywire_xa_log (gtrid_hex, branch_index, backend_name, "
+                                + "backend_jdbc_url, backend_user, backend_password) VALUES (?, ?, ?, ?, ?, ?) "
                                 + "ON CONFLICT (gtrid_hex, branch_index) DO NOTHING")) {
             for (Branch b : branches) {
                 ps.setString(1, gtridHex);
                 ps.setInt(2, b.branchIndex());
                 ps.setString(3, b.backendName());
+                ps.setString(4, b.backendJdbcUrl());
+                ps.setString(5, b.backendUser());
+                // Same at-rest protection as polywire_config's own backend passwords -- see
+                // FieldCipher's class doc. Backward-compatible/no-op (stores plaintext) when
+                // POLYGRES_ENCRYPTION_KEY isn't set, same as everywhere else that calls this.
+                ps.setString(6, b.backendPassword() == null ? null : com.polygres.wire.secrets.FieldCipher.encrypt(b.backendPassword()));
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -109,12 +141,15 @@ public final class XaRecoveryLog {
         try (Connection conn = com.polygres.wire.pgwire.PgConnections.open(options);
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
-                        "SELECT gtrid_hex, branch_index, backend_name FROM polywire_xa_log "
+                        "SELECT gtrid_hex, branch_index, backend_name, backend_jdbc_url, backend_user, "
+                                + "backend_password FROM polywire_xa_log "
                                 + "WHERE resolved_at IS NULL ORDER BY gtrid_hex, branch_index")) {
             while (rs.next()) {
                 String gtridHex = rs.getString(1);
+                String storedPassword = rs.getString(6);
                 byGtrid.computeIfAbsent(gtridHex, k -> new ArrayList<>())
-                        .add(new Branch(gtridHex, rs.getInt(2), rs.getString(3)));
+                        .add(new Branch(gtridHex, rs.getInt(2), rs.getString(3), rs.getString(4), rs.getString(5),
+                                storedPassword == null ? null : com.polygres.wire.secrets.FieldCipher.decrypt(storedPassword)));
             }
         }
         return byGtrid;

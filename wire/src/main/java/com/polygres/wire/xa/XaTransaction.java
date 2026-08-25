@@ -1,5 +1,6 @@
 package com.polygres.wire.xa;
 
+import com.polygres.wire.core.BackendTarget;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +17,14 @@ public final class XaTransaction {
     private List<XAResource> resources;
     private List<Xid> branchXids;
     private List<String> branchBackendNames;
+    // Parallel to branchBackendNames -- the exact BackendTarget each branch was actually opened
+    // against, captured here (not re-resolved from a name later) so a durably-logged branch can
+    // record precisely what to reconnect to during crash recovery, immune to that name being
+    // repointed to a different physical target in the meantime. Null entries throughout for the
+    // legacy XaTransaction(List<XAResource>) constructor, which never calls addBranch -- commit()
+    // treats a null target the same as "no captured identity", falling back to name-based
+    // recovery lookup, unchanged from before this existed.
+    private List<BackendTarget> branchTargets;
 
     private final boolean incremental;
     private byte[] incrementalGtrid;
@@ -29,6 +38,7 @@ public final class XaTransaction {
     public XaTransaction(List<XAResource> resources) throws SQLException {
         this.resources = new ArrayList<>(resources);
         this.branchBackendNames = new ArrayList<>(java.util.Collections.nCopies(resources.size(), null));
+        this.branchTargets = new ArrayList<>(java.util.Collections.nCopies(resources.size(), null));
         this.incremental = false;
         this.recoveryLog = null;
         startBranches();
@@ -42,6 +52,7 @@ public final class XaTransaction {
         this.resources = new ArrayList<>();
         this.branchXids = new ArrayList<>();
         this.branchBackendNames = new ArrayList<>();
+        this.branchTargets = new ArrayList<>();
         this.incremental = true;
         this.incrementalGtrid = XidImpl.newGlobalTransactionId();
         this.recoveryLog = recoveryLog;
@@ -51,7 +62,20 @@ public final class XaTransaction {
         return !resources.isEmpty();
     }
 
+    /** As {@link #addBranch(String, XAResource)}, capturing {@code target}'s exact jdbcUrl/user/
+     * password alongside its name -- see {@link #branchTargets}'s javadoc. Every production caller
+     * (only {@code RoutingBackendExecutor}) already has the {@link BackendTarget} in hand right
+     * where it opens the branch, so this is the preferred overload; the name-only one remains for
+     * tests that don't need a real target. */
+    public void addBranch(BackendTarget target, XAResource resource) throws SQLException {
+        addBranchInternal(target.name(), target, resource);
+    }
+
     public void addBranch(String backendName, XAResource resource) throws SQLException {
+        addBranchInternal(backendName, null, resource);
+    }
+
+    private void addBranchInternal(String backendName, BackendTarget target, XAResource resource) throws SQLException {
         Xid xid = XidImpl.branch(incrementalGtrid, resources.size());
         try {
             resource.start(xid, XAResource.TMNOFLAGS);
@@ -61,6 +85,7 @@ public final class XaTransaction {
         resources.add(resource);
         branchXids.add(xid);
         branchBackendNames.add(backendName);
+        branchTargets.add(target);
     }
 
     public void commit() throws SQLException {
@@ -109,7 +134,11 @@ public final class XaTransaction {
             List<XaRecoveryLog.Branch> toLog = new ArrayList<>();
             for (int i = 0; i < resources.size(); i++) {
                 if (votes.get(i) != XAResource.XA_RDONLY) {
-                    toLog.add(new XaRecoveryLog.Branch(gtridHex, i, branchBackendNames.get(i)));
+                    BackendTarget target = branchTargets.get(i);
+                    toLog.add(new XaRecoveryLog.Branch(gtridHex, i, branchBackendNames.get(i),
+                            target == null ? null : target.jdbcUrl(),
+                            target == null ? null : target.user(),
+                            target == null ? null : target.password()));
                 }
             }
             recoveryLog.logDecided(gtridHex, toLog);
@@ -165,6 +194,7 @@ public final class XaTransaction {
             resources = new ArrayList<>();
             branchXids = new ArrayList<>();
             branchBackendNames = new ArrayList<>();
+            branchTargets = new ArrayList<>();
             incrementalGtrid = XidImpl.newGlobalTransactionId();
         } else {
             startBranches();

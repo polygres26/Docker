@@ -241,7 +241,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (connection == null) {
             
             XaBackendFactory.XaBranch branch = XaBackendFactory.open(target);
-            xaTransaction.addBranch(target.name(), branch.resource());
+            xaTransaction.addBranch(target, branch.resource());
             connection = branch.connection();
             transactionConnections.put(target.name(), connection);
         }

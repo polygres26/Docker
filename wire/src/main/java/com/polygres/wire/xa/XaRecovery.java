@@ -65,17 +65,27 @@ public final class XaRecovery {
     private static boolean resolveBranch(XaRecoveryLog recoveryLog, BackendRegistry registry, byte[] gtrid,
             XaRecoveryLog.Branch branch) {
         String gtridHex = branch.gtridHex();
-        BackendTarget target = registry.get(branch.backendName());
-        if (target == null) {
-            log.error("xa recovery: gtrid={} branch={} references unknown backend '{}' -- POLYWIRE_BACKENDS "
-                    + "config may have changed since the crash; this branch cannot be auto-recovered and needs "
-                    + "manual resolution against that backend's own XA recovery tooling (e.g. psql's "
-                    + "pg_prepared_xacts).", gtridHex, branch.branchIndex(), branch.backendName());
+        // Phase 4b: a captured jdbcUrl (present for any branch prepared after this feature
+        // shipped) is authoritative and reconnects directly, bypassing name resolution entirely --
+        // immune to backend_name having been repointed to a different physical target since this
+        // branch was prepared (a switchover, a credential rotation, a config edit). Only a row
+        // written before this existed (backendJdbcUrl null) falls back to resolving backend_name
+        // through the live BackendRegistry, exactly as recovery always worked before Phase 4b.
+        boolean usingCapturedIdentity = branch.backendJdbcUrl() != null;
+        BackendTarget target = usingCapturedIdentity ? null : registry.get(branch.backendName());
+        if (!usingCapturedIdentity && target == null) {
+            log.error("xa recovery: gtrid={} branch={} references unknown backend '{}' (no captured target "
+                    + "identity on this row -- it predates Phase 4b) -- POLYWIRE_BACKENDS config may have "
+                    + "changed since the crash; this branch cannot be auto-recovered and needs manual "
+                    + "resolution against that backend's own XA recovery tooling (e.g. psql's pg_prepared_xacts).",
+                    gtridHex, branch.branchIndex(), branch.backendName());
             return false;
         }
         Xid ourXid = XidImpl.branch(gtrid, branch.branchIndex());
         try {
-            XaBackendFactory.XaBranch xaBranch = XaBackendFactory.open(target);
+            XaBackendFactory.XaBranch xaBranch = usingCapturedIdentity
+                    ? XaBackendFactory.openDirect(branch.backendJdbcUrl(), branch.backendUser(), branch.backendPassword())
+                    : XaBackendFactory.open(target);
             try {
                 // XaBackendFactory.open() sets autoCommit(false) for the normal case of a
                 // connection that will actually participate in a branch via start()/end(). Pure
