@@ -14,6 +14,7 @@ import com.polygres.wire.core.StatementPipeline;
 import com.polygres.wire.core.UntranslatableQueryException;
 import com.polygres.wire.mssqlwire.frontend.Login7Handler;
 import com.polygres.wire.mssqlwire.frontend.PreLoginHandshake;
+import com.polygres.wire.mssqlwire.frontend.RpcRequestReader;
 import com.polygres.wire.mssqlwire.frontend.SqlBatchReader;
 import com.polygres.wire.mssqlwire.frontend.TdsTlsChannel;
 import com.polygres.wire.mssqlwire.frontend.TdsTokens;
@@ -32,6 +33,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
@@ -173,6 +175,22 @@ public final class MssqlWireSessionHandler implements Runnable {
 
     private static final Pattern SET_STATEMENT = Pattern.compile("^\\s*set\\s+", Pattern.CASE_INSENSITIVE);
 
+    // Real client behavior, not something this project's own hand-written tests would have
+    // exercised: mssql-jdbc (and other TDS clients) manage a client-driven transaction by sending
+    // literal batches like "IF @@TRANCOUNT > 0 COMMIT TRAN" for Connection#commit()/rollback(),
+    // rather than relying on a TDS-level transaction descriptor. executeQuery always opens its
+    // backend connection with autoCommit(true) (mssqlwire has no real cross-statement transaction
+    // support today -- every statement commits itself, same limitation noted for pgwire session
+    // pooling elsewhere in this codebase), so these batches are pure client-side bookkeeping with
+    // nothing for the backend to actually do -- sending them through would either hit a syntax
+    // error (Postgres doesn't understand T-SQL's IF/TRAN grammar) or, worse, silently execute
+    // unrelated SQL if a translation happened to produce something parseable. No-op them the same
+    // way SET_STATEMENT already is. Found live via MssqlJdbcIntegrationTest -- a real driver, not
+    // a hand-constructed test payload, is what surfaced this.
+    private static final Pattern TRANSACTION_CONTROL_STATEMENT = Pattern.compile(
+            "^\\s*(?:IF\\s+@@TRANCOUNT|BEGIN\\s+TRAN|COMMIT\\s+TRAN|ROLLBACK\\s+TRAN|SAVE\\s+TRAN)",
+            Pattern.CASE_INSENSITIVE);
+
     private void queryLoop(DataInputStream in, OutputStream out, TdsPacket packets) throws IOException {
         while (true) {
             TdsPacket.Message msg = packets.readMessage(in);
@@ -193,9 +211,11 @@ public final class MssqlWireSessionHandler implements Runnable {
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
                 }
                 case TdsPacketType.RPC -> {
-                    log.warn("mssqlwire: RPC batches not supported in this pass");
-                    packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                            TdsTokens.errorMessage(50000, "RPC/prepared-statement calls are not supported yet"));
+                    long rttStart = System.nanoTime();
+                    String rpcSql = handleRpc(out, packets, msg.payload());
+                    if (sqlMetrics != null && rpcSql != null) {
+                        sqlMetrics.recordRtt(SourceDialect.SQL_SERVER, rpcSql, System.nanoTime() - rttStart);
+                    }
                 }
                 default -> {
                     if (msg.payload().length == 0 && msg.type() == 0) {
@@ -210,17 +230,24 @@ public final class MssqlWireSessionHandler implements Runnable {
     }
 
     private void executeQuery(OutputStream out, TdsPacket packets, String sql) throws IOException {
-        if (SET_STATEMENT.matcher(sql).find()) {
+        executeQuery(out, packets, sql, List.of(), false);
+    }
+
+    /** {@code viaRpc} controls only the final DONE token's flavor (DONEPROC vs DONE) -- see
+     * TdsTokens#writeDoneProc's javadoc for why an RPC (sp_executesql) response needs it. */
+    private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
+            boolean viaRpc) throws IOException {
+        if (SET_STATEMENT.matcher(sql).find() || TRANSACTION_CONTROL_STATEMENT.matcher(sql).find()) {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
-        
+
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, List.of());
+            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams);
             ExecutionResult result;
             try {
                 result = pipeline.execute(statement);
@@ -240,10 +267,10 @@ public final class MssqlWireSessionHandler implements Runnable {
                 for (List<Object> row : result.rows()) {
                     TdsTokens.writeRow(body, row);
                 }
-                TdsTokens.writeDone(body, TdsTokens.doneCountStatus(), TdsTokens.curCmdSelect(), result.rows().size());
+                writeFinalDone(body, viaRpc, TdsTokens.curCmdSelect(), result.rows().size());
             } else {
-                
-                TdsTokens.writeDone(body, TdsTokens.doneCountStatus(), TdsTokens.curCmdFor(sql), result.updateCount());
+
+                writeFinalDone(body, viaRpc, TdsTokens.curCmdFor(sql), result.updateCount());
             }
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
         } catch (SQLException e) {
@@ -253,5 +280,115 @@ public final class MssqlWireSessionHandler implements Runnable {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
                     TdsTokens.errorMessage(nativeError, e.getMessage() == null ? "backend error" : e.getMessage()));
         }
+    }
+
+    private static void writeFinalDone(ByteArrayOutputStream body, boolean viaRpc, int curCmd, long rowCount) {
+        if (viaRpc) {
+            TdsTokens.writeDoneProc(body, TdsTokens.doneCountStatus(), curCmd, rowCount);
+        } else {
+            TdsTokens.writeDone(body, TdsTokens.doneCountStatus(), curCmd, rowCount);
+        }
+    }
+
+    // Only sp_executesql is supported -- covers the overwhelming majority of real
+    // parameterized-query traffic (JDBC PreparedStatement, .NET SqlCommand with parameters, most
+    // ORMs). sp_prepare/sp_execute/sp_prepexec (server-side statement caching across round-trips)
+    // and arbitrary stored-procedure calls are refused with a clean error rather than attempted --
+    // a driver that probes one of those first sees an error, not the silent hang the old blanket
+    // RPC rejection risked for anything that assumed *some* RPC response would come back.
+    private static final int SP_EXECUTESQL_PROC_ID = 10;
+
+    private static final Pattern NAMED_PARAM_PLACEHOLDER = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*");
+    // Confirmed live against a real client (mssql-jdbc): the RPC parameters carrying the actual
+    // bound values are sent UNNAMED (name field empty) -- only @stmt/@params carry real content,
+    // and the @P0/@P1/... placeholders in @stmt are matched to bound values purely positionally,
+    // in declaration order. This is why rewriteNamedParams below resolves a "@P<n>" placeholder by
+    // numeric index first and only falls back to name matching for a driver that DOES set names.
+    private static final Pattern POSITIONAL_PLACEHOLDER = Pattern.compile("(?i)^@P(\\d+)$");
+
+    /** Returns the executed SQL text for RTT metrics, or {@code null} if nothing was executed
+     * (decode failure / unsupported RPC / bad shape -- an error was already written to the
+     * client in every such case). */
+    private String handleRpc(OutputStream out, TdsPacket packets, byte[] payload) throws IOException {
+        RpcRequestReader.RpcRequest request;
+        try {
+            request = RpcRequestReader.read(payload);
+        } catch (IOException e) {
+            log.warn("mssqlwire: could not decode RPC request: {}", e.getMessage());
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "could not decode RPC request: " + e.getMessage()));
+            return null;
+        }
+        boolean isExecSql = request.procId() == SP_EXECUTESQL_PROC_ID
+                || "sp_executesql".equalsIgnoreCase(request.procName());
+        if (!isExecSql) {
+            String proc = request.procName() != null ? request.procName() : ("proc #" + request.procId());
+            log.warn("mssqlwire: RPC call to {} not supported -- only sp_executesql is", proc);
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "only sp_executesql RPC calls are supported "
+                            + "(not stored procedures or sp_prepare/sp_execute/sp_prepexec)"));
+            return null;
+        }
+        if (request.params().size() < 2 || !(request.params().get(0).value() instanceof String sql)) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "sp_executesql call missing a string @stmt parameter"));
+            return null;
+        }
+        List<RpcRequestReader.RpcParam> boundParams = request.params().subList(2, request.params().size());
+        List<Object> orderedBinds = new java.util.ArrayList<>();
+        String jdbcSql;
+        try {
+            jdbcSql = rewriteNamedParams(sql, boundParams, orderedBinds);
+        } catch (IOException e) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(50000, e.getMessage()));
+            return null;
+        }
+        executeQuery(out, packets, jdbcSql, orderedBinds, true);
+        return jdbcSql;
+    }
+
+    /** Rewrites {@code @P0}/{@code @name}-style placeholders in {@code sql} to JDBC {@code ?}.
+     * Every real client observed (mssql-jdbc, confirmed live) sends the actual bound-value RPC
+     * parameters unnamed and matches them to {@code @stmt}'s placeholders purely by position/
+     * declaration order -- so a {@code @P<n>} placeholder resolves directly to
+     * {@code boundParams.get(n)} first. Falls back to matching by name for a driver that DOES set
+     * names (the TDS spec allows it even though the one real client tested here doesn't use it).
+     * A placeholder that resolves neither way is refused rather than guessed at, same "refuse over
+     * silently wrong" convention as RouterStage/ScatterGatherAggregateMerge. */
+    private static String rewriteNamedParams(String sql, List<RpcRequestReader.RpcParam> boundParams,
+            List<Object> orderedBinds) throws IOException {
+        Matcher matcher = NAMED_PARAM_PLACEHOLDER.matcher(sql);
+        StringBuilder rewritten = new StringBuilder();
+        int last = 0;
+        while (matcher.find()) {
+            String name = matcher.group();
+            RpcRequestReader.RpcParam match = resolveBoundParam(name, boundParams);
+            if (match == null) {
+                throw new IOException("sp_executesql: no bound value found for placeholder " + name);
+            }
+            rewritten.append(sql, last, matcher.start());
+            rewritten.append('?');
+            orderedBinds.add(match.value());
+            last = matcher.end();
+        }
+        rewritten.append(sql, last, sql.length());
+        return rewritten.toString();
+    }
+
+    private static RpcRequestReader.RpcParam resolveBoundParam(String placeholderName,
+            List<RpcRequestReader.RpcParam> boundParams) {
+        Matcher positional = POSITIONAL_PLACEHOLDER.matcher(placeholderName);
+        if (positional.matches()) {
+            int index = Integer.parseInt(positional.group(1));
+            if (index >= 0 && index < boundParams.size()) {
+                return boundParams.get(index);
+            }
+        }
+        for (RpcRequestReader.RpcParam p : boundParams) {
+            if (placeholderName.equalsIgnoreCase(p.name())) {
+                return p;
+            }
+        }
+        return null;
     }
 }

@@ -36,6 +36,7 @@
     <slf4j.version>2.0.16</slf4j.version>
     <junit.version>5.11.3</junit.version>
     <ojdbc.version>23.8.0.25.04</ojdbc.version>
+    <mssqljdbc.version>12.8.1.jre11</mssqljdbc.version>
     <grpc.version>1.68.1</grpc.version>
     <protobuf.version>3.25.5</protobuf.version>
     <gson.version>2.11.0</gson.version>
@@ -253,6 +254,15 @@
       <groupId>com.oracle.database.jdbc</groupId>
       <artifactId>ojdbc11</artifactId>
       <version>${ojdbc.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- Same rationale as ojdbc11 above: a real client's own wire encoding is the only thing
+           that actually validates a byte-level protocol decoder (RpcRequestReader, for
+           sp_executesql bind-parameter support); see MssqlJdbcIntegrationTest. -->
+      <groupId>com.microsoft.sqlserver</groupId>
+      <artifactId>mssql-jdbc</artifactId>
+      <version>${mssqljdbc.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>

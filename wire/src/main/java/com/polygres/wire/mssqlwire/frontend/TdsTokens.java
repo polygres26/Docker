@@ -12,6 +12,10 @@ public final class TdsTokens {
     private static final byte TOKEN_COLMETADATA = (byte) 0x81;
     private static final byte TOKEN_ROW = (byte) 0xD1;
     private static final byte TOKEN_DONE = (byte) 0xFD;
+    // Sent instead of plain DONE at the end of an RPC (sp_executesql) response -- some clients
+    // count DONEPROC to know an RPC call specifically has finished, distinct from a DONE inside a
+    // batch. Same body shape as DONE otherwise.
+    private static final byte TOKEN_DONEPROC = (byte) 0xFE;
 
     private static final int ENVCHANGE_DATABASE = 1;
 
@@ -38,6 +42,7 @@ public final class TdsTokens {
         if (database != null && !database.isBlank()) {
             writeEnvChangeDatabase(out, database);
         }
+        writeEnvChangeCollation(out);
         writeDone(out, DONE_FINAL, 0, 0);
         return out.toByteArray();
     }
@@ -55,11 +60,36 @@ public final class TdsTokens {
         out.writeBytes(body.toByteArray());
     }
 
+    private static final int ENVCHANGE_COLLATION = 7;
+
+    // The same 5-byte collation value writeColMetaData already sends for every column's
+    // TYPE_INFO -- reusing it here (rather than picking a fresh encoding) keeps this file
+    // internally consistent with a value already proven to round-trip through a real client.
+    private static final byte[] DEFAULT_COLLATION = {0x09, 0x04, 0x00, 0x00, 0x00};
+
     private static void writeEnvChangeDatabase(ByteArrayOutputStream out, String database) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write(ENVCHANGE_DATABASE);
         writeBVarChar(body, database);
         writeBVarChar(body, "");
+
+        out.write(TOKEN_ENVCHANGE);
+        writeU16LE(out, body.size());
+        out.writeBytes(body.toByteArray());
+    }
+
+    // Without this, a real client (mssql-jdbc confirmed live) has no server collation to encode
+    // string RPC parameters with and throws a NullPointerException client-side before a single
+    // byte reaches PolyWire -- not a decode bug in RpcRequestReader, a missing piece of the LOGIN7
+    // response every client needs regardless of RPC support at all. Found via
+    // MssqlJdbcIntegrationTest, a real client -- exactly the kind of gap a hand-constructed test
+    // payload can't surface, since nothing about RpcRequestReader's own decoding was wrong.
+    private static void writeEnvChangeCollation(ByteArrayOutputStream out) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(ENVCHANGE_COLLATION);
+        body.write(DEFAULT_COLLATION.length);
+        body.writeBytes(DEFAULT_COLLATION);
+        body.write(0); // old value length -- none, this is the initial login response
 
         out.write(TOKEN_ENVCHANGE);
         writeU16LE(out, body.size());
@@ -113,7 +143,15 @@ public final class TdsTokens {
     }
 
     public static void writeDone(ByteArrayOutputStream out, int status, int curCmd, long rowCount) {
-        out.write(TOKEN_DONE);
+        writeDoneToken(out, TOKEN_DONE, status, curCmd, rowCount);
+    }
+
+    public static void writeDoneProc(ByteArrayOutputStream out, int status, int curCmd, long rowCount) {
+        writeDoneToken(out, TOKEN_DONEPROC, status, curCmd, rowCount);
+    }
+
+    private static void writeDoneToken(ByteArrayOutputStream out, byte token, int status, int curCmd, long rowCount) {
+        out.write(token);
         writeU16LE(out, status);
         writeU16LE(out, curCmd);
         for (int i = 0; i < 8; i++) {
