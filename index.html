@@ -157,7 +157,7 @@ SQL&gt;</pre>
         and it never finds out.
       </p>
       <figure class="rewireFigure">
-        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: four applications each connect directly to their own database (Oracle, MongoDB, OpenSearch, MySQL). After: the same four applications connect through PolyWire, which fans them all into one PostgreSQL database.">
+        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: four applications each connect directly to their own database (Oracle, MongoDB, OpenSearch, MySQL). After: those same four applications, plus an AI agent over MCP, all connect through PolyWire, which fans them into one PostgreSQL database.">
           <defs>
             <marker id="rewireArrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <polygon points="0,0 10,5 0,10" fill="var(--ink-faint)"></polygon>
@@ -199,34 +199,41 @@ SQL&gt;</pre>
           <rect class="panelBg" x="380" y="8" width="550" height="244" rx="14"></rect>
           <text class="panelLabel" x="595" y="26" text-anchor="middle">After</text>
 
-          <path class="line" d="M523,60 C 610,60 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,105 C 600,105 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,150 C 600,150 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,195 C 610,195 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,46 C 610,46 620,124 688,124" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,85 C 600,85 615,124 688,124" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,124 C 600,124 610,124 688,124" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,163 C 600,163 615,124 688,124" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,202 C 610,202 620,124 688,124" marker-end="url(#rewireArrowhead)"></path>
 
-          <rect class="box" x="398" y="44" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="64" text-anchor="middle">Oracle App</text>
-          <rect class="box" x="398" y="89" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="109" text-anchor="middle">Mongo App</text>
-          <rect class="box" x="398" y="134" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="154" text-anchor="middle">Search App</text>
-          <rect class="box" x="398" y="179" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="199" text-anchor="middle">MySQL App</text>
+          <rect class="box" x="398" y="30" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="50" text-anchor="middle">Oracle App</text>
+          <rect class="box" x="398" y="69" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="89" text-anchor="middle">Mongo App</text>
+          <rect class="box" x="398" y="108" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="128" text-anchor="middle">Search App</text>
+          <rect class="box" x="398" y="147" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="167" text-anchor="middle">MySQL App</text>
+          <rect class="box" x="398" y="186" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="206" text-anchor="middle">AI Agent (MCP)</text>
 
-          <rect class="hubBox" x="690" y="107" width="100" height="40" rx="8"></rect>
-          <text class="hubLabel" x="740" y="132" text-anchor="middle">PolyWire</text>
-          <line class="line" x1="790" y1="127" x2="815" y2="127" marker-end="url(#rewireArrowhead)"></line>
-          <text class="pgLabel" x="822" y="132" text-anchor="start">PostgreSQL</text>
+          <rect class="hubBox" x="690" y="104" width="100" height="40" rx="8"></rect>
+          <text class="hubLabel" x="740" y="129" text-anchor="middle">PolyWire</text>
+          <line class="line" x1="790" y1="124" x2="815" y2="124" marker-end="url(#rewireArrowhead)"></line>
+          <text class="pgLabel" x="822" y="129" text-anchor="start">PostgreSQL</text>
         </svg>
         <figcaption>
           Before: four applications, four databases, four protocols to run and secure
-          separately. After: the same four applications, unmodified, fan into PolyWire — which
+          separately. After: those same four applications, plus an AI agent over MCP, all
+          unmodified, fan into PolyWire — which
           alone talks to a single PostgreSQL database.
         </figcaption>
       </figure>
       <p class="rttNote">
         Keep your applications. Keep your drivers. Keep your protocols. Standardize the backend
-        on Postgres.
+        on Postgres. Every one of them is a real client library talking the real protocol it
+        always has — <code>python-oracledb</code>, <code>mongosh</code>/<code>mongodb-driver-sync</code>,
+        <code>opensearch-py</code>, an MCP client — unaware PolyWire, not the database it thinks
+        it's talking to, is on the other end.
       </p>
 
       <h3 class="subhead" id="try">Try it in a minute<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
@@ -252,20 +259,6 @@ curl -s localhost:9200/_search                     # OpenSearch wire</code>
         provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
         PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
         <a href="CONNECTING.md">CONNECTING.md</a>.
-      </p>
-
-      <h3 class="subhead" id="see-it-work">See it work<a class="permalink" href="#see-it-work" aria-label="Link to this section">#</a></h3>
-      <div class="seeItWorkGrid">
-        <div class="seeItWorkRow"><span>Oracle App</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span></div>
-        <div class="seeItWorkRow"><span>MongoDB App</span><span class="rewireArrow">→</span><span>MongoDB wire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span></div>
-        <div class="seeItWorkRow"><span>OpenSearch App</span><span class="rewireArrow">→</span><span>REST API</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span></div>
-        <div class="seeItWorkRow"><span>AI Agent</span><span class="rewireArrow">→</span><span>MCP</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span></div>
-      </div>
-      <p class="rttNote">
-        Every one of these is a real client library talking the real protocol it always has —
-        <code>python-oracledb</code>, <code>mongosh</code>/<code>mongodb-driver-sync</code>,
-        <code>opensearch-py</code>, an MCP client — unaware PolyWire, not the database it thinks
-        it's talking to, is on the other end.
       </p>
 
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
