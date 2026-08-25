@@ -13,9 +13,12 @@ from the whole page.
 
 ## PolyWire
 
-- [Main page](https://polygres26.github.io/#polywire): use cases, architecture, cache/RTT
-  benchmarks per protocol, sharding, rollups, observability, multi-AZ deployment, security, error
-  handling, and planned/unplanned outage handling.
+- [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, the
+  before/after protocol-rewiring diagram, a 60-second quick start, and the architecture diagram.
+- [Full capabilities](https://polygres26.github.io/polywire.html): outcomes, use cases,
+  architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
+  observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
+  handling -- the complete technical detail behind the pitch on the main page.
 - [Connecting to your Postgres](https://polygres26.github.io/CONNECTING.md): worked examples and
   real gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
@@ -76,8 +79,11 @@ rights, nothing is feature-gated to a paid tier:
 
 ## PolyAdvisor
 
-- [Main page](https://polygres26.github.io/#polyadvisor): how assessment works, what the
-  dashboards show, sizing recommendations.
+- [Main page](https://polygres26.github.io/#polyadvisor): the bridge from the PolyWire pitch --
+  what PolyAdvisor is and a quick start.
+- [Full detail](https://polygres26.github.io/polyadvisor.html): how assessment works (live
+  connection or uploaded report), what you get, the admin console dashboards, and sizing
+  recommendations.
 - Rules-based migration-difficulty scoring for Oracle/MySQL/MariaDB/SQL Server -> Postgres --
   reproducible (same database, same score every run), with a line-by-line breakdown of what
   drives the score and why.
