@@ -7,6 +7,9 @@
 <meta name="description" content="PolyWire: one wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to a single real Postgres database, unmodified — with a SQL firewall, sharding, RLS, and planned/unplanned failover built in. PolyAdvisor scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://polygres26.github.io/">
 <meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="docs/logo.png">
+<link rel="apple-touch-icon" href="docs/logo.png">
 
 <!-- Open Graph / Twitter Card -->
 <meta property="og:type" content="website">
@@ -34,7 +37,23 @@
       "description": "A wire-protocol gateway: Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP clients connect unmodified, and PolyWire executes against one real Postgres database on the other side. Includes a SQL firewall, connection ACL, QoS admission control, sharding, row-level security, and planned/unplanned backend failover.",
       "url": "https://polygres26.github.io/#polywire",
       "image": "https://polygres26.github.io/docs/architecture.png",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "Developer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "description": "Free forever, every protocol and feature enabled, capped at 25 concurrent connections per instance, 3 instances, and 3 Postgres backends -- evaluation and development use, not licensed for commercial production.",
+          "url": "https://polygres26.github.io/#pricing"
+        },
+        {
+          "@type": "Offer",
+          "name": "Enterprise",
+          "priceCurrency": "USD",
+          "description": "Everything in Developer, unlimited connections/instances/backends, licensed for commercial production use, with enterprise support. Contact for pricing.",
+          "url": "https://polygres26.github.io/#contact"
+        }
+      ],
       "softwareHelp": "https://polygres26.github.io/CONNECTING.md"
     },
     {
@@ -50,7 +69,14 @@
       "@type": "Organization",
       "name": "Polygres",
       "url": "https://polygres26.github.io/",
-      "logo": "https://polygres26.github.io/docs/logo.png"
+      "logo": "https://polygres26.github.io/docs/logo.png",
+      "sameAs": ["https://github.com/polygres26"],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "url": "https://polygres26.github.io/#contact",
+        "availableLanguage": "English"
+      }
     }
   ]
 }
@@ -121,6 +147,15 @@
   h3.subhead .permalink { margin-left: 8px; color: var(--ink-faint); text-decoration: none; font-weight: 400; opacity: 0; transition: opacity 0.12s; }
   h3.subhead:hover .permalink, h3.subhead .permalink:focus { opacity: 1; }
   .tool[id], section#faq { scroll-margin-top: 64px; }
+
+  /* Off-screen until keyboard-focused -- lets a keyboard/screen-reader user jump straight past
+     the nav to the page content instead of tabbing through every nav link first. */
+  .skipLink {
+    position: absolute; left: -9999px; top: auto; z-index: 100;
+    padding: 10px 16px; background: var(--indigo); color: #fff; border-radius: 0 0 6px 0;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+  }
+  .skipLink:focus { left: 0; top: 0; }
 
   /* Sticky top nav -- section links + active-section highlight (see the IntersectionObserver
      script near the end of <body>). Collapses to a horizontal scroller on narrow viewports
@@ -219,6 +254,7 @@
 </style>
 </head>
 <body>
+  <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="#polywire">PolyWire</a>
@@ -227,9 +263,10 @@
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
       <a href="CONNECTING.md">Connecting</a>
+      <a href="llms.txt" title="A condensed, LLM-friendly summary of this page -- paste it into a chat instead of the full page">Copy for LLM</a>
     </div>
   </nav>
-  <div class="wrap">
+  <div class="wrap" id="main">
     <header>
       <div class="brandRow">
         <img src="docs/logo.png" alt="Polygres" class="brandMark">
