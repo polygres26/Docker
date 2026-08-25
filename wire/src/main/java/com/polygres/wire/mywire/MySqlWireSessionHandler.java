@@ -2,6 +2,7 @@ package com.polygres.wire.mywire;
 
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.config.FailedStatementLog;
+import com.polygres.wire.core.DialectErrorMessages;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.SourceDialect;
@@ -413,8 +414,12 @@ public final class MySqlWireSessionHandler implements Runnable {
             int nativeError = SqlStateErrorMapper.toMySqlError(state);
             failedStatementLog.record(SourceDialect.MYSQL, sql,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
-            packets.writePayload(out, MySqlMessages.errPacket(nativeError, state,
-                    e.getMessage() == null ? "backend error" : e.getMessage()));
+            // The client sees real MySQL error text ("Table 'x' doesn't exist", etc.) when a
+            // dialect-native template exists for this SQLSTATE -- the audit log line above still
+            // records Postgres's own raw message.
+            String clientMessage = e.getMessage() == null ? "backend error"
+                    : DialectErrorMessages.render(SourceDialect.MYSQL, state, e.getMessage());
+            packets.writePayload(out, MySqlMessages.errPacket(nativeError, state, clientMessage));
         }
     }
 

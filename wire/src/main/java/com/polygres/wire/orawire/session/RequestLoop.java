@@ -2,6 +2,7 @@ package com.polygres.wire.orawire.session;
 
 import com.polygres.wire.config.FailedStatementLog;
 import com.polygres.wire.core.ColumnInfo;
+import com.polygres.wire.core.DialectErrorMessages;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
@@ -249,7 +250,13 @@ public final class RequestLoop {
             failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             rollbackAfterStatementError();
-            ResponseWriter.writeErrorEnd(w, nativeError, e.getMessage() == null ? "backend error" : e.getMessage(), openCursorId, callNumber);
+            // The client sees the dialect-native ORA-xxxxx wording (real Oracle message text,
+            // not Postgres's) when one exists for this SQLSTATE -- the audit log line above still
+            // records Postgres's own raw message, since that's the more useful text for debugging
+            // the real backend failure.
+            String clientMessage = e.getMessage() == null ? "backend error"
+                    : DialectErrorMessages.render(SourceDialect.ORACLE, e.getSQLState(), e.getMessage());
+            ResponseWriter.writeErrorEnd(w, nativeError, clientMessage, openCursorId, callNumber);
         } catch (RuntimeException e) {
             
             log.warn("unexpected error executing statement: {}", e.toString(), e);

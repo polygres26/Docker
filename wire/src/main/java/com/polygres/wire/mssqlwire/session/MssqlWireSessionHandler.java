@@ -3,6 +3,7 @@ package com.polygres.wire.mssqlwire.session;
 import com.polygres.wire.auth.CredentialStore;
 import com.polygres.wire.config.FailedStatementLog;
 import com.polygres.wire.core.BackendRegistry;
+import com.polygres.wire.core.DialectErrorMessages;
 import com.polygres.wire.core.ExecutionResult;
 import com.polygres.wire.core.JdbcBackendExecutor;
 import com.polygres.wire.core.PipelineStage;
@@ -303,8 +304,13 @@ public final class MssqlWireSessionHandler implements Runnable {
             int nativeError = SqlStateErrorMapper.toSqlServerError(e.getSQLState());
             failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
+            // The client sees real SQL Server error text ("Invalid object name 'x'.", etc.) when
+            // a dialect-native template exists for this SQLSTATE -- the audit log line above
+            // still records Postgres's own raw message.
+            String clientMessage = e.getMessage() == null ? "backend error"
+                    : DialectErrorMessages.render(SourceDialect.SQL_SERVER, e.getSQLState(), e.getMessage());
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                    TdsTokens.errorMessage(nativeError, e.getMessage() == null ? "backend error" : e.getMessage()));
+                    TdsTokens.errorMessage(nativeError, clientMessage));
         }
     }
 

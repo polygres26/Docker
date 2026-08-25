@@ -98,4 +98,35 @@ class OracleJdbcIntegrationTest {
             }
         }
     }
+
+    /** The exact scenario the error-code plan started from: a real Oracle client creating an
+     * index that already exists must see a real ORA-00955 -- the correct error CODE ({@link
+     * com.polygres.wire.core.SqlStateErrorMapper}, Phase 2) AND Oracle's own real message text
+     * ({@link com.polygres.wire.core.DialectErrorMessages}, Phase 3), not Postgres's "relation ...
+     * already exists" wording behind a native-looking code. */
+    @Test
+    void creatingAnIndexThatAlreadyExistsReturnsARealOra00955() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE ojdbc_idx_it (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+                stmt.execute("CREATE INDEX ojdbc_idx_it_name ON ojdbc_idx_it(name)");
+                conn.commit();
+
+                SQLException duplicate = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.execute("CREATE INDEX ojdbc_idx_it_name ON ojdbc_idx_it(name)"),
+                        "creating an index under a name that already exists must fail");
+                assertEquals(955, duplicate.getErrorCode(), "must be a real ORA-00955, not a generic default");
+                assertTrue(duplicate.getMessage() != null && duplicate.getMessage().startsWith("ORA-00955"),
+                        "client should see Oracle's own real wording, not Postgres's -- got: " + duplicate.getMessage());
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE ojdbc_idx_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
 }
