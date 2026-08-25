@@ -2,7 +2,8 @@
 
 PolyWire needs exactly one thing to run: a Postgres it can reach. Everything below points the
 same image at a different kind of Postgres — an existing on-prem instance, Supabase, Amazon RDS,
-Cloud SQL, or Azure Database for PostgreSQL — using the same five env vars every time:
+Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
+PostgreSQL — using the same five env vars every time:
 
 ```
 POLYWIRE_HOST=<host>
@@ -32,7 +33,7 @@ below verifies with plain `psql` since it's the most universal check, but the ba
 you've pointed PolyWire at is available through all of them identically.
 
 **A note on verification depth**: the on-prem example below is directly, repeatably tested against
-a real Postgres container as part of this repo's own test suite. The four cloud examples are
+a real Postgres container as part of this repo's own test suite. The five cloud examples are
 written and checked against each provider's own current documented connection format, but — unlike
 everything else in this repo — haven't been run against a live account of each service. If you hit
 something that doesn't match what's below, it's more likely a provider detail that's shifted than a
@@ -233,3 +234,58 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
   "Allow public access from any Azure service" if PolyWire itself runs inside Azure) — same
   allowlist-before-anything-else requirement as RDS's security group and Cloud SQL's authorized
   networks.
+
+---
+
+## Oracle Cloud Infrastructure — Database with PostgreSQL
+
+The one target here with no public-endpoint option at all: OCI's managed Postgres DB systems are
+deployed into a **private VCN subnet only** — there's no equivalent of RDS's "publicly accessible"
+toggle or Cloud SQL's authorized-networks list. Reaching it needs one of:
+
+- PolyWire already running on a compute instance inside the same VCN (simplest if that's where
+  it's going to live in production anyway), or
+- an **OCI Bastion port-forwarding session** — no jump-box compute instance needed, just a
+  short-lived tunnel from the OCI console/CLI mapping a local port to the DB system's 5432 inside
+  the VCN, or
+- a site-to-site VPN (or FastConnect) between wherever PolyWire runs and the VCN.
+
+The examples below assume a bastion session already forwards `localhost:5432` on the machine
+running `docker run` to the DB system — adjust `POLYWIRE_HOST`/`POLYWIRE_PORT` to wherever your
+own tunnel actually lands.
+
+```bash
+docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=host.docker.internal \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_DATABASE=postgres \
+  -e POLYWIRE_USER=your_admin_user \
+  -e POLYWIRE_PASSWORD=your-password \
+  -e POLYWIRE_PG_SSLMODE=verify-full \
+  -e POLYWIRE_PG_SSLROOTCERT=/certs/dbsystem.pub \
+  -v /local/path/to/dbsystem.pub:/certs/dbsystem.pub:ro \
+  ghcr.io/polygres26/polywire:latest
+```
+
+```bash
+psql -h localhost -p 15432 -U your_admin_user -d postgres
+```
+
+**Gotchas:**
+- **TLS is mandatory, not optional** — OCI's Postgres service refuses a plaintext connection
+  unconditionally, same as Azure Flexible Server. Unlike the other providers here, going all the
+  way to `verify-full` is realistic to set up from the start: download the CA bundle from the DB
+  system's **Connection details** panel in the console (referred to there as `dbsystem.pub`) and
+  mount it in, as above.
+- **The admin username is chosen when you create the DB system, not fixed to `postgres`** — closer
+  to RDS's master-username model than Supabase/Azure's fixed convention — and can't be changed
+  afterward (the password can be rotated; the username can't).
+- **There's no single documented endpoint format to predict** — unlike the other providers, OCI
+  doesn't publish a template hostname pattern. Get the exact FQDN from the DB system's own
+  **Connection details** page in the console, not by guessing at a shape.
+- A DB system exposes both a **primary (floating) endpoint** — always the current read-write
+  node, safe default for `POLYWIRE_HOST` — and separate per-node endpoints for directing read
+  traffic at specific replicas. Use the primary endpoint here unless you specifically want to
+  point PolyWire's standby-aware read routing (`POLYWIRE_STANDBY_HOST`, see the main README) at a
+  particular replica instead.

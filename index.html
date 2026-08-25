@@ -160,13 +160,52 @@
   ghcr.io/polygres26/polywire:latest</code>
       </div>
       <p class="rttNote">
-        That works as-is against an existing on-prem Postgres. Connecting to a managed provider
-        needs a couple of provider-specific details — <b>Supabase's pooler needs a
-        <code>postgres.&lt;project-ref&gt;</code> username</b> (its direct connection is IPv6-only
-        in most regions, unreachable from a typical Docker host), and <b>Supabase and Azure both
-        require <code>POLYWIRE_PG_SSLMODE=require</code></b> — they reject a plaintext connection
-        outright. Full copy-pasteable commands, network/firewall requirements, and every gotcha for
-        on-prem, Supabase, Amazon RDS, Google Cloud SQL, and Azure Database for PostgreSQL:
+        That works as-is against an existing on-prem Postgres. Managed providers need a couple of
+        provider-specific details on top — two worth seeing directly, the rest (Amazon RDS, Google
+        Cloud SQL, Azure Database for PostgreSQL) in the full reference:
+        <a href="CONNECTING.md">CONNECTING.md</a>.
+      </p>
+
+      <div class="runblock">
+        <p><b>Supabase</b> — the pooler, not the direct connection: the direct connection
+          (<code style="display:inline;padding:1px 6px;">db.&lt;ref&gt;.supabase.co</code>) is
+          IPv6-only in most regions, unreachable from a typical Docker host. The pooler needs a
+          <code style="display:inline;padding:1px 6px;">postgres.&lt;project-ref&gt;</code>
+          username, not plain <code style="display:inline;padding:1px 6px;">postgres</code>, and
+          TLS is mandatory.</p>
+        <code>docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=aws-0-&lt;region&gt;.pooler.supabase.com \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_USER=postgres.&lt;project-ref&gt; \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_PG_SSLMODE=require \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+
+      <div class="runblock">
+        <p><b>Oracle Cloud Infrastructure — Database with PostgreSQL</b> — no public endpoint at
+          all: DB systems live in a private VCN subnet only. Reach one via an
+          <a href="https://docs.oracle.com/en-us/iaas/Content/Bastion/Concepts/bastionoverview.htm" target="_blank" rel="noopener">OCI
+          Bastion port-forwarding session</a> (shown below, forwarded to <code style="display:inline;padding:1px 6px;">localhost:5432</code>),
+          a VPN, or running PolyWire inside the same VCN. TLS is mandatory, and unlike the other
+          providers here, going straight to <code style="display:inline;padding:1px 6px;">verify-full</code>
+          is realistic from the start — the CA bundle is a direct download from the DB system's own
+          Connection details page.</p>
+        <code>docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=host.docker.internal \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_USER=&lt;your_admin_user&gt; \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_PG_SSLMODE=verify-full \
+  -e POLYWIRE_PG_SSLROOTCERT=/certs/dbsystem.pub \
+  -v /local/path/to/dbsystem.pub:/certs/dbsystem.pub:ro \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+      <p class="rttNote">
+        Full detail for all six targets — copy-pasteable commands, every network/firewall
+        requirement, and the gotchas that actually block a first connection attempt:
         <a href="CONNECTING.md">CONNECTING.md</a>.
       </p>
 
