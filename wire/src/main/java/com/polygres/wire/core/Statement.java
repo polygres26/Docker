@@ -32,6 +32,14 @@ public record Statement(
         return new Statement("default", dialect, sqlText, bindParams, "default", null, AccessContext.ANONYMOUS);
     }
 
+    /** As {@link #of(SourceDialect, String, List)}, but carrying a real, non-anonymous
+     * {@code accessContext} -- e.g. the Postgres role a pgwire/mssqlwire session actually
+     * authenticated as under {@code POLYWIRE_AUTH_MODE=postgres_roles}, propagated from here into
+     * {@code JdbcBackendExecutor}'s native-RLS session-context call. */
+    public static Statement of(SourceDialect dialect, String sqlText, List<Object> bindParams, AccessContext accessContext) {
+        return new Statement("default", dialect, sqlText, bindParams, "default", null, accessContext);
+    }
+
     public Statement withSqlText(String newSqlText) {
         return new Statement(tenantId, sourceDialect, newSqlText, bindParams, workloadClass, targetBackend, accessContext);
     }

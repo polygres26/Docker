@@ -55,6 +55,7 @@ public final class MetricsServer {
 
     private final Server server;
     private final com.polygres.wire.sqswire.PgQueueStore queueStore;
+    private final com.polygres.wire.audit.AuditLog auditLog;
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.polygres.wire.acl.ConnectionGate.DISABLED);
@@ -162,7 +163,29 @@ public final class MetricsServer {
             com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
             com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
             com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, mcpMetrics,
+                captureBuffer, null);
+    }
+
+    /**
+     * As the full constructor above, plus {@code auditLog} -- when non-null, enables
+     * {@code GET /api/audit} (this process's recent {@link com.polygres.wire.audit.AuditEvent}s,
+     * most-recent-first; the durable, hash-chained store when {@code POLYWIRE_AUDIT_LOG_DB} is
+     * configured, the in-memory ring buffer otherwise). {@code null} (every other constructor's
+     * default) means the route is absent, same "omitted, not an error" convention as every other
+     * optional dependency here.
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
+            com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer,
+            com.polygres.wire.audit.AuditLog auditLog) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
+        this.auditLog = auditLog;
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
         // than threading sqswire's own store across process wiring just for this read-only page.
@@ -296,6 +319,18 @@ public final class MetricsServer {
                         return;
                     }
                     handleCapture(request, response, captureBuffer);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (auditLog != null && "/api/audit".equals(target)) {
+                    if (!bearerTokenValid(request, adminToken)) {
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleAudit(request, response, auditLog);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -787,6 +822,30 @@ public final class MetricsServer {
                 json.append(p == null ? "null" : jsonString(String.valueOf(p)));
             }
             json.append("]}");
+        }
+        json.append(']');
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(json.toString());
+    }
+
+    /** {@code GET /api/audit?limit=N} (default 100) -- most-recent-first, from the durable
+     * hash-chained DB sink when {@code POLYWIRE_AUDIT_LOG_DB} is configured, the in-memory ring
+     * buffer otherwise (see {@link com.polygres.wire.audit.AuditLog#recent}). */
+    private static void handleAudit(HttpServletRequest request, HttpServletResponse response,
+            com.polygres.wire.audit.AuditLog auditLog) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        if (!"GET".equals(request.getMethod())) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            response.getWriter().write("{\"error\":\"no such route\"}");
+            return;
+        }
+        int limit = (int) parseLongParam(request.getParameter("limit"), 100);
+        StringBuilder json = new StringBuilder("[");
+        boolean first = true;
+        for (com.polygres.wire.audit.AuditEvent event : auditLog.recent(limit)) {
+            if (!first) json.append(',');
+            first = false;
+            json.append(com.polygres.wire.audit.AuditLog.toJson(event));
         }
         json.append(']');
         response.setStatus(HttpServletResponse.SC_OK);

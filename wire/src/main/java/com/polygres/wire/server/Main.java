@@ -256,9 +256,18 @@ public final class Main {
         // they end up in) so both share the exact same instance -- MetricsServer reads it,
         // PolyWireMcpServer writes to it, from its single tools/call dispatch point.
         com.polygres.wire.mcp.McpMetricsCollector mcpMetrics = new com.polygres.wire.mcp.McpMetricsCollector();
+
+        // Constructed here (before MetricsServer, which reads it for GET /api/audit) so the same
+        // instance is shared with every session handler that records into it below -- pgwire/
+        // mssqlwire's DB_LOGIN_SUCCEEDED/DB_LOGIN_FAILED events, and (indirectly, via
+        // AccessControlStage if that's ever wired in) row-filter/column-mask decisions. Without
+        // POLYWIRE_AUDIT_LOG_FILE/POLYWIRE_AUDIT_LOG_DB configured, events still land in the
+        // in-memory ring (readable via /api/audit) but aren't durable across a restart.
+        com.polygres.wire.audit.AuditLog auditLog = com.polygres.wire.audit.AuditLog.fromEnv();
+
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir, options, mcpMetrics, captureBuffer);
+                adminWebDir, options, mcpMetrics, captureBuffer, auditLog);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
@@ -300,9 +309,14 @@ public final class Main {
                     parseIntEnv("POLYWIRE_AUTH_REFRESH_SECONDS", 30));
         }
 
-        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
+        // auditLog (constructed earlier, shared with MetricsServer's /api/audit) is wired into
+        // every login attempt on the two protocols that authenticate a real, distinguishable
+        // Postgres role -- see PgWireSessionHandler/MssqlWireSessionHandler's
+        // DB_LOGIN_SUCCEEDED/DB_LOGIN_FAILED events, and JdbcBackendExecutor's native-RLS
+        // session-context propagation, which uses that same real identity.
+        listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
-        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate));
+        listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
         listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics, backendRegistry));
 
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
@@ -423,7 +437,8 @@ public final class Main {
 
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
-            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
             log.info("polywire listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
@@ -433,7 +448,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
+                sessionExecutor.submit(new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
             }
         } catch (IOException e) {
             log.error("Postgres wire listener on port {} failed", options.pgWireListenPort(), e);
@@ -461,7 +476,8 @@ public final class Main {
 
     private static void acceptMssqlWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
-            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate) {
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("polywire listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
@@ -471,7 +487,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache));
+                sessionExecutor.submit(new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
             }
         } catch (IOException e) {
             log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);

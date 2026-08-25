@@ -48,24 +48,35 @@ public final class MssqlWireSessionHandler implements Runnable {
     private volatile Socket activeSocket;
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
-    private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
+    private final JdbcBackendExecutor terminalExecutor;
     private final StatementPipeline pipeline;
     private final com.polygres.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
 
     private final com.polygres.wire.auth.PgRoleAuthCache roleAuthCache;
+    private final com.polygres.wire.audit.AuditLog auditLog;
+    private volatile com.polygres.wire.core.AccessContext accessContext = com.polygres.wire.core.AccessContext.ANONYMOUS;
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
-        this(clientSocket, options, sharedStages, backendRegistry, null);
+        this(clientSocket, options, sharedStages, backendRegistry, null, null);
     }
 
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
             com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
+        this(clientSocket, options, sharedStages, backendRegistry, roleAuthCache, null);
+    }
+
+    public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
+            List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.audit.AuditLog auditLog) {
         this.clientSocket = clientSocket;
         this.options = options;
+        // Same real-identity-into-native-RLS wiring as PgWireSessionHandler -- see its
+        // constructor's javadoc for the full reasoning.
+        this.terminalExecutor = new JdbcBackendExecutor(null, new com.polygres.wire.core.access.PostgresRlsSessionInitializer());
         this.pipeline = new StatementPipeline(sharedStages,
                 new RoutingBackendExecutor(backendRegistry, terminalExecutor,
                         new com.polygres.wire.xa.XaRecoveryLog(options)));
@@ -73,14 +84,29 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
+        this.auditLog = auditLog;
     }
 
     private boolean authenticate(String username, String presentedPassword) {
+        boolean ok;
         if (roleAuthCache != null) {
-            return roleAuthCache.verify(username, presentedPassword);
+            ok = roleAuthCache.verify(username, presentedPassword);
+        } else {
+            byte[] expected = credentials.lookupPassword(username);
+            ok = expected != null && new String(expected, java.nio.charset.StandardCharsets.UTF_8).equals(presentedPassword);
         }
-        byte[] expected = credentials.lookupPassword(username);
-        return expected != null && new String(expected, java.nio.charset.StandardCharsets.UTF_8).equals(presentedPassword);
+        if (ok && roleAuthCache != null) {
+            accessContext = new com.polygres.wire.core.AccessContext(username, java.util.Set.of(), java.util.Map.of());
+        }
+        if (auditLog != null) {
+            auditLog.record(ok
+                    ? com.polygres.wire.audit.AuditEvent.of(com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_SUCCEEDED,
+                            username, "mssqlwire login succeeded for user \"" + username + "\""
+                                    + (roleAuthCache != null ? " (real Postgres role)" : " (shared credential)"))
+                    : com.polygres.wire.audit.AuditEvent.of(com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_FAILED,
+                            username, "mssqlwire login failed for user \"" + username + "\""));
+        }
+        return ok;
     }
 
     @Override
@@ -247,7 +273,7 @@ public final class MssqlWireSessionHandler implements Runnable {
         try (Connection backend = PgConnections.open(options)) {
             backend.setAutoCommit(true);
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams);
+            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext);
             ExecutionResult result;
             try {
                 result = pipeline.execute(statement);

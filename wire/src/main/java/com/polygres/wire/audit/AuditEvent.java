@@ -15,7 +15,9 @@ public record AuditEvent(Instant timestamp, Type type, String userId, String sum
         SCIM_USER_DEPROVISIONED,
         SCIM_USER_DELETED,
         ADMIN_LOGIN,
-        
+        DB_LOGIN_SUCCEEDED,
+        DB_LOGIN_FAILED,
+
         ONTOLOGY_RELATIONSHIP_AUTO_ACCEPTED,
         
         NL2SQL_QUERY_EXECUTED,

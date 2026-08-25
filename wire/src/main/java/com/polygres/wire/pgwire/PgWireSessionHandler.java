@@ -50,7 +50,9 @@ public final class PgWireSessionHandler implements Runnable {
         return expected != null && presentedPassword.equals(new String(expected, StandardCharsets.UTF_8));
     }
     
-    private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
+    private final JdbcBackendExecutor terminalExecutor;
+    private final com.polygres.wire.audit.AuditLog auditLog;
+    private volatile com.polygres.wire.core.AccessContext accessContext = com.polygres.wire.core.AccessContext.ANONYMOUS;
     
     private final com.polygres.wire.core.RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
@@ -89,14 +91,27 @@ public final class PgWireSessionHandler implements Runnable {
 
     public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
-        this(clientSocket, options, sharedStages, backendRegistry, null);
+        this(clientSocket, options, sharedStages, backendRegistry, null, null);
     }
 
     public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
             com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
+        this(clientSocket, options, sharedStages, backendRegistry, roleAuthCache, null);
+    }
+
+    public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
+            List<com.polygres.wire.core.PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.auth.PgRoleAuthCache roleAuthCache, com.polygres.wire.audit.AuditLog auditLog) {
         this.clientSocket = clientSocket;
         this.options = options;
+        // Real, per-connection identity for whichever login actually verified a distinct Postgres
+        // role (roleAuthCache != null) -- propagated into every Statement this session executes,
+        // and from there into JdbcBackendExecutor's native-RLS session-context call (see
+        // terminalExecutor below), so a real Postgres RLS policy on the backend can key off
+        // current_setting('polywire.user_id'). Stays AccessContext.ANONYMOUS for the
+        // shared-credential fallback -- that path has no real distinguishable identity to assert.
+        this.terminalExecutor = new JdbcBackendExecutor(null, new com.polygres.wire.core.access.PostgresRlsSessionInitializer());
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
                 new com.polygres.wire.xa.XaRecoveryLog(options));
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
@@ -104,6 +119,7 @@ public final class PgWireSessionHandler implements Runnable {
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
         this.roleAuthCache = roleAuthCache;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -216,8 +232,26 @@ public final class PgWireSessionHandler implements Runnable {
         String password = new String(body, 0, body.length - 1, StandardCharsets.UTF_8);
 
         if (!authenticate(username, password)) {
+            if (auditLog != null) {
+                auditLog.record(com.polygres.wire.audit.AuditEvent.of(
+                        com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_FAILED, username,
+                        "pgwire login failed for user \"" + username + "\""));
+            }
             PgMessages.writeErrorAndReady(out, "28P01", "password authentication failed for user \"" + username + "\"");
             return null;
+        }
+        if (roleAuthCache != null) {
+            // Only when a real, distinguishable Postgres role was actually verified -- the
+            // shared-credential fallback has no real per-connection identity to assert, and
+            // asserting one anyway would let a single shared secret masquerade as a real user for
+            // native-RLS/audit purposes.
+            accessContext = new com.polygres.wire.core.AccessContext(username, java.util.Set.of(), java.util.Map.of());
+        }
+        if (auditLog != null) {
+            auditLog.record(com.polygres.wire.audit.AuditEvent.of(
+                    com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_SUCCEEDED, username,
+                    "pgwire login succeeded for user \"" + username + "\""
+                            + (roleAuthCache != null ? " (real Postgres role)" : " (shared credential)")));
         }
 
         PgMessages.writeAuthOk(out);
@@ -412,7 +446,7 @@ public final class PgWireSessionHandler implements Runnable {
         String jdbcSql = rewriteDollarParams(sql, rawParams, orderedBinds);
 
         terminalExecutor.rebind(backend);
-        Statement statement = Statement.of(SourceDialect.POSTGRES, jdbcSql, orderedBinds);
+        Statement statement = Statement.of(SourceDialect.POSTGRES, jdbcSql, orderedBinds, accessContext);
         ExecutionResult result = pipeline.execute(statement);
         portals.put(portalName, new Portal(sql, result));
         PgMessages.writeBindComplete(out);
@@ -513,7 +547,7 @@ public final class PgWireSessionHandler implements Runnable {
                 return;
             }
             terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.POSTGRES, sql, List.of());
+            Statement statement = Statement.of(SourceDialect.POSTGRES, sql, List.of(), accessContext);
             ExecutionResult result = pipeline.execute(statement);
             if (result.isQuery()) {
                 PgMessages.writeRowDescription(out, result.columnNames(), result.columnJdbcTypes());
