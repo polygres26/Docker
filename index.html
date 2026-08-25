@@ -531,6 +531,29 @@
         MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't yet propagate identity
         into RLS at all — every session there still shares one backend credential.
       </p>
+
+      <h3 class="subhead">Planned and unplanned outages</h3>
+      <p class="rttNote">
+        A Postgres backend going down for a patch shouldn't take your application down with it —
+        whether you chose the timing or not. PolyWire tells the two cases apart deliberately: a
+        planned switchover can afford to wait for a clean cutover; an unplanned failure can't wait
+        for anything.
+      </p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">Planned switchover</span><span class="uc-desc"><code>POST /api/backends/{name}/drain</code> stops routing new statements to a backend in favor of a configured fallback (a same-region replica or another region's backend — the mechanism doesn't distinguish the two), then waits (bounded by <code>graceMs</code>) for its connection pool to empty before closing it. It also waits for the fallback to reach real zero replication lag before reporting success — a planned window has no outage forcing an immediate cutover, so it actually waits for a clean one. Refuses (409) to drain a backend with any unresolved in-doubt XA transaction against it, and fans the call out to every other node in the cluster (not just whichever one received the HTTP request) so a switchover is genuinely cluster-wide, not single-node.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Unplanned failover</span><span class="uc-desc">A background prober re-checks every backend's connectivity (<code>POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS</code>, default 15s) and automatically redirects new statements to a backend's fallback the moment it stops responding — no operator, no admin call. Set <code>POLYWIRE_FAILOVER_MAX_LAG_SECONDS</code> to name the replication lag (the data loss) you're willing to accept from an outage nobody scheduled; exceeding it doesn't block the failover — refusing to redirect would only trade a bounded loss for a total outage — but it does log loudly, exactly what a real alert should page on.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Crash-safe recovery, even after a switchover</span><span class="uc-desc">An in-doubt two-phase-commit branch records the exact backend (jdbc URL, user, password) it was prepared against, not just its name — so if that name gets repointed to a different physical target between the crash and the next restart (a switchover, a credential rotation, a config edit), startup recovery still reconnects to where the branch actually lives, not wherever the name currently resolves to.</span></span></li>
+      </ul>
+      <p class="rttNote">
+        <b>Scope: the Postgres, SQL Server, MySQL, and Oracle wire protocols only.</b> Drain/
+        undrain, fallback redirection, and auto-failover all act on the same statement-routing
+        layer those four protocols share. The DynamoDB, MongoDB, SQS, and OpenSearch wire
+        protocols resolve backends directly by name today and don't participate in this yet — a
+        backend serving one of those protocols can still be drained from the admin API's point of
+        view (its connection pool empties the same way), but traffic on those four protocols keeps
+        connecting to it directly regardless of drain/down state until routing-layer support is
+        added for them too.
+      </p>
     </section>
 
     <section class="tool" id="polyadvisor">
