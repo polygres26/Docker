@@ -214,9 +214,12 @@ public final class Main {
                 config.routerValueShardRules(),
                 config.routerShardTables(),
                 backendRegistry);
-        log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s), {} shard-table rule(s)",
+        log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s) "
+                        + "({} bind-param-indexed, {} literal-column), {} shard-table rule(s)",
                 routerStage.schemaRules().size(), routerStage.predicateRules().size(),
-                routerStage.valueShardRules().size(), routerStage.shardRules().size());
+                routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size(),
+                routerStage.valueShardRules().size(), routerStage.valueShardColumnRules().size(),
+                routerStage.shardRules().size());
         stages.add(routerStage);
         stages.add(qosStage);
         TranslationCacheStore translationCacheStore = new TranslationCacheStore(options);
@@ -399,7 +402,8 @@ public final class Main {
                             + "oauth={}, awsIam={} credential(s))",
                     newVersion.version(), c.qosRatePerSec(), c.qosBurst(),
                     routerStage.schemaRules().size() + routerStage.predicateRules().size()
-                            + routerStage.valueShardRules().size() + routerStage.shardRules().size(),
+                            + routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size()
+                            + routerStage.shardRules().size(),
                     backendRegistry.all().size(), cacheStage != null, newRollups.size(),
                     clientAcl.hasRules() ? "some" : "0", c.oauthIssuer() == null ? "disabled" : "enabled",
                     awsIamCredentials.isEnabled() ? "some" : "0");

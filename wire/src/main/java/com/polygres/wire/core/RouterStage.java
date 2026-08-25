@@ -21,34 +21,50 @@ public final class RouterStage implements PipelineStage {
     public record ValueShardRule(int bindIndex, ShardingStrategy strategy) {
     }
 
+    /** Same sharding-value routing as {@link ValueShardRule}, but for a client that sent the
+     * sharding value as a plain SQL literal (e.g. {@code WHERE tenant_id = 42} from psql,
+     * simple-query mode, or any client/ORM not using bind parameters) instead of a bind
+     * parameter. {@link ValueShardRule} indexes {@code statement.bindParams()}, which is empty
+     * for a literal -- that statement fell through to the default backend silently, a real
+     * correctness gap (wrong shard, no error) flagged by a fresh competitive-comparison audit
+     * against ShardingSphere, which extracts sharding values from literals via real SQL parsing.
+     * This is the regex-based equivalent, matching {@link SchemaRule}/{@link ShardRule}'s existing
+     * (also regex-on-raw-SQL, not a real parser) scope in this class -- see
+     * {@link ValueShardLiteralMatcher} for exactly what it can and can't find. */
+    public record ValueShardColumnRule(String columnName, ShardingStrategy strategy) {
+    }
+
     public record ShardRule(Pattern schemaPattern) {
     }
 
     private volatile List<SchemaRule> schemaRules;
     private volatile List<PredicateRule> predicateRules;
     private volatile List<ValueShardRule> valueShardRules;
+    private volatile List<ValueShardColumnRule> valueShardColumnRules;
     private volatile List<ShardRule> shardRules;
-    
+
     private final BackendRegistry backendRegistry;
 
     public RouterStage() {
-        this(List.of(), List.of(), List.of(), List.of(), null);
+        this(List.of(), List.of(), List.of(), List.of(), List.of(), null);
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules, List<ShardRule> shardRules) {
-        this(schemaRules, predicateRules, List.of(), shardRules, null);
+        this(schemaRules, predicateRules, List.of(), List.of(), shardRules, null);
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules,
             List<ValueShardRule> valueShardRules, List<ShardRule> shardRules) {
-        this(schemaRules, predicateRules, valueShardRules, shardRules, null);
+        this(schemaRules, predicateRules, valueShardRules, List.of(), shardRules, null);
     }
 
     public RouterStage(List<SchemaRule> schemaRules, List<PredicateRule> predicateRules,
-            List<ValueShardRule> valueShardRules, List<ShardRule> shardRules, BackendRegistry backendRegistry) {
+            List<ValueShardRule> valueShardRules, List<ValueShardColumnRule> valueShardColumnRules,
+            List<ShardRule> shardRules, BackendRegistry backendRegistry) {
         this.schemaRules = List.copyOf(schemaRules);
         this.predicateRules = List.copyOf(predicateRules);
         this.valueShardRules = List.copyOf(valueShardRules);
+        this.valueShardColumnRules = List.copyOf(valueShardColumnRules);
         this.shardRules = List.copyOf(shardRules);
         this.backendRegistry = backendRegistry;
     }
@@ -63,6 +79,10 @@ public final class RouterStage implements PipelineStage {
 
     public List<ValueShardRule> valueShardRules() {
         return valueShardRules;
+    }
+
+    public List<ValueShardColumnRule> valueShardColumnRules() {
+        return valueShardColumnRules;
     }
 
     public List<ShardRule> shardRules() {
@@ -100,15 +120,24 @@ public final class RouterStage implements PipelineStage {
             }
         }
         List<ValueShardRule> valueShardRules = new ArrayList<>();
+        List<ValueShardColumnRule> valueShardColumnRules = new ArrayList<>();
         if (valueShardSpec != null && !valueShardSpec.isBlank()) {
             for (String rule : valueShardSpec.split("\\|")) {
                 String[] parts = rule.split(":", 3);
                 if (parts.length != 3) {
                     continue;
                 }
-                int bindIndex = Integer.parseInt(parts[0].trim());
+                String key = parts[0].trim();
                 ShardingStrategy strategy = ShardingStrategy.fromConfig(parts[1].trim(), parts[2].trim());
-                valueShardRules.add(new ValueShardRule(bindIndex, strategy));
+                // A purely-numeric first field is (unchanged, back-compat) a bind-parameter index.
+                // Anything else is a column name -- routes a client that sent the sharding value
+                // as a plain SQL literal instead of a bind parameter (see ValueShardColumnRule's
+                // javadoc for why that case previously fell through to the wrong backend silently).
+                if (key.matches("\\d+")) {
+                    valueShardRules.add(new ValueShardRule(Integer.parseInt(key), strategy));
+                } else {
+                    valueShardColumnRules.add(new ValueShardColumnRule(key, strategy));
+                }
             }
         }
         List<ShardRule> shardRules = new ArrayList<>();
@@ -121,7 +150,7 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        return new RouterStage(schemaRules, predicateRules, valueShardRules, shardRules, backendRegistry);
+        return new RouterStage(schemaRules, predicateRules, valueShardRules, valueShardColumnRules, shardRules, backendRegistry);
     }
 
     public void reconfigure(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec) {
@@ -129,6 +158,7 @@ public final class RouterStage implements PipelineStage {
         this.schemaRules = fresh.schemaRules;
         this.predicateRules = fresh.predicateRules;
         this.valueShardRules = fresh.valueShardRules;
+        this.valueShardColumnRules = fresh.valueShardColumnRules;
         this.shardRules = fresh.shardRules;
     }
 
@@ -168,6 +198,22 @@ public final class RouterStage implements PipelineStage {
                                 rule.bindIndex(), bindValue, backend);
                         return backend;
                     }
+                }
+            }
+        }
+        // Covers the case ValueShardRule can't: a client that sent the sharding value as a plain
+        // SQL literal (WHERE tenant_id = 42) rather than a bind parameter -- bindParams() is empty
+        // for that statement, so the loop above never even runs. Always tried, not just when
+        // bindParams() is empty, since a client can mix bind params for some columns with literals
+        // for others in the same statement.
+        for (ValueShardColumnRule rule : valueShardColumnRules) {
+            String literal = ValueShardLiteralMatcher.findLiteralValue(statement.sqlText(), rule.columnName());
+            if (literal != null) {
+                String backend = rule.strategy().resolve(literal);
+                if (backend != null) {
+                    log.debug("router: value-shard literal rule matched ({}={}) -> backend={}",
+                            rule.columnName(), literal, backend);
+                    return backend;
                 }
             }
         }
