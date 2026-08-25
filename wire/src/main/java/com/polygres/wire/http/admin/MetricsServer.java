@@ -52,6 +52,8 @@ public final class MetricsServer {
     private static final Pattern BACKEND_COLUMNS_PATH = Pattern.compile("^/api/backends/([^/]+)/tables/([^/]+)/([^/]+)/columns$");
     private static final Pattern BACKEND_QUERY_PATH = Pattern.compile("^/api/backends/([^/]+)/query$");
     private static final Pattern BACKEND_TEST_NAMED_PATH = Pattern.compile("^/api/backends/([^/]+)/test$");
+    private static final Pattern BACKEND_DRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/drain$");
+    private static final Pattern BACKEND_UNDRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/undrain$");
 
     private final Server server;
     private final com.polygres.wire.sqswire.PgQueueStore queueStore;
@@ -597,6 +599,8 @@ public final class MetricsServer {
             Matcher columnsMatch = BACKEND_COLUMNS_PATH.matcher(target);
             Matcher queryMatch = BACKEND_QUERY_PATH.matcher(target);
             Matcher testNamedMatch = BACKEND_TEST_NAMED_PATH.matcher(target);
+            Matcher drainMatch = BACKEND_DRAIN_PATH.matcher(target);
+            Matcher undrainMatch = BACKEND_UNDRAIN_PATH.matcher(target);
 
             if ("/api/backends/test".equals(target) && "POST".equals(request.getMethod())) {
                 // Test-before-add: params the caller is considering, not anything already in
@@ -635,11 +639,47 @@ public final class MetricsServer {
                     json.append("{\"name\":").append(jsonString(t.name()))
                             .append(",\"jdbcUrl\":").append(jsonString(t.jdbcUrl()))
                             .append(",\"dialect\":").append(jsonString(t.dialect() == null ? null : t.dialect().name()))
+                            .append(",\"state\":").append(jsonString(backendRegistry.stateOf(t.name()).name()))
+                            .append(",\"fallback\":").append(jsonString(t.fallbackName()))
                             .append('}');
                 }
                 json.append(']');
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write(json.toString());
+            } else if (drainMatch.matches() && "POST".equals(request.getMethod())) {
+                // Planned-maintenance switchover, step 1: stop routing NEW statements to this
+                // backend's name (resolveForRouting starts preferring its configured fallback, if
+                // any, the instant setState below returns) and drain its connection pool -- wait
+                // (bounded by graceMs) for whatever's already checked out to finish and be
+                // returned, then close it. Existing sessions still mid-transaction on this backend
+                // are unaffected by either step; they keep running on the connection they already
+                // hold until they naturally finish. drainedCleanly=false in the response means the
+                // grace period expired with connections still active -- the pool was closed anyway
+                // (see BackendConnectionPools.drain's javadoc for exactly what that means), so the
+                // caller knows to check for exceptions in whatever was still running against it.
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, drainMatch.group(1), response);
+                if (t == null) return;
+                long graceMs = parseLongParam(request.getParameter("graceMs"), 30_000);
+                backendRegistry.setState(t.name(), com.polygres.wire.core.BackendRegistry.BackendState.DRAINING);
+                var result = com.polygres.wire.core.BackendConnectionPools.drain(t.poolKey(), graceMs);
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"name\":" + jsonString(t.name())
+                        + ",\"state\":\"DRAINING\""
+                        + ",\"fallback\":" + jsonString(t.fallbackName())
+                        + ",\"poolExisted\":" + result.poolExisted()
+                        + ",\"drainedCleanly\":" + result.drainedCleanly()
+                        + ",\"activeConnectionsAtClose\":" + result.activeConnectionsAtClose() + "}");
+            } else if (undrainMatch.matches() && "POST".equals(request.getMethod())) {
+                // Step 2, once maintenance is done: resolveForRouting immediately starts sending
+                // new statements back to this backend's own name again. No pool action needed here
+                // -- drain() already removed the old pool entirely, so the very next borrow()
+                // against this backend transparently creates a fresh one (see BackendConnectionPools
+                // .drain's javadoc); there's nothing to "resume".
+                com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, undrainMatch.group(1), response);
+                if (t == null) return;
+                backendRegistry.setState(t.name(), com.polygres.wire.core.BackendRegistry.BackendState.ACTIVE);
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"name\":" + jsonString(t.name()) + ",\"state\":\"ACTIVE\"}");
             } else if (tablesMatch.matches() && "GET".equals(request.getMethod())) {
                 com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, tablesMatch.group(1), response);
                 if (t == null) return;

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,9 +14,26 @@ public final class BackendRegistry {
 
     public static final String DEFAULT_BACKEND_NAME = "default";
 
+    /** A backend's operational state for routing purposes -- see {@link #resolveForRouting}.
+     * {@code ACTIVE} is the default for every backend that's never had its state touched.
+     * {@code DRAINING} is set explicitly via the admin drain API ahead of planned maintenance;
+     * {@code DOWN} is reserved for a future automated health-checker (not built yet) to set on
+     * an unplanned failure -- both are treated identically by routing today (prefer the
+     * configured fallback, if any), so adding the health-checker later needs no routing change. */
+    public enum BackendState {
+        ACTIVE, DRAINING, DOWN
+    }
+
     private volatile Map<String, BackendTarget> targets;
     private volatile List<String> shardGroup;
-    
+
+    // Deliberately NOT reset by reload() -- a backend's drain/down state is an operational fact
+    // set by an admin action or a health check, independent of whatever POLYWIRE_BACKENDS config
+    // happens to be current. A name that disappears from a fresh reload just leaves its state
+    // entry orphaned (harmless -- resolveForRouting/stateOf only ever look it up by name, and
+    // get(name) already returns null for an unknown name regardless of this map).
+    private final Map<String, BackendState> states = new ConcurrentHashMap<>();
+
     private final BackendTarget defaultTarget;
 
     public BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup) {
@@ -50,13 +68,20 @@ public final class BackendRegistry {
                 String url = parts.length > 0 ? parts[0].replace("%3B", ";").replace("%3b", ";") : "";
                 String user = parts.length > 1 ? parts[1] : null;
                 String password = parts.length > 2 ? parts[2] : null;
+                // Optional 4th field: the name of another backend in THIS SAME spec to prefer for
+                // new routing while this one is DRAINING/DOWN (a same-region replica, or another
+                // region's backend entirely -- the mechanism doesn't care which). Not validated to
+                // exist here (the fallback entry may appear later in the spec, or be added in a
+                // later reload) -- resolveForRouting treats an unresolvable fallback name as "no
+                // fallback" rather than failing config parsing over it.
+                String fallbackName = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
                 if (!trustedHosts.isTrusted(url)) {
                     log.warn("backend registry: REFUSING to register backend '{}' ({}) -- its host is not in "
                             + "POLYWIRE_TRUSTED_BACKEND_HOSTS. This entry is skipped, not fatal; every other "
                             + "configured backend is unaffected.", name, url);
                     continue;
                 }
-                targets.put(name, new BackendTarget(name, url, user, password));
+                targets.put(name, new BackendTarget(name, url, user, password, null, fallbackName));
             }
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
@@ -76,8 +101,47 @@ public final class BackendRegistry {
         this.shardGroup = fresh.shardGroup;
     }
 
+    /** Exact, unredirected lookup -- returns the literal backend registered under {@code name},
+     * regardless of its drain/down state. This is deliberate: {@code XaRecovery} resolves an
+     * in-doubt branch's backend by the exact name it was prepared against, and admin routes
+     * (test/tables/query) operate on the backend an operator explicitly named -- neither should
+     * be silently redirected to a fallback. Statement routing should call {@link
+     * #resolveForRouting} instead. */
     public BackendTarget get(String name) {
         return targets.get(name);
+    }
+
+    /** As {@link #get}, but for new statement routing: an {@code ACTIVE} backend (the default for
+     * every name, until {@link #setState} says otherwise) resolves to itself unchanged. A
+     * {@code DRAINING}/{@code DOWN} backend with a configured {@link BackendTarget#fallbackName}
+     * resolves to that fallback instead -- one level only, no chained fallback-of-a-fallback, to
+     * keep this from ever looping. A {@code DRAINING}/{@code DOWN} backend with NO fallback
+     * configured still resolves to itself: better to let the caller's connection attempt fail
+     * loudly against a backend that's mid-maintenance than to silently mask a missing fallback by
+     * pretending the backend is fine. Existing sessions already bound to a connection on the
+     * draining backend are unaffected either way -- this only changes where the NEXT statement
+     * that needs a new connection gets routed. */
+    public BackendTarget resolveForRouting(String name) {
+        BackendTarget target = targets.get(name);
+        if (target == null || stateOf(name) == BackendState.ACTIVE || target.fallbackName() == null) {
+            return target;
+        }
+        BackendTarget fallback = targets.get(target.fallbackName());
+        return fallback != null ? fallback : target;
+    }
+
+    public BackendState stateOf(String name) {
+        return states.getOrDefault(name, BackendState.ACTIVE);
+    }
+
+    /** Returns false (and changes nothing) if {@code name} isn't a currently-registered backend --
+     * an admin caller should treat that as a 404, not a silently-ignored no-op. */
+    public boolean setState(String name, BackendState state) {
+        if (!targets.containsKey(name)) {
+            return false;
+        }
+        states.put(name, state);
+        return true;
     }
 
     public boolean isEmpty() {

@@ -4,10 +4,15 @@ import java.sql.Connection;
 import java.sql.SQLException;
 
 public record BackendTarget(String name, String jdbcUrl, String user, String password,
-        com.polygres.wire.server.ServerOptions failoverOptions) {
+        com.polygres.wire.server.ServerOptions failoverOptions, String fallbackName) {
 
     public BackendTarget(String name, String jdbcUrl, String user, String password) {
-        this(name, jdbcUrl, user, password, null);
+        this(name, jdbcUrl, user, password, null, null);
+    }
+
+    public BackendTarget(String name, String jdbcUrl, String user, String password,
+            com.polygres.wire.server.ServerOptions failoverOptions) {
+        this(name, jdbcUrl, user, password, failoverOptions, null);
     }
 
     public SourceDialect dialect() {
@@ -35,6 +40,14 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         Connection connection = com.polygres.wire.pgwire.PgConnections.openForRead(failoverOptions);
         connection.setAutoCommit(true);
         return connection;
+    }
+
+    /** The key this target's connections are pooled under in {@link BackendConnectionPools} --
+     * shared with {@link #borrow()} so a drain/undrain admin call can address the exact same pool
+     * a live session would borrow from. Meaningless (and unused) for a {@code failoverOptions}
+     * target, since that path doesn't go through {@code BackendConnectionPools} at all. */
+    public String poolKey() {
+        return BackendConnectionPools.poolKeyFor(jdbcUrl, user);
     }
 
     public Connection openManualCommit() throws SQLException {

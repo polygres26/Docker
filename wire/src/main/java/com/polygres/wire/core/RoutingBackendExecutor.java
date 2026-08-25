@@ -117,7 +117,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             // exists to route against).
             if (READ_ROUTING_ENABLED && transactionConnections == null && !registry.isEmpty()
                     && SqlMetricsCollector.classify(statement.sqlText()) == SqlMetricsCollector.StatementKind.READ) {
-                BackendTarget defaultTarget = registry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+                BackendTarget defaultTarget = registry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
                 if (defaultTarget != null) {
                     return executeOnFreshConnection(defaultTarget, statement);
                 }
@@ -127,7 +127,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (SCATTER_ALL.equals(targetName)) {
             return executeScatterGather(statement);
         }
-        BackendTarget target = registry.get(targetName);
+        BackendTarget target = registry.resolveForRouting(targetName);
         if (target == null) {
             throw new SQLException("router assigned unknown backend \"" + targetName + "\"");
         }
@@ -185,7 +185,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (plan != null) {
             Map<List<Object>, Object[]> accumulators = new LinkedHashMap<>();
             for (String shardName : shardNames) {
-                BackendTarget target = registry.get(shardName);
+                BackendTarget target = registry.resolveForRouting(shardName);
                 if (target == null) {
                     throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
                 }
@@ -199,7 +199,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             List<List<Object>> mergedRows = new ArrayList<>();
             Statement coreStatement = statement.withSqlText(coreSql);
             for (String shardName : shardNames) {
-                BackendTarget target = registry.get(shardName);
+                BackendTarget target = registry.resolveForRouting(shardName);
                 if (target == null) {
                     throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
                 }
