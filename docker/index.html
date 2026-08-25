@@ -309,6 +309,7 @@
           <li><a href="#multi-az">Multi-AZ deployment</a></li>
           <li><a href="#security">Security</a></li>
           <li><a href="#outages">Planned/unplanned outages</a></li>
+          <li><a href="#error-handling">Error handling</a></li>
         </ul>
       </details>
 
@@ -322,6 +323,8 @@
         <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
         <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
         <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no PolyWire-specific SDK to learn first.</p></div>
+        <div class="obsCard"><h4>Planned &amp; unplanned downtime management</h4><p>A scheduled drain waits for a clean cutover; an unrelated backend failure triggers automatic failover in seconds — the two cases are handled deliberately differently, across every wire protocol.</p></div>
+        <div class="obsCard"><h4>Native error translation</h4><p>Every real Postgres failure comes back as that protocol's own genuine error — ORA-03113, a MongoDB codeName, a DynamoDB exception name — so each client's own retry/reconnect logic keys off exactly what it expects.</p></div>
       </div>
 
       <h3 class="subhead" id="use-cases">Use cases<a class="permalink" href="#use-cases" aria-label="Link to this section">#</a></h3>
@@ -747,6 +750,36 @@
         switchover — a fallback that's a genuinely separate Postgres, not necessarily a replica —
         gets its schema/catalog tables created there automatically the first time routing actually
         lands on it, not never.
+      </p>
+
+      <h3 class="subhead" id="error-handling">Error handling: real native errors, not a generic wrapper<a class="permalink" href="#error-handling" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Underneath every protocol PolyWire speaks, the real failure is a Postgres SQLSTATE — a
+        unique-constraint violation, a missing table, a dead connection. A driver's own retry and
+        reconnect logic (Oracle drivers checking for <code>ORA-03113</code> specifically to decide
+        whether to transparently reconnect, MongoDB's retryable-reads keying off a real
+        <code>codeName</code>, the AWS SDK unmarshalling a real exception class) only works if
+        PolyWire sends the exact native error that driver expects — not a generic
+        <code>internal error</code> that leaves that logic with nothing to act on. Every wire
+        protocol translates the real Postgres SQLSTATE into that protocol's own genuine error
+        shape, verified against each vendor's own documentation or a real client library actually
+        parsing the response, not guessed.
+      </p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">Oracle, MySQL, SQL Server</span><span class="uc-desc">Real <code>ORA-NNNNN</code> numbers, MySQL <code>errno</code>s, and SQL Server error numbers, each paired with that vendor's own real message wording (not Postgres's) and the originating SQLSTATE.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">MongoDB</span><span class="uc-desc">Real <code>code</code> + <code>codeName</code> on command errors and on per-document <code>writeErrors</code> — e.g. <code>11000 DuplicateKey</code>, <code>112 WriteConflict</code>, <code>91 ShutdownInProgress</code> — verified against a real <code>mongodb-driver-sync</code> client.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">DynamoDB</span><span class="uc-desc">Real AWS exception names in the real DynamoDB JSON envelope — <code>ConditionalCheckFailedException</code>, <code>ResourceNotFoundException</code>, <code>TransactionConflictException</code> — verified against a real AWS SDK v2 client.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">SQS</span><span class="uc-desc">Real AWS error codes in the real SQS JSON error envelope — <code>QueueDoesNotExist</code>, <code>AccessDenied</code> — verified against a real AWS SDK v2 client.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">OpenSearch</span><span class="uc-desc">Real <code>error.type</code>/<code>error.reason</code>/<code>error.root_cause</code> — <code>index_not_found_exception</code>, <code>version_conflict_engine_exception</code>, <code>mapper_parsing_exception</code> — verified against a real <code>opensearch-java</code> client.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Connection loss, specifically</span><span class="uc-desc">PolyWire distinguishes three real Postgres SQLSTATEs that all mean "the backend is unreachable" — an already-open connection dying vs. a new connection attempt failing to establish — and maps every one of them to the native "backend gone" error each protocol's own client actually expects, confirmed against a real live outage, not assumed.</span></span></li>
+      </ul>
+      <p class="rttNote">
+        Where a vendor genuinely has no dedicated code for a condition (SQL Server has no numbered
+        error for a mid-session transport failure; SQS has no code distinct from a generic backend
+        failure for a duplicate/throttling condition), that gap is documented plainly rather than
+        papered over with an invented code. Full per-protocol mapping tables, the canonical-
+        condition comparison, and the connection-loss detail live in
+        <a href="ERRORS.md">ERRORS.md</a>.
       </p>
     </section>
 
