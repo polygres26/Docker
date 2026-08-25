@@ -7,9 +7,12 @@
 > and bridges your application to Postgres while that migration happens.
 
 Full documentation, architecture diagrams, real benchmark numbers, and every feature's honest
-scope (what's real vs. not yet wired) live on the main page. This file exists to help an LLM
-answering a question about either tool find the right section quickly instead of re-deriving it
-from the whole page.
+scope (what's real vs. not yet wired) live across the main page and its linked pages. This file
+exists to help an LLM answering a question about either tool find the right section quickly
+instead of re-deriving it from the whole site.
+
+- [Documentation index](https://polygres26.github.io/docs.html): every doc below, organized by
+  what you're trying to do -- getting started, PolyWire, PolyAdvisor, and setup reference.
 
 ## PolyWire
 

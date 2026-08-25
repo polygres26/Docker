@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyWire &amp; PolyAdvisor Documentation</title>
+<meta name="description" content="Documentation index for PolyWire and PolyAdvisor: full capabilities, connecting to your Postgres (on-prem, Supabase, RDS, Cloud SQL, Azure, OCI), error translation per protocol, and migration assessment detail.">
+<link rel="canonical" href="https://polygres26.github.io/docs.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="docs/logo.png">
+<link rel="apple-touch-icon" href="docs/logo.png">
+<link rel="stylesheet" href="styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://polygres26.github.io/docs.html">
+<meta property="og:title" content="PolyWire &amp; PolyAdvisor Documentation">
+<meta property="og:description" content="Documentation index: full capabilities, connecting to your Postgres, error translation, and migration assessment detail.">
+<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PolyWire &amp; PolyAdvisor Documentation">
+<meta name="twitter:description" content="Documentation index: full capabilities, connecting to your Postgres, error translation, and migration assessment detail.">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+</head>
+<body>
+  <a href="#main" class="skipLink">Skip to content</a>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="index.html">Home</a>
+      <a href="polywire.html">PolyWire</a>
+      <a href="polyadvisor.html">PolyAdvisor</a>
+      <a href="docs.html" class="active">Docs</a>
+      <a href="index.html#pricing">Pricing</a>
+      <a href="index.html#faq">FAQ</a>
+      <a href="index.html#contact">Contact</a>
+    </div>
+  </nav>
+  <div class="wrap" id="main">
+    <header>
+      <div class="brandRow">
+        <img src="docs/logo.png" alt="Polygres" class="brandMark">
+        <h1 class="eyebrow">PolyGres</h1>
+      </div>
+      <p class="lede">
+        <a href="index.html">← Back to home</a> — everything written down about PolyWire and
+        PolyAdvisor, organized by what you're trying to do.
+      </p>
+    </header>
+
+    <section class="tool" id="getting-started" style="margin-top:0; padding-top:0; border-top:none;">
+      <div class="kicker">
+        <span class="num">01</span>
+      </div>
+      <h2>Getting started</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="index.html#try">Try it in a minute</a></span><span class="uc-desc">The docker run command and one-line client commands per protocol — the fastest way to see PolyWire actually working.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="CONNECTING.md">Connecting to your Postgres</a></span><span class="uc-desc">Worked examples and real, previously-hit gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="polywire-docs">
+      <div class="kicker">
+        <span class="num">02</span>
+        <span class="badge">ghcr.io/polygres26/polywire</span>
+      </div>
+      <h2>PolyWire</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="polywire.html">Full capabilities</a></span><span class="uc-desc">Outcomes, use cases, architecture, admin console, PolyCache benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, and planned/unplanned outage handling — every honestly-scoped detail, nothing held back for a later page.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="ERRORS.md">Error translation</a></span><span class="uc-desc">Per-protocol native error shapes (Oracle ORA-numbers, MySQL errno, SQL Server number/severity/state, MongoDB code/codeName, DynamoDB/SQS/OpenSearch native envelopes), a canonical-condition comparison table across all seven protocols, and the connection-loss SQLSTATE detail.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="polywire.html#security">Security</a></span><span class="uc-desc">SQL firewall, connection ACL, QoS admission control, authentication (Postgres roles, per-user credentials, admin SSO), TLS, secrets management, and row-level security — each scoped honestly, including what's opt-in or narrower than the feature name suggests.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="polywire.html#observability">Observability</a></span><span class="uc-desc">Exporting metrics to CloudWatch, Datadog, New Relic, Grafana, Azure Monitor, GCP Cloud Monitoring, and AppDynamics — which platforms need a Collector in between and which take a direct push.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="polyadvisor-docs">
+      <div class="kicker">
+        <span class="num">03</span>
+        <span class="badge">ghcr.io/polygres26/polyadvisor</span>
+      </div>
+      <h2>PolyAdvisor</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="polyadvisor.html">Full detail</a></span><span class="uc-desc">Two ways to get an assessment (live connection or uploaded performance report), what you get (score, feature inventory, sizing, downloadable report), connecting and exploring with an LLM's help, and the admin console.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="reference-docs">
+      <div class="kicker">
+        <span class="num">04</span>
+      </div>
+      <h2>Setup reference</h2>
+      <p class="rttNote">
+        Source for both tools is private; the files below are the public documentation and image
+        surface published alongside this site.
+      </p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="README.md">README.md</a></span><span class="uc-desc">Top-level repository reference.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="polywire/README.md">polywire/README.md</a></span><span class="uc-desc">PolyWire-specific setup reference — full port list, environment variables, and build notes.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="polyadvisor/README.md">polyadvisor/README.md</a></span><span class="uc-desc">PolyAdvisor-specific setup reference.</span></span></li>
+      </ul>
+    </section>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="README.md">README.md</a> and
+      <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
+      in this repo.
+    </footer>
+  </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+  <script src="page.js"></script>
+</body>
+</html>

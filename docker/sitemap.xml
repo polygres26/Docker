@@ -49,6 +49,12 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://polygres26.github.io/docs.html</loc>
+    <lastmod>2026-08-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://polygres26.github.io/CONNECTING.md</loc>
     <lastmod>2026-08-25</lastmod>
     <changefreq>weekly</changefreq>
