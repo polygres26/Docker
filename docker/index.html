@@ -157,7 +157,7 @@ SQL&gt;</pre>
         and it never finds out.
       </p>
       <figure class="rewireFigure">
-        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: five applications each connect directly to their own database (Oracle, SQL Server, MySQL, MongoDB, OpenSearch). After: those same five applications, plus an AI agent over MCP, all connect through PolyWire, which fans them into one PostgreSQL database.">
+        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: seven applications each connect directly to their own database or service (Oracle, SQL Server, MySQL, MongoDB, OpenSearch, DynamoDB, SQS). After: those same seven applications, plus an AI agent over MCP, all connect through PolyWire, which fans them into one PostgreSQL database.">
           <defs>
             <marker id="rewireArrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <polygon points="0,0 10,5 0,10" fill="var(--ink-faint)"></polygon>
@@ -168,72 +168,92 @@ SQL&gt;</pre>
           <text class="panelLabel" x="185" y="22" text-anchor="middle">Before</text>
 
           <g>
-            <rect class="box" x="28" y="28" width="125" height="32" rx="6"></rect>
-            <text class="boxLabel" x="90" y="48" text-anchor="middle">Oracle App</text>
-            <rect class="box" x="228" y="28" width="115" height="32" rx="6"></rect>
-            <text class="boxLabel" x="285" y="48" text-anchor="middle">Oracle</text>
-            <line class="line" x1="153" y1="44" x2="225" y2="44" marker-end="url(#rewireArrowhead)"></line>
+            <rect class="box" x="28" y="28" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="47" text-anchor="middle">Oracle App</text>
+            <rect class="box" x="228" y="28" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="47" text-anchor="middle">Oracle</text>
+            <line class="line" x1="153" y1="43" x2="225" y2="43" marker-end="url(#rewireArrowhead)"></line>
           </g>
           <g>
-            <rect class="box" x="28" y="64" width="125" height="32" rx="6"></rect>
-            <text class="boxLabel" x="90" y="84" text-anchor="middle">SQL Server App</text>
-            <rect class="box" x="228" y="64" width="115" height="32" rx="6"></rect>
-            <text class="boxLabel" x="285" y="84" text-anchor="middle">SQL Server</text>
-            <line class="line" x1="153" y1="80" x2="225" y2="80" marker-end="url(#rewireArrowhead)"></line>
+            <rect class="box" x="28" y="60" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="79" text-anchor="middle">SQL Server App</text>
+            <rect class="box" x="228" y="60" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="79" text-anchor="middle">SQL Server</text>
+            <line class="line" x1="153" y1="75" x2="225" y2="75" marker-end="url(#rewireArrowhead)"></line>
           </g>
           <g>
-            <rect class="box" x="28" y="100" width="125" height="32" rx="6"></rect>
-            <text class="boxLabel" x="90" y="120" text-anchor="middle">MySQL App</text>
-            <rect class="box" x="228" y="100" width="115" height="32" rx="6"></rect>
-            <text class="boxLabel" x="285" y="120" text-anchor="middle">MySQL</text>
-            <line class="line" x1="153" y1="116" x2="225" y2="116" marker-end="url(#rewireArrowhead)"></line>
+            <rect class="box" x="28" y="92" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="111" text-anchor="middle">MySQL App</text>
+            <rect class="box" x="228" y="92" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="111" text-anchor="middle">MySQL</text>
+            <line class="line" x1="153" y1="107" x2="225" y2="107" marker-end="url(#rewireArrowhead)"></line>
           </g>
           <g>
-            <rect class="box" x="28" y="136" width="125" height="32" rx="6"></rect>
-            <text class="boxLabel" x="90" y="156" text-anchor="middle">Mongo App</text>
-            <rect class="box" x="228" y="136" width="115" height="32" rx="6"></rect>
-            <text class="boxLabel" x="285" y="156" text-anchor="middle">MongoDB</text>
-            <line class="line" x1="153" y1="152" x2="225" y2="152" marker-end="url(#rewireArrowhead)"></line>
+            <rect class="box" x="28" y="124" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="143" text-anchor="middle">Mongo App</text>
+            <rect class="box" x="228" y="124" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="143" text-anchor="middle">MongoDB</text>
+            <line class="line" x1="153" y1="139" x2="225" y2="139" marker-end="url(#rewireArrowhead)"></line>
           </g>
           <g>
-            <rect class="box" x="28" y="172" width="125" height="32" rx="6"></rect>
-            <text class="boxLabel" x="90" y="192" text-anchor="middle">Search App</text>
-            <rect class="box" x="228" y="172" width="115" height="32" rx="6"></rect>
-            <text class="boxLabel" x="285" y="192" text-anchor="middle">OpenSearch</text>
-            <line class="line" x1="153" y1="188" x2="225" y2="188" marker-end="url(#rewireArrowhead)"></line>
+            <rect class="box" x="28" y="156" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="175" text-anchor="middle">Search App</text>
+            <rect class="box" x="228" y="156" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="175" text-anchor="middle">OpenSearch</text>
+            <line class="line" x1="153" y1="171" x2="225" y2="171" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+          <g>
+            <rect class="box" x="28" y="188" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="207" text-anchor="middle">DynamoDB App</text>
+            <rect class="box" x="228" y="188" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="207" text-anchor="middle">DynamoDB</text>
+            <line class="line" x1="153" y1="203" x2="225" y2="203" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+          <g>
+            <rect class="box" x="28" y="220" width="125" height="30" rx="6"></rect>
+            <text class="boxLabel" x="90" y="239" text-anchor="middle">Queue App</text>
+            <rect class="box" x="228" y="220" width="115" height="30" rx="6"></rect>
+            <text class="boxLabel" x="285" y="239" text-anchor="middle">SQS</text>
+            <line class="line" x1="153" y1="235" x2="225" y2="235" marker-end="url(#rewireArrowhead)"></line>
           </g>
 
           <rect class="panelBg" x="380" y="8" width="550" height="244" rx="14"></rect>
           <text class="panelLabel" x="595" y="22" text-anchor="middle">After</text>
 
-          <path class="line" d="M523,42 C 610,42 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,76 C 600,76 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,110 C 600,110 610,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,144 C 600,144 610,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,178 C 600,178 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,212 C 610,212 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,38 C 605,38 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,65 C 605,65 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,92 C 605,92 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,119 C 605,119 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,146 C 605,146 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,173 C 605,173 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,200 C 605,200 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,227 C 605,227 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
 
-          <rect class="box" x="398" y="26" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="46" text-anchor="middle">Oracle App</text>
-          <rect class="box" x="398" y="60" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="80" text-anchor="middle">SQL Server App</text>
-          <rect class="box" x="398" y="94" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="114" text-anchor="middle">MySQL App</text>
-          <rect class="box" x="398" y="128" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="148" text-anchor="middle">Mongo App</text>
-          <rect class="box" x="398" y="162" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="182" text-anchor="middle">Search App</text>
-          <rect class="box" x="398" y="196" width="125" height="32" rx="6"></rect>
-          <text class="boxLabel" x="460" y="216" text-anchor="middle">AI Agent (MCP)</text>
+          <rect class="box" x="398" y="26" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="42" text-anchor="middle">Oracle App</text>
+          <rect class="box" x="398" y="53" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="69" text-anchor="middle">SQL Server App</text>
+          <rect class="box" x="398" y="80" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="96" text-anchor="middle">MySQL App</text>
+          <rect class="box" x="398" y="107" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="123" text-anchor="middle">Mongo App</text>
+          <rect class="box" x="398" y="134" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="150" text-anchor="middle">Search App</text>
+          <rect class="box" x="398" y="161" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="177" text-anchor="middle">DynamoDB App</text>
+          <rect class="box" x="398" y="188" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="204" text-anchor="middle">Queue App</text>
+          <rect class="box" x="398" y="215" width="125" height="24" rx="6"></rect>
+          <text class="boxLabel" x="460" y="231" text-anchor="middle">AI Agent (MCP)</text>
 
-          <rect class="hubBox" x="690" y="107" width="100" height="40" rx="8"></rect>
-          <text class="hubLabel" x="740" y="132" text-anchor="middle">PolyWire</text>
-          <line class="line" x1="790" y1="127" x2="815" y2="127" marker-end="url(#rewireArrowhead)"></line>
-          <text class="pgLabel" x="822" y="132" text-anchor="start">PostgreSQL</text>
+          <rect class="hubBox" x="690" y="113" width="100" height="40" rx="8"></rect>
+          <text class="hubLabel" x="740" y="138" text-anchor="middle">PolyWire</text>
+          <line class="line" x1="790" y1="133" x2="815" y2="133" marker-end="url(#rewireArrowhead)"></line>
+          <text class="pgLabel" x="822" y="138" text-anchor="start">PostgreSQL</text>
         </svg>
         <figcaption>
-          Before: five applications, five databases, five protocols to run and secure
-          separately. After: those same five applications, plus an AI agent over MCP, all
+          Before: seven applications, seven databases and services, seven protocols to run and
+          secure separately. After: those same seven applications, plus an AI agent over MCP, all
           unmodified, fan into PolyWire — which
           alone talks to a single PostgreSQL database.
         </figcaption>
@@ -263,7 +283,12 @@ mysql -h 127.0.0.1 -P 13306 -u root -p             # MySQL wire
 sqlcmd -S localhost,14333 -U sa -P '&lt;password&gt;'   # SQL Server wire
 sql app/password@//localhost:11521/postgres        # Oracle wire (SQLcl)
 mongosh mongodb://localhost:27017                  # MongoDB wire
-curl -s localhost:9200/_search                     # OpenSearch wire</code>
+curl -s localhost:9200/_search                     # OpenSearch wire
+aws dynamodb scan --table-name orders \            # DynamoDB wire
+  --endpoint-url http://localhost:18000
+aws sqs receive-message \                          # SQS wire
+  --queue-url http://localhost:9324/queue/orders \
+  --endpoint-url http://localhost:9324</code>
       </div>
       <p class="rttNote">
         That works as-is against an existing on-prem Postgres. For a specific managed
