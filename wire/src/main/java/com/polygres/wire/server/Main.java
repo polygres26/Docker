@@ -91,7 +91,12 @@ public final class Main {
         // against every configured backend on a timer.
         long healthCheckSeconds = parseLongEnv("POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS", 15);
         if (healthCheckSeconds > 0 && !backendRegistry.isEmpty()) {
-            new com.polygres.wire.core.BackendHealthChecker(backendRegistry, healthCheckSeconds).start();
+            // "Acceptable data loss" for an unplanned failover -- see BackendHealthChecker's
+            // javadoc on maxAcceptableFailoverLagSeconds. Unset (null) means no lag check at all,
+            // same behavior as before this existed.
+            String maxLagRaw = System.getenv("POLYWIRE_FAILOVER_MAX_LAG_SECONDS");
+            Double maxLagSeconds = (maxLagRaw == null || maxLagRaw.isBlank()) ? null : Double.valueOf(maxLagRaw);
+            new com.polygres.wire.core.BackendHealthChecker(backendRegistry, healthCheckSeconds, maxLagSeconds).start();
         }
 
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();

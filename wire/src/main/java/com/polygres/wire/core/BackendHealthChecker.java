@@ -33,11 +33,25 @@ public final class BackendHealthChecker {
 
     private final BackendRegistry registry;
     private final long periodSeconds;
+    // "Acceptable data loss" for an UNPLANNED failover -- the RPO an operator is willing to accept
+    // when a primary just dies with no warning and nothing about the timing was chosen. Null (the
+    // POLYWIRE_FAILOVER_MAX_LAG_SECONDS default) means no check is made at all: every failover is
+    // logged as a plain ACTIVE->DOWN transition, same as before this existed. When set, exceeding
+    // it does NOT block the failover -- the primary is already unreachable, so refusing to route
+    // to its fallback would only turn a bounded-loss failover into a total outage. It only changes
+    // whether the resulting log line reads as a routine failover or a loud "this cost you more
+    // than your accepted RPO" warning -- see probeOne's javadoc.
+    private final Double maxAcceptableFailoverLagSeconds;
     private ScheduledExecutorService scheduler;
 
     public BackendHealthChecker(BackendRegistry registry, long periodSeconds) {
+        this(registry, periodSeconds, null);
+    }
+
+    public BackendHealthChecker(BackendRegistry registry, long periodSeconds, Double maxAcceptableFailoverLagSeconds) {
         this.registry = registry;
         this.periodSeconds = periodSeconds;
+        this.maxAcceptableFailoverLagSeconds = maxAcceptableFailoverLagSeconds;
     }
 
     public void start() {
@@ -83,6 +97,34 @@ public final class BackendHealthChecker {
                     + "statements will route to its configured fallback, if any (routing falls straight "
                     + "through to '{}' itself if none is configured)",
                     target.name(), result.message(), target.name());
+            logFailoverLagIfConfigured(target);
+        }
+    }
+
+    /** Best-effort, log-only -- see {@link #maxAcceptableFailoverLagSeconds}'s javadoc for why
+     * this never blocks the failover it's reporting on. */
+    private void logFailoverLagIfConfigured(BackendTarget target) {
+        if (maxAcceptableFailoverLagSeconds == null || target.fallbackName() == null) {
+            return;
+        }
+        BackendTarget fallback = registry.get(target.fallbackName());
+        if (fallback == null) {
+            return;
+        }
+        ReplicationLag.Result lag = ReplicationLag.check(fallback);
+        if (!lag.ok() || !lag.isReplica()) {
+            return;
+        }
+        if (lag.lagSeconds() > maxAcceptableFailoverLagSeconds) {
+            log.warn("backend health: failing over '{}' to '{}' EXCEEDS the accepted data-loss window -- "
+                    + "fallback lag {}s > POLYWIRE_FAILOVER_MAX_LAG_SECONDS={}s; some committed writes on "
+                    + "'{}' may not be present on '{}' yet",
+                    target.name(), target.fallbackName(), String.format("%.1f", lag.lagSeconds()),
+                    maxAcceptableFailoverLagSeconds, target.name(), target.fallbackName());
+        } else {
+            log.info("backend health: failing over '{}' to '{}' -- fallback lag {}s is within the accepted "
+                    + "{}s data-loss window", target.name(), target.fallbackName(),
+                    String.format("%.1f", lag.lagSeconds()), maxAcceptableFailoverLagSeconds);
         }
     }
 }

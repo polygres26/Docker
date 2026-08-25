@@ -703,6 +703,31 @@ public final class MetricsServer {
                 java.util.List<String> peerResults = local ? java.util.List.of()
                         : fanOutToPeers(options, selfAdminPort, forwardedAuthHeader,
                                 "/api/backends/" + t.name() + "/drain?local=true&graceMs=" + graceMs);
+                // "Wait for zero data loss" -- checked ONCE here (never on a local=true forwarded
+                // call: replication lag is a property of the Postgres primary/replica pair, not of
+                // any one PolyWire node, so N nodes each checking it would be redundant) and only
+                // after every node has already stopped routing new statements here and drained its
+                // in-flight ones -- by this point nothing is writing to `t` through PolyWire
+                // anymore, so waiting for its fallback's lag to reach zero here is waiting for a
+                // real, achievable full catch-up, not chasing a moving target. Unlike Phase
+                // 3's failover lag check (advisory, never blocks -- see BackendHealthChecker's
+                // javadoc), a PLANNED switchover can and should actually wait: there's no outage
+                // forcing an immediate cutover. zeroDataLossConfirmed=false means the grace period
+                // ran out before lag reached zero -- the caller should NOT proceed with physical
+                // maintenance on `t` yet (some committed writes may still be missing on the
+                // fallback), and can retry the drain (already-DRAINING, so idempotent) once the
+                // replica has had more time.
+                String lagStatus = "not applicable";
+                if (!local && t.fallbackName() != null) {
+                    com.polygres.wire.core.BackendTarget fallback = backendRegistry.get(t.fallbackName());
+                    if (fallback != null) {
+                        var lag = com.polygres.wire.core.ReplicationLag.awaitLagBelow(fallback, 0.0, graceMs);
+                        lagStatus = !lag.ok() ? "fallback unreachable: " + lag.message()
+                                : !lag.isReplica() ? "fallback is not a streaming replica -- no lag to wait for"
+                                : lag.lagSeconds() <= 0.0 ? "confirmed zero lag"
+                                : "TIMED OUT waiting for zero lag -- still " + String.format("%.1f", lag.lagSeconds()) + "s behind";
+                    }
+                }
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write("{\"name\":" + jsonString(t.name())
                         + ",\"state\":\"DRAINING\""
@@ -710,6 +735,7 @@ public final class MetricsServer {
                         + ",\"poolExisted\":" + result.poolExisted()
                         + ",\"drainedCleanly\":" + result.drainedCleanly()
                         + ",\"activeConnectionsAtClose\":" + result.activeConnectionsAtClose()
+                        + ",\"zeroDataLoss\":" + jsonString(lagStatus)
                         + ",\"peers\":" + jsonStringArray(peerResults) + "}");
             } else if (undrainMatch.matches() && "POST".equals(request.getMethod())) {
                 // Step 2, once maintenance is done: resolveForRouting immediately starts sending
