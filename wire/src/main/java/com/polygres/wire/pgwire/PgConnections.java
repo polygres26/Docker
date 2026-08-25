@@ -33,6 +33,29 @@ public final class PgConnections {
         return openWithFailover(options, PgConnections::connectRaw);
     }
 
+    /**
+     * For read-only statements a caller has already decided are safe to serve from a replica
+     * (see {@code POLYWIRE_READ_ROUTING_ENABLED} in {@code RoutingBackendExecutor}): tries the
+     * standby first, falls back to the primary if the standby is unreachable or none is
+     * configured. Deliberately independent of {@link #onStandby}/the failback-probe machinery
+     * above -- that state means "the primary is down, we're degraded"; this method's standby
+     * preference is a normal, healthy-path load-balancing choice and must never itself flip or
+     * be confused with the outage-driven failover state (a read-routing attempt hitting an
+     * unreachable standby is not a primary outage and must not be logged/treated as one).
+     */
+    public static Connection openForRead(ServerOptions options) throws SQLException {
+        if (options.pgStandbyHost() == null || options.pgStandbyHost().isBlank()) {
+            return open(options);
+        }
+        try {
+            return connect(options.pgStandbyHost(), options.pgStandbyPort(), options);
+        } catch (SQLException standbyUnreachable) {
+            log.warn("read routing: standby {}:{} unreachable ({}), reading from primary instead",
+                    options.pgStandbyHost(), options.pgStandbyPort(), standbyUnreachable.getMessage());
+            return open(options);
+        }
+    }
+
     private static Connection openWithFailover(ServerOptions options, ConnectionOpener opener) throws SQLException {
         if (options.pgStandbyHost() == null || options.pgStandbyHost().isBlank()) {
             return opener.open(options.pgHost(), options.pgPort(), options);

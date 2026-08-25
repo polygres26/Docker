@@ -24,6 +24,19 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         return connection;
     }
 
+    /** As {@link #open()}, but prefers this target's configured standby for the connection --
+     * see {@link com.polygres.wire.pgwire.PgConnections#openForRead}. Falls back to {@link #open()}
+     * when this target has no {@code failoverOptions} (i.e. no standby concept at all, the plain
+     * {@code BackendConnectionPools}-only path) -- there's nothing to prefer in that case. */
+    public Connection openPreferringStandby() throws SQLException {
+        if (failoverOptions == null) {
+            return open();
+        }
+        Connection connection = com.polygres.wire.pgwire.PgConnections.openForRead(failoverOptions);
+        connection.setAutoCommit(true);
+        return connection;
+    }
+
     public Connection openManualCommit() throws SQLException {
         Connection connection = borrow();
         connection.setAutoCommit(false);

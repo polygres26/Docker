@@ -97,6 +97,21 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         }
         
         if (targetName == null || registry.isEmpty() || BackendRegistry.DEFAULT_BACKEND_NAME.equals(targetName)) {
+            // The common case -- no POLYWIRE_ROUTER_* rule matched -- normally always uses
+            // defaultExecutor, a connection borrowed once for the whole client session. That's
+            // correct and cheapest for the vast majority of statements, but it structurally can't
+            // read-route: the same connection serves every statement in the session regardless of
+            // read/write. When read routing is enabled, route an eligible read through the fresh-
+            // connection-per-statement path instead (same eligibility rule as the explicit-target
+            // path below: autocommit, READ-classified, and only when a default target actually
+            // exists to route against).
+            if (READ_ROUTING_ENABLED && transactionConnections == null && !registry.isEmpty()
+                    && SqlMetricsCollector.classify(statement.sqlText()) == SqlMetricsCollector.StatementKind.READ) {
+                BackendTarget defaultTarget = registry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+                if (defaultTarget != null) {
+                    return executeOnFreshConnection(defaultTarget, statement);
+                }
+            }
             return defaultExecutor.execute(statement);
         }
         if (SCATTER_ALL.equals(targetName)) {
@@ -152,8 +167,24 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         return ExecutionResult.ofQuery(columns, mergedRows);
     }
 
+    // Opt-in (default off): reading from a standby means reading data that may be behind the
+    // primary by however long replication lag currently is -- a real correctness tradeoff, not
+    // a free win, so this must never be silently on. Off by default matches every other
+    // behavior-changing toggle in this codebase (e.g. POLYWIRE_DYNAMOWIRE_CACHE_ENABLED's
+    // sibling pattern), except inverted: here the safer default (always read the primary) is
+    // the one that ships without an explicit opt-in.
+    private static final boolean READ_ROUTING_ENABLED =
+            "true".equalsIgnoreCase(System.getenv("POLYWIRE_READ_ROUTING_ENABLED"));
+
     private ExecutionResult executeOnFreshConnection(BackendTarget target, Statement statement) throws SQLException {
-        try (Connection connection = target.open()) {
+        // Only single, autocommit, read-classified statements are eligible -- this method is
+        // only ever called when transactionConnections == null (see execute()), so "not inside a
+        // transaction" is already guaranteed by the caller; the remaining condition is purely
+        // "would sending this to a standby be safe", which for a WRITE or an unclassifiable
+        // statement it is not.
+        boolean preferStandby = READ_ROUTING_ENABLED
+                && SqlMetricsCollector.classify(statement.sqlText()) == SqlMetricsCollector.StatementKind.READ;
+        try (Connection connection = preferStandby ? target.openPreferringStandby() : target.open()) {
             return new JdbcBackendExecutor(connection).execute(statement);
         }
     }
