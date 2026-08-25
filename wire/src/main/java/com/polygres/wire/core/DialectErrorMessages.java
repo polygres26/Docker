@@ -58,7 +58,14 @@ public final class DialectErrorMessages {
                     "new row for relation \"(.+?)\" violates check constraint \"(.+?)\"")),
             Map.entry("22P02", Pattern.compile("invalid input syntax for type (\\w+): \"(.*?)\"")),
             Map.entry("42501", Pattern.compile("permission denied for \\w+ (.+)")),
-            Map.entry("42883", Pattern.compile("function (.+?) does not exist")));
+            Map.entry("42883", Pattern.compile("function (.+?) does not exist")),
+            Map.entry("42702", Pattern.compile("column reference \"(.+?)\" is ambiguous")),
+            // Delete-side of foreign_key_violation -- see the "23503_DELETE" key below and
+            // SqlStateErrorMapper.isForeignKeyDeleteSide's javadoc for why this needs its own
+            // extractor distinct from plain "23503"'s (insert-side) one above: same SQLSTATE, a
+            // different real Postgres message shape, three groups instead of two.
+            Map.entry("23503_DELETE", Pattern.compile(
+                    "update or delete on table \"(.+?)\" violates foreign key constraint \"(.+?)\" on table \"(.+?)\"")));
 
     private static final Properties ORACLE_TEMPLATES = load("errors/oracle_en.properties");
     private static final Properties MYSQL_TEMPLATES = load("errors/mysql_en.properties");
@@ -99,11 +106,20 @@ public final class DialectErrorMessages {
         if (sqlState == null || postgresMessage == null) {
             return postgresMessage;
         }
-        String template = templatesFor(dialect).getProperty(sqlState);
+        // foreign_key_violation (23503) is the one SQLSTATE covering two really-different native
+        // errors (see SqlStateErrorMapper.isForeignKeyDeleteSide's javadoc) -- if the real message
+        // is the delete-side shape, render from the "23503_DELETE" template/extractor instead of
+        // the plain "23503" (insert-side) ones below. contains(), not startsWith(): a real caught
+        // SQLException's getMessage() carries Postgres's own "ERROR: " prefix, so the delete-side
+        // phrase never actually begins at position 0 -- same bug SqlStateErrorMapper's matching
+        // check had, caught by the same real end-to-end test.
+        String effectiveKey = "23503".equals(sqlState) && postgresMessage.contains("update or delete on table")
+                ? "23503_DELETE" : sqlState;
+        String template = templatesFor(dialect).getProperty(effectiveKey);
         if (template == null) {
             return postgresMessage;
         }
-        Pattern extractor = EXTRACTORS.get(sqlState);
+        Pattern extractor = EXTRACTORS.get(effectiveKey);
         if (extractor == null) {
             // A dialect-native template exists with no placeholder to fill (e.g. "ORA-00060:
             // deadlock detected while waiting for resource") -- return it as-is.

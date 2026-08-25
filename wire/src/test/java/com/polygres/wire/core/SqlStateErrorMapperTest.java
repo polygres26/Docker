@@ -38,12 +38,64 @@ class SqlStateErrorMapperTest {
             "42883, 904,   1305, 195",
             "55P03, 54,    3572, 1222",
             "57014, 1013,  3024, 50000",
+            "42702, 918,   1052, 209",
+            "53300, 18,    1040, 50000",
+            "08006, 3113,  2013, 50000",
     })
     void mapsEachKnownSqlStateToTheVerifiedNativeCodeForAllThreeDialects(
             String sqlState, int oracle, int mysql, int sqlServer) {
         assertEquals(oracle, SqlStateErrorMapper.toOracleError(sqlState), "Oracle code for " + sqlState);
         assertEquals(mysql, SqlStateErrorMapper.toMySqlError(sqlState), "MySQL code for " + sqlState);
         assertEquals(sqlServer, SqlStateErrorMapper.toSqlServerError(sqlState), "SQL Server code for " + sqlState);
+    }
+
+    @Test
+    void foreignKeyViolationDefaultsToTheInsertSideCodeWithNoMessageArgument() {
+        // Same as the single-arg 23503 row above -- the 2-arg overload with a null/unhelpful
+        // message must fall back to the same insert-side default, not silently pick a direction.
+        assertEquals(2291, SqlStateErrorMapper.toOracleError("23503", null));
+        assertEquals(1452, SqlStateErrorMapper.toMySqlError("23503", null));
+        assertEquals(2291, SqlStateErrorMapper.toOracleError("23503", "some unrelated message"));
+        assertEquals(1452, SqlStateErrorMapper.toMySqlError("23503", "some unrelated message"));
+    }
+
+    @Test
+    void foreignKeyViolationOnTheDeleteSideGetsTheRealChildRecordFoundCode() {
+        // Real captured Postgres wording for a DELETE blocked by an existing child row.
+        String deleteSideMessage = "update or delete on table \"parent\" violates foreign key "
+                + "constraint \"child_id_fkey\" on table \"child\"";
+        assertEquals(2292, SqlStateErrorMapper.toOracleError("23503", deleteSideMessage),
+                "Oracle: ORA-02292 (child record found), not ORA-02291 (parent key not found)");
+        assertEquals(1451, SqlStateErrorMapper.toMySqlError("23503", deleteSideMessage),
+                "MySQL: ER_ROW_IS_REFERENCED_2 (1451), not ER_NO_REFERENCED_ROW_2 (1452)");
+        // SQL Server genuinely does NOT distinguish direction at the numeric-code level -- 547
+        // either way (only the message wording differs, in DialectErrorMessages).
+        assertEquals(547, SqlStateErrorMapper.toSqlServerError("23503"));
+    }
+
+    @Test
+    void foreignKeyViolationDeleteSideDetectionSurvivesTheRealErrorPrefix() {
+        // Regression test for a real bug an end-to-end test caught: a genuinely caught
+        // SQLException's getMessage() carries Postgres's own "ERROR: " prefix (confirmed against
+        // a live orawire session), which broke an earlier "^update or delete on table" ANCHORED
+        // check -- the anchor required the match at position 0, which the prefix always defeated.
+        // This uses the message exactly as a real caught exception has it, not the cleaned-up
+        // string the test above uses.
+        String realCaughtMessage = "ERROR: update or delete on table \"ojdbc_fk_parent\" violates "
+                + "foreign key constraint \"ojdbc_fk_child_id_fkey\" on table \"ojdbc_fk_child\"";
+        assertEquals(2292, SqlStateErrorMapper.toOracleError("23503", realCaughtMessage));
+        assertEquals(1451, SqlStateErrorMapper.toMySqlError("23503", realCaughtMessage));
+    }
+
+    @Test
+    void foreignKeyViolationOnAnUnrelatedSqlStateIgnoresTheMessageShape() {
+        // The delete-side detection is scoped to sqlState 23503 specifically -- a message that
+        // happens to start with "update or delete on table" under a DIFFERENT SQLSTATE must not
+        // accidentally trigger it.
+        String deleteSideShapedMessage = "update or delete on table \"x\" violates foreign key "
+                + "constraint \"y\" on table \"z\"";
+        assertEquals(SqlStateErrorMapper.toOracleError("40P01"),
+                SqlStateErrorMapper.toOracleError("40P01", deleteSideShapedMessage));
     }
 
     @Test

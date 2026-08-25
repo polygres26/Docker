@@ -88,7 +88,57 @@ public final class SqlStateErrorMapper {
             // "attention" packet, not an error-code frame, so SQL_SERVER_DEFAULT is used here
             // deliberately rather than inventing a plausible-looking number that doesn't exist in
             // sys.messages.
-            Map.entry("57014", new NativeErrors(1013, 3024, SQL_SERVER_DEFAULT)));
+            Map.entry("57014", new NativeErrors(1013, 3024, SQL_SERVER_DEFAULT)),
+
+            // -- Gap-closing pass against a customer-supplied coverage checklist (see PR/commit
+            // notes), each again verified before landing, not guessed.
+
+            // ambiguous_column (e.g. SELECT id FROM parent, child where both have an "id" column).
+            // SQL Server's 209 is strongly corroborated across multiple independent sources but
+            // Microsoft's own sys.messages catalog page for it 404'd during verification -- flagged
+            // here rather than silently treated as equally certain as the primary-source-confirmed
+            // entries elsewhere in this table.
+            Map.entry("42702", new NativeErrors(918, 1052, 209)),
+
+            // too_many_connections (Postgres refuses a new connection once max_connections is
+            // exhausted: "sorry, too many clients already"). SQL Server has no single documented
+            // sys.messages number for this the way Oracle/MySQL do -- same treatment as 57014,
+            // SQL_SERVER_DEFAULT used deliberately rather than a fabricated number.
+            Map.entry("53300", new NativeErrors(18, 1040, SQL_SERVER_DEFAULT)),
+
+            // connection_failure (the backend Postgres connection drops mid-session -- a network
+            // blip, Postgres restarting, etc.). Lower confidence than most of this table: Postgres
+            // itself defines 08006 as the SQLSTATE for this (verified against Postgres's own
+            // errcodes.txt), but the ACTUAL message text a JDBC driver attaches varies by exactly
+            // how/where the failure is detected ("connection reset", "An I/O error occurred", "This
+            // connection has been closed", etc.) -- too unpredictable to build a reliable
+            // DialectErrorMessages template/extractor against, so this entry supplies the native
+            // error CODE only; the client still sees Postgres's own message text for this one.
+            // SQL Server has no single canonical number for a mid-session transport failure either
+            // (severity-20 "transport-level error" messages aren't consistently numbered across
+            // versions), so SQL_SERVER_DEFAULT is used deliberately here too.
+            Map.entry("08006", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)));
+
+    // foreign_key_violation (23503) is the one SQLSTATE in this table where Postgres genuinely
+    // collapses a real distinction Oracle and MySQL both keep: an INSERT/UPDATE whose new row
+    // references a missing parent ("insert or update on table ... violates foreign key
+    // constraint ...") is a DIFFERENT native error than a DELETE/UPDATE blocked because a child
+    // row still references the row being removed ("update or delete on table ... violates
+    // foreign key constraint ... on table ..."). SQL Server doesn't distinguish the two at the
+    // CODE level (547 either way -- only its message wording differs, handled entirely in
+    // DialectErrorMessages), so only the Oracle/MySQL codes below actually change on this check.
+    // Deliberately NOT anchored with "^" -- a real caught SQLException's getMessage() carries
+    // Postgres's own "ERROR: " prefix (confirmed against a live orawire session: the actual text
+    // is "ERROR: update or delete on table ..."), so an anchored match against the absolute start
+    // of the string would never fire. Caught by OracleJdbcIntegrationTest's real end-to-end test
+    // against an actual wire session, not by the narrower unit tests, which used hand-written
+    // strings without that prefix and so didn't catch this.
+    private static final java.util.regex.Pattern FK_VIOLATION_DELETE_SIDE =
+            java.util.regex.Pattern.compile("update or delete on table");
+
+    private static boolean isForeignKeyDeleteSide(String sqlState, String message) {
+        return "23503".equals(sqlState) && message != null && FK_VIOLATION_DELETE_SIDE.matcher(message).find();
+    }
 
     private SqlStateErrorMapper() {
     }
@@ -98,9 +148,26 @@ public final class SqlStateErrorMapper {
         return n == null ? ORACLE_DEFAULT : n.oracle();
     }
 
+    /** As {@link #toOracleError(String)}, but distinguishes {@code 23503}'s two real directions
+     * (see {@link #isForeignKeyDeleteSide}) using the real Postgres message text -- ORA-02292
+     * ("child record found") for the delete-side, ORA-02291 ("parent key not found", same as the
+     * single-arg overload) otherwise. Every other SQLSTATE behaves identically to the single-arg
+     * overload; prefer this overload wherever the real message text is available. */
+    public static int toOracleError(String sqlState, String message) {
+        return isForeignKeyDeleteSide(sqlState, message) ? 2292 : toOracleError(sqlState);
+    }
+
     public static int toMySqlError(String sqlState) {
         NativeErrors n = sqlState == null ? null : TABLE.get(sqlState);
         return n == null ? MYSQL_DEFAULT : n.mysql();
+    }
+
+    /** As {@link #toMySqlError(String)}, distinguishing {@code 23503}'s direction the same way
+     * {@link #toOracleError(String, String)} does -- 1451 (ER_ROW_IS_REFERENCED_2, "Cannot delete
+     * or update a parent row") for the delete-side, 1452 (same as the single-arg overload)
+     * otherwise. */
+    public static int toMySqlError(String sqlState, String message) {
+        return isForeignKeyDeleteSide(sqlState, message) ? 1451 : toMySqlError(sqlState);
     }
 
     public static int toSqlServerError(String sqlState) {

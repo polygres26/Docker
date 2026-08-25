@@ -246,7 +246,7 @@ public final class RequestLoop {
                     e.getMessage() == null ? "statement could not be translated" : e.getMessage(), openCursorId, callNumber);
         } catch (SQLException e) {
             log.warn("backend error executing statement: {}", e.getMessage());
-            int nativeError = SqlStateErrorMapper.toOracleError(e.getSQLState());
+            int nativeError = SqlStateErrorMapper.toOracleError(e.getSQLState(), e.getMessage());
             failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             rollbackAfterStatementError();

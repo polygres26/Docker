@@ -129,4 +129,40 @@ class OracleJdbcIntegrationTest {
             }
         }
     }
+
+    /** From the same customer coverage checklist as the ORA-00955 test above: deleting a row that
+     * a child table still references must return a genuine ORA-02292 ("child record found"), NOT
+     * the insert-side ORA-02291 ("parent key not found") that a naive single-code-per-SQLSTATE
+     * mapping would return -- Postgres uses the same 23503 SQLSTATE for both directions, but
+     * Oracle (and MySQL) don't. */
+    @Test
+    void deletingARowThatAChildTableStillReferencesReturnsARealOra02292() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE ojdbc_fk_parent (id INTEGER PRIMARY KEY)");
+                stmt.execute("CREATE TABLE ojdbc_fk_child (id INTEGER REFERENCES ojdbc_fk_parent(id))");
+                stmt.executeUpdate("INSERT INTO ojdbc_fk_parent (id) VALUES (1)");
+                stmt.executeUpdate("INSERT INTO ojdbc_fk_child (id) VALUES (1)");
+                conn.commit();
+
+                SQLException blocked = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                        () -> stmt.executeUpdate("DELETE FROM ojdbc_fk_parent WHERE id = 1"),
+                        "deleting a still-referenced parent row must fail");
+                assertEquals(2292, blocked.getErrorCode(),
+                        "must be the delete-side ORA-02292, not the insert-side ORA-02291 default");
+                assertTrue(blocked.getMessage() != null && blocked.getMessage().startsWith("ORA-02292")
+                                && blocked.getMessage().contains("child record found"),
+                        "client should see Oracle's real delete-side wording -- got: " + blocked.getMessage());
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE ojdbc_fk_child");
+                    cleanup.execute("DROP TABLE ojdbc_fk_parent");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
 }

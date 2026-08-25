@@ -215,4 +215,61 @@ class DialectErrorMessagesTest {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> DialectErrorMessages.render(SourceDialect.POSTGRES, "42P01", "relation \"t\" does not exist"));
     }
+
+    @Test
+    void ambiguousColumnCarriesTheRealColumnName() {
+        String pg = "column reference \"id\" is ambiguous";
+        assertEquals("ORA-00918: column ambiguously defined",
+                DialectErrorMessages.render(SourceDialect.ORACLE, "42702", pg));
+        assertEquals("Column 'id' is ambiguous",
+                DialectErrorMessages.render(SourceDialect.MYSQL, "42702", pg));
+        assertEquals("Ambiguous column name 'id'.",
+                DialectErrorMessages.render(SourceDialect.SQL_SERVER, "42702", pg));
+    }
+
+    @Test
+    void tooManyConnectionsIsFixedTextInEveryDialect() {
+        String pg = "sorry, too many clients already";
+        assertEquals("ORA-00018: maximum number of sessions exceeded",
+                DialectErrorMessages.render(SourceDialect.ORACLE, "53300", pg));
+        assertEquals("Too many connections",
+                DialectErrorMessages.render(SourceDialect.MYSQL, "53300", pg));
+        assertEquals("Too many connections.",
+                DialectErrorMessages.render(SourceDialect.SQL_SERVER, "53300", pg));
+    }
+
+    @Test
+    void foreignKeyViolationOnTheInsertSideStillUsesTheOriginalTemplate() {
+        // Regression guard: adding the delete-side special case must not change the existing,
+        // already-tested insert-side behavior (see foreignKeyViolationCarriesTheRealTableAndConstraintName
+        // above) for a plain insert-side message.
+        String pg = "insert or update on table \"t2\" violates foreign key constraint \"t2_id_fkey\"";
+        assertEquals("ORA-02291: integrity constraint (t2_id_fkey) violated - parent key not found",
+                DialectErrorMessages.render(SourceDialect.ORACLE, "23503", pg));
+    }
+
+    @Test
+    void foreignKeyViolationOnTheDeleteSideGetsRealVendorWordingForThatDirection() {
+        String pg = "update or delete on table \"parent\" violates foreign key constraint "
+                + "\"child_id_fkey\" on table \"child\"";
+        assertEquals("ORA-02292: integrity constraint (child_id_fkey) violated - child record found",
+                DialectErrorMessages.render(SourceDialect.ORACLE, "23503", pg));
+        assertEquals("Cannot delete or update a parent row: a foreign key constraint fails",
+                DialectErrorMessages.render(SourceDialect.MYSQL, "23503", pg));
+        assertEquals(
+                "The DELETE statement conflicted with the REFERENCE constraint \"child_id_fkey\". "
+                        + "The conflict occurred in table \"child\".",
+                DialectErrorMessages.render(SourceDialect.SQL_SERVER, "23503", pg));
+    }
+
+    @Test
+    void foreignKeyViolationDeleteSideRenderingSurvivesTheRealErrorPrefix() {
+        // Same real bug as SqlStateErrorMapperTest's matching regression test -- a genuinely
+        // caught SQLException's getMessage() carries Postgres's "ERROR: " prefix, which broke an
+        // earlier startsWith(...) check here too (fixed to contains(...)).
+        String realCaughtMessage = "ERROR: update or delete on table \"ojdbc_fk_parent\" violates "
+                + "foreign key constraint \"ojdbc_fk_child_id_fkey\" on table \"ojdbc_fk_child\"";
+        assertEquals("ORA-02292: integrity constraint (ojdbc_fk_child_id_fkey) violated - child record found",
+                DialectErrorMessages.render(SourceDialect.ORACLE, "23503", realCaughtMessage));
+    }
 }

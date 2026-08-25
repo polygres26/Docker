@@ -411,7 +411,7 @@ public final class MySqlWireSessionHandler implements Runnable {
             }
         } catch (SQLException e) {
             String state = sqlState(e);
-            int nativeError = SqlStateErrorMapper.toMySqlError(state);
+            int nativeError = SqlStateErrorMapper.toMySqlError(state, e.getMessage());
             failedStatementLog.record(SourceDialect.MYSQL, sql,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             // The client sees real MySQL error text ("Table 'x' doesn't exist", etc.) when a
