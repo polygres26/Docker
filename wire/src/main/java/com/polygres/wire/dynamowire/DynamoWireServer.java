@@ -140,7 +140,19 @@ public final class DynamoWireServer {
             writeError(response, statusForError(e.dynamoErrorType), e.dynamoErrorType, e.getMessage());
         } catch (RuntimeException e) {
             log.error("dynamowire operation {} failed", operation, e);
-            writeError(response, 500, "InternalFailure", String.valueOf(e.getMessage()));
+            // PgItemStore wraps every real backend SQLException in a plain RuntimeException (e.g.
+            // "CreateTable failed for foo", cause = the real SQLException) rather than letting it
+            // propagate directly -- unwrap it here so a real Postgres failure (unique violation,
+            // missing table, permission denied, a genuinely dead connection) gets translated to
+            // real DynamoDB vocabulary via DynamoDbErrorMapper instead of collapsing to the same
+            // generic InternalFailure regardless of what actually went wrong.
+            if (e.getCause() instanceof java.sql.SQLException sqlEx) {
+                String errorType = DynamoDbErrorMapper.errorType(sqlEx.getSQLState());
+                writeError(response, DynamoDbErrorMapper.status(sqlEx.getSQLState()), errorType, e.getMessage());
+            } else {
+                writeError(response, DynamoDbErrorMapper.DEFAULT_STATUS, DynamoDbErrorMapper.DEFAULT_ERROR_TYPE,
+                        String.valueOf(e.getMessage()));
+            }
         } finally {
             // Skip schema operations (CreateTable/DeleteTable/DescribeTable/ListTables) --
             // they're not "traffic" in the sense the dashboard means, and would otherwise show up
