@@ -29,11 +29,8 @@ than inventing a plausible-looking one.
 | **SQS** (sqswire) | HTTP status + AWS error code, in the real AWS JSON/XML error envelope |
 | **OpenSearch** (oswire) | HTTP status + `error.type` + `error.reason` + `error.root_cause[]` |
 
-Source: `SqlStateErrorMapper` (Oracle/MySQL/SQL Server numeric codes, paired with
-`errors/{oracle,mysql,sqlserver}_en.properties` for real dialect-native message text),
-`MongoErrorMapper`, `DynamoDbErrorMapper`, `SqsErrorMapper`, `OpenSearchErrorMapper` — one mapper
-per protocol, each a `Postgres SQLSTATE → native error` table, each falling back to that protocol's
-own generic default for anything unmapped rather than failing to respond at all.
+Each protocol maps the real Postgres condition to its own native error table, falling back to that
+protocol's own generic default for anything unmapped rather than failing to respond at all.
 
 ---
 
@@ -98,21 +95,6 @@ live PolyWire), the client's own transport layer detects a closed socket directl
 error code is sent or expected, since there's no PolyWire process left to send one. This page is
 about translating a real error *from* Postgres, not about PolyWire's own process lifecycle.
 
----
-
-## Where this is implemented
-
-- `wire/src/main/java/com/polygres/wire/core/SqlStateErrorMapper.java` — Oracle/MySQL/SQL Server
-  numeric codes, paired with `wire/src/main/resources/errors/{oracle,mysql,sqlserver}_en.properties`
-  for real dialect-native message text.
-- `wire/src/main/java/com/polygres/wire/mongowire/MongoErrorMapper.java`
-- `wire/src/main/java/com/polygres/wire/dynamowire/DynamoDbErrorMapper.java`
-- `wire/src/main/java/com/polygres/wire/sqswire/SqsErrorMapper.java`
-- `wire/src/main/java/com/polygres/wire/oswire/OpenSearchErrorMapper.java`
-
-Each has a real, passing integration test exercising it end-to-end against that protocol's own
-client library (`OracleJdbcIntegrationTest`, `MongoErrorMappingIntegrationTest`,
-`DynamoDbErrorMappingIntegrationTest`, `SqsErrorMappingIntegrationTest`,
-`OpenSearchErrorMappingIntegrationTest`, and their MySQL/SQL Server counterparts) — not just a
-JSON-shape assertion, but a real driver actually raising the typed exception a real application
-would catch.
+Every mapping in this document is exercised end-to-end against that protocol's own real client
+library — not just checked for the right JSON shape, but confirmed to raise the exact typed
+exception a real application would catch.

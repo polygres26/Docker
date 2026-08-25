@@ -13,8 +13,7 @@ POLYWIRE_USER=<user>
 POLYWIRE_PASSWORD=<password>
 ```
 
-Two more control TLS (see [`ServerOptions`](../wire/src/main/java/com/polygres/wire/server/ServerOptions.java)'s
-`parse()` javadoc for the full detail):
+Two more control TLS:
 
 ```
 POLYWIRE_PG_SSLMODE=<disable|allow|prefer|require|verify-ca|verify-full>
