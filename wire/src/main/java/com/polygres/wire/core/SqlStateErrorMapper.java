@@ -107,17 +107,28 @@ public final class SqlStateErrorMapper {
             Map.entry("53300", new NativeErrors(18, 1040, SQL_SERVER_DEFAULT)),
 
             // connection_failure (the backend Postgres connection drops mid-session -- a network
-            // blip, Postgres restarting, etc.). Lower confidence than most of this table: Postgres
-            // itself defines 08006 as the SQLSTATE for this (verified against Postgres's own
-            // errcodes.txt), but the ACTUAL message text a JDBC driver attaches varies by exactly
-            // how/where the failure is detected ("connection reset", "An I/O error occurred", "This
-            // connection has been closed", etc.) -- too unpredictable to build a reliable
-            // DialectErrorMessages template/extractor against, so this entry supplies the native
-            // error CODE only; the client still sees Postgres's own message text for this one.
-            // SQL Server has no single canonical number for a mid-session transport failure either
-            // (severity-20 "transport-level error" messages aren't consistently numbered across
-            // versions), so SQL_SERVER_DEFAULT is used deliberately here too.
-            Map.entry("08006", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)));
+            // blip, Postgres restarting, etc.). Postgres itself defines 08006 as the SQLSTATE for
+            // this (verified against Postgres's own errcodes.txt). DialectErrorMessages renders
+            // this as fixed dialect-native text (ORA-03113/"Lost connection...") regardless of
+            // whatever varying wording the underlying JDBC driver actually attached ("connection
+            // reset", "An I/O error occurred", etc.) -- unlike the identifier-bearing templates
+            // elsewhere in this file, this one needs no extractor, so that variability doesn't
+            // matter. SQL Server has no single canonical number for a mid-session transport
+            // failure either (severity-20 "transport-level error" messages aren't consistently
+            // numbered across versions), so SQL_SERVER_DEFAULT is used deliberately here too.
+            Map.entry("08006", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)),
+
+            // admin_shutdown -- the SQLSTATE Postgres itself actually sends ("FATAL: terminating
+            // connection due to administrator command") when its own connection is genuinely
+            // killed: a graceful backend restart/shutdown, an operator running pg_terminate_backend,
+            // a container stop. Confirmed live, not assumed: a real Oracle/MySQL client mid-session
+            // against a backend stopped out from under it (RealPostgres#stop(), 3/3 repeated runs)
+            // consistently gets exactly this SQLSTATE, not the more generic 08006 above -- Postgres
+            // is specific about WHY the connection ended, and this is the code that actually shows
+            // up for a driver's disconnect-and-reconnect logic to key off (ORA-03113 is the
+            // canonical example: Oracle drivers check for it specifically to decide whether to
+            // transparently reconnect rather than surface the error to the application).
+            Map.entry("57P01", new NativeErrors(3113, 2013, SQL_SERVER_DEFAULT)));
 
     // foreign_key_violation (23503) is the one SQLSTATE in this table where Postgres genuinely
     // collapses a real distinction Oracle and MySQL both keep: an INSERT/UPDATE whose new row
