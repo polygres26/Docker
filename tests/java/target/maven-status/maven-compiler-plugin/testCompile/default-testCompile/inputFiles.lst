@@ -1,0 +1,9 @@
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/DynamoWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/MongoWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/MssqlWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/MyWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/OraWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/OsWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/PgWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/SqsWireTest.java
+/Users/kumarrajamani/Projects/Polygres/docker/tests/java/src/test/java/com/polygres/wiretests/TestConfig.java

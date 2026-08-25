@@ -1,0 +1,9 @@
+com/polygres/wiretests/TestConfig.class
+com/polygres/wiretests/MongoWireTest.class
+com/polygres/wiretests/OsWireTest.class
+com/polygres/wiretests/SqsWireTest.class
+com/polygres/wiretests/MssqlWireTest.class
+com/polygres/wiretests/DynamoWireTest.class
+com/polygres/wiretests/MyWireTest.class
+com/polygres/wiretests/OraWireTest.class
+com/polygres/wiretests/PgWireTest.class
