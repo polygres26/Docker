@@ -160,9 +160,8 @@
   ghcr.io/polygres26/polywire:latest</code>
       </div>
       <p class="rttNote">
-        That works as-is against an existing on-prem Postgres. Managed providers need a couple of
-        provider-specific details on top — two worth seeing directly, the rest (Amazon RDS, Google
-        Cloud SQL, Azure Database for PostgreSQL) in the full reference:
+        That works as-is against an existing on-prem Postgres. Managed providers each need a
+        couple of provider-specific details on top — full reference, every gotcha, at
         <a href="CONNECTING.md">CONNECTING.md</a>.
       </p>
 
@@ -178,6 +177,58 @@
   -e POLYWIRE_HOST=aws-0-&lt;region&gt;.pooler.supabase.com \
   -e POLYWIRE_PORT=5432 \
   -e POLYWIRE_USER=postgres.&lt;project-ref&gt; \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_PG_SSLMODE=require \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+
+      <div class="runblock">
+        <p><b>Amazon RDS for PostgreSQL</b> — the security group is the first thing to check: it
+          must allow inbound 5432 from wherever PolyWire actually runs, or the connection just
+          hangs until timeout instead of failing cleanly. <code style="display:inline;padding:1px 6px;">sslmode=require</code>
+          is enough for encryption in transit; add
+          <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html" target="_blank" rel="noopener">RDS's
+          own CA bundle</a> via <code style="display:inline;padding:1px 6px;">POLYWIRE_PG_SSLROOTCERT</code>
+          for <code style="display:inline;padding:1px 6px;">verify-full</code>.</p>
+        <code>docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=your-instance.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_USER=your_master_user \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_PG_SSLMODE=require \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+
+      <div class="runblock">
+        <p><b>Google Cloud SQL for PostgreSQL</b> — the quickest path is a public IP plus an
+          authorized network entry for whichever machine runs PolyWire (Cloud SQL console →
+          instance → Connections → Networking); production deployments should prefer the
+          <a href="https://cloud.google.com/sql/docs/postgres/connect-auth-proxy" target="_blank" rel="noopener">Cloud
+          SQL Auth Proxy</a> as a sidecar instead — IAM-based access, no public IP or network
+          allowlist to maintain (full compose example in the reference).</p>
+        <code>docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=&lt;instance public IP&gt; \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_USER=postgres \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e POLYWIRE_PG_SSLMODE=require \
+  ghcr.io/polygres26/polywire:latest</code>
+      </div>
+
+      <div class="runblock">
+        <p><b>Azure Database for PostgreSQL — Flexible Server</b> — TLS isn't optional here;
+          Flexible Server rejects a plaintext connection outright. Use a plain username, not the
+          legacy <code style="display:inline;padding:1px 6px;">user@servername</code> shape the
+          older, now-deprecated Single Server tier required — Flexible Server dropped it, and using
+          the old form fails auth with a confusing error rather than a clear complaint about
+          format.</p>
+        <code>docker run \
+  -p 19090:19090 -p 15432:15432 \
+  -e POLYWIRE_HOST=your-server.postgres.database.azure.com \
+  -e POLYWIRE_PORT=5432 \
+  -e POLYWIRE_USER=your_admin_user \
   -e POLYWIRE_PASSWORD=&lt;password&gt; \
   -e POLYWIRE_PG_SSLMODE=require \
   ghcr.io/polygres26/polywire:latest</code>
