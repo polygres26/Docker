@@ -151,6 +151,28 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (shardNames.isEmpty()) {
             throw new SQLException("router assigned scatter-gather but POLYWIRE_SHARD_BACKENDS is not configured");
         }
+
+        // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this
+        // used to always append raw per-shard rows unchanged, which is correct for a plain SELECT
+        // but silently wrong for an aggregate -- COUNT(*)/SUM/AVG/MIN/MAX each need real
+        // cross-shard combination, not concatenation. ScatterGatherAggregateMerge.plan() returns
+        // null for anything that doesn't need merging (no aggregate present), so the plain-append
+        // path below is unchanged for every query shape it was already correct for.
+        ScatterGatherAggregateMerge.Plan plan = ScatterGatherAggregateMerge.plan(statement.sqlText());
+        if (plan != null) {
+            Map<List<Object>, Object[]> accumulators = new LinkedHashMap<>();
+            for (String shardName : shardNames) {
+                BackendTarget target = registry.get(shardName);
+                if (target == null) {
+                    throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
+                }
+                Statement rewritten = statement.withSqlText(plan.rewrittenSql());
+                ExecutionResult shardResult = executeOnFreshConnection(target, rewritten);
+                ScatterGatherAggregateMerge.mergeShardResult(plan, shardResult, accumulators);
+            }
+            return ScatterGatherAggregateMerge.buildResult(plan, accumulators);
+        }
+
         List<ColumnInfo> columns = null;
         List<List<Object>> mergedRows = new ArrayList<>();
         for (String shardName : shardNames) {
