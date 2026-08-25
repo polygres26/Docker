@@ -298,6 +298,21 @@
       <version>${awssdk.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- Real opensearch-py-equivalent Java client, test scope only. oswire's existing tests
+           used raw HttpURLConnection; this is the first real OpenSearch client library any
+           oswire test has been verified against. -->
+      <groupId>org.opensearch.client</groupId>
+      <artifactId>opensearch-java</artifactId>
+      <version>2.19.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.opensearch.client</groupId>
+      <artifactId>opensearch-rest-client</artifactId>
+      <version>2.12.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

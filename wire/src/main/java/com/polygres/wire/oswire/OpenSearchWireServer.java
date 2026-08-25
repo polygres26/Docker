@@ -1,5 +1,6 @@
 package com.polygres.wire.oswire;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import jakarta.servlet.http.HttpServletRequest;
@@ -139,7 +140,7 @@ public final class OpenSearchWireServer {
             writeError(response, 400, e.errorType, e.getMessage());
         } catch (SQLException e) {
             log.warn("oswire: Postgres error servicing _search on \"{}\": {}", index, e.getMessage());
-            writeError(response, 500, "postgres_exception", e.getMessage());
+            writeError(response, OpenSearchErrorMapper.status(e.getSQLState()), OpenSearchErrorMapper.errorType(e.getSQLState()), e.getMessage());
         } catch (RuntimeException e) {
             log.error("oswire: _search on \"{}\" failed", index, e);
             writeError(response, 400, "parsing_exception", String.valueOf(e.getMessage()));
@@ -162,7 +163,7 @@ public final class OpenSearchWireServer {
             writeJson(response, 201, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE, index, start);
         } catch (SQLException e) {
-            writeError(response, 500, "postgres_exception", e.getMessage());
+            writeError(response, OpenSearchErrorMapper.status(e.getSQLState()), OpenSearchErrorMapper.errorType(e.getSQLState()), e.getMessage());
         } catch (RuntimeException e) {
             writeError(response, 400, "parsing_exception", String.valueOf(e.getMessage()));
         }
@@ -217,7 +218,7 @@ public final class OpenSearchWireServer {
             writeJson(response, 200, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ, index, start);
         } catch (SQLException e) {
-            writeError(response, 500, "postgres_exception", e.getMessage());
+            writeError(response, OpenSearchErrorMapper.status(e.getSQLState()), OpenSearchErrorMapper.errorType(e.getSQLState()), e.getMessage());
         }
     }
 
@@ -233,7 +234,7 @@ public final class OpenSearchWireServer {
             writeJson(response, deleted ? 200 : 404, resp);
             recordMetric("_doc", com.polygres.wire.core.SqlMetricsCollector.StatementKind.WRITE, index, start);
         } catch (SQLException e) {
-            writeError(response, 500, "postgres_exception", e.getMessage());
+            writeError(response, OpenSearchErrorMapper.status(e.getSQLState()), OpenSearchErrorMapper.errorType(e.getSQLState()), e.getMessage());
         }
     }
 
@@ -265,7 +266,7 @@ public final class OpenSearchWireServer {
             resp.addProperty("index", index);
             writeJson(response, 200, resp);
         } catch (SQLException e) {
-            writeError(response, 500, "postgres_exception", e.getMessage());
+            writeError(response, OpenSearchErrorMapper.status(e.getSQLState()), OpenSearchErrorMapper.errorType(e.getSQLState()), e.getMessage());
         }
     }
 
@@ -318,10 +319,22 @@ public final class OpenSearchWireServer {
             } catch (SQLException | RuntimeException e) {
                 anyErrors = true;
                 JsonObject err = new JsonObject();
-                err.addProperty("type", e instanceof OpenSearchException ose ? ose.errorType : "postgres_exception");
+                String errorType;
+                int status;
+                if (e instanceof OpenSearchException ose) {
+                    errorType = ose.errorType;
+                    status = 400;
+                } else if (e instanceof SQLException sqlEx) {
+                    errorType = OpenSearchErrorMapper.errorType(sqlEx.getSQLState());
+                    status = OpenSearchErrorMapper.status(sqlEx.getSQLState());
+                } else {
+                    errorType = OpenSearchErrorMapper.DEFAULT_ERROR_TYPE;
+                    status = OpenSearchErrorMapper.DEFAULT_STATUS;
+                }
+                err.addProperty("type", errorType);
                 err.addProperty("reason", e.getMessage());
                 itemResult.add("error", err);
-                itemResult.addProperty("status", 400);
+                itemResult.addProperty("status", status);
             }
             com.google.gson.JsonObject wrapper = new com.google.gson.JsonObject();
             wrapper.add(actionType, itemResult);
@@ -375,6 +388,19 @@ public final class OpenSearchWireServer {
     private static void writeError(HttpServletResponse response, int status, String errorType, String message) throws IOException {
         JsonObject err = new JsonObject();
         JsonObject inner = new JsonObject();
+        // root_cause is a real, load-bearing part of OpenSearch's/Elasticsearch's actual error
+        // shape, not decorative -- opensearch-py and other real clients read type/reason from
+        // root_cause[0], not (only) the top-level type/reason, for the exception it actually
+        // raises client-side. This was missing entirely before -- a client got a top-level
+        // type/reason that looked plausible but wasn't the real shape a genuine OpenSearch server
+        // sends. One cause per error here (this server never produces a multi-cause failure),
+        // matching real OpenSearch's own shape for the common single-cause case.
+        JsonObject cause = new JsonObject();
+        cause.addProperty("type", errorType);
+        cause.addProperty("reason", message);
+        JsonArray rootCause = new JsonArray();
+        rootCause.add(cause);
+        inner.add("root_cause", rootCause);
         inner.addProperty("type", errorType);
         inner.addProperty("reason", message);
         err.add("error", inner);
