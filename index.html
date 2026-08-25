@@ -141,7 +141,7 @@
         <li><span class="uc-body"><span class="uc-title">Governed access for AI agents</span><span class="uc-desc">An MCP frontend lets AI agents and modern service architectures query Postgres directly — through the same SQL firewall, ACL, and QoS controls as every other client, not a separate, unguarded path to your data.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">A single, secure gateway across multiple data sources</span><span class="uc-desc">One admin surface — SQL firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread across five different databases' own tooling, each with its own access model.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Connection pooling for Postgres</span><span class="uc-desc">Every backend is fronted by a bounded connection pool — many client connections share a small, fixed set of real Postgres connections, the same problem PgBouncer solves, built into the same gateway that's already translating and firewalling the traffic.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Horizontal sharding</span><span class="uc-desc">Route requests across multiple Postgres backends by schema, predicate, or value-based rules, with scatter-gather fan-out and result merging for queries that span shards — without every application knowing which shard owns what.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Horizontal sharding, by real bound values</span><span class="uc-desc">Route by schema, predicate, or a real bound parameter value — decoded from each protocol's own wire format across Postgres, Oracle, SQL Server, and MySQL, not just SQL text — with genuine cross-shard merge (not concatenation) for aggregates, sorted/paginated hits, and DynamoDB/MongoDB/SQS/OpenSearch sharding alongside SQL. See "Sharding" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Query result caching</span><span class="uc-desc">An embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres — no application-side caching code to write or invalidate.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
@@ -162,8 +162,8 @@
 
       <h3 class="subhead">Architecture</h3>
       <figure>
-        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline (frontends, firewall, router, QoS, dialect translation, rollup, cache, stats), each stage paired with the customer outcome it drives, backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall, router, QoS, dialect translation, rollup, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end.</figcaption>
+        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Client drivers are unmodified: each one talks the real wire protocol it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically.</figcaption>
       </figure>
       <p class="rttNote">
         <b>What gRPC is, on this diagram:</b> the one protocol here that isn't emulating a
@@ -178,8 +178,8 @@
 
       <h3 class="subhead">Admin console</h3>
       <figure>
-        <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar for Topology, SQL Firewall, ACL, OAuth, Backends, Queues, Data Explorer, Router Rules, QoS, and LLM Configuration">
-        <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, deployment topology, SQL firewall rules, ACL, backends, queues, and LLM configuration for dialect translation, all in one place.</figcaption>
+        <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, traffic by backend (routing/sharding target), and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar grouped into four real labeled sections — Monitoring (Metrics, Topology), Security (SQL Firewall, ACL, OAuth), Traffic (Backends, Queues, Data Explorer, Router Rules — where shard/routing targets are configured, QoS), and Configuration (LLM)">
+        <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, and a sidebar that groups controls the same way this page does: Security (SQL firewall, ACL, OAuth) as its own labeled section, Router Rules for sharding/routing targets under Traffic, deployment topology, backends, queues, and LLM configuration for dialect translation — all in one place, not scattered across each protocol's own tooling.</figcaption>
       </figure>
 
       <h3 class="subhead">Cache hit vs. Postgres round trip, per protocol</h3>
@@ -275,6 +275,51 @@
         oswire has no result cache at all (see the rollups/caching architecture above; every
         <code>_search</code>/<code>_doc</code> call hits Postgres directly), so its cache-hit and
         speedup cells are genuinely blank, not omitted data.
+      </p>
+
+      <h3 class="subhead">Sharding: by real bound values, across every protocol that has one</h3>
+      <p class="rttNote">
+        PolyWire routes by a real bound parameter value — not just SQL text — across
+        <b>Postgres, Oracle, SQL Server, and MySQL</b> wire protocols, decoding each protocol's
+        own native binary bind-parameter encoding (Postgres extended-query, Oracle TTC,
+        TDS <code>sp_executesql</code>, MySQL <code>COM_STMT_EXECUTE</code>) so a client's
+        <code>PreparedStatement</code> value — <code>tenant_id</code>, <code>customer_id</code>,
+        whatever the shard key is — reaches the router correctly, whichever of the four protocols
+        the client happens to speak. A client that sends the same value as a plain SQL literal
+        (psql, simple-query mode, an ORM that doesn't bind parameters) still routes correctly too,
+        via literal-value matching — the feature degrades to "still correct," not "silently
+        wrong." Hash, consistent-hash (150 virtual nodes per backend, minimizing what actually
+        moves when the shard set changes), range, and list strategies are all real, configured via
+        the same <code>POLYWIRE_ROUTER_VALUE_SHARD_RULES</code> knob regardless of which protocol
+        or bind style the traffic arrives as.
+      </p>
+      <p class="rttNote">
+        A cross-shard SQL query — <code>COUNT</code>/<code>SUM</code>/<code>AVG</code>/
+        <code>MIN</code>/<code>MAX</code>, with or without <code>GROUP BY</code>, and
+        <code>ORDER BY</code>/<code>LIMIT</code>/<code>OFFSET</code> — is genuinely merged across
+        shards, not concatenated: <code>AVG</code> is a real weighted average (not an
+        average-of-averages), and a global <code>LIMIT</code> caps the merged result, not each
+        shard's own contribution. A query shape outside that set is refused with a clear error
+        rather than silently mis-merged.
+      </p>
+      <p class="rttNote">
+        <b>Sharding isn't SQL-only.</b> <b>DynamoDB</b> (dynamowire) hashes by the real DynamoDB
+        partition key. <b>MongoDB</b> (mongowire) hashes by <code>_id</code> for a
+        <code>{_id: ...}</code>-shaped query; anything broader scatter-gathers. <b>SQS</b>
+        (sqswire) hashes by queue name (one queue lives entirely on one backend — there's no
+        per-message key to shard by independently). <b>OpenSearch</b> (oswire) hashes documents
+        by <code>doc_id</code>, and a structured <code>_search</code> — hits, pagination, and
+        <code>terms</code>/metric aggregations including a real weighted <code>avg</code>, even
+        nested inside a <code>terms</code> bucket — merges across shards the same way SQL's does.
+        k-NN (vector) and hybrid search on a sharded collection are refused with a clear error
+        rather than quietly searching only one shard — a real, disclosed boundary, not a silent
+        gap.
+      </p>
+      <p class="rttNote">
+        <b>What sharding doesn't do:</b> there's no elastic/online resharding anywhere — changing
+        the shard set doesn't migrate data, queues, or documents already placed under the old set.
+        Consistent hashing minimizes what <i>would</i> need to move; nothing moves it
+        automatically today.
       </p>
 
       <h3 class="subhead">SQS: enqueue vs. dequeue</h3>
@@ -450,6 +495,30 @@
         <img src="docs/deployment.png" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, stateless instances per zone holding primary or backup cache copies, a config-primary Postgres with standby failover">
         <figcaption>Every piece of this is real and tested today, including the cross-zone cache backup replication — a cache entry's backup copy is placed on a node in a different availability zone than its primary, proven by a live test with real cache nodes. Cluster discovery works across a static seed list or AWS/GCP/Azure storage; connections between cache nodes can be TLS-encrypted.</figcaption>
       </figure>
+
+      <h3 class="subhead">Security</h3>
+      <p class="rttNote">
+        Every layer below is real, running code — not roadmap. Each item states its actual scope
+        plainly, including the parts that are opt-in or narrower than the feature name might
+        suggest; a security page that only lists what's strong isn't one you should trust.
+      </p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">SQL firewall</span><span class="uc-desc">Allow/deny rules matched on statement type, table (glob), and a SQL regex, stored in Postgres and pushed live to every node over LISTEN/NOTIFY — no restart to change a rule. Stacked-query injection (<code>SELECT ...; DROP TABLE ...</code>) is blocked unconditionally, independent of any rule. Rules are process-wide today, not yet per-tenant or per-role, and the only actions are allow/deny — no rate-limit or log-only action.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Connection ACL</span><span class="uc-desc">CIDR allow/deny lists, fail-closed once any rule is configured, enforced at accept time on every TCP wire protocol, every HTTP endpoint, and gRPC. PROXY protocol v2 preserves the real client IP behind a load balancer. Configure <code>POLYWIRE_ACL_TRUSTED_PROXIES</code> for HTTP endpoints — without it, the first <code>X-Forwarded-For</code> hop is trusted, which a client in front of an untrusted proxy could spoof.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">A real token-bucket limiter — rate, burst, and max-wait, configurable per workload class (query/write/ddl/txn) — plus shedding when a backend's connection pool is saturated. Today the limiter is per-workload-class and process-wide, not yet per-tenant or per-client.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and PolyWire verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a superuser admin connection to read role hashes). Without it, every protocol falls back to one shared username/password. MySQL and Oracle wire protocols only support that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">TLS everywhere</span><span class="uc-desc">In-band TLS for Postgres, MySQL, and SQL Server wire protocols (standard client <code>sslmode</code>/encryption settings just work), a dedicated TCPS port for Oracle, TLS for gRPC, and mutual TLS between cluster nodes for cache traffic — all from one PKCS12 keystore. Client-certificate authentication isn't implemented yet; TLS today verifies the server to the client, not the client to the server.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>POLYGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and PolyWire logs a warning at startup saying so.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API is bearer-token authenticated (<code>POLYWIRE_ADMIN_TOKEN</code>, constant-time compare) and fails closed — unset the token and the whole surface is unreachable, not open. The one exception: <code>/metrics</code> itself isn't behind the admin token (only ACL/OAuth, both off by default) — put it behind your own network boundary if Prometheus scrape access shouldn't be public.</span></span></li>
+      </ul>
+      <p class="rttNote">
+        <b>Built, correct, and not yet load-bearing — two honest exceptions:</b> row-level security/
+        column-masking (real predicate injection via bind parameters, real Postgres/Oracle VPD
+        session-context wiring, all fail-closed by design) and a tamper-evident, hash-chained audit
+        log store both exist as real, reviewed code — but neither is wired into the running
+        pipeline yet, so no statement today is actually filtered or masked by identity, and no
+        access decision is actually being logged. Don't rely on either until this note is updated.
+      </p>
     </section>
 
     <section class="tool" id="polyadvisor">
