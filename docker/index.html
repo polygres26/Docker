@@ -156,30 +156,74 @@ SQL&gt;</pre>
         Your Oracle application thinks it's talking to Oracle. It's actually talking to Postgres —
         and it never finds out.
       </p>
-      <div class="rewireDiagram">
-        <div class="rewireSide">
-          <div class="rewireSideLabel">Before</div>
-          <div class="rewireRow"><span class="rewireApp">Oracle App</span><span class="rewireArrow">→</span><span class="rewireDb">Oracle</span></div>
-          <div class="rewireRow"><span class="rewireApp">Mongo App</span><span class="rewireArrow">→</span><span class="rewireDb">MongoDB</span></div>
-          <div class="rewireRow"><span class="rewireApp">Search App</span><span class="rewireArrow">→</span><span class="rewireDb">OpenSearch</span></div>
-          <div class="rewireRow"><span class="rewireApp">MySQL App</span><span class="rewireArrow">→</span><span class="rewireDb">MySQL</span></div>
-        </div>
-        <div class="rewireSide">
-          <div class="rewireSideLabel">After</div>
-          <div class="rewireFanIn">
-            <div class="rewireApps">
-              <span class="rewireApp">Oracle App</span>
-              <span class="rewireApp">Mongo App</span>
-              <span class="rewireApp">Search App</span>
-              <span class="rewireApp">MySQL App</span>
-            </div>
-            <span class="rewireArrow">→</span>
-            <span class="rewireHub">PolyWire</span>
-            <span class="rewireArrow">→</span>
-            <span class="rewireDb postgres">PostgreSQL</span>
-          </div>
-        </div>
-      </div>
+      <figure class="rewireFigure">
+        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: four applications each connect directly to their own database (Oracle, MongoDB, OpenSearch, MySQL). After: the same four applications connect through PolyWire, which fans them all into one PostgreSQL database.">
+          <defs>
+            <marker id="rewireArrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="var(--ink-faint)"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="panelBg" x="10" y="8" width="350" height="244" rx="14"></rect>
+          <text class="panelLabel" x="185" y="26" text-anchor="middle">Before</text>
+
+          <g>
+            <rect class="box" x="28" y="44" width="125" height="32" rx="6"></rect>
+            <text class="boxLabel" x="90" y="64" text-anchor="middle">Oracle App</text>
+            <rect class="box" x="228" y="44" width="115" height="32" rx="6"></rect>
+            <text class="boxLabel" x="285" y="64" text-anchor="middle">Oracle</text>
+            <line class="line" x1="153" y1="60" x2="225" y2="60" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+          <g>
+            <rect class="box" x="28" y="89" width="125" height="32" rx="6"></rect>
+            <text class="boxLabel" x="90" y="109" text-anchor="middle">Mongo App</text>
+            <rect class="box" x="228" y="89" width="115" height="32" rx="6"></rect>
+            <text class="boxLabel" x="285" y="109" text-anchor="middle">MongoDB</text>
+            <line class="line" x1="153" y1="105" x2="225" y2="105" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+          <g>
+            <rect class="box" x="28" y="134" width="125" height="32" rx="6"></rect>
+            <text class="boxLabel" x="90" y="154" text-anchor="middle">Search App</text>
+            <rect class="box" x="228" y="134" width="115" height="32" rx="6"></rect>
+            <text class="boxLabel" x="285" y="154" text-anchor="middle">OpenSearch</text>
+            <line class="line" x1="153" y1="150" x2="225" y2="150" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+          <g>
+            <rect class="box" x="28" y="179" width="125" height="32" rx="6"></rect>
+            <text class="boxLabel" x="90" y="199" text-anchor="middle">MySQL App</text>
+            <rect class="box" x="228" y="179" width="115" height="32" rx="6"></rect>
+            <text class="boxLabel" x="285" y="199" text-anchor="middle">MySQL</text>
+            <line class="line" x1="153" y1="195" x2="225" y2="195" marker-end="url(#rewireArrowhead)"></line>
+          </g>
+
+          <rect class="panelBg" x="380" y="8" width="550" height="244" rx="14"></rect>
+          <text class="panelLabel" x="595" y="26" text-anchor="middle">After</text>
+
+          <path class="line" d="M523,60 C 610,60 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,105 C 600,105 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,150 C 600,150 615,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+          <path class="line" d="M523,195 C 610,195 620,127 688,127" marker-end="url(#rewireArrowhead)"></path>
+
+          <rect class="box" x="398" y="44" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="64" text-anchor="middle">Oracle App</text>
+          <rect class="box" x="398" y="89" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="109" text-anchor="middle">Mongo App</text>
+          <rect class="box" x="398" y="134" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="154" text-anchor="middle">Search App</text>
+          <rect class="box" x="398" y="179" width="125" height="32" rx="6"></rect>
+          <text class="boxLabel" x="460" y="199" text-anchor="middle">MySQL App</text>
+
+          <rect class="hubBox" x="690" y="107" width="100" height="40" rx="8"></rect>
+          <text class="hubLabel" x="740" y="132" text-anchor="middle">PolyWire</text>
+          <line class="line" x1="790" y1="127" x2="815" y2="127" marker-end="url(#rewireArrowhead)"></line>
+          <text class="pgLabel" x="822" y="132" text-anchor="start">PostgreSQL</text>
+        </svg>
+        <figcaption>
+          Before: four applications, four databases, four protocols to run and secure
+          separately. After: the same four applications, unmodified, fan into PolyWire — which
+          alone talks to a single PostgreSQL database.
+        </figcaption>
+      </figure>
       <p class="rttNote">
         Keep your applications. Keep your drivers. Keep your protocols. Standardize the backend
         on Postgres.
