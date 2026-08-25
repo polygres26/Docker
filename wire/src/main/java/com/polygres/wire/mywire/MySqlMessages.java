@@ -61,6 +61,19 @@ final class MySqlMessages {
         }
     }
 
+    /** Forces a client (which may have optimistically guessed a different default plugin for its
+     * first auth response -- see {@code MySqlWireSessionHandler.performHandshake}'s javadoc on
+     * this) to redo authentication using {@code pluginName} against a fresh challenge. Every
+     * spec-compliant client, upon receiving this, sends back a follow-up packet containing only
+     * the raw auth-response bytes computed with the requested plugin. */
+    static byte[] authSwitchRequest(String pluginName, byte[] pluginData) {
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        b.write(0xfe);
+        MySqlPacket.writeNulString(b, pluginName);
+        b.write(pluginData, 0, pluginData.length);
+        return b.toByteArray();
+    }
+
     static byte[] okPacket(long affectedRows) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         b.write(0x00);
