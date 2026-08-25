@@ -7,6 +7,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -27,14 +28,26 @@ public final class RealPostgres implements AutoCloseable {
     }
 
     public static RealPostgres start() throws IOException, InterruptedException {
+        return start(java.util.List.of());
+    }
+
+    /** As {@link #start()}, but with {@code postgresql.conf} settings appended as {@code -c
+     * key=value} server args -- e.g. {@code "max_prepared_transactions=10"} for XA-recovery tests,
+     * which need PREPARE TRANSACTION support that stock Postgres ships disabled (0). */
+    public static RealPostgres start(java.util.List<String> postgresConfOverrides) throws IOException, InterruptedException {
         String containerName = "polywire-test-pg-" + System.nanoTime();
         int port = findFreePort();
-        run("docker", "run", "-d", "--name", containerName,
+        List<String> args = new java.util.ArrayList<>(List.of("docker", "run", "-d", "--name", containerName,
                 "-p", port + ":5432",
                 "-e", "POSTGRES_USER=postgres",
                 "-e", "POSTGRES_PASSWORD=postgres",
                 "-e", "POSTGRES_DB=postgres",
-                "postgres:16-alpine");
+                "postgres:16-alpine"));
+        for (String override : postgresConfOverrides) {
+            args.add("-c");
+            args.add(override);
+        }
+        run(args.toArray(new String[0]));
         RealPostgres pg = new RealPostgres(containerName, port);
         pg.waitUntilReady(Duration.ofSeconds(30));
         return pg;

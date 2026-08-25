@@ -97,7 +97,8 @@ public final class PgWireSessionHandler implements Runnable {
             com.polygres.wire.auth.PgRoleAuthCache roleAuthCache) {
         this.clientSocket = clientSocket;
         this.options = options;
-        this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor);
+        this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
+                new com.polygres.wire.xa.XaRecoveryLog(options));
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);

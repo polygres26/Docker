@@ -65,7 +65,8 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
-                new RoutingBackendExecutor(backendRegistry, terminalExecutor));
+                new RoutingBackendExecutor(backendRegistry, terminalExecutor,
+                        new com.polygres.wire.xa.XaRecoveryLog(options)));
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();

@@ -52,7 +52,8 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         this.options = options;
         this.pipeline = new StatementPipeline(sharedStages,
-                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
+                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
+                new com.polygres.wire.xa.XaRecoveryLog(options)));
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();

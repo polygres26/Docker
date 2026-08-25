@@ -154,6 +154,25 @@ public final class ServerOptions {
         return mssqlWireListenPort;
     }
 
+    /** Builds a minimal {@code ServerOptions} pointed at a specific control-plane Postgres,
+     * without touching real process environment variables -- for in-process tests of a
+     * ServerOptions-consuming class (e.g. {@code XaRecoveryLog}, {@code PgConnections}) that need
+     * a real {@code ServerOptions} but don't start any listener and shouldn't risk colliding with
+     * whatever POLYWIRE_* vars happen to be set in the actual test JVM's environment. Every
+     * non-Postgres field gets an inert placeholder; callers that also need those should use a full
+     * {@code PolyWireProcess} subprocess instead, matching this project's existing pattern for
+     * anything that exercises a real listener. */
+    public static ServerOptions forTesting(String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
+        return new ServerOptions(0, 0, 0, 0, 0, 0, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                null, pgPort,
+                false, 0, 0, null, null,
+                false, DualExecAuthority.POSTGRES, false, false,
+                false,
+                "localhost", 1521, "orcl", OracleBackendMode.JDBC,
+                false, "localhost", 3306, "mysql", null, null,
+                0);
+    }
+
     private static int parseIntEnv(String name, int defaultValue) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? defaultValue : Integer.parseInt(value);

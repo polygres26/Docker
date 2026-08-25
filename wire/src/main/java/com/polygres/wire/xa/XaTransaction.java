@@ -15,28 +15,43 @@ public final class XaTransaction {
 
     private List<XAResource> resources;
     private List<Xid> branchXids;
-    
+    private List<String> branchBackendNames;
+
     private final boolean incremental;
     private byte[] incrementalGtrid;
 
+    // Nullable -- when absent (the no-arg XaTransaction() constructor, used by every unit test
+    // that doesn't need real crash recovery), commit() behaves exactly as it did before this
+    // in-doubt-recovery feature existed: no durable logging, no recovery is possible for a crash
+    // mid-commit. RoutingBackendExecutor always supplies one in production.
+    private final XaRecoveryLog recoveryLog;
+
     public XaTransaction(List<XAResource> resources) throws SQLException {
         this.resources = new ArrayList<>(resources);
+        this.branchBackendNames = new ArrayList<>(java.util.Collections.nCopies(resources.size(), null));
         this.incremental = false;
+        this.recoveryLog = null;
         startBranches();
     }
 
     public XaTransaction() {
+        this((XaRecoveryLog) null);
+    }
+
+    public XaTransaction(XaRecoveryLog recoveryLog) {
         this.resources = new ArrayList<>();
         this.branchXids = new ArrayList<>();
+        this.branchBackendNames = new ArrayList<>();
         this.incremental = true;
         this.incrementalGtrid = XidImpl.newGlobalTransactionId();
+        this.recoveryLog = recoveryLog;
     }
 
     public boolean hasBranches() {
         return !resources.isEmpty();
     }
 
-    public void addBranch(XAResource resource) throws SQLException {
+    public void addBranch(String backendName, XAResource resource) throws SQLException {
         Xid xid = XidImpl.branch(incrementalGtrid, resources.size());
         try {
             resource.start(xid, XAResource.TMNOFLAGS);
@@ -45,6 +60,7 @@ public final class XaTransaction {
         }
         resources.add(resource);
         branchXids.add(xid);
+        branchBackendNames.add(backendName);
     }
 
     public void commit() throws SQLException {
@@ -74,16 +90,47 @@ public final class XaTransaction {
             rearmOrReset();
             throw prepareFailure;
         }
+
+        // Every branch just voted to prepare -- the transaction's fate is now fixed (commit) and
+        // durable-loggable. This is the point-of-no-return: a crash from here until every branch's
+        // commit() below actually returns leaves that branch prepared (holding locks) at its
+        // backend with nothing else recording it needs finishing -- exactly what XaRecoveryLog
+        // exists to make recoverable on the next startup. Read-only branches never entered this
+        // window (a read-only vote already released the branch's resources during prepare), so
+        // they're excluded from the log.
+        // resources can legitimately be empty here -- a transaction that never touched an XA
+        // branch at all (e.g. every statement went through the plain, non-XA defaultExecutor
+        // path) still calls commit() on its way through endTransaction(). xids.get(0) below would
+        // throw on that empty list, so this whole block -- there's nothing to log or resolve when
+        // there are no branches.
+        String gtridHex = (recoveryLog == null || resources.isEmpty())
+                ? null : XaRecoveryLog.hex(xids.get(0).getGlobalTransactionId());
+        if (recoveryLog != null && !resources.isEmpty()) {
+            List<XaRecoveryLog.Branch> toLog = new ArrayList<>();
+            for (int i = 0; i < resources.size(); i++) {
+                if (votes.get(i) != XAResource.XA_RDONLY) {
+                    toLog.add(new XaRecoveryLog.Branch(gtridHex, i, branchBackendNames.get(i)));
+                }
+            }
+            recoveryLog.logDecided(gtridHex, toLog);
+        }
+
         for (int i = 0; i < resources.size(); i++) {
             if (votes.get(i) == XAResource.XA_RDONLY) {
                 continue;
             }
             try {
                 resources.get(i).commit(xids.get(i), false);
+                if (recoveryLog != null) {
+                    recoveryLog.markBranchResolved(gtridHex, i);
+                }
             } catch (XAException e) {
-                
-                log.error("xa: branch {} failed to commit after a successful prepare vote — in-doubt transaction: {}",
-                        i, e.getMessage());
+
+                log.error("xa: branch {} failed to commit after a successful prepare vote — in-doubt transaction"
+                        + (recoveryLog != null
+                                ? " logged for recovery on the next PolyWire restart (gtrid=" + gtridHex + ")"
+                                : " -- NOT recoverable, this XaTransaction was created without a recovery log")
+                        + ": {}", i, e.getMessage());
                 rearmOrReset();
                 throw wrap("commit", e);
             }
@@ -117,6 +164,7 @@ public final class XaTransaction {
         if (incremental) {
             resources = new ArrayList<>();
             branchXids = new ArrayList<>();
+            branchBackendNames = new ArrayList<>();
             incrementalGtrid = XidImpl.newGlobalTransactionId();
         } else {
             startBranches();

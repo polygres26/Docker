@@ -76,6 +76,15 @@ public final class Main {
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
                 config.backends(), config.shardBackends(), defaultBackendTarget);
 
+        // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
+        // crash between an XA transaction's commit decision and every branch actually applying it
+        // used to leave that branch prepared (holding locks) at its backend forever. Run before any
+        // client connection is accepted, not lazily on first use -- an in-doubt branch has already
+        // been holding locks since before this restart, so there's no reason to wait.
+        com.polygres.wire.xa.XaRecoveryLog xaRecoveryLog = new com.polygres.wire.xa.XaRecoveryLog(options);
+        xaRecoveryLog.ensureSchema();
+        com.polygres.wire.xa.XaRecovery.recover(xaRecoveryLog, backendRegistry);
+
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
         if (telemetry != null) {
             log.info("OTel export enabled (POLYWIRE_OTEL_ENDPOINT); set POLYWIRE_OTEL_ENDPOINT=disabled to turn off");

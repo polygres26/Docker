@@ -121,7 +121,8 @@ public final class RequestLoop {
         this.failedStatementLog.ensureSchema();
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.reusablePipeline = new StatementPipeline(sharedStages,
-                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor));
+                new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
+                new com.polygres.wire.xa.XaRecoveryLog(options)));
     }
 
     public void run() throws IOException {

@@ -1,6 +1,7 @@
 package com.polygres.wire.core;
 
 import com.polygres.wire.xa.XaBackendFactory;
+import com.polygres.wire.xa.XaRecoveryLog;
 import com.polygres.wire.xa.XaTransaction;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -21,6 +22,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     private final BackendRegistry registry;
     private final BackendExecutor defaultExecutor;
+    private final XaRecoveryLog recoveryLog;
 
     private Map<String, Connection> transactionConnections;
 
@@ -35,8 +37,16 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             Pattern.compile("(?i)^\\s*(?:FETCH\\b.*\\b(?:FROM|IN)\\s+(\\w+)|CLOSE\\s+(\\w+))\\s*;?\\s*$");
 
     public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor) {
+        this(registry, defaultExecutor, null);
+    }
+
+    /** {@code recoveryLog} is nullable -- see {@link XaTransaction}'s matching constructor; every
+     * production caller (Main) supplies one so a coordinator crash mid-commit is recoverable, but
+     * tests that don't need real crash recovery can omit it. */
+    public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor, XaRecoveryLog recoveryLog) {
         this.registry = registry;
         this.defaultExecutor = defaultExecutor;
+        this.recoveryLog = recoveryLog;
     }
 
     public boolean inTransaction() {
@@ -52,7 +62,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     public void beginTransaction() {
         transactionConnections = new LinkedHashMap<>();
         cursorTargets = new LinkedHashMap<>();
-        xaTransaction = new XaTransaction();
+        xaTransaction = new XaTransaction(recoveryLog);
         transactionFailed = false;
     }
 
@@ -216,7 +226,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (connection == null) {
             
             XaBackendFactory.XaBranch branch = XaBackendFactory.open(target);
-            xaTransaction.addBranch(branch.resource());
+            xaTransaction.addBranch(target.name(), branch.resource());
             connection = branch.connection();
             transactionConnections.put(target.name(), connection);
         }
