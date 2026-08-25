@@ -408,17 +408,75 @@ public final class O5LogonHandler {
         sendData(out, payload, largeSdu);
     }
 
+    // Real bytes captured from an actual Oracle Database 23c Free instance (gvenzl/oracle-free)
+    // rejecting a login with a wrong password, via a raw TCP-proxy capture of a real ojdbc11
+    // client's session -- see the session notes for the exact setup. This revealed three things
+    // that weren't in the code before, each confirmed by diffing our own bytes against the real
+    // capture byte-for-byte, not guessed:
+    //
+    // 1. The server sends a pair of TNS MARKER packets (type 12, flags 0x20) BEFORE the error
+    //    DATA packet, and waits for the client to echo one back. Skip this handshake (as the code
+    //    used to) and a client mid-rich/12c-auth exchange doesn't correctly decode the error frame
+    //    that follows -- it falls back to its own generic client-side error instead of surfacing
+    //    the real ORA-01017. This handshake is specific to a FAILED LOGIN; it's not needed (and a
+    //    real server doesn't send it) for a post-login statement-execution error, which is why the
+    //    existing ORA-00955/ORA-02292 tests already worked fine without it.
+    // 2. The error DATA packet's own header sets the "end of response" data-flags to 0x0000, not
+    //    the 0x2000 every other DATA packet in this file uses (a login rejection isn't the final
+    //    packet of a normal response the way a statement result/error is).
+    // 3. The TTC error-message payload's own binary prefix -- everything before the message text
+    //    itself -- does NOT match {@link ResponseWriter#writeErrorEnd}'s general-purpose encoding
+    //    byte-for-byte in this specific auth-rejection context (Oracle's compressed integer
+    //    encoding apparently differs by field here vs. a post-login statement error, even though
+    //    writeErrorEnd is verified correct for THAT case). Rather than reverse-engineer exactly
+    //    which UB2/UB4 field differs and why, LOGIN_REJECTION_PREFIX below is the real captured
+    //    prefix bytes used verbatim -- the same "captured template, patch in the variable part"
+    //    approach already used elsewhere in this file for the rich-format success responses (see
+    //    PHASE_TWO_RESPONSE_EXTENDED_B64 etc.), and for the same reason: more reliable than a
+    //    hand-derived re-encoding for a frame shape this codebase has no other reference for.
+    //    ORA-01017 is the only error this method ever sends, so a static prefix (rather than a
+    //    dynamically-rebuilt one) is honest, not a hack -- it's exactly what a real server sent
+    //    for exactly this scenario.
+    private static final int MARKER_FLAGS = 0x20;
+    private static final byte[] MARKER_PAYLOAD_1 = {0x01, 0x00, 0x01};
+    private static final byte[] MARKER_PAYLOAD_2 = {0x01, 0x00, 0x02};
+    private static final byte[] LOGIN_REJECTION_PREFIX =
+            java.util.Base64.getDecoder().decode("BAEBAAACA/kAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAACA/k=");
+    private static final String LOGIN_REJECTION_MESSAGE =
+            "ORA-01017: invalid credential or not authorized; logon denied\n";
+
     private void sendRejection(OutputStream out, boolean largeSdu) throws IOException {
-        TtcWriter w = new TtcWriter();
-        // The error CODE here (1017 = ORA-01017) was already correct, but the message text
-        // wasn't -- writeErrorEnd sends the message verbatim, with no "ORA-01017: " prefix added
-        // automatically anywhere downstream (confirmed by reading writeErrorEnd itself), so a
-        // bare "invalid username/password" doesn't match the convention every other error in this
-        // codebase follows (see DialectErrorMessages/errors/oracle_en.properties, where every
-        // template spells out the full "ORA-xxxxx: ..." text itself). This is Oracle's own real,
-        // well-documented wording for a failed logon.
-        ResponseWriter.writeErrorEnd(w, 1017, "ORA-01017: invalid username/password; logon denied", 0);
-        sendData(out, w.toByteArray(), largeSdu);
+        sendMarker(out, MARKER_PAYLOAD_1, largeSdu);
+        sendMarker(out, MARKER_PAYLOAD_2, largeSdu);
+        // The real capture showed the client's marker-echo reply and the server's final error
+        // packet close together in time, in that order -- but that's consistent with a real
+        // two-way TCP round-trip happening to land in that order, not necessarily the server
+        // BLOCKING on the reply before proceeding (a real Oracle client's TNS transport layer
+        // handles MARKER packets out-of-band, below the auth-handshake code, so it wouldn't
+        // matter to a real client which order these two things happen in). Deliberately NOT
+        // reading the client's reply here: a synchronous, single-threaded test client that never
+        // implements this reply (see O5LogonHandlerTest.FakeClient, a legitimate crypto round-trip
+        // test predating this fix) would otherwise hang this call forever, and there's no real
+        // evidence the wait is actually load-bearing for a genuine client either.
+
+        // NOT writeStrWithLength -- that writes a 1-byte length prefix for a message this short
+        // (see TtcWriter.writeBytesWithLength), but the real capture shows this specific field
+        // uses a flat 4-byte big-endian length instead (0000003e for the real 62-byte message),
+        // a different convention than the general-purpose TTC string encoding uses elsewhere.
+        byte[] messageBytes = LOGIN_REJECTION_MESSAGE.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        TtcWriter messageWriter = new TtcWriter();
+        messageWriter.writeUint32BE(messageBytes.length);
+        messageWriter.writeRaw(messageBytes);
+        byte[] payload = concat(LOGIN_REJECTION_PREFIX, messageWriter.toByteArray());
+        TnsPacket errPacket = new TnsPacket(TnsPacketType.DATA, 0, payload);
+        out.write(errPacket.encode(largeSdu, false));
+        out.flush();
+    }
+
+    private void sendMarker(OutputStream out, byte[] payload, boolean largeSdu) throws IOException {
+        TnsPacket packet = new TnsPacket(TnsPacketType.MARKER, MARKER_FLAGS, payload);
+        out.write(packet.encode(largeSdu));
+        out.flush();
     }
 
     private void writePairWithVerifierType(TtcWriter w, String key, String value, long verifierType) {
