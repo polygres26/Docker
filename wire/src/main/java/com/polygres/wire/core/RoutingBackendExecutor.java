@@ -168,7 +168,20 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // cross-shard combination, not concatenation. ScatterGatherAggregateMerge.plan() returns
         // null for anything that doesn't need merging (no aggregate present), so the plain-append
         // path below is unchanged for every query shape it was already correct for.
-        ScatterGatherAggregateMerge.Plan plan = ScatterGatherAggregateMerge.plan(statement.sqlText());
+        //
+        // A second, related bug fixed here (same audit, follow-up finding): whichever path below
+        // runs, the client's own ORDER BY/LIMIT/OFFSET used to be sent to EVERY shard unmodified
+        // and the per-shard results just concatenated -- each shard locally sorted/truncated its
+        // own rows, so e.g. a 3-shard "... ORDER BY x LIMIT 10" could return up to 30 rows, in
+        // shard-arrival order, not the correct globally-ordered top 10. ScatterGatherOrderLimit
+        // strips those clauses from what's sent to each shard (so every shard returns its full,
+        // unsorted/untruncated matching set) and applies them once, centrally, after gathering --
+        // see its class doc for why no partial per-shard LIMIT pushdown is attempted here.
+        ScatterGatherOrderLimit.Parsed orderLimit = ScatterGatherOrderLimit.parse(statement.sqlText());
+        String coreSql = orderLimit.withoutOrderLimitOffset();
+
+        ScatterGatherAggregateMerge.Plan plan = ScatterGatherAggregateMerge.plan(coreSql);
+        ExecutionResult merged;
         if (plan != null) {
             Map<List<Object>, Object[]> accumulators = new LinkedHashMap<>();
             for (String shardName : shardNames) {
@@ -180,23 +193,25 @@ public final class RoutingBackendExecutor implements BackendExecutor {
                 ExecutionResult shardResult = executeOnFreshConnection(target, rewritten);
                 ScatterGatherAggregateMerge.mergeShardResult(plan, shardResult, accumulators);
             }
-            return ScatterGatherAggregateMerge.buildResult(plan, accumulators);
-        }
-
-        List<ColumnInfo> columns = null;
-        List<List<Object>> mergedRows = new ArrayList<>();
-        for (String shardName : shardNames) {
-            BackendTarget target = registry.get(shardName);
-            if (target == null) {
-                throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
+            merged = ScatterGatherAggregateMerge.buildResult(plan, accumulators);
+        } else {
+            List<ColumnInfo> columns = null;
+            List<List<Object>> mergedRows = new ArrayList<>();
+            Statement coreStatement = statement.withSqlText(coreSql);
+            for (String shardName : shardNames) {
+                BackendTarget target = registry.get(shardName);
+                if (target == null) {
+                    throw new SQLException("shard group references unknown backend \"" + shardName + "\"");
+                }
+                ExecutionResult result = executeOnFreshConnection(target, coreStatement);
+                if (columns == null) {
+                    columns = result.columns();
+                }
+                mergedRows.addAll(result.rows());
             }
-            ExecutionResult result = executeOnFreshConnection(target, statement);
-            if (columns == null) {
-                columns = result.columns();
-            }
-            mergedRows.addAll(result.rows());
+            merged = ExecutionResult.ofQuery(columns, mergedRows);
         }
-        return ExecutionResult.ofQuery(columns, mergedRows);
+        return ScatterGatherOrderLimit.applyOrderAndLimit(merged, orderLimit.spec());
     }
 
     // Opt-in (default off): reading from a standby means reading data that may be behind the
