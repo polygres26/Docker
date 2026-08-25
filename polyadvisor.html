@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyAdvisor — Migration Assessment</title>
+<meta name="description" content="PolyAdvisor: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
+<link rel="canonical" href="https://polygres26.github.io/polyadvisor.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="docs/logo.png">
+<link rel="apple-touch-icon" href="docs/logo.png">
+<link rel="stylesheet" href="styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://polygres26.github.io/polyadvisor.html">
+<meta property="og:title" content="PolyAdvisor — Migration Assessment">
+<meta property="og:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
+<meta property="og:image" content="https://polygres26.github.io/docs/admin-polyadvisor.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PolyAdvisor — Migration Assessment">
+<meta name="twitter:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/admin-polyadvisor.png">
+</head>
+<body>
+  <a href="#main" class="skipLink">Skip to content</a>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="index.html">Home</a>
+      <a href="polywire.html">PolyWire</a>
+      <a href="polyadvisor.html" class="active">PolyAdvisor</a>
+      <a href="CONNECTING.md">Docs</a>
+      <a href="index.html#pricing">Pricing</a>
+      <a href="index.html#faq">FAQ</a>
+      <a href="index.html#contact">Contact</a>
+    </div>
+  </nav>
+  <div class="wrap" id="main">
+    <header>
+      <div class="brandRow">
+        <img src="docs/logo.png" alt="Polygres" class="brandMark">
+        <h1 class="eyebrow">PolyGres</h1>
+      </div>
+      <p class="lede">
+        <a href="index.html">← Back to home</a> — PolyAdvisor tells you how hard moving to
+        Postgres will be, then PolyWire keeps your application running while you do it.
+      </p>
+    </header>
+    <section class="tool" id="polyadvisor-detail" style="margin-top:0; padding-top:0; border-top:none;">
+      <div class="kicker">
+        <span class="num">01</span>
+        <span class="badge">ghcr.io/polygres26/polyadvisor</span>
+      </div>
+      <h2>PolyAdvisor</h2>
+      <p class="lede">
+        Tool for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: assess how hard the
+        migration is, then bridge your existing application to Postgres while you do it.
+      </p>
+      <details class="onThisPage">
+        <summary>On this page<span class="otpCurrent"></span></summary>
+        <ul class="otpList">
+          <li><a href="#two-ways-to-assess">Two ways to get an assessment</a></li>
+          <li><a href="#what-you-get">What you get</a></li>
+          <li><a href="#llm-assist">Connecting with an LLM's help</a></li>
+          <li><a href="#admin-console-polyadvisor">Admin console</a></li>
+        </ul>
+      </details>
+
+      <h3 class="subhead" id="two-ways-to-assess">Two ways to get an assessment<a class="permalink" href="#two-ways-to-assess" aria-label="Link to this section">#</a></h3>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">Connect a database</span><span class="uc-desc">A read-only connection profiles the real schema, feature usage, and query workload directly — no data leaves your database, only metadata and query statistics. Deterministic: run it twice, get the same score.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
+      </ul>
+
+      <h3 class="subhead" id="what-you-get">What you get<a class="permalink" href="#what-you-get" aria-label="Link to this section">#</a></h3>
+      <ul class="whatyouget">
+        <li><span class="wg-body"><span class="wg-title">Migration difficulty score and tier</span><span class="wg-desc">Reproducible and rules-based — run it twice against the same database, get the same score and the same itemized breakdown behind it.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Feature inventory</span><span class="wg-desc">PL/SQL packages, triggers, procedures, partitioning, database links, scheduled jobs, and more, each weighted by real migration cost.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Schema, workload, and parameter browsing</span><span class="wg-desc">Drill into any table, view, procedure, or function's real definition; a captured-query-workload summary (top SQL by cost, executions, buffer gets); and the source database's full configuration parameter list, filterable — all read-only, all from the same connection.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Downloadable findings report (PDF)</span><span class="wg-desc">Generated live from the current scan, built for sharing with a stakeholder who'll never open the app.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">Postgres sizing recommendation</span><span class="wg-desc">vCPUs, memory, storage, and IOPS from a live connection's schema size and captured workload — or from an uploaded report's signals — with the caveats and the reasoning behind every number spelled out, not just the numbers themselves.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title">PL/SQL summarization (Oracle sources)</span><span class="wg-desc">An LLM explains what a package or procedure actually does in plain English, with an optional second-opinion "judge" model for a review pass — advisory only, layered on top of the rules-based score, never replacing it.</span></span></li>
+      </ul>
+      <p class="rttNote">
+        <b>Where PolyAdvisor is still early:</b> saved connection credentials are stored as-is
+        today — encryption at rest is planned but not yet built, so treat this like any other tool
+        you'd point at a database with a password in a config file. There's a single shared admin
+        account, no per-user roles or SSO yet. Worth knowing before you point it at anything you
+        wouldn't otherwise put in a plaintext config.
+      </p>
+
+      <div class="runblock">
+        <p>Quick start:</p>
+        <code>docker run -p 8090:8090 \
+  -v polyadvisor-data:/data \
+  ghcr.io/polygres26/polyadvisor:latest</code>
+      </div>
+
+      <h3 class="subhead" id="llm-assist">Connecting, exploring, and reviewing PL/SQL with an LLM's help<a class="permalink" href="#llm-assist" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
+        reference into Vault or CyberArk if you'd rather not store the secret in PolyAdvisor at
+        all. Once it's saved, Objects lists everything that user can see, grouped by type and
+        (for a multi-schema connection) owner-qualified so a package in one schema is never
+        confused for one in another. Selecting a routine shows its real source, pulled live from
+        the database, not a cached copy.
+      </p>
+      <figure>
+        <img src="docs/polyadvisor-add-connection.png" alt="PolyAdvisor's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
+        <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved from Vault/CyberArk at connect time instead of being stored at all.</figcaption>
+      </figure>
+      <p class="rttNote">
+        <b>What the LLM step actually does, precisely:</b> select a package, procedure, or
+        function and PolyAdvisor can ask an LLM to explain it — a plain-English summary of what
+        it does, a bullet list of the specific constructs that are non-trivial to port to
+        Postgres (cursor locking, <code>DBMS_OUTPUT</code>, autonomous transactions, and the
+        like), and a trivial/moderate/substantial effort estimate with its reasoning. This is a
+        reviewer's aid, not a code generator — it does not emit PL/pgSQL, and nothing it produces
+        feeds back into the deterministic score above. Runs entirely local by default (no API
+        key, nothing leaves the machine) against a small on-box model, or against an external
+        provider if you configure one on the LLM page.
+      </p>
+      <figure>
+        <img src="docs/polyadvisor-plsql-summarize.png" alt="PolyAdvisor's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
+        <figcaption>A real Oracle procedure's source (left: cursor <code>FOR UPDATE</code> loop, <code>DBMS_OUTPUT</code>, exception handling) and the LLM's live output below it — a summary, the specific constructs that need manual attention when porting to Postgres, and an effort estimate. Explanation and risk-flagging, not automated translation.</figcaption>
+      </figure>
+
+      <h3 class="subhead" id="admin-console-polyadvisor">Admin console<a class="permalink" href="#admin-console-polyadvisor" aria-label="Link to this section">#</a></h3>
+      <figure>
+        <img src="docs/admin-polyadvisor.png" alt="PolyAdvisor's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
+        <figcaption>PolyAdvisor's Findings dashboard against a real MySQL 8.0 connection — complexity tier, overall score, feature inventory, and the itemized per-feature breakdown behind that score, each line with its own point cost and reasoning. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
+      </figure>
+      <figure>
+        <img src="docs/polyadvisor-sizing.png" alt="PolyAdvisor's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
+        <figcaption>Sizing recommendation for the same connection — a starting-point Postgres instance shape built from a fresh schema-size scan and workload capture, with the caveats and the line-by-line rationale behind every number shown alongside it, not hidden behind a tooltip.</figcaption>
+      </figure>
+    </section>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="README.md">README.md</a> and
+      <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
+      in this repo.
+    </footer>
+  </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+  <script src="page.js"></script>
+</body>
+</html>

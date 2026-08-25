@@ -1,0 +1,248 @@
+  :root {
+    --paper: #ffffff;
+    --paper-raised: #f6f7f9;
+    --ink: #1b2430;
+    --ink-dim: #57626f;
+    --ink-faint: #8894a2;
+    --line: #dde3e9;
+    --indigo: #3f5b9b;
+    --indigo-soft: #e8ecf7;
+    --teal: #227465;
+    --teal-soft: #e2f3ef;
+    --amber: #a15c07;
+    --amber-soft: #f7ecd9;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #12161c;
+      --paper-raised: #181d25;
+      --ink: #e7ecf2;
+      --ink-dim: #98a3b2;
+      --ink-faint: #5c6673;
+      --line: #2a323d;
+      --indigo: #7f9ce0;
+      --indigo-soft: #232c3d;
+      --teal: #5cc0ac;
+      --teal-soft: #16292a;
+      --amber: #e0a94f;
+      --amber-soft: #2c2415;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.6; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 56px 24px 80px; }
+  header { margin-bottom: 40px; }
+  .eyebrow { font-family: var(--mono); font-size: 26px; letter-spacing: 0.02em; color: var(--indigo); margin: 0; font-weight: 700; }
+  .brandRow { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .brandMark { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; flex: none; }
+  .lede { color: var(--ink-dim); font-size: 17px; margin: 0; }
+
+  /* Hero -- one screen meant to sell the idea before any capability list. */
+  .hero { margin-bottom: 40px; }
+  .heroTitle { font-size: 40px; line-height: 1.15; letter-spacing: -0.02em; margin: 6px 0 14px; color: var(--ink); }
+  .heroSub { font-size: 18px; line-height: 1.5; color: var(--ink-dim); margin: 0 0 20px; max-width: 620px; }
+  .protoStrip { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); letter-spacing: 0.01em; margin: 0 0 26px; }
+  .heroCtas { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; }
+  .btn { display: inline-flex; align-items: center; font: inherit; font-weight: 600; font-size: 14.5px; padding: 12px 22px; border-radius: 8px; text-decoration: none; cursor: pointer; }
+  .btn-primary { background: var(--indigo); color: #fff; border: 1px solid var(--indigo); }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo); }
+  .heroTagline { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+
+  /* "Don't rewrite. Rewire." before/after -- plain HTML/CSS, no image asset, so it stays crisp
+     and theme-aware at any size. Before: four separate app-to-own-database rows. After: the same
+     four apps fan into one PolyWire box, then one arrow to Postgres -- the whole point rendered
+     as a shape, not just asserted in prose. */
+  .rewireDiagram { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0 8px; }
+  @media (max-width: 620px) { .rewireDiagram { grid-template-columns: 1fr; } }
+  .rewireSide { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; background: var(--paper-raised); }
+  .rewireSideLabel { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); margin: 0 0 12px; }
+  .rewireRow { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 6px 0; }
+  .rewireApp { color: var(--ink); font-weight: 600; }
+  .rewireArrow { color: var(--ink-faint); font-size: 13px; }
+  .rewireDb { font-family: var(--mono); color: var(--ink-dim); }
+  .rewireDb.postgres, .seeItWorkRow .postgres { color: var(--teal); font-weight: 700; }
+  .rewireFanIn { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; text-align: center; }
+  .rewireApps { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+  .rewireApps .rewireApp { font-size: 13px; }
+  .rewireHub { font-family: var(--mono); font-weight: 700; color: #fff; background: var(--indigo); padding: 6px 14px; border-radius: 8px; font-size: 13.5px; }
+
+  .seeItWorkGrid { display: grid; gap: 10px; margin: 16px 0 8px; }
+  .seeItWorkRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13.5px; font-family: var(--mono); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+  .seeItWorkRow span:not(.rewireArrow) { color: var(--ink-dim); }
+  .seeItWorkRow span:first-child { color: var(--ink); font-weight: 700; font-family: var(--sans); }
+
+  /* Benchmark/deep-technical teaser pattern -- a one-line stat always visible, the full
+     methodology/config/detail one click deeper via <details>, so the punchy claim doesn't drown
+     in the paragraph that earns it. */
+  .statTeaser { font-size: 15px; color: var(--ink); margin: 0 0 10px; }
+  .statTeaser b { color: var(--teal); }
+  details.methodDetails { margin: 0 0 26px; }
+  details.methodDetails summary { cursor: pointer; color: var(--indigo); font-size: 13.5px; font-weight: 600; list-style: none; margin-bottom: 14px; }
+  details.methodDetails summary::-webkit-details-marker { display: none; }
+  details.methodDetails summary:hover { text-decoration: underline; }
+  details.methodDetails[open] summary { margin-bottom: 14px; }
+
+
+  .bridgeKicker { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+
+  /* Flagship terminal demo -- a real, reproducible-shaped transcript (illustrative row values,
+     everything else real: the client, the protocol, the path), not a recorded video. */
+  .termWindow { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); margin: 16px 0 18px; background: #1b2430; }
+  .termBar { display: flex; gap: 6px; padding: 10px 14px; background: #10151d; }
+  .termDot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+  .termDot.r { background: #ff5f57; }
+  .termDot.y { background: #febc2e; }
+  .termDot.g { background: #28c840; }
+  .termBody { margin: 0; padding: 18px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: #d7dee8; overflow-x: auto; white-space: pre; }
+  .demoFlow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; font-family: var(--mono); font-size: 13.5px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 8px; text-align: center; }
+  .demoFlow span:not(.rewireArrow) { color: var(--ink-dim); }
+  .demoFlow span:first-child { color: var(--ink); font-weight: 700; }
+
+  .tool { margin: 64px 0; padding-top: 48px; border-top: 1px solid var(--line); }
+  .tool:first-of-type { margin-top: 48px; }
+  .kicker { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .kicker .num { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; background: var(--teal-soft); color: var(--teal); padding: 4px 10px; border-radius: 999px; }
+  .tool h2 { font-size: 28px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  .tool > .lede { color: var(--ink-dim); font-size: 16px; margin: 0 0 22px; }
+  .tool > .lede b { color: var(--ink); font-weight: 600; }
+
+  .usecases { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
+  .usecases li { display: flex; gap: 12px; align-items: flex-start; }
+  .usecases li::before { content: "→"; color: var(--indigo); flex: none; font-size: 14px; line-height: 1.6; }
+  .usecases .uc-body { display: block; }
+  .usecases .uc-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
+  .usecases .uc-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6;  }
+
+  .runblock { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin: 0 0 8px; }
+  .runblock p { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 12px; }
+  .runblock code { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; color: var(--ink); white-space: pre; }
+
+  h3.subhead { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.01em; scroll-margin-top: 64px; }
+  h3.subhead .permalink { margin-left: 8px; color: var(--ink-faint); text-decoration: none; font-weight: 400; opacity: 0; transition: opacity 0.12s; }
+  h3.subhead:hover .permalink, h3.subhead .permalink:focus { opacity: 1; }
+  .tool[id], section#faq { scroll-margin-top: 64px; }
+
+  /* Off-screen until keyboard-focused -- lets a keyboard/screen-reader user jump straight past
+     the nav to the page content instead of tabbing through every nav link first. */
+  .skipLink {
+    position: absolute; left: -9999px; top: auto; z-index: 100;
+    padding: 10px 16px; background: var(--indigo); color: #fff; border-radius: 0 0 6px 0;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+  }
+  .skipLink:focus { left: 0; top: 0; }
+
+  /* Sticky top nav -- section links + active-section highlight (see the IntersectionObserver
+     script near the end of <body>). Collapses to a horizontal scroller on narrow viewports
+     instead of a hamburger menu -- only 4 links, not worth the extra JS/state. */
+  .siteNav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .siteNav .siteNavInner { max-width: 900px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; gap: 4px; overflow-x: auto; }
+  .siteNav a { flex: none; font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); text-decoration: none; padding: 14px 10px; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .siteNav a:hover { color: var(--ink); }
+  .siteNav a.active { color: var(--indigo); border-bottom-color: var(--indigo); }
+
+  /* "On this page" -- a <details> disclosure right under a section's lede, not a persistent
+     sidebar: the page's own content column is a fixed 900px, and this project's sections range
+     from 4 to 11 subheads, so a collapsible list beats permanent sidebar chrome that's mostly
+     empty space on the short sections. It sticks below the site nav while its section scrolls by
+     (longest section is now 17 subheads) so there's always a quick way to jump, and its own
+     summary label names the subhead currently in view even while collapsed -- see the
+     IntersectionObserver script near the end of <body>. Sticky is skipped below 640px: a phone's
+     viewport is short enough that a second fixed bar competes too much with actual content. */
+  details.onThisPage { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 24px; background: var(--paper-raised); }
+  @media (min-width: 640px) {
+    details.onThisPage { position: sticky; top: var(--nav-h, 49px); z-index: 15; box-shadow: 0 2px 10px -4px rgba(0,0,0,0.15); }
+  }
+  details.onThisPage summary { cursor: pointer; padding: 10px 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.04em; list-style: none; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+  details.onThisPage summary::-webkit-details-marker { display: none; }
+  details.onThisPage summary::before { content: "▸"; display: inline-block; margin-right: -2px; transition: transform 0.12s; }
+  details.onThisPage[open] summary::before { transform: rotate(90deg); }
+  details.onThisPage .otpCurrent { color: var(--indigo); text-transform: none; letter-spacing: normal; font-weight: 600; }
+  details.onThisPage[open] .otpCurrent { display: none; }
+  details.onThisPage .otpList { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 14px 14px; margin: 0; }
+  details.onThisPage .otpList a { font-size: 13px; color: var(--ink); text-decoration: none; }
+  details.onThisPage .otpList a:hover { color: var(--indigo); text-decoration: underline; }
+  details.onThisPage .otpList a.active { color: var(--indigo); font-weight: 600; }
+
+  #backToTop { position: fixed; right: 20px; bottom: 20px; z-index: 20; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink-dim); font-size: 16px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+  #backToTop.show { opacity: 1; pointer-events: auto; }
+  #backToTop:hover { color: var(--indigo); border-color: var(--indigo); }
+  figure { margin: 24px 0 32px; }
+  figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
+  figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px;  }
+
+  .rttNote { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 16px; }
+  .rttTableWrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; margin: 0 0 8px; }
+  table.rttTable { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 560px; }
+  table.rttTable th, table.rttTable td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.rttTable th:first-child, table.rttTable td:first-child { text-align: left; }
+  table.rttTable thead th { color: var(--ink-faint); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--paper-raised); }
+  table.rttTable tbody tr:last-child td { border-bottom: none; }
+  table.rttTable td.num { font-family: var(--mono); }
+  table.rttTable td.speedup { color: var(--teal); font-family: var(--mono); font-weight: 600; }
+
+  table.compareTable td.yes { color: var(--teal); font-weight: 700; }
+  table.compareTable td.no { color: var(--ink-faint); }
+  table.compareTable td.maybe { color: var(--amber); font-size: 12.5px; }
+  table.compareTable th, table.compareTable td { text-align: left; white-space: normal; }
+  table.compareTable td:first-child { font-weight: 600; }
+
+  .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
+  .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .obsCard h4 { margin: 0 0 6px; font-size: 14px; }
+  .obsCard p { margin: 0; font-size: 13px; color: var(--ink-dim); line-height: 1.55; }
+  .obsPills { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+  .obsPill { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 999px; }
+  .obsPill.scrape { color: var(--teal); background: var(--teal-soft); }
+  .obsPill.direct { color: var(--indigo); background: var(--indigo-soft); }
+  .obsPill.collector { color: var(--amber); background: var(--amber-soft); }
+
+  .whatyouget { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
+  .whatyouget li { display: flex; gap: 12px; align-items: flex-start; }
+  .whatyouget li::before { content: "✓"; color: var(--teal); flex: none; font-size: 14px; line-height: 1.6; }
+  .whatyouget .wg-body { display: block; }
+  .whatyouget .wg-title { display: block; color: var(--ink); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
+  .whatyouget .wg-desc { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.6;  }
+
+  .pricingGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 24px; }
+  @media (max-width: 620px) { .pricingGrid { grid-template-columns: 1fr; } }
+  .priceCard { border: 1px solid var(--line); border-radius: 14px; padding: 24px; background: var(--paper-raised); }
+  .priceCard.enterprise { border-color: var(--indigo); background: var(--indigo-soft); }
+  .priceCard h3 { margin: 0 0 4px; font-size: 20px; }
+  .priceCard .priceTag { font-family: var(--mono); font-size: 28px; font-weight: 700; color: var(--ink); margin: 0 0 4px; }
+  .priceCard .priceTag small { font-size: 13px; font-weight: 400; color: var(--ink-dim); }
+  .priceCard .priceSub { color: var(--ink-dim); font-size: 13px; margin: 0 0 18px; }
+  .priceCard ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+  .priceCard li { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+  .priceCard li::before { content: "✓"; color: var(--teal); flex: none; font-weight: 700; }
+  .priceCard li.limit::before { content: "△"; color: var(--amber); }
+  .pricingNote { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 16px; }
+
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
+  footer a { color: var(--indigo); }
+  a { color: var(--indigo); }
+  .contactForm { max-width: 520px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); display: flex; flex-direction: column; gap: 16px; }
+  .formRow { display: flex; flex-direction: column; gap: 6px; }
+  .formRow label { font-size: 13px; font-weight: 600; color: var(--ink-dim); }
+  .formRow input, .formRow select, .formRow textarea {
+    font: inherit; font-size: 14px; padding: 9px 11px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink); resize: vertical;
+  }
+  .formRow input:focus, .formRow select:focus, .formRow textarea:focus {
+    outline: none; border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-soft);
+  }
+  .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  #contactSubmitBtn {
+    align-self: flex-start; font: inherit; font-weight: 600; font-size: 14px;
+    padding: 11px 22px; border-radius: 7px; border: 1px solid var(--indigo);
+    background: var(--indigo); color: #fff; cursor: pointer;
+  }
+  #contactSubmitBtn:hover { opacity: 0.9; }
+  #contactSubmitBtn:disabled { opacity: 0.6; cursor: default; }
+  #contactStatus { margin: 0; font-size: 13px; min-height: 1.4em; }
+  #contactStatus.ok { color: #2e7d4f; }
+  #contactStatus.err { color: #c0392b; }
