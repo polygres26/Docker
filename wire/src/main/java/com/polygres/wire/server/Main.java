@@ -292,7 +292,7 @@ public final class Main {
                             + "in-band on their existing plain ports ({}, {})",
                     options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
 
-            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
+            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
 
             grpcServer.startTls();
             log.info("polywire listening for gRPC TLS on port {}", options.grpcTlsPort());
@@ -423,7 +423,7 @@ public final class Main {
                     awsIamCredentials.isEnabled() ? "some" : "0");
         });
 
-        acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate);
+        acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog);
     }
 
     private static PolyWireCluster startLocalCacheCluster() {
@@ -517,7 +517,7 @@ public final class Main {
 
     private static void acceptOraWireLoop(ServerOptions options, PgBackendPool backendPool,
             List<PipelineStage> pipelineStages, BackendRegistry backendRegistry, ExecutorService sessionExecutor,
-            com.polygres.wire.acl.ConnectionGate connectionGate) {
+            com.polygres.wire.acl.ConnectionGate connectionGate, com.polygres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
             log.info("polywire listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
@@ -527,7 +527,7 @@ public final class Main {
                 if (!connectionGate.acceptTcp(clientSocket)) {
                     continue;
                 }
-                sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry));
+                sessionExecutor.submit(new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
             }
         } catch (IOException e) {
             log.error("Oracle wire listener on port {} failed", options.listenPort(), e);
@@ -536,7 +536,8 @@ public final class Main {
 
     private static void acceptOraWireTlsLoop(ServerOptions options, SSLSocketFactory tlsSocketFactory,
             PgBackendPool backendPool, List<PipelineStage> pipelineStages, BackendRegistry backendRegistry,
-            ExecutorService sessionExecutor, com.polygres.wire.acl.ConnectionGate connectionGate) {
+            ExecutorService sessionExecutor, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
             log.info("polywire listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
@@ -549,7 +550,7 @@ public final class Main {
                 SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
                         plainSocket, null, plainSocket.getPort(), true);
                 tlsSocket.setUseClientMode(false);
-                sessionExecutor.submit(new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry));
+                sessionExecutor.submit(new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
             }
         } catch (IOException e) {
             log.error("Oracle wire TCPS listener on port {} failed", options.tlsPort(), e);

@@ -38,7 +38,7 @@ public final class O5LogonHandler {
         byte[] password = credentials.lookupPassword(username);
         if (password == null) {
             sendRejection(out, largeSdu);
-            return new AuthResult(username, false);
+            return new AuthResult(username, false, credentials.isMultiUser());
         }
 
         byte[] verifierData = randomBytes(VFR_DATA_LENGTH);
@@ -82,7 +82,7 @@ public final class O5LogonHandler {
         } else {
             sendRejection(out, largeSdu);
         }
-        return new AuthResult(username, success);
+        return new AuthResult(username, success, credentials.isMultiUser());
     }
 
     private boolean verifyPhaseTwo(Map<String, String> pairs, byte[] passwordHash, byte[] sessionKeyPartA,
@@ -467,6 +467,11 @@ public final class O5LogonHandler {
         return HexFormat.of().withUpperCase().formatHex(bytes);
     }
 
-    public record AuthResult(String username, boolean success) {
+    /** {@code realIdentity} is true exactly when {@code POLYWIRE_AUTH_CREDENTIALS} is configured
+     * (see {@link CredentialStore}), i.e. {@code username} is a real, distinguishable per-caller
+     * identity worth propagating into {@link com.polygres.wire.core.AccessContext} -- as opposed
+     * to the single shared-credential default, where every caller presents the same username and
+     * carrying it into RLS/audit would be misleading. */
+    public record AuthResult(String username, boolean success, boolean realIdentity) {
     }
 }

@@ -87,8 +87,22 @@ public final class RequestLoop {
     // rebuild the chain. This also fixes a latent gap: a fresh RoutingBackendExecutor per call
     // meant it could never accumulate its own cross-statement transaction/cursor routing state
     // within one session -- reusing one now matches how pgwire's already behaves.
-    private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
+    //
+    // The NativeRlsSessionInitializer here is always PostgresRlsSessionInitializer, never
+    // OracleVpdSessionInitializer, even though this is the Oracle wire protocol: every
+    // SessionHandler.run() construction site actually reaching RequestLoop passes primaryConn =
+    // pgConnection (Postgres JDBC, running the Oracle SQL DualTableRewriter-translated) -- the
+    // real-Oracle-backend path (dualExecAuthority=ORACLE + oracleBackendMode=NATIVE) is
+    // intercepted earlier, in SessionHandler.run(), by a raw TNS byte relay
+    // (NativeSessionRelay) that never constructs a RequestLoop or JdbcBackendExecutor at all.
+    // So the JDBC connection this executor's set_config(...) calls land on genuinely is
+    // Postgres, and OracleVpdSessionInitializer's SYS_CONTEXT/DBMS_SESSION.SET_CONTEXT-shaped
+    // calls would simply fail against it -- it stays reserved for a future NativeOracleExecutor
+    // RLS path, which would need its own, separate wiring at a completely different layer.
+    private final JdbcBackendExecutor terminalExecutor =
+            new JdbcBackendExecutor(null, new com.polygres.wire.core.access.PostgresRlsSessionInitializer());
     private final StatementPipeline reusablePipeline;
+    private final com.polygres.wire.core.AccessContext accessContext;
 
     private record StatementSignature(String sql, int[] bindTypes) {
     }
@@ -98,7 +112,7 @@ public final class RequestLoop {
             XaTransaction xaTransaction,
             ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
         this(reader, out, pgConnection, oracleConnection, replicaConnections, xaTransaction, options, sharedStages,
-                backendRegistry, null, null);
+                backendRegistry, null, null, com.polygres.wire.core.AccessContext.ANONYMOUS);
     }
 
     public RequestLoop(TnsPacketReader reader, OutputStream out, com.polygres.wire.core.LazyPooledConnection pgConnection,
@@ -106,6 +120,16 @@ public final class RequestLoop {
             XaTransaction xaTransaction,
             ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
             String oracleUsername, String oraclePassword) {
+        this(reader, out, pgConnection, oracleConnection, replicaConnections, xaTransaction, options, sharedStages,
+                backendRegistry, oracleUsername, oraclePassword, com.polygres.wire.core.AccessContext.ANONYMOUS);
+    }
+
+    public RequestLoop(TnsPacketReader reader, OutputStream out, com.polygres.wire.core.LazyPooledConnection pgConnection,
+            com.polygres.wire.core.LazyPooledConnection oracleConnection, List<Connection> replicaConnections,
+            XaTransaction xaTransaction,
+            ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
+            String oracleUsername, String oraclePassword, com.polygres.wire.core.AccessContext accessContext) {
+        this.accessContext = accessContext;
         this.reader = reader;
         this.out = out;
         this.pgConnection = pgConnection;
@@ -405,7 +429,7 @@ public final class RequestLoop {
 
         BindVariableRewriter.Result rewritten = BindVariableRewriter.rewrite(primarySql);
         List<Object> binds = orderedBindValues(request.bindParams, rewritten.placeholderToBindIndex());
-        Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds);
+        Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds, accessContext);
         lastRewrittenSqlText = rewritten.sql();
         terminalExecutor.rebind(primaryConn);
 

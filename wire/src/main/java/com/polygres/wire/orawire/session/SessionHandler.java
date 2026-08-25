@@ -27,15 +27,23 @@ public final class SessionHandler implements Runnable {
     private final ServerOptions options;
     private final List<PipelineStage> sharedStages;
     private final com.polygres.wire.core.BackendRegistry backendRegistry;
+    private final com.polygres.wire.audit.AuditLog auditLog;
     private final CredentialStore credentials = new CredentialStore();
 
     public SessionHandler(Socket clientSocket, PgBackendPool backendPool,
             ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry) {
+        this(clientSocket, backendPool, options, sharedStages, backendRegistry, null);
+    }
+
+    public SessionHandler(Socket clientSocket, PgBackendPool backendPool,
+            ServerOptions options, List<PipelineStage> sharedStages, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.audit.AuditLog auditLog) {
         this.clientSocket = clientSocket;
         this.backendPool = backendPool;
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -69,15 +77,34 @@ public final class SessionHandler implements Runnable {
             O5LogonHandler.AuthResult auth = new O5LogonHandler().authenticate(reader, out);
             if (!auth.success()) {
                 log.warn("authentication failed for user={}", auth.username());
+                if (auditLog != null) {
+                    auditLog.record(com.polygres.wire.audit.AuditEvent.of(
+                            com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_FAILED, auth.username(),
+                            "orawire login failed for user \"" + auth.username() + "\""));
+                }
                 return;
             }
+            if (auditLog != null) {
+                auditLog.record(com.polygres.wire.audit.AuditEvent.of(
+                        com.polygres.wire.audit.AuditEvent.Type.DB_LOGIN_SUCCEEDED, auth.username(),
+                        "orawire login succeeded for user \"" + auth.username() + "\""
+                                + (auth.realIdentity() ? " (real per-user credential)" : " (shared credential)")));
+            }
+            // Only a real, distinguishable per-user credential (POLYWIRE_AUTH_CREDENTIALS
+            // configured -- see CredentialStore) is worth carrying into AccessContext: under the
+            // single shared-credential default every caller presents the identical username, so
+            // there's no real identity for PostgresRlsSessionInitializer's session GUC or an RLS
+            // policy to key on. Same rule pgwire/mssqlwire apply via roleAuthCache != null.
+            com.polygres.wire.core.AccessContext accessContext = auth.realIdentity()
+                    ? new com.polygres.wire.core.AccessContext(auth.username(), java.util.Set.of(), java.util.Map.of())
+                    : com.polygres.wire.core.AccessContext.ANONYMOUS;
 
             String replicationBackends = System.getenv("POLYWIRE_REPLICATION_BACKENDS");
             if (replicationBackends != null && !replicationBackends.isBlank()) {
-                runReplicated(reader, out, descriptor, auth, replicationBackends);
+                runReplicated(reader, out, descriptor, auth, replicationBackends, accessContext);
             } else {
-                
-                runPlain(reader, out, descriptor, auth);
+
+                runPlain(reader, out, descriptor, auth, accessContext);
             }
         } catch (Exception e) {
             log.warn("session terminated: {}", e.getMessage(), e);
@@ -85,14 +112,16 @@ public final class SessionHandler implements Runnable {
     }
 
     private void runPlain(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,
-            O5LogonHandler.AuthResult auth) throws Exception {
+            O5LogonHandler.AuthResult auth, com.polygres.wire.core.AccessContext accessContext) throws Exception {
         try (com.polygres.wire.core.LazyPooledConnection pgConnection = backendPool.borrowConnection(descriptor, auth.username())) {
-            new RequestLoop(reader, out, pgConnection, null, null, null, options, sharedStages, backendRegistry).run();
+            new RequestLoop(reader, out, pgConnection, null, null, null, options, sharedStages, backendRegistry,
+                    null, null, accessContext).run();
         }
     }
 
     private void runReplicated(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,
-            O5LogonHandler.AuthResult auth, String replicationBackendsSpec) throws Exception {
+            O5LogonHandler.AuthResult auth, String replicationBackendsSpec,
+            com.polygres.wire.core.AccessContext accessContext) throws Exception {
         List<String> names = List.of(replicationBackendsSpec.split(",")).stream()
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
 
@@ -103,7 +132,7 @@ public final class SessionHandler implements Runnable {
                     replicaConnections.add(requireBackend(name).openManualCommit());
                 }
                 new RequestLoop(reader, out, pgConnection, null, replicaConnections, null, options, sharedStages,
-                        backendRegistry).run();
+                        backendRegistry, null, null, accessContext).run();
             } finally {
                 for (Connection replica : replicaConnections) {
                     closeQuietly(replica);
