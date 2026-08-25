@@ -95,8 +95,6 @@
   .eyebrow { font-family: var(--mono); font-size: 16px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo); margin: 0; font-weight: 600; }
   .brandRow { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .brandMark { width: 28px; height: 28px; border-radius: 8px; object-fit: cover; flex: none; }
-  h1 { font-size: clamp(30px, 5vw, 42px); margin: 0 0 14px; letter-spacing: -0.01em; }
-  h1 span { color: var(--indigo); }
   .lede { color: var(--ink-dim); font-size: 17px; margin: 0; }
 
   .tool { margin: 64px 0; padding-top: 48px; border-top: 1px solid var(--line); }
@@ -198,9 +196,8 @@
     <header>
       <div class="brandRow">
         <img src="docs/logo.png" alt="Polygres" class="brandMark">
-        <p class="eyebrow">Polygres</p>
+        <h1 class="eyebrow">Polygres</h1>
       </div>
-      <h1>PolyWire &amp; <span>PolyAdvisor</span></h1>
       <p class="lede">
         A secure, scalable, AI-ready Postgres gateway for the enterprise — built for AI agents
         and applications alike — and the tool that tells you how hard it'll be to get everything
@@ -223,9 +220,21 @@
         compatibility is one use case among several — not the whole story.
       </p>
 
+      <h3 class="subhead" id="outcomes">Outcomes<a class="permalink" href="#outcomes" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
+        <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall.</p></div>
+        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, caching, and rollups.</p></div>
+        <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
+        <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
+        <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
+        <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no PolyWire-specific SDK to learn first.</p></div>
+      </div>
+
       <details class="onThisPage">
         <summary>On this page</summary>
         <ul class="otpList">
+          <li><a href="#outcomes">Outcomes</a></li>
           <li><a href="#use-cases">Use cases</a></li>
           <li><a href="#architecture">Architecture</a></li>
           <li><a href="#admin-console-polywire">Admin console</a></li>
