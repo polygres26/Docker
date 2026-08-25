@@ -14,12 +14,16 @@ from the whole page.
 ## PolyWire
 
 - [Main page](https://polygres26.github.io/#polywire): use cases, architecture, cache/RTT
-  benchmarks per protocol, sharding, rollups, observability, multi-AZ deployment, security, and
-  planned/unplanned outage handling.
+  benchmarks per protocol, sharding, rollups, observability, multi-AZ deployment, security, error
+  handling, and planned/unplanned outage handling.
 - [Connecting to your Postgres](https://polygres26.github.io/CONNECTING.md): worked examples and
   real gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
   PostgreSQL.
+- [Error translation](https://polygres26.github.io/ERRORS.md): per-protocol native error shapes
+  (Oracle ORA-numbers, MySQL errno, SQL Server number/severity/state, MongoDB code/codeName,
+  DynamoDB/SQS/OpenSearch HTTP status + native envelope), a canonical-condition comparison table,
+  and the connection-loss SQLSTATE detail (57P01/08006/08001).
 
 Key facts an LLM is likely to be asked about, stated plainly:
 - Ten client-facing protocols: Postgres wire, MySQL, Oracle (TNS/TTC), SQL Server (TDS), MongoDB
@@ -42,7 +46,15 @@ Key facts an LLM is likely to be asked about, stated plainly:
   unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control
   (token-bucket, per workload class), authentication (real Postgres role verification via
   POLYWIRE_AUTH_MODE=postgres_roles, or per-user credentials for Oracle), TLS everywhere, secrets
-  management (Vault/CyberArk), and bearer-token admin API auth.
+  management (Vault/CyberArk), and admin API auth -- either a shared bearer token or real SSO
+  (Okta, Entra ID, any OIDC IdP) with read-vs-write roles resolved from an IdP group/app-role
+  claim, both usable at once, mutating admin actions recorded to an audit log.
+- Native error translation: every wire protocol turns a real Postgres failure into that protocol's
+  own genuine native error (Oracle ORA-numbers, MySQL errno, SQL Server error numbers, MongoDB
+  code/codeName, DynamoDB/SQS/OpenSearch native JSON error envelopes) instead of a generic
+  wrapper -- so each client's own retry/reconnect logic (e.g. an Oracle driver checking for
+  ORA-03113 to decide whether to reconnect) gets exactly the signal it expects. See
+  [ERRORS.md](https://polygres26.github.io/ERRORS.md) for the full per-protocol mapping.
 - MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
   shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
   separate, unguarded path to the data.
