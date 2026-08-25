@@ -106,6 +106,21 @@ public final class RealPostgres implements AutoCloseable {
         }
     }
 
+    /** Stops the container (connection refused, not just slow) without removing it -- for tests
+     * that need to simulate a genuine backend outage (health-checker auto-DOWN, failover) rather
+     * than just tearing the fixture down. Pair with {@link #resume}. */
+    public void stop() throws IOException, InterruptedException {
+        run("docker", "stop", containerName);
+    }
+
+    /** Restarts a container previously {@link #stop}ped and waits for it to accept connections
+     * again -- does NOT re-run init scripts/env vars, so whatever schema/data existed before
+     * {@link #stop} is still there. */
+    public void resume() throws IOException, InterruptedException {
+        run("docker", "start", containerName);
+        waitUntilReady(Duration.ofSeconds(30));
+    }
+
     @Override
     public void close() {
         try {

@@ -186,6 +186,32 @@ public final class MetricsServer {
             com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
             com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer,
             com.polygres.wire.audit.AuditLog auditLog) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, mcpMetrics,
+                captureBuffer, auditLog, null);
+    }
+
+    /**
+     * As the full constructor above, plus {@code xaRecoveryLog} -- when non-null, {@code
+     * POST /api/backends/{name}/drain} refuses (409) to drain a backend with any unresolved
+     * in-doubt XA branch against it (see {@link com.polygres.wire.xa.XaRecoveryLog#hasUnresolvedFor}'s
+     * javadoc for why), and the drain/undrain routes fan out to every other live node in {@code
+     * polywire_nodes} (see {@link com.polygres.wire.config.NodeRegistry}) instead of only mutating
+     * this process's own in-memory {@code BackendRegistry} state -- drain/undrain state is
+     * deliberately NOT propagated via {@code ConfigStore}/LISTEN-NOTIFY like routing config is
+     * (it's an operational, not a config, fact), so without this fan-out a drain call would only
+     * ever take effect on whichever single node happened to receive the HTTP request. {@code null}
+     * (every other constructor's default) means neither behavior is active: drain never gates on
+     * XA state and only ever mutates the local node, same as before this was added.
+     */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
+            com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer,
+            com.polygres.wire.audit.AuditLog auditLog, com.polygres.wire.xa.XaRecoveryLog xaRecoveryLog) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
         this.auditLog = auditLog;
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
@@ -284,7 +310,8 @@ public final class MetricsServer {
                         baseRequest.setHandled(true);
                         return;
                     }
-                    handleBackends(target, request, response, backendRegistry);
+                    handleBackends(target, request, response, backendRegistry, xaRecoveryLog, options, port,
+                            request.getHeader("Authorization"));
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -592,7 +619,9 @@ public final class MetricsServer {
     }
 
     private static void handleBackends(String target, HttpServletRequest request, HttpServletResponse response,
-            com.polygres.wire.core.BackendRegistry backendRegistry) throws java.io.IOException {
+            com.polygres.wire.core.BackendRegistry backendRegistry, com.polygres.wire.xa.XaRecoveryLog xaRecoveryLog,
+            com.polygres.wire.server.ServerOptions options, int selfAdminPort, String forwardedAuthHeader)
+            throws java.io.IOException {
         response.setContentType("application/json; charset=utf-8");
         try {
             Matcher tablesMatch = BACKEND_TABLES_PATH.matcher(target);
@@ -659,16 +688,29 @@ public final class MetricsServer {
                 // caller knows to check for exceptions in whatever was still running against it.
                 com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, drainMatch.group(1), response);
                 if (t == null) return;
+                if (xaRecoveryLog != null && xaRecoveryLog.hasUnresolvedFor(t.name())) {
+                    response.setStatus(409);
+                    response.getWriter().write("{\"error\":\"backend '" + t.name() + "' has an unresolved "
+                            + "in-doubt XA branch -- draining now would make it unrecoverable by name. Wait "
+                            + "for it to resolve (see GET /api/backends -- XA state isn't exposed there yet, "
+                            + "check polywire_xa_log) and retry.\"}");
+                    return;
+                }
                 long graceMs = parseLongParam(request.getParameter("graceMs"), 30_000);
+                boolean local = "true".equals(request.getParameter("local"));
                 backendRegistry.setState(t.name(), com.polygres.wire.core.BackendRegistry.BackendState.DRAINING);
                 var result = com.polygres.wire.core.BackendConnectionPools.drain(t.poolKey(), graceMs);
+                java.util.List<String> peerResults = local ? java.util.List.of()
+                        : fanOutToPeers(options, selfAdminPort, forwardedAuthHeader,
+                                "/api/backends/" + t.name() + "/drain?local=true&graceMs=" + graceMs);
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write("{\"name\":" + jsonString(t.name())
                         + ",\"state\":\"DRAINING\""
                         + ",\"fallback\":" + jsonString(t.fallbackName())
                         + ",\"poolExisted\":" + result.poolExisted()
                         + ",\"drainedCleanly\":" + result.drainedCleanly()
-                        + ",\"activeConnectionsAtClose\":" + result.activeConnectionsAtClose() + "}");
+                        + ",\"activeConnectionsAtClose\":" + result.activeConnectionsAtClose()
+                        + ",\"peers\":" + jsonStringArray(peerResults) + "}");
             } else if (undrainMatch.matches() && "POST".equals(request.getMethod())) {
                 // Step 2, once maintenance is done: resolveForRouting immediately starts sending
                 // new statements back to this backend's own name again. No pool action needed here
@@ -677,9 +719,14 @@ public final class MetricsServer {
                 // .drain's javadoc); there's nothing to "resume".
                 com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, undrainMatch.group(1), response);
                 if (t == null) return;
+                boolean local = "true".equals(request.getParameter("local"));
                 backendRegistry.setState(t.name(), com.polygres.wire.core.BackendRegistry.BackendState.ACTIVE);
+                java.util.List<String> peerResults = local ? java.util.List.of()
+                        : fanOutToPeers(options, selfAdminPort, forwardedAuthHeader,
+                                "/api/backends/" + t.name() + "/undrain?local=true");
                 response.setStatus(HttpServletResponse.SC_OK);
-                response.getWriter().write("{\"name\":" + jsonString(t.name()) + ",\"state\":\"ACTIVE\"}");
+                response.getWriter().write("{\"name\":" + jsonString(t.name()) + ",\"state\":\"ACTIVE\""
+                        + ",\"peers\":" + jsonStringArray(peerResults) + "}");
             } else if (tablesMatch.matches() && "GET".equals(request.getMethod())) {
                 com.polygres.wire.core.BackendTarget t = requireBackend(backendRegistry, tablesMatch.group(1), response);
                 if (t == null) return;
@@ -770,6 +817,75 @@ public final class MetricsServer {
             return null;
         }
         return t;
+    }
+
+    /**
+     * The cluster-wide half of switchover drain/undrain (Phase 5): {@code BackendRegistry}'s
+     * drain/down state lives only in each process's own memory (deliberately not pushed through
+     * {@code ConfigStore}/LISTEN-NOTIFY -- see the constructor javadoc above), so an operator's
+     * drain call landing on one node behind a load balancer must be re-issued against every OTHER
+     * live node too, or routing on those nodes would keep sending traffic to a backend that's
+     * supposedly under maintenance. Reads live node addresses from {@code polywire_nodes} via
+     * {@link com.polygres.wire.config.NodeRegistry#listAll} (the same table the {@code /api/nodes}
+     * admin page already reads), skips the row matching this process's own {@code
+     * NodeRegistry.resolveHost()}/{@code selfAdminPort} (that node already applied the call
+     * directly, not through HTTP), and forwards the caller's own {@code Authorization} header
+     * on to each peer -- every node in a cluster shares the same {@code POLYWIRE_ADMIN_TOKEN}, so
+     * this doesn't need its own separate credential.
+     *
+     * <p>Best-effort, not a two-phase commit: a peer that's unreachable or errors is reported in
+     * the returned list as a {@code "host:port -> ERROR: ..."} line rather than failing the whole
+     * request -- an operator running a real switchover is expected to read this list and confirm
+     * every peer succeeded before proceeding with maintenance, the same judgment call a real load
+     * balancer's "drain and confirm" workflow already requires.
+     */
+    private static java.util.List<String> fanOutToPeers(com.polygres.wire.server.ServerOptions options,
+            int selfAdminPort, String authHeader, String path) {
+        java.util.List<String> results = new java.util.ArrayList<>();
+        if (options == null) {
+            return results;
+        }
+        java.util.List<com.polygres.wire.config.NodeRegistry.NodeRow> nodes;
+        try {
+            nodes = com.polygres.wire.config.NodeRegistry.listAll(options);
+        } catch (java.sql.SQLException e) {
+            results.add("ERROR: could not list cluster nodes to fan out to: " + e.getMessage());
+            return results;
+        }
+        String selfHost = com.polygres.wire.config.NodeRegistry.resolveHost();
+        var client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(5)).build();
+        for (var node : nodes) {
+            if (selfHost.equals(node.host()) && selfAdminPort == node.adminPort()) {
+                continue;
+            }
+            String peer = node.host() + ":" + node.adminPort();
+            try {
+                var requestBuilder = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create("http://" + node.host() + ":" + node.adminPort() + path))
+                        .timeout(java.time.Duration.ofSeconds(15))
+                        .POST(java.net.http.HttpRequest.BodyPublishers.noBody());
+                if (authHeader != null) {
+                    requestBuilder.header("Authorization", authHeader);
+                }
+                var httpResponse = client.send(requestBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+                results.add(peer + " -> " + httpResponse.statusCode());
+            } catch (Exception e) {
+                results.add(peer + " -> ERROR: " + e.getMessage());
+            }
+        }
+        return results;
+    }
+
+    private static String jsonStringArray(java.util.List<String> values) {
+        StringBuilder json = new StringBuilder("[");
+        boolean first = true;
+        for (String v : values) {
+            if (!first) json.append(',');
+            first = false;
+            json.append(jsonString(v));
+        }
+        return json.append(']').toString();
     }
 
     private static final Pattern QUEUE_NAME_PATH = Pattern.compile("^/api/queues/([^/]+)$");

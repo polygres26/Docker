@@ -120,6 +120,25 @@ public final class XaRecoveryLog {
         return byGtrid;
     }
 
+    /** Used by the switchover drain gate (see {@code MetricsServer}'s drain route): a backend with
+     * any unresolved in-doubt branch must not be drained -- {@code XaRecovery} would reconnect to
+     * it by name on the next crash-recovery pass, and closing its pool out from under a branch
+     * that's still prepared-but-undecided would turn a recoverable in-doubt transaction into an
+     * unrecoverable one. Deliberately a plain linear scan of {@link #findUnresolved()} rather than
+     * a new indexed query -- this table is expected to be near-empty in steady state (see this
+     * class's own javadoc: only the commit-decision window is ever logged), so there's no
+     * performance case for a backend-indexed lookup here. */
+    public boolean hasUnresolvedFor(String backendName) throws SQLException {
+        for (List<Branch> branches : findUnresolved().values()) {
+            for (Branch b : branches) {
+                if (backendName.equals(b.backendName())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public static String hex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) {

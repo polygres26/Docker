@@ -65,7 +65,11 @@ public final class NodeRegistry {
         return (zone != null && !zone.isBlank()) ? zone : host;
     }
 
-    private static String resolveHost() {
+    /** Same host-resolution {@link #host} uses, exposed so a caller outside this class (the
+     * switchover drain fan-out in {@code MetricsServer}) can recognize its OWN row in {@link
+     * #listAll} and skip forwarding a drain call to itself -- it already applied that call
+     * locally. */
+    public static String resolveHost() {
         String advertised = System.getenv("POLYWIRE_ADVERTISED_HOST");
         if (advertised != null && !advertised.isBlank()) {
             return advertised;

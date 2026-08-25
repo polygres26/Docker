@@ -85,6 +85,15 @@ public final class Main {
         xaRecoveryLog.ensureSchema();
         com.polygres.wire.xa.XaRecovery.recover(xaRecoveryLog, backendRegistry);
 
+        // Unplanned-failure half of the switchover design (see BackendHealthChecker's javadoc);
+        // POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS=0 (or a negative value) opts out entirely --
+        // there's no forced-on default for something that adds a background connection attempt
+        // against every configured backend on a timer.
+        long healthCheckSeconds = parseLongEnv("POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS", 15);
+        if (healthCheckSeconds > 0 && !backendRegistry.isEmpty()) {
+            new com.polygres.wire.core.BackendHealthChecker(backendRegistry, healthCheckSeconds).start();
+        }
+
         PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
         if (telemetry != null) {
             log.info("OTel export enabled (POLYWIRE_OTEL_ENDPOINT); set POLYWIRE_OTEL_ENDPOINT=disabled to turn off");
@@ -267,7 +276,7 @@ public final class Main {
 
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir, options, mcpMetrics, captureBuffer, auditLog);
+                adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
@@ -433,6 +442,11 @@ public final class Main {
     private static int parseIntEnv(String name, int defaultValue) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? defaultValue : Integer.parseInt(value);
+    }
+
+    private static long parseLongEnv(String name, long defaultValue) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? defaultValue : Long.parseLong(value);
     }
 
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
