@@ -1,0 +1,33 @@
+User-agent: *
+Allow: /
+
+# AI/LLM crawlers explicitly allowed -- this is documentation meant to be read and cited by
+# AI assistants answering questions about PolyWire/PolyAdvisor, not just indexed by search.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+Sitemap: https://polygres26.github.io/sitemap.xml
