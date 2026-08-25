@@ -57,7 +57,7 @@
      four apps fan into one PolyWire box, then one arrow to Postgres -- the whole point rendered
      as a shape, not just asserted in prose. */
   .rewireArrow { color: var(--ink-faint); font-size: 13px; }
-  .seeItWorkRow .postgres { color: var(--teal); font-weight: 700; }
+  .postgres { color: var(--teal); font-weight: 700; }
 
   /* Before/after fan-in diagram -- real inline SVG so the "many protocols funnel into one
      gateway" claim is a shape, not just a stacked list next to an arrow. Boxes/lines/panel
@@ -75,11 +75,6 @@
   .rewireSvg .hubBox { fill: var(--indigo); stroke: var(--indigo); }
   .rewireSvg .hubLabel { fill: #fff; font-weight: 700; font-size: 13px; }
   .rewireSvg .pgLabel { fill: var(--teal); font-weight: 700; font-size: 14px; }
-
-  .seeItWorkGrid { display: grid; gap: 10px; margin: 16px 0 8px; }
-  .seeItWorkRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13.5px; font-family: var(--mono); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
-  .seeItWorkRow span:not(.rewireArrow) { color: var(--ink-dim); }
-  .seeItWorkRow span:first-child { color: var(--ink); font-weight: 700; font-family: var(--sans); }
 
   /* Benchmark/deep-technical teaser pattern -- a one-line stat always visible, the full
      methodology/config/detail one click deeper via <details>, so the punchy claim doesn't drown
@@ -105,7 +100,7 @@
   .termDot.g { background: #28c840; }
   .termBody { margin: 0; padding: 18px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: #d7dee8; overflow-x: auto; white-space: pre; }
   .demoFlow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; font-family: var(--mono); font-size: 13.5px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 8px; text-align: center; }
-  .demoFlow span:not(.rewireArrow) { color: var(--ink-dim); }
+  .demoFlow span:not(.rewireArrow):not(.postgres) { color: var(--ink-dim); }
   .demoFlow span:first-child { color: var(--ink); font-weight: 700; }
 
   .tool { margin: 64px 0; padding-top: 48px; border-top: 1px solid var(--line); }
