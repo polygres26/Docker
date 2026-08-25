@@ -281,8 +281,8 @@
       <p class="rttNote">
         PolyWire routes by a real bound parameter value — not just SQL text — across
         <b>Postgres, Oracle, SQL Server, and MySQL</b> wire protocols, decoding each protocol's
-        own native binary bind-parameter encoding (Postgres extended-query, Oracle TTC,
-        TDS <code>sp_executesql</code>, MySQL <code>COM_STMT_EXECUTE</code>) so a client's
+        own native binary bind-parameter encoding (Postgres extended-query, Oracle,
+        SQL Server <code>sp_executesql</code>, MySQL <code>COM_STMT_EXECUTE</code>) so a client's
         <code>PreparedStatement</code> value — <code>tenant_id</code>, <code>customer_id</code>,
         whatever the shard key is — reaches the router correctly, whichever of the four protocols
         the client happens to speak. A client that sends the same value as a plain SQL literal
