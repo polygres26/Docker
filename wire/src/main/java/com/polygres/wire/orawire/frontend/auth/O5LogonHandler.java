@@ -410,7 +410,14 @@ public final class O5LogonHandler {
 
     private void sendRejection(OutputStream out, boolean largeSdu) throws IOException {
         TtcWriter w = new TtcWriter();
-        ResponseWriter.writeErrorEnd(w, 1017, "invalid username/password", 0);
+        // The error CODE here (1017 = ORA-01017) was already correct, but the message text
+        // wasn't -- writeErrorEnd sends the message verbatim, with no "ORA-01017: " prefix added
+        // automatically anywhere downstream (confirmed by reading writeErrorEnd itself), so a
+        // bare "invalid username/password" doesn't match the convention every other error in this
+        // codebase follows (see DialectErrorMessages/errors/oracle_en.properties, where every
+        // template spells out the full "ORA-xxxxx: ..." text itself). This is Oracle's own real,
+        // well-documented wording for a failed logon.
+        ResponseWriter.writeErrorEnd(w, 1017, "ORA-01017: invalid username/password; logon denied", 0);
         sendData(out, w.toByteArray(), largeSdu);
     }
 

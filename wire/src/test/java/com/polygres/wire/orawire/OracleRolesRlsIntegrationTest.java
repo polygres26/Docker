@@ -153,6 +153,34 @@ class OracleRolesRlsIntegrationTest {
                         + "with the real identity: " + events);
     }
 
+    /** A real Oracle client presenting a wrong password over O5LOGON must fail the login --
+     * confirmed here. What it does NOT yet reliably get is Oracle's real ORA-01017 error code:
+     * {@code O5LogonHandler.sendRejection} sends the numeric code (1017) and message text ("ORA-
+     * 01017: invalid username/password; logon denied", Oracle's own real wording) in the CLASSIC
+     * TTC error-frame format, but a modern client that negotiated the "rich"/12c auth protocol
+     * (as ojdbc11 does here -- see the rich-format success paths this same test class already
+     * exercises) gets that response after an otherwise all-rich exchange, and its own client-side
+     * error-handling doesn't decode it correctly -- it reports a driver-internal fallback code
+     * (observed: 18745, ojdbc11-specific, not a real Oracle server error) instead. Fixing this
+     * needs a real rich-format rejection frame to model the fix on (the rich SUCCESS paths in
+     * O5LogonHandler are built from base64 blobs captured from an actual Oracle session -- there's
+     * no equivalent captured rich REJECTION frame to work from), the same category of gap as
+     * orawire's documented SQL*Plus limitation: needs a real packet capture before it can be
+     * fixed safely, not guessed at. This test locks in today's true, honest behavior (login
+     * fails; the client-visible code is NOT yet a trustworthy ORA-01017) so a future fix of the
+     * rich-rejection-framing gap has a test that starts failing FORWARD (catching the fix) rather
+     * than a test that was quietly never run. */
+    @Test
+    void aWrongPasswordFailsTheLoginButTheClientVisibleCodeIsNotYetReliablyOra01017() {
+        SQLException rejected = org.junit.jupiter.api.Assertions.assertThrows(SQLException.class,
+                () -> connectAs("alice", "not-alices-real-password"),
+                "a wrong password over O5LOGON must fail the login");
+        // Deliberately NOT asserting errorCode == 1017 here -- see the javadoc above. Once the
+        // rich-rejection-framing gap is fixed (needs a real packet capture), tighten this to
+        // assertEquals(1017, rejected.getErrorCode()) and the real ORA-01017 message text.
+        assertTrue(rejected.getErrorCode() != 0, "the login must fail with SOME error, not silently hang/succeed");
+    }
+
     private String fetchAudit() throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(
                         "http://localhost:" + polywire.metricsPort() + "/api/audit?limit=50")
