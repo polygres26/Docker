@@ -5,13 +5,17 @@ import com.google.gson.JsonParser;
 import com.polygres.wire.config.ConfigStore;
 import com.polygres.wire.config.FirewallRuleStore;
 import com.polygres.wire.config.PolyWireConfig;
+import com.polygres.wire.core.AccessContext;
 import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.StatsCollectorStage;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.Arrays;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -21,8 +25,22 @@ import org.slf4j.LoggerFactory;
 /**
  * The admin HTTP surface: {@code /metrics} (Prometheus text), {@code /config} (read-only current
  * config snapshot), and -- when a {@link FirewallRuleStore} is supplied -- a real CRUD API for SQL
- * Firewall rules under {@code /api/firewall-rules}, guarded by a bearer token
- * ({@code POLYWIRE_ADMIN_TOKEN}). When a {@link ConfigStore} is also supplied, {@code /api/config}
+ * Firewall rules under {@code /api/firewall-rules}.
+ *
+ * <p><b>Auth:</b> every route is gated one of two ways, and both work simultaneously -- neither
+ * disables the other. The simple path, unchanged from before role support existed: a shared
+ * bearer token ({@code POLYWIRE_ADMIN_TOKEN}) grants full read+write access. This stays fully
+ * supported for developer testing, CI, and any customer who just wants one token -- no OIDC setup
+ * required. The SSO path, opt-in via {@code POLYWIRE_OAUTH_ISSUER} (see
+ * {@link com.polygres.wire.http.auth.AccessContextResolver}, works against Okta, Entra ID, or any
+ * OIDC-compliant IdP): a caller presents a real JWT instead, and its roles claim (name configured
+ * via {@code POLYWIRE_OAUTH_ROLES_CLAIM}, e.g. an Okta group or an Entra ID app role) is checked
+ * against {@code POLYWIRE_OAUTH_ADMIN_ROLES}/{@code POLYWIRE_OAUTH_VIEWER_ROLES} (comma-separated
+ * role names, defaulting to {@code admin}/{@code viewer}) to grant read-only access (GET routes
+ * only) or full read+write, respectively -- see {@link #resolveAdminRole}. When a customer wants
+ * "read vs. change" access split by real identity instead of one shared secret, this is how.
+ *
+ * <p>When a {@link ConfigStore} is also supplied, {@code /api/config}
  * exposes every field of {@link PolyWireConfig} (backends, router rules, QoS limits, ACL rules,
  * OAuth settings, ...) as one GET/PUT(-partial) resource -- a PUT merges the given fields onto the
  * latest version and appends a new {@code polywire_config} row, the same LISTEN/NOTIFY path every
@@ -213,6 +231,14 @@ public final class MetricsServer {
             com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer,
             com.polygres.wire.audit.AuditLog auditLog, com.polygres.wire.xa.XaRecoveryLog xaRecoveryLog) {
         String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
+        // Real per-user SSO on top of the token above, not instead of it -- POLYWIRE_ADMIN_TOKEN
+        // stays fully supported for developer testing, CI, and any customer who just wants a
+        // single shared secret; it always resolves to full ADMIN access, unchanged. When
+        // POLYWIRE_OAUTH_ISSUER is also configured (Okta, Entra ID, or any OIDC-compliant IdP),
+        // a caller can instead present a real JWT whose configured roles claim determines VIEWER
+        // (read-only) vs ADMIN (read+write) access -- see resolveAdminRole/authorized below.
+        Set<String> adminRoleNames = splitRoles(System.getenv("POLYWIRE_OAUTH_ADMIN_ROLES"), "admin");
+        Set<String> viewerRoleNames = splitRoles(System.getenv("POLYWIRE_OAUTH_VIEWER_ROLES"), "viewer");
         this.auditLog = auditLog;
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
@@ -234,10 +260,13 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
-                if (oauth.enforce(request, response) == null) {
+                AccessContext accessContext = oauth.enforce(request, response);
+                if (accessContext == null) {
                     baseRequest.setHandled(true);
                     return;
                 }
+                AdminRole role = resolveAdminRole(request.getHeader("Authorization"), accessContext, adminToken,
+                        adminRoleNames, viewerRoleNames);
                 if ("/metrics".equals(target)) {
                     String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
                     response.setStatus(HttpServletResponse.SC_OK);
@@ -251,10 +280,12 @@ public final class MetricsServer {
                     // config -- including the backends field's embedded password and
                     // awsIamCredentials -- decrypted. Gated like every other config-bearing
                     // route, not left open; nothing internal ever relied on this being public.
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -265,10 +296,12 @@ public final class MetricsServer {
                     return;
                 }
                 if ("/api/metrics/summary".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -279,10 +312,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (firewallRuleStore != null && target.startsWith("/api/firewall-rules")) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -291,10 +326,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (configStore != null && "/api/config".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -303,10 +340,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (backendRegistry != null && target.startsWith("/api/backends")) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -316,10 +355,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (queueStore != null && target.startsWith("/api/queues")) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -328,10 +369,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (options != null && "/api/nodes".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -340,10 +383,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (captureBuffer != null && "/api/capture".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -352,10 +397,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (auditLog != null && "/api/audit".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -364,10 +411,12 @@ public final class MetricsServer {
                     return;
                 }
                 if (configStore != null && "/api/llm-config".equals(target)) {
-                    if (!bearerTokenValid(request, adminToken)) {
-                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json; charset=utf-8");
-                        response.getWriter().write("{\"error\":\"missing or invalid admin token\"}");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
                         baseRequest.setHandled(true);
                         return;
                     }
@@ -394,17 +443,78 @@ public final class MetricsServer {
         }
     }
 
-    private static boolean bearerTokenValid(HttpServletRequest request, String adminToken) {
+    /**
+     * A caller's resolved admin-console access level for this request. {@code NONE} means neither
+     * the shared {@code POLYWIRE_ADMIN_TOKEN} nor a real SSO identity with a recognized role was
+     * presented. {@code VIEWER} is read-only (GET routes only); {@code ADMIN} is full read+write,
+     * exactly like every admin request before role support existed.
+     */
+    enum AdminRole {
+        NONE, VIEWER, ADMIN
+    }
+
+    /**
+     * Resolves the caller's {@link AdminRole} for this request. The static {@code
+     * POLYWIRE_ADMIN_TOKEN} bearer token (see {@link #bearerTokenValid}) always resolves to {@code
+     * ADMIN} when present and valid -- this is deliberate, not a fallback to remove: developer
+     * testing, CI, single-node/dev deployments, and any customer who simply wants one shared
+     * secret keep working exactly as before, with no OIDC setup required. When no admin token is
+     * presented (or none is configured), a real SSO identity from {@code accessContext} -- resolved
+     * by {@link com.polygres.wire.http.auth.AccessContextResolver} against Okta, Entra ID, or any
+     * OIDC-compliant IdP -- is checked against the configured admin/viewer role-name sets (drawn
+     * from the JWT's {@code POLYWIRE_OAUTH_ROLES_CLAIM} claim, e.g. an Okta group or an Entra ID
+     * app role) to grant {@code ADMIN} or {@code VIEWER} instead. A caller authenticated via SSO
+     * but carrying neither role name gets {@code NONE} -- default-deny, not silently treated as a
+     * viewer.
+     */
+    static AdminRole resolveAdminRole(String authorizationHeader, AccessContext accessContext,
+            String adminToken, Set<String> adminRoleNames, Set<String> viewerRoleNames) {
+        if (bearerTokenValid(authorizationHeader, adminToken)) {
+            return AdminRole.ADMIN;
+        }
+        if (accessContext != null && !accessContext.isAnonymous()) {
+            if (accessContext.hasAnyRole(adminRoleNames)) {
+                return AdminRole.ADMIN;
+            }
+            if (accessContext.hasAnyRole(viewerRoleNames)) {
+                return AdminRole.VIEWER;
+            }
+        }
+        return AdminRole.NONE;
+    }
+
+    /** GET/HEAD (read) requests need at least {@code VIEWER}; every other HTTP method (the
+     * mutating routes -- config PUT, firewall rule CRUD, backend drain/undrain/query, queue
+     * delete, LLM config PUT) needs full {@code ADMIN}. */
+    static boolean authorized(String httpMethod, AdminRole role) {
+        if ("GET".equalsIgnoreCase(httpMethod) || "HEAD".equalsIgnoreCase(httpMethod)) {
+            return role != AdminRole.NONE;
+        }
+        return role == AdminRole.ADMIN;
+    }
+
+    /** Splits a comma-separated env var into a role-name set, falling back to a single default
+     * role name (e.g. {@code "admin"}/{@code "viewer"}) when unset -- so a customer who configures
+     * OIDC but doesn't bother naming custom roles still gets sensible behavior by naming their IdP
+     * group/app-role claim value exactly {@code admin} or {@code viewer}. */
+    static Set<String> splitRoles(String envValue, String defaultRole) {
+        if (envValue == null || envValue.isBlank()) {
+            return Set.of(defaultRole);
+        }
+        return Arrays.stream(envValue.split(",")).map(String::trim).filter(s -> !s.isEmpty())
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    static boolean bearerTokenValid(String authorizationHeader, String adminToken) {
         if (adminToken == null || adminToken.isBlank()) {
             // Opt-in like every other feature: unset means this whole API surface is disabled by
             // the caller never being able to authenticate -- not silently open.
             return false;
         }
-        String header = request.getHeader("Authorization");
-        if (header == null || !header.startsWith("Bearer ")) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return false;
         }
-        return constantTimeEquals(adminToken, header.substring("Bearer ".length()));
+        return constantTimeEquals(adminToken, authorizationHeader.substring("Bearer ".length()));
     }
 
     private static boolean constantTimeEquals(String a, String b) {
