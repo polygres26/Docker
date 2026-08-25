@@ -195,6 +195,13 @@
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
   footer a { color: var(--indigo); }
   a { color: var(--indigo); }
+  .contactCard { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); }
+  .contactCard p { margin: 0; color: var(--ink-dim); font-size: 15px; max-width: 46ch; }
+  .contactCard p b { color: var(--ink); font-weight: 600; }
+  #revealEmailBtn { font: inherit; font-weight: 600; font-size: 14px; padding: 11px 18px; border-radius: 7px; border: 1px solid var(--indigo); background: var(--indigo-soft); color: var(--indigo); cursor: pointer; white-space: nowrap; }
+  #revealEmailBtn:hover { background: var(--indigo); color: #fff; }
+  #emailReveal { font-family: var(--mono); font-size: 15px; }
+  #emailReveal a { color: var(--indigo); }
 </style>
 </head>
 <body>
@@ -204,6 +211,7 @@
       <a href="#pricing">Pricing</a>
       <a href="#polyadvisor">PolyAdvisor</a>
       <a href="#faq">FAQ</a>
+      <a href="#contact">Contact</a>
       <a href="CONNECTING.md">Connecting</a>
     </div>
   </nav>
@@ -863,6 +871,25 @@
       </ul>
     </section>
 
+    <section class="tool" id="contact">
+      <div class="kicker">
+        <span class="num">05</span>
+      </div>
+      <h2>Contact</h2>
+      <p class="lede">
+        Questions about either tool, or something not working right? We read everything sent here.
+      </p>
+      <div class="contactCard">
+        <p><b>Product questions, bug reports, feature requests</b> — for either PolyWire or
+          PolyAdvisor. Include what you were trying to do and, for a bug, what you expected vs.
+          what happened.</p>
+        <div>
+          <button type="button" id="revealEmailBtn">Show contact email</button>
+          <div id="emailReveal" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="README.md">README.md</a> and
@@ -957,6 +984,27 @@
         }, { rootMargin: '-64px 0px -70% 0px' });
         sections.forEach(function (s) { observer.observe(s); });
       }
+
+      // Contact email: never present as plaintext in the HTML (no "mailto:", no "@" next to a
+      // domain anywhere in the source) -- assembled from separate character-code arrays only
+      // once a real visitor clicks the button, then rendered as a normal mailto link. This isn't
+      // meant to stop a human copying it out of the rendered page, only to stop the dumb scrapers
+      // that regex raw HTML/JS source for an email pattern without executing a click.
+      var revealBtn = document.getElementById('revealEmailBtn');
+      var revealTarget = document.getElementById('emailReveal');
+      var userCodes = [112, 111, 115, 116, 103, 114, 101, 115, 50, 54];
+      var domainCodes = [103, 109, 97, 105, 108, 46, 99, 111, 109];
+      revealBtn.addEventListener('click', function () {
+        var user = String.fromCharCode.apply(null, userCodes);
+        var domain = String.fromCharCode.apply(null, domainCodes);
+        var address = user + '@' + domain;
+        var link = document.createElement('a');
+        link.href = 'mailto:' + address;
+        link.textContent = address;
+        revealTarget.textContent = '';
+        revealTarget.appendChild(link);
+        revealBtn.remove();
+      });
     })();
   </script>
 </body>
