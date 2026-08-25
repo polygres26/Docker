@@ -106,15 +106,15 @@ public final class PgConnections {
     }
 
     private static Connection connect(String host, int port, ServerOptions options) throws SQLException {
-        
-        String url = "jdbc:postgresql://" + host + ":" + port + "/" + options.pgDatabase();
-        
+
+        String url = baseUrl(host, port, options);
+
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.pgUser());
         return BackendConnectionPools.borrow(poolKey, url, options.pgUser(), options.pgPassword());
     }
 
     private static Connection connectRaw(String host, int port, ServerOptions options) throws SQLException {
-        String url = "jdbc:postgresql://" + host + ":" + port + "/" + options.pgDatabase();
+        String url = baseUrl(host, port, options);
         Properties props = new Properties();
         if (options.pgUser() != null) {
             props.setProperty("user", options.pgUser());
@@ -123,6 +123,23 @@ public final class PgConnections {
             props.setProperty("password", options.pgPassword());
         }
         return DriverManager.getConnection(url, props);
+    }
+
+    /** {@code jdbc:postgresql://host:port/database}, plus {@code ?sslmode=...} (and {@code
+     * &sslrootcert=...}) when {@code POLYWIRE_PG_SSLMODE}/{@code POLYWIRE_PG_SSLROOTCERT} are
+     * set -- see {@code ServerOptions.parse}'s javadoc on those fields for why this exists
+     * (required for Supabase/Azure Database for PostgreSQL, which reject a plaintext connection
+     * outright). Both {@link #connect} and {@link #connectRaw} share this so a switch to the
+     * standby -- same {@code options}, different host/port -- keeps the same SSL settings. */
+    private static String baseUrl(String host, int port, ServerOptions options) {
+        String url = "jdbc:postgresql://" + host + ":" + port + "/" + options.pgDatabase();
+        if (options.pgSslMode() != null && !options.pgSslMode().isBlank()) {
+            url += "?sslmode=" + options.pgSslMode();
+            if (options.pgSslRootCert() != null && !options.pgSslRootCert().isBlank()) {
+                url += "&sslrootcert=" + options.pgSslRootCert();
+            }
+        }
+        return url;
     }
 
     private PgConnections() {

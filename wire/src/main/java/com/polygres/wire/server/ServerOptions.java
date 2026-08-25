@@ -21,6 +21,8 @@ public final class ServerOptions {
     private final String pgDatabase;
     private final String pgUser;
     private final String pgPassword;
+    private final String pgSslMode;
+    private final String pgSslRootCert;
     private final String pgStandbyHost;
     private final int pgStandbyPort;
     private final boolean tlsEnabled;
@@ -46,6 +48,7 @@ public final class ServerOptions {
     private final int mssqlWireListenPort;
 
     private ServerOptions(int listenPort, int pgWireListenPort, int myWireListenPort, int grpcPort, int httpPort, int httpsPort, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
+            String pgSslMode, String pgSslRootCert,
             String pgStandbyHost, int pgStandbyPort,
             boolean tlsEnabled, int tlsPort, int grpcTlsPort,
             String tlsKeystorePath, String tlsKeystorePassword,
@@ -65,6 +68,8 @@ public final class ServerOptions {
         this.pgDatabase = pgDatabase;
         this.pgUser = pgUser;
         this.pgPassword = pgPassword;
+        this.pgSslMode = pgSslMode;
+        this.pgSslRootCert = pgSslRootCert;
         this.pgStandbyHost = pgStandbyHost;
         this.pgStandbyPort = pgStandbyPort;
         this.tlsEnabled = tlsEnabled;
@@ -136,11 +141,26 @@ public final class ServerOptions {
         String pgDatabase = System.getenv().getOrDefault("POLYWIRE_DATABASE", "postgres");
         String pgUser = System.getenv("POLYWIRE_USER");
         String pgPassword = System.getenv("POLYWIRE_PASSWORD");
+        // libpq-style sslmode values (disable/allow/prefer/require/verify-ca/verify-full), passed
+        // straight through to pgjdbc's own "sslmode" connection property -- unset means pgjdbc's
+        // own default ("prefer"), same as before this existed. Needed for any backend that
+        // requires SSL outright (Supabase, Azure Database for PostgreSQL both reject a plaintext
+        // connection) -- previously the only way to reach one of those was the multi-backend
+        // POLYWIRE_BACKENDS var, which accepts a full literal JDBC URL string (so sslmode could be
+        // smuggled into the URL's own query string) but isn't the "simple" single-backend path
+        // every other quickstart uses.
+        String pgSslMode = System.getenv("POLYWIRE_PG_SSLMODE");
+        // A PEM CA bundle path readable from inside the container -- e.g. RDS's/Azure's own
+        // downloadable root cert, mounted in via a docker-compose volume. Optional even with
+        // sslmode=verify-full set; pgjdbc falls back to the JVM's own trust store if omitted,
+        // which already trusts most major clouds' default certs.
+        String pgSslRootCert = System.getenv("POLYWIRE_PG_SSLROOTCERT");
 
         String pgStandbyHost = System.getenv("POLYWIRE_STANDBY_HOST");
         int pgStandbyPort = parseIntEnv("POLYWIRE_STANDBY_PORT", pgPort);
 
         return new ServerOptions(orawireListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                pgSslMode, pgSslRootCert,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, grpcTlsPort, keystorePath, keystorePassword,
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
@@ -164,6 +184,7 @@ public final class ServerOptions {
      * anything that exercises a real listener. */
     public static ServerOptions forTesting(String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
         return new ServerOptions(0, 0, 0, 0, 0, 0, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                null, null,
                 null, pgPort,
                 false, 0, 0, null, null,
                 false, DualExecAuthority.POSTGRES, false, false,
@@ -225,6 +246,14 @@ public final class ServerOptions {
 
     public String pgDatabase() {
         return pgDatabase;
+    }
+
+    public String pgSslMode() {
+        return pgSslMode;
+    }
+
+    public String pgSslRootCert() {
+        return pgSslRootCert;
     }
 
     public String pgStandbyHost() {
