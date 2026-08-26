@@ -84,6 +84,17 @@ public final class RequestLoop {
     // level -- only that the second native-OCI Execute in a session is the one that counts.
     private int nativeOciExecuteCount;
 
+    // Whether this session's first native-OCI query has already fully completed (its Fetch found
+    // genuinely nothing left -- see where this is set, right alongside nativeOciExecuteCount's own
+    // per-query reset). Real Oracle's FUNC_UNKNOWN_68 response is a completely different, much
+    // shorter shape for a query that reuses an already-established dblink connection than for the
+    // very first query on it -- confirmed live diffing a real Oracle-to-Oracle self-loop capture of
+    // two sequential queries on the same link. nativeOciExecuteCount itself can't distinguish these
+    // two cases (it's already back to 1 by the time FUNC_UNKNOWN_68 runs, in *either* case, since it
+    // resets per-query) -- this tracks the thing that actually differs: whether this is the first
+    // query in the session or a later one.
+    private boolean nativeOciFirstQueryComplete;
+
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
     private volatile String lastSqlText;
@@ -349,8 +360,24 @@ public final class RequestLoop {
                 // a fixed offset was 2 in one and 3 in the other, matching each capture's own column
                 // count), so that one byte is patched per-response instead of just replayed
                 // statically like the rest of the template.
-                byte[] response = java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_68_RESPONSE_B64);
-                response[FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET] = (byte) openColumns.size();
+                // Real bug, found live testing a second query reusing the same dblink connection
+                // (a real Oracle client's normal, common usage pattern this series hadn't tried
+                // until now): a real Oracle-to-Oracle self-loop capture of two sequential queries
+                // on the same link shows this SAME call's real response is a completely different,
+                // much shorter shape (22 payload bytes, not 49) the second time -- confirmed live
+                // this was the actual cause of the second query hanging, not a coincidence: using
+                // the first-query-shaped 49-byte response for it produced the same TNS BREAK/RESET
+                // this whole series keeps finding whenever a response's real shape doesn't match
+                // what the client expects. Tracked with nativeOciFirstQueryComplete rather than
+                // nativeOciExecuteCount (already 1 again by this point in *either* case, since it
+                // resets per-query -- see its own reset site) since what actually matters here is
+                // "first query in this session" vs "not," not "how many Executes so far."
+                byte[] response = java.util.Base64.getDecoder()
+                        .decode(nativeOciFirstQueryComplete ? FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64
+                                : FUNC_UNKNOWN_68_RESPONSE_B64);
+                if (!nativeOciFirstQueryComplete) {
+                    response[FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET] = (byte) openColumns.size();
+                }
                 w.writeRaw(response);
             } else {
                 throw new UnsupportedOperationException("unsupported TTC function code: " + functionCode);
@@ -750,6 +777,16 @@ public final class RequestLoop {
         "CAgAjec12rsAAABSAAAAAQAAAAIAAABkAAAAAgAAAAAAAAAEAAIAAAAJAwAAAMUSHQ==";
     private static final int FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET = 27;
 
+    // Real bytes from a real Oracle-to-Oracle self-loop capture's SECOND query on an
+    // already-established dblink connection -- see the FUNC_UNKNOWN_68 branch's own comment for
+    // why this exists as a separate template rather than reusing FUNC_UNKNOWN_68_RESPONSE_B64 for
+    // every query. No column-count-like byte has been confirmed/patched in this one yet (this
+    // codebase's own dblink test scenario happens to have 2 columns, matching what's baked into
+    // this capture, the same kind of coincidental match FUNC_UNKNOWN_68_RESPONSE_B64's own comment
+    // already flags for its column count byte) -- a different column count on a repeated query may
+    // need this revisited the same way.
+    private static final String FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64 = "CAIAo5rUywcCAAABAAIJAwAAAJgAHQ==";
+
     // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
     // 2-byte "varying" marker (randomized below, same pattern as the marker
     // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
@@ -1120,6 +1157,19 @@ public final class RequestLoop {
                 // for the Execute response -- see writeNativeOciExecuteTailWithRows). No cursor-id
                 // echo point was found in it either (unlike Execute's tail, its only 0x07 byte is
                 // part of a fixed span, not an echoed value) -- used verbatim rather than patched.
+                // Real bug, found live: reusing the SAME dblink connection for a second query in
+                // the same sqlplus session sends a differently-shaped exchange than the very first
+                // query does (its own chained Execute arrives immediately, without a repeat of the
+                // first-query-only prepare/describe/piggyback dance) -- but nativeOciExecuteCount
+                // was a monotonic, session-wide counter that never reset, so by the second query it
+                // was already >1, and the new query's own FIRST (prepare-shaped, no-data) Execute
+                // wrongly got real row data spliced into it -- the exact same "TNS BREAK/RESET"
+                // failure mode already confirmed live for a first Execute given rows it shouldn't
+                // have. This point -- a genuinely-empty Fetch, the normal signal that a query's own
+                // data delivery is fully done -- is the right place to reset it: whatever Execute
+                // comes next belongs to a new query, not a continuation of this one.
+                nativeOciExecuteCount = 0;
+                nativeOciFirstQueryComplete = true;
                 w.writeRaw(NATIVE_OCI_EMPTY_FETCH_RESPONSE);
                 return;
             }
