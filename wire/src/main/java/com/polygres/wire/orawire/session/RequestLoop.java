@@ -518,8 +518,22 @@ public final class RequestLoop {
     // the theory the client fetches rows via a separate real FETCH call instead of inline. (Tried in
     // isolation first -- numIters=0, no row writing, no tail template -- and made no difference on
     // its own; combined with this tail template is what's actually being tried here.)
+    // Real bug, found live testing a second query reusing the same dblink connection: this
+    // template's bytes at relative offset 35-37 were left as the original captured template's own
+    // 0x00 0x00 0x00, on the theory (like the rest of this template) that they were session-noise
+    // safe to leave un-patched. Confirmed WRONG by diffing a real Oracle-to-Oracle self-loop
+    // capture of two sequential queries on the same link against EACH OTHER (not just against this
+    // codebase's own output): real Oracle sends the exact same non-zero bytes (0x39 0xd2 0x76) at
+    // this position for BOTH queries -- i.e. this is a real, constant value real Oracle always
+    // sends (plausibly something table/schema-scoped, not query-scoped, given it doesn't vary
+    // between two back-to-back queries against the same table), not session noise. A first query
+    // over a brand new connection apparently tolerates this codebase's own zero here (nothing to
+    // compare it against yet), but a second query -- by which point the client has presumably
+    // already recorded the real value from the first query's own response -- does not, and the
+    // mismatch surfaces as a real client-side "ORA-02072: distributed database network protocol
+    // mismatch" (a graceful, diagnosable rejection, not a hang or crash).
     private static final String NATIVE_OCI_EXECUTE_TAIL_B64 =
-        "BwAAAAd4fggaBBsoAQAAAOgfAABdAAAAXQAAAAAAAAAIBgAAAAAAAAAAAAcAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAQDAAAA3QsBAAAAAAAAAAAAAAcAHgADAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAANgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
+        "BwAAAAd4fggaBBsoAQAAAOgfAABdAAAAXQAAAAAAAAAIBgA50nYAAAAAAAcAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAQDAAAA3QsBAAAAAAAAAAAAAAcAHgADAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAANgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
 
     private void writeNativeOciExecuteTail(TtcWriter w) {
         w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64));
@@ -543,8 +557,15 @@ public final class RequestLoop {
     // NATIVE_OCI_ROW_PREFIX) sitting in the real capture right where this codebase's output jumped
     // straight to the row. Only one real row has been captured so far, so -- like the row prefix --
     // this is a fixed, best-effort template rather than a field-by-field understanding.
+    //
+    // Real bug, found the same way and for the same reason as NATIVE_OCI_EXECUTE_TAIL_B64's own
+    // offset-35-37 fix above (see its comment): relative offsets 28-31 and 44-47 here were also
+    // left as this template's original zero, and are also real, constant (not query-scoped) values
+    // real Oracle always sends -- confirmed identical across two sequential real queries on the
+    // same link, diffed against each other. A second query over the same connection needs these to
+    // be right; a first query apparently doesn't notice they're wrong.
     private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK = java.util.Base64.getDecoder().decode(
-        "BgEaAAIAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        "BgEaAAIAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEbH//8AAAAAAAAAAAAAAAAswSTuAAA=");
 
     private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
         byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
