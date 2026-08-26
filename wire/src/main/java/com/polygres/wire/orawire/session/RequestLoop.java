@@ -657,15 +657,27 @@ public final class RequestLoop {
         r.readUb8();
         if (piggybackFunctionCode == FUNC_CLIENT_BANNER_REQUEST) {
             // A real distributed-database-link connection's native OCI client sends this piggyback
-            // (function code 107, undocumented publicly; its payload includes a plain "SQL*Plus"
-            // client-program-name string) right after login and, unlike every other piggyback this
-            // codebase handles, actually expects a reply -- confirmed live via a real capture
-            // against a real Oracle 23c instance: the real server replies with the connection
-            // banner text sqlplus prints right after "Connected to:" (a real Oracle server sent
-            // "Oracle AI Database 26ai Free Release 23.26.2.0.0 - ..."). Not replying at all left
-            // the client waiting forever for this banner instead of proceeding to its real query.
-            r.readRemaining();
-            sendBanner();
+            // (function code 107, undocumented publicly; its payload includes a plain "SQL*Plus" or
+            // "oracle" client-program-name string) right after login and, unlike every other
+            // piggyback this codebase handles, actually expects a reply -- confirmed live via a
+            // real capture against a real Oracle 23c instance: the real server replies with the
+            // connection banner text sqlplus prints right after "Connected to:" (a real Oracle
+            // server sent "Oracle AI Database 26ai Free Release 23.26.2.0.0 - ..."). Not replying
+            // at all left the client waiting forever for this banner instead of proceeding to its
+            // real query.
+            //
+            // The real banner content itself differs by client type -- confirmed live, not
+            // guessed: a genuine SQL*Plus client needs the fuller two-line banner (see
+            // STATIC_BANNER_PAYLOAD_B64's own javadoc) or it silently aborts with a TNS BREAK/RESET
+            // after receiving the shorter one; a dblink native OCI client does the opposite --
+            // sending it that same fuller banner is what makes IT abort instead, while the original
+            // shorter, one-line banner is what it actually expects. Distinguishing them here by the
+            // banner-request piggyback's own payload length (confirmed live: a dblink client's is
+            // ~263 bytes, a real SQL*Plus client's is ~86) rather than by client-program-name text,
+            // since that name was already discarded upstream by the time this call happens and
+            // isn't worth re-plumbing just for this one branch.
+            byte[] piggybackPayload = r.readRemaining();
+            sendBanner(piggybackPayload.length > 150);
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
             // The native-OCI dblink fallback case is handled entirely above, before the generic
@@ -811,19 +823,35 @@ public final class RequestLoop {
     // need this revisited the same way.
     private static final String FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64 = "CAIAo5rUywcCAAABAAIJAwAAAJgAHQ==";
 
-    // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
-    // 2-byte "varying" marker (randomized below, same pattern as the marker
-    // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
-    // have), then a final terminating byte -- confirmed byte-for-byte via a real capture against a
-    // real Oracle 23c instance.
-    private static final byte[] BANNER_TRAILER_PREFIX = { 0x00, 0x00, 0x17, 0x09, 0x01, 0x00, 0x00, 0x00 };
-    private static final byte BANNER_TRAILER_TERMINATOR = 0x1d;
+    // Real bug, found live testing a genuine SQL*Plus client (not just a dblink native OCI
+    // connection): this template was missing the banner's second line entirely -- a real Oracle
+    // server's banner text is "Oracle AI Database ... Free\nVersion 23.26.2.0.0", not just the
+    // first line, confirmed byte-for-byte against a real Oracle 23c self-loop capture that went
+    // past login all the way through a real query. A real SQL*Plus client silently aborts with a
+    // TNS BREAK/RESET marker pair after receiving the truncated one-line version -- it doesn't
+    // error visibly, it just never proceeds to send its own query, which is why this was hard to
+    // spot without a capture that went all the way through a successful real query for comparison.
+    //
+    // Real, confirmed live: a dblink native OCI client does NOT want this fuller banner --
+    // sending it this one makes THAT client abort instead (same BREAK/RESET symptom, opposite
+    // trigger), while DBLINK_BANNER_PAYLOAD_B64 below (the original one-line template) is what it
+    // actually expects. See skipPiggyback's own comment for how the two are told apart at the call
+    // site. The whole template (length-prefix bytes included -- real Oracle appears to write the
+    // text length as both a leading UB1 and, for this longer text, a duplicated length byte again
+    // right before the text itself) is captured verbatim rather than re-derived, same as this
+    // file's other static-template constants.
+    private static final String SQLPLUS_BANNER_PAYLOAD_B64 =
+        "CGcAZ09yYWNsZSBBSSBEYXRhYmFzZSAyNmFpIEZyZWUgUmVsZWFzZSAyMy4yNi4yLjAuMCAtIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlClZlcnNpb24gMjMuMjYuMi4wLjAAIBoXCQEAAACjAB0=";
 
-    private static final String STATIC_BANNER_PAYLOAD_B64 =
+    // The original, shorter one-line banner template -- a dblink native OCI client's own expected
+    // shape, confirmed to still work for that client after SQLPLUS_BANNER_PAYLOAD_B64 above was
+    // found to break it (see that constant's own javadoc).
+    private static final String DBLINK_BANNER_PAYLOAD_B64 =
         "CFMAT3JhY2xlIEFJIERhdGFiYXNlIDI2YWkgRnJlZSBSZWxlYXNlIDIzLjI2LjIuMC4wIC0gRGV2ZWxvcCwgTGVhcm4sIGFuZCBSdW4gZm9yIEZyZWUAAAAXCQEAAAAiDB0=";
 
-    private void sendBanner() throws IOException {
-        byte[] payload = java.util.Base64.getDecoder().decode(STATIC_BANNER_PAYLOAD_B64);
+    private void sendBanner(boolean dblinkClient) throws IOException {
+        byte[] payload = java.util.Base64.getDecoder()
+                .decode(dblinkClient ? DBLINK_BANNER_PAYLOAD_B64 : SQLPLUS_BANNER_PAYLOAD_B64);
         TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, payload);
         out.write(packet.encode(reader.isLargeSdu()));
         out.flush();
