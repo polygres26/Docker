@@ -298,8 +298,15 @@ public final class RequestLoop {
                 // first time) -- confirmed live against a real Oracle 23c instance. Content-wise
                 // this looks like plain, non-cryptographic, non-session-specific numeric fields
                 // (unlike FUNC_UNKNOWN_202), so replaying a fixed real response carries much less
-                // risk here; done the same way as every other undocumented call in this series.
-                w.writeRaw(java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_68_RESPONSE_B64));
+                // risk here; done the same way as every other undocumented call in this series --
+                // except this response DOES encode something query-specific (confirmed by diffing
+                // two real captures against each other, a 2-column and a 3-column SELECT: a byte at
+                // a fixed offset was 2 in one and 3 in the other, matching each capture's own column
+                // count), so that one byte is patched per-response instead of just replayed
+                // statically like the rest of the template.
+                byte[] response = java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_68_RESPONSE_B64);
+                response[FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET] = (byte) openColumns.size();
+                w.writeRaw(response);
             } else {
                 throw new UnsupportedOperationException("unsupported TTC function code: " + functionCode);
             }
@@ -451,11 +458,36 @@ public final class RequestLoop {
             sendBanner();
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
-            
+
             r.readUint8();
             long numCursors = r.readUb4();
             for (long i = 0; i < numCursors; i++) {
                 r.readUb4();
+            }
+            // A real distributed-database-link connection's native OCI client's FUNC_CLOSE_CURSORS
+            // piggyback doesn't end here the way it does for JDBC/sqlplus/SQLcl -- confirmed live
+            // against a real Oracle 23c instance via two independent real captures (a real
+            // Oracle-to-Oracle self-loop and this codebase's own dblink test scenario), byte-length
+            // identical despite carrying different session-specific values: with numCursors=0, 31
+            // more bytes follow (an 8-byte -2/"invalid" cursor-id sentinel, then further opaque
+            // session/call-tag fields whose exact field-by-field layout wasn't needed to get past
+            // them -- only their fixed total width, confirmed the same across both captures) before
+            // a real chained FUNCTION message -- a genuine second EXECUTE (function code 94) for the
+            // dblink's actual remote-fetch query, reusing real column aliases (A1.ID, A1.AMOUNT)
+            // instead of the first EXECUTE's plain "SELECT *". (An earlier version of this skip used
+            // 21 bytes, from a hand-traced byte count that wrongly assumed readUb8()/readUb4() are
+            // fixed-width -- they're actually Oracle's usual chunked length-prefixed encoding, e.g.
+            // a lone 0x00 length byte for a zero value, not "8 bytes"/"4 bytes"; replaying the
+            // parse with that corrected accounting is what found the true, live-confirmed gap of 31
+            // bytes from here to the real FUNCTION tag.) Skipping straight past this piggyback
+            // without also consuming these bytes left the caller's next messageType read landing on
+            // padding mid-structure instead of that FUNCTION tag ("expected function-call message,
+            // got type 0"). Scoped to the native-OCI Execute fallback specifically --
+            // JDBC/sqlplus/SQLcl's own FUNC_CLOSE_CURSORS piggybacks have never been observed to
+            // carry this trailing content, and a numCursors=0 close-cursors call from them really
+            // does just end here.
+            if (usedNativeOciExecuteFallback) {
+                r.skip(31);
             }
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLIENT_FEATURES) {
             
@@ -573,8 +605,14 @@ public final class RequestLoop {
     // See the FUNC_UNKNOWN_68 branch's comment above.
     private static final int FUNC_UNKNOWN_68 = 68;
 
+    // Real bytes from a 2-column SELECT's real capture -- matches this codebase's own dblink test
+    // scenario's column count, so FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET's patch is a no-op against
+    // this particular template; kept patched anyway since a 2-column response was confirmed WRONG
+    // when it carried a real 3-column capture's own baked-in count (a real Oracle 23c client
+    // reported ORA-02072, "distributed database network protocol mismatch", on that mismatch).
     private static final String FUNC_UNKNOWN_68_RESPONSE_B64 =
-        "CAgAKc4mFrwAAABSAAAAAQAAAAIAAABkAAAAAwAAAAAAAAAFAAIAAAAACQMAAAC1DB0=";
+        "CAgAjec12rsAAABSAAAAAQAAAAIAAABkAAAAAgAAAAAAAAAEAAIAAAAJAwAAAMUSHQ==";
+    private static final int FUNC_UNKNOWN_68_COLUMN_COUNT_OFFSET = 27;
 
     // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
     // 2-byte "varying" marker (randomized below, same pattern as the marker
