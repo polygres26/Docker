@@ -370,119 +370,6 @@ aws sqs receive-message \                          # SQS wire
         </p>
       </details>
 
-      <details class="exploreMore">
-        <summary class="exploreSummary">Explore PolyWire in depth — modernization example, QoS, security, detailed architecture, comparison →</summary>
-      <h3 class="subhead" id="rewire">Use case: modernize without rewrites — don't rewrite, rewire<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote">
-        Your Oracle client thinks it's talking to Oracle. It's actually talking to Postgres —
-        and it never finds out.
-      </p>
-      <figure class="rewireFigure">
-        <svg class="rewireSvg" viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before: seven applications each connect directly to their own database or service (Oracle, SQL Server, MySQL, MongoDB, OpenSearch, DynamoDB, SQS). After: those same seven applications, plus an AI agent over MCP, all connect through PolyWire, which fans them into one PostgreSQL database.">
-          <defs>
-            <marker id="rewireArrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <polygon points="0,0 10,5 0,10" fill="var(--ink-faint)"></polygon>
-            </marker>
-          </defs>
-
-          <rect class="panelBg" x="10" y="8" width="350" height="244" rx="14"></rect>
-          <text class="panelLabel" x="185" y="22" text-anchor="middle">Before</text>
-
-          <g>
-            <rect class="box" x="28" y="28" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="47" text-anchor="middle">Oracle App</text>
-            <rect class="box" x="228" y="28" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="47" text-anchor="middle">Oracle</text>
-            <line class="line" x1="153" y1="43" x2="225" y2="43" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="60" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="79" text-anchor="middle">SQL Server App</text>
-            <rect class="box" x="228" y="60" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="79" text-anchor="middle">SQL Server</text>
-            <line class="line" x1="153" y1="75" x2="225" y2="75" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="92" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="111" text-anchor="middle">MySQL App</text>
-            <rect class="box" x="228" y="92" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="111" text-anchor="middle">MySQL</text>
-            <line class="line" x1="153" y1="107" x2="225" y2="107" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="124" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="143" text-anchor="middle">Mongo App</text>
-            <rect class="box" x="228" y="124" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="143" text-anchor="middle">MongoDB</text>
-            <line class="line" x1="153" y1="139" x2="225" y2="139" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="156" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="175" text-anchor="middle">Search App</text>
-            <rect class="box" x="228" y="156" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="175" text-anchor="middle">OpenSearch</text>
-            <line class="line" x1="153" y1="171" x2="225" y2="171" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="188" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="207" text-anchor="middle">DynamoDB App</text>
-            <rect class="box" x="228" y="188" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="207" text-anchor="middle">DynamoDB</text>
-            <line class="line" x1="153" y1="203" x2="225" y2="203" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-          <g>
-            <rect class="box" x="28" y="220" width="125" height="30" rx="6"></rect>
-            <text class="boxLabel" x="90" y="239" text-anchor="middle">Queue App</text>
-            <rect class="box" x="228" y="220" width="115" height="30" rx="6"></rect>
-            <text class="boxLabel" x="285" y="239" text-anchor="middle">SQS</text>
-            <line class="line" x1="153" y1="235" x2="225" y2="235" marker-end="url(#rewireArrowhead)"></line>
-          </g>
-
-          <rect class="panelBg" x="380" y="8" width="550" height="244" rx="14"></rect>
-          <text class="panelLabel" x="595" y="22" text-anchor="middle">After</text>
-
-          <path class="line" d="M523,38 C 605,38 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,65 C 605,65 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,92 C 605,92 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,119 C 605,119 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,146 C 605,146 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,173 C 605,173 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,200 C 605,200 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-          <path class="line" d="M523,227 C 605,227 615,133 688,133" marker-end="url(#rewireArrowhead)"></path>
-
-          <rect class="box" x="398" y="26" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="42" text-anchor="middle">Oracle App</text>
-          <rect class="box" x="398" y="53" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="69" text-anchor="middle">SQL Server App</text>
-          <rect class="box" x="398" y="80" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="96" text-anchor="middle">MySQL App</text>
-          <rect class="box" x="398" y="107" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="123" text-anchor="middle">Mongo App</text>
-          <rect class="box" x="398" y="134" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="150" text-anchor="middle">Search App</text>
-          <rect class="box" x="398" y="161" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="177" text-anchor="middle">DynamoDB App</text>
-          <rect class="box" x="398" y="188" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="204" text-anchor="middle">Queue App</text>
-          <rect class="box" x="398" y="215" width="125" height="24" rx="6"></rect>
-          <text class="boxLabel" x="460" y="231" text-anchor="middle">AI Agent (MCP)</text>
-
-          <rect class="hubBox" x="690" y="113" width="100" height="40" rx="8"></rect>
-          <text class="hubLabel" x="740" y="138" text-anchor="middle">PolyWire</text>
-          <line class="line" x1="790" y1="133" x2="815" y2="133" marker-end="url(#rewireArrowhead)"></line>
-          <text class="pgLabel" x="822" y="138" text-anchor="start">PostgreSQL</text>
-        </svg>
-        <figcaption>
-          Before: seven applications, seven databases and services, seven protocols to run and
-          secure separately. After: those same seven applications, plus an AI agent over MCP, all
-          unmodified, fan into PolyWire — which
-          alone talks to a single PostgreSQL database.
-        </figcaption>
-      </figure>
-      <p class="rttNote">
-        Keep your applications, drivers, and protocols. Standardize the backend on Postgres.
-      </p>
-
       <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         <b>QoS for Postgres, at the gateway.</b> Prioritize, throttle, bound concurrency, and
@@ -499,6 +386,8 @@ aws sqs receive-message \                          # SQS wire
       <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
       <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
 
+      <details class="exploreMore">
+        <summary class="exploreSummary">Explore PolyWire in depth — detailed architecture, comparison →</summary>
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
