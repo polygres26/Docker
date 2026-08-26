@@ -27,9 +27,9 @@ public final class O5LogonHandler {
 
     public AuthResult authenticate(TnsPacketReader reader, OutputStream out) throws IOException {
         boolean largeSdu = reader.isLargeSdu();
-        
+
         boolean richAuth = reader.isAnoEligible();
-        TnsPacket phaseOnePacket = readNonEmptyPacket(reader);
+        TnsPacket phaseOnePacket = readNonEmptyPacket(reader, out, largeSdu);
         FunctionCall call1 = expectFunction(phaseOnePacket, AuthConstants.FUNC_AUTH_PHASE_ONE);
         String username = richAuth
                 ? readUsernameAndSkipPairsRich(call1.reader())
@@ -59,7 +59,7 @@ public final class O5LogonHandler {
             sendPhaseOneResponse(out, verifierData, authSesskey, cskSalt, call1.sequenceNumber(), largeSdu);
         }
 
-        TnsPacket phaseTwoPacket = readNonEmptyPacket(reader);
+        TnsPacket phaseTwoPacket = readNonEmptyPacket(reader, out, largeSdu);
         FunctionCall call2 = expectFunction(phaseTwoPacket, AuthConstants.FUNC_AUTH_PHASE_TWO);
         Map<String, String> pairs = richAuth
                 ? readPhaseTwoPairsRich(call2.reader())
@@ -128,23 +128,71 @@ public final class O5LogonHandler {
         return username;
     }
 
-    private record RichAuthHeader(int hasUser, int numPairs) {
+    private record RichAuthHeader(int hasUser, int userLen, int numPairs) {
     }
 
+    /**
+     * Parses the rich-auth (ANO-eligible) call preamble that precedes the username and
+     * AUTH_*-keyword pairs on both AUTH_PHASE_ONE and AUTH_PHASE_TWO calls. The previous version of
+     * this method (fixed-width {@code skip(25)}/{@code skip(16)} around a leading hasUser byte and
+     * a little-endian numPairs) was tuned only against Oracle's JDBC thin driver and does not match
+     * what a real distributed-database-link connection's native OCI client actually sends --
+     * confirmed live via byte-for-byte capture against a real Oracle 23c instance, where it read
+     * past the end of the packet buffer trying to honor a bogus username length.
+     *
+     * <p>The real layout was recovered by diffing two live captures of the same dblink client
+     * logging in as different users (one 6-char "SYSTEM", one 8-char "postgres") against each
+     * other: every byte the two captures share is fixed/structural regardless of username; the two
+     * captures diverge at exactly one single-byte position (the username length) and then again,
+     * later, only within the username bytes themselves -- pinning down the field layout below
+     * without needing to guess at Oracle's internal field semantics. (The reference project at
+     * {@code /Users/kumarrajamani/Projects/orawire}, a JDBC-thin-derived implementation, was
+     * checked first but marshals this same call differently -- e.g. it encodes hasUser as an
+     * explicit 0/1 pointer byte immediately at the start of the record, which real captures do not
+     * show -- confirming the real native OCI client's wire format genuinely differs from JDBC
+     * thin's here and can't be taken from that reference directly.)
+     *
+     * <p>Layout, relative to the start of the call record (right after the shared msgType/
+     * function-code/sequence-number bytes {@link #expectFunction} already consumes):
+     * <pre>
+     *   2 bytes  -- per-connection random/nonce value (varies call to call; not structural)
+     *  20 bytes  -- fixed
+     *   1 byte   -- username length (raw UB1; 0 means no username follows)
+     *  15 bytes  -- fixed
+     *   1 byte   -- number of AUTH_* keyword/value pairs that follow (raw UB1)
+     *  23 bytes  -- fixed
+     *   N bytes  -- the username itself (raw, already quoted by the client if applicable --
+     *               e.g. {@code "SYSTEM"} including the quote characters)
+     * </pre>
+     * followed immediately by the keyword/value pairs, which {@link #readRichPairs} already parses
+     * correctly (that method's little-endian-length-prefixed format was independently confirmed
+     * against these same real captures).
+     */
     private RichAuthHeader readRichAuthHeader(TtcReader r) {
-        int hasUser = r.readUint8();
-        r.skip(25);
-        int numPairs = (int) readLe32(r);
-        r.skip(16);
-        return new RichAuthHeader(hasUser, numPairs);
+        r.skip(2);
+        r.skip(20);
+        int userLen = r.readUint8();
+        r.skip(15);
+        int numPairs = r.readUint8();
+        r.skip(23);
+        return new RichAuthHeader(userLen > 0 ? 1 : 0, userLen, numPairs);
     }
 
-    private String readRichUsername(TtcReader r, int hasUser) {
+    private String readRichUsername(TtcReader r, int hasUser, int userLen) {
         if (hasUser == 0) {
             return null;
         }
-        int userLen = r.readUint8();
-        return new String(r.readRawBytes(userLen), java.nio.charset.StandardCharsets.UTF_8);
+        String username = new String(r.readRawBytes(userLen), java.nio.charset.StandardCharsets.UTF_8);
+        // A real distributed-database-link connection's native OCI client sends the username
+        // already quoted (e.g. the wire bytes are literally `"POSTGRES"`, quote characters
+        // included) -- confirmed live via byte-for-byte capture against a real Oracle 23c
+        // instance. Strip a matching pair of double quotes so credential lookup (and the
+        // AuditEvent/log lines that report this username) see the plain identifier, same as every
+        // other client this codebase talks to.
+        if (username.length() >= 2 && username.charAt(0) == '"' && username.charAt(username.length() - 1) == '"') {
+            username = username.substring(1, username.length() - 1);
+        }
+        return username;
     }
 
     private Map<String, String> readRichPairs(TtcReader r, int numPairs) {
@@ -175,14 +223,14 @@ public final class O5LogonHandler {
 
     private String readUsernameAndSkipPairsRich(TtcReader r) {
         RichAuthHeader header = readRichAuthHeader(r);
-        String username = readRichUsername(r, header.hasUser());
+        String username = readRichUsername(r, header.hasUser(), header.userLen());
         readRichPairs(r, header.numPairs());
         return username;
     }
 
     private Map<String, String> readPhaseTwoPairsRich(TtcReader r) {
         RichAuthHeader header = readRichAuthHeader(r);
-        readRichUsername(r, header.hasUser());
+        readRichUsername(r, header.hasUser(), header.userLen());
         return readRichPairs(r, header.numPairs());
     }
 
@@ -201,9 +249,20 @@ public final class O5LogonHandler {
         return AuthKv.readPairs(r, (int) numPairs);
     }
 
-    private static TnsPacket readNonEmptyPacket(TnsPacketReader reader) throws IOException {
+    /**
+     * Reads past transport-layer noise before returning the next real phase-one/phase-two FUNCTION
+     * packet: an empty-payload DATA packet, and a stray MARKER packet. The MARKER packets a real
+     * distributed-database-link connection sends here turned out to be a *reaction* to a real,
+     * separate bug in {@link com.polygres.wire.orawire.frontend.ProtocolNegotiation}'s data-types
+     * response (it was answering the dblink client's compact-style data-types request with the
+     * full ~2.8KB type table instead of the short mirrored ack a real Oracle server sends that
+     * request shape) -- see that class's javadoc. With that fixed, no marker packets should reach
+     * this method for a dblink session at all; the skip here just remains defensive.
+     */
+    private static TnsPacket readNonEmptyPacket(TnsPacketReader reader, OutputStream out, boolean largeSdu)
+            throws IOException {
         TnsPacket packet = reader.readPacket();
-        while (packet.payload().length == 0) {
+        while (packet.payload().length == 0 || packet.type() == TnsPacketType.MARKER) {
             packet = reader.readPacket();
         }
         return packet;
@@ -229,9 +288,24 @@ public final class O5LogonHandler {
         return new FunctionCall(r, sequenceNumber);
     }
 
+    // Was 81 bytes (truncated right after the lone 0x02 marker byte) until this fix -- that
+    // shorter terminator was apparently only ever exercised by JDBC, which doesn't seem to mind
+    // the missing tail. A real distributed-database-link connection's native OCI client silently
+    // aborts after receiving a truncated one: it never sends its phase-two call, and this side
+    // then blocks forever waiting for it (confirmed live via jstack against a real Oracle 23c
+    // instance). Extended to the full 155 bytes a real Oracle server sends here, recovered from a
+    // byte-for-byte capture of a genuine Oracle-to-Oracle self-loop dblink session: the same
+    // leading "00 04 01 00 00 00 <2 bytes>" shape this constant already had, but continuing past
+    // the 0x02 marker with a second marker pair (0x36 0x01) and a 6-byte opaque value (confirmed
+    // structural, not content the client appears to validate -- it's copied verbatim from the real
+    // capture since there's no live traffic evidence either way) before the trailing zero padding
+    // and final terminating byte.
+    // Length and content confirmed byte-for-byte against a real Oracle 23c self-loop dblink
+    // capture (previous versions of this constant were both wrong: 81 bytes, truncated right
+    // after the lone 0x02 marker, then a mis-counted 155 bytes -- the real length is 154).
     private static final String PHASE_ONE_TERMINATOR_RICH_B64 =
-        "AAQBAAAAdgUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            + "AAAAAAAAAAAd";
+        "AAQBAAAAdgUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAANgEAAAAAAAAAAAAAAAAAALDU"
+            + "IBGN6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
     private void sendPhaseOneResponseRich(OutputStream out, byte[] verifierData, byte[] authSesskey, byte[] cskSalt,
             boolean largeSdu) throws IOException {
@@ -332,41 +406,52 @@ public final class O5LogonHandler {
     private static final int PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_LENGTH = 9;
     private static final int PHASE_TWO_RICH_SVR_RESPONSE_CHUNK2_OFFSET = 1967;
     private static final int PHASE_TWO_RICH_SVR_RESPONSE_CHUNK2_LENGTH = 87;
-    private static final int PHASE_TWO_RICH_CALLNUMBER_OFFSET = 2533;
+    // Offset/length confirmed byte-for-byte against a real Oracle 23c self-loop capture: this is
+    // the same 2-byte "varying" marker region {@link #sendPhaseOneResponseRich}'s terminator also
+    // has (there, PHASE_ONE_TERMINATOR_VARYING_OFFSET) -- both sit right after an identical
+    // "00 04 01 00 00 00" marker prefix. The template this offset indexes into was replaced with a
+    // real capture's exact tail bytes as part of this same fix (see PHASE_TWO_RESPONSE_EXTENDED_B64
+    // and sendPhaseTwoSuccessRich's javadoc); the old offset (2533) indexed into the old, shorter,
+    // JDBC-derived tail and no longer applies.
+    private static final int PHASE_TWO_RICH_CALLNUMBER_OFFSET = 2511;
     private static final int PHASE_TWO_RICH_CALLNUMBER_LENGTH = 2;
     private static final String PHASE_TWO_RESPONSE_EXTENDED_B64 =
-        "CDQAEwAAABNBVVRIX1ZFUlNJT05fU1RSSU5HIgAAACItIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlAAAAABAAAAAQQVVUSF9WRVJT" +
-        "SU9OX1NRTAIAAAACMjYAAAAAEwAAABNBVVRIX1hBQ1RJT05fVFJBSVRTAQAAAAEzAAAAAA8AAAAPQVVUSF9WRVJTSU9OX05PCQAAAAkzODc1ODgw" +
-        "OTYAAAAAEwAAABNBVVRIX1ZFUlNJT05fU1RBVFVTAQAAAAEwAAAAABUAAAAVQVVUSF9DQVBBQklMSVRZX1RBQkxFAAAAAAAAAAAPAAAAD0FVVEhf" +
-        "TEFTVF9MT0dJThoAAAAaNzg3RTA4MDkwNjFGMEEwMDAwMDAwMDAwMDAAAAAACwAAAAtBVVRIX0RCTkFNRQgAAAAIRlJFRVBEQjEAAAAAEQAAABFB" +
-        "VVRIX0RCX01PVU5UX0lEAAoAAAAKMTUxMjU1NjA5MgAAAAALAAAAC0FVVEhfREJfSUQACgAAAAoyOTUyNzc0Mzk0AAAAAAwAAAAMQVVUSF9VU0VS" +
-        "X0lEAQAAAAE5AAAAAA8AAAAPQVVUSF9TRVNTSU9OX0lEAwAAAAMyMDkAAAAADwAAAA9BVVRIX1NFUklBTF9OVU0FAAAABTQ3NzA4AAAAABAAAAAQ" +
-        "QVVUSF9JTlNUQU5DRV9OTwEAAAABMQAAAAAQAAAAEEFVVEhfRkFJTE9WRVJfSUQBAAAAATEAAAAADwAAAA9BVVRIX1NFUlZFUl9QSUQGAAAABjE0" +
-        "MDg5OAAAAAATAAAAE0FVVEhfU0NfU0VSVkVSX0hPU1QMAAAADGQ3NmZmZGViNWIwYQAAAAAVAAAAFUFVVEhfU0NfREJVTklRVUVfTkFNRQQAAAAE" +
-        "RlJFRQAAAAAVAAAAFUFVVEhfU0NfSU5TVEFOQ0VfTkFNRQQAAAAERlJFRQAAAAATAAAAE0FVVEhfU0NfSU5TVEFOQ0VfSUQBAAAAATEAAAAAGwAA" +
-        "ABtBVVRIX1NDX0lOU1RBTkNFX1NUQVJUX1RJTUUkAAAAJDIwMjYtMDgtMDUgMTY6NDQ6NDIuMDAwMDAwMDAwIC0wNzowMAAAAAARAAAAEUFVVEhf" +
-        "U0NfREJfRE9NQUlOAAAAAAAAAAAUAAAAFEFVVEhfU0NfU0VSVklDRV9OQU1FCAAAAAhmcmVlcGRiMQAAAAAbAAAAG0FVVEhfT05TX1JMQl9TVUJT" +
-        "Q1JfUEFUVEVSTjQAAAA0JSJldmVudFR5cGU9ZGF0YWJhc2UvZXZlbnQvc2VydmljZW1ldHJpY3MvZnJlZXBkYjEiAAAAAAAaAAAAGkFVVEhfT05T" +
-        "X0hBX1NVQlNDUl9QQVRURVJOSQAAAEkoImV2ZW50VHlwZT1kYXRhYmFzZS9ldmVudC9zZXJ2aWNlIikgfCAoImV2ZW50VHlwZT1kYXRhYmFzZS9l" +
-        "dmVudC9ob3N0IikAAAAAABoAAAAaQVVUSF9TQ19SRUFMX0RCVU5JUVVFX05BTUUEAAAABEZSRUUAAAAAEQAAABFBVVRIX0lOU1RBTkNFTkFNRQQA" +
-        "AAAERlJFRQAAAAAPAAAAD0FVVEhfTkxTX0xYTEFOAAgAAAAIQU1FUklDQU4AAAAAFgAAABZBVVRIX05MU19MWENURVJSSVRPUlkABwAAAAdBTUVS" +
-        "SUNBAAAAABUAAAAVQVVUSF9OTFNfTFhDQ1VSUkVOQ1kAAQAAAAEkAAAAABQAAAAUQVVUSF9OTFNfTFhDSVNPQ1VSUgAHAAAAB0FNRVJJQ0EAAAAA" +
-        "FQAAABVBVVRIX05MU19MWENOVU1FUklDUwACAAAAAi4sAAAAABMAAAATQVVUSF9OTFNfTFhDREFURUZNAAkAAAAJREQtTU9OLVJSAAAAABUAAAAV" +
-        "QVVUSF9OTFNfTFhDREFURUxBTkcACAAAAAhBTUVSSUNBTgAAAAARAAAAEUFVVEhfTkxTX0xYQ1NPUlQABgAAAAZCSU5BUlkAAAAAFQAAABVBVVRI" +
-        "X05MU19MWENDQUxFTkRBUgAJAAAACUdSRUdPUklBTgAAAAAVAAAAFUFVVEhfTkxTX0xYQ1VOSU9OQ1VSAAEAAAABJAAAAAATAAAAE0FVVEhfTkxT" +
-        "X0xYQ1RJTUVGTQAOAAAADkhILk1JLlNTWEZGIEFNAAAAABMAAAATQVVUSF9OTFNfTFhDU1RNUEZNABgAAAAYREQtTU9OLVJSIEhILk1JLlNTWEZG" +
-        "IEFNAAAAABMAAAATQVVUSF9OTFNfTFhDVFRaTkZNABIAAAASSEguTUkuU1NYRkYgQU0gVFpSAAAAABMAAAATQVVUSF9OTFNfTFhDU1RaTkZNABwA" +
-        "AAAcREQtTU9OLVJSIEhILk1JLlNTWEZGIEFNIFRaUgAAAAAYAAAAGEFVVEhfTkxTX0xYTEVOU0VNQU5USUNTAAQAAAAEQllURQAAAAAZAAAAGUFV" +
-        "VEhfTkxTX0xYTkNIQVJDT05WRVhDUAAFAAAABUZBTFNFAAAAABAAAAAQQVVUSF9OTFNfTFhDT01QAAYAAAAGQklOQVJZAAAAABEAAAARQVVUSF9T" +
-        "VlJfUkVTUE9OU0VgAAAAYDY4Nzg3RUIzRQAAAosGAAAAIABGQzhDRTMyMjY0NTBGNUIxNjY1NUZGNzQzQTY0NzUxNjk0RTZENDQ2NjhBQTEyMzYx" +
-        "OTY5QTc0MURDNEVFQzRFNjY3RUI2MDZGMjhBQ0ZGREM3QTEzMzYAAAAAFQAAABVBVVRIX01BWF9PUEVOX0NVUlNPUlMDAAAAAzMwMAAAAAANAAAA" +
-        "DUFVVEhfUERCX1VJRAAKAAAACjI5NTI3NzQzOTQAAAAAFAAAABRBVVRIX01BWF9JREVOX0xFTkdUSAMAAAADMTI4AAAAAAoAAAAKQVVUSF9GTEFH" +
-        "UwEAAAABMQAAAAAQAAAAEEFVVEhfU0VSVkVSX1RZUEUBAAAAATEAAAAAGAAAABhBVVRIX1NFUlZFUl9DQVBBQklMSVRJRVMBAAAAATEAAAAAEAAA" +
-        "ABBBVVRIX1JFU0VUX1NUQVRFAQAAAAEwAAAAABcFAQAQBgAAABYAAAAACwAAAAuAAAAANTw8gAAAAKMAAAAAAGQAAABkAAAAAQAAAAkAAAAEAAAA" +
-        "CgAAAEMAAAALAAAARAAAAAwAAAAOAAAADwAAABUAAAAjAAAAJAAAADIAAAAzAAAAPwAAAEAAAABBAAAAagAAAGsAAAByAAAAegAAAH0AAAB/AAAA" +
-        "IaoAHQAAAB0iREJBIiwiQVFfQURNSU5JU1RSQVRPUl9ST0xFIgAAAADHAAQAAAAESElHSAAAAADMAAAAAAAEAAAABAAAAADKAAAAAAAEAAAABARw" +
-        "2GzLAAAAAAAEAQAAAGIEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
-        "AAAAHQ==";
+        "CDQAEwAAABNBVVRIX1ZFUlNJT05fU1RSSU5HIgAAACItIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlAAAAABAAAAAQ" +
+        "QVVUSF9WRVJTSU9OX1NRTAIAAAACMjYAAAAAEwAAABNBVVRIX1hBQ1RJT05fVFJBSVRTAQAAAAEzAAAAAA8AAAAPQVVUSF9WRVJT" +
+        "SU9OX05PCQAAAAkzODc1ODgwOTYAAAAAEwAAABNBVVRIX1ZFUlNJT05fU1RBVFVTAQAAAAEwAAAAABUAAAAVQVVUSF9DQVBBQklM" +
+        "SVRZX1RBQkxFAAAAAAAAAAAPAAAAD0FVVEhfTEFTVF9MT0dJThoAAAAaNzg3RTA4MDkwNjFGMEEwMDAwMDAwMDAwMDAAAAAACwAA" +
+        "AAtBVVRIX0RCTkFNRQgAAAAIRlJFRVBEQjEAAAAAEQAAABFBVVRIX0RCX01PVU5UX0lEAAoAAAAKMTUxMjU1NjA5MgAAAAALAAAA" +
+        "C0FVVEhfREJfSUQACgAAAAoyOTUyNzc0Mzk0AAAAAAwAAAAMQVVUSF9VU0VSX0lEAQAAAAE5AAAAAA8AAAAPQVVUSF9TRVNTSU9O" +
+        "X0lEAwAAAAMyMDkAAAAADwAAAA9BVVRIX1NFUklBTF9OVU0FAAAABTQ3NzA4AAAAABAAAAAQQVVUSF9JTlNUQU5DRV9OTwEAAAAB" +
+        "MQAAAAAQAAAAEEFVVEhfRkFJTE9WRVJfSUQBAAAAATEAAAAADwAAAA9BVVRIX1NFUlZFUl9QSUQGAAAABjE0MDg5OAAAAAATAAAA" +
+        "E0FVVEhfU0NfU0VSVkVSX0hPU1QMAAAADGQ3NmZmZGViNWIwYQAAAAAVAAAAFUFVVEhfU0NfREJVTklRVUVfTkFNRQQAAAAERlJF" +
+        "RQAAAAAVAAAAFUFVVEhfU0NfSU5TVEFOQ0VfTkFNRQQAAAAERlJFRQAAAAATAAAAE0FVVEhfU0NfSU5TVEFOQ0VfSUQBAAAAATEA" +
+        "AAAAGwAAABtBVVRIX1NDX0lOU1RBTkNFX1NUQVJUX1RJTUUkAAAAJDIwMjYtMDgtMDUgMTY6NDQ6NDIuMDAwMDAwMDAwIC0wNzow" +
+        "MAAAAAARAAAAEUFVVEhfU0NfREJfRE9NQUlOAAAAAAAAAAAUAAAAFEFVVEhfU0NfU0VSVklDRV9OQU1FCAAAAAhmcmVlcGRiMQAA" +
+        "AAAbAAAAG0FVVEhfT05TX1JMQl9TVUJTQ1JfUEFUVEVSTjQAAAA0JSJldmVudFR5cGU9ZGF0YWJhc2UvZXZlbnQvc2VydmljZW1l" +
+        "dHJpY3MvZnJlZXBkYjEiAAAAAAAaAAAAGkFVVEhfT05TX0hBX1NVQlNDUl9QQVRURVJOSQAAAEkoImV2ZW50VHlwZT1kYXRhYmFz" +
+        "ZS9ldmVudC9zZXJ2aWNlIikgfCAoImV2ZW50VHlwZT1kYXRhYmFzZS9ldmVudC9ob3N0IikAAAAAABoAAAAaQVVUSF9TQ19SRUFM" +
+        "X0RCVU5JUVVFX05BTUUEAAAABEZSRUUAAAAAEQAAABFBVVRIX0lOU1RBTkNFTkFNRQQAAAAERlJFRQAAAAAPAAAAD0FVVEhfTkxT" +
+        "X0xYTEFOAAgAAAAIQU1FUklDQU4AAAAAFgAAABZBVVRIX05MU19MWENURVJSSVRPUlkABwAAAAdBTUVSSUNBAAAAABUAAAAVQVVU" +
+        "SF9OTFNfTFhDQ1VSUkVOQ1kAAQAAAAEkAAAAABQAAAAUQVVUSF9OTFNfTFhDSVNPQ1VSUgAHAAAAB0FNRVJJQ0EAAAAAFQAAABVB" +
+        "VVRIX05MU19MWENOVU1FUklDUwACAAAAAi4sAAAAABMAAAATQVVUSF9OTFNfTFhDREFURUZNAAkAAAAJREQtTU9OLVJSAAAAABUA" +
+        "AAAVQVVUSF9OTFNfTFhDREFURUxBTkcACAAAAAhBTUVSSUNBTgAAAAARAAAAEUFVVEhfTkxTX0xYQ1NPUlQABgAAAAZCSU5BUlkA" +
+        "AAAAFQAAABVBVVRIX05MU19MWENDQUxFTkRBUgAJAAAACUdSRUdPUklBTgAAAAAVAAAAFUFVVEhfTkxTX0xYQ1VOSU9OQ1VSAAEA" +
+        "AAABJAAAAAATAAAAE0FVVEhfTkxTX0xYQ1RJTUVGTQAOAAAADkhILk1JLlNTWEZGIEFNAAAAABMAAAATQVVUSF9OTFNfTFhDU1RN" +
+        "UEZNABgAAAAYREQtTU9OLVJSIEhILk1JLlNTWEZGIEFNAAAAABMAAAATQVVUSF9OTFNfTFhDVFRaTkZNABIAAAASSEguTUkuU1NY" +
+        "RkYgQU0gVFpSAAAAABMAAAATQVVUSF9OTFNfTFhDU1RaTkZNABwAAAAcREQtTU9OLVJSIEhILk1JLlNTWEZGIEFNIFRaUgAAAAAY" +
+        "AAAAGEFVVEhfTkxTX0xYTEVOU0VNQU5USUNTAAQAAAAEQllURQAAAAAZAAAAGUFVVEhfTkxTX0xYTkNIQVJDT05WRVhDUAAFAAAA" +
+        "BUZBTFNFAAAAABAAAAAQQVVUSF9OTFNfTFhDT01QAAYAAAAGQklOQVJZAAAAABEAAAARQVVUSF9TVlJfUkVTUE9OU0VgAAAAYDY4" +
+        "Nzg3RUIzRQAAAosGAAAAIABGQzhDRTMyMjY0NTBGNUIxNjY1NUZGNzQzQTY0NzUxNjk0RTZENDQ2NjhBQTEyMzYxOTY5QTc0MURD" +
+        "NEVFQzRFNjY3RUI2MDZGMjhBQ0ZGREM3QTEzMzYAAAAAFQAAABVBVVRIX01BWF9PUEVOX0NVUlNPUlMDAAAAAzMwMAAAAAANAAAA" +
+        "DUFVVEhfUERCX1VJRAAKAAAACjI5NTI3NzQzOTQAAAAAFAAAABRBVVRIX01BWF9JREVOX0xFTkdUSAMAAAADMTI4AAAAAAoAAAAK" +
+        "QVVUSF9GTEFHUwEAAAABMQAAAAAQAAAAEEFVVEhfU0VSVkVSX1RZUEUBAAAAATEAAAAAGAAAABhBVVRIX1NFUlZFUl9DQVBBQklM" +
+        "SVRJRVMBAAAAATEAAAAAEAAAABBBVVRIX1JFU0VUX1NUQVRFAQAAAAEwAAAAABcFAQAQBQAAABYAAAAAZAAAAGQAAAABAAAACQAA" +
+        "AAQAAAAKAAAAQwAAAAsAAABEAAAADAAAAA4AAAAPAAAAFQAAACMAAAAkAAAAMgAAADMAAAA/AAAAQAAAAEEAAABqAAAAawAAAHIA" +
+        "AAB6AAAAfQAAAH8AAAAhqgAdAAAAHSJEQkEiLCJBUV9BRE1JTklTVFJBVE9SX1JPTEUiAAAAAMcABAAAAARISUdIAAAAAMwAAAAA" +
+        "AAQAAAAEAAAAAMoAAAAAAAQAAAAEBHDYbMsAAAAAAAQBAAAAhxUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+        "AAAAAAADAAAAAAAANgEAAAAAAAAAAAAAAAAAALDUIBGN6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
     private void sendPhaseTwoSuccessRich(OutputStream out, byte[] comboKey, boolean largeSdu) throws IOException {
         byte[] plaintext = new byte[32];
@@ -378,16 +463,42 @@ public final class O5LogonHandler {
             throw new IllegalStateException("unexpected AUTH_SVR_RESPONSE hex length: " + authSvrResponseHex.length());
         }
         byte[] payload = java.util.Base64.getDecoder().decode(PHASE_TWO_RESPONSE_EXTENDED_B64);
-        byte[] chunk1 = authSvrResponseHex.substring(0, PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_LENGTH)
-                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        byte[] chunk2 = authSvrResponseHex.substring(PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_LENGTH)
-                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        System.arraycopy(chunk1, 0, payload, PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_OFFSET, chunk1.length);
-        System.arraycopy(chunk2, 0, payload, PHASE_TWO_RICH_SVR_RESPONSE_CHUNK2_OFFSET, chunk2.length);
-        
+        // Was two separate arraycopy calls (a "chunk1"/"chunk2" split with a 10-byte untouched gap
+        // between them, at CHUNK1_OFFSET length 9 and CHUNK2_OFFSET) until this fix. Parsing this
+        // template's own AUTH_SVR_RESPONSE key-value pair (key at this same CHUNK1_OFFSET, with a
+        // declared value length of 96) shows its value is a single contiguous 96-byte field with no
+        // real chunk boundary in the middle -- confirmed against a byte-for-byte capture of a real
+        // Oracle-to-Oracle self-loop session, where the same field is one plain length-prefixed
+        // string. Splitting the write left that 10-byte gap holding stale template bytes instead of
+        // real value bytes, corrupting this pair (and, since nothing after it re-syncs to a fixed
+        // offset, everything that follows) -- confirmed live via a byte capture against a real
+        // Oracle 23c instance showing garbled AUTH_SVR_RESPONSE content full of embedded null and
+        // non-hex bytes where a clean 96-character hex string should be.
+        byte[] authSvrResponseHexBytes = authSvrResponseHex.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(authSvrResponseHexBytes, 0, payload, PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_OFFSET,
+                authSvrResponseHexBytes.length);
+        // The old chunk1/chunk2 split's 10-byte gap (the leftover span between where chunk1 used to
+        // end and chunk2 used to start, now made stale by writing the value contiguously above) is
+        // still physically present in this base64-decoded template and must be spliced out, not
+        // just left overwritten-and-ignored -- everything after it (AUTH_MAX_OPEN_CURSORS onward,
+        // plus the call-number field patched below) is still at its OLD template offset otherwise.
+        int staleGapStart = PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_OFFSET + authSvrResponseHexBytes.length;
+        int staleGapEnd = PHASE_TWO_RICH_SVR_RESPONSE_CHUNK2_OFFSET
+                + (PHASE_TWO_TEMPLATE_SVR_RESPONSE_LENGTH - PHASE_TWO_RICH_SVR_RESPONSE_CHUNK1_LENGTH);
+        payload = concat(Arrays.copyOfRange(payload, 0, staleGapStart),
+                Arrays.copyOfRange(payload, staleGapEnd, payload.length));
+
         byte[] callNumberBytes = randomBytes(PHASE_TWO_RICH_CALLNUMBER_LENGTH);
-        System.arraycopy(callNumberBytes, 0, payload, PHASE_TWO_RICH_CALLNUMBER_OFFSET, callNumberBytes.length);
-        sendDataFragmented(out, payload, largeSdu);
+        System.arraycopy(callNumberBytes, 0, payload,
+                PHASE_TWO_RICH_CALLNUMBER_OFFSET - (staleGapEnd - staleGapStart), callNumberBytes.length);
+        // Was sendDataFragmented (split across multiple TNS DATA packets) until this fix. A real
+        // Oracle server sends this entire ~2.6KB response as a SINGLE TNS packet -- confirmed via a
+        // byte-for-byte capture of a genuine Oracle-to-Oracle self-loop session, where the packet's
+        // own declared length field covers the whole response. Splitting it desyncs a real
+        // distributed-database-link connection's native OCI client, which reacts with the same
+        // TNS BREAK/RESET marker pair this session's earlier bugs also produced (confirmed live
+        // against a real Oracle 23c instance).
+        sendData(out, payload, largeSdu);
     }
 
     private void sendPhaseTwoSuccess(OutputStream out, byte[] comboKey, int sequenceNumber, boolean largeSdu)

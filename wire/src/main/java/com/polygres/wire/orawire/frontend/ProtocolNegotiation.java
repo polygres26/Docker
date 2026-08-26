@@ -20,6 +20,10 @@ public final class ProtocolNegotiation {
 
     private boolean extendedProtocol;
 
+    // The raw data-types-request payload, kept so sendDataTypesResponse can tell which of two
+    // real, distinct request shapes it's answering -- see that method's javadoc.
+    private byte[] dataTypesRequestPayload;
+
     public void perform(TnsPacketReader reader, OutputStream out) throws IOException {
         readProtocolRequest(reader);
         sendProtocolResponse(out, reader.isLargeSdu());
@@ -67,7 +71,7 @@ public final class ProtocolNegotiation {
     }
 
     private void readDataTypesRequest(TnsPacketReader reader) throws IOException {
-        
+
         TnsPacket packet = reader.readPacket();
         while (packet.payload().length == 0) {
             packet = reader.readPacket();
@@ -77,7 +81,7 @@ public final class ProtocolNegotiation {
         if (msgType != MSG_TYPE_DATA_TYPES) {
             throw new IOException("expected DATA_TYPES message, got type " + msgType);
         }
-        
+        dataTypesRequestPayload = packet.payload();
     }
 
     private static final String DATA_TYPES_RESPONSE_B64 =
@@ -144,10 +148,29 @@ public final class ProtocolNegotiation {
         "AQAAAL4AtwABAAAAvwAAAMAAAADDAHAAAQAAAMQAcQABAAAAxQByAAEAAADGAHcAAQAAAMcAfwABAAAA0ADQAAEAAADRAAAA5wDn" +
         "AAEAAADoAOcAAQAAAOkA6QABAAAA8QBtAAEAAAD1APUAAQAAAPYA9gABAAAA+gAAAPsAAAD8APwAAQAAAgMCAwABAAAAAA==";
 
+    // Length (payload bytes, including the leading msgType byte) of the compact data-types
+    // request a real Oracle distributed-database-link connection sends -- confirmed live via
+    // byte-for-byte capture against a real Oracle 23c instance (CREATE DATABASE LINK ... ; SELECT
+    // ... FROM t@link), distinct from the longer request JDBC/SQLcl/sqlplus send. A real Oracle
+    // server answers *this* request shape with a tiny ack that mirrors 15 bytes verbatim from the
+    // client's own request (dropping only the request's final 2 bytes), not with the full
+    // data-types table below -- sending the full table here (what this code used to do
+    // unconditionally) desyncs the dblink client's protocol state machine, which reacts by
+    // aborting the connection with TNS BREAK/RESET MARKER packets that this side then has no valid
+    // response to. JDBC/SQLcl/sqlplus were tested working against the full-table response and are
+    // deliberately left on that path -- this only carves out the one request shape confirmed to
+    // need the short form.
+    private static final int COMPACT_DATA_TYPES_REQUEST_LENGTH = 92;
+
     private void sendDataTypesResponse(OutputStream out, boolean largeSdu) throws IOException {
         byte[] payload;
         if (pythonThinClient) {
             payload = new byte[] { (byte) MSG_TYPE_DATA_TYPES, 0, 0 };
+        } else if (dataTypesRequestPayload != null
+                && dataTypesRequestPayload.length == COMPACT_DATA_TYPES_REQUEST_LENGTH) {
+            payload = new byte[16];
+            payload[0] = (byte) MSG_TYPE_DATA_TYPES;
+            System.arraycopy(dataTypesRequestPayload, dataTypesRequestPayload.length - 17, payload, 1, 15);
         } else if (extendedProtocol) {
             payload = java.util.Base64.getDecoder().decode(DATA_TYPES_RESPONSE_EXTENDED_B64);
         } else {

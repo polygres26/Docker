@@ -182,8 +182,18 @@ public final class RequestLoop {
         TtcReader r = new TtcReader(packet.payload());
         int messageType = r.readUint8();
         while (messageType == TtcConstants.MSG_TYPE_PIGGYBACK) {
-            
+
             skipPiggyback(r);
+            // A real distributed-database-link connection's native OCI client sends a piggyback as
+            // the ENTIRE contents of its own TNS packet, with no FUNCTION call chained after it in
+            // the same packet (confirmed live via a real capture against a real Oracle 23c
+            // instance) -- unlike every other tested client, which always follows a piggyback with
+            // a real function call in the same read. Nothing to reply to and no more bytes to read;
+            // returning here (not logging off) lets the request loop go back to reading the next
+            // packet instead of trying to read a messageType byte past the end of this one.
+            if (!r.hasRemaining()) {
+                return false;
+            }
             messageType = r.readUint8();
         }
         if (messageType != TtcConstants.MSG_TYPE_FUNCTION) {
@@ -316,11 +326,22 @@ public final class RequestLoop {
         }
     }
 
-    private void skipPiggyback(TtcReader r) {
+    private void skipPiggyback(TtcReader r) throws IOException {
         int piggybackFunctionCode = r.readUint8();
         r.readUint8();
         r.readUb8();
-        if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
+        if (piggybackFunctionCode == FUNC_CLIENT_BANNER_REQUEST) {
+            // A real distributed-database-link connection's native OCI client sends this piggyback
+            // (function code 107, undocumented publicly; its payload includes a plain "SQL*Plus"
+            // client-program-name string) right after login and, unlike every other piggyback this
+            // codebase handles, actually expects a reply -- confirmed live via a real capture
+            // against a real Oracle 23c instance: the real server replies with the connection
+            // banner text sqlplus prints right after "Connected to:" (a real Oracle server sent
+            // "Oracle AI Database 26ai Free Release 23.26.2.0.0 - ..."). Not replying at all left
+            // the client waiting forever for this banner instead of proceeding to its real query.
+            r.readRemaining();
+            sendBanner();
+        } else if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
             
             r.readUint8();
@@ -364,21 +385,70 @@ public final class RequestLoop {
             r.readRawOrLengthPrefixedBytes((int) clientInfoLength);
             r.readRawOrLengthPrefixedBytes((int) dbopLength);
         } else {
-            throw new UnsupportedOperationException(
-                    "unsupported piggyback function code: " + piggybackFunctionCode);
+            // An unrecognized piggyback function code. Rather than fail the whole session over a
+            // best-effort piggyback this codebase doesn't have specific field-level parsing for,
+            // consume the rest of this packet and move on -- every piggyback this client has been
+            // observed sending occupies the entirety of its own TNS packet with nothing further to
+            // read afterward (see the caller's hasRemaining() check), so discarding an unrecognized
+            // one's trailing bytes is no worse than not understanding its fields would already be.
+            r.readRemaining();
         }
     }
 
-    private void handleMarker(TnsPacket packet) throws IOException {
-        byte[] resetMarker = { 1, 0, TNS_MARKER_TYPE_RESET };
-        TnsPacket response = new TnsPacket(TnsPacketType.MARKER, 0, resetMarker);
-        out.write(response.encode(reader.isLargeSdu()));
-        TnsPacket drainTerminator = new TnsPacket(TnsPacketType.DATA, 0, new byte[0]);
-        out.write(drainTerminator.encode(reader.isLargeSdu()));
+    // Function code of the "client banner request" piggyback -- see skipPiggyback's javadoc for
+    // where this was discovered. Not present in TtcConstants alongside the documented piggyback
+    // function codes since Oracle doesn't document this one publicly; kept local to where it's
+    // used rather than added to that shared, otherwise-documented constant set.
+    private static final int FUNC_CLIENT_BANNER_REQUEST = 107;
+
+    // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
+    // 2-byte "varying" marker (randomized below, same pattern as the marker
+    // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
+    // have), then a final terminating byte -- confirmed byte-for-byte via a real capture against a
+    // real Oracle 23c instance.
+    private static final byte[] BANNER_TRAILER_PREFIX = { 0x00, 0x17, 0x09, 0x01, 0x00, 0x00, 0x00 };
+    private static final byte BANNER_TRAILER_TERMINATOR = 0x1d;
+
+    private void sendBanner() throws IOException {
+        String banner = "PolyWire (Postgres via Oracle Net) - Develop, Learn, and Run for Free";
+        byte[] bannerBytes = banner.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        buf.write(0x08);
+        buf.write('S');
+        buf.write(0x00);
+        buf.write(bannerBytes, 0, bannerBytes.length);
+        buf.write(0x00);
+        buf.write(BANNER_TRAILER_PREFIX, 0, BANNER_TRAILER_PREFIX.length);
+        byte[] varying = new byte[2];
+        new java.security.SecureRandom().nextBytes(varying);
+        buf.write(varying, 0, varying.length);
+        buf.write(BANNER_TRAILER_TERMINATOR);
+        TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, buf.toByteArray());
+        out.write(packet.encode(reader.isLargeSdu()));
         out.flush();
     }
 
-    private static final byte TNS_MARKER_TYPE_RESET = 2;
+    /**
+     * A real distributed-database-link connection's native OCI client sends TNS RESET markers
+     * during the request loop (not just during login -- see {@code O5LogonHandler}'s own marker
+     * handling and its javadoc for the login-time half of this investigation). This method used to
+     * unconditionally echo a RESET marker straight back for every marker received, which, tested
+     * live against a real Oracle 23c instance, causes an infinite marker ping-pong between this
+     * side and the client (confirmed via a live byte capture running into hundreds of thousands of
+     * frames in under a minute -- each side kept interpreting the other's echo as a fresh marker to
+     * echo back).
+     *
+     * <p>The real reference client's own marker handler
+     * ({@code NetworkChannelImpl.handleMarkerPacket}, case {@code NIQRMARK}/reset) only ever echoes
+     * a reset back when {@code acknowledgeReset} was already set -- which only happens when
+     * <i>that same side</i> sent the initiating break itself and is now waiting on the peer's
+     * acknowledgment. PolyWire never initiates a break, so it should never be the one echoing a
+     * reset either; simply consuming and ignoring the marker (matching the "silent skip" behavior
+     * confirmed correct at login time) is the correct response here.
+     */
+    private void handleMarker(TnsPacket packet) throws IOException {
+        // Intentionally no response -- see javadoc above.
+    }
 
     private void handleExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
         if (request.sqlText != null) {
