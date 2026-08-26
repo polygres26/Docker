@@ -447,6 +447,35 @@ public final class RequestLoop {
         w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64));
     }
 
+    // Where a real row belongs *inside* NATIVE_OCI_EXECUTE_TAIL_B64, for the second (chained)
+    // native-OCI Execute in a session -- see handleExecute's own comment for how this was found.
+    // Confirmed live: a real capture's own tail-equivalent bytes match this template exactly for
+    // their first 32 bytes, then a real row's own bytes appear, then the template's remaining 188
+    // bytes match again (with a handful of session-specific bytes differing throughout, same as
+    // this template's own known variance -- see its javadoc above) -- i.e. the row is spliced into
+    // the middle of what looked, from the first (row-free) Execute, like one opaque fixed span.
+    private static final int NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT = 32;
+
+    // A second, separate 50-byte span that belongs between the row-insertion point above and the
+    // row data itself -- found the same way, live diffing against a real capture: after inserting
+    // rows directly at NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, the real capture's row still
+    // started 50 bytes later than this codebase's own output did, with these exact 50 bytes (almost
+    // entirely zero, six leading non-zero bytes: a real, per-row descriptor of some kind, plausibly
+    // OCI bind/define buffer-size housekeeping -- exact meaning not needed to get past it, same as
+    // NATIVE_OCI_ROW_PREFIX) sitting in the real capture right where this codebase's output jumped
+    // straight to the row. Only one real row has been captured so far, so -- like the row prefix --
+    // this is a fixed, best-effort template rather than a field-by-field understanding.
+    private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK = java.util.Base64.getDecoder().decode(
+        "BgEaAAIAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+
+    private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
+        byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
+        w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
+        w.writeRaw(NATIVE_OCI_PRE_ROW_BLOCK);
+        writeRows(w, maxRows);
+        w.writeRaw(java.util.Arrays.copyOfRange(tail, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, tail.length));
+    }
+
     private static boolean isStatementShaped(int functionCode) {
         return functionCode == TtcConstants.FUNC_EXECUTE || functionCode == TtcConstants.FUNC_FETCH
                 || functionCode == TtcConstants.FUNC_REEXECUTE || functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH;
@@ -799,7 +828,7 @@ public final class RequestLoop {
         }
 
         if (result.isQuery()) {
-            openColumns = toColumnMetadata(result.columns());
+            openColumns = toColumnMetadata(result.columns(), usedNativeOciExecuteFallback);
             openRows = result.rows();
             fetchPosition = 0;
             ResponseWriter.writeDescribeInfo(w, openColumns, usedNativeOciExecuteFallback);
@@ -821,27 +850,25 @@ public final class RequestLoop {
                 // Real bug, found live diffing this exact response against a real Oracle-to-Oracle
                 // self-loop capture: real Oracle's own Execute response for the SECOND (chained --
                 // see nativeOciExecuteCount's javadoc) Execute in a session embeds the query's
-                // actual row data inline, right here, before the fixed 220-byte tail (confirmed
-                // live: a real capture's equivalent response has this query's exact encoded values,
-                // id=1/amount=99.5, sitting in the middle of it) -- this call site used to go
-                // straight to the static tail with no rows at all for every Execute, meaning every
-                // row had to come back via a later Fetch instead. That's not just suboptimal: it
-                // changes the whole shape of what the client expects afterward (a real self-loop
-                // capture's own subsequent Fetch, once the row was already delivered here, got a
-                // pure ORA-01403 with no row data of its own -- a different, simpler response shape
-                // than what this codebase's Fetch handler had to construct when it was the one
-                // carrying the only copy of the row). writeNativeOciExecuteTail's 220-byte template
-                // was always derived as the fixed suffix *after* any row content, so inserting real
-                // rows ahead of it (instead of nothing) is consistent with how it was measured, not
-                // a change to it. The FIRST native-OCI Execute in a session must NOT get rows here
-                // -- tried unconditionally first and it broke that call specifically (confirmed
-                // live: the client reacted with a TNS BREAK/RESET), matching real Oracle's own
-                // first Execute response, which really is DESCRIBE_INFO + the tail with no row
-                // content.
+                // actual row data inline (confirmed live: a real capture's equivalent response has
+                // this query's exact encoded values, id=1/amount=99.5, sitting in it), not just the
+                // static, row-free NATIVE_OCI_EXECUTE_TAIL_B64 template this call site used to send
+                // unconditionally. Two wrong guesses before finding the real shape: (1) rows
+                // immediately before the whole static tail -- byte-diffing the result against the
+                // real capture showed the real row sits INSIDE the tail's own byte range, not before
+                // it; (2) writeSuccessEnd (the compositional, cursorId/rowcount-aware writer that's
+                // correct for every OTHER client's row-returning Execute) instead of the tail
+                // entirely -- also wrong, real Oracle really does still send this same tail template
+                // for this client, just with a row spliced into it (see
+                // writeNativeOciExecuteTailWithRows's own javadoc for exactly where and how that was
+                // confirmed). The FIRST native-OCI Execute in a session (prepare-shaped, genuinely no
+                // row content) keeps using the plain tail -- tried giving it rows/writeSuccessEnd too
+                // and both broke it specifically, confirmed live via a TNS BREAK/RESET.
                 if (nativeOciExecuteCount > 1) {
-                    writeRows(w, request.numIters);
+                    writeNativeOciExecuteTailWithRows(w, request.numIters);
+                } else {
+                    writeNativeOciExecuteTail(w);
                 }
-                writeNativeOciExecuteTail(w);
             } else {
                 ResponseWriter.writeSuccessEnd(w, writeRows(w, request.numIters), openCursorId, callNumber);
             }
@@ -909,7 +936,7 @@ public final class RequestLoop {
         return ordered;
     }
 
-    private static List<ColumnMetadata> toColumnMetadata(List<ColumnInfo> columns) {
+    private static List<ColumnMetadata> toColumnMetadata(List<ColumnInfo> columns, boolean uppercaseNames) {
         List<ColumnMetadata> result = new ArrayList<>(columns.size());
         for (ColumnInfo col : columns) {
             int oraType = switch (col.jdbcType()) {
@@ -927,7 +954,16 @@ public final class RequestLoop {
             long bufferSize = oraType == TtcConstants.ORA_TYPE_NUM_VARCHAR
                     ? Math.max(1, col.displaySize())
                     : (oraType == TtcConstants.ORA_TYPE_NUM_DATE ? 7 : 22);
-            result.add(new ColumnMetadata(col.name(), oraType, precision, scale, bufferSize, col.nullable()));
+            // Real bug, found live diffing a native-OCI dblink client's DESCRIBE_INFO response
+            // against a real Oracle-to-Oracle self-loop capture: real Oracle reports column names
+            // in uppercase ("AMOUNT"), matching its own default unquoted-identifier convention --
+            // this codebase's own column name comes straight from Postgres's catalog, which folds
+            // the other way (lowercase), so it reached the client as "amount" unchanged. Scoped to
+            // the native-OCI fallback specifically since it's the only client this has been
+            // confirmed to matter for live; JDBC/sqlplus/SQLcl keep getting Postgres's own case
+            // exactly as before.
+            String name = uppercaseNames ? col.name().toUpperCase(java.util.Locale.ROOT) : col.name();
+            result.add(new ColumnMetadata(name, oraType, precision, scale, bufferSize, col.nullable()));
         }
         return result;
     }
@@ -1019,9 +1055,22 @@ public final class RequestLoop {
         // behavior below is correct as-is and applies unconditionally again -- the actual next gap
         // is figuring out what that further real request is and replying to it, not this.
         if (rowsWritten < request.fetchArraySize) {
+            if (usedNativeOciExecuteFallback && rowsWritten == 0) {
+                // Real bug, found live diffing this exact response against a real Oracle-to-Oracle
+                // self-loop capture (finally reproducible again after this investigation's self-loop
+                // environment was fixed): a genuinely-empty Fetch's real response for this client
+                // isn't just this codebase's generic writeErrorEnd shape with a fuller message --
+                // it's a substantially longer (179-byte), differently-structured message the real
+                // capture's own bytes never lined up with field-by-field (the same class of "real
+                // Oracle sends more than writeErrorEnd/writeSuccessEnd construct" gap already found
+                // for the Execute response -- see writeNativeOciExecuteTailWithRows). No cursor-id
+                // echo point was found in it either (unlike Execute's tail, its only 0x07 byte is
+                // part of a fixed span, not an echoed value) -- used verbatim rather than patched.
+                w.writeRaw(NATIVE_OCI_EMPTY_FETCH_RESPONSE);
+                return;
+            }
             // Real bug, found live diffing this exact response against a real Oracle-to-Oracle
-            // self-loop capture (finally reproducible again after this investigation's self-loop
-            // environment was fixed): real Oracle's own end-of-fetch message text is the full
+            // self-loop capture: real Oracle's own end-of-fetch message text is the full
             // "ORA-01403: no data found\n" -- both the "ORA-01403: " prefix AND a trailing newline
             // this code was missing, not the bare "no data found" it used to send. Confirmed via
             // the length-prefixed message string's own byte length in the capture: 0x19=25, i.e.
@@ -1050,6 +1099,13 @@ public final class RequestLoop {
             w.writeUint8(0x1d);
         }
     }
+
+    // Real bytes, captured live from a real Oracle-to-Oracle self-loop's response to a Fetch that
+    // genuinely found zero rows (the normal case once the Execute response above already delivers
+    // every row inline) -- see handleFetch's own comment for why this exists instead of
+    // writeErrorEnd. Includes its own trailing 0x1d already, unlike writeErrorEnd/writeSuccessEnd.
+    private static final byte[] NATIVE_OCI_EMPTY_FETCH_RESPONSE = java.util.Base64.getDecoder().decode(
+        "BAMAAAAjAAEBAAAAewUAAAAABwAAAAMAIAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAA2AQAAAAAAAAAAAAAAAAAAsBRFKrL1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAEAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
 
     private long writeRows(TtcWriter w, long maxRows) {
         long count = 0;
