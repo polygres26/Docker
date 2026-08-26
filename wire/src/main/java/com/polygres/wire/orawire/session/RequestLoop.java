@@ -382,7 +382,30 @@ public final class RequestLoop {
      */
     private ExecuteRequest readExecuteRequest(TtcReader r, TnsPacket packet) {
         try {
-            return ExecuteRequestReader.read(r);
+            ExecuteRequest parsed = ExecuteRequestReader.read(r);
+            // Real bug, found live against a real dblink client's Execute for a query shaped
+            // differently from the "SELECT *" one this fallback was originally found and fixed
+            // against ("SELECT id, amount FROM t@link" instead): this client's field layout
+            // mismatch doesn't always throw ArrayIndexOutOfBoundsException the way the "SELECT *"
+            // shape did -- for this shape, the structured reader ran to completion without any
+            // exception at all, just silently landing on sqlPointer=0 ("not a fresh parse, no SQL
+            // text follows" -- exactly the misreading readByScanningForSql's own javadoc already
+            // warned this client triggers) with cursorId also 0. sqlText==null and cursorId==0
+            // together are never legitimate for a real Execute: a genuine re-execute of a cached
+            // statement (sqlText==null) always carries the real cursor id of the statement it's
+            // reusing, never 0. Confirmed live: without this check, that combination reached
+            // handleExecute's dual-table rewriting unguarded and threw a NullPointerException
+            // trying to regex-match null SQL text. Retry via the same raw-scanning fallback used
+            // for the exception case, against this same packet's own raw bytes (not `r`, whose
+            // position reflects the structured reader's own, differently-wrong parse this time).
+            if (parsed.sqlText == null && parsed.cursorId == 0) {
+                log.info("Execute request parsed without error but produced no SQL text and no cursor "
+                        + "id (real dblink native-OCI client, different query shape?) -- falling back "
+                        + "to scanning its raw bytes for a SQL statement");
+                usedNativeOciExecuteFallback = true;
+                return ExecuteRequestReader.readByScanningForSql(packet.payload());
+            }
+            return parsed;
         } catch (ArrayIndexOutOfBoundsException e) {
             log.info("Execute request didn't match the known field layout (real dblink native-OCI "
                     + "client?) -- falling back to scanning its raw bytes for a SQL statement: {}",
