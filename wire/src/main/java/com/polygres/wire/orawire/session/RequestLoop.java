@@ -406,7 +406,7 @@ public final class RequestLoop {
     // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
     // have), then a final terminating byte -- confirmed byte-for-byte via a real capture against a
     // real Oracle 23c instance.
-    private static final byte[] BANNER_TRAILER_PREFIX = { 0x00, 0x17, 0x09, 0x01, 0x00, 0x00, 0x00 };
+    private static final byte[] BANNER_TRAILER_PREFIX = { 0x00, 0x00, 0x17, 0x09, 0x01, 0x00, 0x00, 0x00 };
     private static final byte BANNER_TRAILER_TERMINATOR = 0x1d;
 
     private void sendBanner() throws IOException {
