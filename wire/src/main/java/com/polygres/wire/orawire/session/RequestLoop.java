@@ -518,26 +518,27 @@ public final class RequestLoop {
     // the theory the client fetches rows via a separate real FETCH call instead of inline. (Tried in
     // isolation first -- numIters=0, no row writing, no tail template -- and made no difference on
     // its own; combined with this tail template is what's actually being tried here.)
-    // Real bug, found live testing a second query reusing the same dblink connection: this
-    // template's bytes at relative offset 35-37 were left as the original captured template's own
-    // 0x00 0x00 0x00, on the theory (like the rest of this template) that they were session-noise
-    // safe to leave un-patched. Confirmed WRONG by diffing a real Oracle-to-Oracle self-loop
-    // capture of two sequential queries on the same link against EACH OTHER (not just against this
-    // codebase's own output): real Oracle sends the exact same non-zero bytes (0x39 0xd2 0x76) at
-    // this position for BOTH queries -- i.e. this is a real, constant value real Oracle always
-    // sends (plausibly something table/schema-scoped, not query-scoped, given it doesn't vary
-    // between two back-to-back queries against the same table), not session noise. A first query
-    // over a brand new connection apparently tolerates this codebase's own zero here (nothing to
-    // compare it against yet), but a second query -- by which point the client has presumably
-    // already recorded the real value from the first query's own response -- does not, and the
-    // mismatch surfaces as a real client-side "ORA-02072: distributed database network protocol
-    // mismatch" (a graceful, diagnosable rejection, not a hang or crash).
     private static final String NATIVE_OCI_EXECUTE_TAIL_B64 =
-        "BwAAAAd4fggaBBsoAQAAAOgfAABdAAAAXQAAAAAAAAAIBgA50nYAAAAAAAcAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAQDAAAA3QsBAAAAAAAAAAAAAAcAHgADAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAANgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
+        "BwAAAAd4fggaBBsoAQAAAOgfAABdAAAAXQAAAAAAAAAIBgAAAAAAAAAAAAcAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAQDAAAA3QsBAAAAAAAAAAAAAAcAHgADAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAANgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
 
     private void writeNativeOciExecuteTail(TtcWriter w) {
         w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64));
     }
+
+    // Real bug, found live testing a second query reusing the same dblink connection: relative
+    // offset 35-37 of NATIVE_OCI_EXECUTE_TAIL_B64 is real, non-zero content (0x39 0xd2 0x76) that
+    // real Oracle sends -- but ONLY in the chained (row-carrying) Execute response, confirmed by
+    // diffing a real self-loop capture's two sequential queries' CHAINED responses against each
+    // other (identical) as well as against their own PREPARE responses (zero at this same
+    // position in both). An earlier version of this fix patched NATIVE_OCI_EXECUTE_TAIL_B64
+    // itself, which -- since writeNativeOciExecuteTail (the prepare-shaped response, no rows) uses
+    // the same base template -- wrongly leaked this value into the prepare response too, a
+    // regression this session caught by re-diffing after the first fix and finding a NEW mismatch
+    // introduced at this exact position in query 2's own prepare response. This byte-array copy +
+    // patch, applied only inside writeNativeOciExecuteTailWithRows below, keeps the plain prepare
+    // tail exactly as it always was.
+    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH = {0x39, (byte) 0xd2, 0x76};
+    private static final int NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH_OFFSET = 35;
 
     // Where a real row belongs *inside* NATIVE_OCI_EXECUTE_TAIL_B64, for the second (chained)
     // native-OCI Execute in a session -- see handleExecute's own comment for how this was found.
@@ -569,6 +570,8 @@ public final class RequestLoop {
 
     private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
         byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
+        System.arraycopy(NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH, 0, tail,
+                NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH_OFFSET, NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH.length);
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
         w.writeRaw(NATIVE_OCI_PRE_ROW_BLOCK);
         writeRows(w, maxRows);
