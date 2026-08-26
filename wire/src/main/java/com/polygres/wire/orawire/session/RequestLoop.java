@@ -307,13 +307,31 @@ public final class RequestLoop {
                 logoff = true;
             } else if (functionCode == TtcConstants.FUNC_COMMIT) {
                 commitAll();
-                ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
-                if (usedNativeOciExecuteFallback) {
-                    // Same real trailing byte handleFetch's own comment already documents for this
-                    // client (every native-OCI response this investigation has captured ends in one
-                    // more byte, 0x1d, after its own real content) -- writeSuccessEnd is generic,
-                    // hand-written code shared with JDBC/sqlplus/SQLcl and doesn't append it.
-                    w.writeUint8(0x1d);
+                if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
+                    // A real SQL*Plus client's own FUNC_COMMIT arrives as the tail of the bundled
+                    // close-cursors/set-end-to-end-attr/commit piggyback (see the scan-based
+                    // recovery in skipPiggyback above), and a live side-by-side comparison against
+                    // a genuine real Oracle-to-Oracle capture of this exact bundle found this
+                    // codebase's normal writeSuccessEnd-based COMMIT reply is the wrong shape for
+                    // it: real Oracle replies with the same compact STATUS ack (tag 9, zero
+                    // retcode, trailing 0x1d) already established and confirmed live for this same
+                    // client's own LOGOFF above -- not writeSuccessEnd's own ERROR-tagged (tag 4)
+                    // shape. Sending the wrong shape here was confirmed live to be exactly why a
+                    // real SQL*Plus client went silent after PolyWire's own COMMIT response instead
+                    // of proceeding to its final close marker. A dblink native OCI client's own
+                    // standalone COMMIT (never part of this bundle) is unaffected -- it keeps using
+                    // the writeSuccessEnd shape below, already confirmed correct for it.
+                    w.writeRaw(NATIVE_OCI_LOGOFF_RESPONSE);
+                } else {
+                    ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+                    if (usedNativeOciExecuteFallback) {
+                        // Same real trailing byte handleFetch's own comment already documents for
+                        // this client (every native-OCI response this investigation has captured
+                        // ends in one more byte, 0x1d, after its own real content) --
+                        // writeSuccessEnd is generic, hand-written code shared with
+                        // JDBC/sqlplus/SQLcl and doesn't append it.
+                        w.writeUint8(0x1d);
+                    }
                 }
             } else if (functionCode == TtcConstants.FUNC_ROLLBACK) {
                 if (xaTransaction != null) {
