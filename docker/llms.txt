@@ -33,7 +33,8 @@ instead of re-deriving it from the whole site.
 
 ## PolyWire
 
-- [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, the
+- [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, a live
+  "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), the
   before/after protocol-rewiring diagram, a 60-second quick start, and the architecture diagram.
 - [Full capabilities](https://polygres26.github.io/polywire.html): outcomes (organized by the
   five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,

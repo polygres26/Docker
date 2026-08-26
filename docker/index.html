@@ -133,9 +133,8 @@
         <div class="obsCard"><h4>Observe</h4><p>See every request before it reaches Postgres — client → protocol → SQL → policy → route → backend → latency → error — exported to the tools you already run.</p></div>
       </div>
       <p class="rttNote">
-        <b>Different protocols. Same policies. Same Postgres.</b> Migration is one reason to run
-        PolyWire — not the only one. Some teams run it indefinitely as a permanent control point
-        in front of Postgres, whether or not anything is being migrated at all.
+        <b>Different protocols. Same policies. Same Postgres.</b> One control point for every
+        Postgres workload.
       </p>
 
       <h3 class="subhead" id="architecture-simple">What is PolyWire?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
@@ -160,10 +159,33 @@
         detailed eight-stage pipeline behind this diagram.
       </p>
 
+      <h3 class="subhead" id="pillars">Four ways teams put PolyWire to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Modernize databases</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
+        <div class="obsCard"><h4>Build a Postgres control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of five databases' own tooling, run indefinitely, not just during a migration.</p></div>
+        <div class="obsCard"><h4>Scale Postgres horizontally</h4><p>Route tenants, customers, or predicates across shards and merge results centrally — without the application knowing sharding exists.</p></div>
+        <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
+      </div>
+      <p class="rttNote"><a href="polywire.html">Explore all PolyWire capabilities →</a></p>
+
       <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
-      <div class="termWindow">
-        <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
-        <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+      <p class="rttNote">Pick a protocol — same demo, different client, same PostgreSQL on the other end.</p>
+      <div class="demoSelector">
+        <input type="radio" name="demoProto" id="demo-oracle" class="demoRadio" checked>
+        <input type="radio" name="demoProto" id="demo-mysql" class="demoRadio">
+        <input type="radio" name="demoProto" id="demo-mongodb" class="demoRadio">
+        <input type="radio" name="demoProto" id="demo-opensearch" class="demoRadio">
+        <div class="demoTabs">
+          <label for="demo-oracle" class="demoTab">Oracle</label>
+          <label for="demo-mysql" class="demoTab">MySQL</label>
+          <label for="demo-mongodb" class="demoTab">MongoDB</label>
+          <label for="demo-opensearch" class="demoTab">OpenSearch</label>
+        </div>
+
+        <div class="demoPanel" id="panel-oracle">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
 
 SQLcl: Release 23.4 Production
 
@@ -177,14 +199,77 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
 2 rows selected.
 
 SQL&gt;</pre>
-      </div>
-      <div class="demoFlow">
-        <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+          <div class="demoFlow">
+            <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+        </div>
+
+        <div class="demoPanel" id="panel-mysql">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mysql -h 127.0.0.1 -P 13306 -u root -p
+
+mysql&gt; SELECT * FROM orders;
+
++----------+-------------+--------+
+| order_id | customer_id | amount |
++----------+-------------+--------+
+|     1001 |          42 | 129.99 |
+|     1002 |          57 |  89.50 |
++----------+-------------+--------+
+2 rows in set
+
+mysql&gt;</pre>
+          </div>
+          <div class="demoFlow">
+            <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+        </div>
+
+        <div class="demoPanel" id="panel-mongodb">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mongosh mongodb://localhost:27017
+
+test&gt; db.orders.find()
+
+[
+  { _id: 1001, customer_id: 42, amount: 129.99 },
+  { _id: 1002, customer_id: 57, amount: 89.50 }
+]
+
+test&gt;</pre>
+          </div>
+          <div class="demoFlow">
+            <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+        </div>
+
+        <div class="demoPanel" id="panel-opensearch">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ curl -s localhost:9200/orders/_search
+
+{
+  "hits": {
+    "total": { "value": 2 },
+    "hits": [
+      { "_source": { "order_id": 1001, "amount": 129.99 } },
+      { "_source": { "order_id": 1002, "amount": 89.50 } }
+    ]
+  }
+}</pre>
+          </div>
+          <div class="demoFlow">
+            <span>REST client</span><span class="rewireArrow">→</span><span>OSWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+        </div>
       </div>
       <p class="rttNote">
-        <i>Oracle client. Oracle wire protocol. PostgreSQL database. No client rewrite.</i>
-        Table contents above are illustrative — the query, protocol, and path are exactly real.
-        (SQLcl and JDBC clients are what's verified working today; see
+        <i>Real client. Real wire protocol. PostgreSQL database. No client rewrite.</i>
+        Table/document contents above are illustrative — the protocol and path are exactly real.
+        (SQLcl, JDBC, and psql are what's most thoroughly verified today; see
         <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.)
       </p>
       <p class="credStrip">
@@ -362,7 +447,7 @@ aws sqs receive-message \                          # SQS wire
         <a href="polywire.html#security">Security</a> for the full scope.
       </p>
 
-      <h3 class="subhead" id="security-boundary">One security boundary for Postgres.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
         <b>Security follows the request, not the protocol.</b>
@@ -375,23 +460,6 @@ aws sqs receive-message \                          # SQS wire
         <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
         <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically. (gRPC is PolyWire's own native driver protocol, not an emulated foreign database — see <a href="polywire.html">full capabilities</a> for what that means.)</figcaption>
       </figure>
-      <p class="rttNote">
-        <b>Run it anywhere Postgres runs.</b> Docker · Kubernetes · AWS · Azure · GCP · OCI ·
-        on-prem — your infrastructure, your network, your Postgres.
-      </p>
-
-      <h3 class="subhead" id="pillars">Four ways teams put PolyWire to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote">
-        Migration is one reason to run PolyWire — not the only one. Some teams run it
-        indefinitely: a permanent gateway in front of Postgres, not a bridge to somewhere else.
-      </p>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Modernize databases</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
-        <div class="obsCard"><h4>Build a Postgres control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of five databases' own tooling, run indefinitely, not just during a migration.</p></div>
-        <div class="obsCard"><h4>Scale Postgres horizontally</h4><p>Route tenants, customers, or predicates across shards and merge results centrally — without the application knowing sharding exists.</p></div>
-        <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
-      </div>
-      <p class="rttNote"><a href="polywire.html">Explore all PolyWire capabilities →</a></p>
 
       <h3 class="subhead" id="without-polywire">Without PolyWire vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
       <div class="withoutWithGrid">
@@ -437,11 +505,7 @@ aws sqs receive-message \                          # SQS wire
           </tbody>
         </table>
       </div>
-      <p class="rttNote">
-        This compares architectural approaches, not named products — see
-        <a href="polywire.html">full capabilities</a> for the honestly-scoped detail behind
-        every ✓ above.
-      </p>
+      <p class="rttNote"><a href="polywire.html">Comparison methodology →</a></p>
 
       <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
@@ -483,6 +547,13 @@ aws sqs receive-message \                          # SQS wire
         <li><span class="uc-body"><span class="uc-title">Support</span><span class="uc-desc">Community support on Developer; enterprise support on Enterprise — see Pricing below.</span></span></li>
       </ul>
       <p class="rttNote"><a href="#contact">Schedule a PolyWire Architecture Review →</a></p>
+
+      <h3 class="subhead" id="deploy-anywhere">Your infrastructure. Your Postgres.<a class="permalink" href="#deploy-anywhere" aria-label="Link to this section">#</a></h3>
+      <p class="pillarStrip">Docker · Kubernetes · AWS · Azure · GCP · OCI · On-prem</p>
+      <p class="rttNote">
+        Run PolyWire next to the applications and databases you already operate — no managed
+        control plane required.
+      </p>
 
     </section>
 
@@ -601,12 +672,13 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <h2>Contact</h2>
       <p class="lede">
-        Questions about either tool, or something not working right? We read everything sent here.
+        <b>Considering PolyWire for production?</b> Bring your architecture — we'll help map
+        where PolyWire fits. Pick "Architecture Review" below.
       </p>
       <p class="lede" style="margin-bottom: 18px;">
-        <b>Product questions, bug reports, feature requests</b> — for either PolyWire or
-        PolyAdvisor. Include what you were trying to do and, for a bug, what you expected vs.
-        what happened. Goes straight to the team, no email address to copy or scrape.
+        <b>Report an issue or ask a question</b> — for either PolyWire or PolyAdvisor. Include
+        what you were trying to do and, for a bug, what you expected vs. what happened. Goes
+        straight to the team, no email address to copy or scrape.
       </p>
       <form id="contactForm" class="contactForm" action="https://formspree.io/f/mljrqbna" method="POST">
         <div class="formRow">

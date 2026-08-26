@@ -218,6 +218,21 @@
   .archHubLabel { color: #fff; letter-spacing: 0.03em; }
   .archHubFlow { color: rgba(255,255,255,0.82); }
   .archArrow { color: var(--ink-faint); font-size: 18px; line-height: 1; }
+
+  /* CSS-only protocol tab selector for "See it happen" -- radio inputs drive which .demoPanel
+     shows via the general sibling combinator; no JS needed. */
+  .demoRadio { position: absolute; opacity: 0; pointer-events: none; }
+  .demoTabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+  .demoTab { display: inline-block; padding: 8px 16px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink-dim); user-select: none; }
+  #demo-oracle:checked ~ .demoTabs label[for="demo-oracle"],
+  #demo-mysql:checked ~ .demoTabs label[for="demo-mysql"],
+  #demo-mongodb:checked ~ .demoTabs label[for="demo-mongodb"],
+  #demo-opensearch:checked ~ .demoTabs label[for="demo-opensearch"] { background: var(--indigo); color: #fff; border-color: var(--indigo); }
+  .demoPanel { display: none; }
+  #demo-oracle:checked ~ #panel-oracle,
+  #demo-mysql:checked ~ #panel-mysql,
+  #demo-mongodb:checked ~ #panel-mongodb,
+  #demo-opensearch:checked ~ #panel-opensearch { display: block; }
   .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
   .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .obsCard h4 { margin: 0 0 6px; font-size: 14px; }
