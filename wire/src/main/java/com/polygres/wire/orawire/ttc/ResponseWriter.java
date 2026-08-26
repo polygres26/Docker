@@ -158,6 +158,29 @@ public final class ResponseWriter {
         }
     }
 
+    // A real distributed-database-link connection's native OCI client's own real row data --
+    // embedded inline in its Execute response, not a separate Fetch (see RequestLoop's
+    // nativeOciExecuteCount javadoc for why) -- carries 4 extra bytes between the ROW_DATA tag and
+    // the first column's value that plain writeRow above doesn't produce: confirmed live via a real
+    // Oracle-to-Oracle self-loop capture's own equivalent row, byte offset for byte offset (the
+    // capture's row starts with the same ROW_DATA tag, then these 4 bytes, then a length-prefixed
+    // column value in exactly the same shape plain writeRow already gets right). Only one real row
+    // has been captured so far, so this is necessarily a fixed, best-effort template rather than a
+    // field-by-field understanding of what these 4 bytes mean (a per-row descriptor of some kind,
+    // plausibly ROWID/slot-like housekeeping data a real backing table would have and this
+    // codebase's own rows don't) -- kept separate from writeRow, not merged into it, since every
+    // other tested client's real captures have never shown this prefix and JDBC/sqlplus/SQLcl's
+    // rows must stay exactly as they were.
+    private static final byte[] NATIVE_OCI_ROW_PREFIX = { 0x0a, 0x2c, 0x01, 0x02 };
+
+    public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
+        w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
+        w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+        for (int i = 0; i < columns.size(); i++) {
+            writeColumnValue(w, columns.get(i), values[i]);
+        }
+    }
+
     private static void writeColumnValue(TtcWriter w, ColumnMetadata col, Object value) {
         if (value == null) {
             w.writeUint8(0);

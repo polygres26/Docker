@@ -74,6 +74,16 @@ public final class RequestLoop {
     // work without it, so this stays opt-in per-session rather than unconditional.
     private boolean usedNativeOciExecuteFallback;
 
+    // Counts native-OCI-fallback Execute calls in this session. This client sends TWO Executes for
+    // one query (see the piggyback/chained-FUNCTION comments elsewhere in this class): a first,
+    // prepare-shaped one carrying no real data (confirmed live: real Oracle's own response to it is
+    // DESCRIBE_INFO + the fixed tail only, no row content -- writing rows into it broke the client,
+    // which reacted with a TNS BREAK/RESET), and a second, chained one that's the actual
+    // remote-fetch call and DOES need real inline row data (see handleExecute's own comment). This
+    // distinguishes the two without needing to understand what makes them different at the SQL/request
+    // level -- only that the second native-OCI Execute in a session is the one that counts.
+    private int nativeOciExecuteCount;
+
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
     private volatile String lastSqlText;
@@ -485,6 +495,30 @@ public final class RequestLoop {
 
     private void skipPiggyback(TtcReader r) throws IOException {
         int piggybackFunctionCode = r.readUint8();
+        if (usedNativeOciExecuteFallback && piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS) {
+            // A real distributed-database-link connection's native OCI client's FUNC_CLOSE_CURSORS
+            // piggyback carries a real, varying opaque field right where every other piggyback type
+            // (and the generic seq+UB8 preamble below, shared by all of them) safely assumes a
+            // chunked UB8 that's always 0 -- confirmed live against a real Oracle 23c instance: two
+            // earlier live captures of this exact call both happened to have 0 there, so an earlier
+            // version of this method read the shared preamble as usual and then hand-derived a
+            // 31-byte skip from that point to reach the real chained FUNCTION tag that follows (see
+            // readNativeOciExecuteTail and the FUNC_CLOSE_CURSORS branch elsewhere in this class for
+            // the same "chunked field that isn't really chunked for this client" pattern found in
+            // FUNC_FETCH). A THIRD live capture (a different real Oracle 23c container, same
+            // version) broke that assumption with a genuine nonzero value there -- attempting to
+            // chunk-decode it desyncs everything downstream ("expected function-call message, got
+            // type 255"). What stayed constant across all three captures, regardless of that field's
+            // actual value, is the total distance from right after this piggyback's function code to
+            // the real chained FUNCTION tag: 35 bytes. Skipping that fixed distance directly, without
+            // trying to semantically parse any of the fields in between, sidesteps the whole fragile
+            // chunked-vs-raw ambiguity the same way the DESCRIBE_INFO header/Execute tail templates
+            // already do elsewhere in this class. Scoped to the native-OCI Execute fallback
+            // specifically -- JDBC/sqlplus/SQLcl's own FUNC_CLOSE_CURSORS piggybacks are handled by
+            // the ordinary numCursors-based parse below and have never been observed to need this.
+            r.skip(35);
+            return;
+        }
         r.readUint8();
         r.readUb8();
         if (piggybackFunctionCode == FUNC_CLIENT_BANNER_REQUEST) {
@@ -500,36 +534,13 @@ public final class RequestLoop {
             sendBanner();
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
-
+            // The native-OCI dblink fallback case is handled entirely above, before the generic
+            // seq+UB8 preamble -- this ordinary numCursors-based parse is only reached for
+            // JDBC/sqlplus/SQLcl, which have never been observed sending anything past it.
             r.readUint8();
             long numCursors = r.readUb4();
             for (long i = 0; i < numCursors; i++) {
                 r.readUb4();
-            }
-            // A real distributed-database-link connection's native OCI client's FUNC_CLOSE_CURSORS
-            // piggyback doesn't end here the way it does for JDBC/sqlplus/SQLcl -- confirmed live
-            // against a real Oracle 23c instance via two independent real captures (a real
-            // Oracle-to-Oracle self-loop and this codebase's own dblink test scenario), byte-length
-            // identical despite carrying different session-specific values: with numCursors=0, 31
-            // more bytes follow (an 8-byte -2/"invalid" cursor-id sentinel, then further opaque
-            // session/call-tag fields whose exact field-by-field layout wasn't needed to get past
-            // them -- only their fixed total width, confirmed the same across both captures) before
-            // a real chained FUNCTION message -- a genuine second EXECUTE (function code 94) for the
-            // dblink's actual remote-fetch query, reusing real column aliases (A1.ID, A1.AMOUNT)
-            // instead of the first EXECUTE's plain "SELECT *". (An earlier version of this skip used
-            // 21 bytes, from a hand-traced byte count that wrongly assumed readUb8()/readUb4() are
-            // fixed-width -- they're actually Oracle's usual chunked length-prefixed encoding, e.g.
-            // a lone 0x00 length byte for a zero value, not "8 bytes"/"4 bytes"; replaying the
-            // parse with that corrected accounting is what found the true, live-confirmed gap of 31
-            // bytes from here to the real FUNCTION tag.) Skipping straight past this piggyback
-            // without also consuming these bytes left the caller's next messageType read landing on
-            // padding mid-structure instead of that FUNCTION tag ("expected function-call message,
-            // got type 0"). Scoped to the native-OCI Execute fallback specifically --
-            // JDBC/sqlplus/SQLcl's own FUNC_CLOSE_CURSORS piggybacks have never been observed to
-            // carry this trailing content, and a numCursors=0 close-cursors call from them really
-            // does just end here.
-            if (usedNativeOciExecuteFallback) {
-                r.skip(31);
             }
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLIENT_FEATURES) {
             
@@ -806,6 +817,30 @@ public final class RequestLoop {
             // already empty -- is unaffected and still correctly signaled via writeErrorEnd
             // below; writeInlineExhaustionEnd itself has been removed as dead code.
             if (usedNativeOciExecuteFallback) {
+                nativeOciExecuteCount++;
+                // Real bug, found live diffing this exact response against a real Oracle-to-Oracle
+                // self-loop capture: real Oracle's own Execute response for the SECOND (chained --
+                // see nativeOciExecuteCount's javadoc) Execute in a session embeds the query's
+                // actual row data inline, right here, before the fixed 220-byte tail (confirmed
+                // live: a real capture's equivalent response has this query's exact encoded values,
+                // id=1/amount=99.5, sitting in the middle of it) -- this call site used to go
+                // straight to the static tail with no rows at all for every Execute, meaning every
+                // row had to come back via a later Fetch instead. That's not just suboptimal: it
+                // changes the whole shape of what the client expects afterward (a real self-loop
+                // capture's own subsequent Fetch, once the row was already delivered here, got a
+                // pure ORA-01403 with no row data of its own -- a different, simpler response shape
+                // than what this codebase's Fetch handler had to construct when it was the one
+                // carrying the only copy of the row). writeNativeOciExecuteTail's 220-byte template
+                // was always derived as the fixed suffix *after* any row content, so inserting real
+                // rows ahead of it (instead of nothing) is consistent with how it was measured, not
+                // a change to it. The FIRST native-OCI Execute in a session must NOT get rows here
+                // -- tried unconditionally first and it broke that call specifically (confirmed
+                // live: the client reacted with a TNS BREAK/RESET), matching real Oracle's own
+                // first Execute response, which really is DESCRIBE_INFO + the tail with no row
+                // content.
+                if (nativeOciExecuteCount > 1) {
+                    writeRows(w, request.numIters);
+                }
                 writeNativeOciExecuteTail(w);
             } else {
                 ResponseWriter.writeSuccessEnd(w, writeRows(w, request.numIters), openCursorId, callNumber);
@@ -984,10 +1019,35 @@ public final class RequestLoop {
         // behavior below is correct as-is and applies unconditionally again -- the actual next gap
         // is figuring out what that further real request is and replying to it, not this.
         if (rowsWritten < request.fetchArraySize) {
-            ResponseWriter.writeErrorEnd(w, TtcConstants.ERR_NO_DATA_FOUND, "no data found", cursorIdForResponse,
-                    callNumber);
+            // Real bug, found live diffing this exact response against a real Oracle-to-Oracle
+            // self-loop capture (finally reproducible again after this investigation's self-loop
+            // environment was fixed): real Oracle's own end-of-fetch message text is the full
+            // "ORA-01403: no data found\n" -- both the "ORA-01403: " prefix AND a trailing newline
+            // this code was missing, not the bare "no data found" it used to send. Confirmed via
+            // the length-prefixed message string's own byte length in the capture: 0x19=25, i.e.
+            // exactly "ORA-01403: no data found\n".length() (24 without the newline, matching what
+            // an intermediate version of this fix that added only the prefix produced and still
+            // wasn't enough to un-stick the client -- the newline turned out to matter too).
+            // JDBC/sqlplus/SQLcl apparently never cared (they key off the numeric error code, 1403,
+            // not this string) enough for the difference to have been noticed before -- but is
+            // otherwise a plain, harmless completeness fix worth making unconditionally: this
+            // message goes to every client, native-OCI or not, and the fuller, more correct text
+            // can only help.
+            ResponseWriter.writeErrorEnd(w, TtcConstants.ERR_NO_DATA_FOUND, "ORA-01403: no data found\n",
+                    cursorIdForResponse, callNumber);
         } else {
             ResponseWriter.writeSuccessEnd(w, rowsWritten, cursorIdForResponse, callNumber);
+        }
+        if (usedNativeOciExecuteFallback) {
+            // Every real Oracle TTC message this investigation has captured -- this Fetch response,
+            // the earlier Execute response, function 68's response, all of them -- ends in one more
+            // byte, 0x1d, after its own last real content, confirmed by this codebase's own static
+            // NATIVE_OCI_EXECUTE_TAIL_B64 template already carrying it verbatim as its last byte
+            // (it's a raw real-capture copy, not hand-written). writeErrorEnd/writeSuccessEnd are
+            // hand-written, generic code shared with JDBC/sqlplus/SQLcl and don't append it --
+            // apparently harmless for them, but this pickier native-OCI client needs it: without it
+            // here, it received an otherwise byte-correct Fetch response and never proceeded.
+            w.writeUint8(0x1d);
         }
     }
 
@@ -995,7 +1055,11 @@ public final class RequestLoop {
         long count = 0;
         while (count < maxRows && fetchPosition < openRows.size()) {
             List<Object> row = openRows.get(fetchPosition++);
-            ResponseWriter.writeRow(w, openColumns, row.toArray());
+            if (usedNativeOciExecuteFallback) {
+                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray());
+            } else {
+                ResponseWriter.writeRow(w, openColumns, row.toArray());
+            }
             count++;
         }
         return count;
