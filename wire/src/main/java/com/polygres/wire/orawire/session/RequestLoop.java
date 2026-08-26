@@ -233,7 +233,16 @@ public final class RequestLoop {
         // routinely exceeds any plausible chunk length, e.g. 0xf3, and reading it as one throws
         // trying to consume far more bytes than the packet has). See readNativeOciFetchRequest's
         // javadoc for the rest of this request's real, fixed-width layout for this client.
-        if (usedNativeOciExecuteFallback && functionCode == TtcConstants.FUNC_FETCH) {
+        if (usedNativeOciExecuteFallback
+                && (functionCode == TtcConstants.FUNC_FETCH || functionCode == TtcConstants.FUNC_LOGOFF)) {
+            // Real bug, found live: this client's FUNC_LOGOFF carries the exact same kind of real,
+            // varying opaque value here that FUNC_FETCH does (confirmed live: 0x5c as the would-be
+            // chunk-length byte, again far too large to be a real chunk length, again crashing
+            // trying to consume far more bytes than the packet has) -- the same underlying "this
+            // field genuinely isn't chunked for this client" issue, not something specific to
+            // FETCH. handleLogoff() itself reads nothing further from `r`, so the exact skip width
+            // doesn't matter as long as it doesn't crash; reusing FETCH's confirmed-safe 2-byte
+            // skip rather than guessing a LOGOFF-specific width that's never actually used.
             r.skip(2);
         } else {
             r.readUb8();
@@ -262,7 +271,16 @@ public final class RequestLoop {
                 handleReexecute(r, w, callNumber, functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH);
             } else if (functionCode == TtcConstants.FUNC_LOGOFF) {
                 handleLogoff();
-                ResponseWriter.writeSuccessEnd(w, 0, 0, callNumber);
+                if (usedNativeOciExecuteFallback) {
+                    // Real bytes, captured live from a real Oracle-to-Oracle self-loop's own
+                    // response to this same client's LOGOFF: a STATUS message (tag 9), not the
+                    // ERROR-tagged (tag 4) writeSuccessEnd this codebase's other clients get --
+                    // confirmed live as its own distinct real shape, not just writeSuccessEnd with
+                    // different field values.
+                    w.writeRaw(NATIVE_OCI_LOGOFF_RESPONSE);
+                } else {
+                    ResponseWriter.writeSuccessEnd(w, 0, 0, callNumber);
+                }
                 logoff = true;
             } else if (functionCode == TtcConstants.FUNC_COMMIT) {
                 commitAll();
@@ -406,7 +424,17 @@ public final class RequestLoop {
                 return ExecuteRequestReader.readByScanningForSql(packet.payload());
             }
             return parsed;
-        } catch (ArrayIndexOutOfBoundsException e) {
+        } catch (ArrayIndexOutOfBoundsException | UnsupportedOperationException e) {
+            // UnsupportedOperationException: real bug, found live -- the SAME real dblink client
+            // sending the SAME query ("SELECT *") doesn't always hit the field layout mismatch the
+            // same way run to run. Sometimes it's ArrayIndexOutOfBoundsException (this method's
+            // original case), sometimes silently-wrong-but-no-exception (the sqlText==null check
+            // above), and sometimes the structured reader's own explicit
+            // "column defines not supported in narrow slice" guard trips instead (definesPointer
+            // read as nonzero from what's actually still this same misaligned field layout, not a
+            // real client-sent DEFINE). All three are the identical underlying problem -- this
+            // client's Execute request just isn't shaped the way ExecuteRequestReader#read expects
+            // -- so all three fall back to the same raw-scanning reader.
             log.info("Execute request didn't match the known field layout (real dblink native-OCI "
                     + "client?) -- falling back to scanning its raw bytes for a SQL statement: {}",
                     e.toString());
@@ -498,6 +526,9 @@ public final class RequestLoop {
         writeRows(w, maxRows);
         w.writeRaw(java.util.Arrays.copyOfRange(tail, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, tail.length));
     }
+
+    // See the FUNC_LOGOFF branch's comment above for where this was captured.
+    private static final byte[] NATIVE_OCI_LOGOFF_RESPONSE = java.util.Base64.getDecoder().decode("CQEAAAAAAB0=");
 
     private static boolean isStatementShaped(int functionCode) {
         return functionCode == TtcConstants.FUNC_EXECUTE || functionCode == TtcConstants.FUNC_FETCH
