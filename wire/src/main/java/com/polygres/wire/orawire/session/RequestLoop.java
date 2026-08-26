@@ -95,6 +95,18 @@ public final class RequestLoop {
     // query in the session or a later one.
     private boolean nativeOciFirstQueryComplete;
 
+    // Which real native-OCI client this session is talking to -- set once, the first time
+    // skipPiggyback sees the client-banner-request piggyback (see that method's own comment for
+    // how the two are told apart there). Needed here too because the two client types differ in
+    // WHEN they expect row data: a dblink client always sends a second, chained Execute (via a
+    // FUNC_UNKNOWN_68 round trip) before it wants any row content, and its first Execute must stay
+    // row-free (confirmed repeatedly, including a live TNS BREAK/RESET when this was tried); a
+    // real SQL*Plus client, confirmed live via a real Oracle-to-Oracle capture showing its query's
+    // actual result value already embedded in that capture's own single Execute response, never
+    // sends that second chained call at all for a simple query -- it expects its one and only
+    // Execute to carry the row directly.
+    private boolean nativeOciDblinkClient;
+
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
     private volatile String lastSqlText;
@@ -296,6 +308,13 @@ public final class RequestLoop {
             } else if (functionCode == TtcConstants.FUNC_COMMIT) {
                 commitAll();
                 ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+                if (usedNativeOciExecuteFallback) {
+                    // Same real trailing byte handleFetch's own comment already documents for this
+                    // client (every native-OCI response this investigation has captured ends in one
+                    // more byte, 0x1d, after its own real content) -- writeSuccessEnd is generic,
+                    // hand-written code shared with JDBC/sqlplus/SQLcl and doesn't append it.
+                    w.writeUint8(0x1d);
+                }
             } else if (functionCode == TtcConstants.FUNC_ROLLBACK) {
                 if (xaTransaction != null) {
                     xaTransaction.rollback();
@@ -629,7 +648,8 @@ public final class RequestLoop {
 
     private void skipPiggyback(TtcReader r) throws IOException {
         int piggybackFunctionCode = r.readUint8();
-        if (usedNativeOciExecuteFallback && piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS) {
+        if (usedNativeOciExecuteFallback && nativeOciDblinkClient
+                && piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS) {
             // A real distributed-database-link connection's native OCI client's FUNC_CLOSE_CURSORS
             // piggyback carries a real, varying opaque field right where every other piggyback type
             // (and the generic seq+UB8 preamble below, shared by all of them) safely assumes a
@@ -677,16 +697,42 @@ public final class RequestLoop {
             // since that name was already discarded upstream by the time this call happens and
             // isn't worth re-plumbing just for this one branch.
             byte[] piggybackPayload = r.readRemaining();
-            sendBanner(piggybackPayload.length > 150);
+            nativeOciDblinkClient = piggybackPayload.length > 150;
+            sendBanner(nativeOciDblinkClient);
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLOSE_CURSORS
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
             // The native-OCI dblink fallback case is handled entirely above, before the generic
-            // seq+UB8 preamble -- this ordinary numCursors-based parse is only reached for
-            // JDBC/sqlplus/SQLcl, which have never been observed sending anything past it.
-            r.readUint8();
-            long numCursors = r.readUb4();
-            for (long i = 0; i < numCursors; i++) {
-                r.readUb4();
+            // seq+UB8 preamble. This ordinary numCursors-based parse was written for, and stays
+            // correct for, a real SQL*Plus client's own STANDALONE close-cursors piggyback -- but a
+            // real SQL*Plus client was confirmed live to also send a genuinely different, bundled
+            // shape for this same function code: FUNC_CLOSE_CURSORS immediately followed, in the
+            // very same TNS packet, by a FUNC_SET_END_TO_END_ATTR piggyback and then a real
+            // FUNC_COMMIT function call -- confirmed via a real capture showing this exact
+            // "close-cursors, set-end-to-end-attr, commit" bundle right after a query's first Fetch
+            // finds no more rows. Its own internal field layout (a repeating 5-byte
+            // call-sequence-looking marker precedes each sub-call in the bundle, not modeled
+            // anywhere else in this codebase) wasn't reverse-engineered field-by-field -- instead,
+            // scan forward in the raw remaining bytes for the next recognizable message boundary
+            // (another piggyback tag, or a real FUNCTION tag paired with a function code this
+            // codebase actually knows), the same "don't depend on exact field offsets" approach
+            // {@link ExecuteRequestReader#readByScanningForSql} already uses for an analogous
+            // real-Oracle-shape problem. Falls back to the plain numCursors-based skip above if no
+            // recognizable boundary is found, so a genuinely standalone close-cursors call (the
+            // common case this branch was originally written for) is unaffected.
+            byte[] rest = r.readRemaining();
+            int boundary = findNextMessageBoundary(rest);
+            if (boundary >= 0) {
+                r.skip(-(rest.length - boundary));
+            } else {
+                // No recognizable boundary found -- fall back to treating `rest` as the plain
+                // numCursors-based body this branch originally expected, on the raw bytes already
+                // read out rather than re-reading from `r` (which is now at end-of-buffer).
+                TtcReader fallback = new TtcReader(rest);
+                fallback.readUint8();
+                long numCursors = fallback.readUb4();
+                for (long i = 0; i < numCursors; i++) {
+                    fallback.readUb4();
+                }
             }
         } else if (piggybackFunctionCode == TtcConstants.FUNC_CLIENT_FEATURES) {
             
@@ -695,34 +741,48 @@ public final class RequestLoop {
             r.readUint8();
             r.skip((int) featureBytesLength);
         } else if (piggybackFunctionCode == TtcConstants.FUNC_SET_END_TO_END_ATTR) {
-            
-            r.readUint8();
-            r.readUint8();
-            r.readUb4();
-            r.readUint8();
-            long clientIdentifierLength = r.readUb4();
-            r.readUint8();
-            long moduleLength = r.readUb4();
-            r.readUint8();
-            long actionLength = r.readUb4();
-            r.readUint8();
-            r.readUb4();
-            r.readUint8();
-            r.readUb4();
-            r.readUint8();
-            long clientInfoLength = r.readUb4();
-            r.readUint8();
-            r.readUb4();
-            r.readUint8();
-            r.readUb4();
-            r.readUint8();
-            long dbopLength = r.readUb4();
-            
-            r.readRawOrLengthPrefixedBytes((int) clientIdentifierLength);
-            r.readRawOrLengthPrefixedBytes((int) moduleLength);
-            r.readRawOrLengthPrefixedBytes((int) actionLength);
-            r.readRawOrLengthPrefixedBytes((int) clientInfoLength);
-            r.readRawOrLengthPrefixedBytes((int) dbopLength);
+            // Same scan-first safety net as the FUNC_CLOSE_CURSORS branch above, added for the
+            // same reason: confirmed live that a real SQL*Plus client can send this piggyback
+            // bundled together with others in one packet (immediately after a FUNC_CLOSE_CURSORS
+            // piggyback, immediately before a real FUNC_COMMIT call), a context this field-by-field
+            // parse below was never verified against. Try the scan first since it's already
+            // confirmed correct for that real bundled shape; fall back to the original precise
+            // parse (unchanged, still what a standalone occurrence of this piggyback needs) only if
+            // scanning finds nothing recognizable.
+            byte[] rest = r.readRemaining();
+            int boundary = findNextMessageBoundary(rest);
+            if (boundary >= 0) {
+                r.skip(-(rest.length - boundary));
+            } else {
+                TtcReader fr = new TtcReader(rest);
+                fr.readUint8();
+                fr.readUint8();
+                fr.readUb4();
+                fr.readUint8();
+                long clientIdentifierLength = fr.readUb4();
+                fr.readUint8();
+                long moduleLength = fr.readUb4();
+                fr.readUint8();
+                long actionLength = fr.readUb4();
+                fr.readUint8();
+                fr.readUb4();
+                fr.readUint8();
+                fr.readUb4();
+                fr.readUint8();
+                long clientInfoLength = fr.readUb4();
+                fr.readUint8();
+                fr.readUb4();
+                fr.readUint8();
+                fr.readUb4();
+                fr.readUint8();
+                long dbopLength = fr.readUb4();
+
+                fr.readRawOrLengthPrefixedBytes((int) clientIdentifierLength);
+                fr.readRawOrLengthPrefixedBytes((int) moduleLength);
+                fr.readRawOrLengthPrefixedBytes((int) actionLength);
+                fr.readRawOrLengthPrefixedBytes((int) clientInfoLength);
+                fr.readRawOrLengthPrefixedBytes((int) dbopLength);
+            }
         } else {
             // An unrecognized piggyback function code. Rather than fail the whole session over a
             // best-effort piggyback this codebase doesn't have specific field-level parsing for,
@@ -732,6 +792,48 @@ public final class RequestLoop {
             // one's trailing bytes is no worse than not understanding its fields would already be.
             r.readRemaining();
         }
+    }
+
+    // Function codes this codebase can meaningfully resume parsing at, if a scan lands on one --
+    // deliberately conservative (only function codes this class has its own real, tested handling
+    // for) rather than "any small integer," to keep a false-positive match unlikely. Used only by
+    // findNextMessageBoundary's own scan, itself only reached for a piggyback shape whose exact
+    // byte layout isn't modeled field-by-field (see that call site's own javadoc).
+    // 68 = FUNC_UNKNOWN_68, 118/115 = the AUTH_PHASE_ONE/AUTH_PHASE_TWO function codes (see
+    // AuthConstants in the auth package) -- written as literals here rather than referenced,
+    // since both are declared later in this file / in another package respectively and this set
+    // is built at class-init time before either would be reachable.
+    private static final java.util.Set<Integer> KNOWN_RESUMABLE_FUNCTION_CODES = java.util.Set.of(
+            TtcConstants.FUNC_EXECUTE, TtcConstants.FUNC_FETCH, TtcConstants.FUNC_COMMIT,
+            TtcConstants.FUNC_ROLLBACK, TtcConstants.FUNC_LOGOFF, 68, 118, 115);
+
+    // 107 = the client-banner-request piggyback, 67 = FUNC_SESSION_NLS_SETUP -- literals for the
+    // same forward-reference reason as above.
+    private static final java.util.Set<Integer> KNOWN_RESUMABLE_PIGGYBACK_CODES = java.util.Set.of(
+            107, TtcConstants.FUNC_CLOSE_CURSORS, TtcConstants.FUNC_CANCEL_ALL,
+            TtcConstants.FUNC_CLIENT_FEATURES, TtcConstants.FUNC_SET_END_TO_END_ATTR, 67);
+
+    /**
+     * Scans {@code data} for the next byte pair that looks like a genuine message boundary this
+     * class knows how to resume parsing from: a real FUNCTION tag ({@link TtcConstants#MSG_TYPE_FUNCTION})
+     * paired with a function code this class actually has handling for, or a PIGGYBACK tag
+     * ({@link TtcConstants#MSG_TYPE_PIGGYBACK}) paired with a piggyback function code this class
+     * actually has handling for. Returns the index of the tag byte itself (not the function-code
+     * byte after it), or -1 if nothing recognizable is found. See this method's one call site for
+     * why this exists instead of a precise field-by-field parse.
+     */
+    private static int findNextMessageBoundary(byte[] data) {
+        for (int i = 0; i < data.length - 1; i++) {
+            int tag = data[i] & 0xFF;
+            int code = data[i + 1] & 0xFF;
+            if (tag == TtcConstants.MSG_TYPE_FUNCTION && KNOWN_RESUMABLE_FUNCTION_CODES.contains(code)) {
+                return i;
+            }
+            if (tag == TtcConstants.MSG_TYPE_PIGGYBACK && KNOWN_RESUMABLE_PIGGYBACK_CODES.contains(code)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // Function code of the "client banner request" piggyback -- see skipPiggyback's javadoc for
@@ -1007,7 +1109,11 @@ public final class RequestLoop {
                 // confirmed). The FIRST native-OCI Execute in a session (prepare-shaped, genuinely no
                 // row content) keeps using the plain tail -- tried giving it rows/writeSuccessEnd too
                 // and both broke it specifically, confirmed live via a TNS BREAK/RESET.
-                if (nativeOciExecuteCount > 1) {
+                // A dblink client's first Execute must stay row-free (it always sends a second,
+                // chained Execute for the actual rows -- see nativeOciDblinkClient's own javadoc);
+                // a real SQL*Plus client, confirmed live, never sends that second call and expects
+                // its one and only Execute to carry the row directly.
+                if (nativeOciExecuteCount > 1 || !nativeOciDblinkClient) {
                     writeNativeOciExecuteTailWithRows(w, request.numIters);
                 } else {
                     writeNativeOciExecuteTail(w);
