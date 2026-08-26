@@ -46,6 +46,12 @@ instead of re-deriving it from the whole site.
   architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
   observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
   handling -- the complete technical detail behind the pitch on the main page.
+- Dedicated per-protocol guides -- each a standalone page with its own architecture diagram, a
+  real terminal demo, a 60-second quickstart, and an honestly-scoped compatibility row for that
+  one protocol: [Oracle → PostgreSQL](https://polygres26.github.io/oracle-to-postgres.html),
+  [MySQL → PostgreSQL](https://polygres26.github.io/mysql-to-postgres.html),
+  [MongoDB → PostgreSQL](https://polygres26.github.io/mongodb-to-postgres.html), and
+  [OpenSearch → PostgreSQL](https://polygres26.github.io/opensearch-to-postgres.html).
 - [Connecting to your Postgres](https://polygres26.github.io/CONNECTING.md): worked examples and
   real gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oracle → PostgreSQL, No Client Rewrite | PolyWire</title>
+<meta name="description" content="Your Oracle client (SQLcl, JDBC) connects to PolyWire over the real Oracle wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
+<link rel="canonical" href="https://polygres26.github.io/oracle-to-postgres.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="docs/logo.png">
+<link rel="apple-touch-icon" href="docs/logo.png">
+<link rel="stylesheet" href="styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://polygres26.github.io/oracle-to-postgres.html">
+<meta property="og:title" content="Oracle → PostgreSQL, No Client Rewrite">
+<meta property="og:description" content="Your Oracle client thinks it's talking to Oracle. It's actually talking to Postgres. Real Oracle wire protocol, real PostgreSQL backend, no driver swap.">
+<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Oracle → PostgreSQL, No Client Rewrite">
+<meta name="twitter:description" content="Your Oracle client thinks it's talking to Oracle. It's actually talking to Postgres. Real Oracle wire protocol, real PostgreSQL backend, no driver swap.">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Oracle to PostgreSQL without changing the Oracle client",
+  "description": "PolyWire speaks the real Oracle wire protocol (TNS/TTC) to SQLcl and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
+  "url": "https://polygres26.github.io/oracle-to-postgres.html",
+  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://polygres26.github.io/polywire.html" }
+}
+</script>
+</head>
+<body>
+  <a href="#main" class="skipLink">Skip to content</a>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="index.html">Home</a>
+      <a href="polywire.html">PolyWire</a>
+      <a href="polyadvisor.html">PolyAdvisor</a>
+      <a href="docs.html">Docs</a>
+      <a href="index.html#pricing">Pricing</a>
+      <a href="index.html#contact">Contact</a>
+    </div>
+  </nav>
+  <div class="wrap" id="main">
+    <header class="hero">
+      <div class="brandRow">
+        <img src="docs/logo.png" alt="Polygres" class="brandMark">
+        <h1 class="eyebrow">PolyGres</h1>
+      </div>
+      <p class="lede"><a href="index.html">← Back to the PolyWire overview</a></p>
+      <h2 class="heroTitle">Oracle → PostgreSQL. No client rewrite.</h2>
+      <p class="heroSub">
+        Your Oracle client thinks it's talking to Oracle. It's actually talking to Postgres —
+        and it never finds out. SQLcl and JDBC connect over the real Oracle wire protocol;
+        PolyWire executes every statement against a real PostgreSQL database on the other end.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try It Free</a>
+        <a class="btn btn-secondary" href="polywire.html">Explore PolyWire</a>
+      </div>
+    </header>
+
+    <section class="tool" id="how" style="margin-top:0; padding-top:0; border-top:none;">
+      <h3 class="subhead" id="architecture">How it works<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
+      <div class="simpleArch">
+        <div class="archTier archTierApps">
+          <span class="archTierLabel">Oracle client</span>
+          <span class="archTierDetail">SQLcl or JDBC — unmodified, same driver you already use</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierHub">
+          <span class="archTierLabel archHubLabel">POLYWIRE</span>
+          <span class="archTierDetail archHubFlow">OraWire (real Oracle TNS/TTC wire protocol) → Connect · Protect · Control · Accelerate · Observe</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierPg">
+          <span class="archTierLabel">PostgreSQL, anywhere</span>
+          <span class="archTierDetail">RDS · Aurora · Cloud SQL · Azure · OCI · Supabase · On-prem</span>
+        </div>
+      </div>
+
+      <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
+      <div class="termWindow">
+        <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+        <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQLcl: Release 23.4 Production
+
+SQL&gt; SELECT * FROM orders;
+
+ORDER_ID  CUSTOMER_ID  AMOUNT
+--------  -----------  -------
+    1001           42   129.99
+    1002           57    89.50
+
+2 rows selected.
+
+SQL&gt;</pre>
+      </div>
+      <div class="demoFlow">
+        <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+      </div>
+      <p class="rttNote">
+        <i>Oracle client. Oracle wire protocol. PostgreSQL database. No client rewrite.</i>
+        Table contents above are illustrative — the query, protocol, and path are exactly real.
+        (SQLcl and JDBC clients are what's most thoroughly verified today; see
+        <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.)
+      </p>
+
+      <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote"><b>1. Start PolyWire</b> — point it at a Postgres you already have:</p>
+      <div class="runblock"><code>docker run -p 11521:11521 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+      <p class="rttNote"><b>2. Connect</b> — same SQLcl/JDBC connection string shape you already use:</p>
+      <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
+      <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → PolyWire → PostgreSQL. No driver change.</p>
+      <p class="rttNote">
+        Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
+        Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL? See
+        <a href="CONNECTING.md">CONNECTING.md</a> for the real provider-specific setup.
+      </p>
+
+      <h3 class="subhead" id="why">Why teams do this<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Modernize without a rewrite</h4><p>Move off Oracle licensing without touching every application that talks to it — the driver, the connection string, and the SQL your app already sends all keep working.</p></div>
+        <div class="obsCard"><h4>Standardize on Postgres</h4><p>Consolidate Oracle, MySQL, SQL Server, MongoDB, and more onto one real Postgres database, without every team rewriting its data layer first.</p></div>
+        <div class="obsCard"><h4>Keep governance in one place</h4><p>The same SQL firewall, QoS, and audit path that governs every other protocol also governs this one — not a separate, unguarded route to your data.</p></div>
+      </div>
+      <p class="rttNote">
+        Planning the actual migration — schema, PL/SQL, sizing? <a href="polyadvisor.html">PolyAdvisor</a>
+        scores the difficulty and sizes the target Postgres while PolyWire (above) keeps your
+        application running the whole time.
+      </p>
+
+      <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead><tr><th>Protocol</th><th>Client tested against</th><th>Bound parameters decoded</th><th>Native error translation</th><th>RLS identity</th></tr></thead>
+          <tbody>
+            <tr><td>Oracle</td><td>python-oracledb, SQLcl, JDBC</td><td class="yes">✓</td><td class="yes">✓ (ORA-NNNNN)</td><td class="yes">✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote"><a href="polywire.html">Full compatibility matrix, all ten protocols →</a></p>
+    </section>
+
+    <section class="tool" id="final-cta">
+      <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
+      <p class="lede">
+        <b>Try it free</b> — Developer Edition, all features. <b>Taking it to production?</b>
+        Bring your architecture and we'll help map the deployment.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
+        <a class="btn btn-secondary" href="index.html#contact">Schedule Architecture Review</a>
+      </div>
+    </section>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="README.md">README.md</a> and
+      <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
+      in this repo.
+    </footer>
+  </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+  <script src="page.js"></script>
+</body>
+</html>
