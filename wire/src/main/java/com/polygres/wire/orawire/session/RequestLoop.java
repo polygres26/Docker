@@ -291,6 +291,15 @@ public final class RequestLoop {
                 // rather than guessing blind -- see this method's caller-side notes for what was
                 // observed.
                 w.writeRaw(java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_202_RESPONSE_B64));
+            } else if (usedNativeOciExecuteFallback && functionCode == FUNC_UNKNOWN_68) {
+                // The real dblink native-OCI client's next call after a successful Execute response
+                // (this whole series's dblink-compatibility milestone: the client accepted an
+                // Execute response and moved on instead of reacting with a TNS BREAK/RESET, for the
+                // first time) -- confirmed live against a real Oracle 23c instance. Content-wise
+                // this looks like plain, non-cryptographic, non-session-specific numeric fields
+                // (unlike FUNC_UNKNOWN_202), so replaying a fixed real response carries much less
+                // risk here; done the same way as every other undocumented call in this series.
+                w.writeRaw(java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_68_RESPONSE_B64));
             } else {
                 throw new UnsupportedOperationException("unsupported TTC function code: " + functionCode);
             }
@@ -320,7 +329,6 @@ public final class RequestLoop {
             rollbackAfterStatementError();
             ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? e.toString() : e.getMessage(), openCursorId, callNumber);
         }
-        appendNativeOciExecuteTrailerIfNeeded(w, functionCode);
         sendData(w.toByteArray());
         if (sqlMetrics != null && lastRewrittenSqlText != null && isStatementShaped(functionCode)) {
             sqlMetrics.recordRtt(SourceDialect.ORACLE, lastRewrittenSqlText, System.nanoTime() - rttStart);
@@ -350,23 +358,34 @@ public final class RequestLoop {
         }
     }
 
-    // The extra trailer bytes real Oracle appends after its own Execute response to the same real
-    // distributed-database-link client this whole native-OCI fallback series is for -- confirmed
-    // byte-for-byte via a genuine Oracle-to-Oracle self-loop capture of the same SELECT shape
-    // (`SELECT /*+ FULL(P) +*/ * FROM "..." P`, dblink's own generated remote SQL). Without it, the
-    // client reacts with the same TNS BREAK/RESET marker pair every other structurally-incomplete
-    // response in this series has caused -- confirmed live against a real Oracle 23c instance. The
-    // rest of the response (DESCRIBE_INFO, row data, success end) this codebase already builds
-    // correctly -- proven by this exact code path's existing JDBC/sqlplus/SQLcl test coverage,
-    // untouched by this change -- so only this trailer needs adding, appended after whatever that
-    // existing code already wrote, not in place of it.
-    private static final String NATIVE_OCI_EXECUTE_TRAILER_B64 =
-        "NgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
+    // The tail a real Oracle server writes between the last column's DESCRIBE_INFO block and the
+    // end of its Execute response, for this same real distributed-database-link client -- recovered
+    // by diffing this exact 220-byte span from TWO separate real Oracle-to-Oracle self-loop
+    // captures (a 2-column and a 3-column SELECT) against each other. (An earlier version of this
+    // fix mis-measured this span as two separate pieces, 155+97 bytes, because it mis-measured the
+    // preceding column blocks' own width as a fixed 90 bytes -- confirmed WRONG once a real 3-column
+    // capture showed column width actually scales with the column's name length; see
+    // writeColumnMetadataNativeOci. Fixing that column-width bug shifted where this tail actually
+    // starts, which is why it's now one 220-byte span instead of two mismatched ones.) Only 11 of
+    // the 220 bytes actually varied between the two real captures -- a few response-timestamp bytes
+    // inside an embedded current-date field, what looks like a computed row-length/statistics pair,
+    // and a handful more of what's likely a session nonce -- everything else, including whether the
+    // response was for 2 or 3 columns, was byte-for-byte identical, which is why this is used as a
+    // fixed template with no per-call patching at all. The un-patched varying bytes are left as this
+    // template's own captured values rather than recomputed or randomized -- they were never what
+    // made either real capture differ in whether the client accepted the response.
+    //
+    // Real Oracle's own DESCRIBE_INFO for this client has NO recognizable inline row-value bytes in
+    // either real capture this was built from (no Oracle NUMBER-encoding markers anywhere) -- this
+    // method's caller skips this codebase's own row-data writing entirely for this fallback path, on
+    // the theory the client fetches rows via a separate real FETCH call instead of inline. (Tried in
+    // isolation first -- numIters=0, no row writing, no tail template -- and made no difference on
+    // its own; combined with this tail template is what's actually being tried here.)
+    private static final String NATIVE_OCI_EXECUTE_TAIL_B64 =
+        "BwAAAAd4fggaBBsoAQAAAOgfAABdAAAAXQAAAAAAAAAIBgAAAAAAAAAAAAcAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAQDAAAA3QsBAAAAAAAAAAAAAAcAHgADAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAANgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
 
-    private void appendNativeOciExecuteTrailerIfNeeded(TtcWriter w, int functionCode) {
-        if (usedNativeOciExecuteFallback && functionCode == TtcConstants.FUNC_EXECUTE) {
-            w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TRAILER_B64));
-        }
+    private void writeNativeOciExecuteTail(TtcWriter w) {
+        w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64));
     }
 
     private static boolean isStatementShaped(int functionCode) {
@@ -551,6 +570,12 @@ public final class RequestLoop {
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJAQAAACQMHQ==";
 
+    // See the FUNC_UNKNOWN_68 branch's comment above.
+    private static final int FUNC_UNKNOWN_68 = 68;
+
+    private static final String FUNC_UNKNOWN_68_RESPONSE_B64 =
+        "CAgAKc4mFrwAAABSAAAAAQAAAAIAAABkAAAAAwAAAAAAAAAFAAIAAAAACQMAAAC1DB0=";
+
     // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
     // 2-byte "varying" marker (randomized below, same pattern as the marker
     // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
@@ -700,7 +725,11 @@ public final class RequestLoop {
             // how this was found). Genuine exhaustion -- a FETCH call made after the cursor is
             // already empty -- is unaffected and still correctly signaled via writeErrorEnd
             // below; writeInlineExhaustionEnd itself has been removed as dead code.
-            ResponseWriter.writeSuccessEnd(w, writeRows(w, request.numIters), openCursorId, callNumber);
+            if (usedNativeOciExecuteFallback) {
+                writeNativeOciExecuteTail(w);
+            } else {
+                ResponseWriter.writeSuccessEnd(w, writeRows(w, request.numIters), openCursorId, callNumber);
+            }
         } else {
 
             if (wantsCommit && !useNativeAutocommit) {

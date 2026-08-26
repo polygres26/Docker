@@ -11,6 +11,23 @@ public final class ResponseWriter {
     private static final int DESCRIBE_INFO_MAX_ROW_SIZE = 22;
     private static final int DESCRIBE_INFO_TRAILING_BYTE = 130;
 
+    // The DESCRIBE_INFO header (msgtype through the trailing byte right before the first column)
+    // a real Oracle server sends the same real dblink native-OCI client this whole fallback series
+    // is for -- 7 bytes longer than the plain all-zero-filler version above (this codebase's own,
+    // correct for and unchanged for JDBC/sqlplus/SQLcl), confirmed via a real Oracle 23c self-loop
+    // capture. Used verbatim (its own filler content isn't understood field-by-field, only that
+    // its LENGTH matters) with just the column-count byte patched -- confirmed at the same offset
+    // in a second real capture with a different column count.
+    private static final byte[] NATIVE_OCI_DESCRIBE_INFO_HEADER = java.util.Base64.getDecoder().decode(
+        "EBcAAADAxMIZMJdKtcUM0E2zdjOGeH4IGgQbKCwAAAACAAAAgg==");
+    private static final int NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET = 32;
+
+    private static void writeDescribeInfoHeaderNativeOci(TtcWriter w, int columnCount) {
+        byte[] header = NATIVE_OCI_DESCRIBE_INFO_HEADER.clone();
+        header[NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET] = (byte) columnCount;
+        w.writeRaw(header);
+    }
+
     public static void writeDescribeInfo(TtcWriter w, List<ColumnMetadata> columns) {
         writeDescribeInfo(w, columns, false);
     }
@@ -23,12 +40,16 @@ public final class ResponseWriter {
      */
     public static void writeDescribeInfo(TtcWriter w, List<ColumnMetadata> columns,
             boolean nativeOciColumnFormat) {
-        w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
-        w.writeBytesWithLength(DESCRIBE_INFO_BLOB_FILLER);
-        w.writeUb4(DESCRIBE_INFO_MAX_ROW_SIZE);
-        w.writeUb4(columns.size());
-        if (!columns.isEmpty()) {
-            w.writeUint8(DESCRIBE_INFO_TRAILING_BYTE);
+        if (nativeOciColumnFormat) {
+            writeDescribeInfoHeaderNativeOci(w, columns.size());
+        } else {
+            w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
+            w.writeBytesWithLength(DESCRIBE_INFO_BLOB_FILLER);
+            w.writeUb4(DESCRIBE_INFO_MAX_ROW_SIZE);
+            w.writeUb4(columns.size());
+            if (!columns.isEmpty()) {
+                w.writeUint8(DESCRIBE_INFO_TRAILING_BYTE);
+            }
         }
         for (int i = 0; i < columns.size(); i++) {
             ColumnMetadata col = columns.get(i);
@@ -37,6 +58,15 @@ public final class ResponseWriter {
             } else {
                 writeColumnMetadata(w, col, i);
             }
+        }
+
+        // The real dblink native-OCI client needs a completely different (and much larger) tail
+        // here than the plain currentDate+zeros this codebase's own JDBC/sqlplus/SQLcl-correct
+        // format writes -- see RequestLoop.writeNativeOciExecuteTail's javadoc, which writes that
+        // tail (and skips this codebase's own row-data/success-end writing entirely) instead, right
+        // after this method returns, only for that same fallback path.
+        if (nativeOciColumnFormat) {
+            return;
         }
 
         byte[] currentDate = OracleDateCodec.encode(java.time.LocalDateTime.now());
@@ -88,39 +118,37 @@ public final class ResponseWriter {
     }
 
     // A real Oracle server's per-column DESCRIBE_INFO block for a real distributed-database-link
-    // connection's native OCI client is 90 bytes for a NUMBER column, not the 31 bytes
-    // writeColumnMetadata above produces (that method's own format is correct for, and confirmed
-    // live unaffected by this method's existence, JDBC/sqlplus/SQLcl). Confirmed byte-for-byte
-    // against a real Oracle 23c self-loop capture: diffing that capture's own two NUMBER-column
-    // blocks (for differently-named columns) against each other isolates exactly which of the 90
-    // bytes are fixed/structural (80 of them, identical in both) versus column-specific (name
-    // length written twice, a 7-byte fixed-width zero-padded name field, and the 0-based column
-    // index) -- this template encodes that structure directly rather than guessing at Oracle's
-    // internal field semantics for the other 80 bytes. Column names longer than 7 bytes are
-    // truncated (not encoded elsewhere in this real capture's 90-byte block) -- untested beyond
-    // that since no real capture with a longer name was available; a byte-accurate fix for that
-    // case needs one.
-    private static final byte[] NATIVE_OCI_NUMBER_COLUMN_TEMPLATE = java.util.Base64.getDecoder().decode(
-        "AQIAAIEWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAgAAAAJJRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-    // The column-name length appears three separate times (all three confirmed to move together,
-    // in lockstep, between the two real per-column blocks this template was diffed from).
+    // connection's native OCI client is a fixed 56-byte prefix, then the column name written at
+    // its own real length (NOT padded or truncated to a fixed width -- an earlier version of this
+    // fix assumed a fixed 6-byte name field, confirmed WRONG live: a real capture of a 5-char
+    // column name ("PRICE") produced a block exactly 3 bytes longer than a 2-char one ("ID"), and
+    // a 3-char one ("QTY") 1 byte longer again -- then a fixed 32-byte suffix (which holds the
+    // 0-based column index, always at the same offset relative to the suffix's own start,
+    // regardless of the name's length). writeColumnMetadata above produces a much shorter, 31-byte
+    // block instead -- correct for, and confirmed live unaffected by this method's existence,
+    // JDBC/sqlplus/SQLcl. Confirmed byte-for-byte against two real Oracle 23c self-loop captures
+    // (a 2-column and a 3-column SELECT, three differently-named columns total): diffing the
+    // fixed-width prefix/suffix portions against each other across all three real columns isolates
+    // exactly which bytes are fixed/structural versus column-specific (the name length, written
+    // three times in lockstep, and the column index) -- this template encodes that structure
+    // directly rather than guessing at Oracle's internal field semantics for the rest.
+    private static final byte[] NATIVE_OCI_COLUMN_PREFIX = java.util.Base64.getDecoder().decode(
+        "AQIAAIEWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAgAAAAI=");
+    private static final byte[] NATIVE_OCI_COLUMN_SUFFIX = new byte[32];
     private static final int[] NATIVE_OCI_NAME_LENGTH_OFFSETS = { 50, 51, 55 };
-    private static final int NATIVE_OCI_NAME_FIELD_OFFSET = 56;
-    private static final int NATIVE_OCI_NAME_FIELD_WIDTH = 6;
-    private static final int NATIVE_OCI_COLUMN_INDEX_OFFSET = 70;
+    private static final int NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET = 12;
 
     private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex) {
-        byte[] block = NATIVE_OCI_NUMBER_COLUMN_TEMPLATE.clone();
+        byte[] prefix = NATIVE_OCI_COLUMN_PREFIX.clone();
         byte[] nameBytes = col.name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int nameLen = Math.min(nameBytes.length, NATIVE_OCI_NAME_FIELD_WIDTH);
         for (int offset : NATIVE_OCI_NAME_LENGTH_OFFSETS) {
-            block[offset] = (byte) nameLen;
+            prefix[offset] = (byte) nameBytes.length;
         }
-        java.util.Arrays.fill(block, NATIVE_OCI_NAME_FIELD_OFFSET,
-                NATIVE_OCI_NAME_FIELD_OFFSET + NATIVE_OCI_NAME_FIELD_WIDTH, (byte) 0);
-        System.arraycopy(nameBytes, 0, block, NATIVE_OCI_NAME_FIELD_OFFSET, nameLen);
-        block[NATIVE_OCI_COLUMN_INDEX_OFFSET] = (byte) columnIndex;
-        w.writeRaw(block);
+        byte[] suffix = NATIVE_OCI_COLUMN_SUFFIX.clone();
+        suffix[NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET] = (byte) columnIndex;
+        w.writeRaw(prefix);
+        w.writeRaw(nameBytes);
+        w.writeRaw(suffix);
     }
 
     public static void writeRow(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
