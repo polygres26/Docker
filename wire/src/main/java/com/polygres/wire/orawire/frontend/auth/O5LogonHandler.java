@@ -128,61 +128,105 @@ public final class O5LogonHandler {
         return username;
     }
 
-    private record RichAuthHeader(int hasUser, int userLen, int numPairs) {
+    private record RichAuthHeader(int hasUser, int userLen, int usernameStart) {
     }
+
+    // First AUTH_* keyword pair name expected on a rich AUTH_PHASE_ONE call (username/session-env
+    // pairs) vs a rich AUTH_PHASE_TWO call (session-key/password pairs) -- used only to anchor the
+    // scan in readRichAuthHeader below; the real per-pair parsing itself doesn't care which key
+    // comes first (see readRichPairs).
+    private static final String PHASE_ONE_FIRST_KEY = "AUTH_TERMINAL";
+    private static final String PHASE_TWO_FIRST_KEY = "AUTH_SESSKEY";
 
     /**
      * Parses the rich-auth (ANO-eligible) call preamble that precedes the username and
-     * AUTH_*-keyword pairs on both AUTH_PHASE_ONE and AUTH_PHASE_TWO calls. The previous version of
-     * this method (fixed-width {@code skip(25)}/{@code skip(16)} around a leading hasUser byte and
-     * a little-endian numPairs) was tuned only against Oracle's JDBC thin driver and does not match
-     * what a real distributed-database-link connection's native OCI client actually sends --
-     * confirmed live via byte-for-byte capture against a real Oracle 23c instance, where it read
-     * past the end of the packet buffer trying to honor a bogus username length.
+     * AUTH_*-keyword pairs on both AUTH_PHASE_ONE and AUTH_PHASE_TWO calls.
      *
-     * <p>The real layout was recovered by diffing two live captures of the same dblink client
-     * logging in as different users (one 6-char "SYSTEM", one 8-char "postgres") against each
-     * other: every byte the two captures share is fixed/structural regardless of username; the two
-     * captures diverge at exactly one single-byte position (the username length) and then again,
-     * later, only within the username bytes themselves -- pinning down the field layout below
-     * without needing to guess at Oracle's internal field semantics. (The reference project at
-     * {@code /Users/kumarrajamani/Projects/orawire}, a JDBC-thin-derived implementation, was
-     * checked first but marshals this same call differently -- e.g. it encodes hasUser as an
-     * explicit 0/1 pointer byte immediately at the start of the record, which real captures do not
-     * show -- confirming the real native OCI client's wire format genuinely differs from JDBC
-     * thin's here and can't be taken from that reference directly.)
+     * <p>This preamble is NOT fixed-width -- confirmed live, not guessed. An earlier version of
+     * this method assumed one of two fixed byte-offset layouts (one derived from a dblink native
+     * OCI client capture, one from a SQL*Plus capture), selected by which one self-validated. That
+     * worked for the dblink capture it was built from, but a second, otherwise-identical SQL*Plus
+     * login (same user, same client, moments apart) put the username 3 bytes further into the
+     * record than the first one did -- i.e. this preamble contains at least one genuinely
+     * variable-length field before the username, not just a client-type-dependent fixed shape.
+     * Guessing further fixed offsets risks silently misreading the username (or worse, the
+     * AUTH_SESSKEY/AUTH_PASSWORD pairs on the phase-two call) on some future connection that
+     * happens to land on a length this session never captured.
      *
-     * <p>Layout, relative to the start of the call record (right after the shared msgType/
-     * function-code/sequence-number bytes {@link #expectFunction} already consumes):
-     * <pre>
-     *   2 bytes  -- per-connection random/nonce value (varies call to call; not structural)
-     *  20 bytes  -- fixed
-     *   1 byte   -- username length (raw UB1; 0 means no username follows)
-     *  15 bytes  -- fixed
-     *   1 byte   -- number of AUTH_* keyword/value pairs that follow (raw UB1)
-     *  23 bytes  -- fixed
-     *   N bytes  -- the username itself (raw, already quoted by the client if applicable --
-     *               e.g. {@code "SYSTEM"} including the quote characters)
-     * </pre>
-     * followed immediately by the keyword/value pairs, which {@link #readRichPairs} already parses
-     * correctly (that method's little-endian-length-prefixed format was independently confirmed
-     * against these same real captures).
+     * <p>Instead of any offset at all, this locates the pairs section by its own content: the
+     * first AUTH_* keyword pair (see {@link #PHASE_ONE_FIRST_KEY}/{@link #PHASE_TWO_FIRST_KEY}) is
+     * a fixed, known ASCII string preceded by its own 1-byte length -- scanning for that exact byte
+     * sequence pins down where the pairs begin regardless of how long the preamble in front of it
+     * is. The username -- which always sits directly before the pairs, in every capture seen so far
+     * -- is then found by scanning backward from that point for a 1-byte length prefix whose value
+     * both matches the gap to a byte that looks like plausible username content (this codebase has
+     * never seen a real username containing control characters) and is consistent with the pairs
+     * anchor itself, rather than assumed to sit at any specific fixed distance from it.
+     *
+     * <p>The username's own 1-byte length prefix is NOT reliably adjacent to the username text
+     * either -- confirmed live: a distributed-database-link connection's native OCI client sends
+     * its username pre-quoted (e.g. the wire bytes are literally {@code "POSTGRES"}, quote
+     * characters included -- see {@link #readRichUsername}) with several other bytes of preamble
+     * content between the length byte and the quote, while SQL*Plus's own length byte sits
+     * immediately before its (unquoted) username with no gap at all. Rather than locate that length
+     * byte at all, this scans backward from the pairs anchor for the longest contiguous run of
+     * plausible username characters (see {@link #isPlausibleUsername}) -- since the preamble in
+     * front of it is otherwise mostly {@code 0x00}/{@code 0xff} filler, that maximal run is the
+     * username itself, however far back the actual length byte and whatever surrounds it happen to
+     * sit.
      */
-    private RichAuthHeader readRichAuthHeader(TtcReader r) {
-        r.skip(2);
-        r.skip(20);
-        int userLen = r.readUint8();
-        r.skip(15);
-        int numPairs = r.readUint8();
-        r.skip(23);
-        return new RichAuthHeader(userLen > 0 ? 1 : 0, userLen, numPairs);
+    private RichAuthHeader readRichAuthHeader(byte[] rec, String firstPairKey) {
+        int keyTextStart = indexOfKeyword(rec, firstPairKey);
+        if (keyTextStart < 0 || keyTextStart < 5) {
+            throw new IllegalStateException("could not locate first rich-auth pair (" + firstPairKey
+                    + ") in a " + rec.length + "-byte record");
+        }
+        // 4-byte pointer/dummy field (see readRichPairs) + 1-byte key length immediately precede
+        // the key text itself.
+        int pairsStart = keyTextStart - 5;
+        int usernameStart = pairsStart;
+        while (usernameStart > 0 && isPlausibleUsernameChar(rec[usernameStart - 1] & 0xFF)
+                && pairsStart - (usernameStart - 1) <= MAX_PLAUSIBLE_USERNAME_LENGTH) {
+            usernameStart--;
+        }
+        int userLen = pairsStart - usernameStart;
+        if (userLen < 1) {
+            throw new IllegalStateException("could not locate a plausible username before the rich-auth pairs "
+                    + "(pairs start at record offset " + pairsStart + " of " + rec.length + " bytes)");
+        }
+        return new RichAuthHeader(1, userLen, usernameStart);
     }
 
-    private String readRichUsername(TtcReader r, int hasUser, int userLen) {
+    private static final int MAX_PLAUSIBLE_USERNAME_LENGTH = 64;
+
+    private static int indexOfKeyword(byte[] rec, String keyword) {
+        byte[] needle = keyword.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        int lenPrefixValue = needle.length;
+        outer:
+        for (int i = 1; i + needle.length <= rec.length; i++) {
+            if ((rec[i - 1] & 0xFF) != lenPrefixValue) {
+                continue;
+            }
+            for (int j = 0; j < needle.length; j++) {
+                if (rec[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    private static boolean isPlausibleUsernameChar(int b) {
+        return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+                || b == '_' || b == '"' || b == '$' || b == '#' || b == '.';
+    }
+
+    private String readRichUsername(byte[] rec, int usernameStart, int hasUser, int userLen) {
         if (hasUser == 0) {
             return null;
         }
-        String username = new String(r.readRawBytes(userLen), java.nio.charset.StandardCharsets.UTF_8);
+        String username = new String(rec, usernameStart, userLen, java.nio.charset.StandardCharsets.UTF_8);
         // A real distributed-database-link connection's native OCI client sends the username
         // already quoted (e.g. the wire bytes are literally `"POSTGRES"`, quote characters
         // included) -- confirmed live via byte-for-byte capture against a real Oracle 23c
@@ -195,16 +239,44 @@ public final class O5LogonHandler {
         return username;
     }
 
-    private Map<String, String> readRichPairs(TtcReader r, int numPairs) {
+    /**
+     * Parses AUTH_* keyword/value pairs starting at the reader's current position, continuing
+     * until the buffer runs out or the next bytes no longer look like a plausible pair (rather than
+     * relying on an upfront count) -- see {@link #readRichAuthHeader} for why an upfront count from
+     * this preamble can't be trusted to be positioned correctly in the first place.
+     */
+    private Map<String, String> readRichPairs(TtcReader r) {
         Map<String, String> map = new java.util.LinkedHashMap<>();
-        for (int i = 0; i < numPairs; i++) {
+        while (r.hasRemaining()) {
+            int startPos = r.position();
+            if (!r.hasRemaining()) {
+                break;
+            }
             readLe32(r);
+            if (!r.hasRemaining()) {
+                r.skip(-(r.position() - startPos));
+                break;
+            }
             int keyLen = r.readUint8();
+            if (keyLen < 1 || keyLen > 64 || r.remaining() < keyLen) {
+                r.skip(-(r.position() - startPos));
+                break;
+            }
             String key = new String(r.readRawBytes(keyLen), java.nio.charset.StandardCharsets.UTF_8);
+            if (!key.startsWith("AUTH_") && !key.startsWith("SESSION_")) {
+                r.skip(-(r.position() - startPos));
+                break;
+            }
             long valueOuterLen = readLe32(r);
             String value = null;
             if (valueOuterLen != 0) {
+                if (!r.hasRemaining()) {
+                    break;
+                }
                 int valueLen = r.readUint8();
+                if (valueLen > r.remaining()) {
+                    break;
+                }
                 value = new String(r.readRawBytes(valueLen), java.nio.charset.StandardCharsets.UTF_8);
             }
             readLe32(r);
@@ -222,16 +294,20 @@ public final class O5LogonHandler {
     }
 
     private String readUsernameAndSkipPairsRich(TtcReader r) {
-        RichAuthHeader header = readRichAuthHeader(r);
-        String username = readRichUsername(r, header.hasUser(), header.userLen());
-        readRichPairs(r, header.numPairs());
+        byte[] rec = r.readRemaining();
+        RichAuthHeader header = readRichAuthHeader(rec, PHASE_ONE_FIRST_KEY);
+        String username = readRichUsername(rec, header.usernameStart(), header.hasUser(), header.userLen());
+        readRichPairs(new TtcReader(java.util.Arrays.copyOfRange(rec, header.usernameStart() + header.userLen(),
+                rec.length)));
         return username;
     }
 
     private Map<String, String> readPhaseTwoPairsRich(TtcReader r) {
-        RichAuthHeader header = readRichAuthHeader(r);
-        readRichUsername(r, header.hasUser(), header.userLen());
-        return readRichPairs(r, header.numPairs());
+        byte[] rec = r.readRemaining();
+        RichAuthHeader header = readRichAuthHeader(rec, PHASE_TWO_FIRST_KEY);
+        readRichUsername(rec, header.usernameStart(), header.hasUser(), header.userLen());
+        return readRichPairs(new TtcReader(java.util.Arrays.copyOfRange(rec, header.usernameStart() + header.userLen(),
+                rec.length)));
     }
 
     private Map<String, String> readPhaseTwoPairs(TtcReader r) {

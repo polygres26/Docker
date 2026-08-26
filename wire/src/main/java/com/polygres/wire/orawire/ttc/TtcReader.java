@@ -121,4 +121,8 @@ public final class TtcReader {
     public int position() {
         return pos;
     }
+
+    public int remaining() {
+        return buf.length - pos;
+    }
 }
