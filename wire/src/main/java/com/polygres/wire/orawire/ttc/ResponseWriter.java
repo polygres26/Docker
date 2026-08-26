@@ -21,10 +21,23 @@ public final class ResponseWriter {
     private static final byte[] NATIVE_OCI_DESCRIBE_INFO_HEADER = java.util.Base64.getDecoder().decode(
         "EBcAAADAxMIZMJdKtcUM0E2zdjOGeH4IGgQbKCwAAAACAAAAgg==");
     private static final int NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET = 32;
+    // Real bug, found live diffing a single-column native-OCI response against a real
+    // Oracle-to-Oracle self-loop capture of that exact scenario (this codebase's fix chain had
+    // only ever been verified against a 2-column capture until now): this byte, previously left as
+    // the 2-column template's own fixed 0x2c (44), isn't fixed at all -- the real single-column
+    // capture had 0x16 (22) in the exact same position. 22 is this codebase's own per-NUMBER-column
+    // bufferSize (see ColumnMetadata/toColumnMetadata), and 22*2=44 matches the 2-column template
+    // exactly -- a total-row-byte-budget field, the sum of every column's own buffer size.
+    private static final int NATIVE_OCI_DESCRIBE_INFO_HEADER_ROW_SIZE_OFFSET = 28;
 
-    private static void writeDescribeInfoHeaderNativeOci(TtcWriter w, int columnCount) {
+    private static void writeDescribeInfoHeaderNativeOci(TtcWriter w, List<ColumnMetadata> columns) {
         byte[] header = NATIVE_OCI_DESCRIBE_INFO_HEADER.clone();
-        header[NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET] = (byte) columnCount;
+        long rowSize = 0;
+        for (ColumnMetadata col : columns) {
+            rowSize += col.bufferSize;
+        }
+        header[NATIVE_OCI_DESCRIBE_INFO_HEADER_ROW_SIZE_OFFSET] = (byte) rowSize;
+        header[NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET] = (byte) columns.size();
         w.writeRaw(header);
     }
 
@@ -41,7 +54,7 @@ public final class ResponseWriter {
     public static void writeDescribeInfo(TtcWriter w, List<ColumnMetadata> columns,
             boolean nativeOciColumnFormat) {
         if (nativeOciColumnFormat) {
-            writeDescribeInfoHeaderNativeOci(w, columns.size());
+            writeDescribeInfoHeaderNativeOci(w, columns);
         } else {
             w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
             w.writeBytesWithLength(DESCRIBE_INFO_BLOB_FILLER);
@@ -161,21 +174,25 @@ public final class ResponseWriter {
     // A real distributed-database-link connection's native OCI client's own real row data --
     // embedded inline in its Execute response, not a separate Fetch (see RequestLoop's
     // nativeOciExecuteCount javadoc for why) -- carries 4 extra bytes between the ROW_DATA tag and
-    // the first column's value that plain writeRow above doesn't produce: confirmed live via a real
-    // Oracle-to-Oracle self-loop capture's own equivalent row, byte offset for byte offset (the
-    // capture's row starts with the same ROW_DATA tag, then these 4 bytes, then a length-prefixed
-    // column value in exactly the same shape plain writeRow already gets right). Only one real row
-    // has been captured so far, so this is necessarily a fixed, best-effort template rather than a
-    // field-by-field understanding of what these 4 bytes mean (a per-row descriptor of some kind,
-    // plausibly ROWID/slot-like housekeeping data a real backing table would have and this
-    // codebase's own rows don't) -- kept separate from writeRow, not merged into it, since every
-    // other tested client's real captures have never shown this prefix and JDBC/sqlplus/SQLcl's
-    // rows must stay exactly as they were.
+    // the first column's value that plain writeRow above doesn't produce, confirmed live via a real
+    // Oracle-to-Oracle self-loop capture's own equivalent 2-column row. A SEPARATE real capture of
+    // the identical scenario with a single-column query proved this prefix isn't universal, though:
+    // that row's own ROW_DATA tag is followed immediately by its one column's length-prefixed value
+    // with no extra bytes at all -- while everything else in the response (the DESCRIBE_INFO
+    // header/columns, the tail before and after the row) is otherwise structurally identical in
+    // shape between the 1- and 2-column captures. So this prefix is real, but conditional on having
+    // more than one column, not an unconditional part of a "native-OCI row." Its own meaning still
+    // isn't understood field-by-field (a per-row descriptor of some kind, plausibly ROWID/slot-like
+    // housekeeping data a real backing table would have and this codebase's own rows don't) -- kept
+    // separate from writeRow, not merged into it, since every other tested client's real captures
+    // have never shown it and JDBC/sqlplus/SQLcl's rows must stay exactly as they were.
     private static final byte[] NATIVE_OCI_ROW_PREFIX = { 0x0a, 0x2c, 0x01, 0x02 };
 
     public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
-        w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+        if (columns.size() > 1) {
+            w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+        }
         for (int i = 0; i < columns.size(); i++) {
             writeColumnValue(w, columns.get(i), values[i]);
         }
