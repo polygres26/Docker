@@ -55,6 +55,13 @@
   .heroTagline2 { font-size: 15px; color: var(--ink-dim); margin: 6px 0 0; }
   .credStrip { font-size: 12.5px; color: var(--ink-faint); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px 0; margin: 4px 0 20px; line-height: 1.7; }
 
+  /* Visual proof strip -- same facts the old credStrip sentence stated, absorbed at a glance
+     instead of read as prose. */
+  .statGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 8px 0 18px; }
+  .statCard { border: 1px solid var(--line); border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; gap: 4px; }
+  .statNum { font-size: 26px; font-weight: 800; color: var(--indigo); line-height: 1.1; }
+  .statLabel { font-size: 12.5px; color: var(--ink-dim); }
+
   /* "Don't rewrite. Rewire." before/after -- plain HTML/CSS, no image asset, so it stays crisp
      and theme-aware at any size. Before: four separate app-to-own-database rows. After: the same
      four apps fan into one PolyWire box, then one arrow to Postgres -- the whole point rendered
@@ -90,6 +97,15 @@
   details.methodDetails summary:hover { text-decoration: underline; }
   details.methodDetails[open] summary { margin-bottom: 14px; }
 
+  /* Collapsed-by-default wrapper for homepage sections that are real and good but make the
+     default scroll too long -- modernization example, QoS, security, detailed architecture,
+     comparison. Collapsed, the page reads short; expanded, nothing was actually removed. */
+  details.exploreMore { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 8px 0 28px; padding: 18px 0; }
+  details.exploreMore .exploreSummary { cursor: pointer; color: var(--indigo); font-size: 15px; font-weight: 700; list-style: none; }
+  details.exploreMore .exploreSummary::-webkit-details-marker { display: none; }
+  details.exploreMore .exploreSummary:hover { text-decoration: underline; }
+  details.exploreMore[open] .exploreSummary { margin-bottom: 22px; }
+
 
   .bridgeKicker { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
 
@@ -107,6 +123,7 @@
   .demoFlow span:first-child { color: var(--ink); font-weight: 700; }
 
   .tool { margin: 64px 0; padding-top: 48px; border-top: 1px solid var(--line); }
+  .finalCtaTitle { font-size: 26px; letter-spacing: -0.01em; margin: 0 0 12px; }
   .tool:first-of-type { margin-top: 48px; }
   .kicker { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .kicker .num { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
@@ -233,6 +250,20 @@
   #demo-mysql:checked ~ #panel-mysql,
   #demo-mongodb:checked ~ #panel-mongodb,
   #demo-opensearch:checked ~ #panel-opensearch { display: block; }
+
+  /* Second tab selector (the "Try PolyWire in 60 seconds" quickstart) -- uses :has() instead of
+     the general-sibling chain above so adding/removing a protocol tab doesn't need a matching
+     id-specific CSS rule added by hand. */
+  .demoSelector:has(#try-postgres:checked) #trypanel-postgres,
+  .demoSelector:has(#try-oracle:checked) #trypanel-oracle,
+  .demoSelector:has(#try-mysql:checked) #trypanel-mysql,
+  .demoSelector:has(#try-mongodb:checked) #trypanel-mongodb,
+  .demoSelector:has(#try-opensearch:checked) #trypanel-opensearch { display: block; }
+  .demoSelector:has(#try-postgres:checked) .demoTabs label[for="try-postgres"],
+  .demoSelector:has(#try-oracle:checked) .demoTabs label[for="try-oracle"],
+  .demoSelector:has(#try-mysql:checked) .demoTabs label[for="try-mysql"],
+  .demoSelector:has(#try-mongodb:checked) .demoTabs label[for="try-mongodb"],
+  .demoSelector:has(#try-opensearch:checked) .demoTabs label[for="try-opensearch"] { background: var(--indigo); color: #fff; border-color: var(--indigo); }
   .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
   .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .obsCard h4 { margin: 0 0 6px; font-size: 14px; }
