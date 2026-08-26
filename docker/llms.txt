@@ -36,10 +36,11 @@ instead of re-deriving it from the whole site.
 - [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, a live
   "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
   protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
-  architecture diagram, a proof/compatibility stat strip, and pricing -- deeper technical detail
-  (the modernization example, QoS, security, the detailed eight-stage architecture, and the
-  comparison table) sits one click deeper on the same page, collapsed by default under "Explore
-  PolyWire in depth."
+  architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
+  and pricing -- the detailed eight-stage architecture and the full comparison table sit one
+  click deeper on the same page, collapsed by default under "Explore PolyWire in depth" (the
+  standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
+  databases" use case and the live Oracle demo, both already on the page).
 - [Full capabilities](https://polygres26.github.io/polywire.html): outcomes (organized by the
   five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
   architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
