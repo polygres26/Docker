@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PolyWire — The Intelligent Gateway for Postgres | Polygres</title>
-<meta name="description" content="PolyWire is the intelligent gateway for Postgres: one secure, scalable execution layer connecting Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, and MCP clients to a single real Postgres database — with a SQL firewall, QoS, routing, sharding, caching, and observability built in. PolyAdvisor scores how hard your migration to Postgres will be.">
+<meta name="description" content="PolyWire is the intelligent gateway for Postgres: one control point that connects, translates, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, PostgreSQL, gRPC, and MCP. PolyAdvisor scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://polygres26.github.io/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -15,11 +15,11 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/">
 <meta property="og:title" content="PolyWire — The Intelligent Gateway for Postgres">
-<meta property="og:description" content="Connect any application or AI agent to Postgres through one secure, scalable execution layer — Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and MCP clients, unmodified. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
+<meta property="og:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
 <meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="PolyWire — The Intelligent Gateway for Postgres">
-<meta name="twitter:description" content="Connect any application or AI agent to Postgres through one secure, scalable execution layer — Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and MCP clients, unmodified. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
+<meta name="twitter:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
 
 <!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
@@ -34,7 +34,7 @@
       "name": "PolyWire",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
-      "description": "PolyWire is the intelligent gateway for Postgres: one secure, scalable execution layer connecting any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP -- to a single real Postgres database, unmodified. Organized around five capabilities: Connect (ten wire protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (PolyCache, rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
+      "description": "PolyWire is the intelligent gateway for Postgres -- one control point for every Postgres workload. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP -- to a single real Postgres database, unmodified. Organized around six capabilities: Connect (ten client protocols, one backend), Translate (live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution, not just protocol framing), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (PolyCache, rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
       "url": "https://polygres26.github.io/polywire.html",
       "image": "https://polygres26.github.io/docs/architecture.png",
       "offers": [
@@ -104,16 +104,17 @@
       </div>
       <h2 class="heroTitle">The intelligent gateway for Postgres.</h2>
       <p class="heroSub">
-        Connect any application or AI agent to Postgres through one secure, scalable execution
-        layer — with the protocol they already speak, no client rewrite, no driver swap.
+        Connect, secure, control, and accelerate every application and AI agent accessing
+        Postgres — regardless of the protocol they speak.
       </p>
-      <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
+      <p class="pillarStrip">Connect · Translate · Protect · Control · Accelerate · Observe</p>
       <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · PostgreSQL · gRPC · MCP</p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
-        <a class="btn btn-secondary" href="docs.html">Read the Docs</a>
+        <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
       </div>
       <p class="heroTagline">Everything talks to Postgres.</p>
+      <p class="heroTagline2">One control point for every Postgres workload.</p>
     </header>
 
     <section class="tool" id="polywire">
@@ -123,17 +124,41 @@
       </div>
       <h2>PolyWire</h2>
 
-      <h3 class="subhead" id="why">Why put PolyWire in front of Postgres?<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="why">Put an intelligent control point in front of Postgres.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Connect</h4><p>One gateway instead of separate access paths for Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and AI agents — every client keeps its own driver and protocol.</p></div>
+        <div class="obsCard"><h4>Connect</h4><p>Any client. One Postgres. Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, PostgreSQL, gRPC, and MCP — every one keeps its own driver and protocol.</p></div>
+        <div class="obsCard"><h4>Translate</h4><p>Not just protocol translation — semantic execution translation. Protocol → SQL/API semantics → PostgreSQL execution, live, on every call.</p></div>
         <div class="obsCard"><h4>Protect</h4><p>A SQL firewall, connection ACL, authentication, and Postgres row-level security identity all apply before a request reaches Postgres — the same policies regardless of which protocol the caller speaks.</p></div>
         <div class="obsCard"><h4>Control</h4><p>QoS admission control, routing, connection pooling, sharding, and planned/unplanned failover — protect backend capacity and keep Postgres available under load.</p></div>
-        <div class="obsCard"><h4>Accelerate &amp; Observe</h4><p>PolyCache serves repeat reads without a Postgres round trip; Prometheus and OTEL export give you one place to see every request, from protocol in to backend out.</p></div>
+        <div class="obsCard"><h4>Accelerate</h4><p>PolyCache serves repeat reads without a Postgres round trip; rollups keep pre-aggregated tables fresh automatically.</p></div>
+        <div class="obsCard"><h4>Observe</h4><p>See every request before it reaches Postgres — client → protocol → SQL → policy → route → backend → latency → error — exported to the tools you already run.</p></div>
       </div>
       <p class="rttNote">
-        Four real reasons to run PolyWire — migration is one of them, not the only one. Some
+        Six real reasons to run PolyWire — migration is one of them, not the only one. Some
         teams run it indefinitely as a permanent control point in front of Postgres, whether or
         not anything is being migrated at all.
+      </p>
+
+      <h3 class="subhead" id="architecture-simple">One execution path. One security boundary. One control point.<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
+      <div class="simpleArch">
+        <div class="archTier archTierApps">
+          <span class="archTierLabel">Your applications &amp; AI agents</span>
+          <span class="archTierDetail">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · AWS APIs · MCP</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierHub">
+          <span class="archTierLabel archHubLabel">POLYWIRE</span>
+          <span class="archTierDetail archHubFlow">Connect → Translate → Protect → Control → Accelerate → Observe</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierPg">
+          <span class="archTierLabel">Postgres, anywhere</span>
+          <span class="archTierDetail">RDS · Aurora · Cloud SQL · Azure · OCI · Supabase · On-prem</span>
+        </div>
+      </div>
+      <p class="rttNote">
+        <a href="polywire.html#outcomes">See how PolyWire works, stage by stage →</a> — the
+        detailed eight-stage pipeline behind this diagram.
       </p>
 
       <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
@@ -162,6 +187,12 @@ SQL&gt;</pre>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
         (SQLcl and JDBC clients are what's verified working today; see
         <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.)
+      </p>
+      <p class="credStrip">
+        10 client-facing protocols · Verified against each protocol's real client library
+        (psycopg2, python-oracledb, mongosh, boto3, opensearch-py, and more — not a synthetic
+        harness) · Multi-AZ failover tested with real cache nodes · Connection guides for
+        Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, Oracle OCI, and Supabase
       </p>
 
       <h3 class="subhead" id="rewire">Use case: modernize without rewrites — don't rewrite, rewire<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
@@ -279,8 +310,8 @@ SQL&gt;</pre>
         it's talking to, is on the other end.
       </p>
 
-      <h3 class="subhead" id="try">Try it in a minute<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote">Pull the image, point it at a Postgres you already have:</p>
+      <h3 class="subhead" id="try">Try PolyWire in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote"><b>1. Start PolyWire</b> — pull the image, point it at a Postgres you already have:</p>
       <div class="runblock">
         <code>docker run \
   -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
@@ -289,9 +320,15 @@ SQL&gt;</pre>
   -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code>
       </div>
-      <p class="rttNote">Then connect with whatever client you already have — same driver, same protocol, no config beyond the port:</p>
+      <p class="rttNote"><b>2. Connect</b> — same driver, same protocol you already use, no config beyond the port. Postgres, the protocol most people start with:</p>
       <div class="runblock">
-        <code>psql -h localhost -p 15432 -U postgres           # Postgres wire
+        <code>psql -h localhost -p 15432 -U postgres</code>
+      </div>
+      <p class="rttNote"><b>3. Done</b> — your client → PolyWire → PostgreSQL. No rewrite.</p>
+      <details class="methodDetails">
+        <summary>Try another protocol →</summary>
+        <div class="runblock">
+          <code>psql -h localhost -p 15432 -U postgres           # Postgres wire
 mysql -h 127.0.0.1 -P 13306 -u root -p             # MySQL wire
 sqlcmd -S localhost,14333 -U sa -P '&lt;password&gt;'   # SQL Server wire
 sql app/password@//localhost:11521/postgres        # Oracle wire (SQLcl)
@@ -302,28 +339,46 @@ aws dynamodb scan --table-name orders \            # DynamoDB wire
 aws sqs receive-message \                          # SQS wire
   --queue-url http://localhost:9324/queue/orders \
   --endpoint-url http://localhost:9324</code>
+        </div>
+        <p class="rttNote">
+          That works as-is against an existing on-prem Postgres. For a specific managed
+          provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
+          PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
+          <a href="CONNECTING.md">CONNECTING.md</a>.
+        </p>
+      </details>
+
+      <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Prioritize</h4><p>Critical workloads get priority over background traffic.</p></div>
+        <div class="obsCard"><h4>Throttle</h4><p>Rate-limit noisy applications before they hurt everyone else.</p></div>
+        <div class="obsCard"><h4>Bound concurrency</h4><p>Cap how many requests hit Postgres at once, per workload class.</p></div>
+        <div class="obsCard"><h4>Shed load</h4><p>Reject gracefully before Postgres saturates, not after it falls over.</p></div>
       </div>
       <p class="rttNote">
-        That works as-is against an existing on-prem Postgres. For a specific managed
-        provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
-        PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
-        <a href="CONNECTING.md">CONNECTING.md</a>.
+        <b>QoS for Postgres, at the gateway.</b> A real token-bucket admission controller —
+        rate, burst, and max-wait, per workload class (query/write/ddl/txn) — plus shedding when
+        a backend's connection pool is saturated. This isn't a side feature; it's the difference
+        between a runaway workload degrading everyone and one client waiting its turn. See
+        <a href="polywire.html#security">Security</a> for the full scope.
       </p>
+
+      <h3 class="subhead" id="security-boundary">One security boundary for Postgres.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
+        <b>Security follows the request, not the protocol.</b>
+      </p>
+      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
+      <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
 
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically.</figcaption>
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically. (gRPC is PolyWire's own native driver protocol, not an emulated foreign database — see <a href="polywire.html">full capabilities</a> for what that means.)</figcaption>
       </figure>
       <p class="rttNote">
-        <b>What gRPC is, on this diagram:</b> the one protocol here that isn't emulating a
-        foreign database — it's PolyWire's own native driver protocol, a thin, stateless
-        request/response API (one <code>Execute(sql, params)</code> call in, one result back, no
-        session handshake to maintain) for a client written specifically against PolyWire rather
-        than against Postgres, MySQL, or any of the others. It runs through the exact same shared
-        pipeline as every emulated protocol — same firewall, same QoS, same metrics — so choosing
-        it over pgwire buys a simpler client integration, not a separate, less-governed path to
-        your data.
+        <b>Run it anywhere Postgres runs.</b> Docker · Kubernetes · AWS · Azure · GCP · OCI ·
+        on-prem — your infrastructure, your network, your Postgres.
       </p>
 
       <h3 class="subhead" id="pillars">Four ways teams put PolyWire to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
@@ -339,29 +394,54 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <p class="rttNote"><a href="polywire.html">Explore all PolyWire capabilities →</a></p>
 
+      <h3 class="subhead" id="without-polywire">Without PolyWire vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
+      <div class="withoutWithGrid">
+        <div class="withoutCol">
+          <h4>Without PolyWire</h4>
+          <ul>
+            <li>Different database infrastructure per protocol</li>
+            <li>A separate connection proxy</li>
+            <li>Different security controls per system</li>
+            <li>Different observability per system</li>
+            <li>Separate migration tooling</li>
+            <li>A separate, unguarded AI access path</li>
+          </ul>
+        </div>
+        <div class="withCol">
+          <h4>With PolyWire</h4>
+          <p class="withStatement">One gateway → Postgres.</p>
+          <ul>
+            <li><b>Fewer systems to operate</b> — one gateway instead of five databases' own tooling.</li>
+            <li><b>One place to govern workloads</b> — the same firewall, QoS, and audit path for every protocol.</li>
+            <li><b>Standardize on Postgres</b> — without rewriting every application first.</li>
+          </ul>
+        </div>
+      </div>
+
       <h3 class="subhead" id="comparison">Why PolyWire?<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
       <div class="rttTableWrap">
         <table class="rttTable compareTable">
           <thead>
-            <tr><th>Capability</th><th>Traditional migration</th><th>Database proxy</th><th>PolyWire</th></tr>
+            <tr><th>Capability</th><th>Direct to Postgres</th><th>Traditional proxy</th><th>PolyWire</th></tr>
           </thead>
           <tbody>
-            <tr><td>Keep existing drivers</td><td class="no">✗</td><td class="maybe">Usually same protocol only</td><td class="yes">✓</td></tr>
-            <tr><td>Multiple protocols, one gateway</td><td class="no">✗</td><td class="maybe">Limited</td><td class="yes">✓</td></tr>
-            <tr><td>SQL/dialect translation</td><td class="maybe">Migration-time, one-shot</td><td class="maybe">Limited</td><td class="yes">✓, live, every call</td></tr>
-            <tr><td>Real Postgres backend</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>MongoDB / OpenSearch / DynamoDB / SQS on Postgres</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td></tr>
-            <tr><td>MCP for AI agents, same governed path</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td></tr>
-            <tr><td>Firewall / QoS / routing built in</td><td class="maybe">Separate tools</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Postgres wire protocol</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Foreign DB protocols (Oracle, MySQL, SQL Server, MongoDB…)</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Live dialect / semantic translation</td><td class="no">—</td><td class="no">—</td><td class="yes">✓, every call</td></tr>
+            <tr><td>SQL firewall</td><td class="maybe">DB-side only</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Workload QoS / admission control</td><td class="maybe">DB-side only</td><td class="maybe">Limited</td><td class="yes">✓</td></tr>
+            <tr><td>Intelligent routing</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Sharding</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Distributed caching</td><td class="no">Separate system</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>AI / MCP access, same governed path</td><td class="no">Separate path</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Unified observability</td><td class="maybe">Multiple layers</td><td class="maybe">Proxy layer only</td><td class="yes">✓</td></tr>
           </tbody>
         </table>
       </div>
       <p class="rttNote">
-        "Database proxy" above means a same-protocol proxy (e.g. PgBouncer-style pooling) — a
-        real, useful category, just not one built to translate a foreign protocol into Postgres
-        or govern multiple protocols behind one policy plane. No specific competitor is named
-        here; every claim above is about what PolyWire itself does, stated the same way the rest
-        of this page is — scoped honestly, not as a knock on a named alternative.
+        This compares architectural approaches, not named products — see
+        <a href="polywire.html">full capabilities</a> for the honestly-scoped detail behind
+        every ✓ above.
       </p>
 
 
@@ -402,7 +482,10 @@ aws sqs receive-message \                          # SQS wire
         <div class="priceCard enterprise">
           <h3>Enterprise</h3>
           <p class="priceTag">Contact us</p>
-          <p class="priceSub">For production deployments of any size.</p>
+          <p class="priceSub">
+            <b>Simple infrastructure pricing.</b> Per PolyWire instance — no per-protocol fees,
+            no per-database fees. For production deployments of any size.
+          </p>
           <ul>
             <li>Everything in Developer, unrestricted</li>
             <li>Unlimited concurrent client connections</li>
@@ -412,6 +495,7 @@ aws sqs receive-message \                          # SQS wire
             <li>Licensed for commercial production use</li>
             <li>Enterprise support</li>
           </ul>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Contact us for production licensing →</a></p>
         </div>
       </div>
       <p class="pricingNote">
