@@ -272,16 +272,109 @@ test&gt;</pre>
         (SQLcl, JDBC, and psql are what's most thoroughly verified today; see
         <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.)
       </p>
-      <p class="credStrip">
-        10 client-facing protocols · Verified against each protocol's real client library
-        (psycopg2, python-oracledb, mongosh, boto3, opensearch-py, and more — not a synthetic
-        harness) · Multi-AZ failover tested with real cache nodes · Connection guides for
-        Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, Oracle OCI, and Supabase
-      </p>
 
+      <h3 class="subhead" id="try">Try PolyWire in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">What do you use? Point it at a Postgres you already have:</p>
+      <div class="demoSelector">
+        <input type="radio" name="tryProto" id="try-postgres" class="demoRadio" checked>
+        <input type="radio" name="tryProto" id="try-oracle" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-mysql" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-mongodb" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-opensearch" class="demoRadio">
+        <div class="demoTabs">
+          <label for="try-postgres" class="demoTab">Postgres</label>
+          <label for="try-oracle" class="demoTab">Oracle</label>
+          <label for="try-mysql" class="demoTab">MySQL</label>
+          <label for="try-mongodb" class="demoTab">MongoDB</label>
+          <label for="try-opensearch" class="demoTab">OpenSearch</label>
+        </div>
+
+        <div class="demoPanel" id="trypanel-postgres">
+          <p class="rttNote"><b>1. Start PolyWire</b></p>
+          <div class="runblock"><code>docker run -p 15432:15432 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>psql -h localhost -p 15432 -U postgres</code></div>
+          <p class="rttNote"><b>3. Done</b> — your client → PolyWire → PostgreSQL. No rewrite.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-oracle">
+          <p class="rttNote"><b>1. Start PolyWire</b></p>
+          <div class="runblock"><code>docker run -p 11521:11521 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
+          <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → PolyWire → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-mysql">
+          <p class="rttNote"><b>1. Start PolyWire</b></p>
+          <div class="runblock"><code>docker run -p 13306:13306 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
+          <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → PolyWire → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-mongodb">
+          <p class="rttNote"><b>1. Start PolyWire</b></p>
+          <div class="runblock"><code>docker run -p 27017:27017 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
+          <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → PolyWire → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-opensearch">
+          <p class="rttNote"><b>1. Start PolyWire</b></p>
+          <div class="runblock"><code>docker run -p 9200:9200 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
+          <p class="rttNote"><b>3. Done</b> — REST client → OSWire → PolyWire → PostgreSQL. No driver change.</p>
+        </div>
+      </div>
+      <details class="methodDetails">
+        <summary>See every protocol at once (SQL Server, DynamoDB, SQS included) →</summary>
+        <div class="runblock">
+          <code>docker run \
+  -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
+  -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
+  -e POLYWIRE_HOST=&lt;host&gt; \
+  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code>
+        </div>
+        <div class="runblock">
+          <code>psql -h localhost -p 15432 -U postgres           # Postgres wire
+mysql -h 127.0.0.1 -P 13306 -u root -p             # MySQL wire
+sqlcmd -S localhost,14333 -U sa -P '&lt;password&gt;'   # SQL Server wire
+sql app/password@//localhost:11521/postgres        # Oracle wire (SQLcl)
+mongosh mongodb://localhost:27017                  # MongoDB wire
+curl -s localhost:9200/_search                     # OpenSearch wire
+aws dynamodb scan --table-name orders \            # DynamoDB wire
+  --endpoint-url http://localhost:18000
+aws sqs receive-message \                          # SQS wire
+  --queue-url http://localhost:9324/queue/orders \
+  --endpoint-url http://localhost:9324</code>
+        </div>
+        <p class="rttNote">
+          That works as-is against an existing on-prem Postgres. For a specific managed
+          provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
+          PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
+          <a href="CONNECTING.md">CONNECTING.md</a>.
+        </p>
+      </details>
+
+      <details class="exploreMore">
+        <summary class="exploreSummary">Explore PolyWire in depth — modernization example, QoS, security, detailed architecture, comparison →</summary>
       <h3 class="subhead" id="rewire">Use case: modernize without rewrites — don't rewrite, rewire<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Your Oracle application thinks it's talking to Oracle. It's actually talking to Postgres —
+        Your Oracle client thinks it's talking to Oracle. It's actually talking to Postgres —
         and it never finds out.
       </p>
       <figure class="rewireFigure">
@@ -387,63 +480,14 @@ test&gt;</pre>
         </figcaption>
       </figure>
       <p class="rttNote">
-        Keep your applications. Keep your drivers. Keep your protocols. Standardize the backend
-        on Postgres. Every one of them is a real client library talking the real protocol it
-        always has — <code>python-oracledb</code>, <code>mongosh</code>/<code>mongodb-driver-sync</code>,
-        <code>opensearch-py</code>, an MCP client — unaware PolyWire, not the database it thinks
-        it's talking to, is on the other end.
+        Keep your applications, drivers, and protocols. Standardize the backend on Postgres.
       </p>
 
-      <h3 class="subhead" id="try">Try PolyWire in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote"><b>1. Start PolyWire</b> — pull the image, point it at a Postgres you already have:</p>
-      <div class="runblock">
-        <code>docker run \
-  -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
-  -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
-  -e POLYWIRE_HOST=&lt;host&gt; \
-  -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code>
-      </div>
-      <p class="rttNote"><b>2. Connect</b> — same driver, same protocol you already use, no config beyond the port. Postgres, the protocol most people start with:</p>
-      <div class="runblock">
-        <code>psql -h localhost -p 15432 -U postgres</code>
-      </div>
-      <p class="rttNote"><b>3. Done</b> — your client → PolyWire → PostgreSQL. No rewrite.</p>
-      <details class="methodDetails">
-        <summary>Try another protocol →</summary>
-        <div class="runblock">
-          <code>psql -h localhost -p 15432 -U postgres           # Postgres wire
-mysql -h 127.0.0.1 -P 13306 -u root -p             # MySQL wire
-sqlcmd -S localhost,14333 -U sa -P '&lt;password&gt;'   # SQL Server wire
-sql app/password@//localhost:11521/postgres        # Oracle wire (SQLcl)
-mongosh mongodb://localhost:27017                  # MongoDB wire
-curl -s localhost:9200/_search                     # OpenSearch wire
-aws dynamodb scan --table-name orders \            # DynamoDB wire
-  --endpoint-url http://localhost:18000
-aws sqs receive-message \                          # SQS wire
-  --queue-url http://localhost:9324/queue/orders \
-  --endpoint-url http://localhost:9324</code>
-        </div>
-        <p class="rttNote">
-          That works as-is against an existing on-prem Postgres. For a specific managed
-          provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
-          PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
-          <a href="CONNECTING.md">CONNECTING.md</a>.
-        </p>
-      </details>
-
       <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Prioritize</h4><p>Critical workloads get priority over background traffic.</p></div>
-        <div class="obsCard"><h4>Throttle</h4><p>Rate-limit noisy applications before they hurt everyone else.</p></div>
-        <div class="obsCard"><h4>Bound concurrency</h4><p>Cap how many requests hit Postgres at once, per workload class.</p></div>
-        <div class="obsCard"><h4>Shed load</h4><p>Reject gracefully before Postgres saturates, not after it falls over.</p></div>
-      </div>
       <p class="rttNote">
-        <b>QoS for Postgres, at the gateway.</b> A real token-bucket admission controller —
-        rate, burst, and max-wait, per workload class (query/write/ddl/txn) — plus shedding when
-        a backend's connection pool is saturated. This isn't a side feature; it's the difference
-        between a runaway workload degrading everyone and one client waiting its turn. See
+        <b>QoS for Postgres, at the gateway.</b> Prioritize, throttle, bound concurrency, and
+        shed load — before Postgres saturates, not after it falls over. A real token-bucket
+        admission controller, per workload class (query/write/ddl/txn). See
         <a href="polywire.html#security">Security</a> for the full scope.
       </p>
 
@@ -507,7 +551,15 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <p class="rttNote"><a href="polywire.html">Comparison methodology →</a></p>
 
+      </details>
+
       <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
+      <div class="statGrid">
+        <div class="statCard"><span class="statNum">10</span><span class="statLabel">Client protocols</span></div>
+        <div class="statCard"><span class="statNum">8</span><span class="statLabel">Real client stacks verified</span></div>
+        <div class="statCard"><span class="statNum">Multi-AZ</span><span class="statLabel">Failover tested</span></div>
+        <div class="statCard"><span class="statNum">5</span><span class="statLabel">Managed Postgres platforms documented</span></div>
+      </div>
       <p class="rttNote">
         Every row below is verified against that protocol's real client library, not a synthetic
         harness — this table states only what's actually confirmed today; see
@@ -616,35 +668,31 @@ aws sqs receive-message \                          # SQS wire
       </p>
     </section>
 
+    <section class="tool" id="final-cta">
+      <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
+      <p class="lede">
+        <b>Try it free</b> — Developer Edition, all features, all ten protocols.
+        <b>Taking it to production?</b> Bring your architecture and we'll help map the
+        deployment.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
+        <a class="btn btn-secondary" href="#contact">Schedule Architecture Review</a>
+      </div>
+    </section>
+
     <section class="tool" id="polyadvisor">
       <div class="kicker">
         <span class="num">03</span>
         <span class="badge">ghcr.io/polygres26/polyadvisor</span>
       </div>
-      <p class="bridgeKicker">Thinking about moving to Postgres?</p>
-      <h2>PolyAdvisor tells you how hard it'll be</h2>
+      <p class="bridgeKicker">Also from PolyGres</p>
+      <h2>PolyAdvisor — know before you migrate</h2>
       <p class="lede">
         <b>PolyAdvisor plans the move to Postgres. PolyWire runs and governs workloads on
-        Postgres.</b> Oracle · MySQL · MariaDB · SQL Server → assess → size → plan → migrate with
-        PolyWire keeping your application running the whole time.
+        Postgres.</b> Assess → size → plan → move — Oracle, MySQL, MariaDB, SQL Server →
+        Postgres, with a rules-based, reproducible difficulty score (not LLM-generated).
       </p>
-      <p class="lede">
-        Point PolyAdvisor at a source database — or upload a performance report if you can't
-        share a live connection — and it gives you a concrete migration-difficulty score, a
-        breakdown of exactly what's driving that score, and a Postgres sizing recommendation.
-        No guesswork, no black box: the score is rules-based and reproducible, not
-        LLM-generated, so running it twice against the same database gives you the same answer.
-        Once you know what you're migrating and how hard it'll be, PolyWire (above) is what
-        lets your application keep running against its original protocol while the migration
-        actually happens.
-      </p>
-
-      <div class="runblock">
-        <p>Quick start:</p>
-        <code>docker run -p 8090:8090 \
-  -v polyadvisor-data:/data \
-  ghcr.io/polygres26/polyadvisor:latest</code>
-      </div>
       <p class="rttNote"><a href="polyadvisor.html">Explore PolyAdvisor — assessment, sizing, and PL/SQL review with an LLM's help →</a></p>
     </section>
 
