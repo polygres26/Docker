@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSearch → PostgreSQL, No Client Change | PolyWire</title>
+<meta name="description" content="Your OpenSearch REST client or opensearch-py code connects to PolyWire over the real OpenSearch HTTP/JSON wire protocol — and executes against real PostgreSQL on the other end. No client change, no application rewrite. See the commands and try it in 60 seconds.">
+<link rel="canonical" href="https://polygres26.github.io/opensearch-to-postgres.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="docs/logo.png">
+<link rel="apple-touch-icon" href="docs/logo.png">
+<link rel="stylesheet" href="styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://polygres26.github.io/opensearch-to-postgres.html">
+<meta property="og:title" content="OpenSearch → PostgreSQL, No Client Change">
+<meta property="og:description" content="Your OpenSearch client thinks it's talking to OpenSearch. It's actually talking to Postgres. Real OpenSearch wire protocol, real PostgreSQL backend, no client change.">
+<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="OpenSearch → PostgreSQL, No Client Change">
+<meta name="twitter:description" content="Your OpenSearch client thinks it's talking to OpenSearch. It's actually talking to Postgres. Real OpenSearch wire protocol, real PostgreSQL backend, no client change.">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "OpenSearch to PostgreSQL without changing the OpenSearch client",
+  "description": "PolyWire speaks the real OpenSearch HTTP/JSON wire protocol to REST and opensearch-py clients, and executes every search/index call against a real PostgreSQL database -- no client change, no application rewrite.",
+  "url": "https://polygres26.github.io/opensearch-to-postgres.html",
+  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://polygres26.github.io/polywire.html" }
+}
+</script>
+</head>
+<body>
+  <a href="#main" class="skipLink">Skip to content</a>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="index.html">Home</a>
+      <a href="polywire.html">PolyWire</a>
+      <a href="polyadvisor.html">PolyAdvisor</a>
+      <a href="docs.html">Docs</a>
+      <a href="index.html#pricing">Pricing</a>
+      <a href="index.html#contact">Contact</a>
+    </div>
+  </nav>
+  <div class="wrap" id="main">
+    <header class="hero">
+      <div class="brandRow">
+        <img src="docs/logo.png" alt="Polygres" class="brandMark">
+        <h1 class="eyebrow">PolyGres</h1>
+      </div>
+      <p class="lede"><a href="index.html">← Back to the PolyWire overview</a></p>
+      <h2 class="heroTitle">OpenSearch → PostgreSQL. No client change.</h2>
+      <p class="heroSub">
+        Your OpenSearch client thinks it's talking to OpenSearch. It's actually talking to
+        Postgres — and it never finds out. A plain REST client or <code>opensearch-py</code>
+        connects over the real OpenSearch HTTP/JSON wire protocol; PolyWire executes every
+        search and index call against a real PostgreSQL database on the other end.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try It Free</a>
+        <a class="btn btn-secondary" href="polywire.html">Explore PolyWire</a>
+      </div>
+    </header>
+
+    <section class="tool" id="how" style="margin-top:0; padding-top:0; border-top:none;">
+      <h3 class="subhead" id="architecture">How it works<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
+      <div class="simpleArch">
+        <div class="archTier archTierApps">
+          <span class="archTierLabel">OpenSearch client</span>
+          <span class="archTierDetail">REST or opensearch-py — unmodified, same client you already use</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierHub">
+          <span class="archTierLabel archHubLabel">POLYWIRE</span>
+          <span class="archTierDetail archHubFlow">OSWire (real OpenSearch HTTP/JSON wire protocol) → Connect · Protect · Control · Accelerate · Observe</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierPg">
+          <span class="archTierLabel">PostgreSQL, anywhere</span>
+          <span class="archTierDetail">RDS · Aurora · Cloud SQL · Azure · OCI · Supabase · On-prem</span>
+        </div>
+      </div>
+
+      <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
+      <div class="termWindow">
+        <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+        <pre class="termBody">$ curl -s localhost:9200/orders/_search
+
+{
+  "hits": {
+    "total": { "value": 2 },
+    "hits": [
+      { "_source": { "order_id": 1001, "amount": 129.99 } },
+      { "_source": { "order_id": 1002, "amount": 89.50 } }
+    ]
+  }
+}</pre>
+      </div>
+      <div class="demoFlow">
+        <span>REST client</span><span class="rewireArrow">→</span><span>OSWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+      </div>
+      <p class="rttNote">
+        <i>OpenSearch client. OpenSearch wire protocol. PostgreSQL database. No client rewrite.</i>
+        Document contents above are illustrative — the call and path are exactly real.
+        See <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.
+      </p>
+
+      <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote"><b>1. Start PolyWire</b> — point it at a Postgres you already have:</p>
+      <div class="runblock"><code>docker run -p 9200:9200 \
+  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/polywire:latest</code></div>
+      <p class="rttNote"><b>2. Connect</b> — same REST calls you already make:</p>
+      <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
+      <p class="rttNote"><b>3. Done</b> — REST client → OSWire → PolyWire → PostgreSQL. No client change.</p>
+      <p class="rttNote">
+        Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
+        Database for PostgreSQL, or Oracle OCI? See <a href="CONNECTING.md">CONNECTING.md</a> for
+        the real provider-specific setup.
+      </p>
+
+      <h3 class="subhead" id="why">Why teams do this<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Consolidate search onto Postgres</h4><p>Keep the OpenSearch API surface your application already calls, without running a separate OpenSearch cluster alongside Postgres.</p></div>
+        <div class="obsCard"><h4>Standardize on Postgres</h4><p>Consolidate OpenSearch, MongoDB, Oracle, MySQL, and more onto one real Postgres database, without every team rewriting its data layer first.</p></div>
+        <div class="obsCard"><h4>Keep governance in one place</h4><p>The same SQL firewall, QoS, and audit path that governs every other protocol also governs this one — not a separate, unguarded route to your data.</p></div>
+      </div>
+
+      <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead><tr><th>Protocol</th><th>Client tested against</th><th>Bound parameters decoded</th><th>Native error translation</th><th>RLS identity</th></tr></thead>
+          <tbody>
+            <tr><td>OpenSearch</td><td>opensearch-py</td><td class="maybe">Hash by <code>doc_id</code></td><td class="yes">✓ (error.type/reason)</td><td class="no">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote"><a href="polywire.html">Full compatibility matrix, all ten protocols →</a></p>
+    </section>
+
+    <section class="tool" id="final-cta">
+      <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
+      <p class="lede">
+        <b>Try it free</b> — Developer Edition, all features. <b>Taking it to production?</b>
+        Bring your architecture and we'll help map the deployment.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
+        <a class="btn btn-secondary" href="index.html#contact">Schedule Architecture Review</a>
+      </div>
+    </section>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="README.md">README.md</a> and
+      <a href="polywire/README.md">polywire/</a> / <a href="polyadvisor/README.md">polyadvisor/</a>
+      in this repo.
+    </footer>
+  </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+  <script src="page.js"></script>
+</body>
+</html>
