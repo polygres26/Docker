@@ -190,7 +190,10 @@ public final class ExecuteRequestReader {
         // real field is somewhere in the same misaligned region readByScanningForSql exists to
         // avoid depending on. A generous fixed count, rather than 1, keeps a typical
         // dblink-forwarded query's whole result set flowing back in this same response instead of
-        // needing a real FETCH continuation this fallback also doesn't model.
+        // needing a real FETCH continuation this fallback also doesn't model. (0 -- no inline rows
+        // at all, on the theory that this client fetches separately -- was also tried live against
+        // a real Oracle 23c instance: no better, still the same TNS BREAK/RESET reaction, so this
+        // stays at a real row count instead.)
         return new ExecuteRequest(0, sqlText, options, FALLBACK_NUM_ITERS, Collections.emptyList());
     }
 
