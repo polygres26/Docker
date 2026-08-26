@@ -52,6 +52,8 @@
   .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
   .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo); }
   .heroTagline { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+  .heroTagline2 { font-size: 15px; color: var(--ink-dim); margin: 6px 0 0; }
+  .credStrip { font-size: 12.5px; color: var(--ink-faint); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px 0; margin: 4px 0 20px; line-height: 1.7; }
 
   /* "Don't rewrite. Rewire." before/after -- plain HTML/CSS, no image asset, so it stays crisp
      and theme-aware at any size. Before: four separate app-to-own-database rows. After: the same
@@ -193,7 +195,29 @@
   table.compareTable th, table.compareTable td { text-align: left; white-space: normal; }
   table.compareTable td:first-child { font-weight: 600; }
 
+  /* "Without PolyWire" vs. "With PolyWire" -- the executive-summary version of the comparison
+     table, translating feature scope into operational consequence. */
+  .withoutWithGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 20px; }
+  @media (max-width: 640px) { .withoutWithGrid { grid-template-columns: 1fr; } }
+  .withoutCol, .withCol { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .withCol { border-color: var(--indigo); background: var(--indigo-soft); }
+  .withoutCol h4, .withCol h4 { margin: 0 0 10px; font-size: 14px; }
+  .withoutCol ul, .withCol ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ink-dim); line-height: 1.7; }
+  .withStatement { font-weight: 700; font-size: 15px; margin: 0 0 10px; color: var(--ink); }
+
   .pillarLabel { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--indigo); text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 8px; }
+
+  /* Simple, marketing-level architecture diagram -- three stacked tiers, no internal stage names.
+     The detailed eight-stage pipeline stays in the architecture <img> further down the page and
+     on polywire.html; this is the version meant to be understood in two seconds. */
+  .simpleArch { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 4px 0 8px; }
+  .archTier { width: 100%; max-width: 640px; border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; text-align: center; display: flex; flex-direction: column; gap: 4px; }
+  .archTierLabel { font-weight: 700; font-size: 15px; color: var(--ink); }
+  .archTierDetail { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); }
+  .archTierHub { background: var(--indigo); border-color: var(--indigo); }
+  .archHubLabel { color: #fff; letter-spacing: 0.03em; }
+  .archHubFlow { color: rgba(255,255,255,0.82); }
+  .archArrow { color: var(--ink-faint); font-size: 18px; line-height: 1; }
   .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
   .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .obsCard h4 { margin: 0 0 6px; font-size: 14px; }

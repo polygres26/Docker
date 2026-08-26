@@ -8,12 +8,15 @@
 > bridges your application to Postgres while that migration happens.
 >
 > Protocol translation ("everything talks to Postgres") is one capability, not the whole product.
-> PolyWire's full scope is five capabilities: **Connect** (ten client protocols, one Postgres
-> backend), **Protect** (SQL firewall, connection ACL, authentication, row-level security),
-> **Control** (QoS admission control, routing, connection pooling, sharding, planned/unplanned
-> failover), **Accelerate** (PolyCache, rollups), and **Observe** (native per-protocol error
-> translation, Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams
-> run it indefinitely as a permanent control point in front of Postgres.
+> PolyWire's real category is "one control point for every Postgres workload" -- its full scope is
+> six capabilities: **Connect** (ten client protocols, one Postgres backend), **Translate** (live
+> semantic execution translation -- protocol to SQL/API semantics to PostgreSQL execution, not just
+> protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
+> security -- security follows the request, not the protocol), **Control** (QoS admission control,
+> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (PolyCache,
+> rollups), and **Observe** (native per-protocol error translation, Prometheus/OTEL export, audit
+> log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
+> point in front of Postgres, whether or not anything is being migrated at all.
 
 Full documentation, architecture diagrams, real benchmark numbers, and every feature's honest
 scope (what's real vs. not yet wired) live across the main page and its linked pages. This file
