@@ -44,6 +44,7 @@ import org.slf4j.LoggerFactory;
 public final class RequestLoop {
 
     private static final Logger log = LoggerFactory.getLogger(RequestLoop.class);
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
     private final TnsPacketReader reader;
     private final OutputStream out;
@@ -244,6 +245,44 @@ public final class RequestLoop {
                     }
                 }
                 ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+            } else if (functionCode == FUNC_SESSION_NLS_SETUP) {
+                // A real distributed-database-link connection's native OCI client sends TWO
+                // structurally different calls under this same function code (67, undocumented
+                // publicly), confirmed live against a real Oracle 23c instance:
+                //   1. Right after the post-login banner exchange, carrying a literal
+                //      `ALTER SESSION SET NLS_LANGUAGE=... TIME_ZONE=... SKIP_UNUSABLE_INDEXES=...`
+                //      statement -- Oracle session-format/locale settings with no Postgres
+                //      equivalent. Real Oracle answers with a structured reply that echoes each
+                //      NLS_* setting back individually.
+                //   2. Later, carrying a distributed-session identifier string of the shape
+                //      `<SERVICE_NAME>[<version>][<n>]<SERVICE_NAME>.<hex>.<version>` (a global
+                //      transaction/session cookie, not SQL text) -- answered with a different,
+                //      much shorter structured reply.
+                // Sending the first reply's bytes back for the second call (this codebase's first
+                // attempt, since neither call is otherwise parsed at the TTC level) causes the same
+                // TNS BREAK/RESET reaction every other structurally-wrong response in this series
+                // has -- confirmed live. Distinguish by the one cheap, reliable signal available
+                // without a real parser: whether the request text contains "ALTER SESSION".
+                byte[] requestBytes = r.readRemaining();
+                boolean isNlsAlterSession = indexOfAscii(requestBytes, "ALTER SESSION") >= 0;
+                String responseB64 = isNlsAlterSession ? SESSION_NLS_SETUP_RESPONSE_B64
+                        : SESSION_ID_REGISTER_RESPONSE_B64;
+                w.writeRaw(java.util.Base64.getDecoder().decode(responseB64));
+            } else if (functionCode == FUNC_UNKNOWN_202) {
+                // Another real-dblink-client-only call this codebase has no parser for -- comes
+                // right after FUNC_SESSION_NLS_SETUP, confirmed live against a real Oracle 23c
+                // instance. Its request and response payloads are dominated by large opaque
+                // base64-shaped blobs (~1KB), unlike every other call in this series, which strongly
+                // suggests real per-session cryptographic or key-exchange material rather than
+                // plain protocol/session metadata -- meaning replaying a fixed captured response
+                // here (the strategy that worked for the two calls above) is a real risk: if the
+                // client actually uses this content afterward (e.g. as key material for encrypting
+                // later traffic), a fixed replayed value from a DIFFERENT real session won't match
+                // and later traffic could silently corrupt rather than cleanly fail. Tried anyway,
+                // specifically to learn how far a fixed reply gets before that risk materializes,
+                // rather than guessing blind -- see this method's caller-side notes for what was
+                // observed.
+                w.writeRaw(java.util.Base64.getDecoder().decode(FUNC_UNKNOWN_202_RESPONSE_B64));
             } else {
                 throw new UnsupportedOperationException("unsupported TTC function code: " + functionCode);
             }
@@ -401,6 +440,67 @@ public final class RequestLoop {
     // used rather than added to that shared, otherwise-documented constant set.
     private static final int FUNC_CLIENT_BANNER_REQUEST = 107;
 
+    // See the FUNC_SESSION_NLS_SETUP branch's comment above for what this call actually carries.
+    private static final int FUNC_SESSION_NLS_SETUP = 67;
+
+    // The exact real reply bytes captured from a genuine Oracle-to-Oracle self-loop dblink
+    // session's response to this same call: echoes each NLS_* setting from the client's ALTER
+    // SESSION statement back individually (as real Oracle values -- AMERICAN/AMERICA/AL32UTF8/etc,
+    // not whatever the client actually asked for), plus a "SQL*Plus" client-name echo and the same
+    // kind of fixed trailer/marker structure seen elsewhere in this series. Used verbatim rather
+    // than reconstructed field-by-field: this call's real wire format is a different, undocumented
+    // shape from the ordinary EXECUTE/DEFINE response format ResponseWriter otherwise builds, and
+    // the client was confirmed live to need this specific structured content, not just any
+    // well-formed acknowledgement.
+    private static final String SESSION_NLS_SETUP_RESPONSE_B64 =
+        "CAMAAAAAAAAAAAADAAAAAQABEgBhZjJjZmZmYSJGUkVFUERCMSICAETLdQAAAAAAFwUBABAXAAAAFgAAAAAIAAAACEFNRVJJQ0FOEAAAAAAABwAAAAdBTUVSSUNBCQAAAAAAAQAAAAEkAAAAAAAABwAAAAdBTUVSSUNBAQAAAAAAAgAAAAIuLAIAAAAAAAgAAAAIQUwzMlVURjgKAAAAAAAJAAAACUdSRUdPUklBTgwAAAAAAAkAAAAJREQtTU9OLVJSBwAAAAAACAAAAAhBTUVSSUNBTggAAAAAAAYAAAAGQklOQVJZCwAAAAAADgAAAA5ISC5NSS5TU1hGRiBBTTkAAAAAABgAAAAYREQtTU9OLVJSIEhILk1JLlNTWEZGIEFNOgAAAAAAEgAAABJISC5NSS5TU1hGRiBBTSBUWlI7AAAAAAAcAAAAHERELU1PTi1SUiBISC5NSS5TU1hGRiBBTSBUWlI8AAAAAAABAAAAASQ0AAAAAAAGAAAABkJJTkFSWTIAAAAAAAQAAAAEQllURT0AAAAAAAUAAAAFRkFMU0U+AAAAAAALAAAAC4AAAAA8PDyAAAAAowAGAAAABkFDVElWRQAAAAC7AAAAAAABAAAAAQCkAAgAAAAIU1FMKlBsdXMAAAAAuAAAAAAAAAAAALkAAAAAAAkBAAEAIwwd";
+
+    // The second FUNC_SESSION_NLS_SETUP call's real reply -- see that branch's comment. This one
+    // has one obviously session-specific field (a small hex/counter value near the front of the
+    // real capture this was taken from); reusing it verbatim is the same accepted risk as
+    // FUNC_UNKNOWN_202's response, on the same "confirm how far this gets, rather than block on a
+    // full parser" basis.
+    private static final String SESSION_ID_REGISTER_RESPONSE_B64 =
+        "CAMAZxknAwAAAAAAAAAAAgBny3UAAAAAABcFAQAQAQAAABYEAAAABEhJR0gAAAAAzAAAAAAACQMAAAAlDB0=";
+
+    /** Byte-substring search for ASCII text within a request payload, used only to distinguish
+     * two otherwise-unparsed real shapes of the same undocumented function code -- see
+     * FUNC_SESSION_NLS_SETUP's comment. Not a general-purpose text search: no encoding handling,
+     * just literal ASCII byte matching, which is all that's needed for a fixed marker string. */
+    private static int indexOfAscii(byte[] haystack, String needleAscii) {
+        byte[] needle = needleAscii.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        outer:
+        for (int i = 0; i <= haystack.length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    // See the FUNC_UNKNOWN_202 branch's comment above.
+    private static final int FUNC_UNKNOWN_202 = 202;
+
+    private static final String FUNC_UNKNOWN_202_RESPONSE_B64 =
+        "CNgARlp0YlE0Y0JDcWt2WEMvVWZ1QytDejdxZ1ZPcnlwSXRFb0V2aVBIN0Q0RXJoMkh1S1h4Wk1EK0FHd2F5cjZ2dkdNd1NjcEJ6" +
+        "UVpJMnoxR1JVbUdMeGk1akV4MXVOZU8wZHNieGtjZGk3QmdVc3NBYnNlb1ZZL2QyS1R1UXVCdmhzVHlEcUJmd3gzbmd1dHg4QmNF" +
+        "SlZ5djJiKzV2NVg3b1hORldDY3kwKyszaWJ0VnUzdHRjS2h3dmJCL3A5emphN2NleCtGMHNxcFpTMkxIMGdIdEMweVU92AJGZXNX" +
+        "Z2pOaWhGUnk4Ym5aRzhiN0tBTVhrM3o1Ty9Xc28welI0V0hSVzRJMnhCV3FEdjNtbmRvWWdVc1FyS3dEc2JyTGhQN2hOalhaUnl6" +
+        "TVV0MGhFNU16bjZ0SndUcXRLSGtNc2V6MmY5em9CblhiakZac3NCODB1THU4a1dkNDhJbXVyZjMwZXBXN0gveHY5UkxuVkNodUh5" +
+        "MHJhVGlQZWpXUTdhZnUwSGlYdHNkQnJHaWp2K3AzSThONTRkdmlBU093akREUk4xVlpmN3MwT2V6UVY2QWRIaGdrRlk0NDhQQXJX" +
+        "TXVmRnBBZmxsZnIwYVdmUkx3ZEpzQlVEeGFROGNEYml6TFFtSVRhOUpzMWFBTG9jNVA4U3RHVnBwYTNZSDhjZlQ5cmVTZzdhb2Ri" +
+        "MjBTMHJ3L3dNUk9lUllMY3Q1RXZyaWh0WUI3VS9xRzdxejBBZmxMT0wvZjRhaVdJeFd3TEgvbU11ZlpHQ3c3VWhJUFVXclpaMFVI" +
+        "b3NlYUF5ZFRrV045V1lXeXhrSFd2anZneWdWNnRjdEN2Nk9Qd29TTnlLV0hQZW15bHFaOFhEaEJpNHRJaUt0TnQzcStuVXNTZWRj" +
+        "bUMrbnhMb0w1NXBmdExuQ0NXcU9EV1UyNHRRNGo4ak11T05VVGhmM0xpRndUUXF6K2FNN0xhMVNzY0dNTUdZR0ZkNEtHMHlhcVFV" +
+        "YXAwRlVkYmkwWHkxN1JOZTQ2elVLZnozbk9naHZma0JYNkUzMkJvV2VibENKWC9yeDZrZVhVVTlHdXVWNzBlRUMyb21JdS9qeXVa" +
+        "bzlHYVE4L2V5RzhQRTNkK0c3Zk1WWWZEZjNXcUR4cFNCWWdZTnUxL1N3UlhkYzAxazRlOXo4bTFGc214dUhGUFpOZkR4bWFEcGQ3" +
+        "SDhxOVRLU2NDT1pmVlo5c0trdHhKMDJtdVZkMVh4N2NWWk15ZjFheVgxWWp2R0ZJPYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJAQAAACQMHQ==";
+
     // The trailer bytes real Oracle sends after the banner's null terminator: a fixed prefix, a
     // 2-byte "varying" marker (randomized below, same pattern as the marker
     // O5LogonHandler.PHASE_ONE_TERMINATOR_VARYING_OFFSET/PHASE_TWO_RICH_CALLNUMBER_OFFSET both
@@ -409,21 +509,12 @@ public final class RequestLoop {
     private static final byte[] BANNER_TRAILER_PREFIX = { 0x00, 0x00, 0x17, 0x09, 0x01, 0x00, 0x00, 0x00 };
     private static final byte BANNER_TRAILER_TERMINATOR = 0x1d;
 
+    private static final String STATIC_BANNER_PAYLOAD_B64 =
+        "CFMAT3JhY2xlIEFJIERhdGFiYXNlIDI2YWkgRnJlZSBSZWxlYXNlIDIzLjI2LjIuMC4wIC0gRGV2ZWxvcCwgTGVhcm4sIGFuZCBSdW4gZm9yIEZyZWUAAAAXCQEAAAAiDB0=";
+
     private void sendBanner() throws IOException {
-        String banner = "PolyWire (Postgres via Oracle Net) - Develop, Learn, and Run for Free";
-        byte[] bannerBytes = banner.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-        buf.write(0x08);
-        buf.write('S');
-        buf.write(0x00);
-        buf.write(bannerBytes, 0, bannerBytes.length);
-        buf.write(0x00);
-        buf.write(BANNER_TRAILER_PREFIX, 0, BANNER_TRAILER_PREFIX.length);
-        byte[] varying = new byte[2];
-        new java.security.SecureRandom().nextBytes(varying);
-        buf.write(varying, 0, varying.length);
-        buf.write(BANNER_TRAILER_TERMINATOR);
-        TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, buf.toByteArray());
+        byte[] payload = java.util.Base64.getDecoder().decode(STATIC_BANNER_PAYLOAD_B64);
+        TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, payload);
         out.write(packet.encode(reader.isLargeSdu()));
         out.flush();
     }
