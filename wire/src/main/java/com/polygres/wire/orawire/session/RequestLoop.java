@@ -972,6 +972,17 @@ public final class RequestLoop {
         // always does, is correct regardless of whether this specific explanation is the full
         // story.
         int cursorIdForResponse = usedNativeOciExecuteFallback ? (int) request.cursorId : openCursorId;
+        // NOTE: an earlier version of this method special-cased the native-OCI fallback to send a
+        // success-end instead of ORA-01403 whenever a partial (but nonzero) row batch came back,
+        // on the theory that mixing a real row with an immediate "no data found" in the same
+        // response was what left this client silently stuck afterward. That theory didn't survive
+        // testing (the same silent stall happened either way) and, more importantly, doesn't match
+        // a real Oracle-to-Oracle self-loop capture of this exact call from earlier in this
+        // investigation: the real server DID send a combined real-row + ORA-01403 response, and
+        // the real client handled it fine, continuing on to send a further request afterward. So
+        // this method's original, JDBC/sqlplus/SQLcl-shared rowsWritten<fetchArraySize=>error
+        // behavior below is correct as-is and applies unconditionally again -- the actual next gap
+        // is figuring out what that further real request is and replying to it, not this.
         if (rowsWritten < request.fetchArraySize) {
             ResponseWriter.writeErrorEnd(w, TtcConstants.ERR_NO_DATA_FOUND, "no data found", cursorIdForResponse,
                     callNumber);
