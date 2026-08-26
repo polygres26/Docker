@@ -210,8 +210,24 @@ public final class RequestLoop {
         }
         int functionCode = r.readUint8();
         int wireSequenceNumber = r.readUint8();
-        
-        r.readUb8();
+
+        // This field is normally a chunked (length-prefixed) UB8 -- real for every previously
+        // tested client (JDBC/sqlplus/SQLcl), which always sends 0 here regardless of function
+        // code, so a chunked-zero read (1 byte, value 0) has always been indistinguishable from
+        // whatever the field's true width actually is. A real distributed-database-link
+        // connection's native OCI client breaks that: confirmed live against a real Oracle 23c
+        // instance, its own FUNC_FETCH request carries a real, varying 2-byte value here (a
+        // per-call nonce/tag, not a length -- two separate live captures of the identical fetch
+        // scenario had different values in exactly these 2 bytes, with every other byte of the
+        // request byte-identical) that is NOT safely decodable as a chunked UB8 (its high byte
+        // routinely exceeds any plausible chunk length, e.g. 0xf3, and reading it as one throws
+        // trying to consume far more bytes than the packet has). See readNativeOciFetchRequest's
+        // javadoc for the rest of this request's real, fixed-width layout for this client.
+        if (usedNativeOciExecuteFallback && functionCode == TtcConstants.FUNC_FETCH) {
+            r.skip(2);
+        } else {
+            r.readUb8();
+        }
         int callNumber = wireSequenceNumber;
 
         TtcWriter w = new TtcWriter();
@@ -229,7 +245,8 @@ public final class RequestLoop {
             if (functionCode == TtcConstants.FUNC_EXECUTE) {
                 handleExecute(readExecuteRequest(r, packet), w, callNumber);
             } else if (functionCode == TtcConstants.FUNC_FETCH) {
-                handleFetch(FetchRequest.read(r), w, callNumber);
+                handleFetch(usedNativeOciExecuteFallback ? readNativeOciFetchRequest(r) : FetchRequest.read(r), w,
+                        callNumber);
             } else if (functionCode == TtcConstants.FUNC_REEXECUTE
                     || functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH) {
                 handleReexecute(r, w, callNumber, functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH);
@@ -363,6 +380,31 @@ public final class RequestLoop {
             usedNativeOciExecuteFallback = true;
             return ExecuteRequestReader.readByScanningForSql(packet.payload());
         }
+    }
+
+    /**
+     * A real distributed-database-link connection's native OCI client's FUNC_FETCH request isn't
+     * field-compatible with {@link FetchRequest#read}'s generic chunked-UB4-pair layout either --
+     * confirmed live against a real Oracle 23c instance via two independent live captures of the
+     * identical fetch scenario (this codebase's own dblink test, run twice): every byte of the
+     * request was identical between the two runs except a 2-byte value right after the function
+     * code/sequence number (already consumed by the caller as a raw, not chunked, skip -- see its
+     * call site's comment) -- strong evidence of a real, fixed-width layout for this client, not
+     * chunked fields whose byte count would itself vary run to run. Working out from that shared
+     * structure: a 4-byte zero field, a 1-byte flag (0x0f in every capture, including a genuine
+     * real Oracle-to-Oracle self-loop's own version of this same call -- a real protocol constant,
+     * not session-specific data), another 4-byte zero field, then two raw (not chunked) 4-byte
+     * big-endian values whose low byte varied sensibly between captures (a small integer in both
+     * cases) -- read here as the cursor id and requested fetch row count respectively, the same
+     * pair {@link FetchRequest#read} extracts for every other client, just encoded differently.
+     */
+    private FetchRequest readNativeOciFetchRequest(TtcReader r) {
+        r.skip(4);
+        r.readUint8();
+        r.skip(4);
+        long cursorId = r.readUint32BE();
+        long fetchArraySize = r.readUint32BE();
+        return new FetchRequest(cursorId, fetchArraySize);
     }
 
     // The tail a real Oracle server writes between the last column's DESCRIBE_INFO block and the
@@ -917,10 +959,24 @@ public final class RequestLoop {
             throw new IllegalStateException("fetch requested with no open cursor");
         }
         long rowsWritten = writeRows(w, request.fetchArraySize);
+        // A real distributed-database-link connection's native OCI client's Execute response uses
+        // this codebase's own static, real-capture-derived template (see writeNativeOciExecuteTail)
+        // rather than the normal writeSuccessEnd this class uses for every other client -- meaning
+        // the "cursor id" that template told the client about is whatever arbitrary value was baked
+        // into that OTHER real capture, not this session's own openCursorId (a small internal
+        // counter, e.g. 1 or 2, that this client was never actually told). Echoing our own
+        // openCursorId back in this Fetch response instead of the cursor id the client itself just
+        // sent (readNativeOciFetchRequest already recovered it as request.cursorId) left the client
+        // silently stuck rather than erroring -- it seemingly can't match this response to the
+        // cursor it's tracking. Echoing its own value back, the same thing real Oracle's server
+        // always does, is correct regardless of whether this specific explanation is the full
+        // story.
+        int cursorIdForResponse = usedNativeOciExecuteFallback ? (int) request.cursorId : openCursorId;
         if (rowsWritten < request.fetchArraySize) {
-            ResponseWriter.writeErrorEnd(w, TtcConstants.ERR_NO_DATA_FOUND, "no data found", openCursorId, callNumber);
+            ResponseWriter.writeErrorEnd(w, TtcConstants.ERR_NO_DATA_FOUND, "no data found", cursorIdForResponse,
+                    callNumber);
         } else {
-            ResponseWriter.writeSuccessEnd(w, rowsWritten, openCursorId, callNumber);
+            ResponseWriter.writeSuccessEnd(w, rowsWritten, cursorIdForResponse, callNumber);
         }
     }
 
