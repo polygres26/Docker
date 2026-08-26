@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PolyWire — Full Capabilities</title>
-<meta name="description" content="PolyWire's full technical detail: outcomes, use cases, admin console, PolyCache benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
+<title>PolyWire — Full Capabilities of the Intelligent Postgres Gateway</title>
+<meta name="description" content="PolyWire's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, PolyCache benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
 <link rel="canonical" href="https://polygres26.github.io/polywire.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,12 +14,12 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/polywire.html">
-<meta property="og:title" content="PolyWire — Full Capabilities">
-<meta property="og:description" content="Outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
+<meta property="og:title" content="PolyWire — Full Capabilities of the Intelligent Postgres Gateway">
+<meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
 <meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="PolyWire — Full Capabilities">
-<meta name="twitter:description" content="Outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
+<meta name="twitter:title" content="PolyWire — Full Capabilities of the Intelligent Postgres Gateway">
+<meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
 </head>
 <body>
@@ -42,8 +42,10 @@
         <h1 class="eyebrow">PolyGres</h1>
       </div>
       <p class="lede">
-        <a href="index.html">← Back to the PolyWire overview</a> — this page is the full
-        technical detail: every outcome, use case, benchmark, and honestly-scoped capability.
+        <a href="index.html">← Back to the PolyWire overview</a> — PolyWire is the intelligent
+        gateway for Postgres. This page is the full technical detail behind that: every outcome,
+        use case, benchmark, and honestly-scoped capability, organized by what it does — Connect,
+        Protect, Control, Accelerate, Observe.
       </p>
     </header>
     <section class="tool" id="polywire-detail" style="margin-top:0; padding-top:0; border-top:none;">
@@ -70,17 +72,40 @@
         </ul>
       </details>
 
-      <h3 class="subhead" id="outcomes">Outcomes<a class="permalink" href="#outcomes" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="outcomes">Outcomes, by pillar<a class="permalink" href="#outcomes" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Everything below rolls up into the same five things PolyWire does — <b>Connect, Protect,
+        Control, Accelerate, Observe</b> — grouped here instead of as one flat list, so it's clear
+        which outcome each capability is actually buying you.
+      </p>
+
+      <p class="pillarLabel">Connect</p>
       <div class="obsGrid">
         <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
-        <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall.</p></div>
         <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real Postgres access through the same SQL firewall, ACL, and QoS controls as every other client — not a separate, unguarded path to your data.</p></div>
-        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, PolyCache, and rollups.</p></div>
-        <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
-        <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
-        <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
         <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no PolyWire-specific SDK to learn first.</p></div>
+      </div>
+
+      <p class="pillarLabel">Protect</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall — see "Security" below for the full, honestly-scoped detail.</p></div>
+      </div>
+
+      <p class="pillarLabel">Control</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
         <div class="obsCard"><h4>Planned &amp; unplanned downtime management</h4><p>A scheduled drain waits for a clean cutover; an unrelated backend failure triggers automatic failover in seconds — the two cases are handled deliberately differently, across every wire protocol.</p></div>
+      </div>
+
+      <p class="pillarLabel">Accelerate</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, PolyCache, and rollups.</p></div>
+        <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
+      </div>
+
+      <p class="pillarLabel">Observe</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
         <div class="obsCard"><h4>Native error translation</h4><p>Every real Postgres failure comes back as that protocol's own genuine error — ORA-03113, a MongoDB codeName, a DynamoDB exception name — so each client's own retry/reconnect logic keys off exactly what it expects.</p></div>
       </div>
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polygres — PolyWire &amp; PolyAdvisor</title>
-<meta name="description" content="PolyWire: one wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to a single real Postgres database, unmodified — with a SQL firewall, sharding, RLS, and planned/unplanned failover built in. PolyAdvisor scores how hard your migration to Postgres will be.">
+<title>PolyWire — The Intelligent Gateway for Postgres | Polygres</title>
+<meta name="description" content="PolyWire is the intelligent gateway for Postgres: one secure, scalable execution layer connecting Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, and MCP clients to a single real Postgres database — with a SQL firewall, QoS, routing, sharding, caching, and observability built in. PolyAdvisor scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://polygres26.github.io/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,12 +14,12 @@
 <!-- Open Graph / Twitter Card -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/">
-<meta property="og:title" content="PolyWire & PolyAdvisor — Polygres">
-<meta property="og:description" content="A wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to one real Postgres, unmodified — plus a rules-based migration-difficulty assessor.">
+<meta property="og:title" content="PolyWire — The Intelligent Gateway for Postgres">
+<meta property="og:description" content="Connect any application or AI agent to Postgres through one secure, scalable execution layer — Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and MCP clients, unmodified. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
 <meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="PolyWire & PolyAdvisor — Polygres">
-<meta name="twitter:description" content="A wire-protocol gateway that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, and OpenSearch clients talk to one real Postgres, unmodified — plus a rules-based migration-difficulty assessor.">
+<meta name="twitter:title" content="PolyWire — The Intelligent Gateway for Postgres">
+<meta name="twitter:description" content="Connect any application or AI agent to Postgres through one secure, scalable execution layer — Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and MCP clients, unmodified. Plus PolyAdvisor, a rules-based migration-difficulty assessor.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
 
 <!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
@@ -34,7 +34,7 @@
       "name": "PolyWire",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
-      "description": "A wire-protocol gateway: Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP clients connect unmodified, and PolyWire executes against one real Postgres database on the other side. Includes a SQL firewall, connection ACL, QoS admission control, sharding, row-level security, native per-protocol error translation, admin SSO (Okta/Entra ID) with read-vs-write roles, and planned/unplanned backend failover.",
+      "description": "PolyWire is the intelligent gateway for Postgres: one secure, scalable execution layer connecting any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP -- to a single real Postgres database, unmodified. Organized around five capabilities: Connect (ten wire protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (PolyCache, rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
       "url": "https://polygres26.github.io/polywire.html",
       "image": "https://polygres26.github.io/docs/architecture.png",
       "offers": [
@@ -102,17 +102,18 @@
         <img src="docs/logo.png" alt="Polygres" class="brandMark">
         <h1 class="eyebrow">PolyGres</h1>
       </div>
-      <h2 class="heroTitle">Everything talks to Postgres.</h2>
+      <h2 class="heroTitle">The intelligent gateway for Postgres.</h2>
       <p class="heroSub">
-        Run existing applications and AI agents against PostgreSQL using the protocols they
-        already speak — no client rewrite, no driver swap.
+        Connect any application or AI agent to Postgres through one secure, scalable execution
+        layer — with the protocol they already speak, no client rewrite, no driver swap.
       </p>
+      <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
       <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · PostgreSQL · gRPC · MCP</p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
         <a class="btn btn-secondary" href="docs.html">Read the Docs</a>
       </div>
-      <p class="heroTagline">One gateway. Every protocol. Real Postgres.</p>
+      <p class="heroTagline">Everything talks to Postgres.</p>
     </header>
 
     <section class="tool" id="polywire">
@@ -121,6 +122,19 @@
         <span class="badge">ghcr.io/polygres26/polywire</span>
       </div>
       <h2>PolyWire</h2>
+
+      <h3 class="subhead" id="why">Why put PolyWire in front of Postgres?<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Connect</h4><p>One gateway instead of separate access paths for Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, and AI agents — every client keeps its own driver and protocol.</p></div>
+        <div class="obsCard"><h4>Protect</h4><p>A SQL firewall, connection ACL, authentication, and Postgres row-level security identity all apply before a request reaches Postgres — the same policies regardless of which protocol the caller speaks.</p></div>
+        <div class="obsCard"><h4>Control</h4><p>QoS admission control, routing, connection pooling, sharding, and planned/unplanned failover — protect backend capacity and keep Postgres available under load.</p></div>
+        <div class="obsCard"><h4>Accelerate &amp; Observe</h4><p>PolyCache serves repeat reads without a Postgres round trip; Prometheus and OTEL export give you one place to see every request, from protocol in to backend out.</p></div>
+      </div>
+      <p class="rttNote">
+        Four real reasons to run PolyWire — migration is one of them, not the only one. Some
+        teams run it indefinitely as a permanent control point in front of Postgres, whether or
+        not anything is being migrated at all.
+      </p>
 
       <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
       <div class="termWindow">
@@ -146,12 +160,11 @@ SQL&gt;</pre>
       <p class="rttNote">
         <i>Oracle client. Oracle wire protocol. PostgreSQL database. No client rewrite.</i>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
-        Raw <code>sqlplus</code> isn't in this demo on purpose: it still hangs on a deeper
-        protocol-negotiation step orawire doesn't fully handle yet — SQLcl and JDBC clients are
-        what's actually verified working today, and this page only shows what's real.
+        (SQLcl and JDBC clients are what's verified working today; see
+        <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.)
       </p>
 
-      <h3 class="subhead" id="rewire">Don't rewrite. Rewire.<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="rewire">Use case: modernize without rewrites — don't rewrite, rewire<a class="permalink" href="#rewire" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Your Oracle application thinks it's talking to Oracle. It's actually talking to Postgres —
         and it never finds out.
@@ -313,17 +326,16 @@ aws sqs receive-message \                          # SQS wire
         your data.
       </p>
 
-      <h3 class="subhead" id="pillars">One gateway. One policy plane.<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="pillars">Four ways teams put PolyWire to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Migration is one reason to run PolyWire — not the only one. Some teams run it
-        indefinitely: a permanent multi-protocol layer in front of Postgres, not a bridge to
-        somewhere else.
+        indefinitely: a permanent gateway in front of Postgres, not a bridge to somewhere else.
       </p>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Speak any protocol, run one database</h4><p>Keep Oracle, MySQL, SQL Server, MongoDB, and OpenSearch clients exactly as they are — whether you're migrating off them entirely or standardizing on Postgres permanently while every protocol keeps working.</p></div>
-        <div class="obsCard"><h4>One gateway for Postgres</h4><p>Firewall, routing, QoS, pooling, caching, sharding, and observability — one admin surface instead of five databases' own tooling, for as long as you run it.</p></div>
-        <div class="obsCard"><h4>Built for applications and AI agents</h4><p>Traditional drivers and MCP go through the exact same governed execution path — not a separate, unguarded route to your data.</p></div>
-        <div class="obsCard"><h4>A real connection and caching layer</h4><p>Bounded connection pooling (the PgBouncer problem, solved in the same gateway), and PolyCache serving repeat reads without a Postgres round trip — value that has nothing to do with migration.</p></div>
+        <div class="obsCard"><h4>Modernize databases</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
+        <div class="obsCard"><h4>Build a Postgres control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of five databases' own tooling, run indefinitely, not just during a migration.</p></div>
+        <div class="obsCard"><h4>Scale Postgres horizontally</h4><p>Route tenants, customers, or predicates across shards and merge results centrally — without the application knowing sharding exists.</p></div>
+        <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote"><a href="polywire.html">Explore all PolyWire capabilities →</a></p>
 
@@ -418,8 +430,9 @@ aws sqs receive-message \                          # SQS wire
       <p class="bridgeKicker">Thinking about moving to Postgres?</p>
       <h2>PolyAdvisor tells you how hard it'll be</h2>
       <p class="lede">
-        Oracle · MySQL · MariaDB · SQL Server → assess → size → plan → migrate with PolyWire
-        keeping your application running the whole time.
+        <b>PolyAdvisor plans the move to Postgres. PolyWire runs and governs workloads on
+        Postgres.</b> Oracle · MySQL · MariaDB · SQL Server → assess → size → plan → migrate with
+        PolyWire keeping your application running the whole time.
       </p>
       <p class="lede">
         Point PolyAdvisor at a source database — or upload a performance report if you can't
