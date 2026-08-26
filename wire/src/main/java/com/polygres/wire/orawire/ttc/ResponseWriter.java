@@ -66,7 +66,8 @@ public final class ResponseWriter {
         }
         for (int i = 0; i < columns.size(); i++) {
             ColumnMetadata col = columns.get(i);
-            if (nativeOciColumnFormat && col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_NUMBER) {
+            if (nativeOciColumnFormat && (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_NUMBER
+                    || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR)) {
                 writeColumnMetadataNativeOci(w, col, i);
             } else {
                 writeColumnMetadata(w, col, i);
@@ -145,14 +146,45 @@ public final class ResponseWriter {
     // exactly which bytes are fixed/structural versus column-specific (the name length, written
     // three times in lockstep, and the column index) -- this template encodes that structure
     // directly rather than guessing at Oracle's internal field semantics for the rest.
-    private static final byte[] NATIVE_OCI_COLUMN_PREFIX = java.util.Base64.getDecoder().decode(
+    private static final byte[] NATIVE_OCI_COLUMN_PREFIX_NUMBER = java.util.Base64.getDecoder().decode(
         "AQIAAIEWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAgAAAAI=");
+
+    // The VARCHAR-column equivalent of NATIVE_OCI_COLUMN_PREFIX_NUMBER above -- same real,
+    // byte-for-byte-captured discipline, this time confirmed via two real Oracle 23c self-loop
+    // captures of a single-VARCHAR2(20)-column dblink query, differing only in the column name
+    // ("NAME" vs "X"). Structurally identical to the NUMBER prefix in every way that matters here
+    // -- also exactly 56 bytes, also patched at the same three relative offsets for the name
+    // length (this codebase's own real captures show that "write the length three times" pattern
+    // repeats verbatim across both types, not something specific to NUMBER) -- but the fixed
+    // content differs (byte 1 is the real oraTypeNum, 1 for VARCHAR vs. 2 for NUMBER; two more
+    // bytes, at offsets 5 and 41, both carry the column's own declared buffer size -- confirmed by
+    // both real captures independently showing 0x14 (20) at both positions for a VARCHAR2(20)
+    // column; not independently confirmed the two positions vary separately since both real
+    // captures happened to use the same declared width, but writing the real bufferSize at both is
+    // the safer assumption than leaving either one as a guessed constant). This generalizes what
+    // was previously a NUMBER-only native-OCI column format (see writeColumnMetadataNativeOci's
+    // own javadoc) to also cover VARCHAR -- confirmed live to fix a real hang: a native-OCI client
+    // sending any single-VARCHAR-column query (including, notably, SQL*Plus's own unavoidable
+    // startup probe query, `select current_user`) previously got this codebase's plain,
+    // JDBC-shaped column block here instead of this one, and silently aborted with a TNS
+    // BREAK/RESET rather than ever showing an error.
+    private static final byte[] NATIVE_OCI_COLUMN_PREFIX_VARCHAR = java.util.Base64.getDecoder().decode(
+        "AQGAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGkDAQAUAAAA/j8AAAEEBAAAAAQ=");
+    private static final int NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_1 = 5;
+    private static final int NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_2 = 41;
+
     private static final byte[] NATIVE_OCI_COLUMN_SUFFIX = new byte[32];
     private static final int[] NATIVE_OCI_NAME_LENGTH_OFFSETS = { 50, 51, 55 };
     private static final int NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET = 12;
 
     private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex) {
-        byte[] prefix = NATIVE_OCI_COLUMN_PREFIX.clone();
+        byte[] prefix = (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR
+                ? NATIVE_OCI_COLUMN_PREFIX_VARCHAR
+                : NATIVE_OCI_COLUMN_PREFIX_NUMBER).clone();
+        if (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
+            prefix[NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_1] = (byte) col.bufferSize;
+            prefix[NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_2] = (byte) col.bufferSize;
+        }
         byte[] nameBytes = col.name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         for (int offset : NATIVE_OCI_NAME_LENGTH_OFFSETS) {
             prefix[offset] = (byte) nameBytes.length;
@@ -188,8 +220,31 @@ public final class ResponseWriter {
     // have never shown it and JDBC/sqlplus/SQLcl's rows must stay exactly as they were.
     private static final byte[] NATIVE_OCI_ROW_PREFIX = { 0x0a, 0x2c, 0x01, 0x02 };
 
+    // A real single-VARCHAR-column native-OCI row is NOT prefix-free the way a real
+    // single-NUMBER-column row is (see NATIVE_OCI_ROW_PREFIX's own javadoc for that case) --
+    // confirmed live via two real Oracle 23c self-loop captures of a single VARCHAR2(20) column,
+    // differing only in the value's own length ("ABC" vs "ZZ"): both show a real 3-byte marker
+    // {0x2c, 0x01, 0x01} between the ROW_DATA tag and the column's own length-prefixed value,
+    // preceded by a 1-byte count -- confirmed to be the total byte length of everything from that
+    // 3-byte marker through the end of the column's own encoded value (3 + the column value's own
+    // writeColumnValue output length), not a fixed constant: it was 7 for "ABC" (3 + 4, since
+    // "ABC"'s own length-prefixed encoding is itself 4 bytes) and 6 for "ZZ" (3 + 3). Scoped to
+    // exactly the single-VARCHAR-column case for now (not blindly generalized to every VARCHAR row
+    // regardless of column count, which hasn't been captured/confirmed) -- see this method's
+    // dispatch below.
+    private static final byte[] NATIVE_OCI_SINGLE_VARCHAR_ROW_MARKER = { 0x2c, 0x01, 0x01 };
+
     public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
+        if (columns.size() == 1 && columns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
+            TtcWriter valueWriter = new TtcWriter();
+            writeColumnValue(valueWriter, columns.get(0), values[0]);
+            byte[] encodedValue = valueWriter.toByteArray();
+            w.writeUint8(NATIVE_OCI_SINGLE_VARCHAR_ROW_MARKER.length + encodedValue.length);
+            w.writeRaw(NATIVE_OCI_SINGLE_VARCHAR_ROW_MARKER);
+            w.writeRaw(encodedValue);
+            return;
+        }
         if (columns.size() > 1) {
             w.writeRaw(NATIVE_OCI_ROW_PREFIX);
         }

@@ -288,3 +288,22 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
   traffic at specific replicas. Use the primary endpoint here unless you specifically want to
   point PolyWire's standby-aware read routing (`POLYWIRE_STANDBY_HOST`, see the main README) at a
   particular replica instead.
+
+## Optional: Oracle built-in function compatibility (DECODE, XS_SYS_CONTEXT, ...)
+
+SQL*Plus's own connection banner sends `DECODE(USER, 'XS$NULL', XS_SYS_CONTEXT('XS$SESSION',
+'USERNAME'), USER) FROM SYS.DUAL` right after login — PolyWire already recognizes and rewrites
+that *exact* query internally, so a stock SQL*Plus session works with zero setup on your Postgres.
+
+If your own application code also calls Oracle built-in functions like `DECODE` or
+`XS_SYS_CONTEXT` directly — not just the SQL*Plus startup probe — install
+[`oracle_compat_functions.sql`](oracle_compat_functions.sql) on your backend Postgres once:
+
+```bash
+psql -h <host> -p <port> -U <user> -d <database> -f oracle_compat_functions.sql
+```
+
+Nothing in it is created automatically — PolyWire never modifies your backend's schema on its
+own. This is entirely optional: skip it unless your own queries call these functions by name.
+That file is also the running reference for every Oracle built-in this project has needed to
+shim so far; it grows the same way each time (DECODE and XS_SYS_CONTEXT today).
