@@ -1,10 +1,19 @@
 # Polygres
 
-> Polygres is two tools: PolyWire, a wire-protocol gateway that lets Postgres, MySQL, Oracle,
-> SQL Server, MongoDB, DynamoDB, Amazon SQS, and OpenSearch clients connect unmodified while
-> everything actually executes against one real Postgres database; and PolyAdvisor, a rules-based
-> (not LLM-generated) tool that scores how hard migrating an existing database to Postgres will be
-> and bridges your application to Postgres while that migration happens.
+> Polygres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
+> execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
+> OpenSearch, gRPC, and MCP (AI agent) clients connect unmodified while everything actually
+> executes against one real Postgres database. PolyAdvisor is a rules-based (not LLM-generated)
+> tool that scores how hard migrating an existing database to Postgres will be, and PolyWire
+> bridges your application to Postgres while that migration happens.
+>
+> Protocol translation ("everything talks to Postgres") is one capability, not the whole product.
+> PolyWire's full scope is five capabilities: **Connect** (ten client protocols, one Postgres
+> backend), **Protect** (SQL firewall, connection ACL, authentication, row-level security),
+> **Control** (QoS admission control, routing, connection pooling, sharding, planned/unplanned
+> failover), **Accelerate** (PolyCache, rollups), and **Observe** (native per-protocol error
+> translation, Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams
+> run it indefinitely as a permanent control point in front of Postgres.
 
 Full documentation, architecture diagrams, real benchmark numbers, and every feature's honest
 scope (what's real vs. not yet wired) live across the main page and its linked pages. This file
@@ -18,7 +27,8 @@ instead of re-deriving it from the whole site.
 
 - [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, the
   before/after protocol-rewiring diagram, a 60-second quick start, and the architecture diagram.
-- [Full capabilities](https://polygres26.github.io/polywire.html): outcomes, use cases,
+- [Full capabilities](https://polygres26.github.io/polywire.html): outcomes (organized by the
+  five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
   architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
   observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
   handling -- the complete technical detail behind the pitch on the main page.
@@ -81,6 +91,10 @@ rights, nothing is feature-gated to a paid tier:
   [Contact](https://polygres26.github.io/#contact) to reach the team.
 
 ## PolyAdvisor
+
+PolyAdvisor plans the move to Postgres. PolyWire runs and governs workloads on Postgres --
+they're complementary tools for two different phases (deciding/planning a migration vs. running
+production traffic), not competing products.
 
 - [Main page](https://polygres26.github.io/#polyadvisor): the bridge from the PolyWire pitch --
   what PolyAdvisor is and a quick start.
