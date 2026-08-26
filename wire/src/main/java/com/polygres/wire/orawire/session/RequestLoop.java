@@ -66,6 +66,14 @@ public final class RequestLoop {
     private int openCursorId = 0;
     private int nextCursorId = 1;
 
+    // Set once this session's Execute parsing has needed ExecuteRequestReader's native-OCI
+    // fallback (see readExecuteRequest) -- a real distributed-database-link connection's client,
+    // confirmed live, not any client this codebase already handled correctly. Used to append the
+    // extra trailer real Oracle sends after an Execute response for that same client shape (see
+    // NATIVE_OCI_EXECUTE_TRAILER's javadoc); every other tested client's Execute responses already
+    // work without it, so this stays opt-in per-session rather than unconditional.
+    private boolean usedNativeOciExecuteFallback;
+
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
 
     private volatile String lastSqlText;
@@ -219,7 +227,7 @@ public final class RequestLoop {
         long rttStart = System.nanoTime();
         try {
             if (functionCode == TtcConstants.FUNC_EXECUTE) {
-                handleExecute(ExecuteRequestReader.read(r), w, callNumber);
+                handleExecute(readExecuteRequest(r, packet), w, callNumber);
             } else if (functionCode == TtcConstants.FUNC_FETCH) {
                 handleFetch(FetchRequest.read(r), w, callNumber);
             } else if (functionCode == TtcConstants.FUNC_REEXECUTE
@@ -312,11 +320,53 @@ public final class RequestLoop {
             rollbackAfterStatementError();
             ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? e.toString() : e.getMessage(), openCursorId, callNumber);
         }
+        appendNativeOciExecuteTrailerIfNeeded(w, functionCode);
         sendData(w.toByteArray());
         if (sqlMetrics != null && lastRewrittenSqlText != null && isStatementShaped(functionCode)) {
             sqlMetrics.recordRtt(SourceDialect.ORACLE, lastRewrittenSqlText, System.nanoTime() - rttStart);
         }
         return logoff;
+    }
+
+    /**
+     * A real distributed-database-link connection's native OCI client sends Execute requests that
+     * are NOT field-compatible with {@link ExecuteRequestReader#read}'s layout (tuned against
+     * JDBC/sqlplus/SQLcl, confirmed live to keep working correctly against a real Oracle 23c
+     * instance -- this fallback only ever triggers on a request shape none of those clients send).
+     * On the {@link ArrayIndexOutOfBoundsException} that shape causes, retry with
+     * {@link ExecuteRequestReader#readByScanningForSql}, a content-scanning reader built
+     * specifically for a dblink-forwarded query's shape, against the packet's own raw bytes (not
+     * {@code r}, whose position is already past recovery after a mid-parse failure).
+     */
+    private ExecuteRequest readExecuteRequest(TtcReader r, TnsPacket packet) {
+        try {
+            return ExecuteRequestReader.read(r);
+        } catch (ArrayIndexOutOfBoundsException e) {
+            log.info("Execute request didn't match the known field layout (real dblink native-OCI "
+                    + "client?) -- falling back to scanning its raw bytes for a SQL statement: {}",
+                    e.toString());
+            usedNativeOciExecuteFallback = true;
+            return ExecuteRequestReader.readByScanningForSql(packet.payload());
+        }
+    }
+
+    // The extra trailer bytes real Oracle appends after its own Execute response to the same real
+    // distributed-database-link client this whole native-OCI fallback series is for -- confirmed
+    // byte-for-byte via a genuine Oracle-to-Oracle self-loop capture of the same SELECT shape
+    // (`SELECT /*+ FULL(P) +*/ * FROM "..." P`, dblink's own generated remote SQL). Without it, the
+    // client reacts with the same TNS BREAK/RESET marker pair every other structurally-incomplete
+    // response in this series has caused -- confirmed live against a real Oracle 23c instance. The
+    // rest of the response (DESCRIBE_INFO, row data, success end) this codebase already builds
+    // correctly -- proven by this exact code path's existing JDBC/sqlplus/SQLcl test coverage,
+    // untouched by this change -- so only this trailer needs adding, appended after whatever that
+    // existing code already wrote, not in place of it.
+    private static final String NATIVE_OCI_EXECUTE_TRAILER_B64 =
+        "NgEAAAAAAAAAAAAAAAAAALA0WG/w6gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAHQ==";
+
+    private void appendNativeOciExecuteTrailerIfNeeded(TtcWriter w, int functionCode) {
+        if (usedNativeOciExecuteFallback && functionCode == TtcConstants.FUNC_EXECUTE) {
+            w.writeRaw(java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TRAILER_B64));
+        }
     }
 
     private static boolean isStatementShaped(int functionCode) {
@@ -636,7 +686,7 @@ public final class RequestLoop {
             openColumns = toColumnMetadata(result.columns());
             openRows = result.rows();
             fetchPosition = 0;
-            ResponseWriter.writeDescribeInfo(w, openColumns);
+            ResponseWriter.writeDescribeInfo(w, openColumns, usedNativeOciExecuteFallback);
 
             // Always a plain success end, real row count included, even when this batch happens
             // to exhaust the cursor (fewer rows existed than request.numIters asked for). A real

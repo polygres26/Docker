@@ -140,6 +140,100 @@ public final class ExecuteRequestReader {
         };
     }
 
+    /**
+     * Fallback Execute-request reader for a real distributed-database-link connection's native OCI
+     * client, whose Execute request is NOT field-compatible with {@link #read}'s layout (tuned
+     * against JDBC/sqlplus/SQLcl, all of which parse correctly with it -- confirmed by this
+     * codebase's existing, passing test/integration coverage, none of it touched by adding this
+     * method). Confirmed live against a real Oracle 23c instance: {@code sqlPointer} reads as 0
+     * (which {@link #read} takes as "not a fresh parse, no SQL text follows") even on a real dblink
+     * client's very first Execute of a brand-new statement, and the small fixed-count fields before
+     * the SQL text don't line up with this client's actual field count either -- by the time
+     * {@link #read} reaches where it expects the SQL text to start, it's already misaligned by
+     * several fields, and running its field-by-field trace forward (temporary debug instrumentation,
+     * not guessed) showed the very next read landing squarely on the SQL text's own first character
+     * instead of a real length field, well before the eventual out-of-bounds crash several fields
+     * further on. Reliably relocating the *correct* preceding length field looked like it would need
+     * the same kind of extended live byte-capture investigation the rest of this dblink-compatibility
+     * series has used -- ground truth this method sidesteps entirely by not depending on exact field
+     * offsets or counts at all: it scans the raw request payload directly for a recognizable SQL
+     * keyword at a plausible start of statement text, then takes the following run of dominantly
+     * printable ASCII bytes as the statement. This is deliberately narrower than {@link #read}: no
+     * bind variables, no column defines, no non-fresh-parse (re-execute) support -- exactly what a
+     * dblink-forwarded remote query (a single, self-contained SELECT with no placeholders, generated
+     * by Oracle's own dblink layer, not authored by an end user) actually needs. Only used as an
+     * explicit fallback in {@code RequestLoop} when {@link #read} throws
+     * {@link ArrayIndexOutOfBoundsException} parsing an Execute request -- something the existing
+     * JDBC/sqlplus/SQLcl-shaped traffic this codebase already handles has never been observed to do.
+     */
+    public static ExecuteRequest readByScanningForSql(byte[] rawPayload) {
+        int sqlStart = findSqlStatementStart(rawPayload);
+        if (sqlStart < 0) {
+            throw new UnsupportedOperationException(
+                    "could not locate a SQL statement in this Execute request by scanning "
+                            + "(fallback for a real dblink native-OCI client's non-JDBC-shaped request)");
+        }
+        int sqlEnd = sqlStart;
+        while (sqlEnd < rawPayload.length && isLikelySqlTextByte(rawPayload[sqlEnd])) {
+            sqlEnd++;
+        }
+        String sqlText = new String(rawPayload, sqlStart, sqlEnd - sqlStart,
+                java.nio.charset.StandardCharsets.UTF_8).stripTrailing();
+        // SELECT/WITH need EXEC_OPTION_FETCH set for ExecuteRequest.isQuery() to route this through
+        // the fetch/cursor path instead of being treated as a plain DML execute -- ExecuteRequest
+        // itself derives isQuery() purely from this options bit, and this fallback bypasses the
+        // real field that would otherwise carry it, so it has to be inferred here instead.
+        boolean isQuery = sqlText.regionMatches(true, 0, "SELECT", 0, "SELECT".length())
+                || sqlText.regionMatches(true, 0, "WITH", 0, "WITH".length());
+        long options = isQuery ? TtcConstants.EXEC_OPTION_FETCH : 0;
+        // numIters (the requested prefetch row count) can't be recovered by this fallback -- the
+        // real field is somewhere in the same misaligned region readByScanningForSql exists to
+        // avoid depending on. A generous fixed count, rather than 1, keeps a typical
+        // dblink-forwarded query's whole result set flowing back in this same response instead of
+        // needing a real FETCH continuation this fallback also doesn't model.
+        return new ExecuteRequest(0, sqlText, options, FALLBACK_NUM_ITERS, Collections.emptyList());
+    }
+
+    private static final long FALLBACK_NUM_ITERS = 100;
+
+    private static final String[] SQL_STATEMENT_KEYWORDS =
+            { "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE", "BEGIN", "CALL" };
+
+    private static int findSqlStatementStart(byte[] payload) {
+        for (String keyword : SQL_STATEMENT_KEYWORDS) {
+            byte[] needle = keyword.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            outer:
+            for (int i = 0; i <= payload.length - needle.length; i++) {
+                for (int j = 0; j < needle.length; j++) {
+                    if (payload[i + j] != needle[j]) {
+                        continue outer;
+                    }
+                }
+                // Require the match to start a "word" (not be a substring of a longer identifier,
+                // e.g. matching "SELECT" inside "MULTISELECT") -- the preceding byte, if any, must
+                // not itself be a plain ASCII letter/digit/underscore.
+                boolean wordStart = i == 0 || !isIdentifierByte(payload[i - 1]);
+                if (wordStart) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isIdentifierByte(byte b) {
+        char c = (char) (b & 0xFF);
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
+    private static boolean isLikelySqlTextByte(byte b) {
+        int v = b & 0xFF;
+        // Printable ASCII plus tab -- real SQL text (including quoted identifiers/literals) stays
+        // within this range; the first byte that falls outside it is real Oracle's own trailing
+        // wire-format padding/fields, not statement content.
+        return (v >= 0x20 && v < 0x7F) || v == '\t';
+    }
+
     private static String readSqlText(TtcReader r, int sqlLength) {
         // Deliberately readRawBytes, NOT readRawOrLengthPrefixedBytes -- real bug, found live
         // testing against a genuine SQLcl client (not just JDBC): that method's "is there a
