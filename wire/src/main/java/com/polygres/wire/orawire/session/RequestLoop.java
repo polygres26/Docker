@@ -605,6 +605,19 @@ public final class RequestLoop {
     private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK = java.util.Base64.getDecoder().decode(
         "BgEaAAIAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEbH//8AAAAAAAAAAAAAAAAswSTuAAA=");
 
+    // Tried (2026-08-26) and reverted: writing a fresh AL8O4 vector here (tag 0x08 +
+    // AL8O4_LENGTH(6) + six chunked fields -- SCN low/high, cursor id, XA flags, cached row count,
+    // checksum -- per the `orawire` reference project's ExecuteResponseBuilderImpl, using this
+    // session's real cursor id and row count instead of this template's own fixed zeros) on the
+    // theory that a real two-query same-session capture (diffed query 1 vs query 2 to isolate
+    // query-scoped bytes from session-wide constants) had located this exact 8-byte span as where
+    // those two fields live. Confirmed LIVE that this hypothesis is wrong, or at least incomplete:
+    // it regressed the startup-probe query (this same code path, nativeOciExecuteCount==1), which
+    // worked fine with this template's original fixed zeros -- a real client that previously got
+    // past this response now breaks on it instead. Reverted rather than left half-verified. See
+    // [[polywire-orawire-sqlplus-gap]] for why: getting this field-by-field, rather than by more
+    // guess-and-check byte patching, needs a real Oracle-Net-aware capture tool (a proper TNS
+    // dissector) to pin down this vector's true field boundaries and semantics with confidence.
     private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
         byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
         System.arraycopy(NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH, 0, tail,
