@@ -28,6 +28,12 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         if (url.startsWith("jdbc:oracle:")) {
             return SourceDialect.ORACLE;
         }
+        if (url.startsWith("jdbc:sqlserver:")) {
+            return SourceDialect.SQL_SERVER;
+        }
+        if (url.startsWith("jdbc:mysql:") || url.startsWith("jdbc:mariadb:")) {
+            return SourceDialect.MYSQL;
+        }
         return null;
     }
 

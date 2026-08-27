@@ -157,6 +157,15 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (target == null) {
             throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", targetName);
         }
+        // Real bug, found live: a MongoDB backend has no JDBC driver at all -- letting this reach
+        // BackendConnectionPools/HikariCP threw a raw "No suitable driver" RuntimeException that
+        // PgWireSessionHandler treats as fatal to the whole session (not a normal, in-band SQL
+        // error), silently disconnecting the client instead of returning a clear error. A Mongo
+        // backend today only participates via SchemaFederationStage's own two-schema SELECT JOIN
+        // path (see that class's own javadoc) -- a real, clear, caught error here instead.
+        if (isMongoConnectionString(target.jdbcUrl())) {
+            throw ErrorCatalog.sqlException("ERR_MONGO_ROUTING_UNSUPPORTED", targetName);
+        }
         if (transactionConnections == null) {
             return executeOnFreshConnection(target, statement);
         }
@@ -287,9 +296,15 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         try {
             return new JdbcBackendExecutor(connection).execute(statement);
         } catch (SQLException e) {
-            
+
             transactionFailed = true;
             throw e;
         }
+    }
+
+    /** As {@link SchemaFederationStage}'s own matching method -- see its javadoc. Duplicated
+     * rather than shared: a tiny, self-contained check, not worth a cross-class dependency for. */
+    private static boolean isMongoConnectionString(String jdbcUrl) {
+        return jdbcUrl != null && (jdbcUrl.startsWith("mongodb://") || jdbcUrl.startsWith("mongodb+srv://"));
     }
 }

@@ -40,7 +40,7 @@ public final class DialectTranslations {
             SourceDialect.REDSHIFT, DialectTranslations::renderIdentity,
             SourceDialect.BIGQUERY, DialectTranslations::renderBigQuery,
             SourceDialect.DATABRICKS, DialectTranslations::renderIdentity,
-            
+            SourceDialect.SQL_SERVER, DialectTranslations::renderSqlServer,
             SourceDialect.GENERIC_REST, DialectTranslations::renderIdentity);
 
     public static String translate(String sql, SourceDialect from, SourceDialect to) {
@@ -444,5 +444,24 @@ public final class DialectTranslations {
 
     private static String renderIdentity(String sql) {
         return sql;
+    }
+
+    /** Real bug, found live: SQL Server was never a translation TARGET before -- {@code
+     * SourceDialect.SQL_SERVER} only ever appeared in {@code NORMALIZERS} (as a possible SOURCE
+     * dialect), so {@code translate()}'s {@code RENDERERS.get(SQL_SERVER)} returned {@code null}
+     * for every statement, forcing even a plain ANSI-compatible {@code INSERT}/{@code SELECT} into
+     * the (unconfigured, failing) LLM fallback path instead of passing through untouched. Handles
+     * the one thing every existing renderer already treats as a real, common translation need --
+     * {@code LIMIT n}, which T-SQL has no equivalent for -- the same way {@link #renderOracle}
+     * does for Oracle's own {@code FETCH FIRST n ROWS ONLY}, except SQL Server's real ANSI
+     * offset-fetch syntax requires an explicit {@code OFFSET} clause even when it's always 0. */
+    private static String renderSqlServer(String sql) {
+        Matcher matcher = LIMIT_CLAUSE.matcher(sql);
+        if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
+            return sql;
+        }
+        String n = matcher.group(1);
+        String withoutLimit = sql.substring(0, matcher.start()).stripTrailing();
+        return withoutLimit + " OFFSET 0 ROWS FETCH NEXT " + n + " ROWS ONLY";
     }
 }

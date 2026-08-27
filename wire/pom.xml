@@ -161,6 +161,27 @@
       <version>${ojdbc.version}</version>
     </dependency>
     <dependency>
+      <!-- Promoted from test-only scope: PolyWire's third real backend driver, same shape and
+           reasoning as ojdbc11 above; BackendTarget/BackendConnectionPools/ShardJoinExecutor/
+           SchemaFederationStage/RollupStage/XaBackendFactory all now recognize a jdbc:sqlserver:
+           BackendTarget too. -->
+      <groupId>com.microsoft.sqlserver</groupId>
+      <artifactId>mssql-jdbc</artifactId>
+      <version>${mssqljdbc.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Promoted from test-only scope: PolyWire's fourth real backend driver, same shape as
+           ojdbc11/mssql-jdbc above, for jdbc:mysql:/jdbc:mariadb: BackendTargets. This is the real
+           Oracle-published MySQL Connector/J (not MariaDB's own driver, which is what the sibling
+           Omnigate project found live has no usable XADataSource); com.mysql.cj.jdbc.
+           MysqlXADataSource IS real and present in this jar. See XaBackendFactory's own javadoc
+           for whether it actually works end to end, live-verified, not assumed from its mere
+           existence. -->
+      <groupId>com.mysql</groupId>
+      <artifactId>mysql-connector-j</artifactId>
+      <version>${mysqlconnector.version}</version>
+    </dependency>
+    <dependency>
       <!-- com.polygres.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
            standalone BSON library (Apache-2.0), NOT the mongo-java-driver client itself (that
            would be a MongoDB *client* dependency, nonsensical for something acting as a MongoDB
@@ -281,29 +302,12 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
-    <!-- ojdbc11 no longer needs its own test-scope entry here; it's a real, compile-scope
-         backend driver dependency now (see above). MssqlJdbcIntegrationTest/MySqlJdbcIntegrationTest
-         below still need their own test-scope drivers since mssql-jdbc/mysql-connector-j aren't
-         real backend drivers yet. -->
-    <dependency>
-      <!-- Same rationale as ojdbc11 above (now, ojdbc11's OWN wire-encoding-validation role for
-           orawire's protocol decoder is instead covered by the same compile-scope dependency
-           above, no separate test-scope copy needed): a real client's own wire encoding is the
-           only thing that actually validates a byte-level protocol decoder (RpcRequestReader, for
-           sp_executesql bind-parameter support); see MssqlJdbcIntegrationTest. -->
-      <groupId>com.microsoft.sqlserver</groupId>
-      <artifactId>mssql-jdbc</artifactId>
-      <version>${mssqljdbc.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <!-- Same rationale as ojdbc11/mssql-jdbc above, for mywire's COM_STMT_PREPARE/EXECUTE
-           support; see MySqlJdbcIntegrationTest. -->
-      <groupId>com.mysql</groupId>
-      <artifactId>mysql-connector-j</artifactId>
-      <version>${mysqlconnector.version}</version>
-      <scope>test</scope>
-    </dependency>
+    <!-- ojdbc11/mssql-jdbc/mysql-connector-j no longer need their own test-scope entries here;
+         they're all real, compile-scope backend driver dependencies now (see above); their own
+         wire-encoding-validation role for orawire's/mssqlwire's/mywire's protocol decoders (a real
+         client's own wire encoding is the only thing that actually validates a byte-level protocol
+         decoder; see MssqlJdbcIntegrationTest/MySqlJdbcIntegrationTest) is covered by those same
+         compile-scope dependencies now, no separate test-scope copies needed. -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>dynamodb</artifactId>
@@ -335,7 +339,15 @@
       <!-- The real MongoDB client driver, test scope only. The main-scope org.mongodb:bson
            dependency elsewhere in this file is BSON-codec-only, explicitly not this; see that
            dependency's own comment. This is the first real MongoDB client library any mongowire
-           test has been verified against (mongowire has no integration test at all before this). -->
+           test has been verified against (mongowire has no integration test at all before this).
+           MongoDB as a real PolyWire backend engine (via Calcite's own calcite-mongodb adapter)
+           was attempted and reverted; see SchemaFederationStage's own git history/commit message
+           for the full real finding: calcite-mongodb 1.42.0 is compiled against
+           mongodb-driver-sync 4.10.2 (confirmed via its own real pom.xml) and throws a real
+           NoSuchMethodError against this project's required 5.5.1 (needed for mongowire/bson's
+           own lockstep-version requirement above), a genuine, unresolved binary-incompatible
+           version conflict between the two real requirements, not a bug in this project's own
+           code. -->
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
       <version>5.5.1</version>

@@ -52,11 +52,19 @@ public final class BackendConnectivityTest {
         props.setProperty("loginTimeout", String.valueOf(LOGIN_TIMEOUT_SECONDS));
 
         // Real bug, found live against a real Oracle backend: "SELECT version()" is a Postgres
-        // function -- Oracle has no such call, and rejects it outright (ORA-00904: "VERSION":
-        // invalid identifier), which used to mark a perfectly healthy Oracle backend DOWN. A
-        // dialect-aware version query, matching BackendTarget.dialect()'s own URL-prefix dispatch.
-        boolean oracle = jdbcUrl != null && jdbcUrl.toLowerCase(java.util.Locale.ROOT).startsWith("jdbc:oracle:");
-        String versionSql = oracle ? "SELECT banner FROM v$version WHERE ROWNUM = 1" : "SELECT version()";
+        // (and, coincidentally, real MySQL) function -- Oracle and SQL Server have no such call,
+        // and reject it outright (Oracle: ORA-00904 "VERSION": invalid identifier), which used to
+        // mark a perfectly healthy non-Postgres/non-MySQL backend DOWN. A dialect-aware version
+        // query, matching BackendTarget.dialect()'s own URL-prefix dispatch.
+        String url = jdbcUrl == null ? "" : jdbcUrl.toLowerCase(java.util.Locale.ROOT);
+        String versionSql;
+        if (url.startsWith("jdbc:oracle:")) {
+            versionSql = "SELECT banner FROM v$version WHERE ROWNUM = 1";
+        } else if (url.startsWith("jdbc:sqlserver:")) {
+            versionSql = "SELECT @@VERSION";
+        } else {
+            versionSql = "SELECT version()";
+        }
         try (Connection conn = DriverManager.getConnection(jdbcUrl, props);
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(versionSql)) {

@@ -354,56 +354,99 @@ own row-filter/column-mask SQL rewriting, run earlier in the pipeline, is the on
 and a statement referencing more than 2 federated backends in one query falls straight through to
 scatter-gather's own broadcast-and-merge behavior, unfiltered.
 
-### 4.4 Multiple backend engines (Oracle, alongside Postgres)
+### 4.4 Multiple backend engines (top-5-by-DB-Engines-ranking, alongside Postgres)
 
 PolyWire used to be Postgres-only end to end, by explicit design (`BackendRegistry`/
-`BackendConnectionPools`/`BackendTarget` all assumed it). **Oracle is now a real second backend
-engine** — not just something orawire's own wire-protocol frontend decodes against, but a real
-`POLYWIRE_BACKENDS` target PolyWire connects to, routes plain SQL to (read AND write), federates
-`JOIN`s against (§4.3), and coordinates real `XAResource`-based 2PC transactions with. `SQL_SERVER`
-and `MYSQL` are recognized `SourceDialect` values already (reused from dialect translation) but
-have no real backend driver wired up yet — a scoped, real follow-up, not started.
+`BackendConnectionPools`/`BackendTarget` all assumed it). **Oracle, SQL Server, and MySQL/MariaDB
+are now real second/third/fourth backend engines** — not just something orawire's/mssqlwire's/
+mywire's own wire-protocol frontends decode against, but real `POLYWIRE_BACKENDS` targets PolyWire
+connects to, routes plain SQL to (read AND write), federates `JOIN`s against (§4.3), and
+coordinates real `XAResource`-based 2PC transactions with (Oracle and SQL Server; MySQL's own
+driver has no support for the 2PC path specifically — see below).
 
 **`BackendDriverRegistry`** is the one place a real driver class gets chosen from a
 `BackendTarget`'s own `jdbcUrl` prefix — `ShardJoinExecutor`, `SchemaFederationStage`,
 `RollupStage`, and `BackendConnectionPools` all dispatch through it instead of each hardcoding
 `"org.postgresql.Driver"`. **`XaBackendFactory`** dispatches separately (a backend can be a fine
-plain read/write or federation target without being a real XA participant) — Postgres and Oracle
-both get real, vendor-provided `XADataSource` implementations (`PGXADataSource`,
-`OracleXADataSource`), the same real, proven shape the sibling Omnigate project uses. MySQL/MariaDB
-is expected to hit the same real wall Omnigate found live: no usable `XADataSource` in the driver,
-so a MySQL backend (once added) would be best-effort-only for XA, not a real limitation to "fix."
+plain read/write or federation target without being a real XA participant) — every one of Postgres,
+Oracle, SQL Server, and MySQL gets a real, vendor-provided `XADataSource` implementation
+(`PGXADataSource`, `OracleXADataSource`, `SQLServerXADataSource`, `MysqlXADataSource`), the same
+real, proven shape the sibling Omnigate project uses for its own Postgres/Oracle pair.
 
-**Live-verified against a real Oracle instance**, with real bugs found and fixed along the way —
-this project's own established discipline, not a claim taken on faith:
+**Live-verified against real instances of all three new engines**, with real bugs found and fixed
+along the way — this project's own established discipline, not a claim taken on faith:
 
-- Plain routed `SELECT`/`INSERT` against Oracle through the existing, previously Postgres-only
-  `RoutingBackendExecutor`/`JdbcBackendExecutor` path worked with **zero code changes** — that
-  layer was already engine-agnostic (plain JDBC `PreparedStatement`, no Postgres-specific SQL).
-- A real cross-engine `JOIN` — Postgres `orders_db.orders` (200 real rows) `JOIN` Oracle
-  `customers_db.customers` (10 real rows) — returned the correct, exact per-customer counts.
-  Getting there surfaced two real, fixed bugs: (1) `BackendConnectionPools` hardcoded
-  `"org.postgresql.Driver"` unconditionally, crashing HikariCP pool creation for any non-Postgres
-  URL; (2) Oracle folds an unquoted schema/user name to UPPERCASE in its own catalog (unlike
-  Postgres, which folds to lowercase) — Calcite's backend-side table lookup needs that real casing
-  even though the client's own SQL can still reference the schema in whatever case it likes
-  (`BackendDriverRegistry.realCatalogSchemaName`).
-- `DialectTranslationStage` translated a plain Postgres-dialect `INSERT` into real Oracle SQL
-  automatically, the first time that direction (Oracle as *target*, not just *source*) has ever
-  actually run — confirming the translation stage's own design was already dialect-agnostic, it
-  just never had a second target dialect to exercise before.
-- A real, unbounded Oracle `NUMBER` column (no explicit precision) made Calcite reject the plan
+- Plain routed `SELECT`/`INSERT` against Oracle, SQL Server, and MySQL all worked through the
+  existing, previously Postgres-only `RoutingBackendExecutor`/`JdbcBackendExecutor` path with
+  **zero code changes** to that layer — plain JDBC `PreparedStatement`, no Postgres-specific SQL.
+- A real cross-engine `JOIN` — Postgres `orders_db.orders` (~200 real, skewed rows) `JOIN` a
+  10-row `customers_db.customers` table — returned correct, exact per-customer counts against
+  **each** of Oracle, SQL Server, and MySQL in turn. Real bugs found and fixed getting there:
+  1. `BackendConnectionPools` hardcoded `"org.postgresql.Driver"` unconditionally — crashed
+     HikariCP pool creation for any non-Postgres URL. Now dispatches through
+     `BackendDriverRegistry`.
+  2. Oracle folds an unquoted schema/user name to UPPERCASE in its own catalog (Postgres folds to
+     lowercase, SQL Server/MySQL preserve case as typed) — Calcite's backend-side table lookup
+     needs that real casing even though the client's own SQL can still reference the schema in
+     whatever case it likes (`BackendDriverRegistry.realCatalogSchemaName`).
+  3. `BackendConnectivityTest`'s health-check probe used `SELECT version()` unconditionally (a
+     Postgres — and, coincidentally, real MySQL — function) — marked a healthy Oracle/SQL Server
+     backend DOWN with a real syntax error. Now dialect-aware (`v$version` for Oracle,
+     `@@VERSION` for SQL Server).
+  4. `DialectTranslationStage` had never had SQL Server as a translation *target* before — its
+     `RENDERERS` table had no entry for it at all, forcing even a plain ANSI `INSERT`/`SELECT`
+     into an (unconfigured) LLM fallback. Added a real `renderSqlServer`, handling `LIMIT n` →
+     `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` the same way the existing `renderOracle` handles
+     `LIMIT n` → `FETCH FIRST n ROWS ONLY`.
+  5. A JDBC URL containing a literal `;` (SQL Server's own property separator, e.g.
+     `;databaseName=x;encrypt=false`) collided with `POLYWIRE_BACKENDS`' own `;`-delimited entry
+     separator — silently truncated the URL. The existing `%3B` escape (already documented for
+     this exact reason) fixes it; a real, easy-to-hit config trap for any semicolon-bearing JDBC
+     URL, not SQL-Server-specific.
+  6. `TrustedBackendHosts.isTrusted()` only ever recognized `jdbc:postgresql:` URLs — with
+     `POLYWIRE_TRUSTED_BACKEND_HOSTS` enabled, every other real engine's own URL shape returned
+     "not trusted" (silent, full refusal), defeating the whole feature for a non-Postgres backend.
+     Extended to recognize Oracle's `thin:@//host:port` shape and the plain `host:port`-style URLs
+     SQL Server/MySQL/MariaDB use.
+- An unbounded Oracle `NUMBER` column (no explicit precision) makes Calcite reject the plan
   outright (`DECIMAL precision 0 must be between 1 and 19`) — a real, disclosed limitation:
   Oracle tables federated into a `JOIN` need an explicit `NUMBER(p[,s])` precision today, not the
   common unconstrained-`NUMBER` idiom.
-- A real, full 2PC transaction — one client `BEGIN`/`COMMIT` touching both the Postgres and Oracle
-  backends — genuinely prepared and committed atomically across both engines. Two real environment
-  prerequisites had to be met first (both are the actual, standard operational requirements for
-  distributed transactions on each vendor, not PolyWire-specific): Postgres's own
-  `max_prepared_transactions` defaults to 0 (2PC is off until an operator raises it), and Oracle
-  requires an operator grant on `DBA_2PC_PENDING`/`PENDING_TRANS$`/`DBMS_SYSTEM` before any schema
-  can participate in a distributed transaction at all — undocumented anywhere in this project until
-  now, and worth calling out explicitly for anyone deploying this for real.
+- Real, full 2PC — one client `BEGIN`/`COMMIT` touching both a real Postgres backend and a real
+  Oracle **or** MySQL backend genuinely prepared and committed atomically across both engines.
+  MySQL's own real, Oracle-published Connector/J ships a real `MysqlXADataSource` and it actually
+  works end to end — a genuine improvement over the sibling Omnigate project's own broader
+  "MySQL/MariaDB has no usable XADataSource" finding, which was specifically about the *MariaDB*
+  driver, a different vendor's implementation. **SQL Server's own XA path is real code, but not
+  live-verified working** — a fresh SQL Server instance needs the driver's own `sqljdbc_xa`
+  MSDTC support procedures (`xp_sqljdbc_xa_init_ex` etc.) installed server-side before any XA
+  transaction can even start, a genuine Microsoft-documented prerequisite this project's own test
+  instance (a Linux-based Azure SQL Edge container) doesn't have installed and — being a
+  reduced-feature SQL Server variant on Linux, with no native MSDTC service — may not support at
+  all; a real, disclosed gap, not assumed away.
+- Real, standard operational prerequisites had to be met before Postgres/Oracle 2PC worked at all
+  (neither is a PolyWire bug): Postgres's own `max_prepared_transactions` defaults to 0 (2PC is
+  off until an operator raises it), and Oracle requires an operator grant on
+  `DBA_2PC_PENDING`/`PENDING_TRANS$`/`DBMS_SYSTEM` before any schema can participate in a
+  distributed transaction at all — undocumented anywhere in this project until now, worth calling
+  out explicitly for anyone deploying this for real.
+
+**MongoDB was attempted and reverted — a real, unresolved blocker, not started work.** MongoDB
+isn't JDBC/SQL at all, so the JDBC-based approach above doesn't apply; the real path tried was
+Calcite's own `calcite-mongodb` adapter (mounting a real MongoDB database as a Calcite schema, the
+same real mechanism used for every JDBC engine). It hit a genuine, verified binary-incompatible
+version conflict: `calcite-mongodb:1.42.0` is compiled against `mongodb-driver-sync:4.10.2`
+(confirmed directly from its own real `pom.xml`), but this project's own `mywire`/`mongowire`
+compatibility work already requires `mongodb-driver-sync:5.5.1` (documented lockstep-version
+requirement with `bson`, elsewhere in `pom.xml`) — connecting real Mongo 7 to a `MongoSchema`
+built this way throws a real `NoSuchMethodError` (`MongoDatabase.listCollectionNames()`, a method
+whose signature changed across that major version gap) the moment Calcite tries to list the
+database's own collections. Downgrading the driver project-wide would regress `mongowire`'s own
+real, tested functionality; there's no supported way to run two major versions of the same driver
+in one shaded jar. Real follow-up options, none attempted yet: a newer `calcite-mongodb` release
+built against a 5.x driver (would mean upgrading `calcite-core` project-wide too — a much larger,
+riskier change given how much of §4.3's own federation work depends on today's pinned 1.42.0
+behavior), or a hand-written MongoDB executor bypassing Calcite's adapter entirely.
 
 ### 4.5 Multi-AZ distributed cache
 
@@ -675,7 +718,7 @@ Every admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check.
 | Scenario | Feature | Notes |
 |---|---|---|
 | Keep a legacy Oracle-driver app running against Postgres, permanently | orawire | No app rewrite; TNS/TTC + TCPS supported |
-| Join or 2PC-coordinate a transaction across a real Postgres AND a real Oracle database | `POLYWIRE_BACKENDS` (Oracle target) + `SchemaFederationStage`/`XaBackendFactory` | Real Calcite `JOIN` federation and real `XAResource`-based 2PC, not just wire-protocol translation to Postgres (§4.4) |
+| Join or 2PC-coordinate a transaction across Postgres AND a real Oracle/SQL Server/MySQL database | `POLYWIRE_BACKENDS` (non-Postgres target) + `SchemaFederationStage`/`XaBackendFactory` | Real Calcite `JOIN` federation for all three; real `XAResource`-based 2PC for Postgres+Oracle and Postgres+MySQL (SQL Server real but not live-verified — see §4.4) |
 | Cut over a MySQL-protocol app during a migration window | mywire | Temporary bridge, decommission after cutover |
 | Let an AI agent call vetted stored procedures as tools | MCP frontend | Only `POLYWIRE_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |
 | Enforce "no bulk deletes from `orders`" org-wide, DBA-editable, no redeploy | SQL Firewall | Rule lives in Postgres, hot-reloaded |

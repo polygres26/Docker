@@ -1,5 +1,7 @@
 package com.polygres.wire.xa;
 
+import com.microsoft.sqlserver.jdbc.SQLServerXADataSource;
+import com.mysql.cj.jdbc.MysqlXADataSource;
 import com.polygres.wire.core.BackendTarget;
 import com.polygres.wire.core.ErrorCatalog;
 import java.sql.Connection;
@@ -16,13 +18,14 @@ import org.postgresql.xa.PGXADataSource;
  * own {@code XaBackendFactory} uses (its javadoc: "using the vendor-provided XADataSource
  * implementations every major JDBC driver ships ... rather than hand-rolling XA support").
  *
- * <p><b>Postgres and Oracle today, matching {@link com.polygres.wire.core.BackendDriverRegistry}'s
- * own currently-supported engine list</b> -- adding a real, standard {@code XADataSource} (e.g.
- * Microsoft's {@code SQLServerXADataSource}) is a real, scoped follow-up as SQL Server becomes a
- * supported backend engine. MySQL/MariaDB is a genuinely different, harder case: Omnigate's own
- * javadoc found live that the MariaDB JDBC driver ships no usable {@code XADataSource} at all, so a
- * MySQL/MariaDB backend is expected to stay best-effort-only (independent, non-coordinated commits)
- * rather than a real XA participant, not a bug to fix here later.
+ * <p><b>Postgres, Oracle, SQL Server, and MySQL/MariaDB today</b> -- matching {@link
+ * com.polygres.wire.core.BackendDriverRegistry}'s own currently-supported engine list. Every one
+ * of these ships a real vendor {@code XADataSource}: {@code PGXADataSource}, {@code
+ * OracleXADataSource}, Microsoft's {@code SQLServerXADataSource}, and (this project's own real,
+ * Oracle-published MySQL Connector/J, NOT the MariaDB driver the sibling Omnigate project found
+ * live has no usable {@code XADataSource} at all) {@code MysqlXADataSource}. All four have been
+ * live-verified end to end -- a real prepare+commit against a real instance of each engine, not
+ * assumed from the mere existence of the vendor class.
  */
 public final class XaBackendFactory {
 
@@ -56,10 +59,11 @@ public final class XaBackendFactory {
     /** @return a real, configured (but not yet connected) vendor {@code XADataSource} for {@code
      *     url}'s own engine, or {@code null} for an engine with no real XA support wired up --
      *     mirrors {@link com.polygres.wire.core.BackendDriverRegistry}'s own URL-prefix dispatch
-     *     shape, kept as a SEPARATE lookup rather than merged into it: a backend can be a fine
-     *     plain read/write or federation target without being a real XA participant (MySQL/MariaDB
-     *     today -- see this class's own javadoc), so "supports this engine at all" and "supports
-     *     this engine for XA" are genuinely different questions. */
+     *     shape, kept as a SEPARATE lookup rather than merged into it: a backend can in principle
+     *     be a fine plain read/write or federation target without being a real XA participant,
+     *     even though today every {@link com.polygres.wire.core.BackendDriverRegistry}-supported
+     *     engine also has real XA support -- "supports this engine at all" and "supports this
+     *     engine for XA" are still genuinely different questions, kept as different lookups. */
     private static XADataSource xaDataSourceFor(String url) throws SQLException {
         String lower = url == null ? "" : url.toLowerCase(java.util.Locale.ROOT);
         if (lower.startsWith("jdbc:postgresql:")) {
@@ -68,30 +72,54 @@ public final class XaBackendFactory {
         if (lower.startsWith("jdbc:oracle:")) {
             return new OracleXADataSource();
         }
+        if (lower.startsWith("jdbc:sqlserver:")) {
+            return new SQLServerXADataSource();
+        }
+        if (lower.startsWith("jdbc:mysql:") || lower.startsWith("jdbc:mariadb:")) {
+            return new MysqlXADataSource();
+        }
         return null;
     }
 
     private static XaBranch openInternal(XADataSource dataSource, String url, String user, String password)
             throws SQLException {
-        if (dataSource instanceof PGXADataSource pg) {
-            pg.setUrl(url);
-        } else if (dataSource instanceof OracleXADataSource oracle) {
-            oracle.setURL(url);
-        }
+        setUrl(dataSource, url);
         if (user != null) {
-            if (dataSource instanceof PGXADataSource pg) {
-                pg.setUser(user);
-                pg.setPassword(password);
-            } else if (dataSource instanceof OracleXADataSource oracle) {
-                oracle.setUser(user);
-                oracle.setPassword(password);
-            }
+            setCredentials(dataSource, user, password);
         }
         XAConnection xaConnection = dataSource.getXAConnection();
         Connection connection = xaConnection.getConnection();
 
         connection.setAutoCommit(false);
         return new XaBranch(connection, xaConnection.getXAResource(), xaConnection);
+    }
+
+    private static void setUrl(XADataSource dataSource, String url) {
+        if (dataSource instanceof PGXADataSource pg) {
+            pg.setUrl(url);
+        } else if (dataSource instanceof OracleXADataSource oracle) {
+            oracle.setURL(url);
+        } else if (dataSource instanceof SQLServerXADataSource mssql) {
+            mssql.setURL(url);
+        } else if (dataSource instanceof MysqlXADataSource mysql) {
+            mysql.setUrl(url);
+        }
+    }
+
+    private static void setCredentials(XADataSource dataSource, String user, String password) {
+        if (dataSource instanceof PGXADataSource pg) {
+            pg.setUser(user);
+            pg.setPassword(password);
+        } else if (dataSource instanceof OracleXADataSource oracle) {
+            oracle.setUser(user);
+            oracle.setPassword(password);
+        } else if (dataSource instanceof SQLServerXADataSource mssql) {
+            mssql.setUser(user);
+            mssql.setPassword(password);
+        } else if (dataSource instanceof MysqlXADataSource mysql) {
+            mysql.setUser(user);
+            mysql.setPassword(password);
+        }
     }
 
     private XaBackendFactory() {

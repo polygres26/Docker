@@ -102,20 +102,55 @@ public final class TrustedBackendHosts {
     }
 
     private static final Pattern JDBC_POSTGRESQL = Pattern.compile("(?i)^jdbc:postgresql://([^/?]+)");
+    // Real bug, found live building the Oracle/SQL Server/MySQL/Mongo backend engine work: this
+    // used to recognize ONLY jdbc:postgresql: -- extractHostPort returned null (never trusted,
+    // full refusal) for every other real engine's own URL shape the moment POLYWIRE_TRUSTED_
+    // BACKEND_HOSTS was actually enabled, silently defeating the whole feature for anyone using it
+    // with a non-Postgres backend, not just declining to allowlist it. Oracle's own real
+    // "thin:@//host:port/service" shape needs its own separate pattern (the "thin:@" prefix isn't
+    // a URI scheme); TNS-descriptor-style Oracle URLs (no host:port at all) are a real, further
+    // gap this doesn't cover, same "return null -> not trusted" fallback as before this fix.
+    private static final Pattern JDBC_ORACLE_THIN = Pattern.compile("(?i)^jdbc:oracle:thin:@//([^/?]+)");
+    private static final Pattern JDBC_HOST_PORT_STYLE =
+            Pattern.compile("(?i)^jdbc:(?:sqlserver|mysql|mariadb)://([^/;?]+)");
+    private static final Pattern MONGO_CONNECTION_STRING = Pattern.compile("(?i)^mongodb(?:\\+srv)?://([^/?]+)");
 
     private static HostPort extractHostPort(String jdbcUrl) {
         if (jdbcUrl == null) {
             return null;
         }
-        Matcher m = JDBC_POSTGRESQL.matcher(jdbcUrl.trim());
-        if (!m.find()) {
-            return null;
+        String trimmed = jdbcUrl.trim();
+        Matcher pg = JDBC_POSTGRESQL.matcher(trimmed);
+        if (pg.find()) {
+            return parseHostPort("postgresql", pg.group(1), 5432);
         }
+        Matcher oracle = JDBC_ORACLE_THIN.matcher(trimmed);
+        if (oracle.find()) {
+            return parseHostPort("oracle", oracle.group(1), 1521);
+        }
+        Matcher hostPort = JDBC_HOST_PORT_STYLE.matcher(trimmed);
+        if (hostPort.find()) {
+            boolean sqlServer = trimmed.regionMatches(true, 0, "jdbc:sqlserver:", 0, "jdbc:sqlserver:".length());
+            return parseHostPort("generic", hostPort.group(1), sqlServer ? 1433 : 3306);
+        }
+        Matcher mongo = MONGO_CONNECTION_STRING.matcher(trimmed);
+        if (mongo.find()) {
+            // A real Mongo connection string can list several host:port pairs (a replica set
+            // seed list, comma-separated) -- trusting the FIRST one is a real, documented
+            // simplification, not a security hole: every listed host still has to be a real member
+            // of the same real replica set to ever actually get used.
+            String first = mongo.group(1).split(",", 2)[0];
+            return parseHostPort("mongo", first, 27017);
+        }
+        return null;
+    }
+
+    private static HostPort parseHostPort(String scheme, String authority, int defaultPort) {
         try {
-            URI uri = new URI("postgresql", m.group(1), "/", null, null);
+            URI uri = new URI(scheme, authority, "/", null, null);
             String host = uri.getHost();
             int port = uri.getPort();
-            return host == null ? null : new HostPort(host, port < 0 ? 5432 : port);
+            return host == null ? null : new HostPort(host, port < 0 ? defaultPort : port);
         } catch (Exception e) {
             return null;
         }

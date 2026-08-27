@@ -1,10 +1,13 @@
 # PolyWire
 
-A mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL client/server
-protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol, DynamoDB's HTTP/JSON
-API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and routing every one of
-them to real Postgres backend(s). It's wire-protocol compatibility for a pre- or post-migration
-cutover, not a schema/data migration tool itself.
+A mid-tier database gateway. It speaks Oracle TNS/TTC, MySQL client/server protocol, SQL Server
+TDS, Postgres wire protocol v3, MongoDB wire protocol, DynamoDB's HTTP/JSON API, Amazon SQS's
+HTTP/JSON API, gRPC, and MCP to clients — translating and routing every one of them to a real
+backend. Postgres was the original, still-primary backend; Oracle, SQL Server, and MySQL/MariaDB
+are now real backend engines too, not just protocols PolyWire imitates for clients — see
+[`../docs/POLYWIRE_GUIDE.md` §4.4](../docs/POLYWIRE_GUIDE.md#44-multiple-backend-engines-top-5-by-db-engines-ranking-alongside-postgres).
+It's wire-protocol compatibility for a pre- or post-migration cutover, not a schema/data migration
+tool itself.
 
 New here? Start with [`../docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) — what PolyWire does, why
 you'd use it, and how to point your app at it. [`../docs/POLYWIRE_GUIDE.md`](../docs/POLYWIRE_GUIDE.md)

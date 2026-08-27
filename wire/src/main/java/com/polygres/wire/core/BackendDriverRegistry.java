@@ -29,6 +29,12 @@ final class BackendDriverRegistry {
         if (url.startsWith("jdbc:oracle:")) {
             return "oracle.jdbc.OracleDriver";
         }
+        if (url.startsWith("jdbc:sqlserver:")) {
+            return "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+        }
+        if (url.startsWith("jdbc:mysql:") || url.startsWith("jdbc:mariadb:")) {
+            return "com.mysql.cj.jdbc.Driver";
+        }
         return null;
     }
 
