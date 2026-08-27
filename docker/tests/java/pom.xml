@@ -32,6 +32,7 @@
     <awssdk.version>2.46.7</awssdk.version>
     <opensearch-java.version>2.19.0</opensearch-java.version>
     <httpclient5.version>5.3.1</httpclient5.version>
+    <influxdb-java.version>2.24</influxdb-java.version>
   </properties>
 
   <dependencies>
@@ -93,6 +94,12 @@
       <groupId>org.apache.httpcomponents.client5</groupId>
       <artifactId>httpclient5</artifactId>
       <version>${httpclient5.version}</version>
+    </dependency>
+    <!-- influxwire: real InfluxDB v1 client, matching InfluxWireServer's v1 (not v2/Flux) scope -->
+    <dependency>
+      <groupId>org.influxdb</groupId>
+      <artifactId>influxdb-java</artifactId>
+      <version>${influxdb-java.version}</version>
     </dependency>
   </dependencies>
 
