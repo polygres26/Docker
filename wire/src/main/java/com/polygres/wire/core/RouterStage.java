@@ -12,7 +12,12 @@ public final class RouterStage implements PipelineStage {
 
     private static final Logger log = LoggerFactory.getLogger(RouterStage.class);
 
-    public record SchemaRule(Pattern schemaPattern, String backendName) {
+    /** @param schemaName the raw configured schema name (e.g. {@code "orders_db"}), kept alongside
+     *     the already-compiled {@link #schemaPattern()} for the same reason {@link ShardRule} now
+     *     does -- {@link SchemaFederationStage} needs the literal string to mount a Calcite schema
+     *     under the exact name a client's query itself references, not the (potentially
+     *     differently-named) backend the rule routes to. */
+    public record SchemaRule(String schemaName, Pattern schemaPattern, String backendName) {
     }
 
     public record PredicateRule(int bindIndex, String expectedValue, String backendName) {
@@ -124,7 +129,7 @@ public final class RouterStage implements PipelineStage {
             for (String entry : schemaSpec.split(",")) {
                 String[] parts = entry.split(":", 2);
                 if (parts.length == 2) {
-                    schemaRules.add(new SchemaRule(
+                    schemaRules.add(new SchemaRule(parts[0].trim(),
                             Pattern.compile("\\b" + Pattern.quote(parts[0].trim()) + "\\.", Pattern.CASE_INSENSITIVE),
                             parts[1].trim()));
                 }

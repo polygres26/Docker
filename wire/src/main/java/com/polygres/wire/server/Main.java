@@ -14,6 +14,7 @@ import com.polygres.wire.core.PipelineStage;
 import com.polygres.wire.core.QosControlStage;
 import com.polygres.wire.core.RollupStage;
 import com.polygres.wire.core.RouterStage;
+import com.polygres.wire.core.SchemaFederationStage;
 import com.polygres.wire.core.StatsCollectorStage;
 import com.polygres.wire.dynamowire.DynamoWireServer;
 import com.polygres.wire.grpc.PolyWireGrpcServer;
@@ -262,6 +263,16 @@ public final class Main {
                 routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size(),
                 routerStage.valueShardRules().size(), routerStage.valueShardColumnRules().size(),
                 routerStage.shardRules().size());
+        // Before routerStage, not after -- see SchemaFederationStage's own javadoc: a statement
+        // that references two different POLYWIRE_ROUTER_SCHEMA_RULES-routed backends has to be
+        // federated BEFORE RouterStage.resolveBackend ever narrows it down to just one of them.
+        SchemaFederationStage schemaFederationStage = SchemaFederationStage.fromConfigOrNull(routerStage, backendRegistry);
+        if (schemaFederationStage != null) {
+            stages.add(schemaFederationStage);
+            log.info("schema federation: enabled ({} schema rule(s) -- a query referencing 2+ of their backends "
+                    + "in one statement is federated via Calcite instead of routed to a single one)",
+                    routerStage.schemaRules().size());
+        }
         stages.add(routerStage);
         stages.add(qosStage);
         TranslationCacheStore translationCacheStore = new TranslationCacheStore(options);
