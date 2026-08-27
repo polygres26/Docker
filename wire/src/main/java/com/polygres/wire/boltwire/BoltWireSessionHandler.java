@@ -303,7 +303,17 @@ public final class BoltWireSessionHandler implements Runnable {
             }
         }
 
-        StringBuilder sql = new StringBuilder("SELECT ");
+        boolean variableLength = stmt.rel() != null && stmt.rel().minHops() != null;
+
+        StringBuilder sql = new StringBuilder();
+        if (variableLength) {
+            appendRecursiveCte(sql, stmt.rel());
+        }
+        // DISTINCT: a variable-length path can reach the same (start, end) node pair at more than
+        // one depth (e.g. both 2 and 3 hops) -- Cypher's own MATCH semantics return the pair once
+        // per matched path shape here, not once per row, so de-duplicate rather than surface every
+        // intermediate depth as its own result.
+        sql.append(variableLength ? "SELECT DISTINCT " : "SELECT ");
         List<String> selectVars = new ArrayList<>(nodesByVariable.keySet());
         List<String> selectExprs = new ArrayList<>();
         for (String v : selectVars) {
@@ -316,19 +326,43 @@ public final class BoltWireSessionHandler implements Runnable {
         String secondAlias = null;
         if (stmt.second() != null) {
             secondAlias = stmt.second().variable() != null ? stmt.second().variable() : "n1";
-            sql.append(" JOIN polywire_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
-            if (stmt.rel().type() != null) {
-                sql.append(" AND e.type = ").append(sqlLiteral(stmt.rel().type()));
+            if (variableLength) {
+                // The recursive CTE ("paths") already did all the hop-following and cycle-guarding
+                // -- this join is just "attach the two real node rows to a path we already found",
+                // the same shape the fixed-hop branch below uses for its own single-hop join.
+                sql.append(" JOIN paths p ON p.start_id = ").append(firstAlias).append(".id");
+                sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
+                        .append(" ON ").append(secondAlias).append(".id = p.end_id");
+            } else {
+                sql.append(" JOIN polywire_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
+                if (stmt.rel().type() != null) {
+                    sql.append(" AND e.type = ").append(sqlLiteral(stmt.rel().type()));
+                }
+                sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
+                        .append(" ON ").append(secondAlias).append(".id = e.to_id");
             }
-            sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
-                    .append(" ON ").append(secondAlias).append(".id = e.to_id");
         }
 
         List<String> whereClauses = new ArrayList<>();
+        if (variableLength) {
+            // The recursive step already stops extending once depth reaches maxHops (see
+            // appendRecursiveCte), but the walk still keeps every depth from 1 upward along the
+            // way (e.g. minHops=2 still needs depth-1 rows to extend from) -- this is the actual
+            // [minHops, maxHops] narrowing of "paths" down to what MATCH asked for.
+            whereClauses.add("p.depth BETWEEN " + stmt.rel().minHops() + " AND " + stmt.rel().maxHops());
+        }
         List<Object> params = new ArrayList<>();
         addLabelFilter(whereClauses, firstAlias, stmt.first().labels());
+        // Real bug, found live testing Phase 4's variable-length paths: an inline property map on
+        // a MATCH node pattern (e.g. "MATCH (a:Person {name: 'Alice'})") was being parsed into
+        // NodePattern.properties() correctly but never actually turned into a WHERE filter here --
+        // "a" silently matched every Person, not just the one named Alice. CREATE never hit this
+        // (its own properties always go straight into an INSERT, not a filter), so it was never
+        // exercised until a MATCH anchored by name was actually tried.
+        addPropertyFilters(whereClauses, params, firstAlias, stmt.first().properties());
         if (secondAlias != null) {
             addLabelFilter(whereClauses, secondAlias, stmt.second().labels());
+            addPropertyFilters(whereClauses, params, secondAlias, stmt.second().properties());
         }
         for (CypherParser.Condition cond : stmt.where()) {
             if (!nodesByVariable.containsKey(cond.variable())) {
@@ -393,9 +427,42 @@ public final class BoltWireSessionHandler implements Runnable {
         return new ExecutedQuery(columns, rows);
     }
 
+    /** Real variable-length-path support ({@code [*1..3]}): a Postgres {@code WITH RECURSIVE} CTE
+     * that walks {@code polywire_graph_edges} from {@code depth=1} up to {@code rel.maxHops()},
+     * tracking each path's visited node ids in an array so a cycle stops the recursion for that
+     * branch instead of looping forever -- {@code polywire_graph_edges} has no built-in acyclic
+     * guarantee (a real graph can and does have cycles), so this guard is load-bearing, not
+     * defensive-only. {@code minHops} is enforced afterwards in the outer query's WHERE (see
+     * {@link #runMatch}) rather than here, since the recursive step still needs every depth from 1
+     * upward to have something to extend from. */
+    private static void appendRecursiveCte(StringBuilder sql, CypherParser.RelPattern rel) {
+        String typeFilter = rel.type() != null ? " AND type = " + sqlLiteral(rel.type()) : "";
+        sql.append("WITH RECURSIVE paths AS (")
+                .append("SELECT from_id AS start_id, to_id AS end_id, 1 AS depth, ARRAY[from_id, to_id] AS visited ")
+                .append("FROM polywire_graph_edges WHERE true").append(typeFilter)
+                .append(" UNION ALL ")
+                .append("SELECT p.start_id, e.to_id, p.depth + 1, p.visited || e.to_id ")
+                .append("FROM paths p JOIN polywire_graph_edges e ON e.from_id = p.end_id")
+                .append(typeFilter.isEmpty() ? "" : " AND e.type = " + sqlLiteral(rel.type()))
+                .append(" WHERE p.depth < ").append(rel.maxHops())
+                .append(" AND NOT (e.to_id = ANY(p.visited))")
+                .append(") ");
+    }
+
     private static void addLabelFilter(List<String> whereClauses, String alias, List<String> labels) {
         for (String label : labels) {
             whereClauses.add(sqlLiteral(label) + " = ANY(" + alias + ".labels)");
+        }
+    }
+
+    /** A MATCH node pattern's own inline property map (e.g. {@code {name: 'Alice'}}) -- unlike a
+     * label, a property value is real client-supplied data, not a Cypher identifier, so it's bound
+     * as a parameter here rather than inlined like {@link #sqlLiteral} does for labels/types. */
+    private static void addPropertyFilters(List<String> whereClauses, List<Object> params, String alias,
+            Map<String, Object> properties) {
+        for (Map.Entry<String, Object> e : properties.entrySet()) {
+            whereClauses.add(alias + ".properties->>'" + e.getKey() + "' = ?");
+            params.add(String.valueOf(e.getValue()));
         }
     }
 

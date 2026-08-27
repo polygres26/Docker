@@ -33,7 +33,14 @@ final class CypherParser {
     record NodePattern(String variable, List<String> labels, Map<String, Object> properties) {
     }
 
-    record RelPattern(String variable, String type, Map<String, Object> properties) {
+    /** @param minHops/@param maxHops null for both = a plain, fixed single-hop relationship
+     * (Phase 2/3's original scope). Both set = a real variable-length path ({@code [*1..3]} ->
+     * minHops=1, maxHops=3; {@code [*2]} -> minHops=maxHops=2) -- Phase 4's own addition, see
+     * {@code BoltWireSessionHandler#runMatch}'s WITH RECURSIVE translation. A bare, unbounded
+     * {@code [*]} is deliberately rejected at parse time (see {@link #parseRel}) rather than
+     * accepted and left to a real WITH RECURSIVE query with no depth bound to run away against a
+     * large graph -- not implemented, not silently capped to some arbitrary default either. */
+    record RelPattern(String variable, String type, Map<String, Object> properties, Integer minHops, Integer maxHops) {
     }
 
     record ReturnItem(String variable, String property, String alias) {
@@ -177,7 +184,7 @@ final class CypherParser {
         expect("-");
         expect("[");
         String variable = null;
-        if (!peek().equals(":") && !peek().equals("]") && !peek().equals("{")) {
+        if (!peek().equals(":") && !peek().equals("]") && !peek().equals("{") && !peek().startsWith("*")) {
             variable = next();
         }
         String type = null;
@@ -185,11 +192,46 @@ final class CypherParser {
             next();
             type = next();
         }
+        Integer minHops = null;
+        Integer maxHops = null;
+        if (peek().startsWith("*")) {
+            int[] hops = parseHopSpec();
+            minHops = hops[0];
+            maxHops = hops[1];
+        }
         Map<String, Object> properties = peek().equals("{") ? parsePropertyMap() : Map.of();
         expect("]");
         expect("-");
         expect(">");
-        return new RelPattern(variable, type, properties);
+        return new RelPattern(variable, type, properties, minHops, maxHops);
+    }
+
+    /** Parses a variable-length-path hop bound: {@code *N} (exact), {@code *N..M} (range), or a
+     * bare unbounded {@code *} -- the last of which is rejected here (see {@link RelPattern}'s own
+     * javadoc for why), not accepted and left to run away later. {@code '*'} is its own punctuation
+     * token (see {@code tokenize}), so this always consumes it separately from the digits that
+     * follow. */
+    private int[] parseHopSpec() {
+        expect("*");
+        String rest;
+        if (pos < tokens.size() && tokens.get(pos).matches("\\d+")) {
+            rest = next();
+        } else {
+            throw fail("boltwire Phase 4 doesn't support an unbounded variable-length path ([*]) -- "
+                    + "an explicit bound like [*1..3] is required");
+        }
+        int min = Integer.parseInt(rest);
+        int max = min;
+        if (peek().equals(".")) {
+            next();
+            expect(".");
+            String maxTok = next();
+            if (!maxTok.matches("\\d+")) {
+                throw fail("expected a number after \"..\" in a variable-length relationship, got \"" + maxTok + "\"");
+            }
+            max = Integer.parseInt(maxTok);
+        }
+        return new int[] {min, max};
     }
 
     private Map<String, Object> parsePropertyMap() {
@@ -284,7 +326,13 @@ final class CypherParser {
                 i = j + 1;
                 continue;
             }
-            if ("(){}[]:,.-".indexOf(c) >= 0) {
+            // '*' is its own single-char punctuation token (added for Phase 4's [*1..3] variable-
+            // length-path syntax) -- real bug, found live: without this, the generic identifier
+            // scan below (which only stops at the chars excluded there) happily swallowed '*' as
+            // part of the relationship type token itself (":KNOWS*1..3" tokenized as one type
+            // token "KNOWS*1" before finally stopping at the first "."), leaving parseRel() with
+            // no separate token to recognize as the hop-count marker at all.
+            if ("(){}[]:,.-*".indexOf(c) >= 0) {
                 out.add(String.valueOf(c));
                 i++;
                 continue;
@@ -312,7 +360,7 @@ final class CypherParser {
                 continue;
             }
             int j = i;
-            while (j < n && !Character.isWhitespace(q.charAt(j)) && "(){}[]:,.-'\"><=!".indexOf(q.charAt(j)) < 0) {
+            while (j < n && !Character.isWhitespace(q.charAt(j)) && "(){}[]:,.-'\"><=!*".indexOf(q.charAt(j)) < 0) {
                 j++;
             }
             out.add(q.substring(i, j));
