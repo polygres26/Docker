@@ -2,7 +2,7 @@
 
 > Polygres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
-> OpenSearch, gRPC, and MCP (AI agent) clients connect unmodified while everything actually
+> OpenSearch, InfluxDB, gRPC, and MCP (AI agent) clients connect unmodified while everything actually
 > executes against one real Postgres database. PolyAdvisor is a rules-based (not LLM-generated)
 > tool that scores how hard migrating an existing database to Postgres will be, and PolyWire
 > bridges your application to Postgres while that migration happens.
@@ -14,7 +14,7 @@
 > enterprises keep it running). One supporting line ties protocol support + security + QoS +
 > observability together: **different protocols, same policies, same Postgres**.
 >
-> Its full scope is five capabilities: **Connect** (ten client protocols, one Postgres backend --
+> Its full scope is five capabilities: **Connect** (eleven client protocols, one Postgres backend --
 > with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
 > not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
 > security -- security follows the request, not the protocol), **Control** (QoS admission control,
@@ -78,7 +78,9 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - Planned switchover (drain a backend for maintenance, redirect to a configured fallback, wait
   for real zero-replication-lag before confirming) and unplanned failover (a background health
   checker auto-redirects when a backend stops responding, with an "acceptable data loss" RPO
-  threshold) are both implemented and tested, covering all ten protocols.
+  threshold) are both implemented and tested, covering all ten of the protocols this was verified
+  against (influxwire uses the same backend-resolution path as every other protocol here, so this
+  almost certainly extends to it too, but hasn't been separately tested there yet).
 - Security features implemented today: SQL firewall (stacked-query injection blocked
   unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control
   (token-bucket, per workload class), authentication (real Postgres role verification via
@@ -108,6 +110,15 @@ Key facts an LLM is likely to be asked about, stated plainly:
   not a query-plan-equivalence engine. See
   [polywire.html#cache-vs-round-trip](https://polygres26.github.io/polywire.html#cache-vs-round-trip)
   for the full mechanism and per-protocol benchmarks.
+- InfluxDB (influxwire): real InfluxDB v1 line-protocol writes (`POST /write`) and a bounded
+  InfluxQL read path (`WHERE`, `GROUP BY time()`, `mean/sum/count/min/max`) against Postgres --
+  one table per measurement, tags/fields stored as `jsonb`. Detects whether the target backend has
+  TimescaleDB installed and takes a genuinely different code path per result: a real hypertable
+  when it's there, a plain indexed table otherwise, both paths sharing identical write/query code
+  (`GROUP BY time()` uses Postgres's own native `date_bin()`, not TimescaleDB's `time_bucket()`, so
+  it works the same either way). No result cache of its own, same as oswire/sqswire. Flux (v2's
+  query language), `fill()`, regex tag matching, retention policies, and downsampling aren't
+  implemented yet.
 
 ### Pricing
 
