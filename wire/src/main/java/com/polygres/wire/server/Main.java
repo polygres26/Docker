@@ -269,9 +269,14 @@ public final class Main {
         // (always present) so RouterStage.statisticsStoreIn/planStoreIn can hand the same instances
         // to every protocol's own RoutingBackendExecutor. See StatisticsStore/SqlPlanStore/
         // StatisticsScheduler's own javadoc for why each is scoped the way it is.
-        com.polygres.wire.core.StatisticsStore federationStatisticsStore = new com.polygres.wire.core.StatisticsStore();
+        // `cluster` (real multi-instance clustering only, POLYWIRE_CLUSTER_ENABLED=true) -- not
+        // `cacheCluster`, which also activates for the default single-node cache-only Ignite grid:
+        // a "unified view across instances" only has meaning with genuine cross-instance clustering.
+        long federationStatsTtlMillis = com.polygres.wire.core.StatisticsStore.ttlFromEnvOrDefaultPublic();
+        com.polygres.wire.core.StatisticsStore federationStatisticsStore =
+                new com.polygres.wire.core.StatisticsStore(cluster, federationStatsTtlMillis);
         com.polygres.wire.core.SqlPlanStore federationPlanStore =
-                com.polygres.wire.core.SqlPlanStore.fromConfig(System.getenv("POLYWIRE_FEDERATION_PLAN_HISTORY"));
+                com.polygres.wire.core.SqlPlanStore.fromConfig(System.getenv("POLYWIRE_FEDERATION_PLAN_HISTORY"), cluster);
         routerStage.setFederationSupport(federationStatisticsStore, federationPlanStore);
         com.polygres.wire.core.StatisticsScheduler statisticsScheduler = com.polygres.wire.core.StatisticsScheduler
                 .startIfConfigured(backendRegistry, routerStage.shardRules(), routerStage.schemaRules(), federationStatisticsStore);

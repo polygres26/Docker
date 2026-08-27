@@ -46,13 +46,22 @@ public interface SqlPlanStore {
 
     /** {@code null} when plan history is disabled entirely ({@code capacity <= 0}) -- decided by
      * the caller, not this method (see {@code Main}'s own {@code POLYWIRE_FEDERATION_PLAN_HISTORY}
-     * wiring). Only the single-process, in-memory implementation is ported here (see {@link
-     * InMemorySqlPlanStore}'s own javadoc) -- Omnigate's Ignite-cluster-shared variant is a real
-     * follow-up, not needed until PolyWire's own multi-instance federation actually needs a shared
-     * plan history, not just a per-instance one. */
-    public static SqlPlanStore fromConfig(String historySizeSpec) {
+     * wiring). {@code cluster} non-null and real (a genuine multi-instance {@code
+     * POLYWIRE_CLUSTER_ENABLED=true} cluster, not just the default single-node cache-only Ignite
+     * grid every instance already runs for {@code CacheStage}) means every instance's federated
+     * queries land in the SAME plan history, via {@link ClusterSqlPlanStore} -- {@code null}/not a
+     * real cluster falls back to {@link InMemorySqlPlanStore}'s own single-process ring buffer,
+     * same as before this existed: nothing to unify with only one instance running. */
+    public static SqlPlanStore fromConfig(String historySizeSpec, com.polygres.wire.cluster.PolyWireCluster cluster) {
         int capacity = parseIntOrDefault(historySizeSpec, 200);
-        return capacity <= 0 ? null : new InMemorySqlPlanStore(capacity);
+        if (capacity <= 0) {
+            return null;
+        }
+        if (cluster != null && cluster.enabled()) {
+            long ttlMillis = 3_600_000L; // 1h -- diagnostic history, not a correctness-sensitive result cache
+            return new ClusterSqlPlanStore(cluster, capacity, ttlMillis);
+        }
+        return new InMemorySqlPlanStore(capacity);
     }
 
     private static int parseIntOrDefault(String spec, int defaultValue) {

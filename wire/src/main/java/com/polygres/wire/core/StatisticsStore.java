@@ -1,10 +1,19 @@
 package com.polygres.wire.core;
 
+import com.polygres.wire.cluster.PolyWireCluster;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+import java.io.UncheckedIOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.ignite.IgniteCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,10 +24,9 @@ import org.slf4j.LoggerFactory;
  * the one signal that matters most for picking a sane join order (build the hash table from the
  * smaller side, not whichever side happens to appear first in the query text). Ported from the
  * sibling Omnigate project's own {@code StatisticsStore} (real, tested, production code there),
- * simplified to a single local cache (Omnigate's own Ignite-cluster-shared variant is a real
- * follow-up, not needed until PolyWire's own multi-instance federation actually needs a shared
- * statistics view, not just a per-instance one) and to row counts only (no column NDV/selectivity
- * -- that only ever fed Omnigate's own opt-in embedded-planner cost path, not ported here).
+ * simplified to row counts only (no column NDV/selectivity -- that only ever fed Omnigate's own
+ * opt-in embedded-planner cost path, not ported here). The local-vs-cluster split IS ported --
+ * see this class's own "Cluster-shared mode" section below.
  *
  * <p><b>Real Postgres planner statistics, not a slow {@code COUNT(*)} scan</b>: {@code
  * pg_class.reltuples} is the same row-count ESTIMATE Postgres's own query planner already uses
@@ -37,16 +45,27 @@ import org.slf4j.LoggerFactory;
  * <p><b>TTL-bounded (default 24h, {@code POLYWIRE_STATS_TTL_MS}), not versioned/invalidated on
  * write</b> -- a stale statistic (source data changed since last collection) degrades to a worse
  * cost estimate, not a wrong query result; row counts only ever inform planning, never execution.
+ *
+ * <p><b>Cluster-shared mode</b>: when constructed with a real, genuinely-clustered {@link
+ * PolyWireCluster} ({@code POLYWIRE_CLUSTER_ENABLED=true}, not just the default single-node
+ * cache-only Ignite grid every instance already runs for {@code CacheStage}'s own sake), entries
+ * live in a shared {@code IgniteCache} instead of a local {@code ConcurrentHashMap} -- every
+ * PolyWire instance in the cluster sees the SAME row-count statistics, regardless of which
+ * instance's {@link StatisticsScheduler} (or on-demand probe) actually collected them. Mirrors
+ * {@link ClusterSqlPlanStore}'s own identical local/cluster split for plan history -- see that
+ * class's javadoc for the matching reasoning.
  */
 public final class StatisticsStore {
 
     private static final Logger log = LoggerFactory.getLogger(StatisticsStore.class);
     private static final long DEFAULT_TTL_MILLIS = 24L * 60 * 60 * 1000;
+    private static final String CLUSTER_CACHE_NAME = "polywire-federation-stats-cache";
 
-    private record Entry(long rowCount, long collectedAtMillis) {
+    private record Entry(long rowCount, long collectedAtMillis) implements Serializable {
     }
 
-    private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Entry> local;
+    private final IgniteCache<String, byte[]> clusterCache;
     private final long ttlMillis;
 
     public StatisticsStore() {
@@ -54,7 +73,32 @@ public final class StatisticsStore {
     }
 
     public StatisticsStore(long ttlMillis) {
+        this(null, ttlMillis);
+    }
+
+    /** @param cluster {@code null}, or not genuinely clustered, means plain local caching (same
+     *     behavior as before this constructor existed); a real cluster means every instance shares
+     *     the same statistics via Ignite instead. */
+    public StatisticsStore(PolyWireCluster cluster, long ttlMillis) {
         this.ttlMillis = ttlMillis;
+        if (cluster != null && cluster.enabled()) {
+            this.local = null;
+            this.clusterCache = cluster.getOrCreateCache(CLUSTER_CACHE_NAME, ttlMillis);
+        } else {
+            this.local = new ConcurrentHashMap<>();
+            this.clusterCache = null;
+        }
+    }
+
+    private boolean clustered() {
+        return clusterCache != null;
+    }
+
+    /** Public wrapper so callers (e.g. {@code Main}) that need to pass an explicit {@link
+     * PolyWireCluster} into the constructor can still get the same env-configured TTL the
+     * no-cluster constructor uses by default. */
+    public static long ttlFromEnvOrDefaultPublic() {
+        return ttlFromEnvOrDefault();
     }
 
     private static long ttlFromEnvOrDefault() {
@@ -76,13 +120,13 @@ public final class StatisticsStore {
      *     failure) -- {@code null}, not a made-up default, so the caller degrades to Calcite's own
      *     {@code Statistics.UNKNOWN} rather than mislead the planner with a fabricated number. */
     Long rowCount(Connection connection, String cacheKey, String schema, String table) {
-        Entry cached = entries.get(cacheKey);
+        Entry cached = getEntry(cacheKey);
         if (cached != null && System.currentTimeMillis() - cached.collectedAtMillis() < ttlMillis) {
             return cached.rowCount();
         }
         Long fresh = probe(connection, schema, table);
         if (fresh != null) {
-            entries.put(cacheKey, new Entry(fresh, System.currentTimeMillis()));
+            putEntry(cacheKey, new Entry(fresh, System.currentTimeMillis()));
             return fresh;
         }
         // A stale-but-present entry beats no entry at all once TTL has lapsed and a fresh probe
@@ -94,7 +138,41 @@ public final class StatisticsStore {
     /** Package-visible so {@link StatisticsScheduler} can proactively warm this cache without
      * needing a live query's own connection/cache-key convention. */
     void put(String cacheKey, long rowCount) {
-        entries.put(cacheKey, new Entry(rowCount, System.currentTimeMillis()));
+        putEntry(cacheKey, new Entry(rowCount, System.currentTimeMillis()));
+    }
+
+    private Entry getEntry(String cacheKey) {
+        if (clustered()) {
+            byte[] bytes = clusterCache.get(cacheKey);
+            return bytes == null ? null : deserialize(bytes);
+        }
+        return local.get(cacheKey);
+    }
+
+    private void putEntry(String cacheKey, Entry entry) {
+        if (clustered()) {
+            clusterCache.put(cacheKey, serialize(entry));
+        } else {
+            local.put(cacheKey, entry);
+        }
+    }
+
+    private static byte[] serialize(Entry entry) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+            out.writeObject(entry);
+            out.flush();
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to serialize statistics entry", e);
+        }
+    }
+
+    private static Entry deserialize(byte[] bytes) {
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes))) {
+            return (Entry) in.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            throw new UncheckedIOException("failed to deserialize statistics entry", new IOException(e));
+        }
     }
 
     private Long probe(Connection connection, String schema, String table) {
