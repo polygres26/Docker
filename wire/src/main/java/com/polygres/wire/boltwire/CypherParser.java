@@ -33,13 +33,31 @@ final class CypherParser {
     record NodePattern(String variable, List<String> labels, Map<String, Object> properties) {
     }
 
-    record RelPattern(String type, Map<String, Object> properties) {
+    record RelPattern(String variable, String type, Map<String, Object> properties) {
     }
 
     record ReturnItem(String variable, String property, String alias) {
     }
 
     record CreateStatement(NodePattern first, RelPattern rel, NodePattern second, List<ReturnItem> returnItems) {
+    }
+
+    enum CmpOp { EQ, NEQ, GT, LT, GTE, LTE }
+
+    /** A WHERE condition against {@code variable.property} -- always a matched node/relationship's
+     * own property, never a bare literal comparison (Cypher's WHERE can express more, e.g.
+     * label-existence predicates; Phase 3 scope is deliberately just this common case). */
+    record Condition(String variable, String property, CmpOp op, Object value) {
+    }
+
+    /**
+     * Phase 3's read path: {@code MATCH (var1:Label1) [-[[:TYPE]]-> (var2:Label2)] [WHERE cond
+     * [AND cond...]] RETURN item [, item...] [LIMIT n]}. Only a single fixed-length relationship
+     * hop (same bound as CREATE's Phase 2 pattern) -- variable-length paths ({@code [*1..3]}) are a
+     * later phase, see {@code BoltWireSessionHandler}'s own javadoc.
+     */
+    record MatchStatement(NodePattern first, RelPattern rel, NodePattern second, List<Condition> where,
+            List<ReturnItem> returnItems, Integer limit) {
     }
 
     private final List<String> tokens;
@@ -54,6 +72,69 @@ final class CypherParser {
     static CreateStatement parseCreate(String query) {
         CypherParser p = new CypherParser(tokenize(query), query);
         return p.parseCreateStatement();
+    }
+
+    static MatchStatement parseMatch(String query) {
+        CypherParser p = new CypherParser(tokenize(query), query);
+        return p.parseMatchStatement();
+    }
+
+    private MatchStatement parseMatchStatement() {
+        expectKeyword("MATCH");
+        NodePattern first = parseNode();
+        RelPattern rel = null;
+        NodePattern second = null;
+        if (peek().equals("-")) {
+            rel = parseRel();
+            second = parseNode();
+        }
+        List<Condition> where = List.of();
+        if (peekKeyword("WHERE")) {
+            next();
+            where = parseConditions();
+        }
+        expectKeyword("RETURN");
+        List<ReturnItem> returnItems = parseReturnItems();
+        Integer limit = null;
+        if (peekKeyword("LIMIT")) {
+            next();
+            limit = Integer.parseInt(next());
+        }
+        if (pos < tokens.size()) {
+            throw fail("unexpected trailing input near \"" + tokens.get(pos) + "\"");
+        }
+        return new MatchStatement(first, rel, second, where, returnItems, limit);
+    }
+
+    private List<Condition> parseConditions() {
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(parseCondition());
+        while (peekKeyword("AND")) {
+            next();
+            conditions.add(parseCondition());
+        }
+        if (peekKeyword("OR")) {
+            throw fail("boltwire Phase 3 doesn't support OR in WHERE -- only AND-combined conditions");
+        }
+        return conditions;
+    }
+
+    private Condition parseCondition() {
+        String variable = next();
+        expect(".");
+        String property = next();
+        String opTok = next();
+        CmpOp op = switch (opTok) {
+            case "=" -> CmpOp.EQ;
+            case "!=", "<>" -> CmpOp.NEQ;
+            case ">" -> CmpOp.GT;
+            case "<" -> CmpOp.LT;
+            case ">=" -> CmpOp.GTE;
+            case "<=" -> CmpOp.LTE;
+            default -> throw fail("expected a comparison operator, got \"" + opTok + "\"");
+        };
+        Object value = parseValue();
+        return new Condition(variable, property, op, value);
     }
 
     private CreateStatement parseCreateStatement() {
@@ -95,6 +176,10 @@ final class CypherParser {
     private RelPattern parseRel() {
         expect("-");
         expect("[");
+        String variable = null;
+        if (!peek().equals(":") && !peek().equals("]") && !peek().equals("{")) {
+            variable = next();
+        }
         String type = null;
         if (peek().equals(":")) {
             next();
@@ -104,7 +189,7 @@ final class CypherParser {
         expect("]");
         expect("-");
         expect(">");
-        return new RelPattern(type, properties);
+        return new RelPattern(variable, type, properties);
     }
 
     private Map<String, Object> parsePropertyMap() {
@@ -204,13 +289,30 @@ final class CypherParser {
                 i++;
                 continue;
             }
-            if (c == '>') {
-                out.add(">");
-                i++;
+            // Real bug, found live once WHERE conditions (Phase 3) needed comparison operators
+            // CREATE's own grammar (Phase 2) never used: '=', '!=', '<', '<=', '>=', '<>' weren't
+            // tokenized as operators at all -- '<' in particular wasn't in the punctuation set OR
+            // reachable via the generic identifier scan below (which explicitly excludes it as a
+            // stop character), so the scan's own start/end pointers never advanced past it,
+            // producing an empty token forever -- an infinite loop on the very first WHERE clause
+            // tested live. Handling '=', '!', '<', '>' explicitly here, checking for a following
+            // '=' to form the two-character operators, fixes it -- the same "scan for a following
+            // '=' " approach InfluxQlParser's own tokenizer already uses for its own operators.
+            if ("=!<>".indexOf(c) >= 0) {
+                if (i + 1 < n && q.charAt(i + 1) == '=') {
+                    out.add(q.substring(i, i + 2));
+                    i += 2;
+                } else if (c == '<' && i + 1 < n && q.charAt(i + 1) == '>') {
+                    out.add("<>");
+                    i += 2;
+                } else {
+                    out.add(String.valueOf(c));
+                    i++;
+                }
                 continue;
             }
             int j = i;
-            while (j < n && !Character.isWhitespace(q.charAt(j)) && "(){}[]:,.-'\"><".indexOf(q.charAt(j)) < 0) {
+            while (j < n && !Character.isWhitespace(q.charAt(j)) && "(){}[]:,.-'\"><=!".indexOf(q.charAt(j)) < 0) {
                 j++;
             }
             out.add(q.substring(i, j));

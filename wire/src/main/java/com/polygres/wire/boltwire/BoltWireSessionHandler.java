@@ -71,6 +71,7 @@ public final class BoltWireSessionHandler implements Runnable {
     private static final Pattern RETURN_LITERAL = Pattern.compile(
             "(?is)^\\s*RETURN\\s+(-?\\d+\\.\\d+|-?\\d+|'[^']*'|\"[^\"]*\")\\s*(?:AS\\s+(\\w+))?\\s*;?\\s*$");
     private static final Pattern CREATE_PREFIX = Pattern.compile("(?i)^\\s*CREATE\\b");
+    private static final Pattern MATCH_PREFIX = Pattern.compile("(?i)^\\s*MATCH\\b");
 
     public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
@@ -267,7 +268,163 @@ public final class BoltWireSessionHandler implements Runnable {
                 throw new UnsupportedCypherException(e.getMessage());
             }
         }
+        if (MATCH_PREFIX.matcher(cypher).find()) {
+            try {
+                return runMatch(CypherParser.parseMatch(cypher));
+            } catch (CypherException e) {
+                throw new UnsupportedCypherException(e.getMessage());
+            }
+        }
         return runReturnLiteral(cypher);
+    }
+
+    /**
+     * Phase 3's read path: translates a parsed {@link CypherParser.MatchStatement} into one real
+     * parameterized SQL query against {@code polywire_graph_nodes}/{@code polywire_graph_edges},
+     * and executes it directly (bypassing {@code PgGraphStore}'s write-path helpers, which are
+     * shaped around a single insert, not an arbitrary join) -- a single-node MATCH becomes a plain
+     * {@code SELECT ... FROM polywire_graph_nodes WHERE labels @> ... AND properties->>'x' = ?};
+     * a node-rel-node MATCH becomes a real join through {@code polywire_graph_edges}. Each
+     * requested variable gets its own {@code (id, labels, properties)} triple selected under a
+     * distinct SQL alias, so a RETURN referencing either side of the join gets the right node back.
+     */
+    private ExecutedQuery runMatch(CypherParser.MatchStatement stmt) throws SQLException {
+        Map<String, CypherParser.NodePattern> nodesByVariable = new LinkedHashMap<>();
+        if (stmt.first().variable() != null) {
+            nodesByVariable.put(stmt.first().variable(), stmt.first());
+        }
+        if (stmt.second() != null && stmt.second().variable() != null) {
+            nodesByVariable.put(stmt.second().variable(), stmt.second());
+        }
+        for (CypherParser.ReturnItem item : stmt.returnItems()) {
+            if (!nodesByVariable.containsKey(item.variable())) {
+                throw new UnsupportedCypherException(
+                        "boltwire: RETURN references \"" + item.variable() + "\", which isn't a matched node");
+            }
+        }
+
+        StringBuilder sql = new StringBuilder("SELECT ");
+        List<String> selectVars = new ArrayList<>(nodesByVariable.keySet());
+        List<String> selectExprs = new ArrayList<>();
+        for (String v : selectVars) {
+            selectExprs.add(v + ".id, " + v + ".labels, " + v + ".properties");
+        }
+        sql.append(String.join(", ", selectExprs));
+
+        String firstAlias = stmt.first().variable() != null ? stmt.first().variable() : "n0";
+        sql.append(" FROM polywire_graph_nodes ").append(firstAlias);
+        String secondAlias = null;
+        if (stmt.second() != null) {
+            secondAlias = stmt.second().variable() != null ? stmt.second().variable() : "n1";
+            sql.append(" JOIN polywire_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
+            if (stmt.rel().type() != null) {
+                sql.append(" AND e.type = ").append(sqlLiteral(stmt.rel().type()));
+            }
+            sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
+                    .append(" ON ").append(secondAlias).append(".id = e.to_id");
+        }
+
+        List<String> whereClauses = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+        addLabelFilter(whereClauses, firstAlias, stmt.first().labels());
+        if (secondAlias != null) {
+            addLabelFilter(whereClauses, secondAlias, stmt.second().labels());
+        }
+        for (CypherParser.Condition cond : stmt.where()) {
+            if (!nodesByVariable.containsKey(cond.variable())) {
+                throw new UnsupportedCypherException(
+                        "boltwire: WHERE references \"" + cond.variable() + "\", which isn't a matched node");
+            }
+            String op = switch (cond.op()) {
+                case EQ -> "=";
+                case NEQ -> "!=";
+                case GT -> ">";
+                case LT -> "<";
+                case GTE -> ">=";
+                case LTE -> "<=";
+            };
+            whereClauses.add(cond.variable() + ".properties->>'" + cond.property() + "' " + op + " ?");
+            params.add(String.valueOf(cond.value()));
+        }
+        if (!whereClauses.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", whereClauses));
+        }
+        if (stmt.limit() != null) {
+            sql.append(" LIMIT ").append(stmt.limit().intValue());
+        }
+
+        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        if (target == null) {
+            throw new IllegalStateException("boltwire: no default backend configured");
+        }
+        List<String> columns = new ArrayList<>();
+        List<List<Object>> rows = new ArrayList<>();
+        try (Connection c = target.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                ps.setString(i + 1, (String) params.get(i));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, GraphNode> rowNodes = new LinkedHashMap<>();
+                    int col = 1;
+                    for (String v : selectVars) {
+                        long id = rs.getLong(col++);
+                        java.sql.Array labelsArr = rs.getArray(col++);
+                        List<String> labels = labelsArr == null ? List.of()
+                                : List.of((String[]) labelsArr.getArray());
+                        Map<String, Object> props = jsonToMap(rs.getString(col++));
+                        rowNodes.put(v, new GraphNode(id, labels, props, GraphNode.elementId(id)));
+                    }
+                    List<Object> row = new ArrayList<>();
+                    if (columns.isEmpty()) {
+                        for (CypherParser.ReturnItem item : stmt.returnItems()) {
+                            columns.add(item.alias() != null ? item.alias()
+                                    : item.property() != null ? item.variable() + "." + item.property() : item.variable());
+                        }
+                    }
+                    for (CypherParser.ReturnItem item : stmt.returnItems()) {
+                        GraphNode node = rowNodes.get(item.variable());
+                        row.add(item.property() != null ? node.properties().get(item.property()) : node);
+                    }
+                    rows.add(row);
+                }
+            }
+        }
+        return new ExecutedQuery(columns, rows);
+    }
+
+    private static void addLabelFilter(List<String> whereClauses, String alias, List<String> labels) {
+        for (String label : labels) {
+            whereClauses.add(sqlLiteral(label) + " = ANY(" + alias + ".labels)");
+        }
+    }
+
+    /** Labels/relationship types come from the parsed Cypher text, not a bind parameter -- Cypher
+     * identifiers can't contain a quote character at all (the tokenizer would have already split
+     * on one), so a literal, non-parameterized SQL string is safe here the same way this codebase's
+     * other stores inline validated identifiers (e.g. {@code PgTimeSeriesStore#pgTableName}) rather
+     * than bind them. */
+    private static String sqlLiteral(String s) {
+        return "'" + s.replace("'", "''") + "'";
+    }
+
+    private static Map<String, Object> jsonToMap(String json) {
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet()) {
+            com.google.gson.JsonElement v = e.getValue();
+            if (v.isJsonNull()) {
+                map.put(e.getKey(), null);
+            } else if (v.getAsJsonPrimitive().isBoolean()) {
+                map.put(e.getKey(), v.getAsBoolean());
+            } else if (v.getAsJsonPrimitive().isNumber()) {
+                double d = v.getAsDouble();
+                map.put(e.getKey(), d == Math.floor(d) && !Double.isInfinite(d) ? (Object) (long) d : (Object) d);
+            } else {
+                map.put(e.getKey(), v.getAsString());
+            }
+        }
+        return map;
     }
 
     /**
