@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
@@ -27,12 +26,17 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>{@code POST /write?db=&lt;db&gt;&amp;precision=&lt;ns|us|ms|s&gt;} -- real line-protocol
  *       body, one or more points, any number of measurements per request</li>
- *   <li>{@code GET/POST /query?q=&lt;InfluxQL&gt;} -- only {@code SHOW MEASUREMENTS} and
- *       {@code SELECT * FROM &lt;measurement&gt; [LIMIT n]} are recognized; every other InfluxQL
- *       shape (WHERE, GROUP BY time(), aggregate functions, subqueries) returns a clear 400, not a
- *       wrong or partial answer -- a real InfluxQL-to-SQL translator is explicitly V2, matching
- *       {@code OpenSearchAdapter}'s "unrecognized clause fails loudly" policy for this codebase's
- *       other protocols</li>
+ *   <li>{@code GET/POST /query?q=&lt;InfluxQL&gt;} -- {@code SHOW MEASUREMENTS}, and a real, bounded
+ *       {@code SELECT} subset via {@link InfluxQlParser}: {@code SELECT * | field[,field...] |
+ *       agg(field)[,...] FROM &lt;measurement&gt; [WHERE cond [AND cond...]] [GROUP BY
+ *       time(&lt;duration&gt;) [, tag...]] [LIMIT n]}, {@code agg} being
+ *       {@code mean|sum|count|min|max} and {@code cond} an {@code =/!=/&gt;/&lt;/&gt;=/&lt;=}
+ *       comparison against a tag, field, or {@code time} (including {@code now() - &lt;duration&gt;}).
+ *       Everything past that -- {@code OR}, parenthesized conditions, {@code fill()},
+ *       {@code ORDER BY}, regex tag matching, subqueries, Flux -- returns a clear 400, not a wrong
+ *       or partial answer, matching {@code OpenSearchAdapter}'s "unrecognized clause fails loudly"
+ *       policy for this codebase's other protocols; see {@link InfluxQlParser}'s own javadoc for
+ *       the exact grammar.</li>
  *   <li>{@code GET /ping} -- real InfluxDB client SDKs call this as a liveness/version check
  *       before doing anything else; a 204 with an {@code X-Influxdb-Version} header is real
  *       InfluxDB's own shape</li>
@@ -45,10 +49,7 @@ public final class InfluxWireServer {
 
     private static final Logger log = LoggerFactory.getLogger(InfluxWireServer.class);
 
-    private static final Pattern SELECT_STAR = Pattern.compile(
-            "(?i)^\\s*SELECT\\s+\\*\\s+FROM\\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?(?:\\s+LIMIT\\s+(\\d+))?\\s*;?\\s*$");
     private static final Pattern SHOW_MEASUREMENTS = Pattern.compile("(?i)^\\s*SHOW\\s+MEASUREMENTS\\s*;?\\s*$");
-    private static final int DEFAULT_QUERY_LIMIT = 10_000;
 
     private final Server server;
     private final PgTimeSeriesStore store;
@@ -140,17 +141,15 @@ public final class InfluxWireServer {
             return;
         }
         try {
-            Matcher show = SHOW_MEASUREMENTS.matcher(q);
-            Matcher select = SELECT_STAR.matcher(q);
-            if (show.matches()) {
+            if (SHOW_MEASUREMENTS.matcher(q).matches()) {
                 writeJson(response, 200, renderShowMeasurements(store.listMeasurements()));
-            } else if (select.matches()) {
-                String measurement = select.group(1);
-                int limit = select.group(2) != null ? Integer.parseInt(select.group(2)) : DEFAULT_QUERY_LIMIT;
-                writeJson(response, 200, renderSelectAll(measurement, store.selectAll(measurement, limit)));
+            } else if (q.strip().regionMatches(true, 0, "SELECT", 0, 6)) {
+                InfluxQlParser.SelectStatement stmt = InfluxQlParser.parse(q);
+                PgTimeSeriesStore.QueryResult result = store.select(stmt);
+                writeJson(response, 200, renderQueryResult(stmt.measurement(), result));
             } else {
-                writeError(response, 400, "influxwire V1 only recognizes \"SHOW MEASUREMENTS\" and "
-                        + "\"SELECT * FROM <measurement> [LIMIT n]\" -- got: " + q);
+                writeError(response, 400, "influxwire V1 only recognizes \"SHOW MEASUREMENTS\" and a "
+                        + "bounded SELECT subset (WHERE/GROUP BY time()/mean|sum|count|min|max) -- got: " + q);
                 return;
             }
             recordMetric("query", com.polygres.wire.core.SqlMetricsCollector.StatementKind.READ, db, start);
@@ -172,22 +171,22 @@ public final class InfluxWireServer {
     /** Real InfluxDB's own {@code /query} response shape: {@code results[0].series[0]} carrying
      * {@code name}/{@code columns}/{@code values} (an array of arrays, not an array of objects --
      * confirmed against real InfluxDB v1's documented response format). Every real client SDK's
-     * query-result parser expects exactly this nesting. */
-    private static JsonObject renderSelectAll(String measurement, JsonArray rows) {
+     * query-result parser expects exactly this nesting. {@link PgTimeSeriesStore.QueryResult}'s
+     * own column list already matches this shape directly -- this just wraps it and converts each
+     * Java value (String/Number/Boolean/null/a parsed {@code JsonElement} for a jsonb column) to
+     * its JSON form. */
+    private static JsonObject renderQueryResult(String measurement, PgTimeSeriesStore.QueryResult result) {
         JsonObject series = new JsonObject();
         series.addProperty("name", measurement);
         JsonArray columns = new JsonArray();
-        columns.add("time");
-        columns.add("tags");
-        columns.add("fields");
+        result.columns().forEach(columns::add);
         series.add("columns", columns);
         JsonArray values = new JsonArray();
-        for (var el : rows) {
-            JsonObject row = el.getAsJsonObject();
+        for (List<Object> row : result.rows()) {
             JsonArray value = new JsonArray();
-            value.add(row.get("time"));
-            value.add(row.get("tags"));
-            value.add(row.get("fields"));
+            for (Object cell : row) {
+                value.add(toJsonElement(cell));
+            }
             values.add(value);
         }
         series.add("values", values);
@@ -201,6 +200,22 @@ public final class InfluxWireServer {
         JsonObject resp = new JsonObject();
         resp.add("results", results);
         return resp;
+    }
+
+    private static com.google.gson.JsonElement toJsonElement(Object cell) {
+        if (cell == null) {
+            return com.google.gson.JsonNull.INSTANCE;
+        }
+        if (cell instanceof com.google.gson.JsonElement je) {
+            return je;
+        }
+        if (cell instanceof Number n) {
+            return new com.google.gson.JsonPrimitive(n);
+        }
+        if (cell instanceof Boolean b) {
+            return new com.google.gson.JsonPrimitive(b);
+        }
+        return new com.google.gson.JsonPrimitive(String.valueOf(cell));
     }
 
     private static JsonObject renderShowMeasurements(List<String> measurements) {

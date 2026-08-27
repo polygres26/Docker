@@ -180,34 +180,187 @@ public final class PgTimeSeriesStore {
         }
     }
 
+    /** Real InfluxDB's own {@code /query} series shape is column-name-list + row-of-values, not a
+     * fixed (time, tags, fields) triple -- the actual column set varies with the SELECT list and
+     * any GROUP BY. {@link InfluxWireServer} renders this directly into that shape. */
+    public record QueryResult(List<String> columns, List<List<Object>> rows) {
+    }
+
     /**
-     * V1 read path: every point for a measurement, most recent first, optionally bounded by
-     * {@code limit}. This is deliberately NOT InfluxQL -- {@code InfluxWireServer} only calls this
-     * for the narrow {@code SELECT * FROM <measurement>} shape it recognizes without a full parser;
-     * see that class's javadoc for the honest "everything else returns a clear 400, not a wrong
-     * answer" scope line. A real InfluxQL translator (WHERE/GROUP BY time()/aggregate functions) is
-     * out of this V1's scope.
+     * Executes a parsed {@link InfluxQlParser.SelectStatement} as real, parameterized SQL against
+     * this measurement's table. Two real, different SQL shapes depending on the statement:
+     *
+     * <p><b>No aggregation, no GROUP BY</b> (a bare {@code SELECT field1,field2 FROM m WHERE ...}):
+     * one row per matching point, columns = {@code time} + the requested field names, each pulled
+     * out of the {@code fields} jsonb column with {@code ->}.
+     *
+     * <p><b>Aggregated</b> (any {@code mean/sum/count/min/max(...)} in the select list, or a
+     * {@code GROUP BY}): a real {@code GROUP BY} query. Time-bucketing uses Postgres's own native
+     * {@code date_bin()} (built into stock Postgres since v14 -- deliberately NOT TimescaleDB's
+     * {@code time_bucket()}, so aggregation works identically on both {@link #ensureMeasurement}
+     * code paths, not just the hypertable one) anchored to the Unix epoch, matching real InfluxDB's
+     * own UTC-aligned bucket boundaries. Numeric aggregates cast the target field to
+     * {@code double precision} via {@code (fields->>'field')::double precision} -- a field that
+     * was written as a string or bool for some points and a number for others will throw a real
+     * Postgres cast error there, which is an honest reflection of asking a numeric aggregate to
+     * work over genuinely mixed-type data, not a bug to hide.
      */
-    public JsonArray selectAll(String measurement, int limit) throws SQLException {
+    public QueryResult select(InfluxQlParser.SelectStatement stmt) throws SQLException {
         BackendTarget target = defaultTarget();
-        ensureMeasurement(target, measurement);
-        String table = pgTableName(measurement);
-        JsonArray rows = new JsonArray();
-        try (Connection c = target.open();
-                PreparedStatement ps = c.prepareStatement(
-                        "SELECT time, tags, fields FROM " + table + " ORDER BY time DESC LIMIT ?")) {
-            ps.setInt(1, limit);
+        ensureMeasurement(target, stmt.measurement());
+        String table = pgTableName(stmt.measurement());
+
+        boolean aggregated = stmt.groupBy() != null
+                || stmt.selectList().stream().anyMatch(i -> i.func() != null);
+
+        StringBuilder sql = new StringBuilder("SELECT ");
+        List<String> columns = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+
+        if (aggregated) {
+            List<String> selectExprs = new ArrayList<>();
+            String bucketExpr = null;
+            if (stmt.groupBy() != null) {
+                long bucketMillis = InfluxQlParser.parseDurationMillis(stmt.groupBy().durationLiteral());
+                bucketExpr = "date_bin(('" + bucketMillis + " milliseconds')::interval, time, "
+                        + "'epoch'::timestamptz)";
+                selectExprs.add(bucketExpr + " AS time");
+                columns.add("time");
+            }
+            for (String tagCol : stmt.groupBy() == null ? List.<String>of() : stmt.groupBy().tagColumns()) {
+                validateIdentifier(tagCol);
+                selectExprs.add("tags->>'" + tagCol + "' AS " + tagCol);
+                columns.add(tagCol);
+            }
+            for (InfluxQlParser.SelectItem item : stmt.selectList()) {
+                if (item.isWildcard()) {
+                    throw new InfluxException("influxwire: SELECT * can't be combined with aggregation/GROUP BY");
+                }
+                validateIdentifier(item.field());
+                String colAlias = (item.func() == null ? item.field() : item.func().name().toLowerCase(Locale.ROOT))
+                        + "_" + item.field();
+                String fieldExpr = "(fields->>'" + item.field() + "')::double precision";
+                String aggExpr = switch (item.func() == null ? InfluxQlParser.AggFunc.MEAN : item.func()) {
+                    case MEAN -> "avg(" + fieldExpr + ")";
+                    case SUM -> "sum(" + fieldExpr + ")";
+                    case COUNT -> "count(fields->'" + item.field() + "')";
+                    case MIN -> "min(" + fieldExpr + ")";
+                    case MAX -> "max(" + fieldExpr + ")";
+                };
+                selectExprs.add(aggExpr + " AS " + colAlias);
+                columns.add(colAlias);
+            }
+            sql.append(String.join(", ", selectExprs)).append(" FROM ").append(table);
+            appendWhere(sql, params, stmt.where());
+            List<String> groupCols = new ArrayList<>();
+            if (bucketExpr != null) {
+                groupCols.add(bucketExpr);
+            }
+            for (String tagCol : stmt.groupBy() == null ? List.<String>of() : stmt.groupBy().tagColumns()) {
+                groupCols.add("tags->>'" + tagCol + "'");
+            }
+            if (!groupCols.isEmpty()) {
+                sql.append(" GROUP BY ").append(String.join(", ", groupCols));
+                sql.append(" ORDER BY ").append(groupCols.get(0));
+            }
+        } else {
+            List<String> selectExprs = new ArrayList<>();
+            selectExprs.add("time");
+            columns.add("time");
+            if (stmt.selectList().size() == 1 && stmt.selectList().get(0).isWildcard()) {
+                selectExprs.add("tags");
+                selectExprs.add("fields");
+                columns.add("tags");
+                columns.add("fields");
+            } else {
+                for (InfluxQlParser.SelectItem item : stmt.selectList()) {
+                    validateIdentifier(item.field());
+                    selectExprs.add("fields->'" + item.field() + "' AS " + item.field());
+                    columns.add(item.field());
+                }
+            }
+            sql.append(String.join(", ", selectExprs)).append(" FROM ").append(table);
+            appendWhere(sql, params, stmt.where());
+            sql.append(" ORDER BY time DESC");
+        }
+        if (stmt.limit() != null) {
+            sql.append(" LIMIT ").append(stmt.limit().intValue());
+        }
+
+        List<List<Object>> rows = new ArrayList<>();
+        try (Connection c = target.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                Object p = params.get(i);
+                if (p instanceof java.time.Instant instant) {
+                    ps.setTimestamp(i + 1, Timestamp.from(instant));
+                } else {
+                    ps.setString(i + 1, String.valueOf(p));
+                }
+            }
             try (ResultSet rs = ps.executeQuery()) {
+                java.sql.ResultSetMetaData md = rs.getMetaData();
                 while (rs.next()) {
-                    JsonObject row = new JsonObject();
-                    row.addProperty("time", rs.getTimestamp(1).toInstant().toString());
-                    row.add("tags", JsonParser.parseString(rs.getString(2)).getAsJsonObject());
-                    row.add("fields", JsonParser.parseString(rs.getString(3)).getAsJsonObject());
+                    List<Object> row = new ArrayList<>();
+                    for (int i = 1; i <= md.getColumnCount(); i++) {
+                        row.add(resultValue(rs, i, md.getColumnTypeName(i)));
+                    }
                     rows.add(row);
                 }
             }
         }
-        return rows;
+        return new QueryResult(columns, rows);
+    }
+
+    private static Object resultValue(ResultSet rs, int col, String pgType) throws SQLException {
+        Object v = rs.getObject(col);
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Timestamp ts) {
+            return ts.toInstant().toString();
+        }
+        if (pgType.equals("jsonb") || pgType.equals("json")) {
+            return JsonParser.parseString(v.toString());
+        }
+        return v;
+    }
+
+    private static void appendWhere(StringBuilder sql, List<Object> params, List<InfluxQlParser.Condition> where) {
+        if (where.isEmpty()) {
+            return;
+        }
+        sql.append(" WHERE ");
+        List<String> clauses = new ArrayList<>();
+        for (InfluxQlParser.Condition cond : where) {
+            String op = switch (cond.op()) {
+                case EQ -> "=";
+                case NEQ -> "!=";
+                case GT -> ">";
+                case LT -> "<";
+                case GTE -> ">=";
+                case LTE -> "<=";
+            };
+            if (cond.isTime()) {
+                clauses.add("time " + op + " ?");
+                params.add(java.time.Instant.parse(cond.value()));
+            } else {
+                validateIdentifier(cond.column());
+                // A WHERE column could be a tag or a field -- V1 doesn't track per-measurement
+                // schema metadata to disambiguate, so it checks tags first (the overwhelmingly
+                // common real InfluxQL WHERE-clause case) and falls back to the field's own text
+                // representation otherwise, via COALESCE.
+                clauses.add("COALESCE(tags->>'" + cond.column() + "', fields->>'" + cond.column() + "') "
+                        + op + " ?");
+                params.add(cond.value());
+            }
+        }
+        sql.append(String.join(" AND ", clauses));
+    }
+
+    private static void validateIdentifier(String s) {
+        if (!IDENTIFIER.matcher(s).matches()) {
+            throw new InfluxException("influxwire: identifier must match [A-Za-z_][A-Za-z0-9_]* -- got \"" + s + "\"");
+        }
     }
 
     /** {@code SHOW MEASUREMENTS} -- every table this store owns on the default backend. */
