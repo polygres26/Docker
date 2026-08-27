@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
@@ -59,6 +60,10 @@ import org.slf4j.LoggerFactory;
  * {@link StatisticsAwareSchema}; when {@code planStore} is non-null, a real {@code EXPLAIN PLAN FOR}
  * plus timing/row-count/success is captured into {@link SqlPlanStore}, ported from the sibling
  * Omnigate project's own {@code FederationStage}.
+ *
+ * <p><b>Real semi-join pushdown</b> for exactly 2 federated backends -- see {@link
+ * ShardJoinExecutor}'s own matching javadoc section and {@link SemiJoinPushdown}'s own javadoc for
+ * the full mechanism, shared by both classes.
  *
  * <p><b>Deliberately narrow scope, still</b>: a fresh Calcite connection built per statement (no
  * connection cache), no native RLS/VPD session pass-through for the federated connection (this
@@ -136,12 +141,16 @@ public final class SchemaFederationStage implements PipelineStage {
         // shares no code with ShardJoinExecutor -- see that class's own javadoc for the original
         // finding (itself matching a gap Omnigate's FederationStage already had to work around).
         String sql = stripTrailingSemicolon(statement.sqlText());
+        // Kept around ONLY for plan-history display -- semi-join pushdown below may reassign `sql`
+        // itself to an internally-rewritten form; see ShardJoinExecutor's own matching comment.
+        String originalSql = sql;
         // See ShardJoinExecutor's own matching comment: dropping lex=JAVA keeps this connection's
         // default identifier quoting (double-quote) consistent with the Frameworks Planner's own
         // default, so EXPLAIN PLAN FOR (run through this raw connection, not the Planner) parses
         // correctly.
         Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:caseSensitive=false");
         List<Connection> statsConnections = new ArrayList<>();
+        Map<String, Connection> schemaToStatsConnection = new java.util.LinkedHashMap<>();
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
@@ -175,12 +184,21 @@ public final class SchemaFederationStage implements PipelineStage {
                 if (statisticsStore != null) {
                     Connection statsConnection = target.open();
                     statsConnections.add(statsConnection);
+                    schemaToStatsConnection.put(schemaName, statsConnection);
                     rootSchema.add(schemaName, new StatisticsAwareSchema(
                             jdbcSchema, statsConnection, schemaName, backendName + "." + schemaName, statisticsStore));
                 } else {
                     rootSchema.add(schemaName, jdbcSchema);
                 }
                 rules.addAll(JdbcRules.rules(convention));
+            }
+
+            // Real semi-join pushdown -- see SemiJoinPushdown's own javadoc and ShardJoinExecutor's
+            // matching integration for the full reasoning. Scoped to exactly 2 federated backends
+            // here (today's common, demoed shape); 3+ backends in one statement falls through
+            // unfiltered, same as before this existed.
+            if (statisticsStore != null && schemaNameToBackendName.size() == 2) {
+                sql = applySemiJoinPushdown(sql, schemaNameToBackendName, schemaToStatsConnection, statisticsStore, calciteConnection);
             }
 
             FrameworkConfig config = Frameworks.newConfigBuilder()
@@ -199,9 +217,11 @@ public final class SchemaFederationStage implements PipelineStage {
                 optimized = planner.transform(0,
                         relRoot.rel.getTraitSet().replace(EnumerableConvention.INSTANCE), relRoot.rel);
             } catch (Exception e) {
-                throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, sql, e.getMessage());
+                throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, originalSql, e.getMessage());
             }
             String backendsLabel = String.join(",", schemaNameToBackendName.values());
+            // sql here (not originalSql) deliberately -- EXPLAIN PLAN FOR has to reflect the query
+            // that's actually about to run, semi-join filter included when pushdown applied.
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
             // See ShardJoinExecutor's own matching comment: a real, separate re-execution of each
             // backend's own leaf scan, skipped entirely (empty list) for a parameterized statement
@@ -214,12 +234,12 @@ public final class SchemaFederationStage implements PipelineStage {
                 ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
                 if (planStore != null) {
                     long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
+                    planStore.record(backendsLabel, originalSql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
                 }
                 return result;
             } catch (SQLException e) {
                 if (planStore != null) {
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
+                    planStore.record(backendsLabel, originalSql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
                 }
                 throw e;
             }
@@ -237,6 +257,72 @@ public final class SchemaFederationStage implements PipelineStage {
 
     private static long elapsedMillisSince(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /** As {@link ShardJoinExecutor}'s own matching method -- see its javadoc for the full reasoning.
+     * This class's own version has no per-table UNION source to build (each mounted backend already
+     * IS the real source), so every candidate reference's own SQL source is just itself -- the
+     * identity mapping {@link SemiJoinPushdown#detectEqui} still needs to resolve the {@code ON}
+     * clause. Collects EVERY distinct {@code schema.table} reference across the two federated
+     * schemas (not just one per schema) -- {@link SemiJoinPushdown#detectEqui} itself requires
+     * exactly 2 total candidates, so a query touching more than one table per schema safely bails
+     * out to no pushdown, same as any other ambiguous case. */
+    private static String applySemiJoinPushdown(String sql, Map<String, String> schemaNameToBackendName,
+            Map<String, Connection> schemaToStatsConnection, StatisticsStore statisticsStore, Connection calciteConnection) {
+        Map<String, String> refToSource = new java.util.LinkedHashMap<>();
+        Map<String, Long> refToRowCount = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : schemaNameToBackendName.entrySet()) {
+            String schemaName = entry.getKey();
+            String backendName = entry.getValue();
+            Connection statsConnection = schemaToStatsConnection.get(schemaName);
+            Pattern tableRef = Pattern.compile("\\b" + Pattern.quote(schemaName) + "\\.(\\w+)", Pattern.CASE_INSENSITIVE);
+            Matcher m = tableRef.matcher(sql);
+            while (m.find()) {
+                String table = m.group(1);
+                String ref = schemaName + "." + table;
+                // "SELECT * FROM ref", not the bare ref -- SemiJoinPushdown always wraps a
+                // candidate's own source as "FROM (<source>)", which needs a real query expression
+                // on the inside, not a bare table name (real bug, found live: a plain "(schema.table)"
+                // isn't a valid derived table -- Calcite's own parser rejects it outright).
+                refToSource.put(ref, "SELECT * FROM " + ref);
+                Long rowCount = statsConnection == null ? null
+                        : statisticsStore.rowCount(statsConnection, backendName + "." + schemaName + "." + table, schemaName, table);
+                refToRowCount.put(ref, rowCount);
+            }
+        }
+        SemiJoinPushdown.Equi equi = SemiJoinPushdown.detectEqui(sql, refToSource);
+        if (equi == null) {
+            return sql;
+        }
+        Long leftCount = refToRowCount.get(equi.leftRef());
+        Long rightCount = refToRowCount.get(equi.rightRef());
+        if (leftCount == null || rightCount == null) {
+            log.debug("schema federation: semi-join pushdown skipped -- no real row-count estimate for both "
+                    + "\"{}\" and \"{}\"", equi.leftRef(), equi.rightRef());
+            return sql;
+        }
+        boolean leftIsBuild = leftCount <= rightCount;
+        String buildRef = leftIsBuild ? equi.leftRef() : equi.rightRef();
+        String buildCol = leftIsBuild ? equi.leftColumn() : equi.rightColumn();
+        String probeRef = leftIsBuild ? equi.rightRef() : equi.leftRef();
+        String probeCol = leftIsBuild ? equi.rightColumn() : equi.leftColumn();
+        try {
+            List<Object> keys = SemiJoinPushdown.collectDistinctKeys(calciteConnection, refToSource.get(buildRef),
+                    buildCol, SemiJoinPushdown.maxKeysFromEnvOrDefault());
+            if (keys == null) {
+                return sql;
+            }
+            String filtered = SemiJoinPushdown.buildFilteredSource(refToSource.get(probeRef), probeCol, keys);
+            log.info("schema federation: semi-join pushdown -- build side \"{}\" ({} distinct key(s) from ~{} "
+                    + "estimated row(s)) filters probe side \"{}\" (~{} estimated row(s)) before its own join",
+                    buildRef, keys.size(), leftIsBuild ? leftCount : rightCount, probeRef,
+                    leftIsBuild ? rightCount : leftCount);
+            return SemiJoinPushdown.substituteRef(sql, probeRef, filtered);
+        } catch (SQLException e) {
+            log.warn("schema federation: semi-join pushdown's own build-side key collection failed -- skipping, "
+                    + "real query is unaffected ({})", e.toString());
+            return sql;
+        }
     }
 
     /** As {@link ShardJoinExecutor}'s own matching method -- see its javadoc. */

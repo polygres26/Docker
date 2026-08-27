@@ -59,9 +59,15 @@ import org.slf4j.LoggerFactory;
  * {@link SqlPlanStore} -- ported from the sibling Omnigate project's own {@code FederationStage}.
  * Both degrade to "not done" (not an error) when their store is {@code null} -- not configured.
  *
+ * <p><b>Real semi-join pushdown</b>: when {@code statisticsStore} has a real row-count TOTAL (summed
+ * across every shard) for both sides of a simple two-table equi-join, the smaller side's own real
+ * distinct join-key values are collected first and pushed down as a real {@code col IN (...)} filter
+ * on the larger side, before that larger side's own leaf query ever runs -- see {@link
+ * SemiJoinPushdown}'s own javadoc for the full mechanism and every condition that has to hold before
+ * it applies (degrades to no pushdown, never a wrong answer, the instant anything is ambiguous).
+ *
  * <p><b>Deliberately narrow scope, still</b>: single Calcite connection built fresh per statement
- * (no connection cache), no bloom-filter/semi-join pushdown to cut what's shipped between shards
- * before the join (a real, valuable follow-up, not implemented here), and Calcite's own default
+ * (no connection cache), and Calcite's own default
  * planner/rule set (the same one {@link RollupStage} already relies on for its own real, tested
  * Calcite integration) -- no column NDV/selectivity statistics or Omnigate's own opt-in embedded-
  * planner cost path, row counts alone are already a real improvement over {@code Statistics.UNKNOWN}
@@ -108,6 +114,11 @@ final class ShardJoinExecutor {
         // documented and worked around (its own stripTrailingSemicolon), hit here independently
         // since this class doesn't share code with it.
         String sql = stripTrailingSemicolon(statement.sqlText());
+        // Kept around ONLY for plan-history display -- semi-join pushdown below may reassign `sql`
+        // itself to an internally-rewritten form (a probe-side table reference wrapped in a filter
+        // subquery); the client's own original statement text is what should show up in
+        // SqlPlanStore, not that rewriting.
+        String originalSql = sql;
         Set<String> tables = distinctShardTables(schemaName, sql);
         // Real bug, found live via the plan-history feature itself: "lex=JAVA" quotes identifiers
         // with backticks, not the double-quotes this class's own UNION-rewrite generates
@@ -159,24 +170,43 @@ final class ShardJoinExecutor {
                 rules.addAll(JdbcRules.rules(convention));
             }
 
-            String rewrittenSql = sql;
+            // Built for every table FIRST (not substituted in place yet) so the semi-join pushdown
+            // step below has each table's own full union-across-shards source available to both
+            // query (build side) and wrap-with-a-filter (probe side) before anything is substituted
+            // into rewrittenSql.
+            Map<String, String> tableToUnionSource = new LinkedHashMap<>();
             for (String table : tables) {
-                StringBuilder union = new StringBuilder("(");
+                StringBuilder union = new StringBuilder();
                 for (int i = 0; i < shardMountNames.size(); i++) {
                     if (i > 0) {
                         union.append(" UNION ALL ");
                     }
                     union.append("SELECT * FROM \"").append(shardMountNames.get(i)).append("\".").append(table);
                 }
-                union.append(')');
+                tableToUnionSource.put(table, union.toString());
+            }
+
+            // Real semi-join pushdown -- see SemiJoinPushdown's own javadoc for the full reasoning
+            // and every safety condition. Requires real per-table row-count TOTALS (summed across
+            // shards from the same StatisticsStore cache StatisticsAwareSchema already warmed above)
+            // for BOTH of exactly 2 distinct tables; degrades to "no pushdown" (sql/tableToUnionSource
+            // stay as built above) the instant anything is ambiguous, never a wrong answer.
+            if (statisticsStore != null && tables.size() == 2) {
+                sql = applySemiJoinPushdown(sql, tableToUnionSource, shardNames, schemaName, statsConnections,
+                        statisticsStore, calciteConnection);
+            }
+
+            String rewrittenSql = sql;
+            for (Map.Entry<String, String> entry : tableToUnionSource.entrySet()) {
+                String union = "(" + entry.getValue() + ")";
                 // Replaces every occurrence of "schemaName.table" (a real word-boundary match, not
                 // a naive substring replace -- won't touch "shard.orders_archive" while replacing
                 // "shard.orders"), leaving anything the client wrote immediately after it (an
                 // explicit alias, or nothing) completely untouched -- see this class's own javadoc
                 // on why a missing alias surfaces as a real Calcite parse error, not silently.
-                rewrittenSql = Pattern.compile("(?i)\\b" + Pattern.quote(schemaName) + "\\." + Pattern.quote(table) + "\\b")
+                rewrittenSql = Pattern.compile("(?i)\\b" + Pattern.quote(schemaName) + "\\." + Pattern.quote(entry.getKey()) + "\\b")
                         .matcher(rewrittenSql)
-                        .replaceAll(Matcher.quoteReplacement(union.toString()));
+                        .replaceAll(Matcher.quoteReplacement(union));
             }
 
             FrameworkConfig config = Frameworks.newConfigBuilder()
@@ -195,10 +225,10 @@ final class ShardJoinExecutor {
                 optimized = planner.transform(0,
                         relRoot.rel.getTraitSet().replace(EnumerableConvention.INSTANCE), relRoot.rel);
             } catch (Exception e) {
-                throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, sql, e.getMessage());
+                throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, originalSql, e.getMessage());
             }
             log.info("cross-shard join: \"{}\" -> federated across {} shard(s) for schema \"{}\"",
-                    sql, shardNames.size(), schemaName);
+                    originalSql, shardNames.size(), schemaName);
             String backendsLabel = String.join(",", shardNames);
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, rewrittenSql, backendsLabel);
             // Real, measured per-shard row count/timing -- see LeafScanProfiler's own javadoc for
@@ -214,12 +244,12 @@ final class ShardJoinExecutor {
                 ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
                 if (planStore != null) {
                     long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
+                    planStore.record(backendsLabel, originalSql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
                 }
                 return result;
             } catch (SQLException e) {
                 if (planStore != null) {
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
+                    planStore.record(backendsLabel, originalSql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
                 }
                 throw e;
             }
@@ -238,6 +268,68 @@ final class ShardJoinExecutor {
 
     private static long elapsedMillisSince(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /** @return {@code sql} with the identified probe-side table reference wrapped in a real
+     *     semi-join filter, or {@code sql} completely unchanged the instant anything is ambiguous or
+     *     a real failure occurs collecting the build side's own keys -- see {@link SemiJoinPushdown}'s
+     *     own javadoc for the full reasoning; this never risks the real query's correctness, only
+     *     whether it gets the extra filter. */
+    private static String applySemiJoinPushdown(String sql, Map<String, String> tableToUnionSource,
+            List<String> shardNames, String schemaName, List<Connection> statsConnections,
+            StatisticsStore statisticsStore, Connection calciteConnection) {
+        Map<String, String> refToSource = new LinkedHashMap<>();
+        Map<String, Long> refToRowCount = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : tableToUnionSource.entrySet()) {
+            String table = entry.getKey();
+            String ref = schemaName + "." + table;
+            refToSource.put(ref, entry.getValue());
+            long total = 0;
+            boolean allKnown = true;
+            for (int i = 0; i < shardNames.size(); i++) {
+                Long rowCount = statisticsStore.rowCount(statsConnections.get(i),
+                        shardNames.get(i) + "." + schemaName + "." + table, schemaName, table);
+                if (rowCount == null) {
+                    allKnown = false;
+                    break;
+                }
+                total += rowCount;
+            }
+            refToRowCount.put(ref, allKnown ? total : null);
+        }
+        SemiJoinPushdown.Equi equi = SemiJoinPushdown.detectEqui(sql, refToSource);
+        if (equi == null) {
+            return sql;
+        }
+        Long leftCount = refToRowCount.get(equi.leftRef());
+        Long rightCount = refToRowCount.get(equi.rightRef());
+        if (leftCount == null || rightCount == null) {
+            log.debug("cross-shard join: semi-join pushdown skipped -- no real row-count TOTAL for both \"{}\" "
+                    + "and \"{}\" (statistics not yet warmed for every shard)", equi.leftRef(), equi.rightRef());
+            return sql;
+        }
+        boolean leftIsBuild = leftCount <= rightCount;
+        String buildRef = leftIsBuild ? equi.leftRef() : equi.rightRef();
+        String buildCol = leftIsBuild ? equi.leftColumn() : equi.rightColumn();
+        String probeRef = leftIsBuild ? equi.rightRef() : equi.leftRef();
+        String probeCol = leftIsBuild ? equi.rightColumn() : equi.leftColumn();
+        try {
+            List<Object> keys = SemiJoinPushdown.collectDistinctKeys(calciteConnection, refToSource.get(buildRef),
+                    buildCol, SemiJoinPushdown.maxKeysFromEnvOrDefault());
+            if (keys == null) {
+                return sql;
+            }
+            String filtered = SemiJoinPushdown.buildFilteredSource(refToSource.get(probeRef), probeCol, keys);
+            log.info("cross-shard join: semi-join pushdown -- build side \"{}\" ({} distinct key(s) from ~{} "
+                    + "estimated row(s)) filters probe side \"{}\" (~{} estimated row(s)) before its own join",
+                    buildRef, keys.size(), leftIsBuild ? leftCount : rightCount, probeRef,
+                    leftIsBuild ? rightCount : leftCount);
+            return SemiJoinPushdown.substituteRef(sql, probeRef, filtered);
+        } catch (SQLException e) {
+            log.warn("cross-shard join: semi-join pushdown's own build-side key collection failed -- skipping, "
+                    + "real query is unaffected ({})", e.toString());
+            return sql;
+        }
     }
 
     /** {@code EXPLAIN PLAN FOR <sql>} on the same federated Calcite connection the real query is
