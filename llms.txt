@@ -121,6 +121,16 @@ Key facts an LLM is likely to be asked about, stated plainly:
   it works the same either way). No result cache of its own, same as oswire/sqswire. Flux (v2's
   query language), `fill()`, regex tag matching, retention policies, and downsampling aren't
   implemented yet.
+- GraphDB (boltwire): real Neo4j Bolt wire protocol (binary handshake, PackStream serialization,
+  chunked message framing) plus a bounded Cypher subset, verified against the real official
+  `neo4j` driver (Python and Java both) -- against a real Postgres schema underneath: one shared
+  `nodes` table (`labels text[]`, `properties jsonb`) and one shared `edges` table, not a table
+  per label. `CREATE` (a node, or a single node-edge-node pattern) and `MATCH ... WHERE ...
+  RETURN`, including bounded variable-length paths (`[*1..3]`, a real Postgres `WITH RECURSIVE`
+  query with cycle detection -- a bare unbounded `[*]` is rejected at parse time, not silently
+  accepted). No result cache of its own, same as influxwire/oswire/sqswire. `MERGE`/`SET`,
+  returning a relationship as its own Bolt wire object, chained multi-hop patterns beyond one
+  relationship, and `OR` in `WHERE` aren't implemented yet.
 
 ### Pricing
 
