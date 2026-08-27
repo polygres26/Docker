@@ -360,6 +360,8 @@ public final class Main {
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
         listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics, backendRegistry));
+        int boltWirePort = parseIntEnv("POLYWIRE_BOLTWIRE_PORT", 7687);
+        listenerExecutor.submit(() -> acceptBoltWireLoop(boltWirePort, backendRegistry, sessionExecutor, connectionGate));
 
         int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
 
@@ -534,6 +536,32 @@ public final class Main {
             }
         } catch (IOException e) {
             log.error("Postgres wire listener on port {} failed", options.pgWireListenPort(), e);
+        }
+    }
+
+    // V1: real Bolt (binary TCP, PackStream-framed) so a genuine Neo4j client driver can point at
+    // PolyWire directly -- see com.polygres.wire.boltwire.BoltWireSessionHandler's own javadoc for
+    // exactly what's covered (Phase 1: handshake/HELLO/RUN/PULL/RECORD/SUCCESS/GOODBYE against a
+    // narrow "RETURN <literal>" Cypher subset, proven against a real captured Neo4j session) and
+    // what's still Phase 2+ (real MATCH/pattern-matching Cypher-to-SQL translation). Same
+    // TCP-accept-loop shape as pgwire/mywire/mssqlwire/mongowire above, not the Jetty HTTP pattern
+    // oswire/dynamowire/sqswire/influxwire use, since Bolt is a real binary protocol, not HTTP/JSON.
+    private static void acceptBoltWireLoop(int port, BackendRegistry backendRegistry,
+            ExecutorService sessionExecutor, com.polygres.wire.acl.ConnectionGate connectionGate) {
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
+            log.info("polywire listening for Bolt (Neo4j wire) on port {}", port);
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                clientSocket.setTcpNoDelay(true);
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
+                submitSession(sessionExecutor, connectionGate,
+                        new com.polygres.wire.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry));
+            }
+        } catch (IOException e) {
+            log.error("Bolt (boltwire) listener on port {} failed -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring boltwire back.", port, e);
         }
     }
 
