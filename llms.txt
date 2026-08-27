@@ -18,9 +18,10 @@
 > with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
 > not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
 > security -- security follows the request, not the protocol), **Control** (QoS admission control,
-> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (PolyCache,
-> rollups), and **Observe** (native per-protocol error translation, Prometheus/OTEL export, audit
-> log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
+> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (PolyCache --
+> one distributed cache shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, not a
+> per-protocol silo -- and rollups), and **Observe** (native per-protocol error translation,
+> Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
 > point in front of Postgres, whether or not anything is being migrated at all.
 
 Full documentation, architecture diagrams, real benchmark numbers, and every feature's honest
@@ -94,9 +95,13 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
   shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
   separate, unguarded path to the data.
-- PolyCache: PolyWire's embedded, distributed query result cache, opt-in per table. Invalidation
-  is automatic and table-level -- any write against a cached table evicts every cached entry for
-  that table, whether the write binds parameters or sends literal SQL values.
+- PolyCache: PolyWire's embedded, distributed query result cache, opt-in per table, shared across
+  protocols -- PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read and populate the same
+  cache, so a result cached via one protocol is served to another without recomputing it. MongoDB
+  and DynamoDB keep their own separate, protocol-specific caches (find/GetItem exact-key lookups
+  only) rather than sharing this one. Invalidation is automatic and table-level -- any write
+  against a cached table evicts every cached entry for that table, whether the write binds
+  parameters or sends literal SQL values.
 
 ### Pricing
 
