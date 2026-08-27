@@ -284,7 +284,77 @@ sequenceDiagram
 `RoutingBackendExecutor` fans a matching query out to all of them and merges results — useful
 for read-side aggregate queries across horizontally-partitioned Postgres backends.
 
-### 4.3 Multi-AZ distributed cache
+### 4.3 Cross-shard / cross-backend JOIN federation
+
+§4.2's scatter-gather path has a real, silent correctness gap: it broadcasts identical SQL to
+every shard and concatenates/merges the results — wrong the instant a `JOIN`'s matching row pair
+spans two different shards (never found on either shard alone, and no error raised). Two Calcite
+federation engines close this gap by actually planning and executing the `JOIN`, not
+broadcast-and-merge:
+
+- **`ShardJoinExecutor`** — PolyWire's own homogeneous horizontal sharding (the SAME logical
+  table split by row across every shard in a `POLYWIRE_SHARD_BACKENDS` group). Mounts each
+  distinct `schema.table` reference in the query as a real `UNION ALL` across every shard's own
+  copy, then hands the rewritten query to a real Calcite planner.
+- **`SchemaFederationStage`** — PolyWire's own heterogeneous vertical/functional sharding
+  (`POLYWIRE_ROUTER_SCHEMA_RULES` routing a whole table's traffic to one named backend, e.g. every
+  `orders_db.orders` query to backend `orders`). Runs *before* `RouterStage` in the pipeline —
+  federating across backends has to happen before routing narrows a statement to one target. Each
+  matching backend is mounted directly as its own Calcite schema.
+
+Both push predicates/columns down into each shard/backend's own SQL via Calcite's real JDBC
+adapter rules (`JdbcRules`) — not a row-pull-and-join-in-Java.
+
+**Real, statistics-driven cost-based planning.** When `StatisticsStore` is configured, every
+mounted table is wrapped so Calcite's own join-order cost model sees a real row-count estimate
+(Postgres's own `pg_class.reltuples`, the same number the Postgres planner itself already uses —
+a single fast catalog lookup, not a `COUNT(*)` scan) instead of `Statistics.UNKNOWN`.
+`StatisticsScheduler` proactively refreshes it in the background
+(`POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES`); a cold cache still gets a real number via an
+on-demand probe on the first federated query after startup. TTL-bounded
+(`POLYWIRE_STATS_TTL_MS`, default 24h) — a stale statistic degrades the cost estimate, never the
+correctness of the result.
+
+**Real semi-join pushdown.** Checked first whether Calcite already does this given real
+statistics — it doesn't: no Bloom filter concept exists anywhere in Calcite (that's a runtime
+technique with no portable way to ship into a remote backend's own SQL), and Calcite's own
+semi-join rules can't apply to a federated join either (`JdbcJoinRule` only pushes a join down
+when both sides already share one `JdbcConvention` — never true across two different mounted
+backends). `SemiJoinPushdown` closes the gap with a real, exact filter instead: when a query is a
+single, unambiguous equi-join between exactly two known table references, it collects the
+smaller (build) side's real distinct join-key values (capped, `POLYWIRE_SEMIJOIN_MAX_KEYS`,
+default 20,000) and pushes them down as a real `col IN (...)` predicate on the larger (probe)
+side, before that side's own leaf query ever runs. Live-verified against two real Postgres
+backends (10-row `customers`, 200,000-row `orders`, ~19,000 actually matching): the larger side's
+real, MEASURED row count (not estimated) dropped from 200,000 to ~19,000 with an identical,
+correct join result — a genuine ~90% reduction in what crossed the wire. Deliberately
+conservative: no confident stats for both sides, an ambiguous `ON` clause, or either known table
+reference appearing more than once in the statement (rules out self-joins) all just skip the
+optimization — the real join still runs, only without the extra filter, never a wrong answer.
+
+**Real SQL plan cache/history** (`SqlPlanStore`, `POLYWIRE_FEDERATION_PLAN_HISTORY=<capacity>` to
+enable) — a `V$SQL_PLAN`-style record of every federated query's own real `EXPLAIN PLAN FOR` text,
+timing, row count, and success/failure, visible in the admin UI (§11). Per-leaf-scan profiling
+(`LeafScanProfiler`) goes further than `EXPLAIN PLAN FOR` (which only ever reports the planner's
+own pre-execution ESTIMATE): it re-executes each leaf's own pushed-down SQL separately, with real
+wall-clock timing and a real row count from actually iterating the result — the same honest
+tradeoff a DBA manually running `EXPLAIN ANALYZE` on a suspect subquery makes.
+
+**Cluster-shared, not just per-instance.** When PolyWire's embedded Ignite cluster is genuinely
+multi-instance (`POLYWIRE_CLUSTER_ENABLED=true`, not just the default single-node cache-only
+grid), both `StatisticsStore` and `SqlPlanStore` switch to an Ignite-backed shared cache instead
+of a local `ConcurrentHashMap` — every instance sees the SAME row-count statistics and the SAME
+federated-query plan history, regardless of which instance actually ran each query. Live-verified
+with two real, separate JVM processes joining one real Ignite cluster: a plan/stat written by one
+process was immediately visible to the other.
+
+**Deliberately narrow scope, still**: a fresh Calcite connection per statement (no connection
+cache), no native RLS/VPD session pass-through for the federated connection (`AccessControlStage`'s
+own row-filter/column-mask SQL rewriting, run earlier in the pipeline, is the only enforcement),
+and a statement referencing more than 2 federated backends in one query falls straight through to
+scatter-gather's own broadcast-and-merge behavior, unfiltered.
+
+### 4.4 Multi-AZ distributed cache
 
 The distributed cache (Ignite, `com.polygres.wire.cluster.PolyWireCluster`) is cloud-native and
 AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
@@ -417,6 +487,7 @@ Every frontend above feeds the same shared pipeline, in this order:
 
 | Stage | Feature |
 |---|---|
+| `SchemaFederationStage` | Cross-backend `JOIN` federation via Calcite, runs *before* `RouterStage` — see §4.3 |
 | `FirewallStage` | SQL Firewall — see §3.3 |
 | `RouterStage` | Backend/shard selection per statement |
 | `QosControlStage` | Admission control — caps in-flight work per backend to protect it from overload |
@@ -449,6 +520,10 @@ Every frontend above feeds the same shared pipeline, in this order:
 | Postgres stored-procedure config API | Wraps `polywire_config`/firewall inserts with validation, for teams that prefer calling a procedure over hand-writing DML |
 | Backend registry | `POLYWIRE_BACKENDS` — named additional Postgres targets beyond the implicit default |
 | Sharding / scatter-gather | `POLYWIRE_SHARD_BACKENDS` — fan a query to a named group, merge via `RollupStage` (§4.2) |
+| Cross-shard/cross-backend `JOIN` federation | Real Calcite planning + execution for a `JOIN` spanning shards or `POLYWIRE_ROUTER_SCHEMA_RULES` backends (§4.3) |
+| Federated-query statistics | `POLYWIRE_STATS_TTL_MS`, `POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES` — real row-count-driven cost-based join planning (§4.3) |
+| Semi-join pushdown | `POLYWIRE_SEMIJOIN_MAX_KEYS` — exact build-side-key filter pushed onto the larger side of a federated equi-join (§4.3) |
+| SQL plan cache/history | `POLYWIRE_FEDERATION_PLAN_HISTORY` — real `EXPLAIN PLAN FOR` + measured per-leaf timing/rows for every federated query (§4.3) |
 | Translation cache | `polywire_translation_cache` — avoids re-translating identical statements |
 | Failed-statement log | `polywire_failed_statements` — durable record of statements the pipeline rejected or errored on, for audit/debugging |
 
@@ -520,13 +595,17 @@ instrumentation found (each with a live before/after benchmark) are in
 
 ## 11. Admin UI
 
-A React/TS/Vite app (`advisor/web`, served by the Advisor process, proxying server-to-server to
-PolyWire's admin API — the browser never sees PolyWire's admin token) gives PolyWire a real
-operator UI on top of the HTTP endpoints in §8.3/§9/§10:
+A React/TS/Vite app (`wire/web`) gives PolyWire a real operator UI on top of the HTTP endpoints in
+§4.3/§8.3/§9/§10 — built with `npm run build` and served directly by PolyWire's own admin HTTP
+server (`POLYWIRE_ADMIN_WEB_DIR` pointing at the built `dist/`, no separate process). An operator
+opens the admin URL, enters the `POLYWIRE_ADMIN_TOKEN` bearer token once, and the browser talks to
+PolyWire's admin API directly — the token is kept only in that tab's own session storage, never
+sent anywhere else.
 
 | Page | Backs onto |
 |---|---|
 | Metrics | `/api/metrics/summary` — live traffic dashboard, top-SQL-by-cost, per-backend breakdown, Avg RTT (§10) |
+| Federation Plans | `/api/federation/plans` — real `EXPLAIN PLAN FOR` plus MEASURED per-leaf-scan timing/rows for every cross-shard/cross-backend `JOIN` (§4.3) |
 | SQL Firewall | `polywire_firewall_rules` CRUD (§3.3) |
 | ACL | `polywire_config.aclRules`/PPv2 settings (§3.1) |
 | OAuth | OIDC issuer/audience/claim-mapping config (§3.4) |
@@ -536,9 +615,7 @@ operator UI on top of the HTTP endpoints in §8.3/§9/§10:
 | Router rules | `RouterStage` schema/predicate/value-shard rules |
 | QoS | admission-control rate/burst/per-class limits |
 
-Every mutating admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check; the admin
-API is meant to be called server-to-server (by Advisor's own backend on behalf of an
-authenticated operator session), not directly from a browser.
+Every admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check.
 
 ---
 
@@ -552,6 +629,7 @@ authenticated operator session), not directly from a browser.
 | Enforce "no bulk deletes from `orders`" org-wide, DBA-editable, no redeploy | SQL Firewall | Rule lives in Postgres, hot-reloaded |
 | Multi-region app needing Okta-based access control on a DynamoDB-protocol endpoint | dynamowire + OAuth | SigV4 or OIDC bearer, per deployment choice |
 | Horizontally shard reads across N Postgres backends | shard group + RouterStage | Scatter-gather via `POLYWIRE_SHARD_BACKENDS` |
+| Run a correct `JOIN` across shards or functionally-separated backends | `ShardJoinExecutor` / `SchemaFederationStage` | Real Calcite planning, cost-based ordering, semi-join pushdown — not scatter-gather's own broadcast-and-merge (§4.3) |
 | Restrict which IPs/subnets can even open a connection | ACL + PPv2 | Trusted-proxy-aware, works behind a load balancer |
 | Stop config-table write access from becoming a routing-hijack vector | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Env-var-only allowlist, not itself DB-writable |
 | Try PolyWire locally before committing to infrastructure | Docker Compose | See §5 |

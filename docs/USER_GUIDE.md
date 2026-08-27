@@ -50,6 +50,10 @@ doesn't need to know it's talking to PolyWire.
   without touching application code or redeploying anything.
 - **No single point of failure.** PolyWire can run multiple instances behind a load balancer,
   and can fail over automatically if its configuration database becomes unavailable.
+- **Correct `JOIN`s across sharded or split-out data.** If your data is spread across multiple
+  Postgres backends (horizontally sharded, or split by table for scale), a query that joins
+  across them is planned and executed for real — not silently wrong the moment a matching pair of
+  rows happens to live on two different backends.
 
 ## What it's not
 

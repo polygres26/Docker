@@ -18,11 +18,17 @@ migration tool moves schema/data behind the scenes.
 
 ## Architecture
 
-Every protocol frontend feeds the same 9-stage pipeline: frontends → firewall → router → QoS
-admission control → dialect translation → rollup → cache → stats collection → backend
-execution. Config lives in Postgres itself (`polywire_config`, `polywire_firewall_rules`),
-hot-reloaded to every running process via `LISTEN/NOTIFY` — no restart to change a firewall
-rule, routing topology, or SQL rewrite rule.
+Every protocol frontend feeds the same pipeline: frontends → cross-backend JOIN federation →
+firewall → router → QoS admission control → dialect translation → rollup → cache → stats
+collection → backend execution. Config lives in Postgres itself (`polywire_config`,
+`polywire_firewall_rules`), hot-reloaded to every running process via `LISTEN/NOTIFY` — no
+restart to change a firewall rule, routing topology, or SQL rewrite rule.
+
+A `JOIN` spanning two shards or two functionally-separated backends is planned and executed for
+real via Apache Calcite (predicate/column pushdown, real-statistics-driven cost-based join
+ordering, exact semi-join pushdown to cut what crosses the wire) — not the correctness-limited
+scatter-gather path's own broadcast-and-merge. See
+[`../docs/POLYWIRE_GUIDE.md` §4.3](../docs/POLYWIRE_GUIDE.md#43-cross-shard--cross-backend-join-federation).
 
 ![PolyWire architecture: nine client protocols (OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP) feed a shared eight-stage pipeline -- frontends, firewall, router, QoS, dialect translation, rollup, cache, stats collector -- each paired with the customer outcome it drives, backed by a Postgres control plane over LISTEN/NOTIFY and executing against horizontally-sharded Postgres backends](docs/architecture.png)
 
@@ -70,6 +76,8 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 | `POLYWIRE_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
 | `POLYWIRE_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
 | `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups |
+| `POLYWIRE_ROUTER_SCHEMA_RULES` | Routes a schema-qualified table to a named backend — 2+ rules also enables cross-backend `JOIN` federation |
+| `POLYWIRE_FEDERATION_PLAN_HISTORY` | Capacity of the federated-query SQL plan cache/history (0/unset disables) |
 | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Allowlist gating what hosts `POLYWIRE_BACKENDS` can register — env-var only, never DB-writable |
 | `POLYWIRE_ACL_RULES` | IP/CIDR allow-deny rules |
 | `POLYWIRE_ACL_PPV2_ENABLED` / `POLYWIRE_ACL_TRUSTED_PROXIES` | PROXY protocol v2 / X-Forwarded-For support behind a load balancer |
