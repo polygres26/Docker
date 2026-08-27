@@ -144,15 +144,23 @@
     <text x="1128" y="548" font-size="12" fill="#4a4964">(shard 2 / N)</text>
   </g>
 
-  <!-- ===================== BACKUP-REPLICATION RING (dotted, arrowed) ===================== -->
+  <!-- BACKUP-REPLICATION RING (dotted, arrowed): zone A replicates into B, B into C, C into A.
+       Three short arcs, each starting at the zone that HOLDS the backup and ending with its
+       arrowhead pointing into the zone that backup replicates to, so the direction drawn actually
+       matches what the arrow claims. Real bug fixed here, found comparing against the original:
+       the earlier "C wraps to A" arc actually started and ended at zone A's own coordinates,
+       never touching zone C at all; it's drawn correctly below, as one long arc dipping under the
+       config-plane row so it doesn't cut through it. -->
   <g stroke="#8b6fe8" stroke-width="1.75" stroke-dasharray="4,4" fill="none">
-    <path d="M254,586 C254,604 320,616 460,616" marker-end="url(#dArrowPurpleLight)"/>
-    <path d="M766,586 C766,606 700,616 620,616" marker-end="url(#dArrowPurpleLight)"/>
-    <path d="M1278,586 C1278,604 1100,616 1080,616" marker-end="url(#dArrowPurpleLight)"/>
+    <!-- zone A into zone B -->
+    <path d="M454,570 C500,600 520,600 566,570" marker-end="url(#dArrowPurpleLight)"/>
+    <!-- zone B into zone C -->
+    <path d="M966,570 C1012,600 1032,600 1078,570" marker-end="url(#dArrowPurpleLight)"/>
+    <!-- zone C into zone A, wrapping the long way around beneath the config-plane row -->
+    <path d="M1470,586 C1470,842 70,842 70,586" marker-end="url(#dArrowPurpleLight)"/>
   </g>
   <text x="770" y="608" font-size="12.5" fill="#4a4964" text-anchor="middle">backup copies replicate to the next zone</text>
   <text x="770" y="624" font-size="12.5" fill="#4a4964" text-anchor="middle">(dotted, arrowed) — C wraps around to A</text>
-  <path d="M258,586 C160,608 90,608 60,586" stroke="#8b6fe8" stroke-width="1.75" stroke-dasharray="4,4" fill="none" marker-end="url(#dArrowPurpleLight)"/>
 
   <!-- ===================== CONFIG-PRIMARY POSTGRES + STANDBY ===================== -->
   <g stroke="#e08a2c" stroke-width="1.75" stroke-dasharray="4,3" fill="none">
