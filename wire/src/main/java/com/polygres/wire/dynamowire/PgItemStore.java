@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.DdlTemplates;
 import com.polygres.wire.core.ShardingStrategy;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -241,19 +242,14 @@ public final class PgItemStore {
         if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
             return;
         }
+        // Real DDL, loaded from ddl/postgres/dynamowire_catalog.sql -- see DdlTemplates' own
+        // javadoc. Postgres-only today: the catalog connection is always the control-plane
+        // backend, which is always Postgres in every deployment shape this project supports.
+        List<String> statements = DdlTemplates.loadStatements("postgres", "dynamowire_catalog", Map.of());
         try (var st = c.createStatement()) {
-            st.execute("""
-                CREATE TABLE IF NOT EXISTS _dynamo_tables (
-                    table_name text PRIMARY KEY,
-                    pg_table text NOT NULL,
-                    pk_name text NOT NULL,
-                    pk_type text NOT NULL,
-                    sk_name text,
-                    sk_type text,
-                    status text NOT NULL,
-                    creation_time_millis bigint NOT NULL
-                )
-                """);
+            for (String statement : statements) {
+                st.execute(statement);
+            }
         }
         catalogEnsured.put(key, Boolean.TRUE);
     }
@@ -271,6 +267,38 @@ public final class PgItemStore {
                     throw new DynamoException("ResourceInUseException", "Table already exists: " + tableName);
                 }
             }
+            // Real bug, found live testing a MySQL/MariaDB shard backend: this used to INSERT the
+            // catalog metadata row FIRST, then create the real physical table(s) below -- a real
+            // DDL failure on any one shard (a jsonb-column syntax error on a non-Postgres engine,
+            // but just as real on Postgres itself for a transient disk-full/permission failure)
+            // left the metadata row committed and orphaned, silently claiming a table exists that
+            // was never actually created anywhere. Every later CreateTable attempt for that same
+            // name then permanently, incorrectly reports ResourceInUseException instead of the
+            // real underlying failure -- confirmed live: the client only ever saw the misleading
+            // "already exists" from a RETRY of the original failed call, not the real error, which
+            // only appeared in this process's own log. Real physical DDL now runs FIRST; the
+            // catalog row is only ever written once every shard's own table genuinely exists.
+            for (Connection shardConn : shardConnectionsForDdl()) {
+                try (shardConn) {
+                    String engine = DdlTemplates.engineDirFor(shardConn.getMetaData().getURL());
+                    // Real DDL, loaded from ddl/<engine>/dynamowire_item_table.sql -- see
+                    // DdlTemplates' own javadoc for the full reasoning and the real per-engine
+                    // differences (Postgres jsonb -> Oracle CLOB+IS JSON / SQL Server
+                    // NVARCHAR(MAX)+ISJSON() / MySQL JSON, etc.).
+                    List<String> itemDdl = engine == null ? null
+                            : DdlTemplates.loadStatements(engine, "dynamowire_item_table", Map.of("table", pg));
+                    if (itemDdl == null) {
+                        throw new SQLException("dynamowire: no real DDL template for this backend's own engine "
+                                + "(jdbcUrl=" + shardConn.getMetaData().getURL() + ") -- see BackendDriverRegistry "
+                                + "for the currently-supported engine list");
+                    }
+                    try (var st = shardConn.createStatement()) {
+                        for (String statement : itemDdl) {
+                            st.execute(statement);
+                        }
+                    }
+                }
+            }
             long now = System.currentTimeMillis();
             try (var ps = c.prepareStatement(
                     "INSERT INTO _dynamo_tables (table_name, pg_table, pk_name, pk_type, sk_name, sk_type, status, creation_time_millis) VALUES (?,?,?,?,?,?,?,?)")) {
@@ -283,18 +311,6 @@ public final class PgItemStore {
                 ps.setString(7, "ACTIVE");
                 ps.setLong(8, now);
                 ps.executeUpdate();
-            }
-            // The physical item table has to exist on every shard an item might land on, not
-            // just the catalog backend -- one CREATE TABLE per backend in the shard group (or
-            // just the catalog connection itself in unsharded mode, where that's the only place
-            // items ever go).
-            for (Connection shardConn : shardConnectionsForDdl()) {
-                try (shardConn; var st = shardConn.createStatement()) {
-                    StringBuilder ddl = new StringBuilder("CREATE TABLE IF NOT EXISTS " + pg + " (pk_value text NOT NULL, sk_value text NOT NULL DEFAULT '', ");
-                    ddl.append("sk_num numeric, item jsonb NOT NULL, PRIMARY KEY (pk_value, sk_value))");
-                    st.execute(ddl.toString());
-                    st.execute("CREATE INDEX IF NOT EXISTS " + pg + "_pk_sknum_idx ON " + pg + " (pk_value, sk_num)");
-                }
             }
             TableSchema schema = new TableSchema(tableName, pkName, pkType, skName, skType, "ACTIVE", now);
             schemaCache.put(tableName, schema);

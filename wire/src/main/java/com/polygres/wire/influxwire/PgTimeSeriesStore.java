@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.DdlTemplates;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -118,13 +119,23 @@ public final class PgTimeSeriesStore {
             return;
         }
         try (Connection c = target.open(); var st = c.createStatement()) {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
-                    + "time TIMESTAMPTZ NOT NULL, "
-                    + "tags JSONB NOT NULL DEFAULT '{}', "
-                    + "fields JSONB NOT NULL DEFAULT '{}')");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS " + table + "_time_idx ON " + table + " (time DESC)");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS " + table + "_tags_idx ON " + table + " USING GIN (tags)");
-            if (timescaleAvailable(target)) {
+            String engine = DdlTemplates.engineDirFor(target.jdbcUrl());
+            // Real DDL, loaded from ddl/<engine>/influxwire_measurement_table.sql -- see
+            // DdlTemplates' own javadoc for the full reasoning and the real per-engine differences
+            // (Postgres JSONB+GIN -> Oracle CLOB+IS JSON / SQL Server NVARCHAR(MAX)+ISJSON() /
+            // MySQL JSON, each missing a real GIN-equivalent generic tag index -- see each file's
+            // own comment).
+            List<String> tableDdl = engine == null ? null
+                    : DdlTemplates.loadStatements(engine, "influxwire_measurement_table", Map.of("table", table));
+            if (tableDdl == null) {
+                throw new SQLException("influxwire: no real DDL template for this backend's own engine "
+                        + "(jdbcUrl=" + target.jdbcUrl() + ") -- see BackendDriverRegistry for the "
+                        + "currently-supported engine list");
+            }
+            for (String statement : tableDdl) {
+                st.executeUpdate(statement);
+            }
+            if ("postgres".equals(engine) && timescaleAvailable(target)) {
                 // migrate_data => true: harmless/no-op on a table CREATE TABLE just made empty,
                 // but means this call is also safe (not a failed precondition) if a future version
                 // of this class ever calls ensureMeasurement against a table that picked up rows
@@ -133,12 +144,18 @@ public final class PgTimeSeriesStore {
                 // function call (it returns the new/existing hypertable's id and schema/table
                 // name), not DDL; pgjdbc's executeUpdate throws "A result was returned when none
                 // was expected" against it (found live, on the very first real TimescaleDB
-                // backend this was tested against).
-                st.executeQuery("SELECT create_hypertable('" + table + "', 'time', "
-                        + "if_not_exists => true, migrate_data => true)").close();
+                // backend this was tested against). Real, TimescaleDB-only optimization -- no
+                // equivalent DDL exists for the other 3 engines, see ddl/postgres/
+                // influxwire_hypertable.sql's own comment.
+                String hypertableSql = DdlTemplates.loadStatements("postgres", "influxwire_hypertable",
+                        Map.of("table", table)).get(0);
+                st.executeQuery(hypertableSql).close();
                 log.info("influxwire: {} created as a TimescaleDB hypertable", table);
-            } else {
+            } else if ("postgres".equals(engine)) {
                 log.info("influxwire: {} created as a plain Postgres table (no TimescaleDB on this backend)", table);
+            } else {
+                log.info("influxwire: {} created as a plain {} table (TimescaleDB-style hypertable "
+                        + "partitioning has no equivalent on this engine)", table, engine);
             }
         }
     }

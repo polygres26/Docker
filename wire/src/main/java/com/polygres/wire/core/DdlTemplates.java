@@ -1,0 +1,103 @@
+package com.polygres.wire.core;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+/**
+ * Real per-backend-engine DDL, loaded from {@code src/main/resources/ddl/&lt;engine&gt;/&lt;name&gt;.sql}
+ * instead of hardcoded as Java string literals in each store's own class -- {@code PgItemStore}
+ * (dynamowire), {@code PgTimeSeriesStore} (influxwire), {@code PgQueueStore} (sqswire), and {@code
+ * PgGraphStore} (the Bolt/Cypher graph frontend) each used to build their own `CREATE TABLE`/
+ * `CREATE INDEX` text inline in Java, which meant a real per-engine variant (see {@link
+ * BackendDriverRegistry}'s own currently-supported engine list) had nowhere to live but a growing
+ * pile of if/else branches inside otherwise storage-logic-only methods.
+ *
+ * <p>One `.sql` file per (engine, logical DDL name) pair. A file can hold several statements,
+ * each preceded by its own {@code -- ### <label>} marker line (the label is purely documentation
+ * for a human reading the file -- {@link #loadStatements} only ever cares about the marker itself
+ * as a real statement separator, not its text); every marked statement runs in the order it
+ * appears in the file. `${var}` placeholders (today: always just `${table}`, the one thing every
+ * one of these DDL files needs to parameterize) are substituted before execution.
+ *
+ * <p><b>Real, disclosed scope</b>: only {@code dynamowire_item_table}/{@code
+ * influxwire_measurement_table} currently have real Oracle/SQL Server/MySQL variants -- {@code
+ * sqswire}/the Bolt graph frontend need real QUERY-level portability work first ({@code RETURNING},
+ * {@code FOR UPDATE SKIP LOCKED}, {@code ON CONFLICT}, array columns -- see
+ * docs/POLYWIRE_GUIDE.md's own backend-engine prerequisites section), so extracting only their
+ * DDL to a non-Postgres file wouldn't make either store actually work there yet; their own DDL is
+ * still externalized here, just Postgres-only for now, same shape ready for the day their query
+ * code is portable too.
+ */
+public final class DdlTemplates {
+
+    private static final Pattern MARKER = Pattern.compile("(?m)^--\\s*###.*$");
+
+    private DdlTemplates() {
+    }
+
+    /** @return the {@code ddl/<engine>/} directory name for {@code jdbcUrl}'s own real engine --
+     *     mirrors {@link BackendDriverRegistry#driverClassNameFor}'s own URL-prefix dispatch
+     *     (same real engine set, same ordering), kept as its own lookup since a DDL directory name
+     *     and a JDBC driver class name are conceptually different things that happen to be decided
+     *     by the same URL prefix today. {@code null} for an unrecognized prefix -- callers decide
+     *     what "no DDL variant for this engine" means for them (usually: fail with a real, clear
+     *     error, the same {@link BackendDriverRegistry} pattern). */
+    public static String engineDirFor(String jdbcUrl) {
+        String url = jdbcUrl == null ? "" : jdbcUrl.toLowerCase(java.util.Locale.ROOT);
+        if (url.startsWith("jdbc:postgresql:")) {
+            return "postgres";
+        }
+        if (url.startsWith("jdbc:oracle:")) {
+            return "oracle";
+        }
+        if (url.startsWith("jdbc:sqlserver:")) {
+            return "sqlserver";
+        }
+        if (url.startsWith("jdbc:mysql:") || url.startsWith("jdbc:mariadb:")) {
+            return "mysql";
+        }
+        return null;
+    }
+
+    /** @return every {@code -- ### <label>}-delimited statement in {@code ddl/<engine>/<name>.sql},
+     *     in file order, with every {@code ${key}} in {@code vars} substituted -- or {@code null}
+     *     if that exact (engine, name) file doesn't exist (a real, honest "no DDL for this engine
+     *     yet", not a fabricated fallback to a different engine's own SQL dialect). */
+    public static List<String> loadStatements(String engine, String name, Map<String, String> vars) {
+        String path = "/ddl/" + engine + "/" + name + ".sql";
+        String raw;
+        try (InputStream is = DdlTemplates.class.getResourceAsStream(path)) {
+            if (is == null) {
+                return null;
+            }
+            raw = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to read DDL template " + path, e);
+        }
+        // MARKER.split gives every chunk BETWEEN markers, in file order, with element 0 being
+        // whatever precedes the FIRST marker (this file's own leading comment block) -- skipped.
+        String[] chunks = MARKER.split(raw);
+        List<String> statements = new ArrayList<>();
+        for (int i = 1; i < chunks.length; i++) {
+            String statement = substitute(chunks[i].strip(), vars);
+            if (!statement.isEmpty()) {
+                statements.add(statement);
+            }
+        }
+        return statements;
+    }
+
+    private static String substitute(String text, Map<String, String> vars) {
+        String out = text;
+        for (Map.Entry<String, String> entry : vars.entrySet()) {
+            out = out.replace("${" + entry.getKey() + "}", entry.getValue());
+        }
+        return out;
+    }
+}

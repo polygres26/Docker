@@ -3,6 +3,7 @@ package com.polygres.wire.boltwire;
 import com.google.gson.JsonObject;
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.DdlTemplates;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -67,27 +68,13 @@ final class PgGraphStore {
         if (!schemaEnsured.compareAndSet(false, true)) {
             return;
         }
+        // Real DDL, loaded from ddl/postgres/boltwire_graph_schema.sql -- see that file's own
+        // comment for why this store is still Postgres-only (the "labels" array column has no
+        // cross-engine equivalent at all, unlike dynamowire/influxwire's own now-portable DDL).
         try (Connection c = target.open(); var st = c.createStatement()) {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS polywire_graph_nodes ("
-                    + "id BIGSERIAL PRIMARY KEY, "
-                    + "labels TEXT[] NOT NULL DEFAULT '{}', "
-                    + "properties JSONB NOT NULL DEFAULT '{}')");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_nodes_labels_idx "
-                    + "ON polywire_graph_nodes USING GIN (labels)");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_nodes_props_idx "
-                    + "ON polywire_graph_nodes USING GIN (properties)");
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS polywire_graph_edges ("
-                    + "id BIGSERIAL PRIMARY KEY, "
-                    + "type TEXT NOT NULL, "
-                    + "from_id BIGINT NOT NULL REFERENCES polywire_graph_nodes(id), "
-                    + "to_id BIGINT NOT NULL REFERENCES polywire_graph_nodes(id), "
-                    + "properties JSONB NOT NULL DEFAULT '{}')");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_from_idx "
-                    + "ON polywire_graph_edges (from_id)");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_to_idx "
-                    + "ON polywire_graph_edges (to_id)");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_type_idx "
-                    + "ON polywire_graph_edges (type)");
+            for (String statement : DdlTemplates.loadStatements("postgres", "boltwire_graph_schema", Map.of())) {
+                st.executeUpdate(statement);
+            }
         }
     }
 

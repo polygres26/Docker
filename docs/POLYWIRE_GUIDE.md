@@ -448,7 +448,76 @@ built against a 5.x driver (would mean upgrading `calcite-core` project-wide too
 riskier change given how much of §4.3's own federation work depends on today's pinned 1.42.0
 behavior), or a hand-written MongoDB executor bypassing Calcite's adapter entirely.
 
-### 4.5 Multi-AZ distributed cache
+### 4.5 Non-SQL protocol storage: backend-engine prerequisites and limitations
+
+`dynamowire`, `influxwire`, `sqswire`, and the Bolt/Cypher graph frontend (`boltwire`) don't speak
+SQL to their clients, but every one of them stores its own data as real SQL underneath, in a real
+backend — `PgItemStore`, `PgTimeSeriesStore`, `PgQueueStore`, `PgGraphStore`. §4.4 above is about
+letting *SQL-speaking* clients (pgwire/orawire/mywire/mssqlwire) reach a non-Postgres backend; this
+section is about whether these *other four* protocols' own storage can too — a genuinely different
+question, since each one owns its own schema and query logic rather than just passing through
+whatever SQL a client sent.
+
+**Real DDL, no longer hardcoded in Java.** Every one of these stores used to build its own
+`CREATE TABLE`/`CREATE INDEX` text as inline Java string literals — real engine differences had
+nowhere to live but a pile of if/else branches inside otherwise storage-logic-only methods. DDL
+now lives in `wire/src/main/resources/ddl/<engine>/<name>.sql` (`postgres`/`oracle`/`sqlserver`/
+`mysql`), loaded and parameterized (`${table}`) at runtime by `DdlTemplates` — a real, engine-keyed
+directory, not a config format for its own sake: `BackendDriverRegistry.engineDirFor`-equivalent
+dispatch (`DdlTemplates.engineDirFor`) picks the right file from a `BackendTarget`'s own `jdbcUrl`,
+the same real dispatch shape §4.4's `BackendDriverRegistry` already uses for driver classes.
+
+**Only two of the four can even reach a non-default backend today.** `PgItemStore` (dynamowire)
+and `PgQueueStore` (sqswire) both support real shard routing (`POLYWIRE_SHARD_BACKENDS` — hashing
+by DynamoDB partition key / SQS queue name, same as real DynamoDB/SQS partitioning), so a shard
+group member CAN be an Oracle/SQL Server/MySQL backend. `PgTimeSeriesStore` (influxwire) and
+`PgGraphStore` (boltwire) only ever call `backendRegistry.resolveForRouting(DEFAULT_BACKEND_NAME)`
+— no sharding at all — and the default backend doubles as PolyWire's own control-plane connection
+(`polywire_config`, `polywire_firewall_rules`, `LISTEN/NOTIFY`), which has to stay Postgres. Adding
+real shard routing to these two is a real, scoped, not-yet-started follow-up — until then, their
+own storage is Postgres-only regardless of what other backends are configured.
+
+**Live-verified, real per-engine status, table DDL vs. query logic kept separate on purpose** —
+DDL portability and query portability are genuinely different problems, and this project only
+solves what it's actually solved, not by engine-level vibes:
+
+| Store | Protocol | Can target a non-default backend | Table DDL | Query logic (INSERT/SELECT/UPDATE) |
+|---|---|---|---|---|
+| `PgItemStore` | dynamowire | Yes (`POLYWIRE_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified (`CreateTable` actually succeeds against real Oracle/SQL Server/MySQL instances) | Postgres-only (`ON CONFLICT`, `::jsonb` casts — a real, live-confirmed failure on MySQL: `PutItem` still fails past `CreateTable`) |
+| `PgTimeSeriesStore` | influxwire | No (default-backend only) | Real DDL exists for all 4 engines (each engine's own `CREATE TABLE ddl/<engine>/influxwire_measurement_table.sql`, live-verified directly against real Oracle/SQL Server/MySQL) but unreachable in practice until shard routing is added | Postgres-only (`->`/`->>` jsonb operators, `date_bin()`) |
+| `PgQueueStore` | sqswire | Yes (`POLYWIRE_SHARD_BACKENDS`) | Postgres-only (`BIGSERIAL`, `TIMESTAMPTZ`, `now()` — live-confirmed failure: `CreateQueue` itself fails immediately against a real MySQL shard) | Postgres-only (`RETURNING`, `FOR UPDATE SKIP LOCKED` inside an `UPDATE` subselect, `ON CONFLICT`, `FILTER (WHERE ...)`) |
+| `PgGraphStore` | Bolt/Cypher graph frontend | No (default-backend only) | Postgres-only — the `labels TEXT[]` array column has no cross-engine equivalent at all; a real port needs a schema redesign (JSON array column or a normalized join table), not a syntax swap | Postgres-only |
+
+**Real bug found and fixed along the way**: `PgItemStore.createTable()` used to write its own
+catalog metadata row (`_dynamo_tables`) *before* attempting the real backend `CREATE TABLE` — a
+DDL failure on the real backend (the MySQL `jsonb`-syntax failure that motivated this whole
+section, but just as real for a plain transient Postgres failure) left the metadata row committed
+and orphaned, so every later `CreateTable` for that same name permanently, incorrectly reported
+`ResourceInUseException` ("already exists") instead of the real cause — confirmed live: the client
+only ever saw a misleading result from boto3's own automatic retry of the original failed call.
+Physical DDL now runs first; the catalog row is only written once the real table genuinely exists.
+
+**Real, disclosed engine-specific DDL quirk, found live**: Oracle treats an empty string (`''`) as
+`NULL` — dynamowire's own "no sort key" convention (`sk_value` defaults to `''`) would violate the
+item table's own `PRIMARY KEY (pk_value, sk_value)` `NOT NULL` requirement the instant such an item
+reached Oracle (confirmed live: `ORA-01400`). The table DDL itself is real and correct — verified
+with a non-empty `sk_value` — but a real fix for the empty-sort-key case needs a non-empty sentinel
+value on Oracle specifically, not attempted here.
+
+**TimescaleDB is a real, optional Postgres extension, not a hard requirement** — `PgTimeSeriesStore`
+detects it (`SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'`) and only calls
+`create_hypertable(...)` when it's actually installed; without it, `influxwire` still works
+correctly against plain Postgres, just without chunked partitioning/retention-deletion performance
+(every write/query path — including the `date_bin()`-based time-bucketing aggregation — is
+byte-for-byte identical between the hypertable and plain-table paths by design). This capability
+has no equivalent at all on Oracle, SQL Server, or MySQL — none of the three expose a matching
+`create_hypertable()`-style call (all three DO have their own native table partitioning, but
+wiring that in is a separate, from-scratch feature, not a substitution for TimescaleDB's own real
+mechanism); once influxwire gains real shard routing, those three engines' own measurement tables
+will simply stay plain tables permanently, the same real, already-proven-safe fallback behavior
+Postgres itself gets without the extension.
+
+### 4.6 Multi-AZ distributed cache
 
 The distributed cache (Ignite, `com.polygres.wire.cluster.PolyWireCluster`) is cloud-native and
 AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a

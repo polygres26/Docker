@@ -2,6 +2,7 @@ package com.polygres.wire.sqswire;
 
 import com.polygres.wire.core.BackendRegistry;
 import com.polygres.wire.core.BackendTarget;
+import com.polygres.wire.core.DdlTemplates;
 import com.polygres.wire.core.ShardingStrategy;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -11,6 +12,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -207,13 +209,11 @@ public final class PgQueueStore {
         if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
             return;
         }
+        // Real DDL, loaded from ddl/postgres/sqswire_catalog.sql -- see DdlTemplates' own javadoc.
         try (var st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS _sqs_queues ("
-                    + "queue_name TEXT PRIMARY KEY, "
-                    + "visibility_timeout INT NOT NULL DEFAULT 30, "
-                    + "is_fifo BOOLEAN NOT NULL DEFAULT false, "
-                    + "dlq_queue_name TEXT, "
-                    + "max_receive_count INT)");
+            for (String statement : DdlTemplates.loadStatements("postgres", "sqswire_catalog", Map.of())) {
+                st.execute(statement);
+            }
         }
         catalogEnsured.put(key, Boolean.TRUE);
     }
@@ -230,18 +230,13 @@ public final class PgQueueStore {
             return;
         }
         String table = safeTableName(queueName);
+        // Real DDL, loaded from ddl/postgres/sqswire_queue_table.sql -- see that file's own
+        // comment for why this store is still Postgres-only end to end (query-level, not just
+        // DDL) unlike dynamowire/influxwire's own now-portable table DDL.
         try (var st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS " + table + " ("
-                    + "msg_id BIGSERIAL PRIMARY KEY, "
-                    + "receipt_handle TEXT, "
-                    + "vt TIMESTAMPTZ NOT NULL DEFAULT now(), "
-                    + "enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
-                    + "read_ct INT NOT NULL DEFAULT 0, "
-                    + "body TEXT NOT NULL, "
-                    + "message_group_id TEXT, "
-                    + "dedup_id TEXT)");
-            st.execute("CREATE INDEX IF NOT EXISTS " + table + "_vt_idx ON " + table + " (vt)");
-            st.execute("CREATE INDEX IF NOT EXISTS " + table + "_dedup_idx ON " + table + " (dedup_id, enqueued_at)");
+            for (String statement : DdlTemplates.loadStatements("postgres", "sqswire_queue_table", Map.of("table", table))) {
+                st.execute(statement);
+            }
         }
         tableEnsured.put(key, Boolean.TRUE);
     }
