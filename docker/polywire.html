@@ -64,6 +64,7 @@
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
           <li><a href="#influxdb-line-protocol">InfluxDB</a></li>
+          <li><a href="#graphdb-bolt-cypher">GraphDB (Neo4j Bolt+Cypher)</a></li>
           <li><a href="#rollups">Rollups</a></li>
           <li><a href="#observability">Observability</a></li>
           <li><a href="#multi-az">Multi-AZ deployment</a></li>
@@ -120,6 +121,7 @@
         <li><span class="uc-body"><span class="uc-title">Query result caching (PolyCache)</span><span class="uc-desc">PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Time-series writes without running InfluxDB</span><span class="uc-desc">A real line-protocol <code>/write</code> endpoint and a bounded InfluxQL <code>/query</code> (WHERE, GROUP BY time(), mean/sum/count/min/max) land on Postgres — a real TimescaleDB hypertable when the backend has the extension, a plain indexed table otherwise. See "InfluxDB" below.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Property-graph queries without running Neo4j</span><span class="uc-desc">Real Bolt+Cypher — <code>CREATE</code>, <code>MATCH ... WHERE ... RETURN</code>, bounded variable-length paths — against a real Postgres nodes/edges schema, spoken to the official <code>neo4j</code> driver over the real Bolt wire protocol. See "GraphDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run PolyWire while PolyAdvisor (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
@@ -399,6 +401,52 @@
         consequence of actually computing an aggregate over matching rows, not a wire-protocol
         overhead). Not yet implemented: a dedicated cache-hit-vs-round-trip breakdown the way the
         six cached protocols above get, since influxwire has no cache to hit.
+      </p>
+
+      <h3 class="subhead" id="graphdb-bolt-cypher">GraphDB: real Neo4j Bolt+Cypher, on Postgres<a class="permalink" href="#graphdb-bolt-cypher" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        boltwire speaks Neo4j's real Bolt wire protocol -- the same binary handshake, PackStream
+        serialization, and message framing (<code>HELLO</code>/<code>RUN</code>/<code>PULL</code>/
+        <code>RECORD</code>) the official <code>neo4j</code> driver (Python and Java both verified
+        live) speaks to a real Neo4j server -- against a real Postgres schema underneath: one shared
+        <code>nodes</code> table (<code>labels text[]</code>, <code>properties jsonb</code>) and one
+        shared <code>edges</code> table, not a table per label the way influxwire is a table per
+        measurement, since any node relating to any other regardless of label is the whole point of
+        a property graph. A bounded Cypher subset is implemented, not the full language: <code>CREATE</code>
+        for a node or a single node-edge-node pattern, and <code>MATCH ... WHERE ... RETURN</code>
+        including bounded variable-length paths (<code>[*1..3]</code>, translated to a real Postgres
+        <code>WITH RECURSIVE</code> query with cycle detection) -- an unbounded <code>[*]</code> path is
+        rejected at parse time rather than accepted and left to run away against a large graph.
+        Like influxwire, boltwire has no result cache of its own and sits outside PolyCache's shared
+        pipeline -- see <a href="index.html#distributed-cache">the distributed cache section</a> for
+        that scope.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable">
+          <thead>
+            <tr>
+              <th>Protocol</th>
+              <th>Write (<code>CREATE</code> one node)</th>
+              <th>Query (<code>MATCH ... RETURN</code> one node)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>GraphDB (boltwire)</td>
+              <td class="num">2.07 ms</td>
+              <td class="num">1.08 ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        Median of 30 samples, warmed first, via the real official <code>neo4j</code> Python driver --
+        same lighter-weight single-protocol methodology as influxwire's own table above, reported
+        honestly as such. Not yet implemented: <code>MERGE</code>/<code>SET</code>, returning a
+        created or matched relationship as a real Bolt <code>Relationship</code> struct (edges are
+        written and queryable, just not yet returned as their own wire object), chained multi-hop
+        patterns beyond one relationship, <code>OR</code> in <code>WHERE</code>, and a
+        cache-hit-vs-round-trip breakdown, for the same reason influxwire doesn't have one.
       </p>
 
       <h3 class="subhead" id="rollups">Rollups: pre-aggregated tables, kept fresh automatically<a class="permalink" href="#rollups" aria-label="Link to this section">#</a></h3>

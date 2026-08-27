@@ -27,4 +27,5 @@ final class TestConfig {
     static final int SQSWIRE_PORT = port("POLYWIRE_SQSWIRE_PORT", 9324);
     static final int OSWIRE_PORT = port("POLYWIRE_OSWIRE_PORT", 9200);
     static final int INFLUXWIRE_PORT = port("POLYWIRE_INFLUXWIRE_PORT", 8086);
+    static final int BOLTWIRE_PORT = port("POLYWIRE_BOLTWIRE_PORT", 7687);
 }

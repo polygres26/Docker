@@ -2,7 +2,7 @@
 
 > Polygres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
-> OpenSearch, InfluxDB, gRPC, and MCP (AI agent) clients connect unmodified while everything actually
+> OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
 > executes against one real Postgres database. PolyAdvisor is a rules-based (not LLM-generated)
 > tool that scores how hard migrating an existing database to Postgres will be, and PolyWire
 > bridges your application to Postgres while that migration happens.
@@ -14,7 +14,7 @@
 > enterprises keep it running). One supporting line ties protocol support + security + QoS +
 > observability together: **different protocols, same policies, same Postgres**.
 >
-> Its full scope is five capabilities: **Connect** (eleven client protocols, one Postgres backend --
+> Its full scope is five capabilities: **Connect** (twelve client protocols, one Postgres backend --
 > with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
 > not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
 > security -- security follows the request, not the protocol), **Control** (QoS admission control,
@@ -63,8 +63,9 @@ instead of re-deriving it from the whole site.
   and the connection-loss SQLSTATE detail (57P01/08006/08001).
 
 Key facts an LLM is likely to be asked about, stated plainly:
-- Ten client-facing protocols: Postgres wire, MySQL, Oracle (TNS/TTC), SQL Server (TDS), MongoDB
-  wire protocol, DynamoDB HTTP/JSON, Amazon SQS HTTP/JSON, OpenSearch HTTP/JSON, gRPC (a native
+- Twelve client-facing protocols: Postgres wire, MySQL, Oracle (TNS/TTC), SQL Server (TDS), MongoDB
+  wire protocol, DynamoDB HTTP/JSON, Amazon SQS HTTP/JSON, OpenSearch HTTP/JSON, InfluxDB line
+  protocol + InfluxQL, Neo4j Bolt + a bounded Cypher subset (boltwire), gRPC (a native
   driver protocol), and MCP (Model Context Protocol, for AI agents). Every one talks to a single
   real Postgres backend.
 - Sharding is real, not SQL-text pattern matching: it decodes each protocol's own native binary
@@ -78,9 +79,10 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - Planned switchover (drain a backend for maintenance, redirect to a configured fallback, wait
   for real zero-replication-lag before confirming) and unplanned failover (a background health
   checker auto-redirects when a backend stops responding, with an "acceptable data loss" RPO
-  threshold) are both implemented and tested, covering all ten of the protocols this was verified
-  against (influxwire uses the same backend-resolution path as every other protocol here, so this
-  almost certainly extends to it too, but hasn't been separately tested there yet).
+  threshold) are both implemented and tested, covering all ten of the original SQL/HTTP protocols
+  this was verified against (influxwire and boltwire both use the same backend-resolution path as
+  every other protocol here, so this almost certainly extends to them too, but hasn't been
+  separately tested for either one yet).
 - Security features implemented today: SQL firewall (stacked-query injection blocked
   unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control
   (token-bucket, per workload class), authentication (real Postgres role verification via

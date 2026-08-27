@@ -181,15 +181,27 @@ final class PackStream {
             }
         }
 
-        /** Real Bolt Node struct: tag {@code 0x4E} ('N'), 4 fields -- id, labels, properties,
-         * elementId, in that exact order -- confirmed against a genuine Neo4j server capture (see
-         * {@link GraphNode}'s own javadoc). */
+        /** Real Bolt Node struct: tag {@code 0x4E} ('N'), 3 fields -- id, labels, properties, in
+         * that exact order. Real bug, found live writing this feature's own Phase 5 test suite
+         * against the real {@code neo4j-java-driver} (which, unlike the Python driver, validates
+         * struct field counts strictly): a 4th {@code elementId} field was being written
+         * unconditionally, grounded in a real capture -- but that capture (re-verified against a
+         * fresh real {@code neo4j:5-community} container while chasing this bug) turned out to be
+         * of a session that had negotiated Bolt <b>5.8</b> via the newer "manifest" handshake
+         * extension, where a Node struct really does carry a 4th elementId field. This server's own
+         * {@code performHandshake} only ever replies with the classic, simpler Bolt <b>4.4</b>
+         * handshake reply (see its own javadoc) -- and Bolt 4.4's own Node struct genuinely has
+         * only 3 fields, no elementId at all (elementId was a later addition). Every message this
+         * server sends has to honor the protocol version it actually claimed during the
+         * handshake, not a newer one it never negotiated -- {@link GraphNode#elementId} stays as
+         * a real, honest internal id (still exposed as the row's own {@code id} field, which
+         * every Bolt version has), just no longer written to the wire until this server actually
+         * negotiates Bolt 5.x. */
         void writeNode(GraphNode node) {
-            writeStructHeader(4, 0x4E);
+            writeStructHeader(3, 0x4E);
             writeInt(node.id());
             writeList(node.labels());
             writeMap(node.properties());
-            writeString(node.elementId());
         }
 
         private void writeBE(long v, int bytes) {

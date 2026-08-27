@@ -377,8 +377,18 @@ public final class BoltWireSessionHandler implements Runnable {
                 case GTE -> ">=";
                 case LTE -> "<=";
             };
-            whereClauses.add(cond.variable() + ".properties->>'" + cond.property() + "' " + op + " ?");
-            params.add(String.valueOf(cond.value()));
+            // Real bug, found live writing this feature's own test suite: comparing
+            // `properties->>'x'` (always text) against a numeric literal with a plain ">"/"<"
+            // compared lexically, not numerically -- "5" > "18" is true as text (since '5' > '1'),
+            // so "WHERE n.age > 18" matched age=5 right along with age=80. A numeric condition
+            // casts the extracted value to numeric instead; string/bool conditions keep the
+            // original text comparison, which is exactly what Cypher's own equality/ordering on
+            // those types means here.
+            String lhs = cond.value() instanceof Number
+                    ? "(" + cond.variable() + ".properties->>'" + cond.property() + "')::numeric"
+                    : cond.variable() + ".properties->>'" + cond.property() + "'";
+            whereClauses.add(lhs + " " + op + " ?");
+            params.add(cond.value() instanceof Number n ? n : String.valueOf(cond.value()));
         }
         if (!whereClauses.isEmpty()) {
             sql.append(" WHERE ").append(String.join(" AND ", whereClauses));
@@ -395,7 +405,12 @@ public final class BoltWireSessionHandler implements Runnable {
         List<List<Object>> rows = new ArrayList<>();
         try (Connection c = target.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
             for (int i = 0; i < params.size(); i++) {
-                ps.setString(i + 1, (String) params.get(i));
+                Object p = params.get(i);
+                if (p instanceof Number n) {
+                    ps.setBigDecimal(i + 1, new java.math.BigDecimal(n.toString()));
+                } else {
+                    ps.setString(i + 1, (String) p);
+                }
             }
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

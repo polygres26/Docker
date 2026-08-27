@@ -1,6 +1,6 @@
 # Error translation across every wire protocol
 
-A client that speaks Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, or InfluxDB expects a
+A client that speaks Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, or GraphDB (Neo4j) expects a
 real failure — a duplicate key, a missing table, a dead connection — to come back in *that*
 protocol's own native error shape, with the exact code/name a driver's own retry, reconnect, and
 error-handling logic keys off. Underneath every one of them, PolyWire is talking to real Postgres,
@@ -29,6 +29,7 @@ than inventing a plausible-looking one.
 | **SQS** (sqswire) | HTTP status + AWS error code, in the real AWS JSON/XML error envelope |
 | **OpenSearch** (oswire) | HTTP status + `error.type` + `error.reason` + `error.root_cause[]` |
 | **InfluxDB** (influxwire) | HTTP status + a flat `{"error": "..."}` message |
+| **GraphDB** (boltwire) | a real Bolt `FAILURE` message: `Neo.*`-shaped code (e.g. `Neo.ClientError.Statement.SyntaxError`) + message text |
 
 Each protocol maps the real Postgres condition to its own native error table, falling back to that
 protocol's own generic default for anything unmapped rather than failing to respond at all.
@@ -38,6 +39,17 @@ OpenSearch's `error.type` do -- just an HTTP status and a human-readable message
 into that table's per-condition columns would mean inventing distinctions real InfluxDB itself
 doesn't make, not documenting real ones. `InfluxErrorMapper` maps SQLSTATE to the closest real HTTP
 status (404/403/400/503) instead; see its own source for the exact table.
+
+GraphDB (boltwire) is left out of the per-condition table for the same honest reason, one step
+further: it doesn't translate Postgres SQLSTATEs into a per-condition Neo4j error table at all
+yet, only three coarse real Bolt codes -- `Neo.ClientError.Statement.SyntaxError` for a Cypher
+parse/translation failure, `Neo.ClientError.Statement.ExecutionFailed` for any other real
+`SQLException` from the underlying query, and `Neo.DatabaseError.General.UnknownError` for an
+unexpected server-side failure encoding a result row (e.g. a value PackStream has no encoding
+for) -- rather than inventing a finer-grained mapping real Neo4j's own error catalog would draw
+differently. Every one of these is a message a real Bolt client driver already knows how to parse
+into its own typed exception, since the shape (a real `Neo.*`-namespaced code string plus message
+text) is exactly what the wire protocol itself defines, not a PolyWire-specific convention.
 
 ---
 

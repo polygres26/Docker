@@ -33,6 +33,7 @@
     <opensearch-java.version>2.19.0</opensearch-java.version>
     <httpclient5.version>5.3.1</httpclient5.version>
     <influxdb-java.version>2.24</influxdb-java.version>
+    <neo4j-java-driver.version>5.28.4</neo4j-java-driver.version>
   </properties>
 
   <dependencies>
@@ -100,6 +101,11 @@
       <groupId>org.influxdb</groupId>
       <artifactId>influxdb-java</artifactId>
       <version>${influxdb-java.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.neo4j.driver</groupId>
+      <artifactId>neo4j-java-driver</artifactId>
+      <version>${neo4j-java-driver.version}</version>
     </dependency>
   </dependencies>
 
