@@ -1,0 +1,408 @@
+<svg viewBox="0 0 1540 1120" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="PolyWire architecture: twelve client protocols -- OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) -- feed one shared eight-stage pipeline: Frontends, FirewallStage, RouterStage, QosControlStage, DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, backed by a Postgres control plane, executing against a primary Postgres and any number of additional shards.">
+  <defs>
+    <marker id="arrowSolid" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6a4fd6"/>
+    </marker>
+    <marker id="arrowDash" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e08a2c"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1540" height="1120" fill="#ffffff"/>
+
+  <!-- ===================== HEADER ===================== -->
+  <text x="20" y="46" font-size="34" font-weight="800" fill="#5a3fd6">PolyWire</text>
+  <line x1="222" y1="18" x2="222" y2="66" stroke="#d7d3e8" stroke-width="2"/>
+  <text x="246" y="48" font-size="21" font-weight="600" fill="#33324a">Secure, scalable, intelligent Postgres gateway for the enterprise.</text>
+
+  <!-- ===================== LEFT: CLIENT DRIVERS ===================== -->
+  <g>
+    <rect x="20" y="96" width="380" height="42" rx="8" fill="#0f6660"/>
+    <text x="40" y="123" font-size="17" font-weight="700" fill="#ffffff" letter-spacing="0.5">EXISTING CLIENT DRIVERS (UNMODIFIED)</text>
+
+    <rect x="20" y="150" width="380" height="838" rx="10" fill="#ffffff" stroke="#c9c4e0" stroke-width="1.5"/>
+
+    <!-- 12 driver rows -->
+    <!-- row template: icon circle + title + subtitle -->
+  </g>
+
+  <!-- driver row generator (manually laid out, 12 rows @ 68px pitch starting y=168) -->
+  <g font-size="15" font-weight="700" fill="#1c1c2e">
+    <!-- 1 OraWire -->
+    <circle cx="66" cy="196" r="22" fill="#fde8e8"/>
+    <text x="66" y="203" font-size="16" text-anchor="middle" fill="#c0392b">⬭</text>
+    <text x="100" y="192">OraWire client</text>
+    <text x="100" y="209" font-size="12.5" font-weight="500" fill="#5b5a72">(JDBC, OCI, etc.)</text>
+    <rect x="20" y="168" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 2 MySQL -->
+    <circle cx="66" cy="260" r="22" fill="#e8f0fb"/>
+    <text x="66" y="267" font-size="16" text-anchor="middle" fill="#2b6cb0">🐬</text>
+    <text x="100" y="256">MySQL client / server protocol</text>
+    <rect x="20" y="232" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 3 SQL Server -->
+    <circle cx="66" cy="324" r="22" fill="#e8f0fb"/>
+    <text x="66" y="330" font-size="13" text-anchor="middle" fill="#2b6cb0">TDS</text>
+    <text x="100" y="320">SQL Server TDS</text>
+    <text x="100" y="337" font-size="12.5" font-weight="500" fill="#5b5a72">(JDBC)</text>
+    <rect x="20" y="296" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 4 Postgres wire -->
+    <circle cx="66" cy="388" r="22" fill="#e8f0fb"/>
+    <text x="66" y="395" font-size="16" text-anchor="middle" fill="#336791">🐘</text>
+    <text x="100" y="384">Postgres wire v3</text>
+    <text x="100" y="401" font-size="12.5" font-weight="500" fill="#5b5a72">(psql, JDBC, etc.)</text>
+    <rect x="20" y="360" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 5 MongoDB -->
+    <circle cx="66" cy="452" r="22" fill="#e9f7ee"/>
+    <text x="66" y="459" font-size="16" text-anchor="middle" fill="#2e8b57">🍃</text>
+    <text x="100" y="448">MongoDB wire protocol</text>
+    <rect x="20" y="424" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 6 DynamoDB -->
+    <circle cx="66" cy="516" r="22" fill="#eeeafc"/>
+    <text x="66" y="523" font-size="14" text-anchor="middle" fill="#5a3fd6">{}</text>
+    <text x="100" y="512">DynamoDB</text>
+    <text x="100" y="529" font-size="12.5" font-weight="500" fill="#5b5a72">HTTP/JSON API</text>
+    <rect x="20" y="488" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 7 SQS -->
+    <circle cx="66" cy="580" r="22" fill="#fdeee0"/>
+    <text x="66" y="587" font-size="14" text-anchor="middle" fill="#c1690a">⇄</text>
+    <text x="100" y="576">Amazon SQS</text>
+    <text x="100" y="593" font-size="12.5" font-weight="500" fill="#5b5a72">HTTP/JSON API (+ legacy XML)</text>
+    <rect x="20" y="552" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 8 gRPC -->
+    <circle cx="66" cy="644" r="22" fill="#eef4f4"/>
+    <text x="66" y="651" font-size="13" text-anchor="middle" fill="#0f6660">gRPC</text>
+    <text x="100" y="646">gRPC</text>
+    <rect x="20" y="616" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 9 MCP -->
+    <circle cx="66" cy="708" r="22" fill="#eeeafc"/>
+    <text x="66" y="715" font-size="16" text-anchor="middle" fill="#5a3fd6">🤖</text>
+    <text x="100" y="704">MCP client</text>
+    <text x="100" y="721" font-size="12.5" font-weight="500" fill="#5b5a72">(AI agent tools)</text>
+    <rect x="20" y="680" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 10 OpenSearch -->
+    <circle cx="66" cy="772" r="22" fill="#e8f0fb"/>
+    <text x="66" y="779" font-size="16" text-anchor="middle" fill="#2b6cb0">🔎</text>
+    <text x="100" y="768">OpenSearch protocol</text>
+    <text x="100" y="785" font-size="12.5" font-weight="500" fill="#5b5a72">(REST / JSON)</text>
+    <rect x="20" y="744" width="380" height="56" rx="8" fill="none" stroke="#e5e2f0" stroke-width="1"/>
+
+    <!-- 11 InfluxDB (NEW) -->
+    <rect x="20" y="808" width="380" height="56" rx="8" fill="#faf6ff" stroke="#d8cdf7" stroke-width="1.5"/>
+    <circle cx="66" cy="836" r="22" fill="#fdeee0"/>
+    <text x="66" y="843" font-size="15" text-anchor="middle" fill="#c1690a">📈</text>
+    <text x="100" y="832">InfluxDB line protocol</text>
+    <text x="100" y="849" font-size="12.5" font-weight="500" fill="#5b5a72">(v1 write + InfluxQL)</text>
+    <text x="356" y="822" font-size="10" font-weight="800" fill="#8b6fe8" text-anchor="middle">NEW</text>
+
+    <!-- 12 GraphDB (NEW) -->
+    <rect x="20" y="872" width="380" height="56" rx="8" fill="#faf6ff" stroke="#d8cdf7" stroke-width="1.5"/>
+    <circle cx="66" cy="900" r="22" fill="#e9f7ee"/>
+    <text x="66" y="907" font-size="15" text-anchor="middle" fill="#2e8b57">◆</text>
+    <text x="100" y="896">GraphDB (Neo4j Bolt)</text>
+    <text x="100" y="913" font-size="12.5" font-weight="500" fill="#5b5a72">Bolt wire + Cypher subset</text>
+    <text x="356" y="886" font-size="10" font-weight="800" fill="#8b6fe8" text-anchor="middle">NEW</text>
+  </g>
+
+  <!-- legend -->
+  <g>
+    <rect x="20" y="1008" width="380" height="96" rx="10" fill="#faf9fd" stroke="#e5e2f0" stroke-width="1.5"/>
+    <text x="40" y="1034" font-size="14" font-weight="800" fill="#1c1c2e">LEGEND</text>
+    <line x1="40" y1="1058" x2="90" y2="1058" stroke="#6a4fd6" stroke-width="3" marker-end="url(#arrowSolid)"/>
+    <text x="100" y="1063" font-size="13" fill="#33324a">Data Flow (Queries/Responses)</text>
+    <line x1="40" y1="1084" x2="90" y2="1084" stroke="#e08a2c" stroke-width="2.5" stroke-dasharray="5,4" marker-end="url(#arrowDash)"/>
+    <text x="100" y="1089" font-size="13" fill="#33324a">Control / Config Signals</text>
+  </g>
+
+  <!-- connectors from each driver row to the merge point -->
+  <g stroke="#6a4fd6" stroke-width="2" fill="none" opacity="0.85">
+    <path d="M400,196 C425,196 415,510 452,510"/>
+    <path d="M400,260 C425,260 415,510 452,510"/>
+    <path d="M400,324 C425,324 415,510 452,510"/>
+    <path d="M400,388 C425,388 415,510 452,510"/>
+    <path d="M400,452 C425,452 415,510 452,510"/>
+    <path d="M400,516 L452,516"/>
+    <path d="M400,580 C425,580 415,510 452,510"/>
+    <path d="M400,644 C425,644 415,510 452,510"/>
+    <path d="M400,708 C425,708 415,510 452,510"/>
+    <path d="M400,772 C425,772 415,510 452,510"/>
+    <path d="M400,836 C425,836 415,510 452,510"/>
+    <path d="M400,900 C425,900 415,510 452,510"/>
+  </g>
+  <path d="M452,510 L468,510" stroke="#6a4fd6" stroke-width="3" fill="none" marker-end="url(#arrowSolid)"/>
+
+  <!-- ===================== MIDDLE: PIPELINE ===================== -->
+  <g>
+    <rect x="470" y="96" width="540" height="42" rx="8" fill="#4c33a8"/>
+    <text x="495" y="123" font-size="16" font-weight="700" fill="#ffffff" letter-spacing="0.5">POLYWIRE PROCESS — ONE SHARED PIPELINE</text>
+  </g>
+
+  <!-- stage box template: number badge + icon + title + detail -->
+  <!-- Stage 1: Frontends -->
+  <g>
+    <rect x="470" y="150" width="540" height="92" rx="10" fill="#faf9fd" stroke="#d7d3e8" stroke-width="1.5"/>
+    <circle cx="503" cy="170" r="15" fill="#4c33a8"/>
+    <text x="503" y="175" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">1</text>
+    <text x="530" y="176" font-size="15" font-weight="700" fill="#1c1c2e">Frontends (Protocol Listeners)</text>
+    <text x="490" y="198" font-size="12.5" fill="#4a4964">orawire:1521/2484 · mywire:3306 · mssqlwire:1433</text>
+    <text x="490" y="215" font-size="12.5" fill="#4a4964">pgwire:5432 · mongowire:27017 · dynamowire:8000</text>
+    <text x="490" y="232" font-size="12.5" fill="#4a4964">grpc:7070/7071 · opensearch:9200 · influxwire:8086 · boltwire:7687 · admin/metrics:9090</text>
+  </g>
+
+  <!-- Stage 2: FirewallStage -->
+  <g>
+    <rect x="470" y="256" width="540" height="72" rx="10" fill="#faf9fd" stroke="#d7d3e8" stroke-width="1.5"/>
+    <circle cx="503" cy="276" r="15" fill="#0f6660"/>
+    <text x="503" y="281" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">2</text>
+    <text x="530" y="282" font-size="15" font-weight="700" fill="#1c1c2e">FirewallStage (Policy from Postgres)</text>
+    <text x="490" y="304" font-size="12.5" fill="#4a4964">ACL / IP allow-deny</text>
+    <text x="490" y="319" font-size="12.5" fill="#4a4964">PROXY protocol v2 / XFF</text>
+  </g>
+
+  <!-- Stage 3: RouterStage -->
+  <g>
+    <rect x="470" y="338" width="540" height="72" rx="10" fill="#faf9fd" stroke="#d7d3e8" stroke-width="1.5"/>
+    <circle cx="503" cy="358" r="15" fill="#0f6660"/>
+    <text x="503" y="363" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">3</text>
+    <text x="530" y="364" font-size="15" font-weight="700" fill="#1c1c2e">RouterStage (Shard / Backend Selection)</text>
+    <text x="490" y="386" font-size="12.5" fill="#4a4964">Shard scatter-gather,</text>
+    <text x="490" y="401" font-size="12.5" fill="#4a4964">HA failover to standby</text>
+  </g>
+
+  <!-- Stage 4: QosControlStage -->
+  <g>
+    <rect x="470" y="420" width="540" height="72" rx="10" fill="#fdf6ea" stroke="#eddcae" stroke-width="1.5"/>
+    <circle cx="503" cy="440" r="15" fill="#c1690a"/>
+    <text x="503" y="445" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">4</text>
+    <text x="530" y="446" font-size="15" font-weight="700" fill="#1c1c2e">QosControlStage (Admission Control)</text>
+    <text x="490" y="468" font-size="12.5" fill="#4a4964">Concurrency control, throttling,</text>
+    <text x="490" y="483" font-size="12.5" fill="#4a4964">priority queues</text>
+  </g>
+
+  <!-- Stage 5: DialectTranslationStage -->
+  <g>
+    <rect x="470" y="502" width="540" height="72" rx="10" fill="#fdf6ea" stroke="#eddcae" stroke-width="1.5"/>
+    <circle cx="503" cy="522" r="15" fill="#c1690a"/>
+    <text x="503" y="527" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">5</text>
+    <text x="530" y="528" font-size="15" font-weight="700" fill="#1c1c2e">DialectTranslationStage (SQL Rewrite per Protocol)</text>
+    <text x="490" y="550" font-size="12.5" fill="#4a4964">Translate, normalize, hinting, AST rewrite</text>
+  </g>
+
+  <!-- Stage 6: RollupStage -->
+  <g>
+    <rect x="470" y="584" width="540" height="72" rx="10" fill="#fdf6ea" stroke="#eddcae" stroke-width="1.5"/>
+    <circle cx="503" cy="604" r="15" fill="#c0392b"/>
+    <text x="503" y="609" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">6</text>
+    <text x="530" y="610" font-size="15" font-weight="700" fill="#1c1c2e">RollupStage</text>
+    <text x="490" y="632" font-size="12.5" fill="#4a4964">Aggregation, rollups, federation across shards</text>
+  </g>
+
+  <!-- Stage 7: CacheStage -->
+  <g>
+    <rect x="470" y="666" width="540" height="72" rx="10" fill="#f4f0fc" stroke="#d8cdf7" stroke-width="1.5"/>
+    <circle cx="503" cy="686" r="15" fill="#5a3fd6"/>
+    <text x="503" y="691" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">7</text>
+    <text x="530" y="692" font-size="15" font-weight="700" fill="#1c1c2e">CacheStage</text>
+    <text x="490" y="714" font-size="12.5" fill="#4a4964">Backed by embedded Ignite -- opt-in per table, TTL-based</text>
+    <text x="490" y="729" font-size="12.5" fill="#4a4964">(6 shared protocols; not oswire/sqswire/influxwire/boltwire)</text>
+  </g>
+
+  <!-- Stage 8: StatsCollectorStage -->
+  <g>
+    <rect x="470" y="748" width="540" height="72" rx="10" fill="#f4f0fc" stroke="#d8cdf7" stroke-width="1.5"/>
+    <circle cx="503" cy="768" r="15" fill="#5a3fd6"/>
+    <text x="503" y="773" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">8</text>
+    <text x="530" y="774" font-size="15" font-weight="700" fill="#1c1c2e">StatsCollectorStage</text>
+    <text x="490" y="796" font-size="12.5" fill="#4a4964">Exec time + RTT</text>
+    <text x="490" y="811" font-size="12.5" fill="#4a4964">Admin dashboard (:9090)</text>
+  </g>
+
+  <!-- pipeline vertical connectors -->
+  <g stroke="#6a4fd6" stroke-width="2.5" marker-end="url(#arrowSolid)">
+    <line x1="740" y1="242" x2="740" y2="256"/>
+    <line x1="740" y1="328" x2="740" y2="338"/>
+    <line x1="740" y1="410" x2="740" y2="420"/>
+    <line x1="740" y1="492" x2="740" y2="502"/>
+    <line x1="740" y1="574" x2="740" y2="584"/>
+    <line x1="740" y1="656" x2="740" y2="666"/>
+    <line x1="740" y1="738" x2="740" y2="748"/>
+  </g>
+
+  <!-- outcome bubbles, right of each pipeline stage -->
+  <g font-size="12.5" fill="#33324a">
+    <rect x="1024" y="160" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="182" font-size="12" font-weight="700" fill="#5a3fd6">🛡  Multi-protocol</text>
+    <text x="1050" y="200" fill="#4a4964">One entry point for</text>
+    <text x="1050" y="216" fill="#4a4964">all wire protocols</text>
+
+    <rect x="1024" y="256" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="278" font-size="12" font-weight="700" fill="#5a3fd6">🛡  Security first</text>
+    <text x="1050" y="296" fill="#4a4964">Policy-driven access</text>
+    <text x="1050" y="312" fill="#4a4964">control</text>
+
+    <rect x="1024" y="338" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="360" font-size="12" font-weight="700" fill="#5a3fd6">⇄  Smart routing</text>
+    <text x="1050" y="378" fill="#4a4964">Shard-aware &amp; high</text>
+    <text x="1050" y="394" fill="#4a4964">availability</text>
+
+    <rect x="1024" y="420" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="442" font-size="12" font-weight="700" fill="#5a3fd6">⏱  Protect resources</text>
+    <text x="1050" y="460" fill="#4a4964">Guarantee performance</text>
+    <text x="1050" y="476" fill="#4a4964">&amp; SLAs</text>
+
+    <rect x="1024" y="502" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="524" font-size="12" font-weight="700" fill="#5a3fd6">&lt;/&gt;  Protocol agnostic</text>
+    <text x="1050" y="542" fill="#4a4964">Consistent SQL across</text>
+    <text x="1050" y="558" fill="#4a4964">sources</text>
+
+    <rect x="1024" y="584" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="606" font-size="12" font-weight="700" fill="#5a3fd6">↻  Reduce load</text>
+    <text x="1050" y="624" fill="#4a4964">Pre-aggregate &amp;</text>
+    <text x="1050" y="640" fill="#4a4964">federate intelligently</text>
+
+    <rect x="1024" y="666" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="688" font-size="12" font-weight="700" fill="#5a3fd6">▤  Lower latency</text>
+    <text x="1050" y="706" fill="#4a4964">Intelligent caching with</text>
+    <text x="1050" y="722" fill="#4a4964">TTL</text>
+
+    <rect x="1024" y="748" width="230" height="72" rx="10" fill="#ffffff" stroke="#d8cdf7" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="1050" y="770" font-size="12" font-weight="700" fill="#5a3fd6">📊  Observability</text>
+    <text x="1050" y="788" fill="#4a4964">Real-time metrics,</text>
+    <text x="1050" y="804" fill="#4a4964">RTT &amp; exec stats</text>
+  </g>
+
+  <!-- dashed control-signal arrows -->
+  <g stroke="#e08a2c" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrowDash)">
+    <line x1="1010" y1="196" x2="1024" y2="196"/>
+    <line x1="1010" y1="292" x2="1024" y2="292"/>
+    <line x1="1010" y1="374" x2="1024" y2="374"/>
+    <line x1="1010" y1="456" x2="1024" y2="456"/>
+    <line x1="1010" y1="538" x2="1024" y2="538"/>
+    <line x1="1010" y1="620" x2="1024" y2="620"/>
+    <line x1="1010" y1="702" x2="1024" y2="702"/>
+    <line x1="1010" y1="784" x2="1024" y2="784"/>
+  </g>
+
+  <!-- ===================== RIGHT: CONTROL PLANE ===================== -->
+  <g>
+    <rect x="1284" y="96" width="236" height="42" rx="8" fill="#0f6660"/>
+    <text x="1304" y="123" font-size="15" font-weight="700" fill="#ffffff" letter-spacing="0.3">CONTROL PLANE (Postgres)</text>
+
+    <rect x="1284" y="150" width="236" height="222" rx="10" fill="#ffffff" stroke="#c9c4e0" stroke-width="1.5"/>
+
+    <circle cx="1310" cy="182" r="14" fill="#eef4f4"/>
+    <text x="1310" y="187" font-size="12" text-anchor="middle" fill="#0f6660">🗄</text>
+    <text x="1334" y="180" font-size="13" font-weight="700" fill="#1c1c2e">polywire_config /</text>
+    <text x="1334" y="196" font-size="13" font-weight="700" fill="#1c1c2e">polywire_firewall_rules</text>
+    <text x="1334" y="212" font-size="11.5" fill="#5b5a72">(PostgresDB primary / secondary)</text>
+
+    <circle cx="1310" cy="252" r="14" fill="#eef4f4"/>
+    <text x="1310" y="257" font-size="12" text-anchor="middle" fill="#0f6660">🔔</text>
+    <text x="1334" y="250" font-size="13" font-weight="700" fill="#1c1c2e">LISTEN/NOTIFY</text>
+    <text x="1334" y="266" font-size="11.5" fill="#5b5a72">Hot reload of rules</text>
+
+    <circle cx="1310" cy="312" r="14" fill="#eef4f4"/>
+    <text x="1310" y="317" font-size="12" text-anchor="middle" fill="#0f6660">↻</text>
+    <text x="1334" y="310" font-size="13" font-weight="700" fill="#1c1c2e">LISTEN/NOTIFY</text>
+    <text x="1334" y="326" font-size="11.5" fill="#5b5a72">Standby; auto failover</text>
+  </g>
+
+  <!-- control plane feed lines (dashed, up from stages) -->
+  <g stroke="#e08a2c" stroke-width="1.75" stroke-dasharray="4,3" fill="none" opacity="0.75">
+    <path d="M1254,196 C1268,196 1268,182 1284,182"/>
+    <path d="M1254,292 C1272,292 1272,252 1284,252"/>
+    <path d="M1254,374 C1272,374 1272,312 1284,312"/>
+  </g>
+
+  <!-- ===================== RIGHT: KEY OUTCOMES ===================== -->
+  <g>
+    <rect x="1284" y="396" width="236" height="42" rx="8" fill="#4c33a8"/>
+    <text x="1300" y="423" font-size="12.5" font-weight="700" fill="#ffffff" letter-spacing="0.1">KEY OUTCOMES FOR CUSTOMERS</text>
+
+    <rect x="1284" y="450" width="236" height="590" rx="10" fill="#ffffff" stroke="#c9c4e0" stroke-width="1.5"/>
+
+    <circle cx="1310" cy="484" r="16" fill="#eeeafc"/>
+    <text x="1310" y="490" font-size="13" text-anchor="middle" fill="#5a3fd6">🚀</text>
+    <text x="1336" y="481" font-size="13.5" font-weight="800" fill="#1c1c2e">SIMPLE ARCHITECTURE</text>
+    <text x="1336" y="498" font-size="11.5" fill="#5b5a72">One gateway for all protocols</text>
+    <text x="1336" y="513" font-size="11.5" fill="#5b5a72">and data sources</text>
+
+    <circle cx="1310" cy="558" r="16" fill="#eef4f4"/>
+    <text x="1310" y="564" font-size="13" text-anchor="middle" fill="#0f6660">🛡</text>
+    <text x="1336" y="555" font-size="13.5" font-weight="800" fill="#1c1c2e">STRONG SECURITY</text>
+    <text x="1336" y="572" font-size="11.5" fill="#5b5a72">Centralized policies, auth,</text>
+    <text x="1336" y="587" font-size="11.5" fill="#5b5a72">and SQL firewall</text>
+
+    <circle cx="1310" cy="632" r="16" fill="#e8f0fb"/>
+    <text x="1310" y="638" font-size="13" text-anchor="middle" fill="#2b6cb0">⏱</text>
+    <text x="1336" y="629" font-size="13.5" font-weight="800" fill="#1c1c2e">MAX PERFORMANCE</text>
+    <text x="1336" y="646" font-size="11.5" fill="#5b5a72">Smart routing, QoS control,</text>
+    <text x="1336" y="661" font-size="11.5" fill="#5b5a72">caching, and rollups</text>
+
+    <circle cx="1310" cy="706" r="16" fill="#e9f7ee"/>
+    <text x="1310" y="712" font-size="13" text-anchor="middle" fill="#2e8b57">◆</text>
+    <text x="1336" y="703" font-size="13.5" font-weight="800" fill="#1c1c2e">SCALE ELASTICALLY</text>
+    <text x="1336" y="720" font-size="11.5" fill="#5b5a72">Add shards, regions, tenants</text>
+    <text x="1336" y="735" font-size="11.5" fill="#5b5a72">without re-architecting</text>
+
+    <circle cx="1310" cy="780" r="16" fill="#fdf6ea"/>
+    <text x="1310" y="786" font-size="13" text-anchor="middle" fill="#c1690a">$</text>
+    <text x="1336" y="777" font-size="13.5" font-weight="800" fill="#1c1c2e">LOWER COSTS</text>
+    <text x="1336" y="794" font-size="11.5" fill="#5b5a72">Better resource utilization</text>
+    <text x="1336" y="809" font-size="11.5" fill="#5b5a72">and reduced complexity</text>
+
+    <circle cx="1310" cy="854" r="16" fill="#fdeee0"/>
+    <text x="1310" y="860" font-size="13" text-anchor="middle" fill="#c1690a">📊</text>
+    <text x="1336" y="851" font-size="13.5" font-weight="800" fill="#1c1c2e">OPERATIONAL EXCELLENCE</text>
+    <text x="1336" y="868" font-size="11.5" fill="#5b5a72">Deep observability, audit,</text>
+    <text x="1336" y="883" font-size="11.5" fill="#5b5a72">and real-time insights</text>
+
+    <!-- new: twelve protocols outcome -->
+    <circle cx="1310" cy="928" r="16" fill="#faf6ff"/>
+    <text x="1310" y="934" font-size="13" text-anchor="middle" fill="#8b6fe8">＋</text>
+    <text x="1336" y="925" font-size="13.5" font-weight="800" fill="#1c1c2e">TWELVE PROTOCOLS</text>
+    <text x="1336" y="942" font-size="11.5" fill="#5b5a72">Time-series (InfluxDB) and</text>
+    <text x="1336" y="957" font-size="11.5" fill="#5b5a72">property-graph (Neo4j Bolt+</text>
+    <text x="1336" y="972" font-size="11.5" fill="#5b5a72">Cypher) now speak real Postgres too</text>
+  </g>
+
+  <!-- ===================== BOTTOM: POSTGRES ===================== -->
+  <g stroke="#6a4fd6" stroke-width="3" marker-end="url(#arrowSolid)">
+    <line x1="620" y1="820" x2="620" y2="900"/>
+    <line x1="860" y1="820" x2="860" y2="900"/>
+  </g>
+  <text x="595" y="874" font-size="14" font-weight="700" fill="#33324a">SQL</text>
+  <text x="835" y="874" font-size="14" font-weight="700" fill="#33324a">SQL</text>
+
+  <!-- primary db cylinder -->
+  <g>
+    <ellipse cx="620" cy="912" rx="115" ry="20" fill="#e8f0fb" stroke="#336791" stroke-width="2"/>
+    <path d="M505,912 L505,970 A115,20 0 0 0 735,970 L735,912" fill="#e8f0fb" stroke="#336791" stroke-width="2"/>
+    <ellipse cx="620" cy="970" rx="115" ry="20" fill="none" stroke="#336791" stroke-width="2"/>
+    <text x="620" y="925" font-size="15" text-anchor="middle" fill="#336791">🐘</text>
+    <text x="620" y="948" font-size="13.5" font-weight="700" text-anchor="middle" fill="#1c1c2e">PostgresDB primary</text>
+    <text x="620" y="964" font-size="12" text-anchor="middle" fill="#5b5a72">(shard 1)</text>
+  </g>
+
+  <text x="800" y="945" font-size="20" font-weight="800" fill="#8b6fe8" text-anchor="middle">····</text>
+
+  <!-- secondary db cylinder -->
+  <g>
+    <ellipse cx="900" cy="912" rx="120" ry="20" fill="#e8f0fb" stroke="#336791" stroke-width="2"/>
+    <path d="M780,912 L780,970 A120,20 0 0 0 1020,970 L1020,912" fill="#e8f0fb" stroke="#336791" stroke-width="2"/>
+    <ellipse cx="900" cy="970" rx="120" ry="20" fill="none" stroke="#336791" stroke-width="2"/>
+    <text x="900" y="925" font-size="15" text-anchor="middle" fill="#336791">🐘</text>
+    <text x="900" y="948" font-size="13.5" font-weight="700" text-anchor="middle" fill="#1c1c2e">PostgresDB secondary</text>
+    <text x="900" y="964" font-size="12" text-anchor="middle" fill="#5b5a72">(shard 2 / N)</text>
+  </g>
+
+  <text x="470" y="1080" font-size="12" fill="#8b8aa0">PolyWire v1 -- twelve client-facing wire protocols, one real Postgres underneath.</text>
+</svg>
