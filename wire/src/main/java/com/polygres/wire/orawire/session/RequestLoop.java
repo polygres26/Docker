@@ -618,10 +618,50 @@ public final class RequestLoop {
     // [[polywire-orawire-sqlplus-gap]] for why: getting this field-by-field, rather than by more
     // guess-and-check byte patching, needs a real Oracle-Net-aware capture tool (a proper TNS
     // dissector) to pin down this vector's true field boundaries and semantics with confidence.
+    // Real bug, found live for a genuine SQL*Plus (non-dblink) client via a careful, verified byte
+    // accounting rather than a guess: computed this exact template's absolute byte offset for the
+    // AL8O4 tag from first principles (DESCRIBE_INFO header + one NUMBER column's own real,
+    // already-verified-correct encoded length + this template's own row-insertion-point/pre-row
+    // -block/row lengths), landing on offset 32 -- independently matching the byte this template
+    // already puts there (0x08, TTIRPA) exactly, confirming the accounting itself is trustworthy.
+    // Extended that same accounting past the row to real content indices 222/226/247 in a live
+    // capture of PolyWire's own response and diffed those specific bytes against real Oracle's
+    // response to the identical query: template offsets 43/47/68 (0x07/0x05/0x03) are wrong --
+    // real Oracle sends 0x01/0x00/0x01 there instead. Confirmed these three offsets sit inside a
+    // span already proven, separately, to be session-invariant (byte-for-byte identical across two
+    // real, sequential queries in the same real session -- see
+    // [[polywire-orawire-sqlplus-gap]]'s own update #10/#11), so this is a fixed content
+    // correction, not a per-session/per-cursor value needing to be computed at request time -- the
+    // same kind of fixed patch already applied to this same template at offset 35-37
+    // (NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH) above. Scoped to non-dblink clients only: a dblink
+    // client's own use of this same template (its second, chained Execute) is already confirmed
+    // working end-to-end and untouched by this fix, since dblink's own real captures were never
+    // diffed at these specific offsets and may need different (or no) correction there.
+    // Extended the same way, same live-vs-real diff at the same session-invariant offsets: found
+    // two more wrong bytes past the first three, at offsets 85 and 92 (0x07/0x08 in this template,
+    // real Oracle sends 0x01/0x00) -- also inside the span [[polywire-orawire-sqlplus-gap]]'s
+    // update #10 proved session-invariant.
+    // Two more single-byte flags found the same way, at offsets 119 and 203 (both 0x00 in this
+    // template, real Oracle sends 0x01) -- NOT yet independently confirmed session-invariant the
+    // way the five above are (this session's own two-query diff only ran once, and a fresh
+    // second-query capture wasn't re-captured against this exact template state to re-verify), but
+    // low-risk to try: single 0/1-looking flag bytes, not part of anything resembling a
+    // multi-byte checksum/timestamp/SCN. Skipped a nearby 5-byte span (this template's own offsets
+    // ~119-123) that looks like a genuine per-session value (an elapsed-call-time or similar) --
+    // deliberately NOT patched, since it's plausible for that to legitimately differ between any
+    // two real Oracle connections regardless of correctness.
+    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH = { 0x01, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01 };
+    private static final int[] NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS = { 43, 47, 68, 85, 92, 119, 203 };
+
     private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
         byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
         System.arraycopy(NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH, 0, tail,
                 NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH_OFFSET, NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH.length);
+        if (!nativeOciDblinkClient) {
+            for (int i = 0; i < NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS.length; i++) {
+                tail[NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS[i]] = NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH[i];
+            }
+        }
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
         w.writeRaw(NATIVE_OCI_PRE_ROW_BLOCK);
         writeRows(w, maxRows);
