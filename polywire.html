@@ -385,8 +385,8 @@
           <tbody>
             <tr>
               <td>InfluxDB (influxwire)</td>
-              <td class="num">2.20 ms</td>
-              <td class="num">1.52 ms</td>
+              <td class="num">2.25 ms</td>
+              <td class="num">1.32 ms</td>
             </tr>
           </tbody>
         </table>
@@ -401,6 +401,16 @@
         consequence of actually computing an aggregate over matching rows, not a wire-protocol
         overhead). Not yet implemented: a dedicated cache-hit-vs-round-trip breakdown the way the
         six cached protocols above get, since influxwire has no cache to hit.
+      </p>
+      <p class="rttNote">
+        <b>Why this is higher than the round-robin table's own Postgres numbers (0.53/0.83 ms)</b>:
+        InfluxDB's real wire protocol is HTTP -- every <code>/write</code> and <code>/query</code>
+        is its own independent, stateless HTTP request, with no persistent client session to hold a
+        backend connection open across requests the way a pgwire client's session does. Borrowing a
+        pooled Postgres connection once per request (plus real HTTP request parsing) is a genuine,
+        unavoidable cost of speaking a stateless request/response protocol, not an inefficiency in
+        the translation itself -- see boltwire's own numbers below for the contrast a persistent,
+        session-based wire protocol makes.
       </p>
 
       <h3 class="subhead" id="graphdb-bolt-cypher">GraphDB: real Neo4j Bolt+Cypher, on Postgres<a class="permalink" href="#graphdb-bolt-cypher" aria-label="Link to this section">#</a></h3>
@@ -433,8 +443,8 @@
           <tbody>
             <tr>
               <td>GraphDB (boltwire)</td>
-              <td class="num">2.07 ms</td>
-              <td class="num">1.08 ms</td>
+              <td class="num">1.10 ms</td>
+              <td class="num">0.73 ms</td>
             </tr>
           </tbody>
         </table>
@@ -442,7 +452,15 @@
       <p class="rttNote">
         Median of 30 samples, warmed first, via the real official <code>neo4j</code> Python driver --
         same lighter-weight single-protocol methodology as influxwire's own table above, reported
-        honestly as such. Not yet implemented: <code>MERGE</code>/<code>SET</code>, returning a
+        honestly as such. Unlike influxwire's HTTP request/response model, Bolt is a persistent TCP
+        session -- so boltwire holds one pooled Postgres connection per Bolt session, reused across
+        every query the client sends, instead of borrowing and returning a fresh one per request.
+        (An earlier version of this page reported 2.07/1.08 ms: it was still doing the latter, plus
+        wrapping even a single-node <code>CREATE</code> in an explicit transaction with nothing to
+        roll back that mattered -- both real, fixed inefficiencies, not measurement noise, which is
+        why these numbers now land close to the round-robin table's own Postgres baseline
+        (0.53/0.83 ms) above rather than the 2x+ gap influxwire's own genuinely-stateless HTTP
+        model still has.) Not yet implemented: <code>MERGE</code>/<code>SET</code>, returning a
         created or matched relationship as a real Bolt <code>Relationship</code> struct (edges are
         written and queryable, just not yet returned as their own wire object), chained multi-hop
         patterns beyond one relationship, <code>OR</code> in <code>WHERE</code>, and a
