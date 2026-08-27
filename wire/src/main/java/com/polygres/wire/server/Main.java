@@ -263,10 +263,29 @@ public final class Main {
                 routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size(),
                 routerStage.valueShardRules().size(), routerStage.valueShardColumnRules().size(),
                 routerStage.shardRules().size());
+        // Real row-count statistics + plan history for BOTH federation stages (ShardJoinExecutor,
+        // reached later via RoutingBackendExecutor, and schemaFederationStage right below) -- one
+        // shared StatisticsStore/SqlPlanStore instance for the whole process, set onto routerStage
+        // (always present) so RouterStage.statisticsStoreIn/planStoreIn can hand the same instances
+        // to every protocol's own RoutingBackendExecutor. See StatisticsStore/SqlPlanStore/
+        // StatisticsScheduler's own javadoc for why each is scoped the way it is.
+        com.polygres.wire.core.StatisticsStore federationStatisticsStore = new com.polygres.wire.core.StatisticsStore();
+        com.polygres.wire.core.SqlPlanStore federationPlanStore =
+                com.polygres.wire.core.SqlPlanStore.fromConfig(System.getenv("POLYWIRE_FEDERATION_PLAN_HISTORY"));
+        routerStage.setFederationSupport(federationStatisticsStore, federationPlanStore);
+        com.polygres.wire.core.StatisticsScheduler statisticsScheduler = com.polygres.wire.core.StatisticsScheduler
+                .startIfConfigured(backendRegistry, routerStage.shardRules(), routerStage.schemaRules(), federationStatisticsStore);
+        log.info("federation plan history: {} (set POLYWIRE_FEDERATION_PLAN_HISTORY=<capacity> to enable, "
+                + "0/unset disables; statistics collection: {})",
+                federationPlanStore == null ? "disabled" : "enabled",
+                statisticsScheduler == null ? "on-demand only (set POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES for a background refresh)"
+                        : "background refresh enabled");
+
         // Before routerStage, not after -- see SchemaFederationStage's own javadoc: a statement
         // that references two different POLYWIRE_ROUTER_SCHEMA_RULES-routed backends has to be
         // federated BEFORE RouterStage.resolveBackend ever narrows it down to just one of them.
-        SchemaFederationStage schemaFederationStage = SchemaFederationStage.fromConfigOrNull(routerStage, backendRegistry);
+        SchemaFederationStage schemaFederationStage = SchemaFederationStage.fromConfigOrNull(
+                routerStage, backendRegistry, federationStatisticsStore, federationPlanStore);
         if (schemaFederationStage != null) {
             stages.add(schemaFederationStage);
             log.info("schema federation: enabled ({} schema rule(s) -- a query referencing 2+ of their backends "
@@ -320,7 +339,7 @@ public final class Main {
 
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
-                adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog);
+                adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,

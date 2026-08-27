@@ -59,7 +59,10 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
         try (Connection backend = openBackend()) {
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
                     new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend),
-                            new com.polygres.wire.xa.XaRecoveryLog(options)));
+                            new com.polygres.wire.xa.XaRecoveryLog(options),
+                            com.polygres.wire.core.RouterStage.shardRulesIn(sharedStages))
+                            .withFederationSupport(com.polygres.wire.core.RouterStage.statisticsStoreIn(sharedStages),
+                                    com.polygres.wire.core.RouterStage.planStoreIn(sharedStages)));
             List<Object> binds = new ArrayList<>(request.getParamsList());
             Statement statement = Statement.of(SourceDialect.POLYWIRE_NATIVE, request.getSql(), binds);
             ExecutionResult result = pipeline.execute(statement);

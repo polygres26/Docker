@@ -24,6 +24,12 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     private final BackendExecutor defaultExecutor;
     private final XaRecoveryLog recoveryLog;
     private final List<RouterStage.ShardRule> shardRules;
+    // Set via withFederationSupport, not a constructor param -- same "orthogonal, set once after
+    // construction" reasoning as RouterStage's own matching pair; both nullable, meaning "not
+    // configured" (ShardJoinExecutor degrades to Calcite's default Statistics.UNKNOWN / no plan
+    // history recorded), never an error.
+    private StatisticsStore statisticsStore;
+    private SqlPlanStore planStore;
 
     private Map<String, Connection> transactionConnections;
 
@@ -58,6 +64,15 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         this.defaultExecutor = defaultExecutor;
         this.recoveryLog = recoveryLog;
         this.shardRules = List.copyOf(shardRules);
+    }
+
+    /** Fluent, so a call site can chain it right onto the constructor -- see
+     * {@link RouterStage#statisticsStoreIn}/{@link RouterStage#planStoreIn} for where the shared
+     * instances come from. Either or both may be {@code null} (not configured). */
+    public RoutingBackendExecutor withFederationSupport(StatisticsStore statisticsStore, SqlPlanStore planStore) {
+        this.statisticsStore = statisticsStore;
+        this.planStore = planStore;
+        return this;
     }
 
     public boolean inTransaction() {
@@ -183,7 +198,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // no JOIN (the overwhelming common case) is completely unaffected.
         String matchedSchema = ShardJoinExecutor.matchedShardSchema(shardRules, statement.sqlText());
         if (matchedSchema != null) {
-            return ShardJoinExecutor.execute(registry, shardNames, matchedSchema, statement);
+            return ShardJoinExecutor.execute(registry, shardNames, matchedSchema, statement, statisticsStore, planStore);
         }
 
         // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this

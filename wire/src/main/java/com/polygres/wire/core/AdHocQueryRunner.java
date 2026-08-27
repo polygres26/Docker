@@ -48,7 +48,9 @@ public final class AdHocQueryRunner {
         try {
             backend.setAutoCommit(true);
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
-                    new RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend, nativeRlsInitializer)));
+                    new RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend, nativeRlsInitializer),
+                            null, RouterStage.shardRulesIn(sharedStages))
+                            .withFederationSupport(RouterStage.statisticsStoreIn(sharedStages), RouterStage.planStoreIn(sharedStages)));
             Statement statement = new Statement(tenantId, SourceDialect.MCP, sql, bindParams, "default", null, accessContext);
             return Result.ofSuccess(pipeline.execute(statement));
         } catch (SQLException e) {

@@ -76,6 +76,12 @@ public final class MetricsServer {
     private final Server server;
     private final com.polygres.wire.sqswire.PgQueueStore queueStore;
     private final com.polygres.wire.audit.AuditLog auditLog;
+    // Set after the delegating constructor call below (not a constructor param on every overload,
+    // same "orthogonal, opt-in" reasoning RouterStage's own federation-support fields use) --
+    // read at real request-handling time by the anonymous AbstractHandler below (an outer-instance
+    // field access, not a captured local), so setting it after that handler object is built is
+    // still safe: no request is ever handled before this constructor call returns.
+    private com.polygres.wire.core.SqlPlanStore federationPlanStore;
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.polygres.wire.acl.ConnectionGate.DISABLED);
@@ -207,6 +213,28 @@ public final class MetricsServer {
         this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
                 configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, mcpMetrics,
                 captureBuffer, auditLog, null);
+    }
+
+    /** As the full constructor below, plus {@code federationPlanStore} -- when non-null, exposes
+     * {@code GET /api/federation/plans}: every {@link com.polygres.wire.core.ShardJoinExecutor}/
+     * {@link com.polygres.wire.core.SchemaFederationStage} federated query's real captured
+     * {@code EXPLAIN PLAN FOR} plan text, timing, row count, and success/failure -- the same
+     * {@code V$SQL_PLAN}-style history the sibling Omnigate project's own admin API already
+     * exposes. {@code null} (every other constructor's default): the route doesn't exist at all,
+     * matching {@code POLYWIRE_FEDERATION_PLAN_HISTORY} being unset. */
+    public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
+            Supplier<ConfigStore.Version> currentVersionSupplier, com.polygres.wire.acl.ConnectionGate connectionGate,
+            com.polygres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
+            ConfigStore configStore, com.polygres.wire.core.BackendRegistry backendRegistry,
+            com.polygres.wire.core.DialectTranslationStage dialectTranslationStage, String adminWebDir,
+            com.polygres.wire.server.ServerOptions options, com.polygres.wire.mcp.McpMetricsCollector mcpMetrics,
+            com.polygres.wire.capture.WorkloadCaptureBuffer captureBuffer,
+            com.polygres.wire.audit.AuditLog auditLog, com.polygres.wire.xa.XaRecoveryLog xaRecoveryLog,
+            com.polygres.wire.core.SqlPlanStore federationPlanStore) {
+        this(port, statsStage, qosStage, currentVersionSupplier, connectionGate, oauth, firewallRuleStore,
+                configStore, backendRegistry, dialectTranslationStage, adminWebDir, options, mcpMetrics,
+                captureBuffer, auditLog, xaRecoveryLog);
+        this.federationPlanStore = federationPlanStore;
     }
 
     /**
@@ -360,6 +388,39 @@ public final class MetricsServer {
                         return;
                     }
                     handleConfig(request, response, configStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (federationPlanStore != null && "/api/federation/plans".equals(target)) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    StringBuilder json = new StringBuilder("[");
+                    boolean first = true;
+                    for (com.polygres.wire.core.SqlPlanStore.PlanEntry entry : federationPlanStore.snapshot()) {
+                        if (!first) json.append(',');
+                        first = false;
+                        json.append("{\"planId\":").append(entry.planId())
+                                .append(",\"capturedAt\":").append(jsonString(entry.capturedAt().toString()))
+                                .append(",\"backends\":").append(jsonString(entry.backends()))
+                                .append(",\"sqlText\":").append(jsonString(entry.sqlText()))
+                                .append(",\"planText\":").append(jsonString(entry.planText()))
+                                .append(",\"elapsedMillis\":").append(entry.elapsedMillis())
+                                .append(",\"rowCount\":").append(entry.rowCount())
+                                .append(",\"success\":").append(entry.success())
+                                .append(",\"errorMessage\":").append(jsonString(entry.errorMessage()))
+                                .append('}');
+                    }
+                    json.append(']');
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(json.toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1255,8 +1316,35 @@ public final class MetricsServer {
         response.getWriter().write(json.toString());
     }
 
+    /** Real bug, found live building {@code /api/federation/plans}: this helper only ever escaped
+     * backslashes and double-quotes -- every earlier caller's own strings happened to be single-
+     * line (names, messages, SQL text without embedded newlines), so a raw, unescaped {@code '\n'}
+     * inside a JSON string value (a real multi-line {@code EXPLAIN PLAN FOR} plan) never surfaced
+     * this gap before. Strict JSON requires every control character be escaped, not just the two
+     * this was handling. */
     private static String jsonString(String s) {
-        return s == null ? "null" : "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        if (s == null) {
+            return "null";
+        }
+        StringBuilder out = new StringBuilder(s.length() + 16).append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"' -> out.append("\\\"");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.append('"').toString();
     }
 
     private static String requireAction(JsonObject body) {

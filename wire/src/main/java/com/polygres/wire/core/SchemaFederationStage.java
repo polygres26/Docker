@@ -53,11 +53,15 @@ import org.slf4j.LoggerFactory;
  * target. A statement referencing 0 or 1 configured schema-rule backends is untouched here and
  * falls straight through to {@link RouterStage}'s own single-backend routing, unchanged.
  *
- * <p><b>Deliberately narrow scope, v1</b> (same discipline as {@link ShardJoinExecutor}'s own
- * javadoc): a fresh Calcite connection built per statement (no connection cache), Calcite's default
- * planner (no cost-based join ordering from real collected statistics -- Omnigate's own
- * {@code StatisticsStore}/{@code StatisticsAwareSchema} machinery is a real, valuable follow-up, not
- * ported here), no native RLS/VPD session pass-through for the federated connection (this
+ * <p><b>Real row-count statistics, real plan history, both optional</b> -- see {@link
+ * ShardJoinExecutor}'s own matching javadoc section for the full reasoning (shared verbatim by both
+ * classes): when {@code statisticsStore} is non-null, every mounted backend's tables are wrapped in
+ * {@link StatisticsAwareSchema}; when {@code planStore} is non-null, a real {@code EXPLAIN PLAN FOR}
+ * plus timing/row-count/success is captured into {@link SqlPlanStore}, ported from the sibling
+ * Omnigate project's own {@code FederationStage}.
+ *
+ * <p><b>Deliberately narrow scope, still</b>: a fresh Calcite connection built per statement (no
+ * connection cache), no native RLS/VPD session pass-through for the federated connection (this
  * statement's own {@code AccessControlStage} row-filter/column-mask SQL rewriting, already run
  * earlier in the pipeline, is the only enforcement for now), and no schema auto-discovery -- every
  * backend mounts exactly the one schema its own {@link RouterStage.SchemaRule} names. Every PolyWire
@@ -72,21 +76,32 @@ public final class SchemaFederationStage implements PipelineStage {
 
     private final List<RouterStage.SchemaRule> schemaRules;
     private final BackendRegistry backendRegistry;
+    private final StatisticsStore statisticsStore;
+    private final SqlPlanStore planStore;
 
     public SchemaFederationStage(List<RouterStage.SchemaRule> schemaRules, BackendRegistry backendRegistry) {
+        this(schemaRules, backendRegistry, null, null);
+    }
+
+    public SchemaFederationStage(List<RouterStage.SchemaRule> schemaRules, BackendRegistry backendRegistry,
+            StatisticsStore statisticsStore, SqlPlanStore planStore) {
         this.schemaRules = List.copyOf(schemaRules);
         this.backendRegistry = backendRegistry;
+        this.statisticsStore = statisticsStore;
+        this.planStore = planStore;
     }
 
     /** {@code null} when fewer than 2 schema rules exist -- federation across a single named
      * backend is meaningless, so there's nothing for this stage to ever do (same "absent means the
      * feature doesn't exist" shape as {@code CacheStage.fromConfigOrNull}); {@code Main} skips
-     * adding it entirely in that case. */
-    public static SchemaFederationStage fromConfigOrNull(RouterStage routerStage, BackendRegistry backendRegistry) {
+     * adding it entirely in that case. {@code statisticsStore}/{@code planStore} may themselves be
+     * {@code null} (neither configured). */
+    public static SchemaFederationStage fromConfigOrNull(RouterStage routerStage, BackendRegistry backendRegistry,
+            StatisticsStore statisticsStore, SqlPlanStore planStore) {
         if (routerStage.schemaRules().size() < 2) {
             return null;
         }
-        return new SchemaFederationStage(routerStage.schemaRules(), backendRegistry);
+        return new SchemaFederationStage(routerStage.schemaRules(), backendRegistry, statisticsStore, planStore);
     }
 
     @Override
@@ -121,7 +136,12 @@ public final class SchemaFederationStage implements PipelineStage {
         // shares no code with ShardJoinExecutor -- see that class's own javadoc for the original
         // finding (itself matching a gap Omnigate's FederationStage already had to work around).
         String sql = stripTrailingSemicolon(statement.sqlText());
-        Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:lex=JAVA;caseSensitive=false");
+        // See ShardJoinExecutor's own matching comment: dropping lex=JAVA keeps this connection's
+        // default identifier quoting (double-quote) consistent with the Frameworks Planner's own
+        // default, so EXPLAIN PLAN FOR (run through this raw connection, not the Planner) parses
+        // correctly.
+        Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:caseSensitive=false");
+        List<Connection> statsConnections = new ArrayList<>();
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
@@ -149,7 +169,14 @@ public final class SchemaFederationStage implements PipelineStage {
                 // specifically (default search_path is "$user,public", not this backend's own
                 // schema).
                 JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, schemaName);
-                rootSchema.add(schemaName, jdbcSchema);
+                if (statisticsStore != null) {
+                    Connection statsConnection = target.open();
+                    statsConnections.add(statsConnection);
+                    rootSchema.add(schemaName, new StatisticsAwareSchema(
+                            jdbcSchema, statsConnection, schemaName, backendName + "." + schemaName, statisticsStore));
+                } else {
+                    rootSchema.add(schemaName, jdbcSchema);
+                }
                 rules.addAll(JdbcRules.rules(convention));
             }
 
@@ -171,12 +198,55 @@ public final class SchemaFederationStage implements PipelineStage {
             } catch (Exception e) {
                 throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, sql, e.getMessage());
             }
+            String backendsLabel = String.join(",", schemaNameToBackendName.values());
+            String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
+            long startNanos = System.nanoTime();
             try (PreparedStatement ps = calciteConnection.unwrap(org.apache.calcite.tools.RelRunner.class)
                     .prepareStatement(optimized)) {
-                return JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
+                ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
+                if (planStore != null) {
+                    long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null);
+                }
+                return result;
+            } catch (SQLException e) {
+                if (planStore != null) {
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage());
+                }
+                throw e;
             }
         } finally {
+            for (Connection statsConnection : statsConnections) {
+                try {
+                    statsConnection.close();
+                } catch (SQLException ignoredOnCleanup) {
+                    // best-effort -- doesn't affect the real query, which already ran (or failed) above
+                }
+            }
             calciteConnection.close();
+        }
+    }
+
+    private static long elapsedMillisSince(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /** As {@link ShardJoinExecutor}'s own matching method -- see its javadoc. */
+    private static String capturePlanTextOrNull(Connection calciteConnection, String sql, String backendsLabel) {
+        try (java.sql.Statement explainStatement = calciteConnection.createStatement();
+                java.sql.ResultSet rs = explainStatement.executeQuery("EXPLAIN PLAN FOR " + sql)) {
+            StringBuilder plan = new StringBuilder();
+            while (rs.next()) {
+                if (plan.length() > 0) {
+                    plan.append('\n');
+                }
+                plan.append(rs.getString(1));
+            }
+            return plan.toString();
+        } catch (SQLException e) {
+            log.warn("schema federation: EXPLAIN PLAN FOR failed for backends {} -- plan history will show no "
+                    + "plan text for this entry, real query is unaffected ({})", backendsLabel, e.toString());
+            return null;
         }
     }
 

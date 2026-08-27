@@ -53,7 +53,45 @@ public final class RouterStage implements PipelineStage {
     private volatile List<ValueShardColumnRule> valueShardColumnRules;
     private volatile List<ShardRule> shardRules;
 
+    // Set once, after construction (see setFederationSupport) -- not threaded through RouterStage's
+    // own many constructor overloads (every existing caller/test would need updating for something
+    // orthogonal to routing itself). Shared by reference with ShardJoinExecutor/SchemaFederationStage
+    // so every federated query -- regardless of which of the two problem shapes it hits -- reads and
+    // writes the SAME StatisticsStore/SqlPlanStore, not one per stage.
+    private volatile StatisticsStore statisticsStore;
+    private volatile SqlPlanStore planStore;
+
     private final BackendRegistry backendRegistry;
+
+    /** Called once from {@code Main} right after both are constructed -- see this field pair's own
+     * comment for why they're not threaded through a constructor instead. */
+    public void setFederationSupport(StatisticsStore statisticsStore, SqlPlanStore planStore) {
+        this.statisticsStore = statisticsStore;
+        this.planStore = planStore;
+    }
+
+    /** Same "find the one instance of this stage in the shared pipeline stage list" convention as
+     * {@link #shardRulesIn}/{@link StatsCollectorStage#findIn} -- {@code null} if absent, or if
+     * present but {@link #setFederationSupport} was never called (statistics collection not
+     * configured). */
+    public static StatisticsStore statisticsStoreIn(List<PipelineStage> stages) {
+        for (PipelineStage stage : stages) {
+            if (stage instanceof RouterStage router) {
+                return router.statisticsStore;
+            }
+        }
+        return null;
+    }
+
+    /** As {@link #statisticsStoreIn}, for the plan-history store. */
+    public static SqlPlanStore planStoreIn(List<PipelineStage> stages) {
+        for (PipelineStage stage : stages) {
+            if (stage instanceof RouterStage router) {
+                return router.planStore;
+            }
+        }
+        return null;
+    }
 
     public RouterStage() {
         this(List.of(), List.of(), List.of(), List.of(), List.of(), null);

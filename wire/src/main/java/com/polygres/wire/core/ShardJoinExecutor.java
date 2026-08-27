@@ -47,11 +47,23 @@ import org.slf4j.LoggerFactory;
  * concatenate/merge" shape, which is silently wrong the moment a matching row pair spans two shards
  * (never found on either shard alone, and no error raised -- see this class's own introduction).
  *
- * <p><b>Deliberately narrow scope, v1</b>: single Calcite connection built fresh per statement (no
- * connection cache, no cost-based join ordering from real collected statistics, no bloom-filter/
- * semi-join pushdown to cut what's shipped between shards before the join -- all real, valuable
- * follow-ups, not implemented here), and Calcite's own default planner/rule set (the same one
- * {@link RollupStage} already relies on for its own real, tested Calcite integration). A
+ * <p><b>Real row-count statistics, real plan history, both optional</b>: when {@code
+ * statisticsStore} is non-null, every mounted shard table is wrapped in {@link
+ * StatisticsAwareSchema} so Calcite's own join-order cost model sees a real {@code
+ * pg_class.reltuples}-based row count instead of {@code Statistics.UNKNOWN} -- {@link
+ * StatisticsScheduler} keeps it warm in the background; a cold cache still gets a real number via
+ * an on-demand probe. When {@code planStore} is non-null, this method captures a real
+ * {@code EXPLAIN PLAN FOR} of the federated query plus its own timing/row-count/success into
+ * {@link SqlPlanStore} -- ported from the sibling Omnigate project's own {@code FederationStage}.
+ * Both degrade to "not done" (not an error) when their store is {@code null} -- not configured.
+ *
+ * <p><b>Deliberately narrow scope, still</b>: single Calcite connection built fresh per statement
+ * (no connection cache), no bloom-filter/semi-join pushdown to cut what's shipped between shards
+ * before the join (a real, valuable follow-up, not implemented here), and Calcite's own default
+ * planner/rule set (the same one {@link RollupStage} already relies on for its own real, tested
+ * Calcite integration) -- no column NDV/selectivity statistics or Omnigate's own opt-in embedded-
+ * planner cost path, row counts alone are already a real improvement over {@code Statistics.UNKNOWN}
+ * on their own. A
  * shard-qualified table referenced without an explicit alias where SQL requires one for a derived
  * table (this class turns {@code schema.table} into a parenthesized {@code UNION ALL} subquery,
  * which -- like any derived table -- needs an alias) surfaces as a real, clear Calcite parse error
@@ -88,14 +100,26 @@ final class ShardJoinExecutor {
     }
 
     static ExecutionResult execute(BackendRegistry registry, List<String> shardNames, String schemaName,
-            Statement statement) throws SQLException {
+            Statement statement, StatisticsStore statisticsStore, SqlPlanStore planStore) throws SQLException {
         // Real bug, found live: Calcite's own SQL parser rejects a trailing ';' outright ("parse
         // failed: Encountered \";\" ...") -- the exact same gap Omnigate's FederationStage already
         // documented and worked around (its own stripTrailingSemicolon), hit here independently
         // since this class doesn't share code with it.
         String sql = stripTrailingSemicolon(statement.sqlText());
         Set<String> tables = distinctShardTables(schemaName, sql);
-        Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:lex=JAVA;caseSensitive=false");
+        // Real bug, found live via the plan-history feature itself: "lex=JAVA" quotes identifiers
+        // with backticks, not the double-quotes this class's own UNION-rewrite generates
+        // (`"__polywire_shardN"`) -- the Frameworks Planner above still parsed fine (its own
+        // parserConfig defaults to double-quote regardless of this connection's lex setting), but
+        // EXPLAIN PLAN FOR runs through THIS raw connection's own default parser, which choked on
+        // the stray `"` under lex=JAVA. Dropping lex=JAVA (default lex already double-quotes,
+        // matching both this class's own rewrite and the Planner's default) fixes it without
+        // touching case-sensitivity behavior, which caseSensitive=false already controls directly.
+        Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:caseSensitive=false");
+        // One real connection per shard, held open only long enough to mount that shard's schema
+        // (and, when statisticsStore != null, to probe its own real row counts) -- closed in the
+        // same finally block as calciteConnection, never reused across statements.
+        List<Connection> statsConnections = new ArrayList<>();
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
@@ -103,9 +127,10 @@ final class ShardJoinExecutor {
             List<String> shardMountNames = new ArrayList<>();
             SqlDialect dialect = null;
             for (int i = 0; i < shardNames.size(); i++) {
-                BackendTarget target = registry.resolveForRouting(shardNames.get(i));
+                String shardName = shardNames.get(i);
+                BackendTarget target = registry.resolveForRouting(shardName);
                 if (target == null) {
-                    throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardNames.get(i));
+                    throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
                 }
                 String mountName = "__polywire_shard" + i;
                 shardMountNames.add(mountName);
@@ -119,7 +144,14 @@ final class ShardJoinExecutor {
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, mountName, JdbcSchema.class);
                 JdbcConvention convention = JdbcConvention.of(dialect, expression, mountName);
                 JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, schemaName);
-                rootSchema.add(mountName, jdbcSchema);
+                if (statisticsStore != null) {
+                    Connection statsConnection = target.open();
+                    statsConnections.add(statsConnection);
+                    rootSchema.add(mountName, new StatisticsAwareSchema(
+                            jdbcSchema, statsConnection, schemaName, shardName + "." + schemaName, statisticsStore));
+                } else {
+                    rootSchema.add(mountName, jdbcSchema);
+                }
                 rules.addAll(JdbcRules.rules(convention));
             }
 
@@ -163,12 +195,59 @@ final class ShardJoinExecutor {
             }
             log.info("cross-shard join: \"{}\" -> federated across {} shard(s) for schema \"{}\"",
                     sql, shardNames.size(), schemaName);
+            String backendsLabel = String.join(",", shardNames);
+            String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, rewrittenSql, backendsLabel);
+            long startNanos = System.nanoTime();
             try (PreparedStatement ps = calciteConnection.unwrap(org.apache.calcite.tools.RelRunner.class)
                     .prepareStatement(optimized)) {
-                return JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
+                ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
+                if (planStore != null) {
+                    long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null);
+                }
+                return result;
+            } catch (SQLException e) {
+                if (planStore != null) {
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage());
+                }
+                throw e;
             }
         } finally {
+            for (Connection statsConnection : statsConnections) {
+                try {
+                    statsConnection.close();
+                } catch (SQLException ignoredOnCleanup) {
+                    // best-effort -- a stats probe connection failing to close cleanly doesn't
+                    // affect the real query, which already ran (or failed) above
+                }
+            }
             calciteConnection.close();
+        }
+    }
+
+    private static long elapsedMillisSince(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /** {@code EXPLAIN PLAN FOR <sql>} on the same federated Calcite connection the real query is
+     * about to run on -- Calcite supports this natively (own JDBC extension, not standard SQL), and
+     * it's cheap: pure planning, no backend round trip. Ported from Omnigate's own
+     * {@code FederationStage#captureExplainPlanOrNull}. */
+    private static String capturePlanTextOrNull(Connection calciteConnection, String sql, String backendsLabel) {
+        try (java.sql.Statement explainStatement = calciteConnection.createStatement();
+                java.sql.ResultSet rs = explainStatement.executeQuery("EXPLAIN PLAN FOR " + sql)) {
+            StringBuilder plan = new StringBuilder();
+            while (rs.next()) {
+                if (plan.length() > 0) {
+                    plan.append('\n');
+                }
+                plan.append(rs.getString(1));
+            }
+            return plan.toString();
+        } catch (SQLException e) {
+            log.warn("cross-shard join: EXPLAIN PLAN FOR failed for shards {} -- plan history will show no "
+                    + "plan text for this entry, real query is unaffected ({})", backendsLabel, e.toString());
+            return null;
         }
     }
 

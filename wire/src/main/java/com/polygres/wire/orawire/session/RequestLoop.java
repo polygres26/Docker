@@ -189,7 +189,10 @@ public final class RequestLoop {
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.reusablePipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
-                new com.polygres.wire.xa.XaRecoveryLog(options)));
+                new com.polygres.wire.xa.XaRecoveryLog(options),
+                com.polygres.wire.core.RouterStage.shardRulesIn(sharedStages))
+                .withFederationSupport(com.polygres.wire.core.RouterStage.statisticsStoreIn(sharedStages),
+                        com.polygres.wire.core.RouterStage.planStoreIn(sharedStages)));
     }
 
     public void run() throws IOException {
