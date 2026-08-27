@@ -33,15 +33,29 @@ WORKDIR /app
 
 RUN groupadd --system polywire && useradd --system --gid polywire --home-dir /app polywire
 
-COPY --from=build /build/target/polygres-wire.jar /app/polygres-wire.jar
-COPY --from=web-build /build/dist /app/web
+# /app itself (the directory WORKDIR created, owned by root) needs to be writable by polywire at
+# RUNTIME too, not just its contents readable -- PolyWireCluster creates ignite/work under here on
+# startup whenever caching is enabled (POLYWIRE_CACHE_TABLES), and that mkdir fails without it
+# (found live: "Work directory does not exist and cannot be created" -- a real regression the
+# --chown-only version below introduced, since --chown on a COPY only touches the files it copies
+# in, never the pre-existing parent directory). This chown is cheap (an empty directory inode, not
+# a large file) so it doesn't reintroduce the layer-duplication cost this whole change is about
+# avoiding.
+RUN chown polywire:polywire /app
+
+# --chown here, not a separate `RUN chown -R /app` after -- that used to write a whole SECOND
+# ~111MB layer (Docker's layer model can't patch ownership in place; changing it after the fact
+# means a full new copy of everything under /app), doubling this jar's real footprint in the
+# image for zero benefit. --chown sets ownership as part of the same COPY layer instead -- same
+# final files, same owner, same permissions, just without paying for them twice.
+COPY --from=build --chown=polywire:polywire /build/target/polygres-wire.jar /app/polygres-wire.jar
+COPY --from=web-build --chown=polywire:polywire /build/dist /app/web
 
 # POLYWIRE_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
 # its own embedded Jetty (SpaResourceHandler) on the admin/metrics port -- unset this env var to
 # run API-only (the JSON admin API still works either way; this only controls whether the browser
 # UI is also served on the same port).
 ENV POLYWIRE_ADMIN_WEB_DIR=/app/web
-RUN chown -R polywire:polywire /app
 USER polywire
 
 # Every TCP/HTTP frontend PolyWire can start -- see ServerOptions.java/Main.java for the full,
