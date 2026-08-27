@@ -53,6 +53,16 @@ final class PgGraphStore {
         return target;
     }
 
+    /** Opens one pooled connection for a whole Bolt session to reuse across every RUN it sends,
+     * with the schema already ensured -- see {@link BoltWireSessionHandler}'s own "one connection
+     * per session" javadoc for why this replaced opening (and immediately returning) a fresh
+     * pooled connection on every single query. */
+    Connection connect() throws SQLException {
+        BackendTarget target = defaultTarget();
+        ensureSchema(target);
+        return target.open();
+    }
+
     private void ensureSchema(BackendTarget target) throws SQLException {
         if (!schemaEnsured.compareAndSet(false, true)) {
             return;
@@ -112,23 +122,24 @@ final class PgGraphStore {
         }
     }
 
-    /** Runs {@code action} against a single connection with the schema already ensured -- every
-     * write in one Cypher statement (a node, or a node+edge+node) shares one connection/
-     * transaction, so a partial failure (e.g. the edge insert failing after the first node
-     * succeeded) rolls back cleanly instead of leaving an orphaned node. */
-    <T> T withConnection(SqlAction<T> action) throws SQLException {
-        BackendTarget target = defaultTarget();
-        ensureSchema(target);
-        try (Connection c = target.open()) {
-            c.setAutoCommit(false);
-            try {
-                T result = action.run(c);
-                c.commit();
-                return result;
-            } catch (SQLException | RuntimeException e) {
-                c.rollback();
-                throw e;
-            }
+    /** Runs {@code action} as one transaction against the caller's own already-open connection
+     * (see {@link #connect()}) -- every write in one Cypher statement (a node, or a node+edge+node)
+     * shares one transaction, so a partial failure (e.g. the edge insert failing after the first
+     * node succeeded) rolls back cleanly instead of leaving an orphaned node. Toggles
+     * {@code autoCommit} off for the transaction and back on afterward rather than closing the
+     * connection -- unlike the old per-call {@code target.open()} this replaced, {@code c} is a
+     * whole Bolt session's own connection, reused by later RUNs too. */
+    <T> T withConnection(Connection c, SqlAction<T> action) throws SQLException {
+        c.setAutoCommit(false);
+        try {
+            T result = action.run(c);
+            c.commit();
+            return result;
+        } catch (SQLException | RuntimeException e) {
+            c.rollback();
+            throw e;
+        } finally {
+            c.setAutoCommit(true);
         }
     }
 
