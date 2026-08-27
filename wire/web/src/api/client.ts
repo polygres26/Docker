@@ -275,6 +275,42 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
   return api(`/api/backends/${encodeURIComponent(name)}/test`, { method: 'POST' })
 }
 
+// --- Federation plan history: /api/federation/plans (ShardJoinExecutor/SchemaFederationStage's
+// own real, captured Calcite EXPLAIN PLAN FOR history -- see MetricsServer's own javadoc on the
+// route). 404s (not an error to surface as one) when POLYWIRE_FEDERATION_PLAN_HISTORY isn't set --
+// the page itself renders the "not enabled" explanation for that case, same as Queues does for
+// sqswire not being configured. ---
+
+export interface FederationPlanEntry {
+  planId: number
+  capturedAt: string
+  backends: string
+  sqlText: string
+  planText: string | null
+  elapsedMillis: number
+  rowCount: number
+  success: boolean
+  errorMessage: string | null
+}
+
+export class FederationPlansNotEnabledError extends Error {}
+
+export async function listFederationPlans(): Promise<FederationPlanEntry[]> {
+  try {
+    return await api('/api/federation/plans')
+  } catch (e) {
+    // api() surfaces a non-2xx response as Error(body.error) when the server sent a JSON error
+    // body (see api()'s own implementation below) -- MetricsServer's own 404 for this route
+    // always carries exactly this message (its own literal string, matched here verbatim) when
+    // POLYWIRE_FEDERATION_PLAN_HISTORY isn't set, which means "the route doesn't exist because
+    // this feature isn't configured," not a real failure.
+    if (e instanceof Error && e.message.includes('federation plan history is not enabled')) {
+      throw new FederationPlansNotEnabledError(e.message)
+    }
+    throw e
+  }
+}
+
 // --- sqswire queues: /api/queues ---
 
 export interface QueueInfo {

@@ -13,6 +13,7 @@ import DataExplorer from './pages/DataExplorer'
 import RouterRules from './pages/RouterRules'
 import Qos from './pages/Qos'
 import LlmConfig from './pages/LlmConfig'
+import FederationPlans from './pages/FederationPlans'
 
 /** Gate: redirects to /connect unless a base URL + token are already sitting in sessionStorage.
  * Unlike advisor's RequireAuth, this never calls the server to check -- PolyWire's admin API has
@@ -38,6 +39,7 @@ export default function App() {
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
       <Route path="/router" element={<RequireAuth><RouterRules /></RequireAuth>} />
       <Route path="/qos" element={<RequireAuth><Qos /></RequireAuth>} />
+      <Route path="/federation-plans" element={<RequireAuth><FederationPlans /></RequireAuth>} />
       <Route path="/llm-config" element={<RequireAuth><LlmConfig /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/metrics" replace />} />
     </Routes>
