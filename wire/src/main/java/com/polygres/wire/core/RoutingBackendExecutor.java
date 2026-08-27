@@ -24,6 +24,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     private final BackendExecutor defaultExecutor;
     private final XaRecoveryLog recoveryLog;
     private final List<RouterStage.ShardRule> shardRules;
+    private final List<RouterStage.TableShardRule> tableShardRules;
     // Set via withFederationSupport, not a constructor param -- same "orthogonal, set once after
     // construction" reasoning as RouterStage's own matching pair; both nullable, meaning "not
     // configured" (ShardJoinExecutor degrades to Calcite's default Statistics.UNKNOWN / no plan
@@ -60,10 +61,24 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * this codebase, not an error. */
     public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor, XaRecoveryLog recoveryLog,
             List<RouterStage.ShardRule> shardRules) {
+        this(registry, defaultExecutor, recoveryLog, shardRules, List.of());
+    }
+
+    /** As the other constructor, plus {@code tableShardRules} (see {@link RouterStage#tableShardRulesIn})
+     * -- lets {@link #executeScatterGather} resolve THIS statement's own real shard set from its
+     * matched table's own {@link RouterStage.TableShardRule} (via {@link
+     * ShardingStrategy#allBackends}) instead of unconditionally using {@code registry.shardGroup()},
+     * which is the one, project-wide shard list {@code POLYWIRE_SHARD_BACKENDS} configures -- a
+     * real, declaratively-sharded table's own shard set can be a different subset (or even a
+     * disjoint list) of backends. Empty means "no declaratively-sharded tables configured", the
+     * same "absent means the feature doesn't exist" shape {@code shardRules} already has. */
+    public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor, XaRecoveryLog recoveryLog,
+            List<RouterStage.ShardRule> shardRules, List<RouterStage.TableShardRule> tableShardRules) {
         this.registry = registry;
         this.defaultExecutor = defaultExecutor;
         this.recoveryLog = recoveryLog;
         this.shardRules = List.copyOf(shardRules);
+        this.tableShardRules = List.copyOf(tableShardRules);
     }
 
     /** Fluent, so a call site can chain it right onto the constructor -- see
@@ -192,6 +207,29 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (!statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
         }
+
+        // Real, declarative per-table sharding (POLYWIRE_TABLE_SHARDS) takes priority when it
+        // matches: this table's own declared shard set (from its own ShardingStrategy) is what
+        // gets scattered/joined across, NOT necessarily the same registry.shardGroup() every OTHER
+        // table shares -- a table declared with its own backend list can be a disjoint subset.
+        // Falls straight through, unchanged, to the schema-qualified ShardRule/registry.shardGroup()
+        // path below when no table-shard rule matches this statement at all.
+        List<RouterStage.TableShardRule> matchedTableRules = matchedTableShardRules(statement.sqlText());
+        if (!matchedTableRules.isEmpty()) {
+            List<String> tableShardNames = unionOfAllBackends(matchedTableRules);
+            List<RouterStage.TableShardRule> joinRules =
+                    ShardJoinExecutor.matchedTableShardRules(matchedTableRules, statement.sqlText());
+            if (!joinRules.isEmpty()) {
+                java.util.Set<String> tableNames = new java.util.LinkedHashSet<>();
+                for (RouterStage.TableShardRule rule : joinRules) {
+                    tableNames.add(rule.tableName());
+                }
+                return ShardJoinExecutor.executeByTableNames(registry, tableShardNames, tableNames, "public",
+                        statement, statisticsStore, planStore);
+            }
+            return scatterAcross(tableShardNames, statement);
+        }
+
         List<String> shardNames = registry.shardGroup();
         if (shardNames.isEmpty()) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_NOT_CONFIGURED");
@@ -209,6 +247,37 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (matchedSchema != null) {
             return ShardJoinExecutor.execute(registry, shardNames, matchedSchema, statement, statisticsStore, planStore);
         }
+        return scatterAcross(shardNames, statement);
+    }
+
+    /** @return every configured {@link RouterStage.TableShardRule} whose bare table name is
+     *     actually referenced in {@code sql} -- regardless of whether it's a JOIN or a plain
+     *     scatter, unlike {@link ShardJoinExecutor#matchedTableShardRules}, which additionally
+     *     requires a JOIN keyword. */
+    private List<RouterStage.TableShardRule> matchedTableShardRules(String sql) {
+        List<RouterStage.TableShardRule> matched = new ArrayList<>();
+        for (RouterStage.TableShardRule rule : tableShardRules) {
+            if (rule.tablePattern().matcher(sql).find()) {
+                matched.add(rule);
+            }
+        }
+        return matched;
+    }
+
+    private static List<String> unionOfAllBackends(List<RouterStage.TableShardRule> rules) {
+        java.util.LinkedHashSet<String> all = new java.util.LinkedHashSet<>();
+        for (RouterStage.TableShardRule rule : rules) {
+            all.addAll(ShardingStrategy.allBackends(rule.strategy()));
+        }
+        return List.copyOf(all);
+    }
+
+    /** The real, existing aggregate-merge/plain-append scatter-gather logic -- extracted so both
+     * the schema-qualified {@link RouterStage.ShardRule} path (its own {@code registry.shardGroup()})
+     * and the declarative {@link RouterStage.TableShardRule} path (its own matched table's shard
+     * set) can share it unchanged; neither the ORDER BY/LIMIT rewriting nor the aggregate-vs-plain
+     * dispatch below cares which path produced {@code shardNames}. */
+    private ExecutionResult scatterAcross(List<String> shardNames, Statement statement) throws SQLException {
 
         // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this
         // used to always append raw per-shard rows unchanged, which is correct for a plain SELECT

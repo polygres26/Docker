@@ -83,7 +83,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.pipeline = new StatementPipeline(sharedStages,
                 new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
                 new com.polygres.wire.xa.XaRecoveryLog(options),
-                com.polygres.wire.core.RouterStage.shardRulesIn(sharedStages))
+                com.polygres.wire.core.RouterStage.shardRulesIn(sharedStages), com.polygres.wire.core.RouterStage.tableShardRulesIn(sharedStages))
                 .withFederationSupport(com.polygres.wire.core.RouterStage.statisticsStoreIn(sharedStages),
                         com.polygres.wire.core.RouterStage.planStoreIn(sharedStages)));
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);

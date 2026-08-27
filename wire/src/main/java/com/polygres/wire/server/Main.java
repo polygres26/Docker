@@ -256,13 +256,15 @@ public final class Main {
                 config.routerPredicateRules(),
                 config.routerValueShardRules(),
                 config.routerShardTables(),
+                config.routerTableShards(),
                 backendRegistry);
         log.info("router: {} schema rule(s), {} predicate rule(s), {} value-shard rule(s) "
-                        + "({} bind-param-indexed, {} literal-column), {} shard-table rule(s)",
+                        + "({} bind-param-indexed, {} literal-column), {} shard-table rule(s), "
+                        + "{} declarative table-shard rule(s)",
                 routerStage.schemaRules().size(), routerStage.predicateRules().size(),
                 routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size(),
                 routerStage.valueShardRules().size(), routerStage.valueShardColumnRules().size(),
-                routerStage.shardRules().size());
+                routerStage.shardRules().size(), routerStage.tableShardRules().size());
         // Real row-count statistics + plan history for BOTH federation stages (ShardJoinExecutor,
         // reached later via RoutingBackendExecutor, and schemaFederationStage right below) -- one
         // shared StatisticsStore/SqlPlanStore instance for the whole process, set onto routerStage
@@ -486,7 +488,7 @@ public final class Main {
                     c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
             qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
             routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
-                    c.routerValueShardRules(), c.routerShardTables());
+                    c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards());
             backendRegistry.reload(c.backends(), c.shardBackends());
             if (cacheStage != null) {
                 cacheStage.reconfigure(c.cacheTables(), c.cacheTtlMs());
@@ -514,7 +516,7 @@ public final class Main {
                     newVersion.version(), c.qosRatePerSec(), c.qosBurst(),
                     routerStage.schemaRules().size() + routerStage.predicateRules().size()
                             + routerStage.valueShardRules().size() + routerStage.valueShardColumnRules().size()
-                            + routerStage.shardRules().size(),
+                            + routerStage.shardRules().size() + routerStage.tableShardRules().size(),
                     backendRegistry.all().size(), cacheStage != null, newRollups.size(),
                     clientAcl.hasRules() ? "some" : "0", c.oauthIssuer() == null ? "disabled" : "enabled",
                     awsIamCredentials.isEnabled() ? "some" : "0");

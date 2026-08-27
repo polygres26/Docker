@@ -107,8 +107,55 @@ final class ShardJoinExecutor {
         return null;
     }
 
+    /** As {@link #matchedShardSchema}, for {@link RouterStage.TableShardRule}s -- returns EVERY
+     * configured table-shard rule whose bare table name is actually referenced in {@code sql}
+     * (not just the first, unlike the schema-based version above): a real cross-shard JOIN
+     * ordinarily involves exactly two DIFFERENT declaratively-sharded tables (see this project's
+     * own {@code customers JOIN orders} example), so collecting all of them here is what makes
+     * {@link #executeByTableNames} actually able to mount and union BOTH sides, not just one.
+     * Empty (not {@code null}) when there's no JOIN at all, or no configured table is referenced --
+     * the caller falls through to the existing scatter-gather path unchanged, same shape as {@link
+     * #matchedShardSchema}. */
+    static List<RouterStage.TableShardRule> matchedTableShardRules(List<RouterStage.TableShardRule> tableShardRules, String sql) {
+        if (tableShardRules.isEmpty() || !JOIN_KEYWORD.matcher(sql).find()) {
+            return List.of();
+        }
+        List<RouterStage.TableShardRule> matched = new ArrayList<>();
+        for (RouterStage.TableShardRule rule : tableShardRules) {
+            if (rule.tablePattern().matcher(sql).find()) {
+                matched.add(rule);
+            }
+        }
+        return matched;
+    }
+
     static ExecutionResult execute(BackendRegistry registry, List<String> shardNames, String schemaName,
             Statement statement, StatisticsStore statisticsStore, SqlPlanStore planStore) throws SQLException {
+        Set<String> tables = distinctShardTables(schemaName, statement.sqlText());
+        return execute(registry, shardNames, tables, table -> schemaName + "." + table, schemaName,
+                statement, statisticsStore, planStore);
+    }
+
+    /** As {@link #execute(BackendRegistry, List, String, Statement, StatisticsStore, SqlPlanStore)},
+     * for {@link RouterStage.TableShardRule}-matched tables instead of a {@link
+     * RouterStage.ShardRule}-matched schema -- the query references each table by its own BARE
+     * name (no schema-qualifier prefix needed at all, see {@link RouterStage.TableShardRule}'s own
+     * javadoc for why), so the literal text matched/replaced in the query is just the table name
+     * itself, not {@code schema.table}. {@code pgSchemaName} is still needed, separately, for real
+     * JDBC introspection of each shard's own physical Postgres schema (which real backend schema
+     * to mount tables FROM) and for {@link StatisticsStore}'s own {@code pg_class.reltuples}
+     * lookup -- {@code "public"} for every real, disclosed use of this method today (a table
+     * declared in a non-default physical Postgres schema isn't supported by {@code
+     * POLYWIRE_TABLE_SHARDS} yet). */
+    static ExecutionResult executeByTableNames(BackendRegistry registry, List<String> shardNames, Set<String> tables,
+            String pgSchemaName, Statement statement, StatisticsStore statisticsStore, SqlPlanStore planStore)
+            throws SQLException {
+        return execute(registry, shardNames, tables, table -> table, pgSchemaName, statement, statisticsStore, planStore);
+    }
+
+    private static ExecutionResult execute(BackendRegistry registry, List<String> shardNames, Set<String> tables,
+            java.util.function.UnaryOperator<String> refFor, String pgSchemaName, Statement statement,
+            StatisticsStore statisticsStore, SqlPlanStore planStore) throws SQLException {
         // Real bug, found live: Calcite's own SQL parser rejects a trailing ';' outright ("parse
         // failed: Encountered \";\" ...") -- the exact same gap Omnigate's FederationStage already
         // documented and worked around (its own stripTrailingSemicolon), hit here independently
@@ -119,7 +166,6 @@ final class ShardJoinExecutor {
         // subquery); the client's own original statement text is what should show up in
         // SqlPlanStore, not that rewriting.
         String originalSql = sql;
-        Set<String> tables = distinctShardTables(schemaName, sql);
         // Real bug, found live via the plan-history feature itself: "lex=JAVA" quotes identifiers
         // with backticks, not the double-quotes this class's own UNION-rewrite generates
         // (`"__polywire_shardN"`) -- the Frameworks Planner above still parsed fine (its own
@@ -162,12 +208,12 @@ final class ShardJoinExecutor {
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, mountName, JdbcSchema.class);
                 JdbcConvention convention = JdbcConvention.of(dialect, expression, mountName);
-                JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, schemaName);
+                JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, pgSchemaName);
                 if (statisticsStore != null) {
                     Connection statsConnection = target.open();
                     statsConnections.add(statsConnection);
                     rootSchema.add(mountName, new StatisticsAwareSchema(
-                            jdbcSchema, statsConnection, schemaName, shardName + "." + schemaName, statisticsStore));
+                            jdbcSchema, statsConnection, pgSchemaName, shardName + "." + pgSchemaName, statisticsStore));
                 } else {
                     rootSchema.add(mountName, jdbcSchema);
                 }
@@ -196,19 +242,21 @@ final class ShardJoinExecutor {
             // for BOTH of exactly 2 distinct tables; degrades to "no pushdown" (sql/tableToUnionSource
             // stay as built above) the instant anything is ambiguous, never a wrong answer.
             if (statisticsStore != null && tables.size() == 2) {
-                sql = applySemiJoinPushdown(sql, tableToUnionSource, shardNames, schemaName, statsConnections,
+                sql = applySemiJoinPushdown(sql, tableToUnionSource, shardNames, refFor, pgSchemaName, statsConnections,
                         statisticsStore, calciteConnection);
             }
 
             String rewrittenSql = sql;
             for (Map.Entry<String, String> entry : tableToUnionSource.entrySet()) {
                 String union = "(" + entry.getValue() + ")";
-                // Replaces every occurrence of "schemaName.table" (a real word-boundary match, not
-                // a naive substring replace -- won't touch "shard.orders_archive" while replacing
-                // "shard.orders"), leaving anything the client wrote immediately after it (an
-                // explicit alias, or nothing) completely untouched -- see this class's own javadoc
-                // on why a missing alias surfaces as a real Calcite parse error, not silently.
-                rewrittenSql = Pattern.compile("(?i)\\b" + Pattern.quote(schemaName) + "\\." + Pattern.quote(entry.getKey()) + "\\b")
+                // Replaces every occurrence of the table's own configured reference text (a real
+                // word-boundary match, not a naive substring replace -- won't touch
+                // "shard.orders_archive" while replacing "shard.orders", and won't touch
+                // "customer_orders" while replacing bare "orders"), leaving anything the client
+                // wrote immediately after it (an explicit alias, or nothing) completely untouched
+                // -- see this class's own javadoc on why a missing alias surfaces as a real Calcite
+                // parse error, not silently.
+                rewrittenSql = Pattern.compile("(?i)\\b" + Pattern.quote(refFor.apply(entry.getKey())) + "\\b")
                         .matcher(rewrittenSql)
                         .replaceAll(Matcher.quoteReplacement(union));
             }
@@ -231,8 +279,8 @@ final class ShardJoinExecutor {
             } catch (Exception e) {
                 throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, originalSql, e.getMessage());
             }
-            log.info("cross-shard join: \"{}\" -> federated across {} shard(s) for schema \"{}\"",
-                    originalSql, shardNames.size(), schemaName);
+            log.info("cross-shard join: \"{}\" -> federated across {} shard(s) for table(s) {}",
+                    originalSql, shardNames.size(), tables);
             String backendsLabel = String.join(",", shardNames);
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, rewrittenSql, backendsLabel);
             // Real, measured per-shard row count/timing -- see LeafScanProfiler's own javadoc for
@@ -280,19 +328,19 @@ final class ShardJoinExecutor {
      *     own javadoc for the full reasoning; this never risks the real query's correctness, only
      *     whether it gets the extra filter. */
     private static String applySemiJoinPushdown(String sql, Map<String, String> tableToUnionSource,
-            List<String> shardNames, String schemaName, List<Connection> statsConnections,
-            StatisticsStore statisticsStore, Connection calciteConnection) {
+            List<String> shardNames, java.util.function.UnaryOperator<String> refFor, String pgSchemaName,
+            List<Connection> statsConnections, StatisticsStore statisticsStore, Connection calciteConnection) {
         Map<String, String> refToSource = new LinkedHashMap<>();
         Map<String, Long> refToRowCount = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : tableToUnionSource.entrySet()) {
             String table = entry.getKey();
-            String ref = schemaName + "." + table;
+            String ref = refFor.apply(table);
             refToSource.put(ref, entry.getValue());
             long total = 0;
             boolean allKnown = true;
             for (int i = 0; i < shardNames.size(); i++) {
                 Long rowCount = statisticsStore.rowCount(statsConnections.get(i),
-                        shardNames.get(i) + "." + schemaName + "." + table, schemaName, table);
+                        shardNames.get(i) + "." + pgSchemaName + "." + table, pgSchemaName, table);
                 if (rowCount == null) {
                     allKnown = false;
                     break;

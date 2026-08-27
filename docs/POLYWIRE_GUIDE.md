@@ -354,6 +354,36 @@ own row-filter/column-mask SQL rewriting, run earlier in the pipeline, is the on
 and a statement referencing more than 2 federated backends in one query falls straight through to
 scatter-gather's own broadcast-and-merge behavior, unfiltered.
 
+**Real, declarative per-table sharding (`POLYWIRE_TABLE_SHARDS`).** Everything above (`ShardRule`)
+needs a client to type a schema-qualifier prefix like `public.` in every query just to opt a
+statement into scatter-gather — a real footgun (a client that queries `orders` unqualified, which
+is completely normal, silently misses sharding and only ever sees one shard's own data) and not
+how a table's own partitioning should actually work: it should be transparent, keyed by the
+table's own bare name, with the query planner picking the fastest real path on its own.
+`POLYWIRE_TABLE_SHARDS` is that: one declaration per table, `table:strategy:column:params`
+(`|`-delimited between tables), reusing `ShardingStrategy` (hash/consistent/list/range/date, the
+same real strategies `POLYWIRE_ROUTER_VALUE_SHARD_RULES` already has) —
+`orders:hash:customer_id:shard1,shard2,shard3`. The table's own bare name is matched directly (no
+qualifier needed anywhere), and the router picks the real fastest path per statement:
+
+- A query that supplies a real literal value for the declared partition column (`WHERE
+  customer_id = 42`) routes straight to the ONE shard `ShardingStrategy#resolve` says owns it —
+  no scatter, no merge, same cost as a single-backend query. Same real, disclosed limitation
+  `ValueShardColumnRule` already has: a client that BOUND the value as a parameter instead of a
+  literal isn't detected this way (no real SQL parser threading bind positions back to column
+  names) and just falls through to the path below instead — correct, not the fastest available.
+- A query that doesn't (a full-table aggregate, or a `JOIN` of two declaratively-sharded tables)
+  transparently falls back to scatter-gather (or a real federated `JOIN`, `ShardJoinExecutor`)
+  across exactly THIS table's own declared shard set (`ShardingStrategy#allBackends`) — which can
+  be a different subset of backends than any OTHER declaratively-sharded table uses, unlike
+  `ShardRule`'s one shared `registry.shardGroup()`.
+
+`POLYWIRE_ROUTER_SHARD_TABLES`/`POLYWIRE_ROUTER_VALUE_SHARD_RULES` keep working unchanged for
+anyone not migrating — this is additive, not a replacement. Real vertical/functional sharding
+(a whole table routed to one specific backend, no partitioning) is unaffected too; that's still
+`POLYWIRE_ROUTER_SCHEMA_RULES` (§4.3's own `SchemaFederationStage`), a real, already-correctly-
+scoped mechanism this doesn't duplicate.
+
 ### 4.4 Multiple backend engines (top-5-by-DB-Engines-ranking, alongside Postgres)
 
 PolyWire used to be Postgres-only end to end, by explicit design (`BackendRegistry`/

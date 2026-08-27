@@ -115,6 +115,57 @@ public sealed interface ShardingStrategy {
         return new RangeStrategy(ranges);
     }
 
+    record DateRangeEntry(java.time.LocalDate low, java.time.LocalDate high, String backend) {
+    }
+
+    /** As {@link RangeStrategy}, but compares real {@link java.time.LocalDate} values (ISO-8601,
+     * {@code yyyy-MM-dd}) instead of parsing the column value as a double -- for a real date/time
+     * partition column (e.g. {@code created_at}), {@code RangeStrategy}'s own {@code
+     * Double.parseDouble} would just fail to parse every value and silently never match anything. */
+    record DateRangeStrategy(List<DateRangeEntry> ranges) implements ShardingStrategy {
+        public DateRangeStrategy {
+            ranges = List.copyOf(ranges);
+        }
+
+        @Override
+        public String resolve(String value) {
+            java.time.LocalDate v;
+            try {
+                v = java.time.LocalDate.parse(value.strip());
+            } catch (java.time.format.DateTimeParseException e) {
+                return null;
+            }
+            for (DateRangeEntry range : ranges) {
+                if (!v.isBefore(range.low()) && (range.high() == null || v.isBefore(range.high()))) {
+                    return range.backend();
+                }
+            }
+            return null;
+        }
+    }
+
+    static ShardingStrategy dateRange(List<DateRangeEntry> ranges) {
+        return new DateRangeStrategy(ranges);
+    }
+
+    /** @return every distinct backend this strategy could ever resolve to, in first-seen order --
+     *     the full shard set a query that CAN'T supply a routable value needs to fall back to
+     *     (scatter-gather or a real federated JOIN across all of them), not just the one backend
+     *     a specific value would resolve to. */
+    static List<String> allBackends(ShardingStrategy strategy) {
+        return switch (strategy) {
+            case HashStrategy hs -> hs.backends();
+            case ConsistentHashStrategy cs -> distinct(cs.ring().values());
+            case ListStrategy ls -> distinct(ls.valueToBackend().values());
+            case RangeStrategy rs -> distinct(rs.ranges().stream().map(RangeEntry::backend).toList());
+            case DateRangeStrategy ds -> distinct(ds.ranges().stream().map(DateRangeEntry::backend).toList());
+        };
+    }
+
+    private static List<String> distinct(java.util.Collection<String> values) {
+        return List.copyOf(new java.util.LinkedHashSet<>(values));
+    }
+
     static long stableHash(String value) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -161,7 +212,21 @@ public sealed interface ShardingStrategy {
                 }
                 yield range(ranges);
             }
-            default -> throw new IllegalArgumentException("unknown sharding strategy type \"" + type + "\" (expected hash/consistent/list/range)");
+            case "date" -> {
+                List<DateRangeEntry> ranges = new ArrayList<>();
+                java.time.LocalDate low = java.time.LocalDate.MIN;
+                for (String entry : paramsSpec.split(";")) {
+                    String[] parts = entry.split("<", 2);
+                    String backend = parts[0].trim();
+                    java.time.LocalDate high = parts.length == 2 ? java.time.LocalDate.parse(parts[1].trim()) : null;
+                    ranges.add(new DateRangeEntry(low, high, backend));
+                    if (high != null) {
+                        low = high;
+                    }
+                }
+                yield dateRange(ranges);
+            }
+            default -> throw new IllegalArgumentException("unknown sharding strategy type \"" + type + "\" (expected hash/consistent/list/range/date)");
         };
     }
 

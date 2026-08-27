@@ -17,6 +17,7 @@ public record PolyWireConfig(
         String routerPredicateRules,
         String routerValueShardRules,
         String routerShardTables,
+        String routerTableShards,
         String rollupDefinitionsYaml,
         String aclRules,
         String aclPpv2Enabled,
@@ -46,6 +47,7 @@ public record PolyWireConfig(
                 System.getenv("POLYWIRE_ROUTER_PREDICATE_RULES"),
                 System.getenv("POLYWIRE_ROUTER_VALUE_SHARD_RULES"),
                 System.getenv("POLYWIRE_ROUTER_SHARD_TABLES"),
+                System.getenv("POLYWIRE_TABLE_SHARDS"),
                 null,
                 System.getenv("POLYWIRE_ACL_RULES"),
                 System.getenv("POLYWIRE_ACL_PPV2_ENABLED"),
@@ -76,6 +78,7 @@ public record PolyWireConfig(
         fields.put("routerPredicateRules", routerPredicateRules);
         fields.put("routerValueShardRules", routerValueShardRules);
         fields.put("routerShardTables", routerShardTables);
+        fields.put("routerTableShards", routerTableShards);
         fields.put("rollupDefinitionsYaml", rollupDefinitionsYaml);
         fields.put("aclRules", aclRules);
         fields.put("aclPpv2Enabled", aclPpv2Enabled);
@@ -119,6 +122,7 @@ public record PolyWireConfig(
                 fields.get("routerPredicateRules"),
                 fields.get("routerValueShardRules"),
                 fields.get("routerShardTables"),
+                fields.get("routerTableShards"),
                 fields.get("rollupDefinitionsYaml"),
                 fields.get("aclRules"),
                 fields.get("aclPpv2Enabled"),

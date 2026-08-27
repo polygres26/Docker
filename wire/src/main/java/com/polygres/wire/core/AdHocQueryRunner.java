@@ -49,7 +49,7 @@ public final class AdHocQueryRunner {
             backend.setAutoCommit(true);
             StatementPipeline pipeline = new StatementPipeline(sharedStages,
                     new RoutingBackendExecutor(backendRegistry, new JdbcBackendExecutor(backend, nativeRlsInitializer),
-                            null, RouterStage.shardRulesIn(sharedStages))
+                            null, RouterStage.shardRulesIn(sharedStages), RouterStage.tableShardRulesIn(sharedStages))
                             .withFederationSupport(RouterStage.statisticsStoreIn(sharedStages), RouterStage.planStoreIn(sharedStages)));
             Statement statement = new Statement(tenantId, SourceDialect.MCP, sql, bindParams, "default", null, accessContext);
             return Result.ofSuccess(pipeline.execute(statement));
