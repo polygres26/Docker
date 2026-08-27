@@ -54,6 +54,7 @@ services:
       - "18000:18000" # dynamowire (DynamoDB HTTP/JSON)
       - "9324:9324"   # sqswire (Amazon SQS HTTP/JSON)
       - "9200:9200"   # oswire (OpenSearch HTTP/JSON)
+      - "8086:8086"   # influxwire (InfluxDB HTTP/JSON)
       - "18010:18010" # MCP (Model Context Protocol)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 
