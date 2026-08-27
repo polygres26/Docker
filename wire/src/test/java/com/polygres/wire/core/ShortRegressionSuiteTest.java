@@ -3,6 +3,9 @@ package com.polygres.wire.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
 import com.polygres.wire.testsupport.PolyWireProcess;
 import com.polygres.wire.testsupport.RealPostgres;
 import java.net.URI;
@@ -17,9 +20,38 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Map;
+import org.bson.Document;
+import org.influxdb.InfluxDB;
+import org.influxdb.InfluxDBFactory;
+import org.influxdb.dto.Point;
+import org.influxdb.dto.Query;
+import org.influxdb.dto.QueryResult;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.neo4j.driver.AuthTokens;
+import org.neo4j.driver.Driver;
+import org.neo4j.driver.GraphDatabase;
+import org.neo4j.driver.Session;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.retry.RetryPolicy;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
+import software.amazon.awssdk.services.dynamodb.model.KeyType;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
+import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 /**
  * The project's "short regression suite" -- one real PolyWire instance, real Postgres backends,
@@ -71,6 +103,11 @@ class ShortRegressionSuiteTest {
                 .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
                 .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
                 .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
+                .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
+                .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
+                .frontend("influxwire", "POLYWIRE_INFLUXWIRE_PORT")
+                .frontend("boltwire", "POLYWIRE_BOLTWIRE_PORT")
                 .env("POLYWIRE_BACKENDS", backends)
                 // Real, declarative table sharding (no schema-qualifier prefix needed anywhere)
                 // for the federated-query test below -- dogfoods the same mechanism the Router
@@ -164,6 +201,93 @@ class ShortRegressionSuiteTest {
                 assertTrue(rs.next(), protocol + ": expected the row it just inserted to be readable back");
                 assertEquals("hello-from-" + protocol, rs.getString(1));
             }
+        }
+    }
+
+    @Test
+    void mongowireBasicReadWrite() {
+        try (MongoClient client = MongoClients.create(
+                "mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+            MongoCollection<Document> coll = client.getDatabase("test").getCollection("regression_smoke");
+            coll.insertOne(new Document("_id", "mongowire-1").append("val", "hello-from-mongowire"));
+            Document found = coll.find(new Document("_id", "mongowire-1")).first();
+            assertTrue(found != null, "mongowire: expected the document it just inserted to be readable back");
+            assertEquals("hello-from-mongowire", found.getString("val"));
+        }
+    }
+
+    @Test
+    void dynamowireBasicReadWrite() {
+        DynamoDbClient client = DynamoDbClient.builder()
+                .endpointOverride(URI.create("http://localhost:" + polywire.port("dynamowire")))
+                .region(Region.US_EAST_1)
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create("test-access-key", "test-secret-key")))
+                .overrideConfiguration(o -> o.retryPolicy(RetryPolicy.builder().numRetries(0).build()))
+                .build();
+        String table = "regression_smoke";
+        client.createTable(CreateTableRequest.builder()
+                .tableName(table)
+                .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
+                .attributeDefinitions(AttributeDefinition.builder().attributeName("id").attributeType(ScalarAttributeType.S).build())
+                .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
+                .build());
+        client.putItem(PutItemRequest.builder()
+                .tableName(table)
+                .item(Map.of("id", AttributeValue.fromS("dynamowire-1"), "val", AttributeValue.fromS("hello-from-dynamowire")))
+                .build());
+        var result = client.getItem(GetItemRequest.builder()
+                .tableName(table)
+                .key(Map.of("id", AttributeValue.fromS("dynamowire-1")))
+                .build());
+        assertTrue(result.hasItem(), "dynamowire: expected the item it just put to be readable back");
+        assertEquals("hello-from-dynamowire", result.item().get("val").s());
+    }
+
+    @Test
+    void sqswireBasicReadWrite() {
+        SqsClient client = SqsClient.builder()
+                .endpointOverride(URI.create("http://localhost:" + polywire.port("sqswire")))
+                .region(Region.US_EAST_1)
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create("test-access-key", "test-secret-key")))
+                .overrideConfiguration(o -> o.retryPolicy(RetryPolicy.builder().numRetries(0).build()))
+                .build();
+        String queueUrl = client.createQueue(CreateQueueRequest.builder().queueName("regression-smoke").build()).queueUrl();
+        client.sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody("hello-from-sqswire").build());
+        var received = client.receiveMessage(ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(1).build());
+        assertTrue(!received.messages().isEmpty(), "sqswire: expected the message it just sent to be receivable");
+        Message msg = received.messages().get(0);
+        assertEquals("hello-from-sqswire", msg.body());
+    }
+
+    @Test
+    void influxwireBasicReadWrite() {
+        try (InfluxDB client = InfluxDBFactory.connect("http://localhost:" + polywire.port("influxwire"))) {
+            String db = "regression_smoke";
+            client.write(db, "autogen", Point.measurement("smoke")
+                    .addField("val", 1L)
+                    .tag("protocol", "influxwire")
+                    .build());
+            QueryResult result = client.query(new Query("SELECT val FROM smoke", db));
+            assertTrue(!result.hasError(), "influxwire: query returned an error: " + result.getError());
+            assertTrue(!result.getResults().get(0).getSeries().isEmpty(),
+                    "influxwire: expected the point it just wrote to be readable back");
+        }
+    }
+
+    /** Real Bolt 4.4 handshake/auth/RUN/PULL/GOODBYE via the official driver -- boltwire's own
+     * Phase 1 Cypher support is deliberately narrow ({@code RETURN <literal>} only, see {@link
+     * com.polygres.wire.boltwire.BoltWireSessionHandler}'s own javadoc), so that's what this
+     * proves against, not a real graph mutation. */
+    @Test
+    void boltwireBasicQuery() {
+        try (Driver driver = GraphDatabase.driver(
+                "bolt://localhost:" + polywire.port("boltwire"), AuthTokens.basic(shard1.username(), shard1.password()));
+                Session session = driver.session()) {
+            var result = session.run("RETURN 'hello-from-boltwire' AS val");
+            assertTrue(result.hasNext(), "boltwire: expected a row back from a real RUN/PULL round trip");
+            assertEquals("hello-from-boltwire", result.next().get("val").asString());
         }
     }
 

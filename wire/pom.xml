@@ -353,6 +353,25 @@
       <version>5.5.1</version>
       <scope>test</scope>
     </dependency>
+    <!-- Real Neo4j Bolt client, test only, per boltwire's own javadoc: Phase 1's Cypher support
+         is deliberately narrow (RETURN literal only), but the wire protocol itself (handshake,
+         HELLO auth, RUN/PULL/RECORD/SUCCESS framing, GOODBYE) is real Bolt 4.4, so a real driver
+         is what proves it, not a hand rolled socket check. -->
+    <dependency>
+      <groupId>org.neo4j.driver</groupId>
+      <artifactId>neo4j-java-driver</artifactId>
+      <version>5.28.4</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Real InfluxDB v1 HTTP/line protocol client, test only: influxwire speaks the real
+         InfluxDB v1 /write and /query HTTP API (see InfluxWireServer's own javadoc), so this is
+         what a real client actually sends against it. -->
+    <dependency>
+      <groupId>org.influxdb</groupId>
+      <artifactId>influxdb-java</artifactId>
+      <version>2.24</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
