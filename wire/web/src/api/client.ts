@@ -281,6 +281,20 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 // the page itself renders the "not enabled" explanation for that case, same as Queues does for
 // sqswire not being configured. ---
 
+// A real, MEASURED (not estimated) leaf table scan -- see LeafScanProfiler's own javadoc.
+// Calcite's own EXPLAIN PLAN FOR only ever reports the planner's pre-execution row-count
+// ESTIMATE per node, never an actual post-execution measurement -- this is PolyWire's own
+// answer to that gap: a genuinely separate re-execution of just this one leaf's own
+// pushed-down SQL against its own real backend, with real wall-clock timing and a real row
+// count from actually iterating the result.
+export interface FederationLeafScan {
+  backend: string
+  sqlText: string
+  elapsedMillis: number
+  rowCount: number
+  errorMessage: string | null
+}
+
 export interface FederationPlanEntry {
   planId: number
   capturedAt: string
@@ -291,6 +305,7 @@ export interface FederationPlanEntry {
   rowCount: number
   success: boolean
   errorMessage: string | null
+  leafScans: FederationLeafScan[]
 }
 
 export class FederationPlansNotEnabledError extends Error {}

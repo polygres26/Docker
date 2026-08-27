@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FederationPlansNotEnabledError, type FederationPlanEntry, listFederationPlans } from '../api/client'
+import { FederationPlansNotEnabledError, type FederationLeafScan, type FederationPlanEntry, listFederationPlans } from '../api/client'
 
 const REFRESH_MS = 5000
 
@@ -32,15 +32,62 @@ function BackendPills({ backends }: { backends: string }) {
   )
 }
 
+/** Real, MEASURED per-leaf-scan rows -- see LeafScanProfiler's own javadoc for exactly how these
+ * numbers are obtained (a genuine, separate re-execution of just that one leaf's own pushed-down
+ * SQL against its own real backend). A bar under each row's elapsed time, scaled against the
+ * slowest leaf in this same plan, makes real skew across shards/backends visible at a glance --
+ * exactly the kind of thing a static EXPLAIN PLAN FOR estimate can never show. */
+function LeafScansTable({ leafScans }: { leafScans: FederationLeafScan[] }) {
+  const maxMs = Math.max(1, ...leafScans.map((l) => l.elapsedMillis))
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead>
+        <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+          <th style={{ padding: '4px 8px' }}>Backend</th>
+          <th style={{ padding: '4px 8px' }}>Real leaf SQL sent</th>
+          <th style={{ padding: '4px 8px', textAlign: 'right' }}>Measured time</th>
+          <th style={{ padding: '4px 8px', textAlign: 'right' }}>Actual rows</th>
+        </tr>
+      </thead>
+      <tbody>
+        {leafScans.map((leaf, i) => (
+          <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
+            <td style={{ padding: '4px 8px' }}><Badge tone="accent">{leaf.backend}</Badge></td>
+            <td style={{
+              padding: '4px 8px', fontFamily: 'monospace', maxWidth: 320,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={leaf.sqlText}>
+              {leaf.errorMessage ? <span style={{ color: 'var(--hard, crimson)' }}>{leaf.errorMessage}</span> : leaf.sqlText}
+            </td>
+            <td style={{ padding: '4px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 60, height: 6, background: 'var(--surface-2, #eee)', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.max(4, Math.round((leaf.elapsedMillis / maxMs) * 100))}%`, height: '100%',
+                    background: 'var(--accent-strong, #5b6cff)',
+                  }} />
+                </div>
+                {leaf.elapsedMillis} ms
+              </div>
+            </td>
+            <td style={{ padding: '4px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{leaf.rowCount}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 function PlanRow({ entry }: { entry: FederationPlanEntry }) {
   const [expanded, setExpanded] = useState(false)
   const ageSeconds = Math.max(0, Math.round((Date.now() - new Date(entry.capturedAt).getTime()) / 1000))
   const age = ageSeconds < 60 ? `${ageSeconds}s ago` : ageSeconds < 3600 ? `${Math.round(ageSeconds / 60)}m ago` : `${Math.round(ageSeconds / 3600)}h ago`
+  const canExpand = Boolean(entry.planText) || entry.leafScans.length > 0
 
   return (
     <>
-      <tr style={{ borderTop: '1px solid var(--border)', cursor: entry.planText ? 'pointer' : 'default' }}
-        onClick={() => entry.planText && setExpanded((v) => !v)}>
+      <tr style={{ borderTop: '1px solid var(--border)', cursor: canExpand ? 'pointer' : 'default' }}
+        onClick={() => canExpand && setExpanded((v) => !v)}>
         <td style={{ padding: '9px 10px', fontVariantNumeric: 'tabular-nums', color: 'var(--muted)', fontSize: 12 }}>#{entry.planId}</td>
         <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{age}</td>
         <td style={{ padding: '9px 10px', minWidth: 140 }}><BackendPills backends={entry.backends} /></td>
@@ -56,24 +103,38 @@ function PlanRow({ entry }: { entry: FederationPlanEntry }) {
           {entry.success ? <Badge tone="good">OK</Badge> : <Badge tone="warn">Failed</Badge>}
         </td>
         <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--muted)' }}>
-          {entry.planText ? (expanded ? '▾ hide plan' : '▸ show plan') : '—'}
+          {canExpand ? (expanded ? '▾ hide plan' : '▸ show plan') : '—'}
         </td>
       </tr>
-      {expanded && entry.planText && (
+      {expanded && (
         <tr style={{ borderTop: '1px solid var(--border)' }}>
           <td colSpan={8} style={{ padding: '10px 10px 14px', background: 'var(--surface-2, #f8f8f8)' }}>
             {!entry.success && entry.errorMessage && (
               <div style={{ color: 'var(--hard, crimson)', fontSize: 12.5, marginBottom: 8 }}>{entry.errorMessage}</div>
             )}
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}>
-              Real Calcite plan (EXPLAIN PLAN FOR)
-            </div>
-            <pre style={{
-              margin: 0, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre', overflowX: 'auto',
-              background: 'var(--surface, #fff)', border: '1px solid var(--border)', borderRadius: 6, padding: 10,
-            }}>
-              {entry.planText}
-            </pre>
+            {entry.leafScans.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                  Real measured per-shard/backend scan (actual rows &amp; time, not estimated)
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: 'var(--surface, #fff)' }}>
+                  <LeafScansTable leafScans={entry.leafScans} />
+                </div>
+              </div>
+            )}
+            {entry.planText && (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                  Real Calcite plan (EXPLAIN PLAN FOR — planner's own estimate, not measured)
+                </div>
+                <pre style={{
+                  margin: 0, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre', overflowX: 'auto',
+                  background: 'var(--surface, #fff)', border: '1px solid var(--border)', borderRadius: 6, padding: 10,
+                }}>
+                  {entry.planText}
+                </pre>
+              </>
+            )}
           </td>
         </tr>
       )}
@@ -129,7 +190,10 @@ export default function FederationPlans() {
         Real captured history of every cross-shard and cross-backend {'JOIN'} PolyWire has federated
         via Calcite — a genuine <code>EXPLAIN PLAN FOR</code> plan, timing, and row count per query,
         the same {'V$SQL_PLAN'}-style visibility a real database gives you for a query that spans
-        several of your own backends. Refreshes every {REFRESH_MS / 1000}s.
+        several of your own backends. Expand a row for the planner's own estimated plan tree AND
+        real, MEASURED actual rows/time per shard or backend (Calcite's own <code>EXPLAIN PLAN FOR</code>{' '}
+        only ever estimates — this re-runs each leaf's own pushed-down scan separately to get real
+        numbers). Refreshes every {REFRESH_MS / 1000}s.
       </p>
 
       {notEnabled && (

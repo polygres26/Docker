@@ -15,15 +15,31 @@ import java.util.List;
  * shipped. */
 public interface SqlPlanStore {
 
+    /** One MEASURED (not estimated) leaf table scan -- see {@link LeafScanProfiler}'s own javadoc
+     * for exactly how this number is obtained (a real, separate re-execution of just that one
+     * leaf's own pushed-down SQL against its own real backend, with real wall-clock timing and a
+     * real row count from actually iterating the result) and why it's the honest answer to "can
+     * Calcite tell you actual rows/time per plan node" (it can't, out of the box -- this is what
+     * closes that gap). {@code errorMessage} is non-null (and {@code rowCount} is 0) if
+     * re-executing this one leaf failed; the real federated query above it is unaffected either
+     * way -- this is a diagnostic measurement, never load-bearing for the real result. */
+    record LeafScanMetric(String backend, String sqlText, long elapsedMillis, long rowCount, String errorMessage)
+            implements Serializable {
+    }
+
     /** One captured federated-query plan. {@code planText} is Calcite's own {@code EXPLAIN PLAN
-     * FOR} output, verbatim -- never reformatted or reparsed. */
+     * FOR} output, verbatim -- never reformatted or reparsed. {@code leafScans} is empty (not
+     * {@code null}) when per-leaf profiling didn't run for this statement (bind parameters
+     * present -- see {@link LeafScanProfiler}'s own javadoc -- or profiling itself failed
+     * entirely), never a sign of an error on its own. */
     record PlanEntry(long planId, Instant capturedAt, String backends, String sqlText,
-            String planText, long elapsedMillis, long rowCount, boolean success, String errorMessage)
+            String planText, long elapsedMillis, long rowCount, boolean success, String errorMessage,
+            List<LeafScanMetric> leafScans)
             implements Serializable {
     }
 
     long record(String backends, String sqlText, String planText, long elapsedMillis, long rowCount,
-            boolean success, String errorMessage);
+            boolean success, String errorMessage, List<LeafScanMetric> leafScans);
 
     /** Newest first -- matches {@code V$SQL_PLAN}'s typical "what just ran" ordering. */
     List<PlanEntry> snapshot();

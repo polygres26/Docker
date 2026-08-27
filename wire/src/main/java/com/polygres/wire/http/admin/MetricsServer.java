@@ -415,7 +415,19 @@ public final class MetricsServer {
                                 .append(",\"rowCount\":").append(entry.rowCount())
                                 .append(",\"success\":").append(entry.success())
                                 .append(",\"errorMessage\":").append(jsonString(entry.errorMessage()))
-                                .append('}');
+                                .append(",\"leafScans\":[");
+                        boolean firstLeaf = true;
+                        for (com.polygres.wire.core.SqlPlanStore.LeafScanMetric leaf : entry.leafScans()) {
+                            if (!firstLeaf) json.append(',');
+                            firstLeaf = false;
+                            json.append("{\"backend\":").append(jsonString(leaf.backend()))
+                                    .append(",\"sqlText\":").append(jsonString(leaf.sqlText()))
+                                    .append(",\"elapsedMillis\":").append(leaf.elapsedMillis())
+                                    .append(",\"rowCount\":").append(leaf.rowCount())
+                                    .append(",\"errorMessage\":").append(jsonString(leaf.errorMessage()))
+                                    .append('}');
+                        }
+                        json.append("]}");
                     }
                     json.append(']');
                     response.setStatus(HttpServletResponse.SC_OK);

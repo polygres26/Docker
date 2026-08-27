@@ -146,6 +146,8 @@ public final class SchemaFederationStage implements PipelineStage {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new java.util.LinkedHashMap<>();
+            SqlDialect dialect = null;
             for (Map.Entry<String, String> entry : schemaNameToBackendName.entrySet()) {
                 String schemaName = entry.getKey();
                 String backendName = entry.getValue();
@@ -153,9 +155,10 @@ public final class SchemaFederationStage implements PipelineStage {
                 if (target == null) {
                     throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", backendName);
                 }
+                mountToBackend.put(schemaName, new LeafScanProfiler.MountedBackend(target, backendName));
                 DataSource dataSource = JdbcSchema.dataSource(
                         target.jdbcUrl(), "org.postgresql.Driver", target.user(), target.password());
-                SqlDialect dialect = JdbcSchema.createDialect(dataSource);
+                dialect = JdbcSchema.createDialect(dataSource);
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, schemaName, JdbcSchema.class);
                 JdbcConvention convention = JdbcConvention.of(dialect, expression, schemaName);
@@ -200,18 +203,23 @@ public final class SchemaFederationStage implements PipelineStage {
             }
             String backendsLabel = String.join(",", schemaNameToBackendName.values());
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
+            // See ShardJoinExecutor's own matching comment: a real, separate re-execution of each
+            // backend's own leaf scan, skipped entirely (empty list) for a parameterized statement
+            // or when planStore itself isn't configured.
+            List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null ? List.of()
+                    : LeafScanProfiler.measure(optimized, dialect, mountToBackend, !statement.bindParams().isEmpty());
             long startNanos = System.nanoTime();
             try (PreparedStatement ps = calciteConnection.unwrap(org.apache.calcite.tools.RelRunner.class)
                     .prepareStatement(optimized)) {
                 ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
                 if (planStore != null) {
                     long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null);
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
                 }
                 return result;
             } catch (SQLException e) {
                 if (planStore != null) {
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage());
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
                 }
                 throw e;
             }

@@ -5,8 +5,10 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -125,6 +127,7 @@ final class ShardJoinExecutor {
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
             List<String> shardMountNames = new ArrayList<>();
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new LinkedHashMap<>();
             SqlDialect dialect = null;
             for (int i = 0; i < shardNames.size(); i++) {
                 String shardName = shardNames.get(i);
@@ -134,6 +137,7 @@ final class ShardJoinExecutor {
                 }
                 String mountName = "__polywire_shard" + i;
                 shardMountNames.add(mountName);
+                mountToBackend.put(mountName, new LeafScanProfiler.MountedBackend(target, shardName));
                 // Every PolyWire shard is real Postgres (unlike Omnigate's cross-dialect
                 // federation, which needs a real dialect->driver-class lookup) -- always
                 // "org.postgresql.Driver", same as RollupStage's own single-backend mount.
@@ -197,18 +201,25 @@ final class ShardJoinExecutor {
                     sql, shardNames.size(), schemaName);
             String backendsLabel = String.join(",", shardNames);
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, rewrittenSql, backendsLabel);
+            // Real, measured per-shard row count/timing -- see LeafScanProfiler's own javadoc for
+            // why this is a genuinely separate re-execution of each shard's own leaf scan, not
+            // something extracted from the real join execution below. Skipped (empty list) when
+            // planStore itself isn't configured -- no point paying for extra per-shard round trips
+            // nothing will ever read.
+            List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null ? List.of()
+                    : LeafScanProfiler.measure(optimized, dialect, mountToBackend, !statement.bindParams().isEmpty());
             long startNanos = System.nanoTime();
             try (PreparedStatement ps = calciteConnection.unwrap(org.apache.calcite.tools.RelRunner.class)
                     .prepareStatement(optimized)) {
                 ExecutionResult result = JdbcBackendExecutor.executeOnPreparedStatement(ps, statement.bindParams());
                 if (planStore != null) {
                     long rowCount = result.isQuery() ? result.rows().size() : result.updateCount();
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null);
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), rowCount, true, null, leafScans);
                 }
                 return result;
             } catch (SQLException e) {
                 if (planStore != null) {
-                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage());
+                    planStore.record(backendsLabel, sql, planText, elapsedMillisSince(startNanos), 0, false, e.getMessage(), leafScans);
                 }
                 throw e;
             }

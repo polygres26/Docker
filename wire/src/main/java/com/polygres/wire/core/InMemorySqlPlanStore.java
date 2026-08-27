@@ -34,10 +34,10 @@ final class InMemorySqlPlanStore implements SqlPlanStore {
 
     @Override
     public long record(String backends, String sqlText, String planText, long elapsedMillis, long rowCount,
-            boolean success, String errorMessage) {
+            boolean success, String errorMessage, List<LeafScanMetric> leafScans) {
         long id = nextId.getAndIncrement();
         PlanEntry entry = new PlanEntry(id, Instant.now(), backends, sqlText, planText, elapsedMillis, rowCount,
-                success, errorMessage);
+                success, errorMessage, leafScans);
         synchronized (entries) {
             if (entries.size() >= capacity) {
                 entries.removeFirst();
