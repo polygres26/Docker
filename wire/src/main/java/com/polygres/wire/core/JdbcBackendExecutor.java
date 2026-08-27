@@ -6,12 +6,50 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class JdbcBackendExecutor implements BackendExecutor {
 
+    private static final Logger log = LoggerFactory.getLogger(JdbcBackendExecutor.class);
+
     private Connection connection;
     private final com.polygres.wire.core.access.NativeRlsSessionInitializer nativeRlsInitializer;
+
+    /** Real, found-live optimization: {@code execute()} used to {@code prepareStatement}/close a
+     * brand-new {@link PreparedStatement} on every single call, even for the exact same SQL text
+     * repeated hundreds of times (e.g. a hot parameterized {@code SELECT ... WHERE id = ?}) --
+     * which meant pgjdbc's own server-side prepare (activated only once the SAME {@code
+     * PreparedStatement} object has actually been executed {@code prepareThreshold} times, 5 by
+     * default) could never trigger: every call started a fresh object with its own
+     * execution-count back at zero. Postgres re-parsed and re-planned the identical statement
+     * from scratch on every call, forever.
+     *
+     * <p>Fixed by keeping one {@code PreparedStatement} per (connection, exact SQL text) and
+     * reusing it across calls -- {@code bindParams} still get rebound fresh every time via {@code
+     * setObject} in {@link #executeOnPreparedStatement}, only the parse/plan is what gets reused.
+     * Bounded to {@link #STATEMENT_CACHE_MAX_SIZE} entries, LRU-evicted, closing the evicted
+     * statement -- an unbounded cache would leak server-side prepared statements for genuinely
+     * one-off/ad-hoc SQL (e.g. a client that embeds literal values directly in the text instead of
+     * binding them, so every call is a distinct string) that's never repeated. On any {@link
+     * SQLException} from execution, the offending entry is evicted and closed rather than kept --
+     * defensive: a statement object that just failed isn't assumed safe to hand back out. {@link
+     * #rebind} (a failover/reconnect) closes and clears every cached entry, since a {@code
+     * PreparedStatement} is only ever valid against the connection that created it. */
+    private static final int STATEMENT_CACHE_MAX_SIZE = 256;
+    private final Map<String, PreparedStatement> statementCache = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, PreparedStatement> eldest) {
+            if (size() > STATEMENT_CACHE_MAX_SIZE) {
+                closeQuietly(eldest.getValue());
+                return true;
+            }
+            return false;
+        }
+    };
 
     public JdbcBackendExecutor(Connection connection) {
         this(connection, null);
@@ -23,18 +61,44 @@ public final class JdbcBackendExecutor implements BackendExecutor {
     }
 
     public void rebind(Connection connection) {
+        closeAllCachedStatements();
         this.connection = connection;
     }
 
     @Override
     public ExecutionResult execute(Statement statement) throws SQLException {
-        
+
         if (nativeRlsInitializer != null && !statement.accessContext().isAnonymous()) {
             nativeRlsInitializer.initialize(connection, statement.accessContext());
         }
         String sqlText = stripTrailingSemicolon(statement.sqlText());
-        try (PreparedStatement stmt = connection.prepareStatement(sqlText)) {
+        PreparedStatement stmt = statementCache.get(sqlText);
+        if (stmt == null) {
+            stmt = connection.prepareStatement(sqlText);
+            statementCache.put(sqlText, stmt);
+        }
+        try {
             return executeOnPreparedStatement(stmt, statement.bindParams());
+        } catch (SQLException e) {
+            statementCache.remove(sqlText);
+            closeQuietly(stmt);
+            throw e;
+        }
+    }
+
+    private void closeAllCachedStatements() {
+        for (PreparedStatement stmt : statementCache.values()) {
+            closeQuietly(stmt);
+        }
+        statementCache.clear();
+    }
+
+    private static void closeQuietly(PreparedStatement stmt) {
+        try {
+            stmt.close();
+        } catch (SQLException e) {
+            log.debug("jdbc backend executor: failed to close a cached PreparedStatement -- harmless, "
+                    + "the connection's own close will reclaim it regardless", e);
         }
     }
 
