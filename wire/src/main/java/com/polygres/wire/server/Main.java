@@ -416,6 +416,24 @@ public final class Main {
                     osWirePort, e);
         }
 
+        int influxWirePort = parseIntEnv("POLYWIRE_INFLUXWIRE_PORT", 8086);
+        // V1: InfluxDB line-protocol writes plus a narrow SHOW MEASUREMENTS / SELECT * FROM
+        // <measurement> read path, backed by plain Postgres (or a real TimescaleDB hypertable when
+        // detected on the backend -- see PgTimeSeriesStore's javadoc for that dual code path).
+        // Wrapped the same way oswire/dynamowire/sqswire are: an influxwire-only misconfiguration
+        // logs loudly and leaves influxwire off, without affecting any other wire protocol.
+        try {
+            com.polygres.wire.influxwire.InfluxWireServer influxWireServer =
+                    new com.polygres.wire.influxwire.InfluxWireServer(
+                            influxWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
+            influxWireServer.start();
+            log.info("polywire listening for InfluxDB HTTP/JSON (influxwire) on port {}", influxWirePort);
+        } catch (Exception e) {
+            log.error("influxwire failed to start on port {} -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring influxwire back.",
+                    influxWirePort, e);
+        }
+
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.polygres.wire.mcp.PolyWireMcpServer mcpServer = new com.polygres.wire.mcp.PolyWireMcpServer(
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"),
