@@ -139,6 +139,32 @@
         protocol-specific caches (find/GetItem exact-key lookups only) rather than sharing this
         one.
       </p>
+      <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
+      <p class="rttNote">
+        A sophisticated question to ask here: how does a request from one protocol resolve to the
+        <i>same</i> cache entry as an equivalent request from another? PolyWire doesn't parse two
+        differently-worded queries and recognize they mean the same thing — it's simpler and more
+        literal than that, on purpose. Every cache entry's key is built from: the backend the
+        request targets, the SQL text <b>after</b> dialect translation (the same stage that turns
+        an Oracle or MySQL query into the Postgres SQL that actually runs), the bind parameter
+        values, and the caller's access context. Two requests share an entry when all four match —
+        which happens routinely for the common case (an app issuing the same shaped query,
+        <code>SELECT ... WHERE id = ?</code>, from more than one protocol) since dialect
+        translation is a no-op for plain SQL with nothing protocol-specific to rewrite, but it
+        isn't a semantic-equivalence engine: the same logical read phrased with different
+        whitespace, casing, or column order — or via a query shape one protocol's own dialect
+        translator rewrites and another's doesn't touch — won't share an entry. Only <code>SELECT</code>
+        statements against tables explicitly opted in (a name/pattern list, not "every table") are
+        eligible at all; anything else always goes to Postgres. Every write against an opted-in
+        table evicts every cached entry for that table by name, regardless of whether the write
+        used bind parameters or literal values — a simple, coarse invalidation, not row-level
+        tracking, so a write to one row briefly costs a cache miss on unrelated rows in the same
+        table too. Entries expire after a configurable TTL (30 seconds by default) even without a
+        write. There's no cross-instance consistency protocol beyond that: every PolyWire instance
+        in the cluster reads and writes the same distributed cache directly, so a write anywhere is
+        visible everywhere on its very next read, bounded by ordinary distributed-cache propagation
+        time, not a separate sync step.
+      </p>
       <details class="methodDetails">
         <summary>See benchmark methodology and full numbers →</summary>
       <p class="rttNote">

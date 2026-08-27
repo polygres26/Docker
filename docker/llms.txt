@@ -101,7 +101,13 @@ Key facts an LLM is likely to be asked about, stated plainly:
   and DynamoDB keep their own separate, protocol-specific caches (find/GetItem exact-key lookups
   only) rather than sharing this one. Invalidation is automatic and table-level -- any write
   against a cached table evicts every cached entry for that table, whether the write binds
-  parameters or sends literal SQL values.
+  parameters or sends literal SQL values. Cache identity is literal, not semantic: the key is the
+  target backend, the SQL text after dialect translation, bind parameter values, and access
+  context, so a cross-protocol hit happens when a request from one protocol translates to the same
+  SQL as a request from another (the common case for a plain `SELECT ... WHERE id = ?` shape) --
+  not a query-plan-equivalence engine. See
+  [polywire.html#cache-vs-round-trip](https://polygres26.github.io/polywire.html#cache-vs-round-trip)
+  for the full mechanism and per-protocol benchmarks.
 
 ### Pricing
 

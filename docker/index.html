@@ -382,19 +382,13 @@ aws sqs receive-message \                          # SQS wire
         <a href="polywire.html#security">Security</a> for the full scope.
       </p>
 
-      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="distributed-cache">Cache once. Access across protocols.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
-        <b>Security follows the request, not the protocol.</b>
-      </p>
-      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
-      <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
-
-      <h3 class="subhead" id="distributed-cache">Cache through one protocol. Read through another.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote">
-        PolyCache is one distributed cache shared across the gateway cluster — <b>and across
-        protocols.</b> A read cached via MySQL is served to an Oracle client asking for the same
-        row, no separate cache, no round trip to Postgres.
+        A result cached through one PolyWire protocol can be served through another — across
+        PolyWire instances — without another Postgres round trip. <b>One distributed cache,
+        not a per-protocol silo.</b> Confirmed live: a row read via a Postgres client, then asked
+        for again through a MySQL client, comes back as a cache hit — zero Postgres round trips
+        on the second read.
       </p>
       <figure>
         <div class="cacheFlow">
@@ -406,26 +400,73 @@ aws sqs receive-message \                          # SQS wire
             <span class="cacheChip">Oracle client</span>
           </div>
           <span class="cacheArrowDown">↓ same cached result</span>
-          <span class="cachePg">Postgres — system of record</span>
+          <span class="cachePg">PostgreSQL — system of record</span>
         </div>
         <figcaption>Shared today across every protocol that goes through PolyWire's dialect-translation
         stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP. MongoDB and DynamoDB keep their
         own protocol-specific caches (find/GetItem only) rather than this shared one — see
-        <a href="polywire.html#cache-vs-round-trip">full cache scope</a> for exactly what's included.</figcaption>
+        <a href="polywire.html#cache-vs-round-trip">exactly how the cache key works</a> for what
+        does and doesn't share an entry.</figcaption>
       </figure>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Cross-protocol</h4><p>Cache a result through one protocol. Read it back through another — no duplicate caches, no protocol-specific silos.</p></div>
-        <div class="obsCard"><h4>Distributed</h4><p>PolyWire instances share cached data across the cluster, with AZ-aware placement and TLS in transit.</p></div>
-        <div class="obsCard"><h4>Postgres-aware</h4><p>Opt-in per table with automatic invalidation on write — reduces repeated Postgres work while keeping Postgres the system of record.</p></div>
+      <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
+
+      <h4 class="demoSubhead">See cross-protocol caching happen</h4>
+      <div class="cacheDemoSteps">
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">1 — MySQL queries Postgres</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mysql -h 127.0.0.1 -P 13306 -u app -p
+
+mysql&gt; SELECT * FROM orders WHERE order_id = 1001;
+
++----------+-------------+--------+
+| order_id | customer_id | amount |
++----------+-------------+--------+
+|     1001 |          42 | 129.99 |
++----------+-------------+--------+
+1 row in set
+
+# admin console: PolyCache MISS → PostgreSQL round trip → result cached</pre>
+          </div>
+        </div>
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">2 — Oracle asks for the same row</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQL&gt; SELECT * FROM orders WHERE order_id = 1001;
+
+ORDER_ID  CUSTOMER_ID  AMOUNT
+--------  -----------  -------
+    1001           42   129.99
+
+1 row selected.
+
+# admin console: PolyCache HIT → 0 Postgres round trips</pre>
+          </div>
+        </div>
       </div>
-      <p class="rttNote"><a href="polywire.html#cache-vs-round-trip">Explore PolyCache →</a></p>
+      <p class="rttNote">
+        Written through one protocol. Cached once. Served through another — see
+        <a href="polywire.html#cache-vs-round-trip">the real metrics behind this</a>.
+      </p>
+
+      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
+        <b>Security follows the request, not the protocol.</b>
+      </p>
+      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
+      <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
 
       <details class="exploreMore">
         <summary class="exploreSummary">Explore PolyWire in depth — detailed architecture, comparison →</summary>
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage, and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, cache, stats — before reaching real Postgres. Sharding and security aren't bolted on beside the pipeline — they're two of its eight stages, applied to every protocol identically. (gRPC is PolyWire's own native driver protocol, not an emulated foreign database — see <a href="polywire.html">full capabilities</a> for what that means.)</figcaption>
+        <img src="docs/architecture.png" alt="PolyWire architecture: ten client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, and OpenSearch — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (PolyCache — distributed, cross-protocol), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, and operational excellence">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, PolyCache, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is PolyWire's own native driver protocol, not an emulated foreign database — see <a href="polywire.html">full capabilities</a> for what that means.)</figcaption>
       </figure>
 
       <h3 class="subhead" id="without-polywire">Without PolyWire vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
