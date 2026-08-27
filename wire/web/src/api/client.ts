@@ -140,6 +140,7 @@ export interface WireConfig {
   routerPredicateRules: string | null
   routerValueShardRules: string | null
   routerShardTables: string | null
+  routerTableShards: string | null
   rollupDefinitionsYaml: string | null
   aclRules: string | null
   aclPpv2Enabled: string | null
