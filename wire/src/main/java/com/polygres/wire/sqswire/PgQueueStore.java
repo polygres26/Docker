@@ -45,12 +45,21 @@ import org.slf4j.LoggerFactory;
  * {@code ListQueues} just reads that. A registry with an empty shard group behaves like a
  * single-backend store pointed at {@code BackendRegistry.DEFAULT_BACKEND_NAME}.
  *
- * <p><b>Queue attributes catalog:</b> {@code _sqs_queues} holds each queue's visibility timeout
+ * <p><b>Queue attributes catalog:</b> {@code sqs_queues_catalog} holds each queue's visibility timeout
  * default, FIFO flag, and redrive policy (DLQ target + max receive count). Like dynamowire's
  * {@code _dynamo_tables}, this metadata needs one fixed home independent of shard-group
  * membership, so it always lives on {@code BackendRegistry.DEFAULT_BACKEND_NAME} -- see
  * {@link #currentCatalogBackendName()}'s javadoc for why using a shard-group member here broke
  * DescribeTable-equivalent lookups in dynamowire the first time that was tried.
+ *
+ * <p><b>Real bug, found live against Oracle</b>: this catalog table's name was originally
+ * {@code _sqs_queues} (matching dynamowire's own {@code _dynamo_tables} convention) -- Oracle
+ * rejects an unquoted identifier starting with {@code _} outright ({@code ORA-00911: invalid
+ * character after TABLE}), and quoting it consistently isn't a safe portable fix either: MySQL
+ * without {@code ANSI_QUOTES} (not in its own default {@code sql_mode}) treats a double-quoted
+ * token as a string literal, not an identifier, so a quoted name that works on Oracle/Postgres/
+ * SQL Server breaks MySQL. Renamed to {@code sqs_queues_catalog} instead -- valid, unquoted, on
+ * all four engines -- rather than adding a fourth per-engine quoting/naming special case.
  *
  * <p><b>FIFO queues</b> (name ends {@code .fifo}): {@code SendMessage}'s {@code dedup_id} is
  * deduplicated against the last 5 minutes (SQS's own dedup window) for the same queue -- a resend
@@ -88,7 +97,7 @@ public final class PgQueueStore {
     private final ConcurrentHashMap<String, Boolean> catalogEnsured = new ConcurrentHashMap<>();
     private volatile List<String> lastLoggedShardGroup = null;
 
-    // queueAttributes() used to hit Postgres (a real _sqs_queues round trip) on every single
+    // queueAttributes() used to hit Postgres (a real sqs_queues_catalog round trip) on every single
     // ReceiveMessage call -- found live comparing SendMessage's server-side cost against
     // ReceiveMessage's on an empty queue: ReceiveMessage was ~2x slower despite doing *less* real
     // work (a claim UPDATE that matches nothing, vs. an actual INSERT), the same shape of gap
@@ -127,7 +136,7 @@ public final class PgQueueStore {
         try (Connection conn = legacyDs != null ? legacyDs.getConnection() : borrowCatalogConnection()) {
             ensureCatalog(conn);
         } catch (SQLException e) {
-            throw new RuntimeException("sqswire: failed to create _sqs_queues catalog", e);
+            throw new RuntimeException("sqswire: failed to create sqs_queues_catalog catalog", e);
         }
     }
 
@@ -176,7 +185,7 @@ public final class PgQueueStore {
 
     /**
      * The registry's stable {@code DEFAULT_BACKEND_NAME} when it's actually registered --
-     * {@code _sqs_queues} needs one fixed home that doesn't move when the shard group is
+     * {@code sqs_queues_catalog} needs one fixed home that doesn't move when the shard group is
      * reconfigured (mirrors {@code PgItemStore#currentCatalogBackendName}, including the
      * fallback for a deployment that shards without an explicit {@code default=...} entry).
      */
@@ -222,10 +231,38 @@ public final class PgQueueStore {
         String engine = engineOf(conn);
         try (var st = conn.createStatement()) {
             for (String statement : DdlTemplates.loadStatements(engine, "sqswire_catalog", Map.of())) {
-                st.execute(statement);
+                executeIdempotently(st, statement, engine);
             }
         }
         catalogEnsured.put(key, Boolean.TRUE);
+    }
+
+    /** Real bug, found live: {@code catalogEnsured}/{@code tableEnsured} are per-{@code
+     * PgQueueStore}-instance caches, not persisted anywhere durable -- a config hot-reload (a
+     * fresh {@code PgQueueStore} construction, same as the drain-routing tests exercise) starts
+     * both empty again, so the CREATE this method guards can run a second time against a schema
+     * that already has the object from a previous instance's run. Harmless on Postgres/MySQL,
+     * which use a real {@code CREATE TABLE IF NOT EXISTS}. Oracle (pre-23c) and SQL Server have
+     * no {@code IF NOT EXISTS} on {@code CREATE TABLE}/{@code CREATE INDEX} at all -- their own
+     * re-run throws a real "already exists" error (Oracle {@code ORA-00955}, SQL Server error
+     * 2714), caught here exactly like {@code deleteQueue}'s own {@code ORA-00942} catch for the
+     * same underlying "no IF [NOT] EXISTS" gap, just on the create side instead of the drop
+     * side. */
+    private static void executeIdempotently(java.sql.Statement st, String statement, String engine) throws SQLException {
+        if (!"oracle".equals(engine) && !"sqlserver".equals(engine)) {
+            st.execute(statement);
+            return;
+        }
+        try {
+            st.execute(statement);
+        } catch (SQLException e) {
+            boolean alreadyExists = "oracle".equals(engine)
+                    ? ("955".equals(e.getSQLState()) || e.getErrorCode() == 955)
+                    : e.getErrorCode() == 2714;
+            if (!alreadyExists) {
+                throw e;
+            }
+        }
     }
 
     private static String safeTableName(String queueName) {
@@ -258,7 +295,7 @@ public final class PgQueueStore {
         String engine = engineOf(conn);
         try (var st = conn.createStatement()) {
             for (String statement : DdlTemplates.loadStatements(engine, "sqswire_queue_table", Map.of("table", table))) {
-                st.execute(statement);
+                executeIdempotently(st, statement, engine);
             }
         }
         tableEnsured.put(key, Boolean.TRUE);
@@ -276,7 +313,7 @@ public final class PgQueueStore {
         try (Connection cat = borrowCatalogConnection()) {
             String engine = engineOf(cat);
             String upsertSql = "postgres".equals(engine)
-                    ? "INSERT INTO _sqs_queues (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count) "
+                    ? "INSERT INTO sqs_queues_catalog (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count) "
                             + "VALUES (?, ?, ?, ?, ?) ON CONFLICT (queue_name) DO UPDATE SET "
                             + "visibility_timeout = EXCLUDED.visibility_timeout, is_fifo = EXCLUDED.is_fifo, "
                             + "dlq_queue_name = EXCLUDED.dlq_queue_name, max_receive_count = EXCLUDED.max_receive_count"
@@ -311,7 +348,7 @@ public final class PgQueueStore {
     private QueueAttributes loadQueueAttributes(String queueName) throws SQLException {
         try (Connection cat = borrowCatalogConnection();
                 PreparedStatement ps = cat.prepareStatement(
-                        "SELECT visibility_timeout, is_fifo, dlq_queue_name, max_receive_count FROM _sqs_queues WHERE queue_name = ?")) {
+                        "SELECT visibility_timeout, is_fifo, dlq_queue_name, max_receive_count FROM sqs_queues_catalog WHERE queue_name = ?")) {
             ps.setString(1, queueName);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -355,7 +392,7 @@ public final class PgQueueStore {
             tableEnsured.remove(queueName + "@" + conn.getMetaData().getURL());
         }
         try (Connection cat = borrowCatalogConnection();
-                PreparedStatement ps = cat.prepareStatement("DELETE FROM _sqs_queues WHERE queue_name = ?")) {
+                PreparedStatement ps = cat.prepareStatement("DELETE FROM sqs_queues_catalog WHERE queue_name = ?")) {
             ps.setString(1, queueName);
             ps.executeUpdate();
         } finally {
@@ -364,7 +401,7 @@ public final class PgQueueStore {
     }
 
     /**
-     * Reads the catalog ({@code _sqs_queues}) rather than scanning {@code information_schema}
+     * Reads the catalog ({@code sqs_queues_catalog}) rather than scanning {@code information_schema}
      * across every shard backend -- the catalog is already the one stable, cluster-wide source
      * of queue names (see the class javadoc), and unlike a table-name-derived list it preserves
      * the real queue name: Postgres identifiers can't hold {@code -}/{@code .} (both legal in SQS
@@ -376,7 +413,7 @@ public final class PgQueueStore {
         List<String> names = new ArrayList<>();
         try (Connection cat = borrowCatalogConnection();
                 var st = cat.createStatement();
-                ResultSet rs = st.executeQuery("SELECT queue_name FROM _sqs_queues ORDER BY queue_name")) {
+                ResultSet rs = st.executeQuery("SELECT queue_name FROM sqs_queues_catalog ORDER BY queue_name")) {
             while (rs.next()) {
                 names.add(rs.getString(1));
             }
@@ -476,9 +513,14 @@ public final class PgQueueStore {
             // Each claimed row needs its OWN fresh receipt handle, not one shared across the
             // batch -- do it as N single-row claims rather than one batch UPDATE with one handle.
             for (int i = 0; i < maxMessages; i++) {
-                ReceivedMessage claimed = "postgres".equals(engine)
-                        ? claimOnePostgres(conn, table, attrs.fifo(), visibilityTimeoutSeconds)
-                        : claimOneNonPostgres(conn, engine, table, attrs.fifo(), visibilityTimeoutSeconds);
+                ReceivedMessage claimed;
+                if ("postgres".equals(engine)) {
+                    claimed = claimOnePostgres(conn, table, attrs.fifo(), visibilityTimeoutSeconds);
+                } else if ("sqlserver".equals(engine)) {
+                    claimed = claimOneSqlServer(conn, table, attrs.fifo(), visibilityTimeoutSeconds);
+                } else {
+                    claimed = claimOneNonPostgres(conn, engine, table, attrs.fifo(), visibilityTimeoutSeconds);
+                }
                 if (claimed == null) {
                     break;
                 }
@@ -525,7 +567,31 @@ public final class PgQueueStore {
         }
     }
 
-    /** The real, portable two-statement claim for Oracle/SQL Server/MySQL -- see
+    /** SQL Server's own real single-statement claim -- {@code UPDATE ... OUTPUT ... WHERE msg_id
+     * = (SELECT TOP 1 ... WITH (ROWLOCK, READPAST, UPDLOCK) ORDER BY msg_id)}, one round trip,
+     * same shape as {@link #claimOnePostgres}. See {@link SqswireDialect}'s own javadoc for why
+     * this got its own real single-statement path instead of staying on the shared two-statement
+     * one Oracle/MySQL still use. {@code null} means no claimable row was found (no {@code
+     * OUTPUT} row produced). */
+    private static ReceivedMessage claimOneSqlServer(Connection conn, String table, boolean fifo, int visibilityTimeoutSeconds)
+            throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(SqswireDialect.claimSqlServerSql(table, fifo))) {
+            ps.setInt(1, visibilityTimeoutSeconds);
+            String receiptHandle = UUID.randomUUID().toString();
+            ps.setString(2, receiptHandle);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                // OUTPUT INSERTED reflects the row's POST-update value within this same statement
+                // (like Postgres's own RETURNING) -- read_ct is already incremented, no manual +1
+                // needed here the way claimOneNonPostgres's separate two-statement path needs it.
+                return new ReceivedMessage(rs.getLong("msg_id"), receiptHandle, rs.getString("body"), rs.getInt("read_ct"));
+            }
+        }
+    }
+
+    /** The real, portable two-statement claim for Oracle/MySQL -- see
      * {@link SqswireDialect}'s own javadoc for the full design reasoning. Both statements run in
      * one real transaction on {@code conn} so the row lock {@link SqswireDialect#claimSelectSql}
      * takes is still held when {@link SqswireDialect#claimUpdateSql} runs -- {@code

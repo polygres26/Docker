@@ -5,11 +5,11 @@
 -- Real, disclosed gap: no IF NOT EXISTS on CREATE TABLE either, same real mitigating factor as
 -- ddl/sqlserver/dynamowire_item_table.sql's own comment.
 -- ### table
-CREATE TABLE _sqs_queues (
+CREATE TABLE sqs_queues_catalog (
     queue_name NVARCHAR(450) NOT NULL,
     visibility_timeout INT NOT NULL DEFAULT 30,
     is_fifo BIT NOT NULL DEFAULT 0,
     dlq_queue_name NVARCHAR(450),
     max_receive_count INT,
-    CONSTRAINT _sqs_queues_pk PRIMARY KEY (queue_name)
+    CONSTRAINT sqs_queues_catalog_pk PRIMARY KEY (queue_name)
 )

@@ -8,18 +8,27 @@ import java.sql.SQLException;
  * (a single {@code UPDATE ... WHERE msg_id = (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING ...}
  * statement) is untouched; this class is only ever consulted for Oracle/SQL Server/MySQL.
  *
- * <p><b>The "claim a message" design decision, made deliberately</b>: Oracle's own JDBC driver
- * really does support a single-statement {@code RETURNING ... INTO} equivalent via {@code
- * OraclePreparedStatement.registerReturnParameter} (verified against Oracle's own JDBC API docs)
- * -- but using it means a real, separate Oracle-specific Java code path (an {@code
- * oracle.jdbc.OraclePreparedStatement} cast), not just different SQL text. Rather than give Oracle
- * its own fourth code path, all three of Oracle/SQL Server/MySQL share ONE real, portable
- * two-statement pattern instead, run inside one transaction on the same connection: a {@code
- * SELECT ... FOR UPDATE} (with each engine's own real lock-skip hint) to find and lock a
- * candidate row (Java already has its data from this SELECT, no RETURNING needed at all), then a
- * plain {@code UPDATE ... WHERE msg_id = ?} to claim it. One extra real round trip per claim on
- * these three engines versus Postgres's single statement -- a real, disclosed tradeoff for a
- * uniform, maintainable Java code path, not a hidden cost.
+ * <p><b>The "claim a message" design decision, revised after live RTT measurement</b>: the
+ * original design put Oracle/SQL Server/MySQL on ONE shared two-statement claim pattern (a
+ * {@code SELECT ... FOR UPDATE} with each engine's own lock-skip hint, then a plain
+ * {@code UPDATE ... WHERE msg_id = ?}) purely for Java code-path uniformity -- a real, disclosed
+ * extra round trip on all three, accepted as a tradeoff. Live-measured RTT against real
+ * containers showed that tradeoff costing far more on SQL Server than on Oracle/MySQL (SQL
+ * Server's {@code ReceiveMessage} averaged ~7ms server-side vs. ~2ms for its own
+ * {@code SendMessage} -- a much wider gap than Oracle or MySQL show between the same two
+ * operations), so SQL Server now gets its own real single-statement claim via its real,
+ * first-class {@code OUTPUT} clause on {@code UPDATE} (see {@link #claimSqlServerSql}) --
+ * genuinely portable JDBC, no driver-specific cast needed, so this isn't the same tradeoff as
+ * Oracle's option below.
+ *
+ * <p>Oracle's own JDBC driver really does support a single-statement {@code RETURNING ... INTO}
+ * equivalent via {@code OraclePreparedStatement.registerReturnParameter} (verified against
+ * Oracle's own JDBC API docs) -- deliberately NOT adopted: it needs a real, Oracle-specific Java
+ * code path (an {@code oracle.jdbc.OraclePreparedStatement} cast) AND real extra complexity to
+ * return a {@code CLOB} column ({@code body}) through it, for an engine whose two-statement RTT
+ * was already close to Oracle's own baseline live-measured cost, not a real outlier the way SQL
+ * Server was. MySQL has no {@code RETURNING} at all (that's MariaDB-only) -- its two-statement
+ * claim is a genuine language limit, not a design choice left un-optimized.
  *
  * <p><b>Insert-id capture</b> ({@code SendMessage}) uses the standard JDBC {@code
  * Statement.RETURN_GENERATED_KEYS}/{@code getGeneratedKeys()} API instead of {@code RETURNING} --
@@ -39,14 +48,14 @@ final class SqswireDialect {
     static String catalogUpsertSql(String engine) {
         return switch (engine) {
             case "mysql" -> """
-                    INSERT INTO _sqs_queues (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count)
+                    INSERT INTO sqs_queues_catalog (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count)
                     VALUES (?, ?, ?, ?, ?)
                     ON DUPLICATE KEY UPDATE
                       visibility_timeout = VALUES(visibility_timeout), is_fifo = VALUES(is_fifo),
                       dlq_queue_name = VALUES(dlq_queue_name), max_receive_count = VALUES(max_receive_count)
                     """;
             case "oracle" -> """
-                    MERGE INTO _sqs_queues t
+                    MERGE INTO sqs_queues_catalog t
                     USING (SELECT ? AS queue_name, ? AS visibility_timeout, ? AS is_fifo, ? AS dlq_queue_name, ? AS max_receive_count FROM dual) s
                     ON (t.queue_name = s.queue_name)
                     WHEN MATCHED THEN UPDATE SET t.visibility_timeout = s.visibility_timeout, t.is_fifo = s.is_fifo,
@@ -55,7 +64,7 @@ final class SqswireDialect {
                       VALUES (s.queue_name, s.visibility_timeout, s.is_fifo, s.dlq_queue_name, s.max_receive_count)
                     """;
             case "sqlserver" -> """
-                    MERGE INTO _sqs_queues WITH (HOLDLOCK) t
+                    MERGE INTO sqs_queues_catalog WITH (HOLDLOCK) t
                     USING (SELECT ? AS queue_name, ? AS visibility_timeout, ? AS is_fifo, ? AS dlq_queue_name, ? AS max_receive_count) s
                     ON (t.queue_name = s.queue_name)
                     WHEN MATCHED THEN UPDATE SET visibility_timeout = s.visibility_timeout, is_fifo = s.is_fifo,
@@ -114,22 +123,50 @@ final class SqswireDialect {
         };
     }
 
-    /** @return true only for Postgres -- see this class's own javadoc for why Oracle/SQL Server/
-     *     MySQL all share the real two-statement claim pattern instead. */
+    /** @return true for Postgres and SQL Server -- both have a real single-statement claim (see
+     *     {@link #claimSqlServerSql}); Oracle/MySQL still share the two-statement pattern -- see
+     *     this class's own javadoc for why. */
     static boolean claimIsSingleStatement(String engine) {
-        return "postgres".equals(engine);
+        return "postgres".equals(engine) || "sqlserver".equals(engine);
     }
 
-    /** Step 1 of the real two-statement claim: finds and locks (each engine's own real
-     * lock-skip hint) one candidate row without claiming it yet -- Java already has {@code
-     * msg_id}/{@code body}/{@code read_ct} from this SELECT, so the later UPDATE never needs to
-     * report anything back. */
+    /** Shared FIFO group-exclusion predicate, correlated against alias {@code t} -- a message
+     * group with another message still in flight ({@code vt > now}) is skipped entirely, same
+     * real semantics Postgres's own single-statement claim already has. */
+    private static String fifoPredicate(String engine, String table, String alias) {
+        String now = nowExpr(engine);
+        return " AND (" + alias + ".message_group_id IS NULL OR NOT EXISTS (SELECT 1 FROM " + table + " o "
+                + "WHERE o.message_group_id = " + alias + ".message_group_id AND o.vt > " + now + "))";
+    }
+
+    /** SQL Server's own real single-statement claim, via its real, first-class {@code OUTPUT}
+     * clause on {@code UPDATE} -- one round trip, matching Postgres's own shape: an {@code UPDATE
+     * ... WHERE msg_id = (SELECT TOP 1 ... WITH (ROWLOCK, READPAST, UPDLOCK) ORDER BY msg_id)}
+     * picks and locks the same candidate row {@link #claimSelectSql} would have, but claims it in
+     * the same statement instead of a separate round trip. Bind order: (seconds, receiptHandle) --
+     * no {@code msgId} bind needed, it's picked by the embedded subquery, not passed in. {@code
+     * null} means no claimable row (no {@code OUTPUT} row produced) -- checked via {@code
+     * ResultSet.next()} on the {@code executeQuery()} of this statement, same as any other
+     * RETURNING-shaped statement. */
+    static String claimSqlServerSql(String table, boolean fifo) {
+        String now = nowExpr("sqlserver");
+        String fifoPred = fifo ? fifoPredicate("sqlserver", table, "t") : "";
+        return "UPDATE " + table + " SET vt = " + nowPlusSecondsExpr("sqlserver")
+                + ", receipt_handle = ?, read_ct = read_ct + 1 "
+                + "OUTPUT INSERTED.msg_id, INSERTED.body, INSERTED.read_ct "
+                + "WHERE msg_id = (SELECT TOP 1 t.msg_id FROM " + table + " t WITH (ROWLOCK, READPAST, UPDLOCK) "
+                + "WHERE t.vt <= " + now + fifoPred + " ORDER BY t.msg_id)";
+    }
+
+    /** Step 1 of Oracle/MySQL's own two-statement claim (the only two engines still on it -- see
+     * this class's own javadoc): finds and locks (each engine's own real lock-skip hint) one
+     * candidate row without claiming it yet -- Java already has {@code msg_id}/{@code body}/
+     * {@code read_ct} from this SELECT, so the later UPDATE never needs to report anything back.
+     * Not called for SQL Server ({@link #claimIsSingleStatement} is {@code false} only for
+     * Oracle/MySQL) -- SQL Server has its own single-statement {@link #claimSqlServerSql}. */
     static String claimSelectSql(String engine, String table, boolean fifo) {
         String now = nowExpr(engine);
-        String fifoPredicate = fifo
-                ? " AND (t.message_group_id IS NULL OR NOT EXISTS (SELECT 1 FROM " + table + " o "
-                        + "WHERE o.message_group_id = t.message_group_id AND o.vt > " + now + "))"
-                : "";
+        String fifoPredicate = fifo ? fifoPredicate(engine, table, "t") : "";
         return switch (engine) {
             case "mysql" -> "SELECT t.msg_id, t.body, t.read_ct FROM " + table + " t WHERE t.vt <= " + now
                     + fifoPredicate + " ORDER BY t.msg_id LIMIT 1 FOR UPDATE SKIP LOCKED";
@@ -146,15 +183,14 @@ final class SqswireDialect {
             case "oracle" -> "SELECT msg_id, body, read_ct FROM " + table + " WHERE ROWID = ("
                     + "SELECT rid FROM (SELECT t.ROWID AS rid FROM " + table + " t WHERE t.vt <= " + now
                     + fifoPredicate + " ORDER BY t.msg_id) WHERE ROWNUM = 1) FOR UPDATE SKIP LOCKED";
-            case "sqlserver" -> "SELECT TOP 1 t.msg_id, t.body, t.read_ct FROM " + table + " t WITH (ROWLOCK, READPAST, UPDLOCK) "
-                    + "WHERE t.vt <= " + now + fifoPredicate + " ORDER BY t.msg_id";
             default -> throw new IllegalArgumentException("sqswire: no claim-select SQL for engine " + engine);
         };
     }
 
-    /** Step 2 of the real two-statement claim -- plain {@code UPDATE ... WHERE msg_id = ?}, real
-     * portable SQL, no engine-specific syntax beyond {@link #nowPlusSecondsExpr}'s own vt
-     * expression. Bind order: (seconds, receiptHandle, msgId). */
+    /** Step 2 of Oracle/MySQL's own two-statement claim -- plain {@code UPDATE ... WHERE msg_id =
+     * ?}, real portable SQL, no engine-specific syntax beyond {@link #nowPlusSecondsExpr}'s own
+     * vt expression. Bind order: (seconds, receiptHandle, msgId). Not called for SQL Server, same
+     * as {@link #claimSelectSql}. */
     static String claimUpdateSql(String engine, String table) {
         return "UPDATE " + table + " SET vt = " + nowPlusSecondsExpr(engine)
                 + ", receipt_handle = ?, read_ct = read_ct + 1 WHERE msg_id = ?";

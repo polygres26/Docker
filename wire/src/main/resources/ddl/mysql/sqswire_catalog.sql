@@ -3,7 +3,7 @@
 --   BOOLEAN -> TINYINT(1) (MySQL's own real BOOLEAN is an alias for this; JDBC's setInt(1/0),
 --     not setBoolean, is what SqswireDialect uses here -- see its own javadoc)
 -- ### table
-CREATE TABLE IF NOT EXISTS _sqs_queues (
+CREATE TABLE IF NOT EXISTS sqs_queues_catalog (
     queue_name VARCHAR(255) PRIMARY KEY,
     visibility_timeout INT NOT NULL DEFAULT 30,
     is_fifo TINYINT(1) NOT NULL DEFAULT 0,
