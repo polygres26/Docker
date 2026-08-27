@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PolyWire — The Intelligent Gateway for Postgres | Polygres</title>
-<meta name="description" content="PolyWire is the intelligent gateway for Postgres: one control point that connects, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, PostgreSQL, gRPC, and MCP. Different protocols, same policies, same Postgres. PolyAdvisor scores how hard your migration to Postgres will be.">
+<meta name="description" content="PolyWire is the intelligent gateway for Postgres: one control point that connects, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, PostgreSQL, gRPC, and MCP. Different protocols, same policies, same Postgres. PolyAdvisor scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://polygres26.github.io/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -34,7 +34,7 @@
       "name": "PolyWire",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
-      "description": "PolyWire is the intelligent gateway for Postgres -- one control point for every Postgres workload. Different protocols, same policies, same Postgres. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, gRPC, and MCP -- to a single real Postgres database, unmodified, with live semantic execution translation (protocol to SQL/API semantics to PostgreSQL execution), not just protocol framing. Organized around five capabilities: Connect (ten client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (PolyCache -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
+      "description": "PolyWire is the intelligent gateway for Postgres -- one control point for every Postgres workload. Different protocols, same policies, same Postgres. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, gRPC, and MCP -- to a single real Postgres database, unmodified, with live semantic execution translation (protocol to SQL/API semantics to PostgreSQL execution), not just protocol framing. Organized around five capabilities: Connect (eleven client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (PolyCache -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
       "url": "https://polygres26.github.io/polywire.html",
       "image": "https://polygres26.github.io/docs/architecture.png",
       "offers": [
@@ -108,7 +108,7 @@
         Postgres — regardless of the protocol they speak.
       </p>
       <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
-      <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · PostgreSQL · gRPC · MCP</p>
+      <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · InfluxDB · PostgreSQL · gRPC · MCP</p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
@@ -126,7 +126,7 @@
 
       <h3 class="subhead" id="why">Put an intelligent control point in front of Postgres.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Connect</h4><p>Any client. One Postgres — with live semantic execution translation, not just protocol framing. Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, PostgreSQL, gRPC, and MCP — every one keeps its own driver and protocol.</p></div>
+        <div class="obsCard"><h4>Connect</h4><p>Any client. One Postgres — with live semantic execution translation, not just protocol framing. Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, InfluxDB, PostgreSQL, gRPC, and MCP — every one keeps its own driver and protocol.</p></div>
         <div class="obsCard"><h4>Protect</h4><p>A SQL firewall, connection ACL, authentication, and Postgres row-level security identity all apply before a request reaches Postgres — the same policies regardless of which protocol the caller speaks.</p></div>
         <div class="obsCard"><h4>Control</h4><p>QoS admission control, routing, connection pooling, sharding, and planned/unplanned failover — protect backend capacity and keep Postgres available under load.</p></div>
         <div class="obsCard"><h4>Accelerate</h4><p>One distributed cache shared across protocols — a result cached via MySQL is served to Oracle, SQL Server, Postgres, gRPC, and MCP too, no round trip. Rollups keep pre-aggregated tables fresh automatically.</p></div>
@@ -591,7 +591,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
           <p class="priceTag">$0 <small>/ forever</small></p>
           <p class="priceSub">For evaluation, development, demos, and migration testing.</p>
           <ul>
-            <li>All ten protocols — Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, gRPC, MCP</li>
+            <li>All eleven protocols — Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, gRPC, MCP</li>
             <li>SQL translation, dialect rewrite, and rollup acceleration</li>
             <li>SQL firewall, connection ACL, and every policy engine</li>
             <li>Routing and sharding, all strategies</li>
@@ -635,7 +635,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
     <section class="tool" id="final-cta">
       <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
       <p class="lede">
-        <b>Try it free</b> — Developer Edition, all features, all ten protocols.
+        <b>Try it free</b> — Developer Edition, all features, all eleven protocols.
         <b>Taking it to production?</b> Bring your architecture and we'll help map the
         deployment.
       </p>
@@ -737,7 +737,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
         {
           "@type": "Question",
           "name": "Does my application need to change to use PolyWire?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No -- each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end." }
+          "acceptedAnswer": { "@type": "Answer", "text": "No -- each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware PolyWire (not the database it thinks it's talking to) is on the other end." }
         },
         {
           "@type": "Question",

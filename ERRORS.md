@@ -1,6 +1,6 @@
 # Error translation across every wire protocol
 
-A client that speaks Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, or OpenSearch expects a
+A client that speaks Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, or InfluxDB expects a
 real failure — a duplicate key, a missing table, a dead connection — to come back in *that*
 protocol's own native error shape, with the exact code/name a driver's own retry, reconnect, and
 error-handling logic keys off. Underneath every one of them, PolyWire is talking to real Postgres,
@@ -28,9 +28,16 @@ than inventing a plausible-looking one.
 | **DynamoDB** (dynamowire) | HTTP status + AWS exception name, in the real AWS JSON error envelope |
 | **SQS** (sqswire) | HTTP status + AWS error code, in the real AWS JSON/XML error envelope |
 | **OpenSearch** (oswire) | HTTP status + `error.type` + `error.reason` + `error.root_cause[]` |
+| **InfluxDB** (influxwire) | HTTP status + a flat `{"error": "..."}` message |
 
 Each protocol maps the real Postgres condition to its own native error table, falling back to that
 protocol's own generic default for anything unmapped rather than failing to respond at all.
+InfluxDB is left out of the per-condition table below on purpose, not by omission: its own real
+error responses don't carry a distinct error-code taxonomy the way Oracle's `ORA-NNNNN` or
+OpenSearch's `error.type` do -- just an HTTP status and a human-readable message -- so mapping it
+into that table's per-condition columns would mean inventing distinctions real InfluxDB itself
+doesn't make, not documenting real ones. `InfluxErrorMapper` maps SQLSTATE to the closest real HTTP
+status (404/403/400/503) instead; see its own source for the exact table.
 
 ---
 

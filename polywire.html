@@ -63,6 +63,7 @@
           <li><a href="#cache-vs-round-trip">PolyCache vs. round trip</a></li>
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
+          <li><a href="#influxdb-line-protocol">InfluxDB</a></li>
           <li><a href="#rollups">Rollups</a></li>
           <li><a href="#observability">Observability</a></li>
           <li><a href="#multi-az">Multi-AZ deployment</a></li>
@@ -118,6 +119,7 @@
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Query result caching (PolyCache)</span><span class="uc-desc">PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Time-series writes without running InfluxDB</span><span class="uc-desc">A real line-protocol <code>/write</code> endpoint and a bounded InfluxQL <code>/query</code> (WHERE, GROUP BY time(), mean/sum/count/min/max) land on Postgres — a real TimescaleDB hypertable when the backend has the extension, a plain indexed table otherwise. See "InfluxDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run PolyWire while PolyAdvisor (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
@@ -344,6 +346,60 @@
           </tbody>
         </table>
       </div>
+
+      <h3 class="subhead" id="influxdb-line-protocol">InfluxDB: line-protocol writes, a real InfluxQL subset<a class="permalink" href="#influxdb-line-protocol" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        influxwire speaks InfluxDB's real v1 wire format -- <code>POST /write</code> with a genuine
+        line-protocol body, <code>GET/POST /query</code> for a real, bounded InfluxQL subset
+        (<code>WHERE</code>, <code>GROUP BY time()</code>, <code>mean/sum/count/min/max</code>) --
+        against a plain Postgres table, one per measurement, tags and fields stored as
+        <code>jsonb</code>. Like oswire and sqswire, influxwire has no result cache of its own
+        (a time-series write is a new point, not a repeatable read to serve from cache) and sits
+        outside the shared pipeline PolyCache's other six protocols share -- see
+        <a href="index.html#distributed-cache">the distributed cache section</a> for that scope.
+      </p>
+      <p class="rttNote">
+        <b>TimescaleDB, detected not required.</b> influxwire checks whether the target Postgres
+        backend has the TimescaleDB extension installed and takes a genuinely different code path
+        per result: a real hypertable (<code>create_hypertable(...)</code>) when it's there, a
+        plain indexed table otherwise -- verified live against both a stock <code>postgres:16</code>
+        backend and a real <code>timescale/timescaledb</code> container, confirmed via
+        <code>timescaledb_information.hypertables</code>/<code>.chunks</code> that the hypertable
+        path really does create real chunks, not just log a claim that it did. Every other
+        operation (write, InfluxQL translation, <code>GROUP BY time()</code> bucketing via
+        Postgres's own native <code>date_bin()</code>) is identical code on both paths -- plain
+        Postgres works today, TimescaleDB is where real write/retention volume would actually need
+        to go.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable">
+          <thead>
+            <tr>
+              <th>Protocol</th>
+              <th>Write (1 point)</th>
+              <th>Query (<code>SELECT ... LIMIT 1</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>InfluxDB (influxwire)</td>
+              <td class="num">2.20 ms</td>
+              <td class="num">1.52 ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        Median of 30 samples, warmed first, via the real official <code>influxdb</code> (v1)
+        Python client -- a lighter-weight methodology than the round-robin table above (single
+        protocol, no cross-protocol warm-up interleaving needed since there's only one to measure
+        here), reported honestly as such rather than dressed up to look like the same rigor.
+        <code>SELECT * FROM &lt;measurement&gt; LIMIT 1</code> against a single-row measurement is
+        the workload -- not a GROUP BY/aggregate query, which costs more (a real, unavoidable
+        consequence of actually computing an aggregate over matching rows, not a wire-protocol
+        overhead). Not yet implemented: a dedicated cache-hit-vs-round-trip breakdown the way the
+        six cached protocols above get, since influxwire has no cache to hit.
+      </p>
 
       <h3 class="subhead" id="rollups">Rollups: pre-aggregated tables, kept fresh automatically<a class="permalink" href="#rollups" aria-label="Link to this section">#</a></h3>
       <p class="statTeaser">Define a rollup once — PolyWire keeps it fresh and rewrites matching queries to use it automatically, no application change.</p>
