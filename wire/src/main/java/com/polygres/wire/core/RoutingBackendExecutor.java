@@ -23,6 +23,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     private final BackendRegistry registry;
     private final BackendExecutor defaultExecutor;
     private final XaRecoveryLog recoveryLog;
+    private final List<RouterStage.ShardRule> shardRules;
 
     private Map<String, Connection> transactionConnections;
 
@@ -44,9 +45,19 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * production caller (Main) supplies one so a coordinator crash mid-commit is recoverable, but
      * tests that don't need real crash recovery can omit it. */
     public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor, XaRecoveryLog recoveryLog) {
+        this(registry, defaultExecutor, recoveryLog, List.of());
+    }
+
+    /** {@code shardRules} is the configured shard schema list (see {@link RouterStage#shardRulesIn})
+     * -- empty means {@link #executeScatterGather} never attempts {@link ShardJoinExecutor}'s
+     * cross-shard JOIN path, same "absent means the feature doesn't exist" shape used elsewhere in
+     * this codebase, not an error. */
+    public RoutingBackendExecutor(BackendRegistry registry, BackendExecutor defaultExecutor, XaRecoveryLog recoveryLog,
+            List<RouterStage.ShardRule> shardRules) {
         this.registry = registry;
         this.defaultExecutor = defaultExecutor;
         this.recoveryLog = recoveryLog;
+        this.shardRules = List.copyOf(shardRules);
     }
 
     public boolean inTransaction() {
@@ -160,6 +171,19 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         List<String> shardNames = registry.shardGroup();
         if (shardNames.isEmpty()) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_NOT_CONFIGURED");
+        }
+
+        // A genuine cross-shard JOIN (two shard-qualified tables, each independently horizontally
+        // partitioned across shardNames -- a row's match may live on a DIFFERENT physical shard,
+        // not just a different row on the same one) needs real federation, not scatter-gather: the
+        // plain-append/aggregate-merge paths below both send the query text unmodified to every
+        // shard and combine each shard's own LOCAL join result -- silently wrong the moment a
+        // matching row pair spans two shards, since it's never found on either shard alone. Checked
+        // before the aggregate-merge/plain-append dispatch below, not instead of it -- a query with
+        // no JOIN (the overwhelming common case) is completely unaffected.
+        String matchedSchema = ShardJoinExecutor.matchedShardSchema(shardRules, statement.sqlText());
+        if (matchedSchema != null) {
+            return ShardJoinExecutor.execute(registry, shardNames, matchedSchema, statement);
         }
 
         // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this

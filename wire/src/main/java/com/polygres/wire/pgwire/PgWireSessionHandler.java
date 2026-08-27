@@ -113,7 +113,8 @@ public final class PgWireSessionHandler implements Runnable {
         // shared-credential fallback -- that path has no real distinguishable identity to assert.
         this.terminalExecutor = new JdbcBackendExecutor(null, new com.polygres.wire.core.access.PostgresRlsSessionInitializer());
         this.routingExecutor = new com.polygres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
-                new com.polygres.wire.xa.XaRecoveryLog(options));
+                new com.polygres.wire.xa.XaRecoveryLog(options),
+                com.polygres.wire.core.RouterStage.shardRulesIn(sharedStages));
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
         this.sqlMetrics = com.polygres.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);

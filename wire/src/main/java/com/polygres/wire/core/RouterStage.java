@@ -34,7 +34,12 @@ public final class RouterStage implements PipelineStage {
     public record ValueShardColumnRule(String columnName, ShardingStrategy strategy) {
     }
 
-    public record ShardRule(Pattern schemaPattern) {
+    /** @param schemaName the raw configured schema name (e.g. {@code "shard"}), kept alongside the
+     *     already-compiled {@link #schemaPattern()} -- {@link ShardJoinExecutor} needs the literal
+     *     string itself (to mount a Calcite view under that exact name and to find every distinct
+     *     {@code schemaName.table} reference in the query), which a compiled {@link Pattern} can't
+     *     hand back out. */
+    public record ShardRule(String schemaName, Pattern schemaPattern) {
     }
 
     private volatile List<SchemaRule> schemaRules;
@@ -87,6 +92,21 @@ public final class RouterStage implements PipelineStage {
 
     public List<ShardRule> shardRules() {
         return shardRules;
+    }
+
+    /** Same "find the one instance of this stage in the shared pipeline stage list" convention as
+     * {@link StatsCollectorStage#findIn} -- lets a session handler that only has {@code sharedStages}
+     * (not a direct {@link RouterStage} reference) build a {@link RoutingBackendExecutor} that knows
+     * the configured shard schema names, without threading a new constructor parameter through every
+     * caller. Returns {@code List.of()} (not {@code null}) when no {@link RouterStage} is present, so
+     * every caller can pass the result straight through without a null check. */
+    public static List<ShardRule> shardRulesIn(List<PipelineStage> stages) {
+        for (PipelineStage stage : stages) {
+            if (stage instanceof RouterStage router) {
+                return router.shardRules();
+            }
+        }
+        return List.of();
     }
 
     public static RouterStage fromConfig(String schemaSpec, String predicateSpec, String shardTablesSpec) {
@@ -145,7 +165,7 @@ public final class RouterStage implements PipelineStage {
             for (String entry : shardTablesSpec.split(",")) {
                 String schema = entry.trim();
                 if (!schema.isEmpty()) {
-                    shardRules.add(new ShardRule(
+                    shardRules.add(new ShardRule(schema,
                             Pattern.compile("\\b" + Pattern.quote(schema) + "\\.", Pattern.CASE_INSENSITIVE)));
                 }
             }
