@@ -66,13 +66,16 @@ public final class BoltWireSessionHandler implements Runnable {
 
     private final Socket clientSocket;
     private final BackendRegistry backendRegistry;
+    private final PgGraphStore graphStore;
 
     private static final Pattern RETURN_LITERAL = Pattern.compile(
             "(?is)^\\s*RETURN\\s+(-?\\d+\\.\\d+|-?\\d+|'[^']*'|\"[^\"]*\")\\s*(?:AS\\s+(\\w+))?\\s*;?\\s*$");
+    private static final Pattern CREATE_PREFIX = Pattern.compile("(?i)^\\s*CREATE\\b");
 
     public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
         this.backendRegistry = backendRegistry;
+        this.graphStore = new PgGraphStore(backendRegistry);
     }
 
     @Override
@@ -253,16 +256,73 @@ public final class BoltWireSessionHandler implements Runnable {
         }
     }
 
+    /** Dispatches to whichever narrow translation the query text matches -- Phase 1's literal
+     * RETURN, or Phase 2's CREATE (see {@link CypherParser}) -- and fails loudly, naming what
+     * wasn't understood, when neither does. */
+    private ExecutedQuery translateAndRun(String cypher) throws SQLException {
+        if (CREATE_PREFIX.matcher(cypher).find()) {
+            try {
+                return runCreate(CypherParser.parseCreate(cypher));
+            } catch (CypherException e) {
+                throw new UnsupportedCypherException(e.getMessage());
+            }
+        }
+        return runReturnLiteral(cypher);
+    }
+
+    /**
+     * Phase 2's write path: creates the node (and, if the pattern includes one, the relationship
+     * and second node) for real in Postgres via {@link PgGraphStore}, then builds each requested
+     * RETURN item -- either the whole created node (encoded as a real Bolt Node struct, see
+     * {@link GraphNode}) or one scalar property off it. Both nodes (and the edge, if present) are
+     * created in a single transaction -- see {@code PgGraphStore#withConnection}'s own javadoc for
+     * why: a failure partway through must not leave an orphaned node behind.
+     */
+    private ExecutedQuery runCreate(CypherParser.CreateStatement stmt) throws SQLException {
+        Map<String, GraphNode> createdByVariable = new LinkedHashMap<>();
+        graphStore.withConnection(c -> {
+            GraphNode first = graphStore.createNode(c, stmt.first().labels(), stmt.first().properties());
+            if (stmt.first().variable() != null) {
+                createdByVariable.put(stmt.first().variable(), first);
+            }
+            if (stmt.second() != null) {
+                GraphNode second = graphStore.createNode(c, stmt.second().labels(), stmt.second().properties());
+                if (stmt.second().variable() != null) {
+                    createdByVariable.put(stmt.second().variable(), second);
+                }
+                graphStore.createEdge(c, first.id(), second.id(), stmt.rel().type(), stmt.rel().properties());
+            }
+            return null;
+        });
+
+        List<String> columns = new ArrayList<>();
+        List<Object> row = new ArrayList<>();
+        for (CypherParser.ReturnItem item : stmt.returnItems()) {
+            GraphNode node = createdByVariable.get(item.variable());
+            if (node == null) {
+                throw new UnsupportedCypherException(
+                        "boltwire: RETURN references \"" + item.variable() + "\", which wasn't created by this CREATE");
+            }
+            String columnName = item.alias() != null ? item.alias()
+                    : item.property() != null ? item.variable() + "." + item.property() : item.variable();
+            columns.add(columnName);
+            row.add(item.property() != null ? node.properties().get(item.property()) : node);
+        }
+        List<List<Object>> rows = stmt.returnItems().isEmpty() ? List.of() : List.of(row);
+        return new ExecutedQuery(columns, rows);
+    }
+
     /**
      * Phase 1's own narrow translation: {@code RETURN <literal> [AS <alias>]} only -- see this
      * class's own javadoc for why. Executes a genuine {@code SELECT <literal> AS <alias>} against
      * the default backend, proving a real Postgres round trip, not just an in-Java echo.
      */
-    private ExecutedQuery translateAndRun(String cypher) throws SQLException {
+    private ExecutedQuery runReturnLiteral(String cypher) throws SQLException {
         Matcher m = RETURN_LITERAL.matcher(cypher);
         if (!m.matches()) {
             throw new UnsupportedCypherException(
-                    "boltwire Phase 1 only understands \"RETURN <literal> [AS <alias>]\" -- got: " + cypher);
+                    "boltwire Phase 1/2 only understands \"RETURN <literal> [AS <alias>]\" and \"CREATE ...\" "
+                            + "-- got: " + cypher);
         }
         String literal = m.group(1);
         String alias = m.group(2) != null ? m.group(2) : literal.replaceAll("[^A-Za-z0-9_]", "_");

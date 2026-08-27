@@ -174,9 +174,22 @@ final class PackStream {
                 @SuppressWarnings("unchecked")
                 Map<String, ?> m = (Map<String, ?>) map;
                 writeMap(m);
+            } else if (v instanceof GraphNode node) {
+                writeNode(node);
             } else {
                 throw new IllegalArgumentException("boltwire: no PackStream encoding for " + v.getClass());
             }
+        }
+
+        /** Real Bolt Node struct: tag {@code 0x4E} ('N'), 4 fields -- id, labels, properties,
+         * elementId, in that exact order -- confirmed against a genuine Neo4j server capture (see
+         * {@link GraphNode}'s own javadoc). */
+        void writeNode(GraphNode node) {
+            writeStructHeader(4, 0x4E);
+            writeInt(node.id());
+            writeList(node.labels());
+            writeMap(node.properties());
+            writeString(node.elementId());
         }
 
         private void writeBE(long v, int bytes) {

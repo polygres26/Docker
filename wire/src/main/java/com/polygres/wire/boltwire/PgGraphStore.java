@@ -1,0 +1,161 @@
+package com.polygres.wire.boltwire;
+
+import com.google.gson.JsonObject;
+import com.polygres.wire.core.BackendRegistry;
+import com.polygres.wire.core.BackendTarget;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Property-graph storage for boltwire, backed by plain Postgres -- same "real SQL underneath, no
+ * external service required" shape as every other store in this codebase
+ * ({@code oswire.PostgresSearchStore}, {@code influxwire.PgTimeSeriesStore}).
+ *
+ * <p>Two physical tables, shared across every label/relationship-type (not one table per label the
+ * way oswire/influxwire do one table per index/measurement) -- a property graph's whole point is
+ * that any node can relate to any other regardless of label, so a single {@code nodes} table with a
+ * {@code labels} array column (matching real Cypher's own multi-label-per-node model) and a single
+ * {@code edges} table are the natural relational shape, not N per-label tables that would need
+ * cross-table joins for the common case of an untyped/mixed-label traversal:
+ * <pre>
+ *   polywire_graph_nodes(id bigserial pk, labels text[] not null default '{}',
+ *                         properties jsonb not null default '{}')
+ *   polywire_graph_edges(id bigserial pk, type text not null,
+ *                         from_id bigint not null references polywire_graph_nodes(id),
+ *                         to_id bigint not null references polywire_graph_nodes(id),
+ *                         properties jsonb not null default '{}')
+ * </pre>
+ * GIN indexes on {@code labels} and both {@code properties} columns, btree on {@code from_id}/
+ * {@code to_id} for traversal -- all created once, idempotently, on first use (see
+ * {@link #ensureSchema}), the same "lazy, cached per backend" convention as
+ * {@code PgTimeSeriesStore#ensureMeasurement}.
+ */
+final class PgGraphStore {
+
+    private final BackendRegistry backendRegistry;
+    private final AtomicBoolean schemaEnsured = new AtomicBoolean(false);
+
+    PgGraphStore(BackendRegistry backendRegistry) {
+        this.backendRegistry = backendRegistry;
+    }
+
+    BackendTarget defaultTarget() {
+        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        if (target == null) {
+            throw new IllegalStateException("boltwire: no default backend configured");
+        }
+        return target;
+    }
+
+    private void ensureSchema(BackendTarget target) throws SQLException {
+        if (!schemaEnsured.compareAndSet(false, true)) {
+            return;
+        }
+        try (Connection c = target.open(); var st = c.createStatement()) {
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS polywire_graph_nodes ("
+                    + "id BIGSERIAL PRIMARY KEY, "
+                    + "labels TEXT[] NOT NULL DEFAULT '{}', "
+                    + "properties JSONB NOT NULL DEFAULT '{}')");
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_nodes_labels_idx "
+                    + "ON polywire_graph_nodes USING GIN (labels)");
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_nodes_props_idx "
+                    + "ON polywire_graph_nodes USING GIN (properties)");
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS polywire_graph_edges ("
+                    + "id BIGSERIAL PRIMARY KEY, "
+                    + "type TEXT NOT NULL, "
+                    + "from_id BIGINT NOT NULL REFERENCES polywire_graph_nodes(id), "
+                    + "to_id BIGINT NOT NULL REFERENCES polywire_graph_nodes(id), "
+                    + "properties JSONB NOT NULL DEFAULT '{}')");
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_from_idx "
+                    + "ON polywire_graph_edges (from_id)");
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_to_idx "
+                    + "ON polywire_graph_edges (to_id)");
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS polywire_graph_edges_type_idx "
+                    + "ON polywire_graph_edges (type)");
+        }
+    }
+
+    GraphNode createNode(Connection c, List<String> labels, Map<String, Object> properties) throws SQLException {
+        String labelsArray = "{" + String.join(",", labels.stream().map(PgGraphStore::pgArrayEscape).toList()) + "}";
+        try (PreparedStatement ps = c.prepareStatement(
+                // ?::text[] -- real bug, found live: pgjdbc doesn't implicitly cast a plain String
+                // bind parameter to a text[] column just because the string looks like a Postgres
+                // array literal ("{a,b}") -- "column \"labels\" is of type text[] but expression
+                // is of type character varying". An explicit cast on the parameter itself (not
+                // just relying on the column's own declared type) is required.
+                "INSERT INTO polywire_graph_nodes (labels, properties) VALUES (?::text[], ?::jsonb) RETURNING id")) {
+            ps.setString(1, labelsArray);
+            ps.setString(2, toJson(properties));
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                long id = rs.getLong(1);
+                return new GraphNode(id, labels, properties, GraphNode.elementId(id));
+            }
+        }
+    }
+
+    void createEdge(Connection c, long fromId, long toId, String type, Map<String, Object> properties)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO polywire_graph_edges (type, from_id, to_id, properties) VALUES (?, ?, ?, ?::jsonb)")) {
+            ps.setString(1, type == null ? "RELATED_TO" : type);
+            ps.setLong(2, fromId);
+            ps.setLong(3, toId);
+            ps.setString(4, toJson(properties));
+            ps.executeUpdate();
+        }
+    }
+
+    /** Runs {@code action} against a single connection with the schema already ensured -- every
+     * write in one Cypher statement (a node, or a node+edge+node) shares one connection/
+     * transaction, so a partial failure (e.g. the edge insert failing after the first node
+     * succeeded) rolls back cleanly instead of leaving an orphaned node. */
+    <T> T withConnection(SqlAction<T> action) throws SQLException {
+        BackendTarget target = defaultTarget();
+        ensureSchema(target);
+        try (Connection c = target.open()) {
+            c.setAutoCommit(false);
+            try {
+                T result = action.run(c);
+                c.commit();
+                return result;
+            } catch (SQLException | RuntimeException e) {
+                c.rollback();
+                throw e;
+            }
+        }
+    }
+
+    interface SqlAction<T> {
+        T run(Connection c) throws SQLException;
+    }
+
+    private static String pgArrayEscape(String label) {
+        return "\"" + label.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String toJson(Map<String, Object> properties) {
+        JsonObject obj = new JsonObject();
+        for (Map.Entry<String, Object> e : properties.entrySet()) {
+            Object v = e.getValue();
+            if (v == null) {
+                obj.add(e.getKey(), com.google.gson.JsonNull.INSTANCE);
+            } else if (v instanceof String s) {
+                obj.addProperty(e.getKey(), s);
+            } else if (v instanceof Boolean b) {
+                obj.addProperty(e.getKey(), b);
+            } else if (v instanceof Number n) {
+                obj.addProperty(e.getKey(), n);
+            } else {
+                obj.addProperty(e.getKey(), String.valueOf(v));
+            }
+        }
+        return obj.toString();
+    }
+}
