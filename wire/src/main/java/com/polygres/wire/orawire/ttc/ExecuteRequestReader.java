@@ -237,23 +237,61 @@ public final class ExecuteRequestReader {
         return (v >= 0x20 && v < 0x7F) || v == '\t';
     }
 
+    // Real, disclosed leading keywords for every statement kind a client would send through
+    // Execute -- deliberately NOT client-identity-based (see this method's own javadoc for why):
+    // this is a check against the message's own decoded content, the same kind of signal
+    // #isLikelySqlTextByte already uses elsewhere in this class, not who's connected.
+    private static final java.util.Set<String> SQL_LEADING_KEYWORDS = java.util.Set.of(
+            "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE",
+            "GRANT", "REVOKE", "COMMIT", "ROLLBACK", "SET", "BEGIN", "DECLARE", "CALL", "EXPLAIN",
+            "WITH", "ANALYZE", "COMMENT", "LOCK", "SAVEPOINT", "RENAME");
+
+    private static boolean looksLikeRealSql(String candidate) {
+        String trimmed = candidate.stripLeading();
+        int end = 0;
+        while (end < trimmed.length() && Character.isLetter(trimmed.charAt(end))) {
+            end++;
+        }
+        return SQL_LEADING_KEYWORDS.contains(trimmed.substring(0, end).toUpperCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Real bug, found live against two genuine Oracle clients with opposite behavior at this exact
+     * field: a real SQLcl session showed NO redundant length-prefix byte before SQL text (a fixed
+     * {@code readRawBytes(sqlLength)} read was correct there -- see this method's git history for
+     * the original investigation), but a real {@code python-oracledb} (thin-mode) session DOES send
+     * one -- confirmed live via byte-level tracing: the byte immediately before a {@code "SELECT
+     * ..."} statement's real content was {@code 0x26}, exactly equal to {@code sqlLength}, i.e. a
+     * genuine redundant echo of the length just parsed, not a coincidental first-character match.
+     * Skipping it unconditionally (the pre-regression behavior) broke SQLcl; never skipping it (the
+     * regression this replaces) breaks python-oracledb. Neither client's own identity is available
+     * here to key off of (and using one would be the wrong signal regardless -- Oracle's wire
+     * protocol is opcode-driven, not client-driven), so this reads BOTH candidate windows -- with
+     * the marker skipped and without -- and keeps whichever one actually decodes to a real SQL
+     * statement (starts with a real SQL keyword), the one signal that's genuinely unambiguous
+     * regardless of which client sent it. Falls back to the no-skip reading (this class's own
+     * pre-fix default) on the practically-unreachable case where NEITHER candidate looks like real
+     * SQL, so a genuinely novel client shape fails the same way the old unconditional read did,
+     * not silently worse.
+     */
     private static String readSqlText(TtcReader r, int sqlLength) {
-        // Deliberately readRawBytes, NOT readRawOrLengthPrefixedBytes -- real bug, found live
-        // testing against a genuine SQLcl client (not just JDBC): that method's "is there a
-        // redundant length-prefix byte here?" check guesses by comparing the *next* byte's value
-        // to sqlLength, and skips it if they match. For SQL text specifically that's unsound --
-        // the next byte is the first character of the statement itself, an arbitrary ASCII value,
-        // and when a statement happens to be exactly as many bytes long as the ASCII code of its
-        // own first character (e.g. a 67-byte "CREATE TABLE ..." statement -- 'C' is 67), the
-        // heuristic misfires, skips a real content byte, and misaligns every field parsed after
-        // it until the buffer runs out (an ArrayIndexOutOfBoundsException several fields later,
-        // nowhere near the actual bug). Confirmed empirically: a passing, unambiguous-length
-        // request's trace shows readRawOrLengthPrefixedBytes's guess never actually triggers for
-        // this field in practice (it consumes exactly sqlLength bytes with no skip) -- meaning the
-        // guess is a live hazard with no evidenced benefit here, unlike O5LogonHandler's username
-        // field (a separate call site, untouched), which is left as-is since there's no equivalent
-        // evidence that call site's use of the same heuristic is unsafe.
-        byte[] bytes = r.readRawBytes(sqlLength);
+        String withoutSkip = decode(r.peekRawBytes(0, sqlLength));
+        if (looksLikeRealSql(withoutSkip)) {
+            r.readRawBytes(sqlLength);
+            return withoutSkip;
+        }
+        if (r.remaining() >= 1 + sqlLength) {
+            String withSkip = decode(r.peekRawBytes(1, sqlLength));
+            if (looksLikeRealSql(withSkip)) {
+                r.readRawBytes(1 + sqlLength);
+                return withSkip;
+            }
+        }
+        r.readRawBytes(sqlLength);
+        return withoutSkip;
+    }
+
+    private static String decode(byte[] bytes) {
         return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 }

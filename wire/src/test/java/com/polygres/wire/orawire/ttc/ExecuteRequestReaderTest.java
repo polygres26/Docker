@@ -5,22 +5,38 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression coverage for a real bug found live testing orawire against a genuine Oracle SQLcl
- * client: a fresh-parse Execute request's SQL text was misread whenever the statement's byte
- * length happened to equal the ASCII value of its own first character -- e.g. a 67-byte
- * "CREATE TABLE ..." statement, since {@code 'C'} is 67. {@link ExecuteRequestReader#read}'s old
- * SQL-text reader called {@code TtcReader#readRawOrLengthPrefixedBytes}, which guesses there's a
- * redundant length-prefix byte whenever the *next* byte equals the expected length -- a coincidence
- * with real SQL text's first character, not an actual protocol marker. The guess skipped a real
- * content byte, corrupting the text and misaligning every field parsed after it (surfacing several
- * fields later as an unrelated-looking ArrayIndexOutOfBoundsException). Fixed by reading exactly
- * {@code sqlLength} raw bytes with no guessing.
+ * Regression coverage for TWO real, opposite-direction bugs found live at this exact field,
+ * against two genuine Oracle clients:
+ *
+ * <ul>
+ *   <li>A real SQLcl client sends NO redundant length-prefix byte before SQL text. The original
+ *       reader ({@code TtcReader#readRawOrLengthPrefixedBytes}) guessed one was present whenever
+ *       the *next* byte's value equaled the already-known {@code sqlLength} -- for a 67-byte
+ *       {@code "CREATE TABLE ..."} statement, {@code 'C'} (67) coincidentally collided with the
+ *       length itself, the guess fired wrongly, and the real leading {@code 'C'} got skipped,
+ *       corrupting the text and misaligning every field parsed after it.
+ *   <li>A real {@code python-oracledb} (thin-mode) client DOES send a genuine redundant
+ *       length-prefix byte before SQL text -- confirmed live via byte-level tracing: the byte
+ *       immediately before a real {@code "SELECT ..."} statement was {@code 0x26}, exactly
+ *       {@code sqlLength}, a real echo of the length just parsed, not a first-character
+ *       coincidence. The first fix for the SQLcl bug above (readRawBytes, no skip, ever) broke
+ *       this client instead -- the marker byte got read as the SQL text's own first byte.
+ * </ul>
+ *
+ * <p>Neither client's own identity is available to key off here, and using one would be the
+ * wrong signal anyway -- Oracle's wire protocol is opcode/content-driven, not client-driven.
+ * {@link ExecuteRequestReader#read} instead reads BOTH candidate windows (marker skipped and
+ * not) and keeps whichever one actually decodes to a real SQL statement (starts with a real SQL
+ * keyword) -- a signal that's genuinely unambiguous regardless of which client sent it.
  */
 class ExecuteRequestReaderTest {
 
     /** Builds a minimal, valid Execute-request payload (matching {@link ExecuteRequestReader#read}'s
-     * exact field order) around one SQL statement -- no binds, no defines, a fresh parse. */
-    private static byte[] buildExecuteRequestPayload(String sql) {
+     * exact field order) around one SQL statement -- no binds, no defines, a fresh parse.
+     * {@code redundantLengthPrefix} reproduces the real python-oracledb wire shape (a byte equal
+     * to the SQL's own length, immediately before the SQL bytes) when {@code true}; {@code false}
+     * reproduces the real SQLcl shape (no such byte at all). */
+    private static byte[] buildExecuteRequestPayload(String sql, boolean redundantLengthPrefix) {
         TtcWriter w = new TtcWriter();
         byte[] sqlBytes = sql.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
@@ -68,7 +84,11 @@ class ExecuteRequestReaderTest {
         w.writeUint8(0);
         w.writeUb4(0);
 
-        // freshParse branch: raw SQL bytes, then a trailing ub4.
+        // freshParse branch: (real python-oracledb only) a redundant length-echo byte, then the
+        // raw SQL bytes, then a trailing ub4.
+        if (redundantLengthPrefix) {
+            w.writeUint8(sqlBytes.length);
+        }
         w.writeRaw(sqlBytes);
         w.writeUb4(0);
 
@@ -87,11 +107,13 @@ class ExecuteRequestReaderTest {
 
     @Test
     void sqlTextIsReadCorrectlyWhenItsByteLengthCollidesWithItsOwnFirstCharacter() {
-        // "CREATE TABLE sqlcl_demo4 (id NUMBER PRIMARY KEY, name VARCHAR2(50))" is 69 bytes and
-        // starts with 'C' (67), same shape as the real statement that triggered this live. Use a
-        // statement engineered to hit the exact collision: length == first char's ASCII value.
+        // Real SQLcl shape: no redundant length-prefix byte. "CREATE TABLE sqlcl_demo4 (id NUMBER
+        // PRIMARY KEY, name VARCHAR2(50))" is 69 bytes and starts with 'C' (67), same shape as the
+        // real statement that triggered this live. Use a statement engineered to hit the exact
+        // collision: length == first char's ASCII value -- proves the fix doesn't fall back to
+        // "always skip" the way the pre-regression code did.
         String sql = buildCollidingStatement();
-        TtcReader r = new TtcReader(buildExecuteRequestPayload(sql));
+        TtcReader r = new TtcReader(buildExecuteRequestPayload(sql, false));
 
         ExecuteRequest request = ExecuteRequestReader.read(r);
 
@@ -102,11 +124,26 @@ class ExecuteRequestReaderTest {
     @Test
     void sqlTextIsReadCorrectlyWhenNoCollisionOccurs() {
         String sql = "SELECT 1 FROM dual";
-        TtcReader r = new TtcReader(buildExecuteRequestPayload(sql));
+        TtcReader r = new TtcReader(buildExecuteRequestPayload(sql, false));
 
         ExecuteRequest request = ExecuteRequestReader.read(r);
 
         assertEquals(sql, request.sqlText);
+    }
+
+    @Test
+    void sqlTextIsReadCorrectlyWithARealRedundantLengthPrefixByte() {
+        // Real python-oracledb (thin-mode) shape, confirmed live via byte-level tracing: a genuine
+        // redundant length-prefix byte DOES precede the SQL text -- reading it as the SQL text's
+        // own first byte (the pre-existing regression this test guards against) corrupts every
+        // statement from this client, not just a rare collision.
+        String sql = "SELECT val FROM rtt_bench WHERE id = 1";
+        TtcReader r = new TtcReader(buildExecuteRequestPayload(sql, true));
+
+        ExecuteRequest request = ExecuteRequestReader.read(r);
+
+        assertEquals(sql, request.sqlText,
+                "SQL text must round-trip exactly when a real redundant length-prefix byte precedes it");
     }
 
     /** Builds a "CREATE TABLE ..." statement padded to exactly 67 bytes -- 'C' is ASCII 67, the

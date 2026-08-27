@@ -76,6 +76,16 @@ public final class TtcReader {
         return readRawBytes(knownLen);
     }
 
+    /** Reads {@code len} bytes starting {@code offset} bytes past the current position, WITHOUT
+     * consuming anything -- {@link #position()} is unchanged. Lets a caller inspect a candidate
+     * read before committing to it (see {@code ExecuteRequestReader#readSqlText}'s own use, which
+     * needs to try two different byte offsets and keep whichever one decodes to real SQL). */
+    public byte[] peekRawBytes(int offset, int len) {
+        byte[] out = new byte[len];
+        System.arraycopy(buf, pos + offset, out, 0, len);
+        return out;
+    }
+
     public byte[] readRemaining() {
         byte[] out = new byte[buf.length - pos];
         System.arraycopy(buf, pos, out, 0, out.length);
