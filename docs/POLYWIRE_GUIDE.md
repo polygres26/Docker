@@ -485,7 +485,7 @@ solves what it's actually solved, not by engine-level vibes:
 |---|---|---|---|---|
 | `PgItemStore` | dynamowire | Yes (`POLYWIRE_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified (`CreateTable` actually succeeds against real Oracle/SQL Server/MySQL instances) | Postgres-only (`ON CONFLICT`, `::jsonb` casts — a real, live-confirmed failure on MySQL: `PutItem` still fails past `CreateTable`) |
 | `PgTimeSeriesStore` | influxwire | No (default-backend only) | Real DDL exists for all 4 engines (each engine's own `CREATE TABLE ddl/<engine>/influxwire_measurement_table.sql`, live-verified directly against real Oracle/SQL Server/MySQL) but unreachable in practice until shard routing is added | Postgres-only (`->`/`->>` jsonb operators, `date_bin()`) |
-| `PgQueueStore` | sqswire | Yes (`POLYWIRE_SHARD_BACKENDS`) | Postgres-only (`BIGSERIAL`, `TIMESTAMPTZ`, `now()` — live-confirmed failure: `CreateQueue` itself fails immediately against a real MySQL shard) | Postgres-only (`RETURNING`, `FOR UPDATE SKIP LOCKED` inside an `UPDATE` subselect, `ON CONFLICT`, `FILTER (WHERE ...)`) |
+| `PgQueueStore` | sqswire | Yes (`POLYWIRE_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified | **Real query support for all 4 engines**, live-verified end to end — CreateQueue, SendMessage, ReceiveMessage (including FIFO group-exclusion and dedup), DeleteMessage, ChangeMessageVisibility, GetQueueAttributes, DeleteQueue, against real Oracle/SQL Server/MySQL instances |
 | `PgGraphStore` | Bolt/Cypher graph frontend | No (default-backend only) | Postgres-only — the `labels TEXT[]` array column has no cross-engine equivalent at all; a real port needs a schema redesign (JSON array column or a normalized join table), not a syntax swap | Postgres-only |
 
 **Real bug found and fixed along the way**: `PgItemStore.createTable()` used to write its own
@@ -503,6 +503,47 @@ item table's own `PRIMARY KEY (pk_value, sk_value)` `NOT NULL` requirement the i
 reached Oracle (confirmed live: `ORA-01400`). The table DDL itself is real and correct — verified
 with a non-empty `sk_value` — but a real fix for the empty-sort-key case needs a non-empty sentinel
 value on Oracle specifically, not attempted here.
+
+**sqswire is now a genuinely portable queue, not just DDL** — designed deliberately, not by
+mechanically translating Postgres syntax. Each engine's own real idiomatic queue mechanism was
+researched before writing any code (Oracle's own JDBC driver really does support a real
+single-statement `RETURNING INTO` via `OraclePreparedStatement.registerReturnParameter`, and SQL
+Server has a real, first-class `OUTPUT` clause equivalent to `RETURNING` — but adopting either
+would mean a real, separate engine-specific Java code path). The deliberate design instead: keep
+Postgres's own single-statement `UPDATE ... WHERE msg_id = (SELECT ... FOR UPDATE SKIP LOCKED)
+RETURNING ...` claim untouched, and give Oracle/SQL Server/MySQL one shared, real, portable
+**two-statement** claim (`SqswireDialect`) — a `SELECT ... FOR UPDATE` with each engine's own real
+lock-skip hint (`FOR UPDATE SKIP LOCKED` for MySQL/Oracle, `WITH (ROWLOCK, READPAST, UPDLOCK)` for
+SQL Server) to find and lock a candidate row, then a plain `UPDATE ... WHERE msg_id = ?` to claim
+it — both in one real transaction on the same connection. One extra real round trip per claim on
+those three engines versus Postgres's own single statement, a disclosed tradeoff for a uniform
+code path, not a hidden cost. Insert-id capture (`SendMessage`) uses the standard portable JDBC
+`getGeneratedKeys()` API instead of `RETURNING`, real and simple across all three.
+
+Real, live-verified end to end against real Oracle, SQL Server, and MySQL instances — CreateQueue,
+SendMessage (real `AUTO_INCREMENT`/`IDENTITY` ids), ReceiveMessage (including real FIFO
+group-exclusion and dedup-window logic, not just plain-queue claiming), DeleteMessage,
+ChangeMessageVisibility, GetQueueAttributes counts, and DeleteQueue/recreate — with real bugs found
+and fixed along the way:
+
+- **Oracle's own `Statement.RETURN_GENERATED_KEYS`** returns a `ROWID`, not the real generated
+  column value, unless the generated column is named explicitly — the generic JDBC flag produced a
+  real `ORA-17132: Invalid conversion requested` the moment the code tried to read it as a `long`.
+  Fixed by using the real, standard `prepareStatement(sql, String[] columnNames)` overload instead
+  (portable JDBC API, not Oracle-specific — harmless and equally correct on MySQL/SQL Server too).
+- **Oracle rejects `ORDER BY ... FETCH FIRST n ROWS ONLY FOR UPDATE` outright** (`ORA-02014`) — and,
+  found live right after switching to the textbook pre-`FETCH FIRST` `ROWNUM`-filtered-subquery
+  idiom, that ALSO fails with the identical `ORA-02014`, since that subquery still carries the same
+  `ORDER BY`. The real, actually-working idiom (confirmed against real Oracle community reports of
+  the same wall): pick the target row's own `ROWID` through an `ORDER BY`-bearing view with NO
+  `FOR UPDATE` on it at all, then a separate outer query — a trivial `ROWID` equality lookup, no
+  `ORDER BY` of its own — is what actually carries `FOR UPDATE SKIP LOCKED`.
+- **A real, pre-existing, non-engine-specific bug**, found live testing `DeleteQueue`+recreate: the
+  `tableEnsured` per-(queue,backend) cache was only ever set, never invalidated on `DeleteQueue` —
+  recreating a queue right after deleting it silently skipped `CREATE TABLE` on the next
+  `SendMessage`, since the cache still thought the just-dropped table existed, producing a real
+  "relation/object does not exist" failure instead of transparently recreating it. This bug existed
+  on Postgres too, before this work — just never live-tested this specific sequence before now.
 
 **TimescaleDB is a real, optional Postgres extension, not a hard requirement** — `PgTimeSeriesStore`
 detects it (`SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'`) and only calls

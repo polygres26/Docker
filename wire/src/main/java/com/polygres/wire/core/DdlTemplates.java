@@ -25,14 +25,14 @@ import java.util.regex.Pattern;
  * appears in the file. `${var}` placeholders (today: always just `${table}`, the one thing every
  * one of these DDL files needs to parameterize) are substituted before execution.
  *
- * <p><b>Real, disclosed scope</b>: only {@code dynamowire_item_table}/{@code
- * influxwire_measurement_table} currently have real Oracle/SQL Server/MySQL variants -- {@code
- * sqswire}/the Bolt graph frontend need real QUERY-level portability work first ({@code RETURNING},
- * {@code FOR UPDATE SKIP LOCKED}, {@code ON CONFLICT}, array columns -- see
- * docs/POLYWIRE_GUIDE.md's own backend-engine prerequisites section), so extracting only their
- * DDL to a non-Postgres file wouldn't make either store actually work there yet; their own DDL is
- * still externalized here, just Postgres-only for now, same shape ready for the day their query
- * code is portable too.
+ * <p><b>Real, disclosed scope</b>: {@code dynamowire_item_table}, {@code
+ * influxwire_measurement_table}, and now {@code sqswire_catalog}/{@code sqswire_queue_table} all
+ * have real Oracle/SQL Server/MySQL DDL variants -- {@code sqswire}'s own QUERY code (the claim/
+ * upsert/count logic) has real per-engine support too, in {@code
+ * com.polygres.wire.sqswire.SqswireDialect}. The Bolt/Cypher graph frontend is the one store still
+ * genuinely Postgres-only: its {@code labels TEXT[]} array column has no cross-engine equivalent
+ * at all (see {@code ddl/postgres/boltwire_graph_schema.sql}'s own comment) -- a real schema
+ * redesign, not a query-portability problem the way sqswire's own gap was.
  */
 public final class DdlTemplates {
 

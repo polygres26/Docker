@@ -20,10 +20,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Queue storage for sqswire, backed by Postgres -- the same pgmq (github.com/pgmq/pgmq) table
- * shape (a {@code vt} visibility-timeout column plus {@code FOR UPDATE SKIP LOCKED} for
- * ReceiveMessage) reimplemented in plain SQL, so no {@code pgmq} extension needs to be installed
- * on the backend, exactly as dynamowire/mongowire don't require DynamoDB/MongoDB to exist.
+ * Queue storage for sqswire -- the same pgmq (github.com/pgmq/pgmq) table shape (a {@code vt}
+ * visibility-timeout column plus {@code FOR UPDATE SKIP LOCKED} for ReceiveMessage) reimplemented
+ * in plain SQL, so no {@code pgmq} extension needs to be installed on a Postgres backend, exactly
+ * as dynamowire/mongowire don't require DynamoDB/MongoDB to exist.
+ *
+ * <p><b>Real backend engines beyond Postgres</b>: a shard group member can now genuinely be
+ * Oracle, SQL Server, or MySQL/MariaDB too (see {@link com.polygres.wire.core.BackendDriverRegistry}
+ * for the currently-supported engine list) -- live-verified, full CreateQueue/SendMessage/
+ * ReceiveMessage/DeleteMessage/ChangeMessageVisibility/GetQueueAttributes, including FIFO
+ * group-exclusion and dedup, against real instances of all three. {@link SqswireDialect} carries
+ * every real per-engine SQL difference (Postgres's own single-statement {@code UPDATE ...
+ * RETURNING} claim stays untouched; the other three engines share one real, portable two-statement
+ * claim pattern instead) -- see that class's own javadoc for the full design reasoning.
  *
  * <p><b>Sharding:</b> queues route by name across {@code backendRegistry.shardGroup()} -- the
  * same shard group SQL's value-shard rules and dynamowire/mongowire already use -- hashed via
@@ -209,9 +218,10 @@ public final class PgQueueStore {
         if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
             return;
         }
-        // Real DDL, loaded from ddl/postgres/sqswire_catalog.sql -- see DdlTemplates' own javadoc.
+        // Real DDL, loaded from ddl/<engine>/sqswire_catalog.sql -- see DdlTemplates' own javadoc.
+        String engine = engineOf(conn);
         try (var st = conn.createStatement()) {
-            for (String statement : DdlTemplates.loadStatements("postgres", "sqswire_catalog", Map.of())) {
+            for (String statement : DdlTemplates.loadStatements(engine, "sqswire_catalog", Map.of())) {
                 st.execute(statement);
             }
         }
@@ -222,6 +232,19 @@ public final class PgQueueStore {
         return "sqs_queue_" + SAFE_QUEUE_NAME.matcher(queueName).replaceAll("_");
     }
 
+    /** @return the real {@code ddl/<engine>/} directory name for {@code conn}'s own backend --
+     *     see {@link DdlTemplates#engineDirFor}/{@link SqswireDialect}'s own javadoc. Throws a
+     *     real, clear error for an unrecognized engine rather than silently guessing Postgres. */
+    private static String engineOf(Connection conn) throws SQLException {
+        String engine = DdlTemplates.engineDirFor(conn.getMetaData().getURL());
+        if (engine == null) {
+            throw new SQLException("sqswire: no real DDL/query support for this backend's own engine "
+                    + "(jdbcUrl=" + conn.getMetaData().getURL() + ") -- see BackendDriverRegistry for the "
+                    + "currently-supported engine list");
+        }
+        return engine;
+    }
+
     private void ensureTable(Connection conn, String queueName) throws SQLException {
         String key = queueName + "@" + conn.getMetaData().getURL();
         // Cheap idempotent DDL; not worth the complexity of a per-(backend,queue) cache beyond
@@ -230,11 +253,11 @@ public final class PgQueueStore {
             return;
         }
         String table = safeTableName(queueName);
-        // Real DDL, loaded from ddl/postgres/sqswire_queue_table.sql -- see that file's own
-        // comment for why this store is still Postgres-only end to end (query-level, not just
-        // DDL) unlike dynamowire/influxwire's own now-portable table DDL.
+        // Real DDL, loaded from ddl/<engine>/sqswire_queue_table.sql -- see SqswireDialect's own
+        // javadoc for the full real per-engine query-portability design this DDL supports.
+        String engine = engineOf(conn);
         try (var st = conn.createStatement()) {
-            for (String statement : DdlTemplates.loadStatements("postgres", "sqswire_queue_table", Map.of("table", table))) {
+            for (String statement : DdlTemplates.loadStatements(engine, "sqswire_queue_table", Map.of("table", table))) {
                 st.execute(statement);
             }
         }
@@ -250,22 +273,26 @@ public final class PgQueueStore {
             ensureTable(conn, queueName);
         }
         boolean isFifo = attrs.fifo() || queueName.endsWith(".fifo");
-        try (Connection cat = borrowCatalogConnection();
-                PreparedStatement ps = cat.prepareStatement(
-                        "INSERT INTO _sqs_queues (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count) "
-                                + "VALUES (?, ?, ?, ?, ?) ON CONFLICT (queue_name) DO UPDATE SET "
-                                + "visibility_timeout = EXCLUDED.visibility_timeout, is_fifo = EXCLUDED.is_fifo, "
-                                + "dlq_queue_name = EXCLUDED.dlq_queue_name, max_receive_count = EXCLUDED.max_receive_count")) {
-            ps.setString(1, queueName);
-            ps.setInt(2, attrs.visibilityTimeout());
-            ps.setBoolean(3, isFifo);
-            ps.setString(4, attrs.dlqQueueName());
-            if (attrs.maxReceiveCount() == null) {
-                ps.setNull(5, java.sql.Types.INTEGER);
-            } else {
-                ps.setInt(5, attrs.maxReceiveCount());
+        try (Connection cat = borrowCatalogConnection()) {
+            String engine = engineOf(cat);
+            String upsertSql = "postgres".equals(engine)
+                    ? "INSERT INTO _sqs_queues (queue_name, visibility_timeout, is_fifo, dlq_queue_name, max_receive_count) "
+                            + "VALUES (?, ?, ?, ?, ?) ON CONFLICT (queue_name) DO UPDATE SET "
+                            + "visibility_timeout = EXCLUDED.visibility_timeout, is_fifo = EXCLUDED.is_fifo, "
+                            + "dlq_queue_name = EXCLUDED.dlq_queue_name, max_receive_count = EXCLUDED.max_receive_count"
+                    : SqswireDialect.catalogUpsertSql(engine);
+            try (PreparedStatement ps = cat.prepareStatement(upsertSql)) {
+                ps.setString(1, queueName);
+                ps.setInt(2, attrs.visibilityTimeout());
+                SqswireDialect.bindIsFifo(ps, 3, isFifo, engine);
+                ps.setString(4, attrs.dlqQueueName());
+                if (attrs.maxReceiveCount() == null) {
+                    ps.setNull(5, java.sql.Types.INTEGER);
+                } else {
+                    ps.setInt(5, attrs.maxReceiveCount());
+                }
+                ps.executeUpdate();
             }
-            ps.executeUpdate();
         }
         QueueAttributes stored = new QueueAttributes(attrs.visibilityTimeout(), isFifo, attrs.dlqQueueName(), attrs.maxReceiveCount());
         attributesCache.put(queueName, stored);
@@ -303,7 +330,29 @@ public final class PgQueueStore {
 
     public void deleteQueue(String queueName) throws SQLException {
         try (Connection conn = connectionFor(queueName); var st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS " + safeTableName(queueName));
+            // Real per-engine gap: Oracle (pre-23c) has no "DROP TABLE IF EXISTS" at all -- a
+            // plain DROP TABLE throws ORA-00942 for a table that's already gone (or was never
+            // created, e.g. DeleteQueue on a queue that never had a message sent to it), which
+            // this treats the same way IF EXISTS would on the other 3 engines: not an error.
+            if ("oracle".equals(engineOf(conn))) {
+                try {
+                    st.execute("DROP TABLE " + safeTableName(queueName));
+                } catch (SQLException e) {
+                    if (!"942".equals(e.getSQLState()) && e.getErrorCode() != 942) {
+                        throw e;
+                    }
+                }
+            } else {
+                st.execute("DROP TABLE IF EXISTS " + safeTableName(queueName));
+            }
+            // Real bug, found live (pre-existing, not engine-specific): tableEnsured is a
+            // per-(queue,backend) cache that used to only ever get SET, never invalidated here --
+            // recreating a queue right after deleting it silently skipped CREATE TABLE on its next
+            // SendMessage (ensureTable's own cache thought the table it had just dropped was still
+            // there), producing a real "Invalid object name"/"relation does not exist" failure
+            // instead of transparently recreating it. Cleared for exactly the (queue, backend)
+            // pair this method just dropped the real table on.
+            tableEnsured.remove(queueName + "@" + conn.getMetaData().getURL());
         }
         try (Connection cat = borrowCatalogConnection();
                 PreparedStatement ps = cat.prepareStatement("DELETE FROM _sqs_queues WHERE queue_name = ?")) {
@@ -344,10 +393,13 @@ public final class PgQueueStore {
         try (Connection conn = connectionFor(queueName)) {
             ensureTable(conn, queueName);
             String table = safeTableName(queueName);
+            String engine = engineOf(conn);
             if (dedupId != null) {
-                try (PreparedStatement dup = conn.prepareStatement(
-                        "SELECT msg_id FROM " + table + " WHERE dedup_id = ? AND enqueued_at > now() - (? || ' seconds')::interval "
-                                + "ORDER BY msg_id LIMIT 1")) {
+                String dedupSql = "postgres".equals(engine)
+                        ? "SELECT msg_id FROM " + table + " WHERE dedup_id = ? AND enqueued_at > now() - (? || ' seconds')::interval "
+                                + "ORDER BY msg_id LIMIT 1"
+                        : SqswireDialect.dedupLookupSql(engine, table);
+                try (PreparedStatement dup = conn.prepareStatement(dedupSql)) {
                     dup.setString(1, dedupId);
                     dup.setInt(2, FIFO_DEDUP_WINDOW_SECONDS);
                     try (ResultSet rs = dup.executeQuery()) {
@@ -357,14 +409,40 @@ public final class PgQueueStore {
                     }
                 }
             }
+            if ("postgres".equals(engine)) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO " + table + " (body, message_group_id, dedup_id) VALUES (?, ?, ?) RETURNING msg_id")) {
+                    ps.setString(1, body);
+                    ps.setString(2, messageGroupId);
+                    ps.setString(3, dedupId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        rs.next();
+                        return rs.getLong(1);
+                    }
+                }
+            }
+            // Real, portable JDBC generated-keys API instead of RETURNING -- see SqswireDialect's
+            // own javadoc for why this is the simpler, genuinely cross-engine choice for this one
+            // single-auto-increment-column case (unlike the "claim" pattern below, which needs a
+            // real value FROM the row, not just its generated key).
+            //
+            // Real bug, found live against a real Oracle backend: the generic
+            // Statement.RETURN_GENERATED_KEYS int flag makes Oracle's own JDBC driver return a
+            // ROWID by default, not the real msg_id value -- getLong() against that ROWID throws
+            // ORA-17132 "Invalid conversion requested". Naming the real generated column
+            // explicitly (the prepareStatement(sql, String[]) overload -- real, standard JDBC API,
+            // not Oracle-specific) is what makes Oracle's own driver return the actual column
+            // value instead; harmless and equally correct on MySQL/SQL Server too.
             try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO " + table + " (body, message_group_id, dedup_id) VALUES (?, ?, ?) RETURNING msg_id")) {
+                    "INSERT INTO " + table + " (body, message_group_id, dedup_id) VALUES (?, ?, ?)",
+                    new String[] {"msg_id"})) {
                 ps.setString(1, body);
                 ps.setString(2, messageGroupId);
                 ps.setString(3, dedupId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    return rs.getLong(1);
+                ps.executeUpdate();
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    keys.next();
+                    return keys.getLong(1);
                 }
             }
         }
@@ -393,35 +471,16 @@ public final class PgQueueStore {
         try (Connection conn = connectionFor(queueName)) {
             ensureTable(conn, queueName);
             String table = safeTableName(queueName);
-            String claimSql = attrs.fifo()
-                    ? "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval, "
-                            + "receipt_handle = ?, read_ct = read_ct + 1 "
-                            + "WHERE msg_id = (SELECT msg_id FROM " + table + " t WHERE t.vt <= now() "
-                            + "AND (t.message_group_id IS NULL OR NOT EXISTS ("
-                            + "  SELECT 1 FROM " + table + " o WHERE o.message_group_id = t.message_group_id AND o.vt > now())) "
-                            + "ORDER BY t.msg_id FOR UPDATE SKIP LOCKED LIMIT 1) "
-                            + "RETURNING msg_id, receipt_handle, body, read_ct"
-                    : "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval, "
-                            + "receipt_handle = ?, read_ct = read_ct + 1 "
-                            + "WHERE msg_id = (SELECT msg_id FROM " + table + " WHERE vt <= now() "
-                            + "ORDER BY msg_id FOR UPDATE SKIP LOCKED LIMIT 1) "
-                            + "RETURNING msg_id, receipt_handle, body, read_ct";
+            String engine = engineOf(conn);
             List<ReceivedMessage> results = new ArrayList<>();
             // Each claimed row needs its OWN fresh receipt handle, not one shared across the
             // batch -- do it as N single-row claims rather than one batch UPDATE with one handle.
             for (int i = 0; i < maxMessages; i++) {
-                ReceivedMessage claimed;
-                try (PreparedStatement ps = conn.prepareStatement(claimSql)) {
-                    String receiptHandle = UUID.randomUUID().toString();
-                    ps.setInt(1, visibilityTimeoutSeconds);
-                    ps.setString(2, receiptHandle);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (!rs.next()) {
-                            break;
-                        }
-                        claimed = new ReceivedMessage(rs.getLong("msg_id"), rs.getString("receipt_handle"),
-                                rs.getString("body"), rs.getInt("read_ct"));
-                    }
+                ReceivedMessage claimed = "postgres".equals(engine)
+                        ? claimOnePostgres(conn, table, attrs.fifo(), visibilityTimeoutSeconds)
+                        : claimOneNonPostgres(conn, engine, table, attrs.fifo(), visibilityTimeoutSeconds);
+                if (claimed == null) {
+                    break;
                 }
                 if (attrs.maxReceiveCount() != null && attrs.dlqQueueName() != null
                         && claimed.readCt() > attrs.maxReceiveCount()) {
@@ -432,6 +491,79 @@ public final class PgQueueStore {
                 results.add(claimed);
             }
             return results;
+        }
+    }
+
+    /** Postgres's own original, single-statement claim -- {@code UPDATE ... WHERE msg_id =
+     * (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING ...}, unchanged. {@code null} means no
+     * claimable row was found. */
+    private static ReceivedMessage claimOnePostgres(Connection conn, String table, boolean fifo, int visibilityTimeoutSeconds)
+            throws SQLException {
+        String claimSql = fifo
+                ? "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval, "
+                        + "receipt_handle = ?, read_ct = read_ct + 1 "
+                        + "WHERE msg_id = (SELECT msg_id FROM " + table + " t WHERE t.vt <= now() "
+                        + "AND (t.message_group_id IS NULL OR NOT EXISTS ("
+                        + "  SELECT 1 FROM " + table + " o WHERE o.message_group_id = t.message_group_id AND o.vt > now())) "
+                        + "ORDER BY t.msg_id FOR UPDATE SKIP LOCKED LIMIT 1) "
+                        + "RETURNING msg_id, receipt_handle, body, read_ct"
+                : "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval, "
+                        + "receipt_handle = ?, read_ct = read_ct + 1 "
+                        + "WHERE msg_id = (SELECT msg_id FROM " + table + " WHERE vt <= now() "
+                        + "ORDER BY msg_id FOR UPDATE SKIP LOCKED LIMIT 1) "
+                        + "RETURNING msg_id, receipt_handle, body, read_ct";
+        try (PreparedStatement ps = conn.prepareStatement(claimSql)) {
+            ps.setInt(1, visibilityTimeoutSeconds);
+            ps.setString(2, UUID.randomUUID().toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new ReceivedMessage(rs.getLong("msg_id"), rs.getString("receipt_handle"),
+                        rs.getString("body"), rs.getInt("read_ct"));
+            }
+        }
+    }
+
+    /** The real, portable two-statement claim for Oracle/SQL Server/MySQL -- see
+     * {@link SqswireDialect}'s own javadoc for the full design reasoning. Both statements run in
+     * one real transaction on {@code conn} so the row lock {@link SqswireDialect#claimSelectSql}
+     * takes is still held when {@link SqswireDialect#claimUpdateSql} runs -- {@code
+     * connectionFor}'s own connections default to autocommit, which this method turns off just
+     * for its own two statements and always restores afterward, success or failure, so it never
+     * leaves the shared connection in manual-commit mode for whatever runs after it. */
+    private static ReceivedMessage claimOneNonPostgres(Connection conn, String engine, String table, boolean fifo,
+            int visibilityTimeoutSeconds) throws SQLException {
+        boolean originalAutoCommit = conn.getAutoCommit();
+        conn.setAutoCommit(false);
+        try {
+            long msgId;
+            String body;
+            int readCt;
+            try (PreparedStatement select = conn.prepareStatement(SqswireDialect.claimSelectSql(engine, table, fifo));
+                    ResultSet rs = select.executeQuery()) {
+                if (!rs.next()) {
+                    conn.commit();
+                    return null;
+                }
+                msgId = rs.getLong("msg_id");
+                body = rs.getString("body");
+                readCt = rs.getInt("read_ct");
+            }
+            String receiptHandle = UUID.randomUUID().toString();
+            try (PreparedStatement update = conn.prepareStatement(SqswireDialect.claimUpdateSql(engine, table))) {
+                update.setInt(1, visibilityTimeoutSeconds);
+                update.setString(2, receiptHandle);
+                update.setLong(3, msgId);
+                update.executeUpdate();
+            }
+            conn.commit();
+            return new ReceivedMessage(msgId, receiptHandle, body, readCt + 1);
+        } catch (SQLException e) {
+            conn.rollback();
+            throw e;
+        } finally {
+            conn.setAutoCommit(originalAutoCommit);
         }
     }
 
@@ -467,8 +599,11 @@ public final class PgQueueStore {
         try (Connection conn = connectionFor(queueName)) {
             ensureTable(conn, queueName);
             String table = safeTableName(queueName);
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval WHERE receipt_handle = ?")) {
+            String engine = engineOf(conn);
+            String sql = "postgres".equals(engine)
+                    ? "UPDATE " + table + " SET vt = now() + (? || ' seconds')::interval WHERE receipt_handle = ?"
+                    : SqswireDialect.changeVisibilitySql(engine, table);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setInt(1, visibilityTimeoutSeconds);
                 ps.setString(2, receiptHandle);
                 return ps.executeUpdate() > 0;
@@ -483,10 +618,12 @@ public final class PgQueueStore {
         try (Connection conn = connectionFor(queueName)) {
             ensureTable(conn, queueName);
             String table = safeTableName(queueName);
-            try (var st = conn.createStatement();
-                    ResultSet rs = st.executeQuery(
-                            "SELECT count(*) FILTER (WHERE vt <= now()) AS visible, "
-                                    + "count(*) FILTER (WHERE vt > now()) AS in_flight FROM " + table)) {
+            String engine = engineOf(conn);
+            String sql = "postgres".equals(engine)
+                    ? "SELECT count(*) FILTER (WHERE vt <= now()) AS visible, "
+                            + "count(*) FILTER (WHERE vt > now()) AS in_flight FROM " + table
+                    : SqswireDialect.visibleCountSql(engine, table);
+            try (var st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
                 rs.next();
                 return new QueueCounts(rs.getLong("visible"), rs.getLong("in_flight"));
             }
