@@ -236,6 +236,18 @@
   .archHubFlow { color: rgba(255,255,255,0.82); }
   .archArrow { color: var(--ink-faint); font-size: 18px; line-height: 1; }
 
+  /* Horizontal "cache once, read from any protocol" diagram -- deliberately sideways rather than
+     the stacked .simpleArch tiers above, since the story here is two protocols converging on one
+     cache, not a top-to-bottom flow. Wraps to a vertical stack on narrow screens. */
+  .cacheFlow { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 8px; }
+  .cacheFlowRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+  .cacheChip { border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-family: var(--mono); font-size: 13px; color: var(--ink-dim); text-align: center; }
+  .cacheHub { background: var(--indigo); border: 1px solid var(--indigo); border-radius: 12px; padding: 12px 20px; text-align: center; font-weight: 700; color: #fff; line-height: 1.35; }
+  .cacheHubSub { font-family: var(--mono); font-weight: 400; font-size: 11.5px; letter-spacing: 0.03em; color: rgba(255,255,255,0.82); }
+  .cacheArrow { color: var(--ink-faint); font-size: 20px; line-height: 1; }
+  .cacheArrowDown { color: var(--ink-faint); font-size: 12.5px; font-family: var(--mono); }
+  .cachePg { border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px; font-size: 13px; color: var(--ink-dim); text-align: center; }
+
   /* CSS-only protocol tab selector for "See it happen" -- radio inputs drive which .demoPanel
      shows via the general sibling combinator; no JS needed. */
   .demoRadio { position: absolute; opacity: 0; pointer-events: none; }

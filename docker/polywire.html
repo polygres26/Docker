@@ -131,6 +131,14 @@
 
       <h3 class="subhead" id="cache-vs-round-trip">PolyCache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
       <p class="statTeaser">Up to <b>9.3× faster</b> repeat reads — built-in distributed caching reduces Postgres round trips across every protocol PolyWire speaks.</p>
+      <p class="rttNote">
+        <b>Shared across protocols, not per-protocol silos.</b> PostgreSQL, MySQL, Oracle, SQL
+        Server, gRPC, and MCP all read and populate the same distributed cache — a result cached
+        via one protocol is served to another asking for the same row, with no duplicate cache and
+        no protocol-specific staleness window. MongoDB and DynamoDB keep their own, separate
+        protocol-specific caches (find/GetItem exact-key lookups only) rather than sharing this
+        one.
+      </p>
       <details class="methodDetails">
         <summary>See benchmark methodology and full numbers →</summary>
       <p class="rttNote">
