@@ -51,9 +51,15 @@ public final class BackendConnectivityTest {
         props.setProperty("connectTimeout", String.valueOf(LOGIN_TIMEOUT_SECONDS));
         props.setProperty("loginTimeout", String.valueOf(LOGIN_TIMEOUT_SECONDS));
 
+        // Real bug, found live against a real Oracle backend: "SELECT version()" is a Postgres
+        // function -- Oracle has no such call, and rejects it outright (ORA-00904: "VERSION":
+        // invalid identifier), which used to mark a perfectly healthy Oracle backend DOWN. A
+        // dialect-aware version query, matching BackendTarget.dialect()'s own URL-prefix dispatch.
+        boolean oracle = jdbcUrl != null && jdbcUrl.toLowerCase(java.util.Locale.ROOT).startsWith("jdbc:oracle:");
+        String versionSql = oracle ? "SELECT banner FROM v$version WHERE ROWNUM = 1" : "SELECT version()";
         try (Connection conn = DriverManager.getConnection(jdbcUrl, props);
                 Statement st = conn.createStatement();
-                ResultSet rs = st.executeQuery("SELECT version()")) {
+                ResultSet rs = st.executeQuery(versionSql)) {
             String version = rs.next() ? rs.getString(1) : null;
             long tookMs = (System.nanoTime() - start) / 1_000_000;
             return new Result(true, "Connected", tookMs, version);

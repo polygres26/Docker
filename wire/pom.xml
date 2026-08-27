@@ -138,14 +138,27 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <!-- PolyWire's only backend driver — PolyWire is Postgres-only end to end (BackendRegistry/
-           BackendConnectionPools/BackendTarget). Deliberately NOT adding ojdbc/mariadb/mssql/etc as
-           backend drivers here (see BackendConnectionPools' javadoc) — the Oracle/MySQL support this
-           module has is wire-protocol *frontend* code (orawire/mywire), not JDBC drivers this module
-           calls out to. -->
+      <!-- PolyWire's original, still-primary backend driver. PolyWire used to be Postgres-only
+           end to end (BackendRegistry/BackendConnectionPools/BackendTarget); Oracle is now a
+           real second backend driver too (see the ojdbc11 dependency below, promoted from
+           test-only scope), following the sibling Omnigate project's own proven
+           config-record-plus-URL-prefix-dispatch shape rather than a polymorphic per-engine
+           class hierarchy. MySQL/SQL Server as real backends are a real, scoped follow-up, not
+           done yet; see docs/POLYWIRE_GUIDE.md's own federation section. -->
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Promoted from test-only scope: PolyWire's second real backend driver. BackendTarget/
+           BackendConnectionPools/ShardJoinExecutor/SchemaFederationStage/RollupStage/
+           XaBackendFactory all now recognize a jdbc:oracle: BackendTarget as a real read/write
+           data-plane backend (cross-engine JOIN federation and XA/2PC included), not just
+           something orawire's own wire-protocol frontend decodes against. The wire-protocol
+           frontend code (orawire/) is unrelated; it never touches this driver at all. -->
+      <groupId>com.oracle.database.jdbc</groupId>
+      <artifactId>ojdbc11</artifactId>
+      <version>${ojdbc.version}</version>
     </dependency>
     <dependency>
       <!-- com.polygres.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
@@ -268,15 +281,15 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- ojdbc11 no longer needs its own test-scope entry here; it's a real, compile-scope
+         backend driver dependency now (see above). MssqlJdbcIntegrationTest/MySqlJdbcIntegrationTest
+         below still need their own test-scope drivers since mssql-jdbc/mysql-connector-j aren't
+         real backend drivers yet. -->
     <dependency>
-      <groupId>com.oracle.database.jdbc</groupId>
-      <artifactId>ojdbc11</artifactId>
-      <version>${ojdbc.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <!-- Same rationale as ojdbc11 above: a real client's own wire encoding is the only thing
-           that actually validates a byte-level protocol decoder (RpcRequestReader, for
+      <!-- Same rationale as ojdbc11 above (now, ojdbc11's OWN wire-encoding-validation role for
+           orawire's protocol decoder is instead covered by the same compile-scope dependency
+           above, no separate test-scope copy needed): a real client's own wire encoding is the
+           only thing that actually validates a byte-level protocol decoder (RpcRequestReader, for
            sp_executesql bind-parameter support); see MssqlJdbcIntegrationTest. -->
       <groupId>com.microsoft.sqlserver</groupId>
       <artifactId>mssql-jdbc</artifactId>

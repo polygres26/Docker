@@ -87,7 +87,18 @@ public final class BackendConnectionPools {
         HikariConfig config = new HikariConfig();
         config.setPoolName(poolKey);
         config.setJdbcUrl(jdbcUrl);
-        config.setDriverClassName("org.postgresql.Driver");
+        // Real bug, found live: this used to hardcode "org.postgresql.Driver" unconditionally --
+        // harmless while every backend really was Postgres, but a real, hard crash the moment a
+        // real Oracle backend's own connection pool got created (HikariCP's own DriverDataSource
+        // refuses outright: "Driver org.postgresql.Driver claims to not accept jdbcUrl ..."). Real
+        // driver-class lookup instead, matching BackendTarget.dialect()'s own URL-prefix dispatch;
+        // an unrecognized prefix leaves driverClassName unset, which HikariCP resolves itself via
+        // DriverManager's own URL-matching (its documented fallback) rather than a wrong forced
+        // guess.
+        String driverClassName = BackendDriverRegistry.driverClassNameFor(jdbcUrl);
+        if (driverClassName != null) {
+            config.setDriverClassName(driverClassName);
+        }
         if (user != null) {
             config.setUsername(user);
             config.setPassword(password);

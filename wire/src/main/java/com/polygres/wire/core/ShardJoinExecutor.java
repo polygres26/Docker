@@ -149,11 +149,15 @@ final class ShardJoinExecutor {
                 String mountName = "__polywire_shard" + i;
                 shardMountNames.add(mountName);
                 mountToBackend.put(mountName, new LeafScanProfiler.MountedBackend(target, shardName));
-                // Every PolyWire shard is real Postgres (unlike Omnigate's cross-dialect
-                // federation, which needs a real dialect->driver-class lookup) -- always
-                // "org.postgresql.Driver", same as RollupStage's own single-backend mount.
+                // Real driver-class lookup -- a shard can now genuinely be a non-Postgres engine
+                // (Oracle today; see BackendDriverRegistry's own javadoc), unlike this class's
+                // original Postgres-only assumption.
+                String driverClassName = BackendDriverRegistry.driverClassNameFor(target.jdbcUrl());
+                if (driverClassName == null) {
+                    throw ErrorCatalog.sqlException("ERR_UNSUPPORTED_BACKEND_ENGINE", shardName, target.jdbcUrl());
+                }
                 DataSource dataSource = JdbcSchema.dataSource(
-                        target.jdbcUrl(), "org.postgresql.Driver", target.user(), target.password());
+                        target.jdbcUrl(), driverClassName, target.user(), target.password());
                 dialect = JdbcSchema.createDialect(dataSource);
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, mountName, JdbcSchema.class);

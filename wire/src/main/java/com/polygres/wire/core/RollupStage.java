@@ -73,14 +73,22 @@ public final class RollupStage implements PipelineStage {
         if (target == null) {
             return null;
         }
+        // Real driver-class lookup, not a hardcoded "org.postgresql.Driver" literal -- a rollup's
+        // own backend can now genuinely be a non-Postgres engine (Oracle today; see
+        // BackendDriverRegistry's own javadoc). An unrecognized URL prefix falls through to the
+        // real table, same as target == null above -- never a wrong answer, just no acceleration.
+        String driverClassName = BackendDriverRegistry.driverClassNameFor(target.jdbcUrl());
+        if (driverClassName == null) {
+            return null;
+        }
         List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
         Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:lex=JAVA;caseSensitive=false");
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
-            
+
             DataSource dataSource = JdbcSchema.dataSource(
-                    target.jdbcUrl(), "org.postgresql.Driver", target.user(), target.password());
+                    target.jdbcUrl(), driverClassName, target.user(), target.password());
             SqlDialect dialect = JdbcSchema.createDialect(dataSource);
             org.apache.calcite.linq4j.tree.Expression expression =
                     org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, def.backendName(), JdbcSchema.class);

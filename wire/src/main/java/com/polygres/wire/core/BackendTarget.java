@@ -15,10 +15,18 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         this(name, jdbcUrl, user, password, failoverOptions, null);
     }
 
+    /** @return the real target dialect for this backend's own JDBC URL, driving both {@link
+     *     DialectTranslationStage} (what a client's own source-dialect SQL gets translated INTO)
+     *     and {@link BackendDriverRegistry} (which real driver class actually opens the
+     *     connection) -- {@code null} for an unrecognized URL prefix, which {@link
+     *     DialectTranslationStage} treats as "pass the SQL through untranslated," not an error. */
     public SourceDialect dialect() {
         String url = jdbcUrl == null ? "" : jdbcUrl.toLowerCase(java.util.Locale.ROOT);
         if (url.startsWith("jdbc:postgresql:")) {
             return SourceDialect.POSTGRES;
+        }
+        if (url.startsWith("jdbc:oracle:")) {
+            return SourceDialect.ORACLE;
         }
         return null;
     }

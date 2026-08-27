@@ -69,9 +69,12 @@ import org.slf4j.LoggerFactory;
  * connection cache), no native RLS/VPD session pass-through for the federated connection (this
  * statement's own {@code AccessControlStage} row-filter/column-mask SQL rewriting, already run
  * earlier in the pipeline, is the only enforcement for now), and no schema auto-discovery -- every
- * backend mounts exactly the one schema its own {@link RouterStage.SchemaRule} names. Every PolyWire
- * backend is real Postgres (unlike Omnigate's own cross-dialect Oracle+Postgres federation), so
- * there's no dialect->driver-class lookup to get wrong here either.
+ * backend mounts exactly the one schema its own {@link RouterStage.SchemaRule} names. A federated
+ * backend can now be Postgres OR Oracle (real cross-engine JOIN federation, e.g. a Postgres
+ * {@code customers} table joined against an Oracle {@code orders} table, the same shape Omnigate's
+ * own cross-dialect Oracle+Postgres federation proved out) -- see {@link BackendDriverRegistry}
+ * for the currently-supported engine list; an unrecognized URL prefix is a real, clear error, not
+ * a silent misconnection.
  */
 public final class SchemaFederationStage implements PipelineStage {
 
@@ -165,8 +168,15 @@ public final class SchemaFederationStage implements PipelineStage {
                     throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", backendName);
                 }
                 mountToBackend.put(schemaName, new LeafScanProfiler.MountedBackend(target, backendName));
+                // Real driver-class lookup -- a federated backend can now genuinely be a
+                // non-Postgres engine (Oracle today; see BackendDriverRegistry's own javadoc),
+                // unlike this class's original Postgres-only assumption.
+                String driverClassName = BackendDriverRegistry.driverClassNameFor(target.jdbcUrl());
+                if (driverClassName == null) {
+                    throw ErrorCatalog.sqlException("ERR_UNSUPPORTED_BACKEND_ENGINE", backendName, target.jdbcUrl());
+                }
                 DataSource dataSource = JdbcSchema.dataSource(
-                        target.jdbcUrl(), "org.postgresql.Driver", target.user(), target.password());
+                        target.jdbcUrl(), driverClassName, target.user(), target.password());
                 dialect = JdbcSchema.createDialect(dataSource);
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, schemaName, JdbcSchema.class);
@@ -180,7 +190,8 @@ public final class SchemaFederationStage implements PipelineStage {
                 // ShardJoinExecutor's own javadoc notes Omnigate found live against Postgres
                 // specifically (default search_path is "$user,public", not this backend's own
                 // schema).
-                JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, schemaName);
+                String realSchemaName = BackendDriverRegistry.realCatalogSchemaName(target.jdbcUrl(), schemaName);
+                JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, realSchemaName);
                 if (statisticsStore != null) {
                     Connection statsConnection = target.open();
                     statsConnections.add(statsConnection);
