@@ -611,7 +611,7 @@
 
       <h3 class="subhead" id="multi-az">Multi-AZ deployment<a class="permalink" href="#multi-az" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/deployment.png" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, stateless instances per zone holding primary or backup cache copies, a config-primary Postgres with standby failover">
+        <img src="docs/deployment.svg" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, PolyWire instances spread across three availability zones each holding a primary or backup PolyCache copy, a Postgres data plane (one primary shard and its secondaries/replicas, one per zone), and a separate config-primary Postgres with a standby for automatic failover, pushing config changes to every zone via LISTEN/NOTIFY">
         <figcaption>Every piece of this is real and tested today, including the cross-zone cache backup replication — a cache entry's backup copy is placed on a node in a different availability zone than its primary, proven by a live test with real cache nodes. Cluster discovery works across a static seed list or AWS/GCP/Azure storage; connections between cache nodes can be TLS-encrypted.</figcaption>
       </figure>
 
