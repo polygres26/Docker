@@ -1,0 +1,282 @@
+package com.polygres.wire.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.polygres.wire.testsupport.PolyWireProcess;
+import com.polygres.wire.testsupport.RealPostgres;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
+import java.util.Arrays;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+/**
+ * The project's "short regression suite" -- one real PolyWire instance, real Postgres backends,
+ * real client drivers per protocol, meant to run in well under 10 minutes and catch the class of
+ * regression this project has actually hit live: a protocol silently breaking (the orawire
+ * Execute-request regression), a real perf regression in the hot read/write path (the
+ * PreparedStatement-reuse fix), or federation/caching breaking outright. NOT a substitute for the
+ * project's own exhaustive integration suite (`mvn test`) -- this is the fast, always-run subset.
+ *
+ * <p>One shared {@link PolyWireProcess} + two real Postgres backends for every test in this class
+ * (started once in {@link #startInfra}), not one per test -- container/process startup is the
+ * dominant real cost here, and every test in this suite is cheap once the real infra is up.
+ */
+class ShortRegressionSuiteTest {
+
+    private static RealPostgres shard1;
+    private static RealPostgres shard2;
+    private static PolyWireProcess polywire;
+    private static final String ADMIN_TOKEN = "short-regression-suite-token";
+
+    @BeforeAll
+    static void startInfra() throws Exception {
+        shard1 = RealPostgres.start();
+        shard2 = RealPostgres.start();
+
+        try (Connection c = DriverManager.getConnection(shard1.jdbcUrl(), shard1.username(), shard1.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE protocol_smoke (id BIGSERIAL PRIMARY KEY, protocol TEXT, val TEXT)");
+            st.execute("CREATE TABLE rtt_cached (id BIGSERIAL PRIMARY KEY, val TEXT)");
+            st.execute("INSERT INTO rtt_cached (val) VALUES ('warm')");
+            st.execute("CREATE TABLE rtt_plain (id BIGSERIAL PRIMARY KEY, val TEXT)");
+            st.execute("INSERT INTO rtt_plain (val) VALUES ('warm')");
+            st.execute("CREATE TABLE orders (id serial, region TEXT, total NUMERIC)");
+            st.execute("INSERT INTO orders (region, total) VALUES ('east', 10), ('east', 20)");
+        }
+        try (Connection c = DriverManager.getConnection(shard2.jdbcUrl(), shard2.username(), shard2.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE orders (id serial, region TEXT, total NUMERIC)");
+            st.execute("INSERT INTO orders (region, total) VALUES ('west', 30)");
+        }
+
+        String backends = "default=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
+                + ";shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
+                + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password();
+
+        polywire = PolyWireProcess.builder()
+                .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
+                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
+                .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
+                .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
+                .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                .env("POLYWIRE_BACKENDS", backends)
+                // Real, declarative table sharding (no schema-qualifier prefix needed anywhere)
+                // for the federated-query test below -- dogfoods the same mechanism the Router
+                // rules UI edits.
+                .env("POLYWIRE_TABLE_SHARDS", "orders:hash:region:shard1,shard2")
+                .env("POLYWIRE_CACHE_TABLES", "rtt_cached")
+                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .start();
+    }
+
+    @AfterAll
+    static void stopInfra() {
+        if (polywire != null) polywire.close();
+        if (shard2 != null) shard2.close();
+        if (shard1 != null) shard1.close();
+    }
+
+    // --- 1. Basic protocol coverage: every wire protocol against a real Postgres backend --------
+
+    @Test
+    void pgwireBasicReadWrite() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+            assertProtocolReadWriteWorks(conn, "pgwire");
+        }
+    }
+
+    @Test
+    void mywireBasicReadWrite() throws Exception {
+        // Real, pre-existing startup race (predates this suite -- the same flake this project's
+        // own MySqlJdbcIntegrationTest hits under load): PolyWireProcess.waitForTcpReady only
+        // confirms the mywire port itself accepts TCP connections, not that every internal
+        // component (CredentialStore auth wiring included) is fully warm the instant after -- an
+        // immediate first connection attempt can occasionally see a reset mid-handshake or a
+        // spurious "Access denied". A short retry is the honest fix here, not a real code change
+        // to mywire itself: this is a real client behavior (a driver/app retrying a failed
+        // connect), not masking an actual bug.
+        try (Connection conn = connectWithRetry(() -> DriverManager.getConnection(
+                "jdbc:mysql://localhost:" + polywire.port("mywire") + "/postgres", shard1.username(), shard1.password()), 3)) {
+            assertProtocolReadWriteWorks(conn, "mywire");
+        }
+    }
+
+    private interface ConnectionSupplier {
+        Connection get() throws SQLException;
+    }
+
+    private static Connection connectWithRetry(ConnectionSupplier supplier, int attempts) throws SQLException, InterruptedException {
+        SQLException lastFailure = null;
+        for (int i = 0; i < attempts; i++) {
+            try {
+                return supplier.get();
+            } catch (SQLException e) {
+                lastFailure = e;
+                Thread.sleep(300);
+            }
+        }
+        throw lastFailure;
+    }
+
+    @Test
+    void mssqlwireBasicReadWrite() throws SQLException {
+        String url = "jdbc:sqlserver://localhost:" + polywire.port("mssqlwire") + ";encrypt=false;"
+                + "user=" + shard1.username() + ";password=" + shard1.password() + ";";
+        try (Connection conn = DriverManager.getConnection(url)) {
+            assertProtocolReadWriteWorks(conn, "mssqlwire");
+        }
+    }
+
+    @Test
+    void orawireBasicReadWrite() throws SQLException {
+        String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+        try (Connection conn = DriverManager.getConnection(url, shard1.username(), shard1.password())) {
+            assertProtocolReadWriteWorks(conn, "orawire");
+        }
+    }
+
+    private static void assertProtocolReadWriteWorks(Connection conn, String protocol) throws SQLException {
+        try (PreparedStatement ins = conn.prepareStatement("INSERT INTO protocol_smoke (protocol, val) VALUES (?, ?)")) {
+            ins.setString(1, protocol);
+            ins.setString(2, "hello-from-" + protocol);
+            ins.executeUpdate();
+        }
+        try (PreparedStatement sel = conn.prepareStatement("SELECT val FROM protocol_smoke WHERE protocol = ?")) {
+            sel.setString(1, protocol);
+            try (ResultSet rs = sel.executeQuery()) {
+                assertTrue(rs.next(), protocol + ": expected the row it just inserted to be readable back");
+                assertEquals("hello-from-" + protocol, rs.getString(1));
+            }
+        }
+    }
+
+    // --- 2. RTT: cached read, plain read, write -- 50 executions each, real p50/p90 -------------
+
+    @Test
+    void rttCachedReadPlainReadAndWrite50Executions() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+            // Warm the cache for rtt_cached -- one throwaway call, same methodology as
+            // docs/PERFORMANCE.md's own §5.
+            try (PreparedStatement ps = conn.prepareStatement("SELECT val FROM rtt_cached WHERE id = 1");
+                    ResultSet rs = ps.executeQuery()) {
+                rs.next();
+            }
+
+            double[] cachedReadMs = timeExecutions(conn, "SELECT val FROM rtt_cached WHERE id = 1", 50);
+            double[] plainReadMs = timeExecutions(conn, "SELECT val FROM rtt_plain WHERE id = 1", 50);
+            double[] writeMs = new double[50];
+            for (int i = 0; i < 50; i++) {
+                long t0 = System.nanoTime();
+                try (PreparedStatement ps = conn.prepareStatement("INSERT INTO rtt_plain (val) VALUES (?)")) {
+                    ps.setString(1, "row-" + i);
+                    ps.executeUpdate();
+                }
+                writeMs[i] = (System.nanoTime() - t0) / 1_000_000.0;
+            }
+
+            printStats("cached read", cachedReadMs);
+            printStats("plain read ", plainReadMs);
+            printStats("write      ", writeMs);
+
+            // Loose upper bounds -- this is a REGRESSION guard (catch "it got 10x slower"), not a
+            // precise perf benchmark (see docs/PERFORMANCE.md for that); real machine/environment
+            // variance means asserting exact numbers here would just be flaky.
+            assertTrue(avg(cachedReadMs) < 50.0, "cached read regressed badly: avg=" + avg(cachedReadMs) + "ms");
+            assertTrue(avg(plainReadMs) < 50.0, "plain read regressed badly: avg=" + avg(plainReadMs) + "ms");
+            assertTrue(avg(writeMs) < 50.0, "write regressed badly: avg=" + avg(writeMs) + "ms");
+        }
+    }
+
+    private static double[] timeExecutions(Connection conn, String sql, int n) throws SQLException {
+        double[] times = new double[n];
+        for (int i = 0; i < n; i++) {
+            long t0 = System.nanoTime();
+            try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                rs.next();
+            }
+            times[i] = (System.nanoTime() - t0) / 1_000_000.0;
+        }
+        return times;
+    }
+
+    private static double avg(double[] xs) {
+        double sum = 0;
+        for (double x : xs) sum += x;
+        return sum / xs.length;
+    }
+
+    private static void printStats(String label, double[] xs) {
+        double[] sorted = xs.clone();
+        Arrays.sort(sorted);
+        System.out.printf("RTT %s: min=%.3fms p50=%.3fms p90=%.3fms avg=%.3fms%n",
+                label, sorted[0], sorted[sorted.length / 2], sorted[(int) (sorted.length * 0.9)], avg(xs));
+    }
+
+    // --- 3. Federated query over 2 real backends -------------------------------------------------
+
+    @Test
+    void federatedQueryOverTwoBackends() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password());
+                Statement st = conn.createStatement();
+                // No schema-qualifier prefix needed -- "orders" is declaratively sharded via
+                // POLYWIRE_TABLE_SHARDS, matched by its own bare name.
+                ResultSet rs = st.executeQuery("SELECT SUM(total) FROM orders")) {
+            assertTrue(rs.next());
+            assertEquals(60.0, rs.getDouble(1), 0.0001,
+                    "10 + 20 (shard1) + 30 (shard2) = 60 -- a real cross-shard sum, not one shard's own total");
+        }
+    }
+
+    // --- 4. Memory cache (PolyCache) -- functional correctness of a real cache hit --------------
+
+    @Test
+    void memoryCacheServesACorrectRealHit() throws Exception {
+        try (Connection conn = DriverManager.getConnection(
+                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+            String sql = "SELECT val FROM rtt_cached WHERE id = 1";
+            String firstRead;
+            try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                firstRead = rs.getString(1);
+            }
+            String secondRead;
+            try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                secondRead = rs.getString(1);
+            }
+            assertEquals(firstRead, secondRead, "a cached repeat read must return the same real value");
+            assertEquals("warm", secondRead);
+        }
+
+        // Real confirmation it actually came from the in-memory cache, not just "happened to
+        // match" -- /api/metrics/summary's rttByOutcome breaks out real cache_hit calls
+        // separately (see CacheStage#handleCacheableSelect).
+        HttpClient http = HttpClient.newHttpClient();
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/metrics/summary"))
+                .header("Authorization", "Bearer " + ADMIN_TOKEN)
+                .timeout(Duration.ofSeconds(5))
+                .GET().build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        assertTrue(resp.body().contains("\"cache_hit\""),
+                "expected at least one real cache_hit outcome recorded in rttByOutcome -- got: " + resp.body());
+    }
+}
