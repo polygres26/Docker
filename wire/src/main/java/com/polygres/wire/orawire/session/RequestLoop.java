@@ -1091,7 +1091,7 @@ public final class RequestLoop {
         }
 
         if (result.isQuery()) {
-            openColumns = toColumnMetadata(result.columns(), usedNativeOciExecuteFallback);
+            openColumns = toColumnMetadata(result.columns(), usedNativeOciExecuteFallback, request.sqlText);
             openRows = result.rows();
             fetchPosition = 0;
             ResponseWriter.writeDescribeInfo(w, openColumns, usedNativeOciExecuteFallback);
@@ -1203,8 +1203,11 @@ public final class RequestLoop {
         return ordered;
     }
 
-    private static List<ColumnMetadata> toColumnMetadata(List<ColumnInfo> columns, boolean uppercaseNames) {
+    private static List<ColumnMetadata> toColumnMetadata(List<ColumnInfo> columns, boolean uppercaseNames,
+            String sqlText) {
+        List<String> unaliasedExpressionNames = null;
         List<ColumnMetadata> result = new ArrayList<>(columns.size());
+        int columnIndex = 0;
         for (ColumnInfo col : columns) {
             int oraType = switch (col.jdbcType()) {
                 case Types.VARCHAR, Types.CHAR, Types.LONGVARCHAR -> TtcConstants.ORA_TYPE_NUM_VARCHAR;
@@ -1230,9 +1233,108 @@ public final class RequestLoop {
             // confirmed to matter for live; JDBC/sqlplus/SQLcl keep getting Postgres's own case
             // exactly as before.
             String name = uppercaseNames ? col.name().toUpperCase(java.util.Locale.ROOT) : col.name();
+            // Real bug, found live diffing an ordinary query's ("SELECT 1 FROM dual") DESCRIBE_INFO
+            // response against a real Oracle-to-Oracle capture of the identical query: an unaliased
+            // expression's column name comes straight from Postgres's own catalog too, same as the
+            // real-column case just above, but Postgres's convention for an unaliased *expression*
+            // (as opposed to an unaliased plain column reference) is the fixed placeholder
+            // "?column?" -- Oracle's own convention is completely different: it names the column
+            // after the expression's own source text verbatim (uppercased, truncated to its
+            // identifier length limit), e.g. this exact query's column is really named "1", not any
+            // placeholder at all. Sending Postgres's placeholder straight through was confirmed live
+            // to be exactly why a real SQL*Plus client sent a TNS break right after receiving this
+            // query's row -- it never got a shape it recognized as a valid column name. This is a
+            // genuine protocol-correctness gap in the dialect boundary itself, not a client-type
+            // quirk -- real Oracle would never send "?column?" to ANY client -- so it's fixed here
+            // unconditionally, the same way for every client type, rather than folded into
+            // `uppercaseNames`'s existing native-OCI-only scoping above.
+            if ("?column?".equalsIgnoreCase(name) && sqlText != null) {
+                if (unaliasedExpressionNames == null) {
+                    unaliasedExpressionNames = parseSelectListExpressionNames(sqlText);
+                }
+                if (columnIndex < unaliasedExpressionNames.size()) {
+                    name = unaliasedExpressionNames.get(columnIndex);
+                }
+            }
             result.add(new ColumnMetadata(name, oraType, precision, scale, bufferSize, col.nullable()));
+            columnIndex++;
         }
         return result;
+    }
+
+    // Real Oracle's own limit on a synthesized (unaliased-expression) column name -- identifiers
+    // longer than this get silently truncated to it. Applies regardless of client type.
+    private static final int ORACLE_MAX_IDENTIFIER_LENGTH = 30;
+
+    /**
+     * Splits {@code sqlText}'s own top-level SELECT list into one source-text string per column,
+     * verbatim (trimmed, uppercased, truncated to {@link #ORACLE_MAX_IDENTIFIER_LENGTH}) -- what
+     * real Oracle uses as an unaliased expression's synthesized column name. Only ever consulted
+     * for a column Postgres itself already reported as unaliased (its own "?column?" placeholder --
+     * see this method's one call site), so a real column reference or an explicitly aliased
+     * expression never reaches here; best-effort only for the genuinely unaliased-expression case
+     * that placeholder actually signals. Tracks paren/quote nesting so a top-level comma inside a
+     * function call's own argument list (e.g. {@code DECODE(a,b,c)}) isn't mistaken for a
+     * column-list separator; returns as many (or as few) names as it can confidently parse -- see
+     * this method's own call site for what happens if it can't cover every column.
+     */
+    private static List<String> parseSelectListExpressionNames(String sqlText) {
+        String upper = sqlText.strip();
+        if (!upper.regionMatches(true, 0, "SELECT", 0, 6)) {
+            return List.of();
+        }
+        int fromIndex = -1;
+        int depth = 0;
+        char quote = 0;
+        for (int i = 6; i < upper.length(); i++) {
+            char c = upper.charAt(i);
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (depth == 0 && Character.isWhitespace(c)
+                    && upper.regionMatches(true, i + 1, "FROM", 0, 4)
+                    && (i + 5 >= upper.length() || Character.isWhitespace(upper.charAt(i + 5)))) {
+                fromIndex = i;
+                break;
+            }
+        }
+        String selectList = fromIndex >= 0 ? upper.substring(6, fromIndex) : upper.substring(6);
+        List<String> names = new ArrayList<>();
+        int start = 0;
+        depth = 0;
+        quote = 0;
+        for (int i = 0; i <= selectList.length(); i++) {
+            char c = i < selectList.length() ? selectList.charAt(i) : ',';
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                String expr = selectList.substring(start, i).strip();
+                names.add(expr.length() > ORACLE_MAX_IDENTIFIER_LENGTH
+                        ? expr.substring(0, ORACLE_MAX_IDENTIFIER_LENGTH)
+                        : expr);
+                start = i + 1;
+            }
+        }
+        return names;
     }
 
     private interface ConnectionSupplier {
