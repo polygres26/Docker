@@ -55,6 +55,7 @@ services:
       - "9200:9200"   # oswire (was missing from this file even though conftest.py already
                       # referenced OSWIRE_PORT -- added while adding influxwire below)
       - "8086:8086"   # influxwire
+      - "7687:7687"   # boltwire
       - "19090:19090" # admin app + /metrics, /config
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:19090/metrics >/dev/null || exit 1"]
