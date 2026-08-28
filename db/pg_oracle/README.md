@@ -837,14 +837,29 @@ every package schema still present after it.
 
 `test/orawire-integration/` -- the first real end-to-end run through the actual gateway, not
 `psql`: real `sqlcl` (Oracle's own client) over the real Oracle wire protocol, through Polywire's
-orawire, to Postgres with `pg_oracle` installed. Found and fixed a critical bug this way that no
-amount of direct-`psql` testing could have caught: `db_emulation` was never being set at all for
-a plain username/password orawire connection (Polywire's `JdbcBackendExecutor` skips its session
-initializer for an anonymous `AccessContext`, correct for RLS/VPD-context propagation but wrong
-for `db_emulation`, a protocol-level requirement of every orawire session). Fixed in `wire/` --
-see `test/orawire-integration/README.md` for the full story, the exact contrast that pointed at
-it, and several more real, still-open findings from that same run (a `SYS_CONTEXT` bind-typing
-bug, a translator/overload-collision gap in reaching this extension's own new one-argument
-`TO_CHAR`, and a real gap in orawire's basic `CREATE TABLE` DDL translation for Oracle datatypes).
+orawire, to Postgres with `pg_oracle` installed. Found and fixed three real bugs this way that no
+amount of direct-`psql` testing could have caught, all in `wire/`, not this extension:
+
+1. `db_emulation` was never being set at all for a plain username/password orawire connection
+   (`JdbcBackendExecutor` skips its session initializer for an anonymous `AccessContext`, correct
+   for RLS/VPD-context propagation but wrong for `db_emulation`, a protocol-level requirement of
+   every orawire session).
+2. Even after fixing #1, a *second* separate connection could still fail intermittently: a
+   Postgres backend process can outlive what Polywire's own code thinks is one logical
+   connection, and `LazyPooledConnection`'s own `SET search_path` (issued with no idea this
+   extension's own search_path append exists) could reset it out from under a `db_emulation`
+   GUC whose enum value hadn't changed -- fixed by making `db_emulation_assign_hook` (this
+   extension's own C code) reconcile against the actual current `search_path` on every call
+   instead of trusting the enum transition. This single fix also turned out to resolve two
+   findings first suspected to be separate bugs (`SYS_CONTEXT` and bare `TO_CHAR(SYSDATE)`) --
+   the original bind-parameter-typing hypothesis for those was wrong.
+3. `CREATE TABLE` with ordinary Oracle types (`NUMBER`, `VARCHAR2`, `CLOB`, `BLOB`, `RAW`) had no
+   deterministic translation rule at all and fell through to an unconfigured LLM fallback. Fixed
+   with a real type mapper in `DialectTranslations.java`, verified with a real `INSERT`/`SELECT`
+   round-trip through all five types.
+
+See `test/orawire-integration/README.md` for the full story of each, including the exact
+contrasts and debug output that pointed at each real cause, and what's explicitly still out of
+scope (Oracle `DATE`'s time-of-day semantics need a real `TIMESTAMP` mapping, not yet done).
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).

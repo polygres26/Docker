@@ -90,6 +90,54 @@ public final class DialectTranslations {
         return SqlLiterals.findOutsideLiterals(sql, UNHANDLED_ORACLE_CONSTRUCT);
     }
 
+    // Real gap found live testing orawire against a genuine sqlcl client: a plain
+    // `CREATE TABLE emp_test (id NUMBER, name VARCHAR2(50))` -- about as basic an Oracle DDL
+    // statement as exists -- had no deterministic rule at all, so it always fell through to
+    // containsUnhandledOracleConstruct()'s LLM fallback, which failed outright in an environment
+    // with no LLM configured ("LLM fallback translator failed: null"). None of pg_oracle's V$/
+    // DBMS_*/UTL_* work matters for a migrated app that can't even CREATE TABLE its own schema.
+    // Scoped to CREATE/ALTER TABLE statements specifically (the ORACLE_DDL_STATEMENT gate below),
+    // not applied to arbitrary SQL text, to avoid rewriting these type-name-shaped tokens if they
+    // ever appear somewhere unrelated (a string literal, a column aliased "number", etc.) --
+    // SqlLiterals.replaceOutsideLiterals already skips string literals, this gate is the second
+    // layer of caution on top of that.
+    //
+    // Order matters: the parenthesized NUMBER(p,s)/NUMBER(p) forms must be matched before the
+    // bare NUMBER pattern, or the bare pattern would eat the type name and leave a dangling
+    // "(p,s)" behind attached to nothing.
+    private static final Pattern ORACLE_DDL_STATEMENT =
+            Pattern.compile("(?i)^\\s*(CREATE|ALTER)\\s+TABLE\\b");
+    private static final Pattern VARCHAR2_TYPE = Pattern.compile("(?i)\\b(N?)VARCHAR2\\b");
+    private static final Pattern NUMBER_TYPE_WITH_ARGS = Pattern.compile("(?i)\\bNUMBER\\s*\\(");
+    private static final Pattern NUMBER_TYPE_BARE = Pattern.compile("(?i)\\bNUMBER\\b(?!\\s*\\()");
+    private static final Pattern CLOB_TYPE = Pattern.compile("(?i)\\bN?CLOB\\b");
+    private static final Pattern BLOB_TYPE = Pattern.compile("(?i)\\bBLOB\\b");
+    // RAW(n) -> BYTEA(n) is NOT valid Postgres syntax (BYTEA has no length bound at all), so the
+    // length has to actually be dropped, not just have its syntax swapped -- captures and
+    // discards the "(n)" as a whole rather than the two-step comment-splicing this used to
+    // attempt, which risked leaving an unclosed comment marker in the SQL text on a partial
+    // match. Dropping the bound is safe: it only ever narrows what Postgres will accept, never
+    // silently truncates data the way keeping a wrong bound could.
+    private static final Pattern RAW_TYPE_WITH_LENGTH = Pattern.compile("(?i)\\bRAW\\s*\\(\\s*\\d+\\s*\\)");
+    private static final Pattern RAW_TYPE_BARE = Pattern.compile("(?i)\\bRAW\\b(?!\\s*\\()");
+
+    private static String mapOracleDdlTypes(String sql) {
+        if (!ORACLE_DDL_STATEMENT.matcher(sql).find()) {
+            return sql;
+        }
+        String out = sql;
+        // VARCHAR2(n) and NVARCHAR2(n) both become plain VARCHAR(n) -- Postgres has no separate
+        // "national character" type distinction the N-prefix exists for in Oracle.
+        out = SqlLiterals.replaceOutsideLiterals(out, VARCHAR2_TYPE, m -> "VARCHAR");
+        out = SqlLiterals.replaceOutsideLiterals(out, NUMBER_TYPE_WITH_ARGS, m -> "NUMERIC(");
+        out = SqlLiterals.replaceOutsideLiterals(out, NUMBER_TYPE_BARE, m -> "NUMERIC");
+        out = SqlLiterals.replaceOutsideLiterals(out, CLOB_TYPE, m -> "TEXT");
+        out = SqlLiterals.replaceOutsideLiterals(out, BLOB_TYPE, m -> "BYTEA");
+        out = SqlLiterals.replaceOutsideLiterals(out, RAW_TYPE_WITH_LENGTH, m -> "BYTEA");
+        out = SqlLiterals.replaceOutsideLiterals(out, RAW_TYPE_BARE, m -> "BYTEA");
+        return out;
+    }
+
     private static final Pattern NVL = Pattern.compile("(?i)\\bNVL\\s*\\(");
     private static final Pattern FROM_DUAL = Pattern.compile("(?i)\\s+FROM\\s+DUAL\\b");
     private static final Pattern SYSDATE = Pattern.compile("(?i)\\bSYSDATE\\b");
@@ -159,6 +207,7 @@ public final class DialectTranslations {
                         + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema')) " + m.group(1));
         out = SqlLiterals.replaceOutsideLiterals(out, DBA_USERS,
                 m -> "(SELECT usename AS username, NULL::timestamp AS last_login FROM pg_catalog.pg_user) dba_users");
+        out = mapOracleDdlTypes(out);
         out = applyRownumLimit(out);
         out = rewriteDecodeCalls(out);
         return out;

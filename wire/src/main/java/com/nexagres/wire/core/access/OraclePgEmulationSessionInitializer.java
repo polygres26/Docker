@@ -26,6 +26,19 @@ import java.sql.Statement;
  * pg_oracle isn't installed in the target database at all (a Postgres backend orawire is
  * pointed at with no pg_oracle extension), db_emulation is simply an unrecognized GUC name and
  * this fails loudly rather than silently -- see the comment at the call site in RequestLoop.
+ *
+ * A real, subtle interaction with {@link com.nexagres.wire.core.LazyPooledConnection} found
+ * live and fixed on pg_oracle's own side (db/pg_oracle's db_emulation_assign_hook, see that
+ * file's comment): LazyPooledConnection issues its own unconditional `SET search_path TO
+ * "&lt;tenant&gt;", public` the first time its Java wrapper opens a (possibly pool-reused)
+ * physical connection, with no idea this class's search_path append exists. Because a Postgres
+ * backend process can outlive what this code thinks is "a fresh logical connection", `SET
+ * db_emulation = 'oracle'` here can look like a no-op-by-value on the C side (already 'oracle'
+ * from a prior logical session sharing the same physical backend) even though
+ * LazyPooledConnection just wiped the search_path out from under it. Nothing to change here --
+ * it's fixed by making pg_oracle's own hook reconcile against the actual current search_path on
+ * every call instead of trusting the enum value didn't change -- but worth knowing about if this
+ * class's `SET` ever looks like a no-op that should have done something.
  */
 public final class OraclePgEmulationSessionInitializer implements NativeRlsSessionInitializer {
 

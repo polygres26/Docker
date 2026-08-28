@@ -138,16 +138,58 @@ static void
 db_emulation_assign_hook(int newval, void *extra)
 {
 	const char *current_search_path;
+	const char *suffix = ", " ORACLE_EMULATION_SCHEMAS;
+	size_t		cur_len;
+	size_t		suffix_len = strlen(suffix);
+	bool		already_appended;
 	StringInfoData buf;
 
-	if (newval == db_emulation_mode)
-		return;					/* no-op SET, or the boot-time default assignment */
-
+	/*
+	 * Deliberately NOT gated on "newval == db_emulation_mode" (that early
+	 * return was the actual bug, found live via a real orawire+sqlcl
+	 * connection -- see db/pg_oracle/README.md): search_path can be
+	 * overwritten wholesale by code entirely outside this extension's
+	 * control between two `SET db_emulation = 'oracle'` calls on what
+	 * this GUC's own C-level state considers "the same session" --
+	 * Polywire's own LazyPooledConnection issues its own unconditional
+	 * `SET search_path TO "<tenant>", public` the first time its Java
+	 * wrapper object opens a (possibly pool-reused) physical connection,
+	 * with no idea this extension's search_path append exists to
+	 * preserve. If db_emulation_mode's enum value happens to already be
+	 * ORACLE on that same physical backend (a real, observed case: the
+	 * backend process persists across what Polywire's own code thinks
+	 * are separate logical connections), the old "value didn't change,
+	 * nothing to do" assumption was simply wrong -- search_path had
+	 * already been reset out from under it by the time this hook ran
+	 * again, and skipping the reconciliation left oracle_catalog/
+	 * dbms_output/etc. missing for the rest of that session: every
+	 * unqualified V$, DBA_*, or DBMS_* reference failed with ORA-00942/
+	 * ORA-00904 even though `current_setting('db_emulation')` correctly
+	 * still said 'oracle'.
+	 *
+	 * Fixed by reconciling against the ACTUAL current search_path text
+	 * on every call, unconditionally: idempotent either way, so a
+	 * genuinely repeated `SET db_emulation = 'oracle'` where nothing
+	 * external touched search_path is just a cheap string-suffix check
+	 * that changes nothing.
+	 */
 	current_search_path = GetConfigOption("search_path", false, false);
+	cur_len = current_search_path ? strlen(current_search_path) : 0;
+	already_appended = current_search_path != NULL &&
+		(strcmp(current_search_path, ORACLE_EMULATION_SCHEMAS) == 0 ||
+		 (cur_len >= suffix_len &&
+		  strcmp(current_search_path + (cur_len - suffix_len), suffix) == 0));
 
 	initStringInfo(&buf);
 	if (newval == DB_EMULATION_ORACLE)
 	{
+		if (already_appended)
+		{
+			db_emulation_mode = newval;
+			pfree(buf.data);
+			return;				/* already exactly the desired state -- nothing to reconcile */
+		}
+
 		/* Appended, not prepended: search_path's first existing entry is
 		 * also where an unqualified CREATE TABLE/FUNCTION/etc. lands.
 		 * Prepending oracle_catalog/dbms_output/utl_file would silently
@@ -165,25 +207,32 @@ db_emulation_assign_hook(int newval, void *extra)
 	}
 	else
 	{
+		if (!already_appended)
+		{
+			db_emulation_mode = newval;
+			pfree(buf.data);
+			return;				/* nothing to strip -- already not there (or edited by hand) */
+		}
+
 		/* Switching back to 'postgres': strip exactly the suffix we added
 		 * (a plain string match, not a schema-list parse -- if the user
 		 * has since edited search_path by hand, leave it alone rather
-		 * than guess wrong). */
-		const char *suffix = ", " ORACLE_EMULATION_SCHEMAS;
-		size_t		cur_len = current_search_path ? strlen(current_search_path) : 0;
-		size_t		suffix_len = strlen(suffix);
-
-		if (current_search_path != NULL && cur_len >= suffix_len &&
-			strcmp(current_search_path + (cur_len - suffix_len), suffix) == 0)
+		 * than guess wrong). The exact-match case (search_path was
+		 * empty before oracle mode ever applied, so it's now exactly
+		 * ORACLE_EMULATION_SCHEMAS with no ", " prefix to strip) leaves
+		 * an empty result -- a genuinely empty search_path, which is
+		 * what it would have been before oracle mode ran in that case. */
+		if (strcmp(current_search_path, ORACLE_EMULATION_SCHEMAS) != 0)
 			appendBinaryStringInfo(&buf, current_search_path, cur_len - suffix_len);
-		else if (current_search_path != NULL)
-			appendStringInfoString(&buf, current_search_path);
 	}
 
 	db_emulation_mode = newval;
 
-	if (buf.len > 0)
-		SetConfigOption("search_path", buf.data, PGC_USERSET, PGC_S_SESSION);
+	/* buf.data can legitimately be an empty string here (the postgres-mode
+	 * exact-match edge case above) and still need to be applied -- SET
+	 * search_path to '' is a real, valid (if unusual) state, distinct
+	 * from "don't touch it", so this can't be guarded on buf.len > 0. */
+	SetConfigOption("search_path", buf.data, PGC_USERSET, PGC_S_SESSION);
 
 	pfree(buf.data);
 }
