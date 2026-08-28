@@ -222,7 +222,7 @@ JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog',
                          'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert',
                          'dbms_network_acl_admin', 'dbms_crypto', 'dbms_scheduler',
-                         'dbms_aqadm', 'dbms_stats',
+                         'dbms_aqadm', 'dbms_stats', 'dbms_session',
                          'utl_file', 'utl_http', 'cron');
 -- dbms_aq is deliberately NOT in the exclusion list above: unlike every
 -- other package schema here, it holds real, user-facing queue tables
@@ -293,6 +293,187 @@ CREATE FUNCTION dbms_output.get_line(OUT line text, OUT status int) RETURNS reco
 CREATE FUNCTION oracle_catalog.emulation_active() RETURNS boolean
   AS 'MODULE_PATHNAME', 'pg_oracle_emulation_active' LANGUAGE C STABLE;
 COMMENT ON FUNCTION oracle_catalog.emulation_active() IS 'True when this session has SET db_emulation = ''oracle''.';
+
+-- ================================================================
+-- SYS_CONTEXT + DBMS_SESSION.SET_CONTEXT/SET_IDENTIFIER
+--
+-- Why this matters more than its own line in the top-20 list: SYS_CONTEXT
+-- is what a migrated VPD (DBMS_RLS) policy predicate actually calls to
+-- find out who's asking -- SYS_CONTEXT('my_ctx', 'tenant_id') sitting
+-- inside a WHERE-clause-shaped policy function. The genuinely good news:
+-- Postgres already has a native, arguably more capable VPD-equivalent
+-- enforcement mechanism -- real ROW LEVEL SECURITY (`CREATE POLICY ...
+-- USING (...)`) -- so this package's real job isn't reimplementing row
+-- filtering, it's making SYS_CONTEXT() return a real value a Postgres
+-- RLS policy's USING clause can read. See the worked example in
+-- README.md''s SYS_CONTEXT section for the full CREATE POLICY... USING
+-- (sys_context(...) = ...) pattern, verified live end to end.
+--
+-- Two kinds of context, matching real Oracle's own split:
+-- 'USERENV' is Oracle's built-in namespace -- read-only, dispatched here
+-- to real Postgres session facts (current_user, inet_client_addr(),
+-- pg_backend_pid(), ...), not stored state. Anything else is a
+-- user-defined context: CREATE CONTEXT registers a namespace (real
+-- Oracle DDL -- exposed here as a function call instead, since stock
+-- Postgres's grammar has no CREATE CONTEXT statement to add without
+-- patching the parser, the same class of gap as anonymous PL/SQL
+-- blocks); DBMS_SESSION.SET_CONTEXT/CLEAR_CONTEXT then read/write actual
+-- per-session values for it. Storage is a lazily-created TEMP table
+-- (`pg_temp`, inherently private and auto-dropped per session) -- no C
+-- needed, unlike DBMS_OUTPUT's buffer, since a temp table already gives
+-- exactly the "session-lifetime state" property for free.
+--
+-- Oracle's own real access-control mechanic for user-defined contexts --
+-- only the namespace's "trusted package" can call SET_CONTEXT for it --
+-- has no Postgres object to check (Postgres has no PL/SQL packages). The
+-- honest, correct parallel: wrap DBMS_SESSION.SET_CONTEXT calls in your
+-- OWN SECURITY DEFINER function, the same way Oracle's real enforcement
+-- actually works under the hood (only that package's compiled code,
+-- running with definer rights, can reach the underlying context-set
+-- primitive) -- this package doesn't invent a second access-control
+-- layer on top, it makes the existing Postgres one do the same job.
+-- CREATE_CONTEXT itself is owner-only (see its own comment), matching
+-- Oracle's CREATE ANY CONTEXT system privilege being DBA-level.
+-- ================================================================
+
+CREATE TABLE oracle_catalog.contexts(
+  namespace       text PRIMARY KEY,
+  trusted_package text	-- recorded for introspection only -- see this section's header comment for why it isn't (and can't be) enforced the way Oracle enforces it
+);
+COMMENT ON TABLE oracle_catalog.contexts IS 'Registered SYS_CONTEXT namespaces (Oracle CREATE CONTEXT). USERENV is built in, not a row here.';
+
+CREATE FUNCTION oracle_catalog.create_context(p_namespace text, p_trusted_package text DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = oracle_catalog, pg_catalog AS $$
+BEGIN
+  IF upper(p_namespace) = 'USERENV' THEN
+    RAISE EXCEPTION 'ORA-06564: USERENV is a built-in namespace and cannot be created';
+  END IF;
+  INSERT INTO oracle_catalog.contexts(namespace, trusted_package) VALUES (p_namespace, p_trusted_package);
+END;
+$$;
+COMMENT ON FUNCTION oracle_catalog.create_context(text, text) IS 'Oracle CREATE CONTEXT, as a function call rather than new DDL syntax -- see this section''s header comment. SECURITY DEFINER + owner-only EXECUTE (see grants), matching Oracle''s own CREATE ANY CONTEXT privilege.';
+
+CREATE SCHEMA dbms_session;
+COMMENT ON SCHEMA dbms_session IS 'Oracle DBMS_SESSION package (pg_oracle, part of Polygres) -- SET_CONTEXT/CLEAR_CONTEXT/SET_IDENTIFIER, the write side of SYS_CONTEXT. See the SYS_CONTEXT section above.';
+
+CREATE FUNCTION dbms_session.set_context(
+  p_namespace text, p_attribute text, p_value text,
+  p_username text DEFAULT NULL, p_client_id text DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF upper(p_namespace) = 'USERENV' THEN
+    RAISE EXCEPTION 'ORA-01739: USERENV namespace not allowed here -- use dbms_session.set_identifier() for CLIENT_IDENTIFIER';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM oracle_catalog.contexts WHERE namespace = p_namespace) THEN
+    RAISE EXCEPTION 'ORA-01403: no data found -- context namespace ''%'' has not been created (see oracle_catalog.create_context)', p_namespace;
+  END IF;
+  IF p_username IS NOT NULL OR p_client_id IS NOT NULL THEN
+    RAISE NOTICE 'pg_oracle: dbms_session.set_context''s username/client_id parameters (setting context on a DIFFERENT session) are not supported -- ignored, only the calling session''s own context was set.';
+  END IF;
+  CREATE TEMP TABLE IF NOT EXISTS oracle_context_values(
+    namespace text, attribute text, value text, PRIMARY KEY (namespace, attribute)
+  ) ON COMMIT PRESERVE ROWS;
+  INSERT INTO pg_temp.oracle_context_values(namespace, attribute, value)
+    VALUES (p_namespace, p_attribute, p_value)
+    ON CONFLICT (namespace, attribute) DO UPDATE SET value = EXCLUDED.value;
+END;
+$$;
+COMMENT ON FUNCTION dbms_session.set_context(text, text, text, text, text) IS 'Oracle DBMS_SESSION.SET_CONTEXT.';
+
+CREATE FUNCTION dbms_session.clear_context(p_namespace text, p_attribute text DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF to_regclass('pg_temp.oracle_context_values') IS NULL THEN
+    RETURN;	-- nothing has ever been set in this session -- nothing to clear
+  END IF;
+  IF p_attribute IS NULL THEN
+    DELETE FROM pg_temp.oracle_context_values WHERE namespace = p_namespace;
+  ELSE
+    DELETE FROM pg_temp.oracle_context_values WHERE namespace = p_namespace AND attribute = p_attribute;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_session.clear_context(text, text) IS 'Oracle DBMS_SESSION.CLEAR_CONTEXT -- clears one attribute, or every attribute in the namespace if attribute is omitted.';
+
+CREATE FUNCTION dbms_session.clear_all_context(p_namespace text) RETURNS void
+  AS $$ SELECT dbms_session.clear_context(p_namespace, NULL); $$ LANGUAGE sql;
+COMMENT ON FUNCTION dbms_session.clear_all_context(text) IS 'Oracle DBMS_SESSION.CLEAR_ALL_CONTEXT.';
+
+-- CLIENT_IDENTIFIER is USERENV's one genuinely mutable attribute in real
+-- Oracle (everything else in USERENV is read-only derived session
+-- fact) -- stored the same way as user-defined contexts (a reserved
+-- namespace in the same temp table), but through its own dedicated
+-- SET_IDENTIFIER/CLEAR_IDENTIFIER entry points rather than plain
+-- SET_CONTEXT, matching real Oracle exactly (SET_CONTEXT explicitly
+-- rejects 'USERENV', see above).
+CREATE FUNCTION dbms_session.set_identifier(p_client_id text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  CREATE TEMP TABLE IF NOT EXISTS oracle_context_values(
+    namespace text, attribute text, value text, PRIMARY KEY (namespace, attribute)
+  ) ON COMMIT PRESERVE ROWS;
+  INSERT INTO pg_temp.oracle_context_values(namespace, attribute, value)
+    VALUES ('USERENV', 'CLIENT_IDENTIFIER', p_client_id)
+    ON CONFLICT (namespace, attribute) DO UPDATE SET value = EXCLUDED.value;
+END;
+$$;
+COMMENT ON FUNCTION dbms_session.set_identifier(text) IS 'Oracle DBMS_SESSION.SET_IDENTIFIER -- read back via sys_context(''USERENV'',''CLIENT_IDENTIFIER''). The common connection-pooling pattern: the pool authenticates once as a shared DB role, then SET_IDENTIFIER per logical end user for VPD/audit to distinguish them.';
+
+CREATE FUNCTION dbms_session.clear_identifier() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF to_regclass('pg_temp.oracle_context_values') IS NOT NULL THEN
+    DELETE FROM pg_temp.oracle_context_values WHERE namespace = 'USERENV' AND attribute = 'CLIENT_IDENTIFIER';
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_session.clear_identifier() IS 'Oracle DBMS_SESSION.CLEAR_IDENTIFIER.';
+
+CREATE FUNCTION oracle_catalog.sys_context(p_namespace text, p_attribute text) RETURNS text
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_attr text := upper(p_attribute);
+BEGIN
+  IF upper(p_namespace) = 'USERENV' THEN
+    -- CLIENT_IDENTIFIER is the one USERENV attribute backed by mutable
+    -- session state (dbms_session.set_identifier) rather than a fixed
+    -- Postgres session fact -- checked first, everything else below is
+    -- a real, live value, not stored state.
+    IF v_attr = 'CLIENT_IDENTIFIER' THEN
+      IF to_regclass('pg_temp.oracle_context_values') IS NULL THEN
+        RETURN NULL;
+      END IF;
+      RETURN (SELECT value FROM pg_temp.oracle_context_values WHERE namespace = 'USERENV' AND attribute = 'CLIENT_IDENTIFIER');
+    END IF;
+
+    RETURN CASE v_attr
+      WHEN 'CURRENT_USER' THEN current_user
+      WHEN 'SESSION_USER' THEN session_user
+      WHEN 'CURRENT_SCHEMA' THEN current_schema
+      WHEN 'DB_NAME' THEN current_database()
+      WHEN 'INSTANCE_NAME' THEN current_setting('cluster_name')
+      WHEN 'SERVER_HOST' THEN coalesce(host(inet_server_addr()), 'localhost')
+      WHEN 'HOST' THEN coalesce(host(inet_client_addr()), 'localhost')	-- client host -- Oracle's HOST, distinct from SERVER_HOST
+      WHEN 'IP_ADDRESS' THEN host(inet_client_addr())
+      WHEN 'SESSIONID' THEN pg_backend_pid()::text	-- no true Oracle-style AUDSID equivalent -- backend pid is the closest per-connection identifier
+      WHEN 'SID' THEN pg_backend_pid()::text
+      WHEN 'ISDBA' THEN CASE WHEN (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN 'TRUE' ELSE 'FALSE' END
+      WHEN 'LANG' THEN left(current_setting('lc_messages'), 2)
+      WHEN 'LANGUAGE' THEN current_setting('lc_messages')
+      WHEN 'CON_NAME' THEN current_database()	-- Postgres has no CDB/PDB multitenant architecture -- database name is the closest analog, not a real container name
+      WHEN 'CON_ID' THEN '1'	-- see CON_NAME above
+      ELSE NULL	-- an unimplemented (but real) USERENV attribute, or a genuinely invalid one -- both return NULL rather than erroring, see this function's own scope note
+    END;
+  END IF;
+
+  IF to_regclass('pg_temp.oracle_context_values') IS NULL THEN
+    RETURN NULL;	-- nothing has ever been SET_CONTEXT'd in this session
+  END IF;
+  RETURN (SELECT value FROM pg_temp.oracle_context_values WHERE namespace = p_namespace AND attribute = p_attribute);
+END;
+$$;
+COMMENT ON FUNCTION oracle_catalog.sys_context(text, text) IS 'Oracle SYS_CONTEXT. USERENV attributes covered: CURRENT_USER/SESSION_USER/CURRENT_SCHEMA/DB_NAME/INSTANCE_NAME/SERVER_HOST/HOST/IP_ADDRESS/SESSIONID/SID/ISDBA/LANG/LANGUAGE/CON_NAME/CON_ID/CLIENT_IDENTIFIER -- others (MODULE/ACTION/PROXY_USER/AUTHENTICATION_METHOD/... ) return NULL, not implemented yet. User-defined namespaces read whatever dbms_session.set_context() last wrote in this session.';
 
 -- ================================================================
 -- Phase 2 (packages 2-4 of the top-20): DBMS_RANDOM, DBMS_UTILITY,
@@ -1508,6 +1689,20 @@ GRANT USAGE ON SCHEMA utl_http TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_crypto TO PUBLIC;
 GRANT SELECT ON ALL TABLES IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA oracle_catalog TO PUBLIC;
+-- create_context is the one function in oracle_catalog that does NOT
+-- stay PUBLIC -- it's Oracle DDL-equivalent (CREATE CONTEXT, requiring
+-- CREATE ANY CONTEXT there), not an ordinary read/compute call like
+-- everything else in this schema. This REVOKE must come AFTER the
+-- blanket oracle_catalog GRANT directly above -- GRANT/REVOKE apply in
+-- statement order, so reversing these two lines would silently leave
+-- create_context PUBLIC-executable again (the exact bug class found
+-- live on dbms_aqadm's admin functions -- see README.md: a
+-- SECURITY DEFINER function is default-PUBLIC-executable from the
+-- moment it's created, REVOKE has to be explicit, not just "never
+-- granted").
+REVOKE EXECUTE ON FUNCTION oracle_catalog.create_context(text, text) FROM PUBLIC;
+GRANT USAGE ON SCHEMA dbms_session TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_session TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_output TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_random TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_utility TO PUBLIC;

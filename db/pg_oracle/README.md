@@ -77,6 +77,10 @@ extension has no dependency on Polywire and doesn't know it exists.
   including a critical privilege bug this pass found and fixed.
 - **DBMS_STATS**: package 10, a real shim over Postgres's own
   `ANALYZE`/`pg_class` stats -- see the dedicated section below.
+- **SYS_CONTEXT + DBMS_SESSION**: the VPD-enabling piece -- makes
+  `SYS_CONTEXT()` return values real Postgres Row-Level Security
+  policies can read. See the dedicated section below for a working,
+  verified `CREATE POLICY ... USING (sys_context(...))` example.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -359,6 +363,92 @@ table it can't analyze, rather than a hard privilege error -- a real,
 worth-knowing behavioral difference from Oracle, not a security gap:
 no unauthorized action occurred either way).
 
+## SYS_CONTEXT + DBMS_SESSION (VPD)
+
+Why this one matters more than its own line in the top-20 list: a
+migrated VPD (`DBMS_RLS`) policy predicate calls `SYS_CONTEXT('my_ctx',
+'attr')` to find out who's asking. The good news: Postgres already has
+a native, arguably more capable VPD-equivalent enforcement mechanism --
+real Row-Level Security (`CREATE POLICY ... USING (...)`). This
+package's real job isn't reimplementing row filtering, it's making
+`SYS_CONTEXT()` return a real value an RLS policy's `USING` clause can
+read.
+
+Two kinds of context, matching real Oracle's own split. `USERENV` is
+Oracle's built-in namespace, read-only, dispatched to real Postgres
+session facts, not stored state: `CURRENT_USER`/`SESSION_USER`/
+`CURRENT_SCHEMA`/`DB_NAME`/`INSTANCE_NAME`/`SERVER_HOST`/`HOST`/
+`IP_ADDRESS`/`SESSIONID`/`SID`/`ISDBA`/`LANG`/`LANGUAGE`/`CON_NAME`/
+`CON_ID`/`CLIENT_IDENTIFIER` are covered; anything else (`MODULE`,
+`ACTION`, `PROXY_USER`, `AUTHENTICATION_METHOD`, ...) returns `NULL`,
+not implemented yet, stated in the function's own comment rather than
+silently absent. `CON_NAME`/`CON_ID` map to `current_database()`/`'1'`
+-- Postgres has no CDB/PDB multitenant architecture, so there's no real
+container name to report.
+
+Anything else is a user-defined context: `oracle_catalog.create_context`
+stands in for Oracle's `CREATE CONTEXT` DDL (exposed as a function call,
+not new syntax -- stock Postgres's grammar has no `CREATE CONTEXT`
+statement to add without patching the parser, the same class of gap as
+anonymous PL/SQL blocks); `DBMS_SESSION.SET_CONTEXT`/`CLEAR_CONTEXT`
+then read/write actual per-session values for it, stored in a lazily
+created `TEMP TABLE` (`pg_temp`, inherently private and auto-dropped per
+session -- no C needed, unlike `DBMS_OUTPUT`'s buffer, since a temp
+table already gives "session-lifetime state" for free). Confirmed live:
+a value set by one `limited_role` session was correctly invisible in a
+brand new `limited_role` connection -- genuinely per-session, not a
+shared or leaking store. `CLIENT_IDENTIFIER` (the common
+connection-pooling pattern: pool authenticates once as a shared DB role,
+then `SET_IDENTIFIER` per logical end user) goes through its own
+`SET_IDENTIFIER`/`CLEAR_IDENTIFIER` entry points, not plain
+`SET_CONTEXT` -- matching real Oracle exactly, which explicitly rejects
+`SET_CONTEXT('USERENV', ...)` with `ORA-01739`, reproduced here and
+verified live.
+
+**Privilege model**: `create_context` (the DDL-equivalent operation) is
+`SECURITY DEFINER` and owner-only, matching Oracle's `CREATE ANY
+CONTEXT` system privilege being DBA-level -- verified live with a real
+non-superuser role, denied. `SET_CONTEXT`/`SYS_CONTEXT` themselves stay
+`PUBLIC`, since ordinary application code needs to call them. Oracle's
+own real enforcement for *who* may call `SET_CONTEXT` for a given
+namespace ("only the namespace's trusted package") has no Postgres
+object to check -- there are no PL/SQL packages -- so this package
+doesn't invent a second access-control layer: the honest, correct
+parallel is to wrap `DBMS_SESSION.SET_CONTEXT` calls in your own
+`SECURITY DEFINER` function, which is exactly how Oracle's own
+enforcement actually works underneath (only that package's compiled
+code, running with definer rights, reaches the real primitive).
+`create_context`'s `REVOKE EXECUTE FROM PUBLIC` was written *after* the
+blanket `oracle_catalog` grant on purpose, applying the lesson from the
+`dbms_aqadm` bug directly above: statement order matters for
+`GRANT`/`REVOKE`, and reversing the two lines would have silently
+re-opened it.
+
+**The real VPD-equivalent demo, verified live end to end** -- not just
+the plumbing in isolation:
+
+```sql
+SET db_emulation = 'oracle';
+SELECT oracle_catalog.create_context('tenant_ctx');   -- as an admin, once
+
+CREATE TABLE orders(id int, tenant_id text, amount numeric);
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON orders
+  USING (tenant_id = oracle_catalog.sys_context('tenant_ctx', 'tenant_id'));
+
+-- as an ordinary app role, per request:
+SELECT dbms_session.set_context('tenant_ctx', 'tenant_id', '42');
+SELECT * FROM orders;   -- only tenant 42's rows, real Postgres RLS enforcing it
+```
+
+Confirmed live: with three rows across two tenants, a role with no
+context set sees zero rows (`sys_context` correctly returns `NULL`, and
+`NULL = tenant_id` is never true); the same role after
+`SET_CONTEXT('tenant_ctx','tenant_id','42')` sees exactly its own two
+rows, correctly excluding the other tenant's row -- real Postgres RLS
+doing the actual enforcement, this package only supplying the value it
+reads.
+
 ## Remaining top-20 scope
 
 `DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`, `DBMS_APPLICATION_INFO`,
@@ -601,5 +691,24 @@ count); `delete_table_stats()` emits the honest no-op `NOTICE`; a
 non-owning role's `gather_table_stats()` call is silently skipped with a
 `WARNING` by Postgres's own `ANALYZE`, not a hard error -- a real,
 documented behavioral difference from Oracle, not a security gap.
+
+`SYS_CONTEXT`/`DBMS_SESSION`, end to end: every implemented `USERENV`
+attribute returns a real value (`CURRENT_USER`, `SESSION_USER`,
+`DB_NAME`, `SESSIONID`, `ISDBA`, `IP_ADDRESS` all confirmed correct
+against the actual connection), an unset `CLIENT_IDENTIFIER` and a
+genuinely unknown attribute both correctly return `NULL` rather than
+erroring; `SET_IDENTIFIER`/`CLEAR_IDENTIFIER` round-trip correctly
+through `SYS_CONTEXT('USERENV','CLIENT_IDENTIFIER')`;
+`SET_CONTEXT('USERENV', ...)` correctly raises `ORA-01739`;
+`SET_CONTEXT` on an unregistered namespace correctly raises
+`ORA-01403`; a real non-superuser role is denied calling
+`create_context` directly (owner-only, confirmed via `pg_proc.proacl`
+showing no `PUBLIC` entry) -- and the full VPD-equivalent demo above
+(three rows, two tenants, real `CREATE POLICY`) produced exactly the
+expected row visibility for a real non-superuser role, confirmed
+correct with no context set (zero rows) and with context set (exactly
+that tenant's rows); a *second, fresh* connection as the same role
+showed zero rows again, confirming the context store is genuinely
+per-session, not shared or leaking across connections.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).
