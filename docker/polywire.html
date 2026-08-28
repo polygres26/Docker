@@ -545,7 +545,7 @@
       </p>
 
       <figure>
-        <img src="docs/observability.png" alt="PolyWire observability integration diagram: PolyWire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A green Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. A blue direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An orange dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics">
+        <img src="docs/observability.svg" alt="PolyWire observability integration diagram: PolyWire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics">
         <figcaption>How PolyWire's metrics reach each platform: a Prometheus scrape, a direct OTLP push, or a push routed through an OpenTelemetry Collector, depending on what the destination platform natively accepts.</figcaption>
       </figure>
 

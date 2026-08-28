@@ -1,0 +1,172 @@
+<svg viewBox="0 0 1536 1024" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="PolyWire observability integration diagram: PolyWire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics.">
+  <defs>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#227465"/>
+    </marker>
+    <marker id="arrow-indigo" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3f5b9b"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a15c07"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1536" height="1024" fill="#ffffff"/>
+
+  <!-- ...... legend ...... -->
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="15">
+    <rect x="1204" y="34" width="308" height="122" rx="10" fill="#ffffff" stroke="#dde3e9"/>
+    <line x1="1224" y1="66" x2="1256" y2="66" stroke="#227465" stroke-width="2.5"/>
+    <text x="1266" y="71" fill="#1b2430">Prometheus scrape (pull)</text>
+    <line x1="1224" y1="96" x2="1256" y2="96" stroke="#3f5b9b" stroke-width="2.5"/>
+    <text x="1266" y="101" fill="#1b2430">OTLP/gRPC push, direct</text>
+    <line x1="1224" y1="126" x2="1256" y2="126" stroke="#a15c07" stroke-width="2.5" stroke-dasharray="6 5"/>
+    <text x="1266" y="131" fill="#1b2430">OTLP push, via OTel Collector</text>
+  </g>
+
+  <!-- ...... PolyWire source box ...... -->
+  <g>
+    <rect x="72" y="372" width="200" height="280" rx="12" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="172" y="418" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="19" fill="#1b2430">PolyWire</text>
+    <text x="172" y="444" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#57626f">one process</text>
+
+    <rect x="94" y="472" width="156" height="34" rx="7" fill="#e2f3ef"/>
+    <text x="172" y="494" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#1b2430">/metrics :19090</text>
+
+    <rect x="94" y="518" width="156" height="34" rx="7" fill="#e8ecf7"/>
+    <text x="172" y="540" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#1b2430">OTLP/gRPC :4317</text>
+
+    <rect x="94" y="564" width="156" height="34" rx="7" fill="#e8ecf7"/>
+    <text x="172" y="586" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#1b2430">OTLP/HTTP :4318</text>
+  </g>
+
+  <!-- ...... helper: platform card template drawn inline per card ...... -->
+
+  <!-- .... teal branch: scrape agent .... -->
+  <path d="M272,472 C 360,472 380,300 500,254" fill="none" stroke="#227465" stroke-width="2.2" marker-end="url(#arrow-teal)"/>
+  <text x="330" y="284" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#227465" font-weight="600">pull, on a schedule</text>
+
+  <g>
+    <rect x="512" y="200" width="272" height="112" rx="12" fill="#ffffff" stroke="#227465" stroke-width="1.5"/>
+    <rect x="534" y="222" width="34" height="34" rx="5" fill="#e2f3ef" stroke="#227465"/>
+    <line x1="541" y1="231" x2="561" y2="231" stroke="#227465" stroke-width="2"/>
+    <line x1="541" y1="238" x2="561" y2="238" stroke="#227465" stroke-width="2"/>
+    <line x1="541" y1="245" x2="561" y2="245" stroke="#227465" stroke-width="2"/>
+    <text x="580" y="238" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15.5" fill="#1b2430">Scrape agent</text>
+    <text x="534" y="270" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">Prometheus server,</text>
+    <text x="534" y="286" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">Grafana Agent/Alloy,</text>
+    <text x="534" y="302" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">or Datadog Agent check</text>
+  </g>
+
+  <!-- scrape agent fan-out to 3 platform cards -->
+  <path d="M784,222 C 860,190 900,140 924,120" fill="none" stroke="#227465" stroke-width="2" marker-end="url(#arrow-teal)"/>
+  <path d="M784,256 L 924,256" fill="none" stroke="#227465" stroke-width="2" marker-end="url(#arrow-teal)"/>
+  <path d="M784,292 C 860,320 900,340 924,344" fill="none" stroke="#227465" stroke-width="2" marker-end="url(#arrow-teal)"/>
+
+  <!-- .... indigo branch: direct OTLP push .... -->
+  <path d="M272,540 L 500,404" fill="none" stroke="#3f5b9b" stroke-width="2.2" marker-end="url(#arrow-indigo)"/>
+  <text x="336" y="440" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#3f5b9b" font-weight="600">push, native OTLP</text>
+
+  <!-- .... amber branch: via collector .... -->
+  <path d="M272,598 C 340,650 400,760 500,806" fill="none" stroke="#a15c07" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrow-amber)"/>
+  <text x="310" y="746" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#a15c07" font-weight="600">push, needs a Collector hop</text>
+
+  <!-- ...... platform cards, teal targets ...... -->
+  <g>
+    <rect x="924" y="88" width="288" height="86" rx="12" fill="#ffffff" stroke="#227465" stroke-width="1.5"/>
+    <circle cx="953" cy="128" r="16" fill="#fff3e0"/>
+    <path d="M953,116 l7,10 l-7,10 l-7,-10 z" fill="#f4700a"/>
+    <text x="978" y="124" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Self-hosted Grafana</text>
+    <text x="978" y="146" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">+ Prometheus</text>
+  </g>
+
+  <g>
+    <rect x="924" y="222" width="288" height="86" rx="12" fill="#ffffff" stroke="#227465" stroke-width="1.5"/>
+    <circle cx="953" cy="262" r="16" fill="#fff3e0"/>
+    <path d="M953,250 l7,10 l-7,10 l-7,-10 z" fill="#f4700a"/>
+    <text x="978" y="258" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Grafana Cloud</text>
+    <text x="978" y="280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">remote_write</text>
+  </g>
+
+  <g>
+    <rect x="924" y="312" width="288" height="86" rx="12" fill="#ffffff" stroke="#227465" stroke-width="1.5"/>
+    <rect x="937" y="346" width="32" height="32" rx="16" fill="#5b2a86"/>
+    <circle cx="953" cy="362" r="9" fill="#ffffff"/>
+    <text x="978" y="348" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Datadog</text>
+    <text x="978" y="370" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">Agent Prometheus check</text>
+  </g>
+
+  <!-- ...... platform cards, indigo targets ...... -->
+  <g>
+    <rect x="512" y="366" width="248" height="80" rx="12" fill="#ffffff" stroke="#3f5b9b" stroke-width="1.5"/>
+    <circle cx="540" cy="404" r="17" fill="#e8ecf7" stroke="#1c9e6b" stroke-width="2"/>
+    <text x="540" y="409" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-weight="700" font-size="13" fill="#1c9e6b">NR</text>
+    <text x="566" y="400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">New Relic</text>
+    <text x="566" y="420" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#57626f">otlp.nr-data.net:4317</text>
+  </g>
+
+  <g>
+    <rect x="512" y="454" width="248" height="80" rx="12" fill="#ffffff" stroke="#3f5b9b" stroke-width="1.5"/>
+    <rect x="524" y="480" width="32" height="32" rx="16" fill="#5b2a86"/>
+    <circle cx="540" cy="496" r="9" fill="#ffffff"/>
+    <text x="566" y="490" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Datadog</text>
+    <text x="566" y="510" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">native OTLP ingest</text>
+  </g>
+
+  <g>
+    <rect x="512" y="542" width="248" height="80" rx="12" fill="#ffffff" stroke="#3f5b9b" stroke-width="1.5"/>
+    <circle cx="540" cy="582" r="16" fill="#fff3e0"/>
+    <path d="M540,570 l7,10 l-7,10 l-7,-10 z" fill="#f4700a"/>
+    <text x="566" y="578" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Grafana Cloud</text>
+    <text x="566" y="598" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">OTLP gateway</text>
+  </g>
+
+  <!-- ...... amber branch: OTel Collector hub + 4 targets ...... -->
+  <g>
+    <rect x="500" y="766" width="272" height="112" rx="12" fill="#ffffff" stroke="#a15c07" stroke-width="1.5"/>
+    <circle cx="534" cy="806" r="18" fill="#f7ecd9"/>
+    <path d="M526,806 l6,8 l12,-16" fill="none" stroke="#a15c07" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="566" y="800" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15.5" fill="#1b2430">OpenTelemetry</text>
+    <text x="566" y="820" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15.5" fill="#1b2430">Collector</text>
+    <text x="524" y="852" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#57626f">OTLP receiver → exporter</text>
+  </g>
+
+  <path d="M772,788 C 850,740 890,690 924,668" fill="none" stroke="#a15c07" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-amber)"/>
+  <path d="M772,812 C 850,780 890,760 924,748" fill="none" stroke="#a15c07" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-amber)"/>
+  <path d="M772,832 C 850,856 890,868 924,876" fill="none" stroke="#a15c07" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-amber)"/>
+  <path d="M772,852 C 850,900 890,928 924,944" fill="none" stroke="#a15c07" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-amber)"/>
+
+  <g>
+    <rect x="924" y="626" width="288" height="84" rx="12" fill="#ffffff" stroke="#a15c07" stroke-width="1.5"/>
+    <circle cx="952" cy="664" r="16" fill="#f7ecd9"/>
+    <path d="M944,668 q8,-14 16,0 q6,-6 12,2 l-2,6 l-26,2 z" fill="#a15c07"/>
+    <text x="978" y="660" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">AWS CloudWatch</text>
+    <text x="978" y="680" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#57626f">ADOT · awsemf exporter</text>
+  </g>
+
+  <g>
+    <rect x="924" y="706" width="288" height="84" rx="12" fill="#ffffff" stroke="#a15c07" stroke-width="1.5"/>
+    <circle cx="952" cy="748" r="16" fill="#e8ecf7"/>
+    <path d="M944,754 a8,8 0 1,1 16,0" fill="none" stroke="#3f5b9b" stroke-width="2.2"/>
+    <circle cx="952" cy="742" r="2.4" fill="#3f5b9b"/>
+    <text x="978" y="742" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">Azure Monitor</text>
+    <text x="978" y="762" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#57626f">azuremonitor exporter</text>
+  </g>
+
+  <g>
+    <rect x="924" y="786" width="288" height="84" rx="12" fill="#ffffff" stroke="#a15c07" stroke-width="1.5"/>
+    <rect x="937" y="815" width="30" height="30" rx="7" fill="#e8ecf7"/>
+    <circle cx="952" cy="830" r="8" fill="none" stroke="#3f5b9b" stroke-width="2"/>
+    <text x="978" y="822" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">GCP Cloud Monitoring</text>
+    <text x="978" y="842" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#57626f">googlecloud exporter</text>
+  </g>
+
+  <g>
+    <rect x="924" y="866" width="288" height="84" rx="12" fill="#ffffff" stroke="#a15c07" stroke-width="1.5"/>
+    <circle cx="952" cy="908" r="16" fill="#e8ecf7"/>
+    <path d="M944,912 q8,-18 16,0" fill="none" stroke="#3f5b9b" stroke-width="2.2"/>
+    <text x="978" y="902" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="15" fill="#1b2430">AppDynamics</text>
+    <text x="978" y="922" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#57626f">Cisco Cloud Observability</text>
+  </g>
+</svg>
