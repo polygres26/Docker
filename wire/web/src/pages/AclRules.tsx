@@ -5,7 +5,7 @@ import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
  * IP / CIDR access control -- edits `polywire_config.aclRules` (one `allow:<cidr>` or
  * `reject:<cidr>` entry per line, first match wins, checked before any query reaches
  * pgwire/mysqlwire/mssqlwire/mongowire). A save appends a new polywire_config version; every
- * running PolyWire process picks it up within milliseconds over LISTEN/NOTIFY, no restart.
+ * running Polywire process picks it up within milliseconds over LISTEN/NOTIFY, no restart.
  */
 export default function AclRules() {
   const [rules, setRules] = useState('')

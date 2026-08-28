@@ -1,8 +1,8 @@
-# PolyWire — Performance: SQL Statistics, RTT, and the Cache-Hit Latency Investigation
+# Polywire — Performance: SQL Statistics, RTT, and the Cache-Hit Latency Investigation
 
 > **This is a technical/internal reference** for operators and contributors, not application
 > teams — it goes into per-protocol wire-level detail. For a plain-language summary of what
-> PolyWire's caching gets you, see [`USER_GUIDE.md`](USER_GUIDE.md).
+> Polywire's caching gets you, see [`USER_GUIDE.md`](USER_GUIDE.md).
 
 This document covers two related things added/fixed in the same investigation:
 
@@ -311,7 +311,7 @@ actually costing time here.
 1. **Warm, then measure**: one throwaway call to populate any cache, then 30-50 timed calls,
    sorted for percentiles (min/p50/p90).
 2. **Client-observed *and* server-side, always both**: client-observed (Python `time.perf_counter`
-   around the call) includes network + client-library overhead (real, but not PolyWire's to fix);
+   around the call) includes network + client-library overhead (real, but not Polywire's to fix);
    server-side (`/api/metrics/summary`'s `avgRttMs`) isolates what's actually controllable. The
    two disagreeing is itself informative — it's exactly how the DynamoDB/boto3 and orawire/
    oracledb client-library-overhead conclusions were reached.

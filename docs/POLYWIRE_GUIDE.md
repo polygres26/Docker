@@ -1,10 +1,10 @@
-# PolyWire — Use Case & Deployment Guide
+# Polywire — Use Case & Deployment Guide
 
 > **This is a technical/internal reference** for operators and contributors — pipeline internals,
-> security, HA, deployment. If you're an application team looking to connect to PolyWire, start
+> security, HA, deployment. If you're an application team looking to connect to Polywire, start
 > with [`USER_GUIDE.md`](USER_GUIDE.md) instead.
 
-PolyWire is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
+Polywire is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
 client/server protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol,
 DynamoDB's HTTP/JSON API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and
 routing every one of them to real Postgres backend(s). It's wire-protocol compatibility for a
@@ -14,7 +14,7 @@ pre- or post-migration cutover, not a schema/data migration tool itself.
 > backed by a live before/after benchmark against a real client library, documented in
 > [`PERFORMANCE.md`](PERFORMANCE.md) — not estimated.
 
-> **On screenshots**: PolyWire is a headless gateway process — there's no UI to screenshot.
+> **On screenshots**: Polywire is a headless gateway process — there's no UI to screenshot.
 > Its "surface" is protocol traffic and the admin/metrics HTTP endpoint (`:19090`); once you
 > have it running (see §4), I can capture the metrics endpoint's live output or a packet-level
 > trace if that's useful.
@@ -24,8 +24,8 @@ pre- or post-migration cutover, not a schema/data migration tool itself.
 ## 1. What question it answers
 
 **"Can my existing app, written against an Oracle/MySQL/SQL Server/MongoDB/DynamoDB driver,
-talk to Postgres without a rewrite?"** — yes: point the app's connection string at PolyWire
-instead of its original database, and PolyWire translates and routes to real Postgres.
+talk to Postgres without a rewrite?"** — yes: point the app's connection string at Polywire
+instead of its original database, and Polywire translates and routes to real Postgres.
 
 Run it indefinitely as a permanent compatibility shim (e.g. legacy MongoDB driver code that's
 not worth rewriting), or as a temporary cutover bridge while a migration tool moves schema/data
@@ -50,7 +50,7 @@ flowchart TB
         McpCli["MCP client\n(AI agent tools)"]
     end
 
-    subgraph PolyWire["PolyWire process — one shared pipeline"]
+    subgraph Polywire["Polywire process — one shared pipeline"]
         direction TB
         FE["Frontends\norawire:1521/2484 · mywire:3306\nmssqlwire:1433 · pgwire:5432\nmongowire:27017 · dynamowire:18000\nsqswire:9324 · gRPC:7070/17071 · MCP:18010"]
         FW["FirewallStage\n(policy from Postgres)"]
@@ -84,7 +84,7 @@ flowchart TB
   summary`, different entry point. See §9 for the caching layer and §10 for what gets measured.
 - **Config lives in Postgres, not just env vars**: `polywire_config` (versioned, insert-only)
   and `polywire_firewall_rules` (mutable, DBA-managed) are real tables in a designated
-  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running PolyWire process
+  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running Polywire process
   within milliseconds — no restart to change a firewall rule or add a backend.
 - **Config-primary vs. data plane**: the `POLYWIRE_*` env vars point at the single Postgres
   that holds control-plane tables. `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` are the
@@ -121,10 +121,10 @@ MCP, admin/metrics HTTP):
   `LISTEN/NOTIFY` with zero restart.
 - Default (unset) is fully open — no behavior change until you opt in.
 - A rejected connection is dropped immediately, before it reaches the firewall/router stages,
-  and logged with the offending IP — visible in PolyWire's own logs for audit.
+  and logged with the offending IP — visible in Polywire's own logs for audit.
 
 **PPv2 (PROXY protocol v2) / `X-Forwarded-For`** — solves the problem that, once you put a
-load balancer or connection pooler in front of PolyWire, every connection's raw TCP peer IP
+load balancer or connection pooler in front of Polywire, every connection's raw TCP peer IP
 *is the load balancer*, not the real client — so a naive ACL would only ever see one IP.
 
 - `POLYWIRE_ACL_PPV2_ENABLED` (or `polywire_config.aclPpv2Enabled`) turns on parsing of the
@@ -137,7 +137,7 @@ load balancer or connection pooler in front of PolyWire, every connection's raw 
   — this is the exact spoofing vector the trusted-proxy check exists to close.
 - Typical setup: `POLYWIRE_ACL_TRUSTED_PROXIES=10.0.0.0/24` (your load balancer's subnet),
   `POLYWIRE_ACL_RULES=allow 203.0.113.0/24` (the actual office/VPN range you want to allow) —
-  PolyWire then correctly evaluates the ACL against the client's real IP even though every
+  Polywire then correctly evaluates the ACL against the client's real IP even though every
   packet physically arrives from the load balancer.
 
 ### 3.2 Backend-poisoning protection
@@ -164,7 +164,7 @@ CIDR blocks, or literal hostnames (docker-compose service names, internal DNS).
 Runs as its own pipeline stage (`FirewallStage`), first in line — every statement on every
 frontend is checked before routing, translation, or execution. Rules live in a real,
 DBA-managed Postgres table, **not** an env var or app config file, so a DBA can change policy
-with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no PolyWire redeploy.
+with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no Polywire redeploy.
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -202,10 +202,10 @@ flowchart LR
 
 - a plain SQL `INSERT INTO polywire_firewall_rules (...)` (the intended day-to-day DBA path —
   no application deploy involved at all), or
-- the equivalent Postgres stored procedure PolyWire ships (wraps the same insert/update with
+- the equivalent Postgres stored procedure Polywire ships (wraps the same insert/update with
   validation), for teams that prefer calling a procedure over hand-writing DML.
 
-Changes are pushed to every running PolyWire process instantly via the table's `NOTIFY`
+Changes are pushed to every running Polywire process instantly via the table's `NOTIFY`
 trigger — matches the same hot-reload mechanism used by `polywire_config`, `ClientAcl`, and
 `TrustedBackendHosts`.
 
@@ -249,7 +249,7 @@ flowchart LR
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 sequenceDiagram
-    participant PW as PolyWire process
+    participant PW as Polywire process
     participant P as Primary Postgres
     participant S as Standby Postgres
 
@@ -292,11 +292,11 @@ spans two different shards (never found on either shard alone, and no error rais
 federation engines close this gap by actually planning and executing the `JOIN`, not
 broadcast-and-merge:
 
-- **`ShardJoinExecutor`** — PolyWire's own homogeneous horizontal sharding (the SAME logical
+- **`ShardJoinExecutor`** — Polywire's own homogeneous horizontal sharding (the SAME logical
   table split by row across every shard in a `POLYWIRE_SHARD_BACKENDS` group). Mounts each
   distinct `schema.table` reference in the query as a real `UNION ALL` across every shard's own
   copy, then hands the rewritten query to a real Calcite planner.
-- **`SchemaFederationStage`** — PolyWire's own heterogeneous vertical/functional sharding
+- **`SchemaFederationStage`** — Polywire's own heterogeneous vertical/functional sharding
   (`POLYWIRE_ROUTER_SCHEMA_RULES` routing a whole table's traffic to one named backend, e.g. every
   `orders_db.orders` query to backend `orders`). Runs *before* `RouterStage` in the pipeline —
   federating across backends has to happen before routing narrows a statement to one target. Each
@@ -340,7 +340,7 @@ own pre-execution ESTIMATE): it re-executes each leaf's own pushed-down SQL sepa
 wall-clock timing and a real row count from actually iterating the result — the same honest
 tradeoff a DBA manually running `EXPLAIN ANALYZE` on a suspect subquery makes.
 
-**Cluster-shared, not just per-instance.** When PolyWire's embedded Ignite cluster is genuinely
+**Cluster-shared, not just per-instance.** When Polywire's embedded Ignite cluster is genuinely
 multi-instance (`POLYWIRE_CLUSTER_ENABLED=true`, not just the default single-node cache-only
 grid), both `StatisticsStore` and `SqlPlanStore` switch to an Ignite-backed shared cache instead
 of a local `ConcurrentHashMap` — every instance sees the SAME row-count statistics and the SAME
@@ -386,10 +386,10 @@ scoped mechanism this doesn't duplicate.
 
 ### 4.4 Multiple backend engines (top-5-by-DB-Engines-ranking, alongside Postgres)
 
-PolyWire used to be Postgres-only end to end, by explicit design (`BackendRegistry`/
+Polywire used to be Postgres-only end to end, by explicit design (`BackendRegistry`/
 `BackendConnectionPools`/`BackendTarget` all assumed it). **Oracle, SQL Server, and MySQL/MariaDB
 are now real second/third/fourth backend engines** — not just something orawire's/mssqlwire's/
-mywire's own wire-protocol frontends decode against, but real `POLYWIRE_BACKENDS` targets PolyWire
+mywire's own wire-protocol frontends decode against, but real `POLYWIRE_BACKENDS` targets Polywire
 connects to, routes plain SQL to (read AND write), federates `JOIN`s against (§4.3), and
 coordinates real `XAResource`-based 2PC transactions with (Oracle and SQL Server; MySQL's own
 driver has no support for the 2PC path specifically — see below).
@@ -455,7 +455,7 @@ along the way — this project's own established discipline, not a claim taken o
   reduced-feature SQL Server variant on Linux, with no native MSDTC service — may not support at
   all; a real, disclosed gap, not assumed away.
 - Real, standard operational prerequisites had to be met before Postgres/Oracle 2PC worked at all
-  (neither is a PolyWire bug): Postgres's own `max_prepared_transactions` defaults to 0 (2PC is
+  (neither is a Polywire bug): Postgres's own `max_prepared_transactions` defaults to 0 (2PC is
   off until an operator raises it), and Oracle requires an operator grant on
   `DBA_2PC_PENDING`/`PENDING_TRANS$`/`DBMS_SYSTEM` before any schema can participate in a
   distributed transaction at all — undocumented anywhere in this project until now, worth calling
@@ -502,7 +502,7 @@ and `PgQueueStore` (sqswire) both support real shard routing (`POLYWIRE_SHARD_BA
 by DynamoDB partition key / SQS queue name, same as real DynamoDB/SQS partitioning), so a shard
 group member CAN be an Oracle/SQL Server/MySQL backend. `PgTimeSeriesStore` (influxwire) and
 `PgGraphStore` (boltwire) only ever call `backendRegistry.resolveForRouting(DEFAULT_BACKEND_NAME)`
-— no sharding at all — and the default backend doubles as PolyWire's own control-plane connection
+— no sharding at all — and the default backend doubles as Polywire's own control-plane connection
 (`polywire_config`, `polywire_firewall_rules`, `LISTEN/NOTIFY`), which has to stay Postgres. Adding
 real shard routing to these two is a real, scoped, not-yet-started follow-up — until then, their
 own storage is Postgres-only regardless of what other backends are configured.
@@ -590,12 +590,12 @@ Postgres itself gets without the extension.
 
 ### 4.6 Multi-AZ distributed cache
 
-The distributed cache (Ignite, `com.nexagres.wire.cluster.PolyWireCluster`) is cloud-native and
+The distributed cache (Ignite, `com.nexagres.wire.cluster.PolywireCluster`) is cloud-native and
 AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
 static IP list), a configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1) whose
 placement is AZ-aware — a cache entry's backup never lands on a node in the same
 `POLYWIRE_AVAILABILITY_ZONE` as its primary, live-proven by
-`PolyWireClusterAzBackupPlacementTest` (three real Ignite nodes, not a simulation) — and TLS
+`PolywireClusterAzBackupPlacementTest` (three real Ignite nodes, not a simulation) — and TLS
 between cache nodes via `POLYWIRE_TLS_KEYSTORE`, live-verified both positive (two nodes on the
 same keystore form one cluster) and negative (a third node on a different keystore fails the
 handshake and never joins).
@@ -637,10 +637,10 @@ flowchart TB
         L1["TCP LB\n(orawire/mywire/mssqlwire/pgwire/mongowire\nports — protocol-aware health checks)"]
         L2["HTTP(S) LB\n(dynamowire / gRPC / MCP / admin)"]
     end
-    subgraph Cluster["PolyWire replica set\n(stateless — safe to scale horizontally)"]
-        N1["PolyWire pod 1"]
-        N2["PolyWire pod 2"]
-        N3["PolyWire pod N"]
+    subgraph Cluster["Polywire replica set\n(stateless — safe to scale horizontally)"]
+        N1["Polywire pod 1"]
+        N2["Polywire pod 2"]
+        N3["Polywire pod N"]
     end
     subgraph DataPlane["Data plane"]
         Primary[("Config-primary Postgres\n+ standby")]
@@ -658,7 +658,7 @@ flowchart TB
     N1 & N2 & N3 -.sig verify.-> IAM
 ```
 
-- **PolyWire itself is stateless** — every pod reads its live config from the same
+- **Polywire itself is stateless** — every pod reads its live config from the same
   config-primary Postgres via `LISTEN/NOTIFY`, so horizontal scaling is just "add more pods
   pointed at the same `POLYWIRE_*`." No sticky sessions needed at the LB beyond normal TCP
   connection affinity for the life of one client session.
@@ -671,7 +671,7 @@ flowchart TB
 - **Secrets**: `POLYWIRE_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
   the registry token belong in your cloud's secret manager (Secrets Manager, Secret Manager,
   Key Vault) or a Kubernetes `Secret`, injected as env vars — never baked into the image.
-- **What's still cloud-*agnostic* by design**: PolyWire has no hard dependency on any one
+- **What's still cloud-*agnostic* by design**: Polywire has no hard dependency on any one
   cloud's networking primitives — it only needs TCP reachability to its Postgres backends and,
   optionally, an OIDC issuer and/or AWS IAM for auth. Cross-AZ cache placement (§4.3) is
   implemented and tested for all three; only live end-to-end verification against real cloud
@@ -829,11 +829,11 @@ instrumentation found (each with a live before/after benchmark) are in
 
 ## 11. Admin UI
 
-A React/TS/Vite app (`wire/web`) gives PolyWire a real operator UI on top of the HTTP endpoints in
-§4.3/§8.3/§9/§10 — built with `npm run build` and served directly by PolyWire's own admin HTTP
+A React/TS/Vite app (`wire/web`) gives Polywire a real operator UI on top of the HTTP endpoints in
+§4.3/§8.3/§9/§10 — built with `npm run build` and served directly by Polywire's own admin HTTP
 server (`POLYWIRE_ADMIN_WEB_DIR` pointing at the built `dist/`, no separate process). An operator
 opens the admin URL, enters the `POLYWIRE_ADMIN_TOKEN` bearer token once, and the browser talks to
-PolyWire's admin API directly — the token is kept only in that tab's own session storage, never
+Polywire's admin API directly — the token is kept only in that tab's own session storage, never
 sent anywhere else.
 
 | Page | Backs onto |
@@ -867,4 +867,4 @@ Every admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check.
 | Run a correct `JOIN` across shards or functionally-separated backends | `ShardJoinExecutor` / `SchemaFederationStage` | Real Calcite planning, cost-based ordering, semi-join pushdown — not scatter-gather's own broadcast-and-merge (§4.3) |
 | Restrict which IPs/subnets can even open a connection | ACL + PPv2 | Trusted-proxy-aware, works behind a load balancer |
 | Stop config-table write access from becoming a routing-hijack vector | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Env-var-only allowlist, not itself DB-writable |
-| Try PolyWire locally before committing to infrastructure | Docker Compose | See §5 |
+| Try Polywire locally before committing to infrastructure | Docker Compose | See §5 |

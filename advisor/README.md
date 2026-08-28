@@ -1,6 +1,6 @@
-# PolyAdvisor
+# Polyadvisor
 
-PolyAdvisor answers one question: **how hard is it to migrate this database to Postgres, and how
+Polyadvisor answers one question: **how hard is it to migrate this database to Postgres, and how
 much of it can you automate?** Point it at an Oracle, MySQL, MariaDB, or SQL Server database (or
 upload a performance report if you can't share a live connection), and it gives you a concrete
 difficulty score, a breakdown of what's actually driving that score, and a Postgres sizing
@@ -8,7 +8,7 @@ recommendation — no guesswork, no black box.
 
 ## Two ways to get an assessment
 
-**Connect a database** (the deterministic path). Give PolyAdvisor a read-only connection string
+**Connect a database** (the deterministic path). Give Polyadvisor a read-only connection string
 and it profiles the real schema, feature usage, and query workload directly — no data ever leaves
 your database, only metadata and query statistics. This is the accurate, reproducible path: run it
 twice and you get the same score.
@@ -16,7 +16,7 @@ twice and you get the same score.
 **Upload a performance report** (for when you can't share a live connection). Drop in an Oracle
 AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it
 for you. This is a genuinely different kind of signal — a model's read of a report, not a live
-query against your schema — and PolyAdvisor labels it as such everywhere it shows up, rather than
+query against your schema — and Polyadvisor labels it as such everywhere it shows up, rather than
 presenting it as equivalent to a live connection's score. You can upload several reports (e.g. one
 per system, or several snapshots over time) and get one combined assessment across all of them.
 
@@ -55,13 +55,13 @@ Then open the app, add a connection (or upload a report), and run your first ass
 ## A note on credentials
 
 Connection credentials are stored server-side so the browser never sees them again after you
-enter them — but they're currently stored **unencrypted** in PolyAdvisor's local data directory.
+enter them — but they're currently stored **unencrypted** in Polyadvisor's local data directory.
 Encryption at rest is planned but not yet built; keep that in mind before pointing this at a
 production credential you wouldn't want sitting in plaintext on disk.
 
 ## Where to go next
 
-- Companion tool: [PolyWire](../wire/README.md) — once you know what you're migrating, PolyWire
+- Companion tool: [Polywire](../wire/README.md) — once you know what you're migrating, Polywire
   lets your existing application keep talking its native protocol (Oracle, MySQL, SQL Server,
   MongoDB, DynamoDB, Amazon SQS) while the data actually lives in Postgres, either as a permanent
   compatibility layer or a temporary bridge during the migration itself.

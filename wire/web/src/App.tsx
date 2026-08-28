@@ -16,7 +16,7 @@ import LlmConfig from './pages/LlmConfig'
 import FederationPlans from './pages/FederationPlans'
 
 /** Gate: redirects to /connect unless a base URL + token are already sitting in sessionStorage.
- * Unlike advisor's RequireAuth, this never calls the server to check -- PolyWire's admin API has
+ * Unlike advisor's RequireAuth, this never calls the server to check -- Polywire's admin API has
  * no session-check endpoint (no session machinery at all, by design), so "connected" just means
  * "we have a token stored"; an actually-invalid token is caught by the first 401 any page hits,
  * which clears storage and bounces back here (see src/api/client.ts). */

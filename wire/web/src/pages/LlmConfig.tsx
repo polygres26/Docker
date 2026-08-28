@@ -4,7 +4,7 @@ import { type LlmProvider, getLlmConfig, saveLlmConfig } from '../api/client'
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 
 /**
- * Configures PolyWire's SQL-dialect-translation LLM fallback. PolyWire always tries a fast
+ * Configures Polywire's SQL-dialect-translation LLM fallback. Polywire always tries a fast
  * deterministic AST-based rewrite first for each statement -- this only matters for the (usually
  * small) share of statements the rewriter can't handle on its own, where it falls back to an LLM
  * call. Setting the provider to "none" disables the fallback entirely: those statements just fail
@@ -68,9 +68,9 @@ export default function LlmConfig() {
     <div style={{ maxWidth: 560 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        PolyWire translates SQL between dialects with a fast, deterministic AST-based rewriter
+        Polywire translates SQL between dialects with a fast, deterministic AST-based rewriter
         first. Only statements that rewriter can't handle fall back to an LLM call -- so this is a
-        <strong> coverage setting for the long tail</strong>, not PolyWire's primary translation
+        <strong> coverage setting for the long tail</strong>, not Polywire's primary translation
         path. Choosing "None" disables the fallback: unhandled statements fail the rewrite instead
         of being sent to a model.
       </p>

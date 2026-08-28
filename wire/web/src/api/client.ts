@@ -1,4 +1,4 @@
-// This SPA talks directly to PolyWire's own admin API (see
+// This SPA talks directly to Polywire's own admin API (see
 // wire/src/main/java/com/nexagres/wire/http/admin/MetricsServer.java) -- there is no advisor
 // backend in between. That server is explicitly documented as designed for server-to-server use
 // ("no CORS handling and no session/cookie machinery on purpose"), so the browser has to supply
@@ -284,7 +284,7 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 
 // A real, MEASURED (not estimated) leaf table scan -- see LeafScanProfiler's own javadoc.
 // Calcite's own EXPLAIN PLAN FOR only ever reports the planner's pre-execution row-count
-// ESTIMATE per node, never an actual post-execution measurement -- this is PolyWire's own
+// ESTIMATE per node, never an actual post-execution measurement -- this is Polywire's own
 // answer to that gap: a genuinely separate re-execution of just this one leaf's own
 // pushed-down SQL against its own real backend, with real wall-clock timing and a real row
 // count from actually iterating the result.
@@ -379,7 +379,7 @@ export async function saveLlmConfig(cfg: {
 // --- Node topology / heartbeats: /api/nodes ---
 // New admin endpoint, built concurrently by a separate agent -- not yet visible in
 // MetricsServer.java at the time this client was written. Contract per the spec this page was
-// built against: each PolyWire instance heartbeats its identity to the shared config Postgres
+// built against: each Polywire instance heartbeats its identity to the shared config Postgres
 // every ~10s; a node is "stale" if it hasn't heartbeated in 30s.
 
 export interface NodeInfo {

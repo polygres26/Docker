@@ -1,6 +1,6 @@
-# PolyAdvisor — Developer Guide
+# Polyadvisor — Developer Guide
 
-> **This is a technical/internal reference** for contributors working on PolyAdvisor's codebase —
+> **This is a technical/internal reference** for contributors working on Polyadvisor's codebase —
 > package layout, class responsibilities, internal API routes. If you're looking to actually run
 > an assessment, start with [`../README.md`](../README.md) instead.
 

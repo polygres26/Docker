@@ -9,7 +9,7 @@
   <version>1.0.0</version>
   <packaging>jar</packaging>
 
-  <name>PolyWire smoke tests (Java)</name>
+  <name>Polywire smoke tests (Java)</name>
   <description>
     Real client, real driver, one basic smoke test per wire protocol frontend -- for anyone who
     pulled ghcr.io/polygres26/polywire (and optionally ran ../docker-compose.test.yml) and wants

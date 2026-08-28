@@ -6,7 +6,7 @@ import { clearConnection } from './api/client'
 import logo from './assets/logo.png'
 import styles from './Layout.module.css'
 
-// Four groups matching the three questions someone actually has when they open PolyWire's admin
+// Four groups matching the three questions someone actually has when they open Polywire's admin
 // UI ("what's happening", "who's allowed to do what", "where does traffic go and how fast"),
 // plus Configuration for settings that aren't specific to any one of those.
 const GROUPS = [
@@ -45,7 +45,7 @@ const GROUPS = [
 ]
 
 /** Shell for every connected route: labeled, grouped sidebar + topbar, matching advisor/web's
- * Layout but scoped to PolyWire alone -- there's no Migration/Advisor product sharing this rail. */
+ * Layout but scoped to Polywire alone -- there's no Migration/Advisor product sharing this rail. */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
 
@@ -60,7 +60,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className={styles.railBrand}>
           <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
-            <span className={styles.railBrandTitle}>PolyWire</span>
+            <span className={styles.railBrandTitle}>Polywire</span>
             <span className={styles.railBrandSub}>Admin console</span>
           </div>
         </div>

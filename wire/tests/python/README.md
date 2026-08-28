@@ -1,6 +1,6 @@
-# PolyWire integration tests (Python)
+# Polywire integration tests (Python)
 
-Real driver, real Postgres, real PolyWire subprocess -- no mocks, matching this project's own
+Real driver, real Postgres, real Polywire subprocess -- no mocks, matching this project's own
 live-verification style. Covers the three frontends where a real Python driver was faster to get
 working than a Java one: orawire (`python-oracledb`), mssqlwire (`pymssql`), mywire (`PyMySQL`).
 pgwire has its own JDBC-based suite instead: `../../src/test/java/.../pgwire/PgWireIntegrationTest.java`.

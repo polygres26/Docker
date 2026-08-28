@@ -1,10 +1,10 @@
 # Nexagres Use Case & Deployment Guide
 
-Covers both modules — **PolyAdvisor** (migration assessment) and **PolyWire** (protocol
+Covers both modules — **Polyadvisor** (migration assessment) and **Polywire** (protocol
 gateway) — plus the Docker packaging for each. Each section is self-contained; jump to what
 you need.
 
-> **On screenshots**: this guide doesn't include UI screenshots. PolyAdvisor's web UI only has
+> **On screenshots**: this guide doesn't include UI screenshots. Polyadvisor's web UI only has
 > real content once it's pointed at an actual source database, and generating images here would
 > mean either fabricating a fake UI or a blank shell — neither is useful. Once you run `docker
 > compose up` (see the Docker section), tell me and I'll drive the running UI in a browser and
@@ -16,18 +16,18 @@ you need.
 
 | Module | Question it answers | Output |
 |---|---|---|
-| **PolyAdvisor** | "How hard is it to migrate this Oracle/MySQL/SQL Server database to Postgres, and can you do the easy parts for me?" | Assessment report (schema/feature/workload scoring) + automated migration for low-risk objects |
-| **PolyWire** | "Can my existing app, written against Oracle/MySQL/SQL Server/MongoDB/DynamoDB wire protocols, talk to Postgres without a rewrite?" | A gateway process that speaks the client's native wire protocol on one side and real Postgres SQL on the other |
+| **Polyadvisor** | "How hard is it to migrate this Oracle/MySQL/SQL Server database to Postgres, and can you do the easy parts for me?" | Assessment report (schema/feature/workload scoring) + automated migration for low-risk objects |
+| **Polywire** | "Can my existing app, written against Oracle/MySQL/SQL Server/MongoDB/DynamoDB wire protocols, talk to Postgres without a rewrite?" | A gateway process that speaks the client's native wire protocol on one side and real Postgres SQL on the other |
 
-They're complementary, not sequential-only: a team can run PolyWire indefinitely as a
+They're complementary, not sequential-only: a team can run Polywire indefinitely as a
 permanent compatibility shim (e.g. legacy MongoDB driver code that's not worth rewriting) or
-as a temporary cutover bridge while PolyAdvisor migrates schema/data behind the scenes.
+as a temporary cutover bridge while Polyadvisor migrates schema/data behind the scenes.
 
 ---
 
 ## 2. Architecture
 
-### 2.1 PolyAdvisor
+### 2.1 Polyadvisor
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -35,7 +35,7 @@ flowchart LR
     subgraph Client["Your browser"]
         UI["advisor/web\nReact + Vite SPA"]
     end
-    subgraph Advisor["PolyAdvisor process"]
+    subgraph Advisor["Polyadvisor process"]
         HTTP["AdvisorHttpServer\n(REST API)"]
         Profiler["Schema / feature\nprofiler"]
         Workload["Workload capture\n& scorer"]
@@ -63,7 +63,7 @@ flowchart LR
   source database. Only the migration engine writes, and only to the Postgres target — it
   never mutates the source.
 
-### 2.2 PolyWire
+### 2.2 Polywire
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -79,7 +79,7 @@ flowchart TB
         McpCli["MCP client\n(AI agent tools)"]
     end
 
-    subgraph PolyWire["PolyWire process — one shared pipeline"]
+    subgraph Polywire["Polywire process — one shared pipeline"]
         direction TB
         FE["Frontends\norawire:1521/2484 · mywire:3306\nmssqlwire:1433 · pgwire:5432\nmongowire:27017 · dynamowire:8000\ngRPC:7070/17071 · MCP:8010"]
         FW["FirewallStage\n(policy from Postgres)"]
@@ -108,7 +108,7 @@ flowchart TB
   routing, QoS, translation, caching, and stats are protocol-agnostic.
 - **Config lives in Postgres, not just env vars**: `polywire_config` (versioned, insert-only)
   and `polywire_firewall_rules` (mutable, DBA-managed) are real tables in a designated
-  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running PolyWire process
+  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running Polywire process
   within milliseconds — no restart to change a firewall rule or add a backend.
 - **Config-primary vs. data plane**: the `POLYWIRE_*` env vars point at the single Postgres
   that holds control-plane tables. `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` are the
@@ -145,10 +145,10 @@ MCP, admin/metrics HTTP):
   `LISTEN/NOTIFY` with zero restart.
 - Default (unset) is fully open — no behavior change until you opt in.
 - A rejected connection is dropped immediately, before it reaches the firewall/router stages,
-  and logged with the offending IP — visible in PolyWire's own logs for audit.
+  and logged with the offending IP — visible in Polywire's own logs for audit.
 
 **PPv2 (PROXY protocol v2) / `X-Forwarded-For`** — solves the problem that, once you put a
-load balancer or connection pooler in front of PolyWire, every connection's raw TCP peer IP
+load balancer or connection pooler in front of Polywire, every connection's raw TCP peer IP
 *is the load balancer*, not the real client — so a naive ACL would only ever see one IP.
 
 - `POLYWIRE_ACL_PPV2_ENABLED` (or `polywire_config.aclPpv2Enabled`) turns on parsing of the
@@ -161,7 +161,7 @@ load balancer or connection pooler in front of PolyWire, every connection's raw 
   — this is the exact spoofing vector the trusted-proxy check exists to close.
 - Typical setup: `POLYWIRE_ACL_TRUSTED_PROXIES=10.0.0.0/24` (your load balancer's subnet),
   `POLYWIRE_ACL_RULES=allow 203.0.113.0/24` (the actual office/VPN range you want to allow) —
-  PolyWire then correctly evaluates the ACL against the client's real IP even though every
+  Polywire then correctly evaluates the ACL against the client's real IP even though every
   packet physically arrives from the load balancer.
 
 ### 3.2 Backend-poisoning protection
@@ -188,7 +188,7 @@ CIDR blocks, or literal hostnames (docker-compose service names, internal DNS).
 Runs as its own pipeline stage (`FirewallStage`), first in line — every statement on every
 frontend is checked before routing, translation, or execution. Rules live in a real,
 DBA-managed Postgres table, **not** an env var or app config file, so a DBA can change policy
-with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no PolyWire redeploy.
+with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no Polywire redeploy.
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -226,10 +226,10 @@ flowchart LR
 
 - a plain SQL `INSERT INTO polywire_firewall_rules (...)` (the intended day-to-day DBA path —
   no application deploy involved at all), or
-- the equivalent Postgres stored procedure PolyWire ships (wraps the same insert/update with
+- the equivalent Postgres stored procedure Polywire ships (wraps the same insert/update with
   validation), for teams that prefer calling a procedure over hand-writing DML.
 
-Changes are pushed to every running PolyWire process instantly via the table's `NOTIFY`
+Changes are pushed to every running Polywire process instantly via the table's `NOTIFY`
 trigger — matches the same hot-reload mechanism used by `polywire_config`, `ClientAcl`, and
 `TrustedBackendHosts`.
 
@@ -273,7 +273,7 @@ flowchart LR
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 sequenceDiagram
-    participant PW as PolyWire process
+    participant PW as Polywire process
     participant P as Primary Postgres
     participant S as Standby Postgres
 
@@ -322,13 +322,13 @@ detailed gap list.
 
 Both modules have a Docker Compose file that needs nothing but Docker Desktop.
 
-**PolyWire** (gateway only, bring your own Postgres or point at one running elsewhere):
+**Polywire** (gateway only, bring your own Postgres or point at one running elsewhere):
 
 ```bash
 docker compose -f docker/polywire/docker-compose.yml up --build
 ```
 
-**PolyAdvisor** (one container — API + SPA served together by embedded Jetty):
+**Polyadvisor** (one container — API + SPA served together by embedded Jetty):
 
 ```bash
 docker compose -f docker/polyadvisor/docker-compose.yml up --build
@@ -359,10 +359,10 @@ flowchart TB
         L1["TCP LB\n(orawire/mywire/mssqlwire/pgwire/mongowire\nports — protocol-aware health checks)"]
         L2["HTTP(S) LB\n(dynamowire / gRPC / MCP / admin)"]
     end
-    subgraph Cluster["PolyWire replica set\n(stateless — safe to scale horizontally)"]
-        N1["PolyWire pod 1"]
-        N2["PolyWire pod 2"]
-        N3["PolyWire pod N"]
+    subgraph Cluster["Polywire replica set\n(stateless — safe to scale horizontally)"]
+        N1["Polywire pod 1"]
+        N2["Polywire pod 2"]
+        N3["Polywire pod N"]
     end
     subgraph DataPlane["Data plane"]
         Primary[("Config-primary Postgres\n+ standby")]
@@ -380,7 +380,7 @@ flowchart TB
     N1 & N2 & N3 -.sig verify.-> IAM
 ```
 
-- **PolyWire itself is stateless** — every pod reads its live config from the same
+- **Polywire itself is stateless** — every pod reads its live config from the same
   config-primary Postgres via `LISTEN/NOTIFY`, so horizontal scaling is just "add more pods
   pointed at the same `POLYWIRE_*`." No sticky sessions needed at the LB beyond normal TCP
   connection affinity for the life of one client session.
@@ -394,7 +394,7 @@ flowchart TB
 - **Secrets**: `POLYWIRE_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
   the registry token belong in your cloud's secret manager (Secrets Manager, Secret Manager,
   Key Vault) or a Kubernetes `Secret`, injected as env vars — never baked into the image.
-- **What's still cloud-*agnostic* by design**: PolyWire has no hard dependency on any one
+- **What's still cloud-*agnostic* by design**: Polywire has no hard dependency on any one
   cloud's networking primitives — it only needs TCP reachability to its Postgres backends and,
   optionally, an OIDC issuer and/or AWS IAM for auth. Cross-AZ cache placement is the one piece
   still marked open (§4.3) before treating a specific cloud's multi-AZ topology as fully proven.
@@ -403,7 +403,7 @@ flowchart TB
 
 ## 7. Docker packaging reference
 
-| | PolyWire | PolyAdvisor |
+| | Polywire | Polyadvisor |
 |---|---|---|
 | Images | 1 (`docker/polywire/Dockerfile`) | 1 (`docker/polyadvisor/Dockerfile`) — API + SPA in one container |
 | Base (build) | `maven:3.9-eclipse-temurin-21` | same, plus a `node:22-alpine` stage to build the SPA |
@@ -427,7 +427,7 @@ docker build -f docker/polyadvisor/Dockerfile -t polyadvisor:latest .
 
 Every end-user-facing feature in both modules, in one place, with its config knob.
 
-### 8.1 PolyAdvisor features
+### 8.1 Polyadvisor features
 
 | Feature | What it does | Where |
 |---|---|---|
@@ -441,7 +441,7 @@ Every end-user-facing feature in both modules, in one place, with its config kno
 | Report storage & history | Past assessment/migration reports kept for comparison over time | `ReportStore` (embedded HSQLDB) |
 | React/TS web UI | Full workflow — connect, profile, review score, trigger migration, read reports | `advisor/web` |
 
-### 8.2 PolyWire — protocol frontends
+### 8.2 Polywire — protocol frontends
 
 | Frontend | Protocol | Default port | Notes |
 |---|---|---|---|
@@ -455,7 +455,7 @@ Every end-user-facing feature in both modules, in one place, with its config kno
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | see §8.4 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
 
-### 8.3 PolyWire — statement pipeline stages
+### 8.3 Polywire — statement pipeline stages
 
 Every frontend above feeds the same shared pipeline, in this order:
 
@@ -469,7 +469,7 @@ Every frontend above feeds the same shared pipeline, in this order:
 | `CacheStage` | Translation-result and read caching (`polywire_translation_cache`) |
 | `StatsCollectorStage` | Per-statement metrics feeding the admin/metrics HTTP endpoint |
 
-### 8.4 PolyWire — security features
+### 8.4 Polywire — security features
 
 | Feature | Config knob | Detail |
 |---|---|---|
@@ -482,7 +482,7 @@ Every frontend above feeds the same shared pipeline, in this order:
 | Native driver password auth | n/a, always on | TCP frontends (Oracle/MySQL/SQL Server/Postgres) |
 | TLS listeners | shared keystore config | §3.5 — orawire TCPS, gRPC TLS |
 
-### 8.5 PolyWire — configuration & operations features
+### 8.5 Polywire — configuration & operations features
 
 | Feature | Detail |
 |---|---|
@@ -496,7 +496,7 @@ Every frontend above feeds the same shared pipeline, in this order:
 | Translation cache | `polywire_translation_cache` — avoids re-translating identical statements |
 | Failed-statement log | `polywire_failed_statements` — durable record of statements the pipeline rejected or errored on, for audit/debugging |
 
-### 8.6 PolyWire — MCP (AI agent tool access)
+### 8.6 Polywire — MCP (AI agent tool access)
 
 | Feature | Detail |
 |---|---|
@@ -510,12 +510,12 @@ Every frontend above feeds the same shared pipeline, in this order:
 
 | Scenario | Module(s) | Notes |
 |---|---|---|
-| Assess Oracle → Postgres migration difficulty | PolyAdvisor | Read-only profiling, no source-side risk |
-| Auto-migrate low-risk schema objects | PolyAdvisor | Writes only to the Postgres target |
-| Keep a legacy Oracle-driver app running against Postgres, permanently | PolyWire (orawire) | No app rewrite; TNS/TTC + TCPS supported |
-| Cut over a MySQL-protocol app during a migration window | PolyWire (mywire) | Temporary bridge, decommission after cutover |
-| Let an AI agent call vetted stored procedures as tools | PolyWire (MCP frontend) | Only `POLYWIRE_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |
-| Enforce "no bulk deletes from `orders`" org-wide, DBA-editable, no redeploy | PolyWire (SQL firewall) | Rule lives in Postgres, hot-reloaded |
-| Multi-region app needing Okta-based access control on a DynamoDB-protocol endpoint | PolyWire (dynamowire + OAuth) | SigV4 or OIDC bearer, per deployment choice |
-| Horizontally shard reads across N Postgres backends | PolyWire (shard group + RouterStage) | Scatter-gather via `POLYWIRE_SHARD_BACKENDS` |
+| Assess Oracle → Postgres migration difficulty | Polyadvisor | Read-only profiling, no source-side risk |
+| Auto-migrate low-risk schema objects | Polyadvisor | Writes only to the Postgres target |
+| Keep a legacy Oracle-driver app running against Postgres, permanently | Polywire (orawire) | No app rewrite; TNS/TTC + TCPS supported |
+| Cut over a MySQL-protocol app during a migration window | Polywire (mywire) | Temporary bridge, decommission after cutover |
+| Let an AI agent call vetted stored procedures as tools | Polywire (MCP frontend) | Only `POLYWIRE_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |
+| Enforce "no bulk deletes from `orders`" org-wide, DBA-editable, no redeploy | Polywire (SQL firewall) | Rule lives in Postgres, hot-reloaded |
+| Multi-region app needing Okta-based access control on a DynamoDB-protocol endpoint | Polywire (dynamowire + OAuth) | SigV4 or OIDC bearer, per deployment choice |
+| Horizontally shard reads across N Postgres backends | Polywire (shard group + RouterStage) | Scatter-gather via `POLYWIRE_SHARD_BACKENDS` |
 | Try either module locally before committing to infrastructure | Docker Compose | See §5 |

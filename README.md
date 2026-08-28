@@ -8,7 +8,7 @@ projects that happen to live together.
   Connects to a source database (Oracle/MySQL/MariaDB/SQL Server), profiles schema/feature/
   workload usage, scores Postgres-migration difficulty, and drives the easy-tier migrations
   themselves. React/TS/Vite frontend in `advisor/web/`.
-- **[wire/](wire/)** -- PolyWire: a mid-tier, Postgres-only database gateway. Speaks Oracle TNS/
+- **[wire/](wire/)** -- Polywire: a mid-tier, Postgres-only database gateway. Speaks Oracle TNS/
   TTC, Postgres wire protocol v3, MySQL client/server protocol, and gRPC to clients, translating
   and routing to real Postgres backend(s) -- wire-protocol compatibility for a pre- or
   post-migration cutover, not a schema/data migration tool itself (that's Advisor's job). Ported

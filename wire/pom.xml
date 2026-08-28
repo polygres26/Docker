@@ -9,7 +9,7 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>nexagres-wire</name>
-  <description>PolyWire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
+  <description>Polywire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
     (com.omnigate.*) into com.nexagres.wire.*, independent standalone module, sibling to
     nexagres-advisor in this repo.</description>
@@ -28,7 +28,7 @@
          no 2.18.0 artifact exists for either); ignite-azure-ext is a separate ignite-extensions
          release line, last published against ignite-core 2.13.0 (provided scope). All three still
          only depend on TcpDiscoveryIpFinderAdapter, a stable SPI surface unchanged across the 2.x
-         line — see PolyWireCluster's javadoc for the full verification trail and the version-skew
+         line — see PolywireCluster's javadoc for the full verification trail and the version-skew
          caveat this pin carries. -->
     <ignite.aws.version>2.11.1</ignite.aws.version>
     <ignite.gce.version>2.11.1</ignite.gce.version>
@@ -39,7 +39,7 @@
     <mssqljdbc.version>12.8.1.jre11</mssqljdbc.version>
     <!-- Pinned to a version that still implements mysql_native_password client-side.
          Oracle removed that plugin from mysql-connector-j starting around 9.x following the
-         server-side deprecation, and PolyWire's mywire currently only implements the
+         server-side deprecation, and Polywire's mywire currently only implements the
          mysql_native_password handshake (real, confirmed working; tests/python/test_mywire.py
          already covers it against PyMySQL, whose Python driver kept native-password support).
          Adding caching_sha2_password (the modern default, RSA/SHA256 challenge-response) is a
@@ -138,7 +138,7 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <!-- PolyWire's original, still-primary backend driver. PolyWire used to be Postgres-only
+      <!-- Polywire's original, still-primary backend driver. Polywire used to be Postgres-only
            end to end (BackendRegistry/BackendConnectionPools/BackendTarget); Oracle is now a
            real second backend driver too (see the ojdbc11 dependency below, promoted from
            test-only scope), following the sibling Omnigate project's own proven
@@ -150,7 +150,7 @@
       <version>${postgresql.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's second real backend driver. BackendTarget/
+      <!-- Promoted from test-only scope: Polywire's second real backend driver. BackendTarget/
            BackendConnectionPools/ShardJoinExecutor/SchemaFederationStage/RollupStage/
            XaBackendFactory all now recognize a jdbc:oracle: BackendTarget as a real read/write
            data-plane backend (cross-engine JOIN federation and XA/2PC included), not just
@@ -161,7 +161,7 @@
       <version>${ojdbc.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's third real backend driver, same shape and
+      <!-- Promoted from test-only scope: Polywire's third real backend driver, same shape and
            reasoning as ojdbc11 above; BackendTarget/BackendConnectionPools/ShardJoinExecutor/
            SchemaFederationStage/RollupStage/XaBackendFactory all now recognize a jdbc:sqlserver:
            BackendTarget too. -->
@@ -170,7 +170,7 @@
       <version>${mssqljdbc.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's fourth real backend driver, same shape as
+      <!-- Promoted from test-only scope: Polywire's fourth real backend driver, same shape as
            ojdbc11/mssql-jdbc above, for jdbc:mysql:/jdbc:mariadb: BackendTargets. This is the real
            Oracle-published MySQL Connector/J (not MariaDB's own driver, which is what the sibling
            Omnigate project found live has no usable XADataSource); com.mysql.cj.jdbc.
@@ -196,7 +196,7 @@
     <dependency>
       <!-- Apache Ignite core (com.nexagres.wire.cluster), Apache-2.0 — embedded in-process
            (Ignition.start(), not a separate server) for CacheStage's cluster-aware cache-aside
-           result cache. Pinned to the 2.x line deliberately, not 3.x (see PolyWireCluster's javadoc). -->
+           result cache. Pinned to the 2.x line deliberately, not 3.x (see PolywireCluster's javadoc). -->
       <groupId>org.apache.ignite</groupId>
       <artifactId>ignite-core</artifactId>
       <version>${ignite.version}</version>
@@ -340,7 +340,7 @@
            dependency elsewhere in this file is BSON-codec-only, explicitly not this; see that
            dependency's own comment. This is the first real MongoDB client library any mongowire
            test has been verified against (mongowire has no integration test at all before this).
-           MongoDB as a real PolyWire backend engine (via Calcite's own calcite-mongodb adapter)
+           MongoDB as a real Polywire backend engine (via Calcite's own calcite-mongodb adapter)
            was attempted and reverted; see SchemaFederationStage's own git history/commit message
            for the full real finding: calcite-mongodb 1.42.0 is compiled against
            mongodb-driver-sync 4.10.2 (confirmed via its own real pom.xml) and throws a real
@@ -414,7 +414,7 @@
         <configuration>
           <!-- Same add-opens set scripts/run.sh documents needing on JDK 17+ for embedded
                Ignite's reflective GridUnsafe bootstrap (module system blocks it by default) —
-               only actually exercised by PolyWireClusterAzBackupPlacementTest, which is the one
+               only actually exercised by PolywireClusterAzBackupPlacementTest, which is the one
                test class that starts real embedded Ignite nodes. -->
           <argLine>
             --add-opens=java.base/jdk.internal.access=ALL-UNNAMED

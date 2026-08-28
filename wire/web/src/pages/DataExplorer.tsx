@@ -8,12 +8,12 @@ import {
 import styles from './DataExplorer.module.css'
 
 /**
- * Object browser + ad-hoc SQL console for PolyWire's configured backends -- pick a backend,
+ * Object browser + ad-hoc SQL console for Polywire's configured backends -- pick a backend,
  * browse its schemas/tables in the left pane, click one to preview it, or write any SQL in the
  * console and run it. Talks straight to com.nexagres.wire.core.DataExplorer via the admin API;
  * see that class's javadoc for why this bypasses SQL Firewall/ACL by design (it's an admin tool,
  * not a client-facing wire protocol) and is gated by the same admin token as the rest of
- * PolyWire's config surface.
+ * Polywire's config surface.
  */
 export default function DataExplorer() {
   const [backends, setBackends] = useState<BackendInfo[] | null>(null);

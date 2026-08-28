@@ -9,13 +9,13 @@ const TABS = [
 
 /**
  * Migration's three sub-areas as tabs on one page, not three separate sidebar entries -- the
- * sidebar leads with PolyWire and collapses this to a single "Migration" destination; this tab
+ * sidebar leads with Polywire and collapses this to a single "Migration" destination; this tab
  * strip is what makes its own pages still reachable from each other. A route match on any TAB
  * path renders this same strip via each page composing it at the top, so switching tabs is a
  * normal client-side navigation, not a nested router.
  *
  * LLM configuration used to be a fourth tab here, but it isn't migration-specific -- the same
- * Primary/Judge model config also drives PolyWire's SQL translation and any other feature that
+ * Primary/Judge model config also drives Polywire's SQL translation and any other feature that
  * calls the LLM, so it moved out to its own top-level "Shared" sidebar entry (see Layout).
  */
 export default function AdvisorTabs() {

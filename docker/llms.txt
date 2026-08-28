@@ -1,15 +1,15 @@
 # Nexagres
 
-> Nexagres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
+> Nexagres is two tools. Polywire is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
 > OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
-> executes against one real Postgres database. PolyAdvisor is a rules-based (not LLM-generated)
-> tool that scores how hard migrating an existing database to Postgres will be, and PolyWire
+> executes against one real Postgres database. Polyadvisor is a rules-based (not LLM-generated)
+> tool that scores how hard migrating an existing database to Postgres will be, and Polywire
 > bridges your application to Postgres while that migration happens.
 >
 > Protocol translation ("everything talks to Postgres") is one capability, not the whole product.
-> PolyWire's real category is "one control point for every Postgres workload." Frozen three-level
-> message: **PolyWire — the intelligent gateway for Postgres** (what it is) -> **Everything talks
+> Polywire's real category is "one control point for every Postgres workload." Frozen three-level
+> message: **Polywire — the intelligent gateway for Postgres** (what it is) -> **Everything talks
 > to Postgres** (what's different) -> **One control point for every Postgres workload** (why
 > enterprises keep it running). One supporting line ties protocol support + security + QoS +
 > observability together: **different protocols, same policies, same Postgres**.
@@ -18,7 +18,7 @@
 > with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
 > not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
 > security -- security follows the request, not the protocol), **Control** (QoS admission control,
-> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (PolyCache --
+> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (Polycache --
 > one distributed cache shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, not a
 > per-protocol silo -- and rollups), and **Observe** (native per-protocol error translation,
 > Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
@@ -30,16 +30,16 @@ exists to help an LLM answering a question about either tool find the right sect
 instead of re-deriving it from the whole site.
 
 - [Documentation index](https://polygres26.github.io/docs.html): every doc below, organized by
-  what you're trying to do -- getting started, PolyWire, PolyAdvisor, and setup reference.
+  what you're trying to do -- getting started, Polywire, Polyadvisor, and setup reference.
 
-## PolyWire
+## Polywire
 
-- [Main page](https://polygres26.github.io/#polywire): the pitch -- what PolyWire is, a live
+- [Main page](https://polygres26.github.io/#polywire): the pitch -- what Polywire is, a live
   "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
   protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
   architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
   and pricing -- the detailed eight-stage architecture and the full comparison table sit one
-  click deeper on the same page, collapsed by default under "Explore PolyWire in depth" (the
+  click deeper on the same page, collapsed by default under "Explore Polywire in depth" (the
   standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
   databases" use case and the live Oracle demo, both already on the page).
 - [Full capabilities](https://polygres26.github.io/polywire.html): outcomes (organized by the
@@ -54,7 +54,7 @@ instead of re-deriving it from the whole site.
   [MongoDB → PostgreSQL](https://polygres26.github.io/mongodb-to-postgres.html), and
   [OpenSearch → PostgreSQL](https://polygres26.github.io/opensearch-to-postgres.html).
 - [Connecting to your Postgres](https://polygres26.github.io/CONNECTING.md): worked examples and
-  real gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
+  real gotchas for pointing Polywire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
   PostgreSQL.
 - [Error translation](https://polygres26.github.io/ERRORS.md): per-protocol native error shapes
@@ -75,7 +75,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
   OpenSearch.
 - Row-level security is real for the Postgres, SQL Server, Oracle, and MySQL wire protocols: a
   real per-caller identity is propagated into a Postgres session GUC, and the customer's own
-  Postgres RLS policies do the actual filtering -- PolyWire doesn't rewrite SQL to do this.
+  Postgres RLS policies do the actual filtering -- Polywire doesn't rewrite SQL to do this.
 - Planned switchover (drain a backend for maintenance, redirect to a configured fallback, wait
   for real zero-replication-lag before confirming) and unplanned failover (a background health
   checker auto-redirects when a backend stops responding, with an "acceptable data loss" RPO
@@ -99,7 +99,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
   shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
   separate, unguarded path to the data.
-- PolyCache: PolyWire's embedded, distributed query result cache, opt-in per table, shared across
+- Polycache: Polywire's embedded, distributed query result cache, opt-in per table, shared across
   protocols -- PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read and populate the same
   cache, so a result cached via one protocol is served to another without recomputing it. MongoDB
   and DynamoDB keep their own separate, protocol-specific caches (find/GetItem exact-key lookups
@@ -144,14 +144,14 @@ rights, nothing is feature-gated to a paid tier:
   [Pricing](https://polygres26.github.io/#pricing) on the main page for the full comparison, or
   [Contact](https://polygres26.github.io/#contact) to reach the team.
 
-## PolyAdvisor
+## Polyadvisor
 
-PolyAdvisor plans the move to Postgres. PolyWire runs and governs workloads on Postgres --
+Polyadvisor plans the move to Postgres. Polywire runs and governs workloads on Postgres --
 they're complementary tools for two different phases (deciding/planning a migration vs. running
 production traffic), not competing products.
 
-- [Main page](https://polygres26.github.io/#polyadvisor): the bridge from the PolyWire pitch --
-  what PolyAdvisor is and a quick start.
+- [Main page](https://polygres26.github.io/#polyadvisor): the bridge from the Polywire pitch --
+  what Polyadvisor is and a quick start.
 - [Full detail](https://polygres26.github.io/polyadvisor.html): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
   recommendations.
@@ -166,7 +166,7 @@ production traffic), not competing products.
 See the [FAQ section](https://polygres26.github.io/#faq) on the main page for direct answers to
 the questions most likely to come up (does an application need to change, is sharding real, does
 RLS work, what happens during planned maintenance, which cloud Postgres providers are supported,
-is PolyAdvisor's score LLM-generated).
+is Polyadvisor's score LLM-generated).
 
 ## Contact
 

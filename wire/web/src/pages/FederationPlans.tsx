@@ -187,7 +187,7 @@ export default function FederationPlans() {
     <div style={{ maxWidth: 1100 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Federation Plans</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Real captured history of every cross-shard and cross-backend {'JOIN'} PolyWire has federated
+        Real captured history of every cross-shard and cross-backend {'JOIN'} Polywire has federated
         via Calcite — a genuine <code>EXPLAIN PLAN FOR</code> plan, timing, and row count per query,
         the same {'V$SQL_PLAN'}-style visibility a real database gives you for a query that spans
         several of your own backends. Expand a row for the planner's own estimated plan tree AND

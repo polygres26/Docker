@@ -52,7 +52,7 @@ export default function OAuth() {
     <div style={{ maxWidth: 560 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>OAuth / OIDC</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Bearer-token verification for PolyWire's HTTP-facing surfaces. Leave the issuer blank to
+        Bearer-token verification for Polywire's HTTP-facing surfaces. Leave the issuer blank to
         keep OAuth disabled.
       </p>
 

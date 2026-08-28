@@ -24,7 +24,7 @@ function formatNumber(n: number): string {
 }
 
 /**
- * Live traffic dashboard for PolyWire -- which wire protocol customers are actually running
+ * Live traffic dashboard for Polywire -- which wire protocol customers are actually running
  * (pgwire/mywire/mssqlwire/orawire, from SqlMetricsCollector's per-statement dialect tag), a
  * reads/sec vs writes/sec split, and the top 10 most expensive SQL shapes by cumulative execution
  * time. Polls the admin API every 5s -- cheap, and "live" is the point of this page.
@@ -93,10 +93,10 @@ export default function Metrics() {
       <div className={styles.hero}>
         <div className={styles.heroTop}>
           <div>
-            <h1 className={styles.heroTitle}>PolyWire traffic</h1>
+            <h1 className={styles.heroTitle}>Polywire traffic</h1>
             <p className={styles.heroSubtitle}>
               Live protocol usage, read/write throughput, and the SQL costing you the most —
-              across every backend PolyWire fronts.
+              across every backend Polywire fronts.
             </p>
           </div>
           <div className={styles.heroBadge}>
