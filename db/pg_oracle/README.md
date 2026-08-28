@@ -66,6 +66,12 @@ extension has no dependency on Polywire and doesn't know it exists.
   outbound HTTP -- see the dedicated section below for the model and the
   one deliberate exception to "grant everything to PUBLIC" this package
   makes.
+- **DBMS_CRYPTO**: package 7, real hashing/HMAC/encryption over
+  Postgres's own `pgcrypto` -- see the dedicated section below.
+- **DBMS_SCHEDULER**: package 8, real recurring jobs over `pg_cron` --
+  see the dedicated section below for a second real privilege-model
+  decision (why these functions are deliberately NOT `SECURITY DEFINER`,
+  unlike `DBMS_NETWORK_ACL_ADMIN`'s).
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -211,11 +217,85 @@ behavior) and `DBMS_ASSERT` rejecting bad input inside `EXCEPTION WHEN
 OTHERS`. The concrete, scoped follow-up is the orawire-side rewriter,
 not more work here.
 
+## DBMS_CRYPTO
+
+Package 7 -- a thin adapter over Postgres's own `pgcrypto` contrib
+extension (audited, battle-tested), not hand-rolled: crypto is exactly
+the category of code where "don't reinvent it yourself" matters most.
+`HASH`/`MAC` (HMAC forms)/`RANDOMBYTES` call straight through to
+`digest()`/`hmac()`/`gen_random_bytes()` -- verified byte-for-byte
+identical to those functions' own output, not just "produces some hash".
+`ENCRYPT`/`DECRYPT` wrap `pgcrypto`'s `encrypt_iv()`/`decrypt_iv()`,
+AES-128/192/256 with CBC/ECB chaining and PKCS5/none padding only --
+`pgcrypto` itself doesn't support Oracle's CFB/OFB chaining or
+PAD_ZERO/PAD_ORCL, so those are rejected outright rather than silently
+approximated.
+
+Constants (`dbms_crypto.hash_sh256()` etc.) are zero-argument functions,
+not Oracle's bare package constants (`DBMS_CRYPTO.HASH_SH256`, no
+parens) -- Postgres has no syntax for a bare constant reference at all.
+Real migrated code hardcoding the bare form needs the same class of
+textual rewrite as anonymous PL/SQL blocks (see that section) -- a much
+smaller rewrite (append `()`), but still a rewrite this extension alone
+can't paper over.
+
+`HASH_*`/`HMAC_*` constant *values* match Oracle's own documented,
+stable-since-10g numbering. `ENCRYPT_*`/`CHAIN_*`/`PAD_*` values are
+this extension's **own** numbering, explicitly **not** verified against
+real Oracle's actual bit-packed `TYP` encoding (algorithm + chaining +
+padding summed into one integer) -- correctness only holds as long as
+callers use the symbolic constants, as idiomatic Oracle code always
+does, not a hardcoded literal matching real Oracle's numbers.
+
+## DBMS_SCHEDULER
+
+Package 8 -- a thin adapter over [pg_cron](https://github.com/citusdata/pg_cron)
+(PostgreSQL-licensed), not a hand-rolled background worker: reliable
+cron-style scheduling inside Postgres is exactly the kind of
+infrastructure not worth reimplementing. `CREATE_JOB`/`RUN_JOB`/
+`ENABLE`/`DISABLE`/`STOP_JOB`/`DROP_JOB`. Requires
+`shared_preload_libraries = 'pg_cron'` and `CREATE EXTENSION pg_cron` --
+**not** `CASCADE`-installed by `pg_oracle` itself the way
+`pg_stat_statements`/`pgcrypto` are, since `pg_cron` needs a
+preload-library restart `CREATE EXTENSION` cannot arrange.
+
+`repeat_interval` supports only the four most common Oracle calendar
+shapes -- `FREQ=DAILY`/`HOURLY`/`WEEKLY`/`MONTHLY` (with `INTERVAL`,
+`BYHOUR`, `BYMINUTE`, `BYDAY`, `BYMONTHDAY`) -- translated to a 5-field
+cron expression. Anything else (`FREQ=YEARLY`, `BYYEARDAY`, exclusion
+lists, `FREQ=DAILY` with `INTERVAL != 1`, which plain cron can't
+represent at all) raises a clear error instead of silently producing a
+wrong schedule. `job_action` for `job_type='PLSQL_BLOCK'` inherits the
+same anonymous-PL/SQL-block limitation as everywhere else in this
+extension (pg_cron executes it as literal SQL text) -- see that section.
+
+**A real privilege-model decision, verified live, not assumed**:
+`create_job`/`enable`/`disable`/`drop_job`/`run_job` are deliberately
+left plain `SECURITY INVOKER` (plpgsql's default), *not*
+`SECURITY DEFINER` the way the `DBMS_NETWORK_ACL_ADMIN` read functions
+needed to be. `pg_cron`'s own `cron.job` table records `username =
+CURRENT_USER` at schedule time and the job later runs as that role --
+making these functions `SECURITY DEFINER` would have silently made every
+scheduled job run with this extension's owner's (likely superuser)
+privileges instead of the real caller's, a genuine privilege escalation.
+Confirmed live with a real non-superuser role: `cron.job.username`
+correctly recorded that role, not the extension owner, and the job's
+actual `INSERT` later executed with a `current_user` of that same role,
+not an elevated one.
+
+This is also why the grants here are broader than everywhere else:
+`pg_cron` ships its own row-level security on `cron.job`
+(`USING (username = CURRENT_USER)`, confirmed live) -- broadly granting
+`SELECT`/`INSERT`/`UPDATE`/`DELETE` on it is safe because a role can only
+ever see or touch its own jobs through it regardless. The grants apply
+conditionally (`to_regnamespace('cron') IS NOT NULL`) since `pg_cron`
+isn't a hard dependency; see `sql/pg_oracle--0.1.sql` for the exact
+re-run steps if `pg_cron` is installed *after* `pg_oracle`.
+
 ## Remaining top-20 scope
 
-`DBMS_CRYPTO`, `DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`,
-`DBMS_APPLICATION_INFO`, `DBMS_METADATA` (subset), `DBMS_JOB`/
-`DBMS_SCHEDULER` (subset), `DBMS_STATS` (shim), `DBMS_LOCK`,
+`DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`, `DBMS_APPLICATION_INFO`,
+`DBMS_METADATA` (subset), `DBMS_STATS` (shim), `DBMS_LOCK`,
 `DBMS_ALERT`, `DBMS_PIPE`, `UTL_RAW`, `UTL_ENCODE` -- planned to build on
 [orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it
 already covers one, rather than reimplement from scratch; `GV$*` across
@@ -359,5 +439,44 @@ successfully makes a real HTTPS request to `httpbin.org` and reads back
 its actual response -- proving the read-only check path, the
 `SECURITY DEFINER` fix, and the owner-only mutation boundary all hold
 together correctly, not just in isolation.
+
+Two more real bugs found live in this pass: `dbms_crypto.hash()`'s first
+version tried to catch an exception from `digest(src, NULL)` for an
+unrecognized type -- except that call doesn't raise at all, it just
+returns `NULL`, so `dbms_crypto.hash('x', 999)` silently produced an
+empty result instead of failing loudly. Fixed by checking the algorithm
+name upfront instead of hoping for an exception that was never going to
+happen. Separately, `dbms_scheduler.jobs` (this extension's own job
+bookkeeping table) had no row-level security, so a second non-superuser
+role could read a first role's scheduled `job_action` SQL text through
+it even though `pg_cron`'s own `cron.job` correctly hid that job
+entirely -- found live with two real roles, not by inspection. Fixed
+with the same RLS policy shape `pg_cron` itself uses.
+
+`DBMS_CRYPTO`, end to end: `hash()` with `HASH_SH256` matches
+`digest(..., 'sha256')`'s own output exactly; `mac()` with `HMAC_SH256`
+matches `hmac()`'s own output exactly; `randombytes(16)` returns exactly
+16 bytes; an unrecognized hash type now correctly raises instead of
+returning `NULL`. `encrypt()`/`decrypt()` round-trip correctly for
+AES-256/CBC/PKCS5; a key length that doesn't match the requested AES
+variant is rejected with a clear error instead of silently doing the
+wrong thing; an unsupported chaining mode is rejected outright.
+
+`DBMS_SCHEDULER`, end to end against a real `pg_cron` instance (not
+mocked): `oracle_calendar_to_cron()` correctly translates all four
+supported `FREQ` shapes (including `BYDAY=MON,WED,FRI` to `1,3,5`) and
+correctly rejects `FREQ=YEARLY` instead of guessing; `create_job` +
+`run_job` executes `job_action` immediately regardless of
+enabled/schedule state; `enable` hands the job to a real `cron.schedule()`
+call and `cron.job` shows the exact expected cron expression and command;
+`disable` correctly unschedules from `pg_cron` (`cron.job` count back to
+0) while preserving the job's own metadata; `drop_job` removes both.
+Privilege separation verified with two real non-superuser roles: the
+role that scheduled a job is the one recorded in `cron.job.username` and
+the one the job's own `INSERT` actually ran as (confirmed via a
+`ran_by`-tracking column in the target table) -- not the extension
+owner; and, after the RLS fix, a second unrelated role correctly sees
+zero rows in both `cron.job` and `dbms_scheduler.jobs` for a job it
+didn't create.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).

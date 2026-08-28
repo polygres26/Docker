@@ -5,4 +5,9 @@ relocatable = false
 # V$SQL is a thin view over pg_stat_statements -- that extension needs to be
 # in shared_preload_libraries to actually collect data, but CREATE EXTENSION
 # pg_oracle can at least ensure its catalog objects exist regardless.
-requires = 'pg_stat_statements'
+# DBMS_CRYPTO is a thin adapter over pgcrypto (see sql/pg_oracle--0.1.sql) --
+# a stock Postgres contrib extension, no separate install/preload needed.
+# DBMS_SCHEDULER needs pg_cron too, but that one DOES need
+# shared_preload_libraries and can't be CASCADE-installed the way these
+# two can -- see README.md, it's intentionally not listed here.
+requires = 'pg_stat_statements, pgcrypto'

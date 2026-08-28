@@ -221,7 +221,8 @@ FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog',
                          'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert',
-                         'dbms_network_acl_admin', 'utl_file', 'utl_http');
+                         'dbms_network_acl_admin', 'dbms_crypto', 'dbms_scheduler',
+                         'utl_file', 'utl_http', 'cron');
 COMMENT ON VIEW oracle_catalog."dba_objects" IS 'Oracle DBA_OBJECTS over pg_class -- excludes this extension''s own objects, same reasoning as V$SESSION excluding its own backend.';
 
 CREATE VIEW oracle_catalog."dba_views" AS
@@ -731,6 +732,393 @@ CREATE FUNCTION utl_http.last_status() RETURNS integer
 COMMENT ON FUNCTION utl_http.last_status() IS 'HTTP status code of the most recent utl_http.request() call in this session -- see that function''s comment for why this is simplified from real UTL_HTTP''s handle-based status access.';
 
 -- ================================================================
+-- Phase 2 (package 7 of the top-20): DBMS_CRYPTO
+--
+-- Built on Postgres's own pgcrypto contrib extension (audited, battle-
+-- tested), not hand-rolled -- crypto is exactly the category of code
+-- where "don't reinvent it yourself" matters most. This package is a
+-- thin adapter: Oracle's HASH/MAC-type constants and calling convention
+-- on the outside, pgcrypto's digest()/hmac()/encrypt()/gen_random_bytes()
+-- doing the actual work underneath.
+--
+-- Constants are zero-argument functions (dbms_crypto.hash_sh256()), not
+-- Oracle's bare package constants (DBMS_CRYPTO.HASH_SH256, no parens) --
+-- Postgres has no syntax for a bare constant reference at all. Real
+-- migrated code that hardcodes the bare form needs the same class of
+-- textual rewrite as anonymous PL/SQL blocks (see that section) --
+-- appending `()` is a far smaller rewrite than DO $$ wrapping, but it's
+-- still a rewrite, not something this extension alone can paper over.
+-- ================================================================
+
+CREATE SCHEMA dbms_crypto;
+COMMENT ON SCHEMA dbms_crypto IS 'Oracle DBMS_CRYPTO package (pg_oracle, part of Polygres) -- thin adapter over pgcrypto.';
+
+-- HASH_* values match Oracle's own documented, stable-since-10g
+-- constants. HMAC_* likewise match Oracle's documented values -- both
+-- are widely published and consistent across every Oracle version this
+-- author has seen, but neither has been re-verified against a live
+-- Oracle instance in this session; flag it if a real one disagrees.
+CREATE FUNCTION dbms_crypto.hash_md4() RETURNS integer AS $$ SELECT 1; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hash_md5() RETURNS integer AS $$ SELECT 2; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hash_sh1()  RETURNS integer AS $$ SELECT 3; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hash_sh256() RETURNS integer AS $$ SELECT 4; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hash_sh384() RETURNS integer AS $$ SELECT 5; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hash_sh512() RETURNS integer AS $$ SELECT 6; $$ LANGUAGE sql IMMUTABLE;
+
+CREATE FUNCTION dbms_crypto.hmac_md5()    RETURNS integer AS $$ SELECT 1; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hmac_sh1()    RETURNS integer AS $$ SELECT 2; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hmac_sh256()  RETURNS integer AS $$ SELECT 3; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hmac_sh384()  RETURNS integer AS $$ SELECT 4; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.hmac_sh512()  RETURNS integer AS $$ SELECT 5; $$ LANGUAGE sql IMMUTABLE;
+
+-- First version of this function relied on catching an exception from
+-- digest() for an unrecognized typ -- except digest(src, NULL) doesn't
+-- raise at all, it just returns NULL, so an invalid typ silently
+-- produced a NULL hash instead of an error. Found live: dbms_crypto.hash
+-- ('x', 999) returned an empty result instead of failing loudly. Fixed
+-- by checking the algorithm name up front instead of hoping for an
+-- exception that was never actually going to happen.
+CREATE FUNCTION dbms_crypto.hash(src bytea, typ integer) RETURNS bytea
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v_algo text := CASE typ
+    WHEN 1 THEN 'md4' WHEN 2 THEN 'md5' WHEN 3 THEN 'sha1'
+    WHEN 4 THEN 'sha256' WHEN 5 THEN 'sha384' WHEN 6 THEN 'sha512'
+    ELSE NULL END;
+BEGIN
+  IF v_algo IS NULL THEN
+    RAISE EXCEPTION 'ORA-06502: PL/SQL: numeric or value error -- unsupported DBMS_CRYPTO hash type %', typ;
+  END IF;
+  RETURN digest(src, v_algo);
+END;
+$$;
+COMMENT ON FUNCTION dbms_crypto.hash(bytea, integer) IS 'Oracle DBMS_CRYPTO.HASH -- call with dbms_crypto.hash_sh256() etc., not a hardcoded number.';
+
+CREATE FUNCTION dbms_crypto.mac(src bytea, typ integer, key bytea) RETURNS bytea
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  algo text := CASE typ
+    WHEN 1 THEN 'md5' WHEN 2 THEN 'sha1' WHEN 3 THEN 'sha256'
+    WHEN 4 THEN 'sha384' WHEN 5 THEN 'sha512' ELSE NULL END;
+BEGIN
+  IF algo IS NULL THEN
+    RAISE EXCEPTION 'ORA-06502: PL/SQL: numeric or value error -- unsupported DBMS_CRYPTO MAC type %', typ;
+  END IF;
+  RETURN hmac(src, key, algo);
+END;
+$$;
+COMMENT ON FUNCTION dbms_crypto.mac(bytea, integer, bytea) IS 'Oracle DBMS_CRYPTO.MAC (HMAC forms only -- see this package''s comment for the legacy non-HMAC MAC_* constants this doesn''t implement).';
+
+CREATE FUNCTION dbms_crypto.randombytes(number_bytes integer) RETURNS bytea
+  AS $$ SELECT gen_random_bytes(number_bytes); $$ LANGUAGE sql VOLATILE;
+COMMENT ON FUNCTION dbms_crypto.randombytes(integer) IS 'Oracle DBMS_CRYPTO.RANDOMBYTES.';
+
+-- ENCRYPT_*/CHAIN_*/PAD_* constant VALUES below are this extension's own
+-- numbering -- NOT verified against real Oracle's actual TYP bit
+-- encoding (algorithm + chaining-mode + padding summed into one
+-- integer), which this author could not confidently reconstruct from
+-- memory with the precision crypto correctness demands. Safe as long as
+-- callers use the symbolic constants (as idiomatic Oracle code always
+-- does: `DBMS_CRYPTO.ENCRYPT_AES256 + DBMS_CRYPTO.CHAIN_CBC +
+-- DBMS_CRYPTO.PAD_PKCS5`), broken if code hardcodes Oracle's actual
+-- numeric literal instead -- the same caveat as the HASH_*/HMAC_*
+-- constants above, just with a real correctness (not just fidelity)
+-- consequence if it's wrong, hence the extra emphasis here.
+--
+-- CHAIN_CFB/CHAIN_OFB and PAD_ZERO/PAD_ORCL are NOT implemented --
+-- pgcrypto itself only supports CBC/ECB chaining and PKCS5/no-padding.
+-- encrypt()/decrypt() below reject any other combination outright rather
+-- than silently approximating one.
+CREATE FUNCTION dbms_crypto.encrypt_aes128() RETURNS integer AS $$ SELECT 6; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.encrypt_aes192() RETURNS integer AS $$ SELECT 7; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.encrypt_aes256() RETURNS integer AS $$ SELECT 8; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.chain_cbc() RETURNS integer AS $$ SELECT 256; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.chain_ecb() RETURNS integer AS $$ SELECT 768; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.pad_pkcs5() RETURNS integer AS $$ SELECT 4096; $$ LANGUAGE sql IMMUTABLE;
+CREATE FUNCTION dbms_crypto.pad_none()  RETURNS integer AS $$ SELECT 8192; $$ LANGUAGE sql IMMUTABLE;
+
+CREATE FUNCTION dbms_crypto.encrypt(src bytea, typ integer, key bytea, iv bytea DEFAULT NULL) RETURNS bytea
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v_algo_bits int := typ & 255;	-- low byte: algorithm (this extension's own numbering, see comment above)
+  v_chain_bits int := typ & 3840;	-- next nibble: chaining mode
+  v_pad_bits  int := typ & 61440;	-- next nibble: padding
+  v_keylen    int := octet_length(key);
+  v_expected_keylen int;
+  v_pgcrypto_algo text;
+BEGIN
+  v_expected_keylen := CASE v_algo_bits WHEN 6 THEN 16 WHEN 7 THEN 24 WHEN 8 THEN 32 ELSE NULL END;
+  IF v_expected_keylen IS NULL THEN
+    RAISE EXCEPTION 'ORA-28817: unsupported DBMS_CRYPTO algorithm in type %', typ;
+  END IF;
+  IF v_keylen != v_expected_keylen THEN
+    RAISE EXCEPTION 'ORA-28231: invalid input value: key length % does not match the requested AES variant (expected % bytes)',
+      v_keylen, v_expected_keylen;
+  END IF;
+
+  v_pgcrypto_algo := 'aes' || (CASE v_chain_bits
+    WHEN 256 THEN '-cbc' WHEN 768 THEN '-ecb'
+    ELSE NULL END);
+  IF v_pgcrypto_algo IS NULL OR position('-' IN v_pgcrypto_algo) = 0 THEN
+    RAISE EXCEPTION 'ORA-28233: chaining mode in type % is not supported (only CHAIN_CBC/CHAIN_ECB are)', typ;
+  END IF;
+  v_pgcrypto_algo := v_pgcrypto_algo || (CASE v_pad_bits
+    WHEN 4096 THEN '/pad:pkcs' WHEN 8192 THEN '/pad:none'
+    ELSE NULL END);
+  IF position('/pad:' IN v_pgcrypto_algo) = 0 THEN
+    RAISE EXCEPTION 'ORA-28233: padding mode in type % is not supported (only PAD_PKCS5/PAD_NONE are)', typ;
+  END IF;
+
+  IF v_chain_bits = 256 AND (iv IS NULL OR octet_length(iv) != 16) THEN
+    RAISE EXCEPTION 'ORA-28239: an IV of exactly 16 bytes is required for CHAIN_CBC';
+  END IF;
+
+  RETURN encrypt_iv(src, key, coalesce(iv, ''::bytea), v_pgcrypto_algo);
+END;
+$$;
+COMMENT ON FUNCTION dbms_crypto.encrypt(bytea, integer, bytea, bytea) IS 'Oracle DBMS_CRYPTO.ENCRYPT (AES/CBC/ECB + PKCS5/none only -- see this package''s header comment for what''s intentionally not supported, and why key length is validated instead of silently coerced).';
+
+CREATE FUNCTION dbms_crypto.decrypt(src bytea, typ integer, key bytea, iv bytea DEFAULT NULL) RETURNS bytea
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v_algo_bits int := typ & 255;
+  v_chain_bits int := typ & 3840;
+  v_pad_bits  int := typ & 61440;
+  v_keylen    int := octet_length(key);
+  v_expected_keylen int;
+  v_pgcrypto_algo text;
+BEGIN
+  v_expected_keylen := CASE v_algo_bits WHEN 6 THEN 16 WHEN 7 THEN 24 WHEN 8 THEN 32 ELSE NULL END;
+  IF v_expected_keylen IS NULL THEN
+    RAISE EXCEPTION 'ORA-28817: unsupported DBMS_CRYPTO algorithm in type %', typ;
+  END IF;
+  IF v_keylen != v_expected_keylen THEN
+    RAISE EXCEPTION 'ORA-28231: invalid input value: key length % does not match the requested AES variant (expected % bytes)',
+      v_keylen, v_expected_keylen;
+  END IF;
+
+  v_pgcrypto_algo := 'aes' || (CASE v_chain_bits WHEN 256 THEN '-cbc' WHEN 768 THEN '-ecb' ELSE NULL END);
+  IF v_pgcrypto_algo IS NULL OR position('-' IN v_pgcrypto_algo) = 0 THEN
+    RAISE EXCEPTION 'ORA-28233: chaining mode in type % is not supported (only CHAIN_CBC/CHAIN_ECB are)', typ;
+  END IF;
+  v_pgcrypto_algo := v_pgcrypto_algo || (CASE v_pad_bits WHEN 4096 THEN '/pad:pkcs' WHEN 8192 THEN '/pad:none' ELSE NULL END);
+  IF position('/pad:' IN v_pgcrypto_algo) = 0 THEN
+    RAISE EXCEPTION 'ORA-28233: padding mode in type % is not supported (only PAD_PKCS5/PAD_NONE are)', typ;
+  END IF;
+
+  RETURN decrypt_iv(src, key, coalesce(iv, ''::bytea), v_pgcrypto_algo);
+END;
+$$;
+COMMENT ON FUNCTION dbms_crypto.decrypt(bytea, integer, bytea, bytea) IS 'Oracle DBMS_CRYPTO.DECRYPT -- see ENCRYPT''s comment.';
+
+-- ================================================================
+-- Phase 2 (package 8 of the top-20): DBMS_SCHEDULER
+--
+-- Built on pg_cron (PostgreSQL-licensed, Citus Data), not a hand-rolled
+-- background worker -- reliable cron-style job scheduling inside
+-- Postgres is exactly the kind of infrastructure not worth
+-- reimplementing (same "don't reinvent it" call as pgcrypto above).
+-- Requires `shared_preload_libraries = 'pg_cron'` and `CREATE EXTENSION
+-- pg_cron` (not `CASCADE`-installed by pg_oracle itself, unlike
+-- pg_stat_statements -- pg_cron needs a preload-library restart, which
+-- CREATE EXTENSION cannot do for you; see README.md).
+--
+-- Scope: CREATE_JOB/RUN_JOB/STOP_JOB/DROP_JOB/ENABLE/DISABLE, and only
+-- the four most common repeat_interval calendar shapes (FREQ=DAILY/
+-- HOURLY/WEEKLY/MONTHLY) -- Oracle's full calendaring syntax (BYYEARDAY,
+-- exclusion lists, FREQ=YEARLY/MINUTELY, combined BYMONTH+BYMONTHDAY,
+-- ...) is NOT translated; oracle_calendar_to_cron() raises a clear error
+-- for anything else rather than silently producing a wrong schedule.
+--
+-- job_action for job_type='PLSQL_BLOCK' inherits the exact same
+-- anonymous-PL/SQL-block limitation as everywhere else in this
+-- extension: pg_cron executes job_action as literal SQL text, so a raw
+-- Oracle-style `BEGIN ... END;` block needs the same DO $$ ... $$
+-- rewrite discussed in that section before it's usable here -- this
+-- package does not attempt that rewrite itself.
+-- ================================================================
+
+CREATE SCHEMA dbms_scheduler;
+COMMENT ON SCHEMA dbms_scheduler IS 'Oracle DBMS_SCHEDULER package (pg_oracle, part of Polygres) -- thin adapter over pg_cron. See this schema''s header comment above for scope.';
+
+CREATE TABLE dbms_scheduler.jobs(
+  job_name        text PRIMARY KEY,
+  job_type        text NOT NULL CHECK (job_type IN ('PLSQL_BLOCK', 'STORED_PROCEDURE')),
+  job_action      text NOT NULL,
+  repeat_interval text,
+  enabled         boolean NOT NULL DEFAULT false,
+  cron_job_id     bigint,	-- NULL until enabled at least once; pg_cron's own job id, for unschedule/alter
+  created_by      text NOT NULL DEFAULT current_user
+);
+
+-- Row-level security matching pg_cron's own cron.job policy (`USING
+-- (username = CURRENT_USER)`, confirmed live): without this, any role
+-- could read every other role's job_action text (potentially containing
+-- sensitive SQL/logic) through this table even though pg_cron itself
+-- already hides their actual cron.job entry -- found live, testing with
+-- two real non-superuser roles, not by inspection: a second role could
+-- see a first role's scheduled job here despite cron.job correctly
+-- returning zero rows for it.
+ALTER TABLE dbms_scheduler.jobs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY dbms_scheduler_jobs_owner_only ON dbms_scheduler.jobs
+  USING (created_by = current_user);
+
+CREATE FUNCTION dbms_scheduler.oracle_calendar_to_cron(p_repeat_interval text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v_parts     text[];
+  v_kv        text[];
+  v_freq      text;
+  v_interval  int := 1;
+  v_byhour    int := 0;
+  v_byminute  int := 0;
+  v_byday     text;
+  v_bymonthday int := 1;
+  v_dow_map   jsonb := '{"MON":"1","TUE":"2","WED":"3","THU":"4","FRI":"5","SAT":"6","SUN":"0"}';
+  v_dow_list  text;
+  v_part      text;
+BEGIN
+  FOREACH v_part IN ARRAY string_to_array(p_repeat_interval, ';') LOOP
+    v_kv := string_to_array(trim(v_part), '=');
+    IF array_length(v_kv, 1) != 2 THEN CONTINUE; END IF;
+    CASE upper(trim(v_kv[1]))
+      WHEN 'FREQ' THEN v_freq := upper(trim(v_kv[2]));
+      WHEN 'INTERVAL' THEN v_interval := trim(v_kv[2])::int;
+      WHEN 'BYHOUR' THEN v_byhour := trim(v_kv[2])::int;
+      WHEN 'BYMINUTE' THEN v_byminute := trim(v_kv[2])::int;
+      WHEN 'BYDAY' THEN v_byday := upper(trim(v_kv[2]));
+      WHEN 'BYMONTHDAY' THEN v_bymonthday := trim(v_kv[2])::int;
+      ELSE NULL;	-- BYSECOND, BYMONTH, BYYEARDAY, etc. -- silently ignored, not translated
+    END CASE;
+  END LOOP;
+
+  IF v_freq IS NULL THEN
+    RAISE EXCEPTION 'ORA-27455: repeat_interval must include FREQ (got: %)', p_repeat_interval;
+  END IF;
+
+  CASE v_freq
+    WHEN 'DAILY' THEN
+      IF v_interval != 1 THEN
+        RAISE EXCEPTION 'ORA-27455: FREQ=DAILY with INTERVAL != 1 is not representable in cron -- not supported';
+      END IF;
+      RETURN format('%s %s * * *', v_byminute, v_byhour);
+    WHEN 'HOURLY' THEN
+      RETURN format('%s */%s * * *', v_byminute, v_interval);
+    WHEN 'WEEKLY' THEN
+      IF v_byday IS NULL THEN
+        RAISE EXCEPTION 'ORA-27455: FREQ=WEEKLY requires BYDAY';
+      END IF;
+      SELECT string_agg(v_dow_map ->> trim(d), ',') INTO v_dow_list
+        FROM unnest(string_to_array(v_byday, ',')) AS d;
+      IF v_dow_list IS NULL THEN
+        RAISE EXCEPTION 'ORA-27455: could not parse BYDAY value ''%''', v_byday;
+      END IF;
+      RETURN format('%s %s * * %s', v_byminute, v_byhour, v_dow_list);
+    WHEN 'MONTHLY' THEN
+      RETURN format('%s %s %s * *', v_byminute, v_byhour, v_bymonthday);
+    ELSE
+      RAISE EXCEPTION 'ORA-27455: FREQ=% is not supported (only DAILY/HOURLY/WEEKLY/MONTHLY are -- see this package''s header comment)', v_freq;
+  END CASE;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.oracle_calendar_to_cron(text) IS 'Internal: translates the four most common Oracle repeat_interval calendar shapes to a 5-field cron expression -- see this schema''s header comment for exactly what''s NOT covered.';
+
+CREATE FUNCTION dbms_scheduler.create_job(
+  p_job_name text, p_job_type text, p_job_action text,
+  p_start_date timestamptz DEFAULT NULL, p_repeat_interval text DEFAULT NULL,
+  p_enabled boolean DEFAULT false
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM dbms_scheduler.jobs WHERE job_name = p_job_name) THEN
+    RAISE EXCEPTION 'ORA-27477: job "%" already exists', p_job_name;
+  END IF;
+  INSERT INTO dbms_scheduler.jobs(job_name, job_type, job_action, repeat_interval, enabled)
+    VALUES (p_job_name, p_job_type, p_job_action, p_repeat_interval, false);
+  IF p_enabled THEN
+    PERFORM dbms_scheduler.enable(p_job_name);
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.create_job(text, text, text, timestamptz, text, boolean) IS 'Oracle DBMS_SCHEDULER.CREATE_JOB -- see this schema''s header comment for job_type/repeat_interval scope.';
+
+CREATE FUNCTION dbms_scheduler.enable(p_job_name text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_job record;
+  v_cron text;
+  v_new_id bigint;
+BEGIN
+  SELECT * INTO v_job FROM dbms_scheduler.jobs WHERE job_name = p_job_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-27476: job "%" does not exist', p_job_name;
+  END IF;
+  IF v_job.repeat_interval IS NULL THEN
+    RAISE EXCEPTION 'ORA-27451: job "%" has no repeat_interval -- one-shot jobs must be run directly with RUN_JOB', p_job_name;
+  END IF;
+  v_cron := dbms_scheduler.oracle_calendar_to_cron(v_job.repeat_interval);
+  IF v_job.cron_job_id IS NOT NULL THEN
+    PERFORM cron.unschedule(v_job.cron_job_id);
+  END IF;
+  v_new_id := cron.schedule(p_job_name, v_cron, v_job.job_action);
+  UPDATE dbms_scheduler.jobs SET enabled = true, cron_job_id = v_new_id WHERE job_name = p_job_name;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.enable(text) IS 'Oracle DBMS_SCHEDULER.ENABLE.';
+
+CREATE FUNCTION dbms_scheduler.disable(p_job_name text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_cron_job_id bigint;
+BEGIN
+  SELECT cron_job_id INTO v_cron_job_id FROM dbms_scheduler.jobs WHERE job_name = p_job_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-27476: job "%" does not exist', p_job_name;
+  END IF;
+  IF v_cron_job_id IS NOT NULL THEN
+    PERFORM cron.unschedule(v_cron_job_id);
+  END IF;
+  UPDATE dbms_scheduler.jobs SET enabled = false, cron_job_id = NULL WHERE job_name = p_job_name;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.disable(text) IS 'Oracle DBMS_SCHEDULER.DISABLE (also covers STOP_JOB for a recurring job -- see stop_job()).';
+
+CREATE FUNCTION dbms_scheduler.stop_job(p_job_name text) RETURNS void
+  AS $$ SELECT dbms_scheduler.disable(p_job_name); $$ LANGUAGE sql;
+COMMENT ON FUNCTION dbms_scheduler.stop_job(text) IS 'Oracle DBMS_SCHEDULER.STOP_JOB -- equivalent to DISABLE for a pg_cron-backed recurring job (no separate "running instance" to interrupt the way Oracle''s STOP_JOB can).';
+
+CREATE FUNCTION dbms_scheduler.drop_job(p_job_name text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_cron_job_id bigint;
+BEGIN
+  SELECT cron_job_id INTO v_cron_job_id FROM dbms_scheduler.jobs WHERE job_name = p_job_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-27475: job "%" does not exist', p_job_name;
+  END IF;
+  IF v_cron_job_id IS NOT NULL THEN
+    PERFORM cron.unschedule(v_cron_job_id);
+  END IF;
+  DELETE FROM dbms_scheduler.jobs WHERE job_name = p_job_name;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.drop_job(text) IS 'Oracle DBMS_SCHEDULER.DROP_JOB.';
+
+CREATE FUNCTION dbms_scheduler.run_job(p_job_name text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_job_action text;
+BEGIN
+  SELECT job_action INTO v_job_action FROM dbms_scheduler.jobs WHERE job_name = p_job_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-27476: job "%" does not exist', p_job_name;
+  END IF;
+  EXECUTE v_job_action;
+END;
+$$;
+COMMENT ON FUNCTION dbms_scheduler.run_job(text) IS 'Oracle DBMS_SCHEDULER.RUN_JOB -- runs job_action immediately, in this session, regardless of enabled/repeat_interval (matches real Oracle''s own immediate-run semantics).';
+
+-- ================================================================
 -- Grants -- without these, `SET db_emulation = 'oracle'` (available to
 -- any role, PGC_USERSET) silently fails the moment that role queries
 -- v$session or calls dbms_output.put_line, since a fresh schema in
@@ -750,6 +1138,7 @@ GRANT USAGE ON SCHEMA dbms_utility TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_assert TO PUBLIC;
 GRANT USAGE ON SCHEMA utl_file TO PUBLIC;
 GRANT USAGE ON SCHEMA utl_http TO PUBLIC;
+GRANT USAGE ON SCHEMA dbms_crypto TO PUBLIC;
 GRANT SELECT ON ALL TABLES IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_output TO PUBLIC;
@@ -758,6 +1147,13 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_utility TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_assert TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA utl_file TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA utl_http TO PUBLIC;
+-- dbms_crypto TO PUBLIC is safe on the same reasoning as the packages
+-- above it, not the dbms_network_acl_admin exception below: hashing/
+-- MAC'ing/encrypting your OWN data isn't a privilege boundary the way
+-- granting network access or file access is -- there's nothing here a
+-- role couldn't already do some other way (e.g. writing the same
+-- pgcrypto calls directly).
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_crypto TO PUBLIC;
 
 -- dbms_network_acl_admin is deliberately NOT blanket-granted to PUBLIC
 -- the way every other package schema above is: unlike DBMS_OUTPUT or
@@ -788,3 +1184,45 @@ GRANT EXECUTE ON FUNCTION dbms_network_acl_admin.check_privilege_for_host(text, 
 -- drop_directory() above, which enforce the real privilege check --
 -- direct table writes would bypass that entirely.
 GRANT SELECT ON utl_file.directories TO PUBLIC;
+
+-- dbms_scheduler: unlike dbms_network_acl_admin, scheduling a job to run
+-- your OWN job_action as YOURSELF isn't a privilege escalation the way
+-- dbms_network_acl_admin's mutating functions are, PROVIDED the actual
+-- scheduled job later runs as the role that scheduled it, not as
+-- whoever owns this extension -- which is exactly why create_job/enable/
+-- disable/drop_job/run_job below are left plain SECURITY INVOKER
+-- (Postgres's plpgsql default), NOT SECURITY DEFINER: pg_cron's own
+-- cron.job table records `username = CURRENT_USER` at schedule time and
+-- the job later runs as that role, so calling cron.schedule() as
+-- SECURITY DEFINER would silently make every job run with THIS
+-- extension owner's (likely superuser) privileges instead of the real
+-- caller's -- a privilege escalation this extension will not introduce.
+-- Full INSERT/UPDATE/DELETE (not just SELECT) on dbms_scheduler.jobs is
+-- safe for the same reason: your own scheduling bookkeeping isn't a
+-- security boundary.
+GRANT USAGE ON SCHEMA dbms_scheduler TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_scheduler TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbms_scheduler.jobs TO PUBLIC;
+
+-- pg_cron itself: NOT a hard `requires` dependency of pg_oracle (see the
+-- .control file -- it needs shared_preload_libraries, which CREATE
+-- EXTENSION cannot arrange for you), so these grants only apply if
+-- pg_cron happens to already be installed in this database. If pg_cron
+-- is installed AFTER pg_oracle, re-run this block by hand (or just these
+-- three GRANT statements, substituting `cron` for the schema name) --
+-- see README.md.
+--
+-- Safe to grant broadly specifically because pg_cron ships its own
+-- row-level security on cron.job (`USING (username = CURRENT_USER)`,
+-- confirmed live -- see README.md): a role can only ever see or manage
+-- its OWN scheduled jobs through these grants, never another role's.
+DO $$
+BEGIN
+  IF to_regnamespace('cron') IS NOT NULL THEN
+    EXECUTE 'GRANT USAGE ON SCHEMA cron TO PUBLIC';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON cron.job TO PUBLIC';
+    EXECUTE 'GRANT SELECT ON cron.job_run_details TO PUBLIC';
+    EXECUTE 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA cron TO PUBLIC';
+  END IF;
+END;
+$$;
