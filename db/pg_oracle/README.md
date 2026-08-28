@@ -62,6 +62,10 @@ extension has no dependency on Polywire and doesn't know it exists.
   see "UTL_FILE's security model" below. `FILE_TYPE` is simplified to a
   plain integer handle rather than Oracle's opaque record type --
   documented, not hidden.
+- **DBMS_NETWORK_ACL_ADMIN + UTL_HTTP**: package 6, real ACL-gated
+  outbound HTTP -- see the dedicated section below for the model and the
+  one deliberate exception to "grant everything to PUBLIC" this package
+  makes.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -120,18 +124,66 @@ containing `/` or `..` is rejected outright -- no legitimate `FOPEN` call
 needs either, and allowing them would let a caller escape the registered
 directory entirely.
 
-## UTL_HTTP: deliberately deferred, not forgotten
+## DBMS_NETWORK_ACL_ADMIN + UTL_HTTP
 
-Not implemented in this pass. Network egress from inside the database is
-a materially different, higher-risk feature than everything else here --
-every other package operates purely on local data or the local
-filesystem (itself gated on existing Postgres roles, see above); letting
-SQL code make outbound HTTP calls needs its own access-control design
-(an allowlist of reachable hosts, at minimum) before it's safe to ship,
-not something to bolt on as one more package in this pass. Likely belongs
-as a Polywire-level policy (it already owns firewall/ACL decisions for
-every protocol) rather than purely inside this extension -- a real
-design discussion, not a quick follow-up.
+Implemented, not deferred: earlier in this project's history `UTL_HTTP`
+was held back specifically because network egress needed its own
+access-control design first, not because it needed nothing at all. That
+design is real Oracle's own: `DBMS_NETWORK_ACL_ADMIN` (`CREATE_ACL`,
+`ADD_PRIVILEGE`, `ASSIGN_ACL`, `UNASSIGN_ACL`, `DROP_ACL`,
+`CHECK_PRIVILEGE`), reused faithfully rather than inventing a simpler,
+unfamiliar policy layer. `UTL_HTTP.REQUEST` raises `ORA-24247` unless a
+role has been granted `CONNECT` on an ACL assigned to the target
+host/port -- exactly Oracle's own 11g+ behavior, deny-by-default, no
+"just let PL/SQL call out" mode.
+
+Model: an ACL is a named, *ordered* list of `(principal, privilege,
+grant-or-deny)` entries -- ordered because Oracle's own semantics are
+"first matching entry in the list wins", not "any deny anywhere beats
+any grant" (`acl_privileges.id` preserves that order). An ACL is assigned
+to one or more host/port patterns (exact host, `*.subdomain` wildcard, or
+`*` catch-all); resolving a request picks the *most specific* matching
+assignment's ACL first, then walks that ACL's entries in order.
+
+Split of responsibility, same principle used everywhere else in this
+extension: the policy (host/port specificity, list-order resolution)
+lives entirely in plpgsql (`dbms_network_acl_admin.*`), independently
+testable and inspectable; `src/utl_http.c` is C only for what SQL
+genuinely cannot do -- parsing a URL for its host/port, and calling
+libcurl to actually open the socket -- and it calls back into that
+plpgsql policy via SPI before ever doing either.
+
+**The one place this extension deliberately does NOT grant `PUBLIC`
+the way every other package does**: `dbms_network_acl_admin`'s
+*mutating* functions (`create_acl`/`add_privilege`/`assign_acl`/
+`unassign_acl`/`drop_acl`) stay owner-only. Granting those to `PUBLIC`
+the way `dbms_output`/`utl_file`/etc. are would let any role grant
+itself network access and defeat the entire feature -- real Oracle draws
+the same line (`DBMS_NETWORK_ACL_ADMIN` isn't `PUBLIC`-executable there
+either). Only the three read-only lookup functions
+(`resolve_acl_for_host`/`check_privilege`/`check_privilege_for_host`) are
+`PUBLIC`, and even those needed `SECURITY DEFINER` with a pinned
+`search_path` to work for an ordinary role at all -- see the bug below.
+
+`UTL_HTTP.REQUEST`'s scope is simplified from real Oracle's full
+request/response handle API (`BEGIN_REQUEST`/`GET_RESPONSE`/
+`READ_TEXT`, which supports streaming and per-header access) down to a
+single synchronous call returning the response body as `text`, plus
+`utl_http.last_status()` for the most recent call's HTTP status code --
+covers the extremely common "make a call, check status, use the body"
+pattern, not multi-request pipelining or custom header inspection.
+
+A third real bug, found live: the three read-only ACL-lookup functions
+initially had no `SECURITY DEFINER`. plpgsql functions are
+`SECURITY INVOKER` by default, so granting `EXECUTE` on them to `PUBLIC`
+wasn't enough -- an ordinary role still needed direct `SELECT` on
+`acls`/`acl_privileges`/`host_assignments` itself, which would have
+meant handing out broad read access to the ACL tables just so
+`utl_http.request()` could check them. Fixed with `SECURITY DEFINER` (so
+the check runs with the function owner's rights, the same way real
+Oracle's own ACL checks run against `SYS`-owned structures) and a pinned
+`search_path` (standard hygiene against a caller shadowing
+`host_assignments` with an object of their own).
 
 ## Anonymous PL/SQL blocks (`DECLARE ... BEGIN ... END;`): an architecture
 ## finding, not a feature gap in this extension
@@ -283,5 +335,29 @@ succeeded after being granted `pg_read_server_files` -- and, separately,
 still correctly failed to open the same file for *write* until also
 granted `pg_write_server_files`, confirming the read/write split actually
 holds and isn't just "has any file role, do anything."
+
+`DBMS_NETWORK_ACL_ADMIN`/`UTL_HTTP`, end to end against real network
+requests (not mocked): with no ACL at all, `utl_http.request()` correctly
+raises `ORA-24247` (including correct default-port inference: 443 for
+`https`); after `create_acl`+`assign_acl` for `example.com`, a real HTTPS
+request to `example.com` succeeds and returns real response body and
+status 200, while a request to an unrelated domain (`postgresql.org`)
+still correctly denies -- the grant doesn't leak beyond its host.
+Specificity resolution verified directly: an exact-host `DENY` correctly
+overrides a same-ACL-unrelated `*.example.com` wildcard `GRANT` for that
+one subdomain, while a different subdomain still resolves via the
+wildcard grant, and a totally unrelated host correctly resolves to `NULL`
+(no ACL covers it at all). List-order semantics verified: adding a `DENY`
+entry after an existing `GRANT` for the same principal+privilege does
+*not* flip the answer -- the first entry in the list still wins, matching
+real Oracle instead of a naive "any deny wins" implementation. Privilege
+separation verified with a real non-superuser role: it cannot call
+`create_acl` (`permission denied for table acls`, confirmed correctly
+blocked even after being granted `EXECUTE` on nothing extra), but once a
+superuser grants it `CONNECT` via `add_privilege`, that same role
+successfully makes a real HTTPS request to `httpbin.org` and reads back
+its actual response -- proving the read-only check path, the
+`SECURITY DEFINER` fix, and the owner-only mutation boundary all hold
+together correctly, not just in isolation.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).

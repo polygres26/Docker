@@ -220,7 +220,8 @@ SELECT n.nspname AS owner,
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog',
-                         'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert', 'utl_file');
+                         'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert',
+                         'dbms_network_acl_admin', 'utl_file', 'utl_http');
 COMMENT ON VIEW oracle_catalog."dba_objects" IS 'Oracle DBA_OBJECTS over pg_class -- excludes this extension''s own objects, same reasoning as V$SESSION excluding its own backend.';
 
 CREATE VIEW oracle_catalog."dba_views" AS
@@ -501,6 +502,235 @@ CREATE FUNCTION utl_file.fclose_all() RETURNS void
   AS 'MODULE_PATHNAME', 'utl_file_fclose_all' LANGUAGE C VOLATILE;
 
 -- ================================================================
+-- Phase 2 (package 6 of the top-20): DBMS_NETWORK_ACL_ADMIN + UTL_HTTP
+--
+-- Real Oracle (11g+) makes UTL_HTTP unusable without an ACL grant by
+-- design -- there is no bare "just let PL/SQL make HTTP calls" mode, so
+-- this doesn't invent a laxer default: UTL_HTTP.REQUEST raises ORA-24247
+-- unless DBMS_NETWORK_ACL_ADMIN has granted the calling role CONNECT on
+-- an ACL assigned to the target host/port. This is what makes UTL_HTTP
+-- safe enough to actually ship (see the earlier discussion of why it was
+-- deferred at first) -- the policy lives entirely in this plpgsql, the
+-- C in src/utl_http.c only parses the URL and calls back into this
+-- policy via SPI before ever opening a socket.
+--
+-- Model, kept faithful to real Oracle rather than simplified into
+-- something unfamiliar to anyone who's used the real package: an ACL is
+-- a named, ordered list of (principal, privilege, grant-or-deny)
+-- entries (`acl_privileges`, `id` column preserving insertion order --
+-- this stands in for the ordering Oracle's ACL XML document itself
+-- encodes); an ACL is assigned to one or more host/port-range patterns
+-- (`host_assignments`); resolving a request to a permission answer is
+-- two steps -- pick the most specific host/port match's ACL, then walk
+-- that ACL's entries in order and return the first one naming this
+-- principal (or the special principal 'PUBLIC') and this privilege.
+-- ================================================================
+
+CREATE SCHEMA dbms_network_acl_admin;
+COMMENT ON SCHEMA dbms_network_acl_admin IS 'Oracle DBMS_NETWORK_ACL_ADMIN package (pg_oracle, part of Polygres) -- the only way to permit UTL_HTTP network access.';
+
+CREATE TABLE dbms_network_acl_admin.acls(
+  acl_name    text PRIMARY KEY,
+  description text
+);
+
+CREATE TABLE dbms_network_acl_admin.acl_privileges(
+  id        bigserial PRIMARY KEY,	-- preserves list order -- see header comment above
+  acl_name  text NOT NULL REFERENCES dbms_network_acl_admin.acls(acl_name) ON DELETE CASCADE,
+  principal text NOT NULL,	-- a role name, or the literal 'PUBLIC'
+  privilege text NOT NULL CHECK (privilege IN ('connect', 'resolve')),
+  is_grant  boolean NOT NULL
+);
+
+CREATE TABLE dbms_network_acl_admin.host_assignments(
+  id          bigserial PRIMARY KEY,
+  acl_name    text NOT NULL REFERENCES dbms_network_acl_admin.acls(acl_name) ON DELETE CASCADE,
+  -- exact host ('api.example.com'), wildcard subdomain ('*.example.com'),
+  -- or catch-all ('*') -- see resolve_acl_for_host()'s specificity order.
+  host_pattern text NOT NULL,
+  lower_port  integer,
+  upper_port  integer,
+  CHECK ((lower_port IS NULL) = (upper_port IS NULL))
+);
+
+-- Parameters are ALL p_-prefixed on purpose: an unprefixed `acl`/`host`
+-- parameter here would shadow this schema's own table/column names the
+-- same way an earlier utl_file.create_directory() bug did (see
+-- README.md) -- prefixing here avoids that whole class of bug up front
+-- rather than finding it live again.
+
+CREATE FUNCTION dbms_network_acl_admin.create_acl(
+  p_acl text, p_description text, p_principal text, p_is_grant boolean, p_privilege text
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM dbms_network_acl_admin.acls WHERE acl_name = p_acl) THEN
+    RAISE EXCEPTION 'ORA-46375: ACL ''%'' already exists', p_acl;
+  END IF;
+  INSERT INTO dbms_network_acl_admin.acls(acl_name, description) VALUES (p_acl, p_description);
+  INSERT INTO dbms_network_acl_admin.acl_privileges(acl_name, principal, privilege, is_grant)
+    VALUES (p_acl, p_principal, lower(p_privilege), p_is_grant);
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.create_acl(text, text, text, boolean, text) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.CREATE_ACL.';
+
+CREATE FUNCTION dbms_network_acl_admin.add_privilege(
+  p_acl text, p_principal text, p_is_grant boolean, p_privilege text
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dbms_network_acl_admin.acls WHERE acl_name = p_acl) THEN
+    RAISE EXCEPTION 'ORA-46192: ACL ''%'' does not exist', p_acl;
+  END IF;
+  INSERT INTO dbms_network_acl_admin.acl_privileges(acl_name, principal, privilege, is_grant)
+    VALUES (p_acl, p_principal, lower(p_privilege), p_is_grant);
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.add_privilege(text, text, boolean, text) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.ADD_PRIVILEGE.';
+
+CREATE FUNCTION dbms_network_acl_admin.assign_acl(
+  p_acl text, p_host text, p_lower_port integer DEFAULT NULL, p_upper_port integer DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dbms_network_acl_admin.acls WHERE acl_name = p_acl) THEN
+    RAISE EXCEPTION 'ORA-46192: ACL ''%'' does not exist', p_acl;
+  END IF;
+  INSERT INTO dbms_network_acl_admin.host_assignments(acl_name, host_pattern, lower_port, upper_port)
+    VALUES (p_acl, p_host, p_lower_port, p_upper_port);
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.assign_acl(text, text, integer, integer) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.ASSIGN_ACL.';
+
+CREATE FUNCTION dbms_network_acl_admin.unassign_acl(
+  p_acl text, p_host text, p_lower_port integer DEFAULT NULL, p_upper_port integer DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM dbms_network_acl_admin.host_assignments
+   WHERE acl_name = p_acl AND host_pattern = p_host
+     AND lower_port IS NOT DISTINCT FROM p_lower_port
+     AND upper_port IS NOT DISTINCT FROM p_upper_port;
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.unassign_acl(text, text, integer, integer) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.UNASSIGN_ACL.';
+
+CREATE FUNCTION dbms_network_acl_admin.drop_acl(p_acl text) RETURNS void
+  AS $$ DELETE FROM dbms_network_acl_admin.acls WHERE acl_name = p_acl; $$
+  LANGUAGE sql;	-- ON DELETE CASCADE on both child tables handles the rest
+COMMENT ON FUNCTION dbms_network_acl_admin.drop_acl(text) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.DROP_ACL.';
+
+-- Most-specific-host-match resolution: exact host beats any wildcard;
+-- among wildcards, the longer (more specific) suffix wins; '*' is the
+-- last resort. Within a specificity tier, an assignment with an explicit
+-- port range beats one covering any port -- matches real Oracle's own
+-- "more specific match wins" resolution order.
+-- SECURITY DEFINER + a pinned search_path on this and the two functions
+-- below: plpgsql functions are SECURITY INVOKER by default, so an
+-- ordinary role's GRANT EXECUTE alone doesn't help it read acls/
+-- acl_privileges/host_assignments -- it still needs its own table-level
+-- SELECT, which would mean granting broad read access to the ACL tables
+-- to every role just so utl_http.request() can check them (found live:
+-- "permission denied for table host_assignments" the moment a real
+-- non-superuser role called this). Real Oracle's own DBMS_NETWORK_ACL_
+-- ADMIN checks run against SYS-owned structures the same way -- a
+-- definer-rights read, not a broad grant on the underlying storage. The
+-- pinned search_path is standard SECURITY DEFINER hygiene: without it, a
+-- caller could set their own search_path to shadow `host_assignments`
+-- with an object of their own and manipulate what this function reads.
+CREATE FUNCTION dbms_network_acl_admin.resolve_acl_for_host(p_host text, p_port integer) RETURNS text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = dbms_network_acl_admin, pg_catalog AS $$
+DECLARE
+  rec             record;
+  best_acl        text;
+  best_specificity int := -1;
+  specificity     int;
+  suffix          text;
+BEGIN
+  FOR rec IN
+    SELECT * FROM dbms_network_acl_admin.host_assignments
+    WHERE (lower_port IS NULL) OR (p_port BETWEEN lower_port AND upper_port)
+  LOOP
+    specificity := NULL;
+    IF rec.host_pattern = p_host THEN
+      specificity := 1000;
+    ELSIF rec.host_pattern = '*' THEN
+      specificity := 1;
+    ELSIF left(rec.host_pattern, 2) = '*.' THEN
+      suffix := substr(rec.host_pattern, 3);
+      IF p_host = suffix OR p_host LIKE ('%.' || suffix) THEN
+        specificity := 100 + length(suffix);
+      END IF;
+    END IF;
+
+    IF specificity IS NOT NULL THEN
+      IF rec.lower_port IS NOT NULL THEN
+        specificity := specificity + 1;	-- explicit port range beats "any port" at the same host tier
+      END IF;
+      IF specificity > best_specificity THEN
+        best_specificity := specificity;
+        best_acl := rec.acl_name;
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN best_acl;
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.resolve_acl_for_host(text, integer) IS 'Internal: picks which ACL (if any) governs a given host/port -- see this file''s comment above CREATE SCHEMA dbms_network_acl_admin.';
+
+-- List-order privilege resolution within one already-resolved ACL --
+-- Oracle semantics: the FIRST entry (in the order privileges were added)
+-- naming this principal (or 'PUBLIC') and this privilege wins, not
+-- "any deny anywhere beats any grant". No matching entry -> NULL, which
+-- callers (including UTL_HTTP) must treat as "not permitted", same as a
+-- real 0 -- Oracle's own semantics for "no explicit answer".
+CREATE FUNCTION dbms_network_acl_admin.check_privilege(p_acl text, p_principal text, p_privilege text) RETURNS integer
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = dbms_network_acl_admin, pg_catalog AS $$
+DECLARE
+  rec record;
+BEGIN
+  FOR rec IN
+    SELECT * FROM dbms_network_acl_admin.acl_privileges
+    WHERE acl_name = p_acl AND privilege = lower(p_privilege)
+    ORDER BY id
+  LOOP
+    IF rec.principal = p_principal OR upper(rec.principal) = 'PUBLIC' THEN
+      RETURN CASE WHEN rec.is_grant THEN 1 ELSE 0 END;
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.check_privilege(text, text, text) IS 'Oracle DBMS_NETWORK_ACL_ADMIN.CHECK_PRIVILEGE.';
+
+CREATE FUNCTION dbms_network_acl_admin.check_privilege_for_host(
+  p_host text, p_port integer, p_principal text, p_privilege text
+) RETURNS integer
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = dbms_network_acl_admin, pg_catalog AS $$
+DECLARE
+  v_acl text;
+BEGIN
+  v_acl := dbms_network_acl_admin.resolve_acl_for_host(p_host, p_port);
+  IF v_acl IS NULL THEN
+    RETURN NULL;	-- no ACL covers this host/port at all -- deny by default, same as real Oracle
+  END IF;
+  RETURN dbms_network_acl_admin.check_privilege(v_acl, p_principal, p_privilege);
+END;
+$$;
+COMMENT ON FUNCTION dbms_network_acl_admin.check_privilege_for_host(text, integer, text, text) IS 'Internal: the single function UTL_HTTP calls via SPI before ever opening a socket -- see src/utl_http.c.';
+
+CREATE SCHEMA utl_http;
+COMMENT ON SCHEMA utl_http IS 'Oracle UTL_HTTP package (pg_oracle, part of Polygres) -- gated by DBMS_NETWORK_ACL_ADMIN, see that schema''s comment.';
+
+CREATE FUNCTION utl_http.request(url text, http_method text DEFAULT 'GET') RETURNS text
+  AS 'MODULE_PATHNAME', 'utl_http_request' LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION utl_http.request(text, text) IS 'Oracle UTL_HTTP.REQUEST (simplified single-call form) -- raises ORA-24247 without an ACL grant. See README.md for what''s simplified vs. real UTL_HTTP''s full request/response handle API.';
+
+CREATE FUNCTION utl_http.last_status() RETURNS integer
+  AS 'MODULE_PATHNAME', 'utl_http_last_status' LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION utl_http.last_status() IS 'HTTP status code of the most recent utl_http.request() call in this session -- see that function''s comment for why this is simplified from real UTL_HTTP''s handle-based status access.';
+
+-- ================================================================
 -- Grants -- without these, `SET db_emulation = 'oracle'` (available to
 -- any role, PGC_USERSET) silently fails the moment that role queries
 -- v$session or calls dbms_output.put_line, since a fresh schema in
@@ -519,6 +749,7 @@ GRANT USAGE ON SCHEMA dbms_random TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_utility TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_assert TO PUBLIC;
 GRANT USAGE ON SCHEMA utl_file TO PUBLIC;
+GRANT USAGE ON SCHEMA utl_http TO PUBLIC;
 GRANT SELECT ON ALL TABLES IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_output TO PUBLIC;
@@ -526,6 +757,31 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_random TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_utility TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_assert TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA utl_file TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA utl_http TO PUBLIC;
+
+-- dbms_network_acl_admin is deliberately NOT blanket-granted to PUBLIC
+-- the way every other package schema above is: unlike DBMS_OUTPUT or
+-- UTL_FILE, this package's whole job is deciding who gets network
+-- access, so letting any role execute it would let any role grant
+-- itself an ACL and defeat the entire point of gating UTL_HTTP on it.
+-- Real Oracle draws the same line -- DBMS_NETWORK_ACL_ADMIN's EXECUTE
+-- privilege is not PUBLIC by default there either, only a DBA-ish role
+-- normally has it.
+--
+-- USAGE on the schema is still PUBLIC: without it, an ordinary role
+-- can't even reach the two read-only, non-mutating functions
+-- (check_privilege/check_privilege_for_host) that utl_http.request()
+-- itself needs to call via SPI as the calling role -- schema USAGE only
+-- controls whether names resolve, not whether a specific function call
+-- succeeds, so this doesn't reopen the mutating functions.
+GRANT USAGE ON SCHEMA dbms_network_acl_admin TO PUBLIC;
+GRANT EXECUTE ON FUNCTION dbms_network_acl_admin.resolve_acl_for_host(text, integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION dbms_network_acl_admin.check_privilege(text, text, text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION dbms_network_acl_admin.check_privilege_for_host(text, integer, text, text) TO PUBLIC;
+-- create_acl/add_privilege/assign_acl/unassign_acl/drop_acl: intentionally
+-- left owner-only (whoever ran CREATE EXTENSION) -- grant EXECUTE on
+-- these explicitly, per-role, the same deliberate way a DBA would grant
+-- real Oracle's DBMS_NETWORK_ACL_ADMIN to specific administrators.
 -- SELECT (not INSERT/UPDATE/DELETE) on the directories table: every role
 -- needs to read it for FOPEN's own internal lookup to work at all, but
 -- registering/changing a directory must go through create_directory()/
