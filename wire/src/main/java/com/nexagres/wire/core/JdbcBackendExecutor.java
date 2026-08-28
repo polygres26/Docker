@@ -68,7 +68,8 @@ public final class JdbcBackendExecutor implements BackendExecutor {
     @Override
     public ExecutionResult execute(Statement statement) throws SQLException {
 
-        if (nativeRlsInitializer != null && !statement.accessContext().isAnonymous()) {
+        if (nativeRlsInitializer != null
+                && (!statement.accessContext().isAnonymous() || nativeRlsInitializer.runEvenWhenAnonymous())) {
             nativeRlsInitializer.initialize(connection, statement.accessContext());
         }
         String sqlText = stripTrailingSemicolon(statement.sqlText());

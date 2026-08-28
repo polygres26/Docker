@@ -1,0 +1,84 @@
+package com.nexagres.wire.core.access;
+
+import com.nexagres.wire.core.AccessContext;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+/**
+ * The missing link between orawire and db/pg_oracle: every orawire session's backend Postgres
+ * connection needs {@code SET db_emulation = 'oracle'} issued exactly once, or none of
+ * pg_oracle's unqualified V$, DBA_*, DBMS_*, or UTL_* names resolve at all -- confirmed live
+ * while building pg_oracle (see db/pg_oracle/README.md) that without this, orawire's translated SQL
+ * hits plain "relation does not exist"/"function does not exist" against a stock Postgres
+ * session with no idea it should be looking in oracle_catalog/dbms_output/etc.
+ *
+ * Delegates everything else to {@link PostgresRlsSessionInitializer} rather than duplicating
+ * its polywire.* GUC propagation -- this class adds exactly one thing on top, it doesn't
+ * replace the existing access-context wiring every other protocol also relies on.
+ *
+ * Also forwards the access context into pg_oracle's own SYS_CONTEXT store
+ * (db/pg_oracle's dbms_session.set_context('polywire_ctx', ...) plus set_identifier() for the
+ * userId) -- not because orawire needs it for anything today, but because it's the exact,
+ * intended integration point db/pg_oracle's VPD section was designed for: an Oracle-migrated
+ * app whose RLS/VPD policies already call SYS_CONTEXT('polywire_ctx', 'tenant_id') keeps
+ * working unmodified once fronted by orawire, with zero policy-side changes. Best-effort: if
+ * pg_oracle isn't installed in the target database at all (a Postgres backend orawire is
+ * pointed at with no pg_oracle extension), db_emulation is simply an unrecognized GUC name and
+ * this fails loudly rather than silently -- see the comment at the call site in RequestLoop.
+ */
+public final class OraclePgEmulationSessionInitializer implements NativeRlsSessionInitializer {
+
+    private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer();
+
+    @Override
+    public boolean runEvenWhenAnonymous() {
+        // See NativeRlsSessionInitializer's own comment -- db_emulation is a protocol-level
+        // requirement of every orawire session, not a per-user RBAC/VPD concern, so it must not
+        // be skipped just because the connection has no real authenticated identity. Found live:
+        // a plain username/password orawire login (no POLYWIRE_AUTH_MODE configured) produces
+        // AccessContext.ANONYMOUS, and without this override SET db_emulation = 'oracle' was
+        // silently never issued at all -- every unqualified V$/DBA_*/DBMS_*/UTL_* reference and
+        // this extension's own new one-argument TO_CHAR/TO_DATE overloads failed with
+        // ORA-00942/ORA-00904 ("table or view does not exist"/"invalid identifier") even though
+        // pg_oracle itself was correctly installed and working (schema-qualified calls like
+        // DBMS_RANDOM.STRING(...) still worked throughout, since those don't depend on
+        // search_path at all -- that's what actually pointed at this bug).
+        return true;
+    }
+
+    @Override
+    public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
+        delegate.initialize(connection, accessContext);
+
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("SET db_emulation = 'oracle'");
+        }
+
+        // Best-effort SYS_CONTEXT propagation -- pg_oracle's own create_context() is owner-only
+        // (see db/pg_oracle/README.md's DBMS_NETWORK_ACL_ADMIN-pattern privilege model), so the
+        // 'polywire_ctx' namespace must already have been registered once by a DBA/admin
+        // connection before this call, exactly the same way an Oracle DBA runs CREATE CONTEXT
+        // once before any session can SET_CONTEXT against it. A session where nobody's done
+        // that yet gets ORA-01403 here -- caught and swallowed deliberately, not surfaced as an
+        // orawire connection failure, since not every deployment will have VPD/SYS_CONTEXT
+        // wired up at all and forcing that setup just to accept a connection would be wrong.
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("SELECT dbms_session.set_identifier(" + quoteLiteral(accessContext.userId()) + ")");
+            for (var entry : accessContext.attributes().entrySet()) {
+                stmt.execute("SELECT dbms_session.set_context('polywire_ctx', "
+                        + quoteLiteral(entry.getKey()) + ", " + quoteLiteral(entry.getValue()) + ")");
+            }
+        } catch (SQLException ignoredContextNotRegistered) {
+            // See comment above -- expected and harmless when 'polywire_ctx' hasn't been
+            // created via pg_oracle's oracle_catalog.create_context() in this database.
+        }
+    }
+
+    private static String quoteLiteral(String value) {
+        if (value == null) {
+            return "NULL";
+        }
+        return "'" + value.replace("'", "''") + "'";
+    }
+}

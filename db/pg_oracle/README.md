@@ -833,4 +833,18 @@ next unqualified `to_char()` call in the same session failed with
 reverified: `search_path` now correctly shows the new schema first with
 every package schema still present after it.
 
+## Real orawire + sqlcl integration test
+
+`test/orawire-integration/` -- the first real end-to-end run through the actual gateway, not
+`psql`: real `sqlcl` (Oracle's own client) over the real Oracle wire protocol, through Polywire's
+orawire, to Postgres with `pg_oracle` installed. Found and fixed a critical bug this way that no
+amount of direct-`psql` testing could have caught: `db_emulation` was never being set at all for
+a plain username/password orawire connection (Polywire's `JdbcBackendExecutor` skips its session
+initializer for an anonymous `AccessContext`, correct for RLS/VPD-context propagation but wrong
+for `db_emulation`, a protocol-level requirement of every orawire session). Fixed in `wire/` --
+see `test/orawire-integration/README.md` for the full story, the exact contrast that pointed at
+it, and several more real, still-open findings from that same run (a `SYS_CONTEXT` bind-typing
+bug, a translator/overload-collision gap in reaching this extension's own new one-argument
+`TO_CHAR`, and a real gap in orawire's basic `CREATE TABLE` DDL translation for Oracle datatypes).
+
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).

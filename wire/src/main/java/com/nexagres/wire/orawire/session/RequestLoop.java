@@ -131,19 +131,28 @@ public final class RequestLoop {
     // meant it could never accumulate its own cross-statement transaction/cursor routing state
     // within one session -- reusing one now matches how pgwire's already behaves.
     //
-    // The NativeRlsSessionInitializer here is always PostgresRlsSessionInitializer, never
+    // The NativeRlsSessionInitializer here is OraclePgEmulationSessionInitializer, never
     // OracleVpdSessionInitializer, even though this is the Oracle wire protocol: every
     // SessionHandler.run() construction site actually reaching RequestLoop passes primaryConn =
     // pgConnection (Postgres JDBC, running the Oracle SQL DualTableRewriter-translated) -- the
     // real-Oracle-backend path (dualExecAuthority=ORACLE + oracleBackendMode=NATIVE) is
     // intercepted earlier, in SessionHandler.run(), by a raw TNS byte relay
     // (NativeSessionRelay) that never constructs a RequestLoop or JdbcBackendExecutor at all.
-    // So the JDBC connection this executor's set_config(...) calls land on genuinely is
-    // Postgres, and OracleVpdSessionInitializer's SYS_CONTEXT/DBMS_SESSION.SET_CONTEXT-shaped
-    // calls would simply fail against it -- it stays reserved for a future NativeOracleExecutor
-    // RLS path, which would need its own, separate wiring at a completely different layer.
+    // So the JDBC connection this executor's initializer calls land on genuinely is Postgres --
+    // OracleVpdSessionInitializer's polywire_ctx_pkg.set_attribute(...) calls target a real
+    // Oracle-shaped stored package that doesn't exist here and would simply fail; it stays
+    // reserved for a future NativeOracleExecutor RLS path, its own separate wiring at a
+    // completely different layer. OraclePgEmulationSessionInitializer is the actual fix for
+    // this Postgres path: `SET db_emulation = 'oracle'` once per session (without it, none of
+    // db/pg_oracle's unqualified V$/DBA_*/DBMS_*/UTL_* names resolve at all -- confirmed live
+    // while building that extension), delegating everything else (polywire.* GUC propagation)
+    // to the same PostgresRlsSessionInitializer every other protocol already uses, plus a
+    // best-effort SYS_CONTEXT('polywire_ctx', ...) forward so an Oracle-migrated app's existing
+    // VPD policies keep working unmodified once fronted by orawire -- see that class's own
+    // comment for exactly what's forwarded and why a missing 'polywire_ctx' namespace is
+    // swallowed rather than failing the connection.
     private final JdbcBackendExecutor terminalExecutor =
-            new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.PostgresRlsSessionInitializer());
+            new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.OraclePgEmulationSessionInitializer());
     private final StatementPipeline reusablePipeline;
     private final com.nexagres.wire.core.AccessContext accessContext;
 

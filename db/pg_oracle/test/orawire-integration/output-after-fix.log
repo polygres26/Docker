@@ -1,0 +1,205 @@
+===TEST=== dual
+
+   [1m1[m 
+____ 
+   1 
+
+1 row selected. 
+
+===TEST=== sysdate
+
+[1mcurrent_timestamp[m    
+____________________ 
+28-AUG-26            
+
+1 row selected. 
+
+===TEST=== v$version
+
+[1mbanner[m                                                  [1mcon_id[m 
+____________________________________________________ _________ 
+PostgreSQL (pg_oracle emulation) 17.10 (Homebrew)            1 
+
+1 row selected. 
+
+===TEST=== v$instance
+
+   [1minstance_number[m [1mstatus[m    
+__________________ _________ 
+                 1 OPEN      
+
+1 row selected. 
+
+===TEST=== v$session
+
+   [1mcount[m 
+________ 
+       9 
+
+1 row selected. 
+
+===TEST=== nonexistent object reference
+
+Error starting at line : 16 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT * FROM DEFINITELY_NOT_A_REAL_TABLE
+Error at Command Line : 16 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00942: table or view does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+===TEST=== dba_tables
+
+   [1mcount[m 
+________ 
+      18 
+
+1 row selected. 
+
+===TEST=== create and use a real table
+
+Error starting at line : 20 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+CREATE TABLE emp_test (id NUMBER, name VARCHAR2(50))
+Error report -
+statement cannot be translated from ORACLE to POSTGRES (needs manual migration): LLM fallback translator failed: null -- original SQL: CREATE TABLE emp_test (id NUMBER, name VARCHAR2(50))
+
+Error starting at line : 21 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+INSERT INTO emp_test VALUES (1, 'Alice')
+Error at Command Line : 21 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00942: table or view does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+
+Error starting at line : 22 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+INSERT INTO emp_test VALUES (2, 'Bob')
+Error at Command Line : 22 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00942: table or view does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+
+Error starting at line : 23 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT * FROM emp_test
+Error at Command Line : 23 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00942: table or view does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+===TEST=== user_tables (Oracle-native object reference)
+
+
+0 rows selected. 
+
+===TEST=== dbms_output
+ERROR: syntax error at or near "dbms_output"
+  Position: 7
+https://docs.oracle.com/error-help/db/ora-00900/
+BEGIN
+*
+ERROR at line 1:
+ERROR: syntax error at or near "DBMS_OUTPUT"
+  Position: 9
+
+===TEST=== sys_context
+
+Error starting at line : 33 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT SYS_CONTEXT('USERENV','CURRENT_USER') FROM DUAL
+Error at Command Line : 33 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00904: "sys_context(unknown, unknown)": invalid identifier
+Help: https://docs.oracle.com/error-help/db/ora-00904/
+
+Error starting at line : 34 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT SYS_CONTEXT('USERENV','SESSIONID') FROM DUAL
+Error at Command Line : 34 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00904: "sys_context(unknown, unknown)": invalid identifier
+Help: https://docs.oracle.com/error-help/db/ora-00904/
+===TEST=== to_char with NLS default format
+
+Error starting at line : 36 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT TO_CHAR(SYSDATE) FROM DUAL
+Error at Command Line : 36 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00904: "to_char(timestamp with time zone)": invalid identifier
+Help: https://docs.oracle.com/error-help/db/ora-00904/
+===TEST=== to_char with explicit RR format
+
+[1mto_char[m      
+____________ 
+28-AUG-RR    
+
+1 row selected. 
+
+===TEST=== dbms_random
+
+[1mstring[m      
+___________ 
+BMNQHMXT    
+
+1 row selected. 
+
+===TEST=== dbms_crypto hash
+
+Error starting at line : 42 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT DBMS_CRYPTO.HASH(UTL_RAW.CAST_TO_RAW('hello'), DBMS_CRYPTO.HASH_SH256) FROM DUAL
+Error at Command Line : 42 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ERROR: schema "utl_raw" does not exist
+  Position: 25
+===TEST=== a genuinely bad PL/SQL reference
+BEGIN
+*
+ERROR at line 1:
+ERROR: syntax error at or near "this_procedure_does_not_exist"
+  Position: 9
+
+===TEST=== a genuinely bad SQL syntax error
+
+Error starting at line : 49 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT * FROM emp_test WHERE
+Error at Command Line : 49 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ERROR: syntax error at end of input
+  Position: 29
+===TEST=== division by zero
+
+Error starting at line : 51 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT 1/0 FROM DUAL
+Error at Command Line : 51 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-01476: divisor is equal to zero
+Help: https://docs.oracle.com/error-help/db/ora-01476/
+===TEST=== rowid/rownum pseudo columns
+
+Error starting at line : 53 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT ROWNUM, name FROM emp_test WHERE ROWNUM <= 1
+Error at Command Line : 53 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ORA-00942: table or view does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+===TEST=== dbms_metadata (not implemented -- expect error)
+
+Error starting at line : 55 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+SELECT DBMS_METADATA.GET_DDL('TABLE','EMP_TEST') FROM DUAL
+Error at Command Line : 55 Column : 1 File @ /private/tmp/pgoracle_sqlcl_test.sql
+Error report -
+SQL Error: ERROR: schema "dbms_metadata" does not exist
+  Position: 8
+===TEST=== cleanup
+
+Error starting at line : 57 File @ /private/tmp/pgoracle_sqlcl_test.sql
+In command -
+DROP TABLE emp_test
+Error report -
+ERROR: table "emp_test" does not exist
+===TEST=== done
