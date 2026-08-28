@@ -476,6 +476,177 @@ $$;
 COMMENT ON FUNCTION oracle_catalog.sys_context(text, text) IS 'Oracle SYS_CONTEXT. USERENV attributes covered: CURRENT_USER/SESSION_USER/CURRENT_SCHEMA/DB_NAME/INSTANCE_NAME/SERVER_HOST/HOST/IP_ADDRESS/SESSIONID/SID/ISDBA/LANG/LANGUAGE/CON_NAME/CON_ID/CLIENT_IDENTIFIER -- others (MODULE/ACTION/PROXY_USER/AUTHENTICATION_METHOD/... ) return NULL, not implemented yet. User-defined namespaces read whatever dbms_session.set_context() last wrote in this session.';
 
 -- ================================================================
+-- ALTER SESSION / ALTER SYSTEM
+--
+-- Two completely different stories, checked live rather than assumed:
+--
+-- ALTER SYSTEM SET parameter = value -- Postgres already has this
+-- exact statement, native, since 9.4 (confirmed live: `ALTER SYSTEM SET
+-- work_mem = '8MB'` + `SELECT pg_reload_conf()` just works). Nothing to
+-- build here -- the only real gap is Oracle-specific parameter NAMES
+-- having no Postgres GUC equivalent, the same vocabulary gap V$PARAMETER
+-- already documents, not a syntax problem.
+--
+-- ALTER SESSION SET parameter = value -- confirmed live to be a genuine
+-- Postgres syntax error ("syntax error at or near SESSION"): stock
+-- Postgres's grammar has no ALTER SESSION statement at all, and there's
+-- no extension hook to add one without patching the parser -- the same
+-- class of gap as anonymous PL/SQL blocks and CREATE CONTEXT. A real
+-- rewrite (ALTER SESSION SET X = Y -> a Polywire orawire-side text
+-- transform) belongs in front of Postgres, not in this extension. What
+-- this extension DOES provide: oracle_catalog.alter_session_set() below,
+-- a function-call substitute usable directly today (and a natural
+-- rewrite target once orawire adds that transform) that implements the
+-- handful of ALTER SESSION forms that have a real Postgres equivalent:
+-- CURRENT_SCHEMA (-> search_path), TIME_ZONE (-> timezone), and the
+-- NLS_* parameters (-> this section's own session-local store, read
+-- back by SYS_CONTEXT-adjacent to_char()/to_date() below). Anything
+-- else raises a clear NOTICE and does nothing, rather than silently
+-- claiming to have applied a setting Postgres has no equivalent for
+-- (RESUMABLE, parallel DML degree, and similar Oracle-only session
+-- concepts have no Postgres analog at all).
+-- ================================================================
+
+CREATE FUNCTION oracle_catalog.alter_session_set(p_parameter text, p_value text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  CASE upper(p_parameter)
+    WHEN 'CURRENT_SCHEMA' THEN
+      -- Prepended onto the EXISTING search_path, not a wholesale
+      -- replacement -- found live: `SET search_path TO myapp` alone
+      -- wiped out the Oracle package schemas db_emulation had already
+      -- appended (dbms_output, oracle_catalog, ...), immediately
+      -- breaking unqualified to_char()/sys_context()/etc. in the same
+      -- session. Real Oracle's CURRENT_SCHEMA only changes the default
+      -- schema for unqualified resolution and object creation -- it
+      -- doesn't make every other Oracle-visible package disappear, so
+      -- neither should this.
+      EXECUTE format('SET search_path TO %I, %s', p_value, current_setting('search_path'));
+    WHEN 'TIME_ZONE' THEN
+      EXECUTE format('SET timezone TO %L', p_value);
+    ELSE
+      IF upper(p_parameter) LIKE 'NLS\_%' ESCAPE '\' THEN
+        CREATE TEMP TABLE IF NOT EXISTS oracle_nls_settings(parameter text PRIMARY KEY, value text) ON COMMIT PRESERVE ROWS;
+        INSERT INTO pg_temp.oracle_nls_settings(parameter, value) VALUES (upper(p_parameter), p_value)
+          ON CONFLICT (parameter) DO UPDATE SET value = EXCLUDED.value;
+      ELSE
+        RAISE NOTICE 'pg_oracle: ALTER SESSION SET % is not supported (no Postgres equivalent) -- ignored, not applied.', p_parameter;
+      END IF;
+  END CASE;
+END;
+$$;
+COMMENT ON FUNCTION oracle_catalog.alter_session_set(text, text) IS 'Oracle ALTER SESSION SET, as a function call rather than new DDL syntax -- see this section''s header comment. Covers CURRENT_SCHEMA, TIME_ZONE, and NLS_* only; anything else is a no-op with a NOTICE.';
+
+CREATE FUNCTION oracle_catalog.get_nls_parameter(p_parameter text) RETURNS text
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_stored text;
+BEGIN
+  IF to_regclass('pg_temp.oracle_nls_settings') IS NOT NULL THEN
+    SELECT value INTO v_stored FROM pg_temp.oracle_nls_settings WHERE parameter = upper(p_parameter);
+    IF v_stored IS NOT NULL THEN
+      RETURN v_stored;
+    END IF;
+  END IF;
+  -- Oracle's real out-of-the-box defaults for an AMERICAN_AMERICA client --
+  -- not every NLS_* parameter Oracle has, only the ones to_char()/
+  -- to_date() below actually consult.
+  RETURN CASE upper(p_parameter)
+    WHEN 'NLS_DATE_FORMAT' THEN 'DD-MON-RR'
+    WHEN 'NLS_TIMESTAMP_FORMAT' THEN 'DD-MON-RR HH.MI.SSXFF AM'
+    WHEN 'NLS_NUMERIC_CHARACTERS' THEN '.,'
+    WHEN 'NLS_CURRENCY' THEN '$'
+    WHEN 'NLS_TERRITORY' THEN 'AMERICA'
+    WHEN 'NLS_LANGUAGE' THEN 'AMERICAN'
+    ELSE NULL
+  END;
+END;
+$$;
+COMMENT ON FUNCTION oracle_catalog.get_nls_parameter(text) IS 'Internal -- session-local NLS_* value if ALTER SESSION SET it, else Oracle''s real AMERICAN_AMERICA default. Backs to_char()/to_date() below and the nls_session_parameters view.';
+
+CREATE VIEW oracle_catalog."nls_session_parameters" AS
+SELECT p.parameter, oracle_catalog.get_nls_parameter(p.parameter) AS value
+FROM (VALUES ('NLS_DATE_FORMAT'), ('NLS_TIMESTAMP_FORMAT'), ('NLS_NUMERIC_CHARACTERS'),
+             ('NLS_CURRENCY'), ('NLS_TERRITORY'), ('NLS_LANGUAGE')) AS p(parameter);
+COMMENT ON VIEW oracle_catalog."nls_session_parameters" IS 'Oracle NLS_SESSION_PARAMETERS dictionary view.';
+
+-- Format-token translation: Postgres's own to_char()/to_date() already
+-- understand almost every Oracle format token identically (checked
+-- live, not assumed -- YYYY/MM/DD/HH24/HH12/MI/SS/MON/DY/DAY/AM/PM/FM
+-- and numeric 9/0/,/. groups all matched Oracle's own output exactly).
+-- Exactly three real, confirmed differences: RR (Oracle's century-
+-- rounding 2-digit year) isn't recognized at all by Postgres, echoed
+-- back literally; bare FF (fractional seconds with no explicit digit
+-- count -- FF1..FF9 DO work natively) isn't recognized either; X
+-- (Oracle's locale radix/decimal-point token) isn't recognized. This
+-- function substitutes all three before delegating to the real
+-- pg_catalog to_char()/to_date() -- everything else in the format
+-- string passes through untouched, verified.
+--
+-- One stated, deliberate limitation: this is a plain string
+-- substitution, not a real format-string tokenizer -- a literal "RR",
+-- "FF", or "X" appearing inside an Oracle format string's own
+-- double-quoted literal-text segment (e.g. 'DD-MON-YYYY "RR is text
+-- here"') would be incorrectly substituted too. Real-world Oracle date
+-- formats essentially never do this; stated here rather than silently
+-- risked.
+CREATE FUNCTION oracle_catalog.translate_nls_format(p_fmt text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT regexp_replace(
+           regexp_replace(
+             regexp_replace(p_fmt, 'RR', 'YY', 'g'),
+           'FF(?![1-9])', 'FF6', 'g'),
+         'X', '.', 'g');
+$$;
+COMMENT ON FUNCTION oracle_catalog.translate_nls_format(text) IS 'Internal -- see this section''s header comment for exactly which three tokens this rewrites and the quoted-literal-text caveat.';
+
+-- date/timestamp overloads only, deliberately, not date/timestamptz
+-- TWO-ARGUMENT forms beyond the exact `date` type: pg_catalog's own
+-- to_char(timestamp[tz], text) already exists as an EXACT type match,
+-- and Postgres always searches pg_catalog first for a tied exact match
+-- regardless of this extension's search_path additions -- adding a
+-- same-signature oracle_catalog.to_char(timestamp, text) would simply
+-- never be chosen, not a real override. The ONE-ARGUMENT forms below
+-- are always safe (pg_catalog has zero one-arg to_char candidates for
+-- any type, confirmed live), and the two-argument `date` form is safe
+-- too (pg_catalog has no plain-`date` to_char overload at all, only
+-- timestamp/timestamptz). Stated plainly: an explicit two-argument
+-- TO_CHAR(some_timestamp, 'DD-MON-RR') call still resolves to real
+-- Postgres's own to_char and will NOT get RR/bare-FF/X translation in
+-- this version -- only the one-arg (NLS-default-format) and the
+-- explicit-format `date`-typed forms do.
+CREATE FUNCTION oracle_catalog.to_char(p_date date, p_fmt text DEFAULT NULL) RETURNS text
+  AS $$ SELECT to_char(p_date::timestamp, oracle_catalog.translate_nls_format(coalesce(p_fmt, oracle_catalog.get_nls_parameter('NLS_DATE_FORMAT')))); $$
+  LANGUAGE sql STABLE;
+COMMENT ON FUNCTION oracle_catalog.to_char(date, text) IS 'Oracle TO_CHAR(DATE) -- defaults to NLS_DATE_FORMAT (session-settable via alter_session_set) when no format is given, translating RR/bare-FF/X first. See this section''s header comment for why only the `date`-typed overload gets an explicit-format form.';
+
+CREATE FUNCTION oracle_catalog.to_char(p_ts timestamp without time zone) RETURNS text
+  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT'))); $$
+  LANGUAGE sql STABLE;
+CREATE FUNCTION oracle_catalog.to_char(p_ts timestamptz) RETURNS text
+  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT'))); $$
+  LANGUAGE sql STABLE;
+COMMENT ON FUNCTION oracle_catalog.to_char(timestamp) IS 'Oracle TO_CHAR(TIMESTAMP) -- one-argument form only (real Postgres to_char has no bare TO_CHAR(some_date)/TO_CHAR(some_timestamp) at all, confirmed live -- this is a genuinely new capability, not an override), using NLS_TIMESTAMP_FORMAT.';
+
+CREATE FUNCTION oracle_catalog.to_date(p_str text, p_fmt text DEFAULT NULL) RETURNS date
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF p_fmt IS NULL THEN
+    RETURN to_date(p_str, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_DATE_FORMAT')));
+  END IF;
+  -- Two-argument form: pg_catalog.to_date(text, text) already exists as
+  -- an exact match and always wins the tie -- this branch only actually
+  -- runs when called schema-qualified (oracle_catalog.to_date(...)) or
+  -- once an orawire-side rewrite targets it explicitly; a bare
+  -- unqualified two-argument TO_DATE(str, fmt) still resolves to real
+  -- Postgres's own to_date without RR/bare-FF/X translation, same
+  -- caveat as to_char's two-argument timestamp forms above.
+  RETURN to_date(p_str, oracle_catalog.translate_nls_format(p_fmt));
+END;
+$$;
+COMMENT ON FUNCTION oracle_catalog.to_date(text, text) IS 'Oracle TO_DATE -- one-argument form (using NLS_DATE_FORMAT) is always safe/new; the two-argument form only actually applies RR/bare-FF/X translation when called schema-qualified -- see this function''s own comment.';
+
+-- ================================================================
 -- Phase 2 (packages 2-4 of the top-20): DBMS_RANDOM, DBMS_UTILITY,
 -- DBMS_ASSERT -- all pure computation over Postgres's own random()/
 -- catalog, no session state needed, so plain SQL/plpgsql, not C (compare

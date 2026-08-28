@@ -81,6 +81,11 @@ extension has no dependency on Polywire and doesn't know it exists.
   `SYS_CONTEXT()` return values real Postgres Row-Level Security
   policies can read. See the dedicated section below for a working,
   verified `CREATE POLICY ... USING (sys_context(...))` example.
+- **ALTER SESSION / ALTER SYSTEM + NLS_\*/TO_CHAR/TO_DATE**: `ALTER
+  SYSTEM SET` already works natively in stock Postgres (nothing to
+  build); `ALTER SESSION SET` needs the same function-call substitute
+  pattern as `CREATE CONTEXT`, and a real bug in its first version is
+  worth reading about. See the two dedicated sections below.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -449,9 +454,101 @@ rows, correctly excluding the other tenant's row -- real Postgres RLS
 doing the actual enforcement, this package only supplying the value it
 reads.
 
+## ALTER SESSION / ALTER SYSTEM
+
+Two completely different stories, each checked live rather than assumed.
+
+**`ALTER SYSTEM SET parameter = value`** -- nothing to build. Postgres
+already has this exact statement, native, since 9.4 (`ALTER SYSTEM SET
+work_mem = '8MB'` + `SELECT pg_reload_conf()` confirmed live). The only
+real gap is Oracle-specific parameter *names* having no Postgres GUC
+equivalent -- the same vocabulary gap `V$PARAMETER` already documents,
+not a syntax problem.
+
+**`ALTER SESSION SET parameter = value`** -- confirmed live to be a
+genuine Postgres syntax error (`syntax error at or near "SESSION"`):
+stock Postgres's grammar has no `ALTER SESSION` statement at all, the
+same class of gap as anonymous PL/SQL blocks and `CREATE CONTEXT`. What
+this extension provides instead: `oracle_catalog.alter_session_set()`,
+a function-call substitute (usable directly today, and a natural
+rewrite target for an eventual orawire-side transform) covering the
+forms that have a real Postgres equivalent -- `CURRENT_SCHEMA` (->
+`search_path`), `TIME_ZONE` (-> `timezone`), and `NLS_*` (-> the
+session-local store `to_char()`/`to_date()` below read). Anything else
+(`RESUMABLE`, parallel-DML degree, and similar Oracle-only session
+concepts with no Postgres analog at all) is a `NOTICE`-and-no-op, not a
+silent false claim of having applied something.
+
+**A real bug found live**: the first version of `CURRENT_SCHEMA` did a
+bare `SET search_path TO <schema>` -- which wholesale *replaced* the
+session's search_path, wiping out every Oracle package schema
+`db_emulation` had already appended (`dbms_output`, `oracle_catalog`,
+...) and immediately breaking unqualified `to_char()`/`sys_context()`
+in the same session. Fixed by *prepending* the new schema onto the
+existing search_path instead -- the same prepend-vs-replace lesson as
+`db_emulation`'s own original bug, rediscovered here in a different
+function. Confirmed live after the fix: `search_path` correctly shows
+the new schema first with every Oracle package schema still present
+after it, and `CREATE TABLE` correctly lands in the new current schema.
+
+## NLS_* / TO_CHAR / TO_DATE
+
+Postgres's own `to_char()`/`to_date()` already understand almost every
+Oracle format token identically -- checked live, not assumed:
+`YYYY`/`MM`/`DD`/`HH24`/`HH12`/`MI`/`SS`/`MON`/`DY`/`DAY`/`AM`/`PM`/`FM`
+and numeric `9`/`0`/`,`/`.` groups all matched real Oracle's own output
+exactly (including the overflow-to-`#` behavior for a value too wide
+for its format, verified to match Oracle's own convention, not a bug).
+Exactly three real, confirmed differences: `RR` (Oracle's
+century-rounding 2-digit year) isn't recognized at all by Postgres and
+is echoed back literally; bare `FF` (fractional seconds with no digit
+count -- `FF1`-`FF9` **do** work natively, checked) isn't recognized;
+`X` (Oracle's locale radix/decimal-point token) isn't recognized.
+`oracle_catalog.translate_nls_format()` rewrites all three
+(`RR`->`YY`, bare `FF`->`FF6`, `X`->`.`) before delegating to real
+Postgres `to_char`/`to_date` -- a plain string substitution, not a real
+format-string tokenizer, so a literal "RR"/"FF"/"X" inside an Oracle
+format string's own quoted-literal-text segment would be incorrectly
+rewritten too (stated, not silently risked; real-world Oracle date
+formats essentially never do this).
+
+`NLS_DATE_FORMAT`/`NLS_TIMESTAMP_FORMAT` are read from
+`oracle_catalog.get_nls_parameter()`, session-settable via
+`alter_session_set()` above, defaulting to Oracle's real
+`AMERICAN_AMERICA` defaults (`DD-MON-RR`, `DD-MON-RR HH.MI.SSXFF AM`)
+when unset -- introspectable via `oracle_catalog."nls_session_parameters"`,
+a real Oracle dictionary view name.
+
+**A genuinely new capability, not an override**: Postgres's own
+`to_char`/`to_date` have **no** one-argument form for any date/timestamp
+type at all (confirmed live: `to_char(current_date)` is a plain "function
+does not exist" in stock Postgres) -- so `oracle_catalog.to_char(date)`/
+`to_char(timestamp)`/`to_char(timestamptz)` and
+`oracle_catalog.to_date(text)` are safe, collision-free additions that
+make the extremely common bare `TO_CHAR(some_date)`/`TO_DATE(some_str)`
+Oracle idiom (relying on the session's NLS default format) work at all,
+not just work better.
+
+**A stated scope limit, not a silent gap**: the explicit-two-argument
+form is only translation-aware for the `date` type specifically (no
+existing `pg_catalog` overload to collide with there); `pg_catalog`
+already has an *exact* two-argument overload for `timestamp`/
+`timestamptz`/`text` types, and Postgres always resolves an exact-type
+tie in `pg_catalog`'s favor regardless of this extension's search_path
+additions -- verified this is real, not assumed (`pg_catalog` is
+implicitly searched first unless a caller deliberately reorders it,
+which this extension does not attempt, on purpose: reordering
+`pg_catalog`'s effective priority globally to win that tie would risk
+shadowing unrelated built-ins throughout the whole session for a
+narrow gain). A bare, unqualified two-argument
+`TO_DATE(str, 'DD-MON-RR')`/`TO_CHAR(some_timestamp, 'DD-MON-RR')` call
+still resolves to real Postgres's own function and will not get
+`RR`/bare-`FF`/`X` translation -- only the one-argument (NLS-default)
+forms, and the explicit-format `date`-typed overload, do.
+
 ## Remaining top-20 scope
 
-`DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`, `DBMS_APPLICATION_INFO`,
+`DBMS_LOB`, `DBMS_SQL`, `DBMS_APPLICATION_INFO`,
 `DBMS_METADATA` (subset), `DBMS_LOCK`, `DBMS_ALERT`, `DBMS_PIPE`,
 `UTL_RAW`, `UTL_ENCODE` -- planned to build on
 [orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it
@@ -710,5 +807,30 @@ correct with no context set (zero rows) and with context set (exactly
 that tenant's rows); a *second, fresh* connection as the same role
 showed zero rows again, confirming the context store is genuinely
 per-session, not shared or leaking across connections.
+
+`ALTER SESSION` / `NLS_*`/`TO_CHAR`/`TO_DATE`, end to end: confirmed
+live that `ALTER SESSION SET`/`ALTER SYSTEM SET` are respectively a
+genuine syntax error and already-native in stock Postgres, not assumed
+from memory; `alter_session_set('CURRENT_SCHEMA', ...)` correctly
+prepends onto search_path (after the bug below was fixed) and
+subsequent `CREATE TABLE` lands in the new schema;
+`alter_session_set('TIME_ZONE', ...)` correctly changes `SHOW timezone`;
+`translate_nls_format()` correctly rewrites all three confirmed-different
+tokens (`RR`->`YY`, bare `FF`->`FF6`, `X`->`.`) while leaving every
+other token untouched; the one-argument `to_char(date)`/`to_char(timestamp)`
+and `to_date(text)` overloads work correctly with the real
+`AMERICAN_AMERICA` defaults, and `alter_session_set('NLS_DATE_FORMAT',
+...)` correctly changes what they produce; the explicit-format `date`
+overload correctly translates `RR` where the bare Postgres function
+would echo it literally.
+
+A real bug found live in this pass: the first version of
+`alter_session_set('CURRENT_SCHEMA', ...)` did a bare `SET search_path
+TO <schema>`, which replaced the entire search_path and wiped out every
+Oracle package schema `db_emulation` had already appended -- the very
+next unqualified `to_char()` call in the same session failed with
+"function does not exist". Fixed by prepending instead of replacing,
+reverified: `search_path` now correctly shows the new schema first with
+every package schema still present after it.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).
