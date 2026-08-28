@@ -222,7 +222,14 @@ JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog',
                          'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert',
                          'dbms_network_acl_admin', 'dbms_crypto', 'dbms_scheduler',
+                         'dbms_aqadm', 'dbms_stats',
                          'utl_file', 'utl_http', 'cron');
+-- dbms_aq is deliberately NOT in the exclusion list above: unlike every
+-- other package schema here, it holds real, user-facing queue tables
+-- (created by DBMS_AQADM.CREATE_QUEUE_TABLE) that a DBA script migrated
+-- from Oracle genuinely expects to find via DBA_OBJECTS -- hiding them
+-- the way this extension's own purely-internal bookkeeping schemas are
+-- hidden would be actively unhelpful, not just cautious.
 COMMENT ON VIEW oracle_catalog."dba_objects" IS 'Oracle DBA_OBJECTS over pg_class -- excludes this extension''s own objects, same reasoning as V$SESSION excluding its own backend.';
 
 CREATE VIEW oracle_catalog."dba_views" AS
@@ -1119,6 +1126,366 @@ $$;
 COMMENT ON FUNCTION dbms_scheduler.run_job(text) IS 'Oracle DBMS_SCHEDULER.RUN_JOB -- runs job_action immediately, in this session, regardless of enabled/repeat_interval (matches real Oracle''s own immediate-run semantics).';
 
 -- ================================================================
+-- Phase 2 (package 9 of the top-20): DBMS_AQADM + DBMS_AQ
+--
+-- Built on `SELECT ... FOR UPDATE SKIP LOCKED`, part of stock Postgres
+-- core since 9.5, not a hand-rolled queue engine -- concurrent-safe
+-- "pop the next available row without blocking on rows other backends
+-- already grabbed" is exactly the problem SKIP LOCKED exists to solve,
+-- and it's exactly the mechanic DBMS_AQ's DEQUEUE needs. No extension,
+-- no extra dependency.
+--
+-- Model: DBMS_AQADM.CREATE_QUEUE_TABLE creates a REAL physical table (one
+-- per Oracle queue table, matching Oracle's own model, not one shared
+-- table for every queue) with a fixed AQ-shaped column set; CREATE_QUEUE
+-- registers a named queue against that table; START_QUEUE/STOP_QUEUE
+-- toggle enqueue/dequeue availability, matching Oracle's real two-step
+-- create-then-start lifecycle.
+--
+-- Scope, stated up front: payload type is `RAW` (bytea) only -- Oracle's
+-- own object-type payloads (a queue typed to a specific PL/SQL record
+-- type) aren't supported; callers serialize structured data into bytea
+-- themselves, the same flexibility Oracle's own RAW payload gives.
+-- NEXT_MESSAGE and FIRST_MESSAGE navigation behave identically here --
+-- there's no per-session dequeue cursor tracked, each DEQUEUE call
+-- simply picks the current highest-priority, oldest, not-yet-expired,
+-- not-yet-delayed message. WAIT is a bounded polling loop (`pg_sleep`
+-- between retries), not a true blocking wait the way Oracle's own
+-- OCI-level wait works -- functionally equivalent for a caller, not
+-- byte-for-byte the same mechanism. DBMS_AQADM.GRANT_QUEUE_PRIVILEGE
+-- (Oracle's own per-queue access-control layer) is NOT implemented --
+-- any role that can call these functions at all can enqueue/dequeue any
+-- queue in this version; a real per-queue ACL is future work, not
+-- silently assumed away.
+-- ================================================================
+
+CREATE SCHEMA dbms_aqadm;
+COMMENT ON SCHEMA dbms_aqadm IS 'Oracle DBMS_AQADM package (pg_oracle, part of Polygres) -- queue administration. See dbms_aq for ENQUEUE/DEQUEUE.';
+CREATE SCHEMA dbms_aq;
+COMMENT ON SCHEMA dbms_aq IS 'Oracle DBMS_AQ package (pg_oracle, part of Polygres) -- ENQUEUE/DEQUEUE. See dbms_aqadm for queue administration, and this schema''s header comment above for scope.';
+
+CREATE TABLE dbms_aqadm.queue_tables(
+  queue_table  text PRIMARY KEY,
+  payload_type text NOT NULL DEFAULT 'RAW' CHECK (payload_type = 'RAW')	-- see header comment: only RAW is supported
+);
+
+CREATE TABLE dbms_aqadm.queues(
+  queue_name      text PRIMARY KEY,
+  queue_table     text NOT NULL REFERENCES dbms_aqadm.queue_tables(queue_table),
+  enqueue_enabled boolean NOT NULL DEFAULT false,
+  dequeue_enabled boolean NOT NULL DEFAULT false
+);
+
+CREATE FUNCTION dbms_aqadm.create_queue_table(p_queue_table text, p_queue_payload_type text DEFAULT 'RAW') RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+BEGIN
+  IF upper(p_queue_payload_type) != 'RAW' THEN
+    RAISE EXCEPTION 'ORA-24002: QUEUE_TABLE payload type ''%'' is not supported (only RAW is -- see this package''s header comment)', p_queue_payload_type;
+  END IF;
+  IF p_queue_table !~ '^[A-Za-z][A-Za-z0-9_]*$' THEN
+    RAISE EXCEPTION 'ORA-00903: invalid table name ''%''', p_queue_table;
+  END IF;
+  INSERT INTO dbms_aqadm.queue_tables(queue_table, payload_type) VALUES (p_queue_table, 'RAW');
+  EXECUTE format($sql$
+    CREATE TABLE dbms_aq.%I(
+      msgid           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      enq_time        timestamptz NOT NULL DEFAULT clock_timestamp(),
+      priority        integer NOT NULL DEFAULT 1,
+      delay_until     timestamptz NOT NULL DEFAULT clock_timestamp(),
+      expiration_time timestamptz,
+      correlation     text,
+      payload         bytea NOT NULL
+    )
+  $sql$, p_queue_table);
+  -- SECURITY DEFINER means every queue table this function creates is
+  -- consistently owned by this extension's owner regardless of which
+  -- (now admin-only-EXECUTE) role actually called create_queue_table --
+  -- so granting here, once, covers every future queue table the same
+  -- way, rather than needing ALTER DEFAULT PRIVILEGES per creating role
+  -- (which wouldn't work here anyway: default privileges are scoped to
+  -- whichever role actually issues the CREATE TABLE, and that's always
+  -- this function's fixed owner now, not the varying caller).
+  EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON dbms_aq.%I TO PUBLIC', p_queue_table);
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.create_queue_table(text, text) IS 'Oracle DBMS_AQADM.CREATE_QUEUE_TABLE -- creates a real table dbms_aq.<queue_table>, RAW/bytea payload only. SECURITY DEFINER -- see this schema''s and this function''s comments for why, and for the EXECUTE-privilege model (owner-only by default, like DBMS_NETWORK_ACL_ADMIN''s admin functions).';
+
+CREATE FUNCTION dbms_aqadm.drop_queue_table(p_queue_table text, p_force boolean DEFAULT false) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+BEGIN
+  IF NOT p_force AND EXISTS (SELECT 1 FROM dbms_aqadm.queues WHERE queue_table = p_queue_table) THEN
+    RAISE EXCEPTION 'ORA-24032: queue table ''%'' is not empty (queues still reference it -- use force => true, or drop_queue() them first)', p_queue_table;
+  END IF;
+  DELETE FROM dbms_aqadm.queues WHERE queue_table = p_queue_table;
+  DELETE FROM dbms_aqadm.queue_tables WHERE queue_table = p_queue_table;
+  EXECUTE format('DROP TABLE IF EXISTS dbms_aq.%I', p_queue_table);
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.drop_queue_table(text, boolean) IS 'Oracle DBMS_AQADM.DROP_QUEUE_TABLE.';
+
+CREATE FUNCTION dbms_aqadm.create_queue(p_queue_name text, p_queue_table text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dbms_aqadm.queue_tables WHERE queue_table = p_queue_table) THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE_TABLE ''%'' does not exist', p_queue_table;
+  END IF;
+  INSERT INTO dbms_aqadm.queues(queue_name, queue_table) VALUES (p_queue_name, p_queue_table);
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.create_queue(text, text) IS 'Oracle DBMS_AQADM.CREATE_QUEUE -- created stopped (enqueue/dequeue both disabled), matching real Oracle; call start_queue() to activate.';
+
+CREATE FUNCTION dbms_aqadm.start_queue(p_queue_name text, p_enqueue boolean DEFAULT true, p_dequeue boolean DEFAULT true) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+BEGIN
+  UPDATE dbms_aqadm.queues SET enqueue_enabled = p_enqueue, dequeue_enabled = p_dequeue WHERE queue_name = p_queue_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE ''%'' does not exist', p_queue_name;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.start_queue(text, boolean, boolean) IS 'Oracle DBMS_AQADM.START_QUEUE.';
+
+CREATE FUNCTION dbms_aqadm.stop_queue(p_queue_name text, p_enqueue boolean DEFAULT true, p_dequeue boolean DEFAULT true) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+BEGIN
+  UPDATE dbms_aqadm.queues SET
+    enqueue_enabled = enqueue_enabled AND NOT p_enqueue,
+    dequeue_enabled = dequeue_enabled AND NOT p_dequeue
+  WHERE queue_name = p_queue_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE ''%'' does not exist', p_queue_name;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.stop_queue(text, boolean, boolean) IS 'Oracle DBMS_AQADM.STOP_QUEUE.';
+
+CREATE FUNCTION dbms_aqadm.drop_queue(p_queue_name text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = dbms_aqadm, dbms_aq, pg_catalog AS $$
+DECLARE
+  v_queue record;
+BEGIN
+  SELECT * INTO v_queue FROM dbms_aqadm.queues WHERE queue_name = p_queue_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE ''%'' does not exist', p_queue_name;
+  END IF;
+  IF v_queue.enqueue_enabled OR v_queue.dequeue_enabled THEN
+    RAISE EXCEPTION 'ORA-24046: queue table string is not empty -- stop_queue() ''%'' before dropping it', p_queue_name;
+  END IF;
+  DELETE FROM dbms_aqadm.queues WHERE queue_name = p_queue_name;
+END;
+$$;
+COMMENT ON FUNCTION dbms_aqadm.drop_queue(text) IS 'Oracle DBMS_AQADM.DROP_QUEUE -- requires stop_queue() first, matching real Oracle.';
+
+CREATE FUNCTION dbms_aq.enqueue(
+  p_queue_name text, p_payload bytea,
+  p_priority integer DEFAULT 1, p_delay_seconds integer DEFAULT 0,
+  p_expiration_seconds integer DEFAULT NULL, p_correlation text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_queue record;
+  v_msgid uuid;
+BEGIN
+  SELECT * INTO v_queue FROM dbms_aqadm.queues WHERE queue_name = p_queue_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE ''%'' does not exist', p_queue_name;
+  END IF;
+  IF NOT v_queue.enqueue_enabled THEN
+    RAISE EXCEPTION 'ORA-25207: enqueue failed, queue ''%'' is not enabled for enqueue', p_queue_name;
+  END IF;
+  EXECUTE format(
+    'INSERT INTO dbms_aq.%I(priority, delay_until, expiration_time, correlation, payload)
+     VALUES ($1, clock_timestamp() + make_interval(secs => $2), '
+    || CASE WHEN p_expiration_seconds IS NULL THEN 'NULL' ELSE 'clock_timestamp() + make_interval(secs => $3)' END
+    || ', $4, $5) RETURNING msgid',
+    v_queue.queue_table
+  ) INTO v_msgid
+    USING p_priority, p_delay_seconds,
+          coalesce(p_expiration_seconds, 0), p_correlation, p_payload;
+  RETURN v_msgid;
+END;
+$$;
+COMMENT ON FUNCTION dbms_aq.enqueue(text, bytea, integer, integer, integer, text) IS 'Oracle DBMS_AQ.ENQUEUE (flattened options -- see this schema''s header comment for what''s simplified from Oracle''s enqueue_options_t/message_properties_t record-typed signature).';
+
+CREATE FUNCTION dbms_aq.dequeue(
+  OUT payload bytea, OUT msgid uuid, OUT priority integer, OUT correlation text,
+  p_queue_name text, p_dequeue_mode text DEFAULT 'REMOVE',
+  p_correlation_filter text DEFAULT NULL, p_wait_seconds integer DEFAULT 0
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_queue record;
+  v_deadline timestamptz := clock_timestamp() + make_interval(secs => p_wait_seconds);
+  v_found boolean := false;
+BEGIN
+  IF upper(p_dequeue_mode) NOT IN ('REMOVE', 'BROWSE', 'LOCKED') THEN
+    RAISE EXCEPTION 'ORA-24033: no recipients for message (invalid dequeue mode ''%'')', p_dequeue_mode;
+  END IF;
+
+  SELECT * INTO v_queue FROM dbms_aqadm.queues WHERE queue_name = p_queue_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-24010: QUEUE ''%'' does not exist', p_queue_name;
+  END IF;
+  IF NOT v_queue.dequeue_enabled THEN
+    RAISE EXCEPTION 'ORA-25207: dequeue failed, queue ''%'' is not enabled for dequeue', p_queue_name;
+  END IF;
+
+  LOOP
+    IF upper(p_dequeue_mode) = 'BROWSE' THEN
+      EXECUTE format(
+        'SELECT payload, msgid, priority, correlation FROM dbms_aq.%I
+         WHERE delay_until <= clock_timestamp()
+           AND (expiration_time IS NULL OR expiration_time > clock_timestamp())
+           AND ($1 IS NULL OR correlation = $1)
+         ORDER BY priority ASC, enq_time ASC LIMIT 1',
+        v_queue.queue_table
+      ) INTO payload, msgid, priority, correlation USING p_correlation_filter;
+    ELSE
+      -- REMOVE and LOCKED both need FOR UPDATE SKIP LOCKED: REMOVE deletes
+      -- the row it locks, LOCKED just holds the lock to end of transaction
+      -- without deleting -- matching Oracle's own LOCKED semantics.
+      EXECUTE format(
+        'SELECT payload, msgid, priority, correlation FROM dbms_aq.%I
+         WHERE delay_until <= clock_timestamp()
+           AND (expiration_time IS NULL OR expiration_time > clock_timestamp())
+           AND ($1 IS NULL OR correlation = $1)
+         ORDER BY priority ASC, enq_time ASC LIMIT 1 FOR UPDATE SKIP LOCKED',
+        v_queue.queue_table
+      ) INTO payload, msgid, priority, correlation USING p_correlation_filter;
+    END IF;
+
+    IF msgid IS NOT NULL THEN
+      v_found := true;
+      IF upper(p_dequeue_mode) = 'REMOVE' THEN
+        EXECUTE format('DELETE FROM dbms_aq.%I WHERE msgid = $1', v_queue.queue_table) USING msgid;
+      END IF;
+      EXIT;
+    END IF;
+
+    IF clock_timestamp() >= v_deadline THEN
+      EXIT;
+    END IF;
+    PERFORM pg_sleep(least(0.5, extract(epoch FROM (v_deadline - clock_timestamp()))));
+  END LOOP;
+
+  IF NOT v_found THEN
+    RAISE EXCEPTION 'ORA-25228: timeout or end-of-fetch during message dequeue from queue %', p_queue_name;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_aq.dequeue(text, text, text, integer) IS 'Oracle DBMS_AQ.DEQUEUE -- NEXT_MESSAGE/FIRST_MESSAGE navigation both behave the same here (no per-session cursor tracked); WAIT is a bounded poll, not a true blocking wait. See this schema''s header comment.';
+
+-- ================================================================
+-- Phase 2 (package 10 of the top-20): DBMS_STATS
+--
+-- An honest shim, not a reimplementation of Oracle's optimizer
+-- internals: Postgres has its own, completely different statistics
+-- system (pg_statistic, gathered by ANALYZE, already kept fresh
+-- automatically by autovacuum) -- there is no Oracle-shaped histogram
+-- engine to port, and pretending to fabricate one would be actively
+-- misleading. GATHER_*_STATS below just call Postgres's own ANALYZE;
+-- Oracle-specific tuning knobs Postgres has no equivalent for
+-- (estimate_percent, method_opt, cascade, degree, ...) are accepted for
+-- call-signature compatibility and otherwise ignored, not silently
+-- misapplied to something that isn't equivalent.
+-- ================================================================
+
+CREATE SCHEMA dbms_stats;
+COMMENT ON SCHEMA dbms_stats IS 'Oracle DBMS_STATS package (pg_oracle, part of Polygres) -- a shim over Postgres''s own ANALYZE/pg_class stats, not Oracle''s optimizer internals. See this schema''s header comment.';
+
+CREATE TABLE dbms_stats.locked_tables(
+  schema_name text NOT NULL,
+  table_name  text NOT NULL,
+  PRIMARY KEY (schema_name, table_name)
+);
+COMMENT ON TABLE dbms_stats.locked_tables IS 'Tables LOCK_TABLE_STATS has locked -- gather_table_stats() below refuses to run against one, matching real Oracle''s own lock behavior.';
+
+CREATE FUNCTION dbms_stats.gather_table_stats(
+  ownname text, tabname text, estimate_percent double precision DEFAULT NULL, cascade boolean DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM dbms_stats.locked_tables WHERE schema_name = ownname AND table_name = tabname) THEN
+    RAISE EXCEPTION 'ORA-20005: object statistics are locked for table %.%', ownname, tabname;
+  END IF;
+  EXECUTE format('ANALYZE %I.%I', ownname, tabname);
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.gather_table_stats(text, text, double precision, boolean) IS 'Oracle DBMS_STATS.GATHER_TABLE_STATS -- runs real ANALYZE; estimate_percent/cascade accepted for signature compatibility, Postgres has no equivalent knob, ignored.';
+
+CREATE FUNCTION dbms_stats.gather_schema_stats(ownname text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  rec record;
+BEGIN
+  FOR rec IN SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ownname LOOP
+    IF NOT EXISTS (SELECT 1 FROM dbms_stats.locked_tables lt WHERE lt.schema_name = ownname AND lt.table_name = rec.tablename) THEN
+      EXECUTE format('ANALYZE %I.%I', ownname, rec.tablename);
+    END IF;
+  END LOOP;
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.gather_schema_stats(text) IS 'Oracle DBMS_STATS.GATHER_SCHEMA_STATS -- ANALYZEs every table in the schema, skipping any LOCK_TABLE_STATS''d ones.';
+
+CREATE FUNCTION dbms_stats.gather_database_stats() RETURNS void
+  AS $$ ANALYZE; $$ LANGUAGE sql;
+COMMENT ON FUNCTION dbms_stats.gather_database_stats() IS 'Oracle DBMS_STATS.GATHER_DATABASE_STATS -- plain ANALYZE, every table this role can analyze. Does not honor per-table locks the way gather_schema_stats() does -- matches plain ANALYZE''s own scope, a real simplification worth knowing about.';
+
+-- Oracle's DELETE_TABLE_STATS discards stored statistics so the
+-- optimizer falls back to defaults -- deliberately NOT implemented by
+-- reaching into pg_statistic directly (an unsupported, genuinely risky
+-- thing to manipulate by hand). This is an honest no-op, not a silent
+-- one: it tells the caller so, rather than pretending to have done
+-- something it didn't.
+CREATE FUNCTION dbms_stats.delete_table_stats(ownname text, tabname text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE NOTICE 'pg_oracle: DBMS_STATS.DELETE_TABLE_STATS is a no-op -- Postgres has no supported way to discard '
+               'table statistics the way Oracle does. Consider re-running ANALYZE %.% with a different '
+               'default_statistics_target instead.', ownname, tabname;
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.delete_table_stats(text, text) IS 'Oracle DBMS_STATS.DELETE_TABLE_STATS -- honest no-op, see this function''s own comment for why.';
+
+-- SET_TABLE_STATS: unlike DELETE_TABLE_STATS above, this one IS
+-- implementable for real -- pg_class.reltuples/relpages are ordinary,
+-- directly UPDATE-able columns (a well-known, legitimate technique for
+-- exactly this "fabricate stats to test a query plan" use case), not a
+-- risky undocumented hack the way editing pg_statistic would be.
+CREATE FUNCTION dbms_stats.set_table_stats(ownname text, tabname text, numrows bigint DEFAULT NULL, numblks bigint DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE pg_catalog.pg_class SET
+    reltuples = coalesce(numrows, reltuples),
+    relpages  = coalesce(numblks, relpages)
+  WHERE oid = (quote_ident(ownname) || '.' || quote_ident(tabname))::regclass;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-20001: table %.% not found', ownname, tabname;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.set_table_stats(text, text, bigint, bigint) IS 'Oracle DBMS_STATS.SET_TABLE_STATS -- real pg_class.reltuples/relpages update, requires table ownership.';
+
+CREATE FUNCTION dbms_stats.lock_table_stats(ownname text, tabname text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO dbms_stats.locked_tables(schema_name, table_name) VALUES (ownname, tabname)
+    ON CONFLICT DO NOTHING;
+  EXECUTE format('ALTER TABLE %I.%I SET (autovacuum_enabled = false)', ownname, tabname);
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.lock_table_stats(text, text) IS 'Oracle DBMS_STATS.LOCK_TABLE_STATS -- blocks gather_table_stats()/gather_schema_stats() above, and disables autovacuum''s own automatic ANALYZE for this table (the closest real Postgres equivalent -- it does not block a manually-issued ANALYZE by a table owner outside this package, a real simplification worth knowing about).';
+
+CREATE FUNCTION dbms_stats.unlock_table_stats(ownname text, tabname text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM dbms_stats.locked_tables WHERE schema_name = ownname AND table_name = tabname;
+  EXECUTE format('ALTER TABLE %I.%I SET (autovacuum_enabled = true)', ownname, tabname);
+END;
+$$;
+COMMENT ON FUNCTION dbms_stats.unlock_table_stats(text, text) IS 'Oracle DBMS_STATS.UNLOCK_TABLE_STATS.';
+
+-- ================================================================
 -- Grants -- without these, `SET db_emulation = 'oracle'` (available to
 -- any role, PGC_USERSET) silently fails the moment that role queries
 -- v$session or calls dbms_output.put_line, since a fresh schema in
@@ -1178,6 +1545,23 @@ GRANT EXECUTE ON FUNCTION dbms_network_acl_admin.check_privilege_for_host(text, 
 -- left owner-only (whoever ran CREATE EXTENSION) -- grant EXECUTE on
 -- these explicitly, per-role, the same deliberate way a DBA would grant
 -- real Oracle's DBMS_NETWORK_ACL_ADMIN to specific administrators.
+--
+-- The explicit REVOKE below matters even though these five are plain
+-- SECURITY INVOKER, not SECURITY DEFINER: Postgres still grants EXECUTE
+-- on every new function to PUBLIC by default, so today they're only
+-- actually blocked for an unprivileged caller because that role also
+-- lacks direct INSERT/UPDATE/DELETE on acls/acl_privileges/
+-- host_assignments -- true right now, but an accident of table grants,
+-- not a real access-control statement about these specific functions
+-- (see the identical, but actually exploitable, version of this gap
+-- found live on dbms_aqadm's SECURITY DEFINER admin functions below --
+-- REVOKE here makes the intent explicit instead of relying on that
+-- coincidence holding forever).
+REVOKE EXECUTE ON FUNCTION dbms_network_acl_admin.create_acl(text, text, text, boolean, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_network_acl_admin.add_privilege(text, text, boolean, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_network_acl_admin.assign_acl(text, text, integer, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_network_acl_admin.unassign_acl(text, text, integer, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_network_acl_admin.drop_acl(text) FROM PUBLIC;
 -- SELECT (not INSERT/UPDATE/DELETE) on the directories table: every role
 -- needs to read it for FOPEN's own internal lookup to work at all, but
 -- registering/changing a directory must go through create_directory()/
@@ -1226,3 +1610,60 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- dbms_aqadm's ADMINISTRATIVE functions (create_queue_table/
+-- drop_queue_table/create_queue/start_queue/stop_queue/drop_queue) are
+-- deliberately owner-only, same reasoning and pattern as
+-- dbms_network_acl_admin's mutating functions above: real Oracle also
+-- treats AQ administration as a privileged operation (its own
+-- EXECUTE_CATALOG_ROLE / explicit grants), separate from ordinary
+-- enqueue/dequeue access -- so these are SECURITY DEFINER (see each
+-- function's own comment) but NOT PUBLIC-executable; a DBA grants
+-- EXECUTE on specific ones to whichever roles should administer queues.
+--
+-- The explicit REVOKE below is NOT redundant with simply never having
+-- written a GRANT: Postgres grants EXECUTE on every newly created
+-- function to PUBLIC by default unless it's explicitly revoked --
+-- found live, the hard way, on this exact set of functions: a real
+-- non-superuser test role successfully called create_queue_table()
+-- (SECURITY DEFINER, so it ran with this extension owner's rights) with
+-- no REVOKE in place, creating a real table it had no business creating.
+-- Simply "not granting" EXECUTE does nothing -- it was already granted
+-- by CREATE FUNCTION itself.
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.create_queue_table(text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.drop_queue_table(text, boolean) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.create_queue(text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.start_queue(text, boolean, boolean) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.stop_queue(text, boolean, boolean) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION dbms_aqadm.drop_queue(text) FROM PUBLIC;
+GRANT USAGE ON SCHEMA dbms_aqadm TO PUBLIC;
+GRANT SELECT ON dbms_aqadm.queue_tables, dbms_aqadm.queues TO PUBLIC;
+
+-- dbms_aq (ENQUEUE/DEQUEUE) is PUBLIC on purpose, unlike dbms_aqadm
+-- above -- a queue's whole point is cross-role message passing (one
+-- role enqueues, a different role dequeues), same as ordinary Oracle
+-- app-role usage once a DBA has set the queue up. Real Oracle controls
+-- per-queue access via DBMS_AQADM.GRANT_QUEUE_PRIVILEGE, not
+-- implemented in this version (see this package's header comment) --
+-- so, honestly, every role that can reach these functions at all can
+-- touch every queue. Tighten with ordinary Postgres GRANT/REVOKE on
+-- individual dbms_aq.<queue_table> tables if that's not acceptable for
+-- a given deployment. Each queue table's own grants are applied by
+-- create_queue_table() itself at creation time (see that function) --
+-- nothing to add here for tables that don't exist yet.
+GRANT USAGE ON SCHEMA dbms_aq TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_aq TO PUBLIC;
+
+-- dbms_stats: PUBLIC is safe here on a different basis than the packages
+-- above -- gather_table_stats()/set_table_stats()/lock_table_stats() all
+-- run ANALYZE/ALTER TABLE/an UPDATE against pg_class dynamically, and
+-- Postgres's OWN existing ownership checks on those underlying
+-- operations are the real gate (a role can only ANALYZE/ALTER a table it
+-- owns or has been granted rights to) -- this package doesn't add or
+-- need a second permission layer on top, same principle as relying on
+-- pg_read_server_files/pg_write_server_files for UTL_FILE rather than
+-- inventing a new one. locked_tables itself is just a lock flag, not a
+-- security boundary -- full CRUD (not just SELECT) is safe.
+GRANT USAGE ON SCHEMA dbms_stats TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_stats TO PUBLIC;
+GRANT SELECT, INSERT, DELETE ON dbms_stats.locked_tables TO PUBLIC;

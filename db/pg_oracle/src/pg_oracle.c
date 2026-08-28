@@ -63,7 +63,7 @@ static int db_emulation_mode = DB_EMULATION_POSTGRES;
  * dbms_output/utl_file and oracle_catalog resolves to the package first --
  * doesn't currently happen, but keeps the precedent unsurprising as more
  * package schemas are added in later phases (top-20 DBMS_* rollout). */
-#define ORACLE_EMULATION_SCHEMAS "dbms_output, dbms_random, dbms_utility, dbms_assert, dbms_network_acl_admin, dbms_crypto, dbms_scheduler, utl_file, utl_http, oracle_catalog"
+#define ORACLE_EMULATION_SCHEMAS "dbms_output, dbms_random, dbms_utility, dbms_assert, dbms_network_acl_admin, dbms_crypto, dbms_scheduler, dbms_aqadm, dbms_aq, dbms_stats, utl_file, utl_http, oracle_catalog"
 
 /*
  * Create a schema literally named after the current role, if one doesn't

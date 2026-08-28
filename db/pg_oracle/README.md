@@ -72,6 +72,11 @@ extension has no dependency on Polywire and doesn't know it exists.
   see the dedicated section below for a second real privilege-model
   decision (why these functions are deliberately NOT `SECURITY DEFINER`,
   unlike `DBMS_NETWORK_ACL_ADMIN`'s).
+- **DBMS_AQADM + DBMS_AQ**: package 9, real message queueing over
+  `SELECT ... FOR UPDATE SKIP LOCKED` -- see the dedicated section below,
+  including a critical privilege bug this pass found and fixed.
+- **DBMS_STATS**: package 10, a real shim over Postgres's own
+  `ANALYZE`/`pg_class` stats -- see the dedicated section below.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -292,11 +297,73 @@ conditionally (`to_regnamespace('cron') IS NOT NULL`) since `pg_cron`
 isn't a hard dependency; see `sql/pg_oracle--0.1.sql` for the exact
 re-run steps if `pg_cron` is installed *after* `pg_oracle`.
 
+## DBMS_AQADM + DBMS_AQ
+
+Package 9 -- built on `SELECT ... FOR UPDATE SKIP LOCKED`, part of stock
+Postgres core since 9.5, not a hand-rolled queue engine: concurrent-safe
+"pop the next available message without blocking on rows another backend
+already grabbed" is exactly the problem `SKIP LOCKED` exists to solve.
+`DBMS_AQADM.CREATE_QUEUE_TABLE` creates a real physical table (one per
+Oracle queue table, matching Oracle's own model); `CREATE_QUEUE`/
+`START_QUEUE`/`STOP_QUEUE`/`DROP_QUEUE` manage its lifecycle;
+`DBMS_AQ.ENQUEUE`/`DEQUEUE` do the actual message passing, with priority
+ordering, delay, expiration, correlation filtering, and all three
+dequeue modes (`REMOVE`/`BROWSE`/`LOCKED`).
+
+Payload type is `RAW` (bytea) only -- Oracle's object-typed payloads
+aren't supported; callers serialize structured data into bytea
+themselves. `NEXT_MESSAGE`/`FIRST_MESSAGE` navigation behave identically
+(no per-session dequeue cursor is tracked). `WAIT` is a bounded polling
+loop (`pg_sleep` between retries, confirmed live to actually poll rather
+than return instantly or block the full ceiling), not Oracle's true
+OCI-level blocking wait -- functionally equivalent, not the same
+mechanism. `DBMS_AQADM.GRANT_QUEUE_PRIVILEGE` (Oracle's own per-queue
+ACL) is **not** implemented -- stated plainly: any role that can reach
+`dbms_aq` at all can touch every queue in this version.
+
+**Privilege model, matching real Oracle's own split**: queue
+*administration* (`CREATE_QUEUE_TABLE` and friends) is `SECURITY
+DEFINER` and owner-only -- real Oracle also treats AQ administration as
+privileged, separate from ordinary enqueue/dequeue access. `DBMS_AQ`
+itself (`ENQUEUE`/`DEQUEUE`) is `PUBLIC`, matching Oracle's own
+app-role usage once a DBA has set a queue up. Verified live end to end
+with a real non-superuser role: blocked from `CREATE_QUEUE_TABLE`, then
+successfully enqueuing and dequeuing on a queue an admin had already
+created and started.
+
+## DBMS_STATS
+
+Package 10 -- an honest shim, not a reimplementation of Oracle's
+optimizer internals: Postgres has its own, completely different
+statistics system (`pg_statistic`, gathered by `ANALYZE`, already kept
+fresh by autovacuum) -- there's no Oracle-shaped histogram engine to
+port, and pretending to fabricate one would be actively misleading.
+`GATHER_TABLE_STATS`/`GATHER_SCHEMA_STATS`/`GATHER_DATABASE_STATS` call
+real `ANALYZE`; `SET_TABLE_STATS` does a real, legitimate
+`pg_class.reltuples`/`relpages` update (a well-known technique for
+fabricating stats to test a query plan, not a risky hack);
+`LOCK_TABLE_STATS`/`UNLOCK_TABLE_STATS` combine an internal lock flag
+this package checks with `ALTER TABLE ... SET (autovacuum_enabled =
+...)`, the closest real Postgres equivalent (doesn't block a manually
+issued `ANALYZE` from outside this package, a stated simplification).
+`DELETE_TABLE_STATS` is an honest no-op with a clear `NOTICE` -- Postgres
+has no supported way to discard statistics the way Oracle does, and
+reaching into `pg_statistic` directly to fake it would be genuinely
+risky, not just inelegant.
+
+No separate permission layer needed here -- Postgres's own ownership
+checks on `ANALYZE`/`ALTER TABLE`/`UPDATE pg_class` are the real gate,
+confirmed live: a non-owning role's `gather_table_stats()` call didn't
+error (Postgres's own `ANALYZE` emits a `WARNING` and silently skips a
+table it can't analyze, rather than a hard privilege error -- a real,
+worth-knowing behavioral difference from Oracle, not a security gap:
+no unauthorized action occurred either way).
+
 ## Remaining top-20 scope
 
 `DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`, `DBMS_APPLICATION_INFO`,
-`DBMS_METADATA` (subset), `DBMS_STATS` (shim), `DBMS_LOCK`,
-`DBMS_ALERT`, `DBMS_PIPE`, `UTL_RAW`, `UTL_ENCODE` -- planned to build on
+`DBMS_METADATA` (subset), `DBMS_LOCK`, `DBMS_ALERT`, `DBMS_PIPE`,
+`UTL_RAW`, `UTL_ENCODE` -- planned to build on
 [orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it
 already covers one, rather than reimplement from scratch; `GV$*` across
 more than one instance (needs Polywire's own sharding fan-out, not just
@@ -478,5 +545,61 @@ the one the job's own `INSERT` actually ran as (confirmed via a
 owner; and, after the RLS fix, a second unrelated role correctly sees
 zero rows in both `cron.job` and `dbms_scheduler.jobs` for a job it
 didn't create.
+
+**A critical bug this pass found -- not a theoretical concern, an actual
+successful exploit against a real non-superuser role, caught before this
+ever shipped**: `dbms_aqadm`'s administrative functions were made
+`SECURITY DEFINER` (see above) but the install script never explicitly
+`REVOKE`d their `EXECUTE` privilege from `PUBLIC` -- and Postgres grants
+`EXECUTE` on every newly created function to `PUBLIC` by default. Simply
+never writing a `GRANT` line does *nothing*; the privilege was already
+there from `CREATE FUNCTION` itself. Live proof: a real non-superuser
+test role successfully called `create_queue_table()` -- which, being
+`SECURITY DEFINER`, ran with this extension owner's rights -- and
+created a real table it had no business creating. Fixed with explicit
+`REVOKE EXECUTE ... FROM PUBLIC` on all six `dbms_aqadm` admin functions,
+reverified: the same role is now cleanly denied. The equivalent
+`dbms_network_acl_admin` mutating functions got the same explicit
+`REVOKE` added too, even though they weren't actually exploitable today
+(they're plain `SECURITY INVOKER`, so they currently only fail because
+the calling role also lacks table-level `INSERT` -- true today, but an
+accident of table grants, not a real statement of intent about those
+functions, until this fix made it one).
+
+**The takeaway for anything added to this extension going forward**: a
+`SECURITY DEFINER` function is un-safe-by-default the moment it's
+created, not the moment someone remembers to lock it down -- explicit
+`REVOKE EXECUTE FROM PUBLIC` has to ship in the same commit as the
+`CREATE FUNCTION`, never as a follow-up.
+
+`DBMS_AQADM`/`DBMS_AQ`, end to end against real concurrent sessions, not
+simulated: three messages enqueued with priorities 5/1/3 dequeue in
+priority order (1, 3, 5), not enqueue order; `NO_WAIT` on an empty queue
+raises `ORA-25228` immediately; a delayed message is correctly invisible
+until its delay elapses, and a `WAIT`-mode dequeue measurably blocked for
+~4 real seconds (not instant, not the full wait ceiling) before
+returning it, proving the poll loop actually polls; an expired message
+is correctly invisible after its expiration passes; `BROWSE` mode
+returns the same message twice without removing it, then `REMOVE`
+actually consumes it; `LOCKED` mode, tested with two real concurrent
+`psql` sessions, held a message locked for the length of session one's
+transaction, correctly made a concurrent dequeue from session two time
+out (`SKIP LOCKED` doing its job) rather than double-deliver the
+message, and the message was still there, un-deleted, once the lock was
+released. Privilege separation verified live (see the critical bug
+above): a real non-superuser role is blocked from
+`create_queue_table()`, then successfully enqueues and dequeues on a
+queue an admin already created and started.
+
+`DBMS_STATS`, end to end: `gather_table_stats()` runs a real `ANALYZE`
+and produces real `reltuples`/`relpages`; `set_table_stats()` really
+overwrites `pg_class.reltuples`/`relpages` with fabricated values;
+`lock_table_stats()` correctly blocks a subsequent `gather_table_stats()`
+call with a clear error, `unlock_table_stats()` correctly restores real
+`ANALYZE` behavior (confirmed `reltuples` went back to the true row
+count); `delete_table_stats()` emits the honest no-op `NOTICE`; a
+non-owning role's `gather_table_stats()` call is silently skipped with a
+`WARNING` by Postgres's own `ANALYZE`, not a hard error -- a real,
+documented behavioral difference from Oracle, not a security gap.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).
