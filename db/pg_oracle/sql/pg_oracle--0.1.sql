@@ -219,7 +219,8 @@ SELECT n.nspname AS owner,
        c.oid::text AS object_id
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog', 'dbms_output', 'utl_file');
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'oracle_catalog',
+                         'dbms_output', 'dbms_random', 'dbms_utility', 'dbms_assert', 'utl_file');
 COMMENT ON VIEW oracle_catalog."dba_objects" IS 'Oracle DBA_OBJECTS over pg_class -- excludes this extension''s own objects, same reasoning as V$SESSION excluding its own backend.';
 
 CREATE VIEW oracle_catalog."dba_views" AS
@@ -285,6 +286,221 @@ CREATE FUNCTION oracle_catalog.emulation_active() RETURNS boolean
 COMMENT ON FUNCTION oracle_catalog.emulation_active() IS 'True when this session has SET db_emulation = ''oracle''.';
 
 -- ================================================================
+-- Phase 2 (packages 2-4 of the top-20): DBMS_RANDOM, DBMS_UTILITY,
+-- DBMS_ASSERT -- all pure computation over Postgres's own random()/
+-- catalog, no session state needed, so plain SQL/plpgsql, not C (compare
+-- DBMS_OUTPUT above, which needed C specifically for its buffer).
+-- ================================================================
+
+CREATE SCHEMA dbms_random;
+COMMENT ON SCHEMA dbms_random IS 'Oracle DBMS_RANDOM package (pg_oracle, part of Polygres).';
+
+CREATE FUNCTION dbms_random.value() RETURNS double precision
+  AS $$ SELECT random(); $$ LANGUAGE sql VOLATILE;
+CREATE FUNCTION dbms_random.value(low double precision, high double precision) RETURNS double precision
+  AS $$ SELECT low + random() * (high - low); $$ LANGUAGE sql VOLATILE;
+COMMENT ON FUNCTION dbms_random.value() IS 'Oracle DBMS_RANDOM.VALUE -- random number in [0,1).';
+
+-- Oracle's RANDOM() returns a binary_integer across the full signed
+-- 32-bit range, not [0,1) -- kept as its own overload rather than folded
+-- into value() so a caller who wrote RANDOM() explicitly still gets an
+-- integer back, matching what real Oracle code expects from that name.
+CREATE FUNCTION dbms_random.random() RETURNS integer
+  AS $$ SELECT (random() * 4294967295.0 - 2147483648.0)::integer; $$ LANGUAGE sql VOLATILE;
+
+-- setseed() wants a double in [-1,1]; val::int's own range (-2^31..2^31-1)
+-- divided by 2147483647 already lands almost exactly there -- clamped at
+-- the low end because -2147483648 / 2147483647 is *barely* < -1. (First
+-- version of this function computed val % 2147483647 + 2147483647 in
+-- int4 arithmetic instead, which overflows int4 for ordinary seed values
+-- like 42 -- found live via "ERROR: integer out of range" on the very
+-- first smoke-test call, not by inspection.)
+CREATE FUNCTION dbms_random.seed(val integer) RETURNS void
+  AS $$ SELECT setseed(GREATEST(-1.0, LEAST(1.0, val::double precision / 2147483647.0))); $$ LANGUAGE sql VOLATILE;
+CREATE FUNCTION dbms_random.seed(val text) RETURNS void
+  AS $$ SELECT setseed(GREATEST(-1.0, LEAST(1.0, (('x' || md5(val))::bit(32)::int)::double precision / 2147483647.0))); $$ LANGUAGE sql VOLATILE;
+COMMENT ON FUNCTION dbms_random.seed(integer) IS 'Oracle DBMS_RANDOM.SEED -- re-seeds via Postgres''s own setseed(), same determinism guarantee: same seed, same subsequent sequence.';
+
+-- STRING(opt, len): opt is Oracle's single-letter charset selector --
+-- U/u uppercase, L/l lowercase, A/a alpha (mixed case), X/x alphanumeric
+-- uppercase (Oracle's default for any option it doesn't recognize), P/p
+-- any printable ASCII character.
+CREATE FUNCTION dbms_random.string(opt text, len int) RETURNS text
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  chars  text;
+  result text := '';
+BEGIN
+  IF len IS NULL OR len < 0 THEN
+    RAISE EXCEPTION 'ORA-20000: DBMS_RANDOM.STRING: length must be a non-negative integer';
+  END IF;
+  chars := CASE upper(coalesce(opt, 'X'))
+    WHEN 'U' THEN 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    WHEN 'L' THEN 'abcdefghijklmnopqrstuvwxyz'
+    WHEN 'A' THEN 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+    WHEN 'P' THEN '!"#$%&''()*+,-./:;<=>?@[\]^_`{|}~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+    ELSE '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'	-- 'X' and any unrecognized option, matching Oracle's own fallback
+  END;
+  FOR i IN 1..len LOOP
+    result := result || substr(chars, 1 + floor(random() * length(chars))::int, 1);
+  END LOOP;
+  RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION dbms_random.string(text, int) IS 'Oracle DBMS_RANDOM.STRING.';
+
+CREATE SCHEMA dbms_utility;
+COMMENT ON SCHEMA dbms_utility IS 'Oracle DBMS_UTILITY package (pg_oracle, part of Polygres) -- partial: see README.md for what''s not here yet and why.';
+
+-- Oracle's GET_TIME returns hundredths of a second since an arbitrary
+-- epoch -- callers only ever diff two calls, never read it as a real
+-- timestamp, so clock_timestamp()-based hundredths-since-epoch satisfies
+-- every real usage pattern (elapsed := (t2 - t1) / 100 for seconds).
+CREATE FUNCTION dbms_utility.get_time() RETURNS bigint
+  AS $$ SELECT (extract(epoch FROM clock_timestamp()) * 100)::bigint; $$ LANGUAGE sql VOLATILE;
+COMMENT ON FUNCTION dbms_utility.get_time() IS 'Oracle DBMS_UTILITY.GET_TIME -- hundredths of a second, for elapsed-time diffs only (not a real timestamp).';
+
+CREATE FUNCTION dbms_utility.db_version(OUT version text, OUT compatibility text) RETURNS record
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  version := current_setting('server_version');
+  compatibility := current_setting('server_version_num');
+END;
+$$;
+COMMENT ON FUNCTION dbms_utility.db_version() IS 'Oracle DBMS_UTILITY.DB_VERSION -- reports the real Postgres version, not an Oracle version string.';
+
+-- FORMAT_ERROR_STACK/FORMAT_CALL_STACK are deliberately NOT here: Oracle
+-- callers invoke them from inside an exception handler and they reach
+-- into that handler's own error context implicitly. There's no
+-- zero-argument way to fake that faithfully from a plain SQL/plpgsql
+-- function -- a caller's own `EXCEPTION WHEN OTHERS THEN ... SQLERRM ...`
+-- (plpgsql's native equivalent) is the honest answer today. Tracked as
+-- future work alongside anonymous-block support generally, since real
+-- use of this pair is almost always inside one.
+
+CREATE SCHEMA dbms_assert;
+COMMENT ON SCHEMA dbms_assert IS 'Oracle DBMS_ASSERT package (pg_oracle, part of Polygres) -- SQL-injection-defense helpers for dynamic SQL.';
+
+CREATE FUNCTION dbms_assert.simple_sql_name(str text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  IF str IS NULL OR str !~ '^[A-Za-z][A-Za-z0-9_$#]*$' THEN
+    RAISE EXCEPTION 'ORA-44003: invalid SQL name';
+  END IF;
+  RETURN str;
+END;
+$$;
+COMMENT ON FUNCTION dbms_assert.simple_sql_name(text) IS 'Oracle DBMS_ASSERT.SIMPLE_SQL_NAME.';
+
+CREATE FUNCTION dbms_assert.qualified_sql_name(str text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  IF str IS NULL OR str !~ '^[A-Za-z][A-Za-z0-9_$#]*(\.[A-Za-z][A-Za-z0-9_$#]*)*$' THEN
+    RAISE EXCEPTION 'ORA-44001: invalid schema name';
+  END IF;
+  RETURN str;
+END;
+$$;
+COMMENT ON FUNCTION dbms_assert.qualified_sql_name(text) IS 'Oracle DBMS_ASSERT.QUALIFIED_SQL_NAME.';
+
+CREATE FUNCTION dbms_assert.schema_name(str text) RETURNS text
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = str) THEN
+    RAISE EXCEPTION 'ORA-44001: invalid schema name';
+  END IF;
+  RETURN str;
+END;
+$$;
+COMMENT ON FUNCTION dbms_assert.schema_name(text) IS 'Oracle DBMS_ASSERT.SCHEMA_NAME.';
+
+CREATE FUNCTION dbms_assert.enquote_name(str text, capitalize boolean DEFAULT true) RETURNS text
+  AS $$ SELECT quote_ident(CASE WHEN capitalize THEN upper(str) ELSE str END); $$ LANGUAGE sql IMMUTABLE;
+COMMENT ON FUNCTION dbms_assert.enquote_name(text, boolean) IS 'Oracle DBMS_ASSERT.ENQUOTE_NAME.';
+
+CREATE FUNCTION dbms_assert.enquote_literal(str text) RETURNS text
+  AS $$ SELECT quote_literal(str); $$ LANGUAGE sql IMMUTABLE;
+COMMENT ON FUNCTION dbms_assert.enquote_literal(text) IS 'Oracle DBMS_ASSERT.ENQUOTE_LITERAL.';
+
+CREATE FUNCTION dbms_assert.noop(str text) RETURNS text
+  AS $$ SELECT str; $$ LANGUAGE sql IMMUTABLE;
+COMMENT ON FUNCTION dbms_assert.noop(text) IS 'Oracle DBMS_ASSERT.NOOP -- passthrough, exists for source compatibility only.';
+
+-- ================================================================
+-- Phase 2 (package 5 of the top-20): UTL_FILE
+-- C implementation in src/utl_file.c -- see that file's header for why
+-- (session-lifetime file handles, and the security model: gated on
+-- Postgres's own pg_read_server_files/pg_write_server_files predefined
+-- roles rather than a second, parallel privilege system).
+--
+-- UTL_FILE.FILE_TYPE is Oracle's own opaque record; here a handle is
+-- just an integer (returned by fopen(), passed to every other call) --
+-- documented simplification, not a hidden one.
+-- ================================================================
+
+CREATE SCHEMA utl_file;
+COMMENT ON SCHEMA utl_file IS 'Oracle UTL_FILE package (pg_oracle, part of Polygres). See create_directory() for the privilege model.';
+
+CREATE TABLE utl_file.directories(
+  directory_name text PRIMARY KEY,
+  path           text NOT NULL
+);
+COMMENT ON TABLE utl_file.directories IS 'Maps an Oracle-style directory-object name to a real filesystem path. No privilege lives in this table -- see create_directory().';
+
+-- Parameters prefixed p_ deliberately: an unprefixed `directory_name`
+-- parameter here shadowed the column of the same name and made the
+-- ON CONFLICT clause below ambiguous ("could refer to either a PL/pgSQL
+-- variable or a table column") -- found live on the very first real
+-- create_directory() call, not by inspection.
+CREATE FUNCTION utl_file.create_directory(p_directory_name text, p_path text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT (pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+          OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'))
+  THEN
+    RAISE EXCEPTION 'ORA-01031: insufficient privileges'
+      USING DETAIL = format('Creating a UTL_FILE directory object requires membership in '
+                             'pg_read_server_files or pg_write_server_files (or superuser) -- '
+                             'the same privilege Postgres itself uses for filesystem access, '
+                             'not a separate grant this extension invented.');
+  END IF;
+  INSERT INTO utl_file.directories(directory_name, path) VALUES (p_directory_name, p_path)
+    ON CONFLICT (directory_name) DO UPDATE SET path = EXCLUDED.path;
+END;
+$$;
+COMMENT ON FUNCTION utl_file.create_directory(text, text) IS 'Oracle CREATE DIRECTORY equivalent -- see this function''s own privilege check, and utl_file.directories'' comment.';
+
+CREATE FUNCTION utl_file.drop_directory(p_directory_name text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT (pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+          OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'))
+  THEN
+    RAISE EXCEPTION 'ORA-01031: insufficient privileges';
+  END IF;
+  DELETE FROM utl_file.directories WHERE directory_name = p_directory_name;
+END;
+$$;
+
+CREATE FUNCTION utl_file.fopen(location text, filename text, open_mode text) RETURNS integer
+  AS 'MODULE_PATHNAME', 'utl_file_fopen' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.is_open(file_id integer) RETURNS boolean
+  AS 'MODULE_PATHNAME', 'utl_file_is_open' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.put(file_id integer, buffer text) RETURNS void
+  AS 'MODULE_PATHNAME', 'utl_file_put' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.put_line(file_id integer, buffer text) RETURNS void
+  AS 'MODULE_PATHNAME', 'utl_file_put_line' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.new_line(file_id integer, lines integer DEFAULT 1) RETURNS void
+  AS 'MODULE_PATHNAME', 'utl_file_new_line' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.get_line(file_id integer) RETURNS text
+  AS 'MODULE_PATHNAME', 'utl_file_get_line' LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION utl_file.get_line(integer) IS 'Raises SQLSTATE P0002 (no_data_found) at end of file -- catch with EXCEPTION WHEN NO_DATA_FOUND, same as real Oracle GET_LINE.';
+CREATE FUNCTION utl_file.fclose(file_id integer) RETURNS void
+  AS 'MODULE_PATHNAME', 'utl_file_fclose' LANGUAGE C VOLATILE;
+CREATE FUNCTION utl_file.fclose_all() RETURNS void
+  AS 'MODULE_PATHNAME', 'utl_file_fclose_all' LANGUAGE C VOLATILE;
+
+-- ================================================================
 -- Grants -- without these, `SET db_emulation = 'oracle'` (available to
 -- any role, PGC_USERSET) silently fails the moment that role queries
 -- v$session or calls dbms_output.put_line, since a fresh schema in
@@ -299,6 +515,20 @@ COMMENT ON FUNCTION oracle_catalog.emulation_active() IS 'True when this session
 
 GRANT USAGE ON SCHEMA oracle_catalog TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_output TO PUBLIC;
+GRANT USAGE ON SCHEMA dbms_random TO PUBLIC;
+GRANT USAGE ON SCHEMA dbms_utility TO PUBLIC;
+GRANT USAGE ON SCHEMA dbms_assert TO PUBLIC;
+GRANT USAGE ON SCHEMA utl_file TO PUBLIC;
 GRANT SELECT ON ALL TABLES IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA oracle_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_output TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_random TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_utility TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_assert TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA utl_file TO PUBLIC;
+-- SELECT (not INSERT/UPDATE/DELETE) on the directories table: every role
+-- needs to read it for FOPEN's own internal lookup to work at all, but
+-- registering/changing a directory must go through create_directory()/
+-- drop_directory() above, which enforce the real privilege check --
+-- direct table writes would bypass that entirely.
+GRANT SELECT ON utl_file.directories TO PUBLIC;

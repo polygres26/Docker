@@ -3,7 +3,7 @@
 
 EXTENSION = pg_oracle
 MODULE_big = pg_oracle
-OBJS = src/pg_oracle.o src/dbms_output.o
+OBJS = src/pg_oracle.o src/dbms_output.o src/utl_file.o
 
 DATA = sql/pg_oracle--0.1.sql
 

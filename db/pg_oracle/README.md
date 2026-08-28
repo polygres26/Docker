@@ -44,6 +44,24 @@ extension has no dependency on Polywire and doesn't know it exists.
   SQL/plpgsql function can't hold. `ENABLE`/`DISABLE`/`PUT_LINE`/`PUT`/
   `NEW_LINE`/`GET_LINE`, faithful to Oracle's "silently dropped unless
   enabled" behavior.
+- **DBMS_RANDOM**, **DBMS_UTILITY** (partial), **DBMS_ASSERT**: packages
+  2-4, plain SQL/plpgsql -- no session state needed, unlike DBMS_OUTPUT.
+  `DBMS_RANDOM`: `VALUE`/`VALUE(low,high)`/`RANDOM`/`SEED`/`STRING`.
+  `DBMS_UTILITY`: `GET_TIME`, `DB_VERSION` -- `FORMAT_ERROR_STACK`/
+  `FORMAT_CALL_STACK` deliberately not here, see the function's own
+  comment in the SQL file for why a zero-argument version can't be
+  faithful. `DBMS_ASSERT`: `SIMPLE_SQL_NAME`, `QUALIFIED_SQL_NAME`,
+  `SCHEMA_NAME`, `ENQUOTE_NAME`, `ENQUOTE_LITERAL`, `NOOP` -- the
+  SQL-injection-defense helpers real Oracle dynamic-SQL code calls.
+- **UTL_FILE**: package 5, in C (`src/utl_file.c`) for the same
+  session-lifetime-state reason as `DBMS_OUTPUT`, plus the file I/O
+  itself isn't reachable from plain SQL at all. `FOPEN`/`PUT`/`PUT_LINE`/
+  `NEW_LINE`/`GET_LINE`/`FCLOSE`/`FCLOSE_ALL`/`IS_OPEN`, gated on
+  Postgres's own `pg_read_server_files`/`pg_write_server_files`
+  predefined roles instead of a second, invented permission system --
+  see "UTL_FILE's security model" below. `FILE_TYPE` is simplified to a
+  plain integer handle rather than Oracle's opaque record type --
+  documented, not hidden.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
   mechanism described above. It also does one more thing: on `SET
   db_emulation = 'oracle'`, it auto-creates a schema named after the
@@ -84,17 +102,74 @@ a literal-valued `GROUP BY` query explains cleanly (`HashAggregate` /
 `Seq Scan` plan lines returned); a bind-parameterized `WHERE dept = $1`
 query correctly returns the explanatory row instead of a wrong plan.
 
-## Explicitly not in v1
+## UTL_FILE's security model
 
-The remaining ~19 of the top-20 `DBMS_*`/`UTL_*` packages (`DBMS_UTILITY`,
-`DBMS_RANDOM`, `DBMS_CRYPTO`, `UTL_FILE`, ...) -- planned to build on
-[orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) rather than
-reimplement from scratch; real PL/SQL stored-procedure support (a
-syntax-subset transpiler to `plpgsql`, the hardest and highest-effort
-piece of the whole plan); `GV$*` across more than one instance (needs
-Polywire's own sharding fan-out, not just this extension); full
-privilege-accurate `ALL_*` views (today: owned-by-you or on-search_path,
-not real grant-checking).
+Deliberately *not* a new, invented permission system: Oracle's directory-
+object model (`CREATE DIRECTORY`, then `GRANT READ/WRITE ON DIRECTORY ...
+TO ...`) is reused conceptually but implemented on top of Postgres's own
+predefined roles `pg_read_server_files`/`pg_write_server_files` (built in
+since PG 11 for exactly this "let a non-superuser touch the filesystem
+safely" purpose). `utl_file.create_directory()`/`FOPEN` both check
+membership in one of those (superuser always passes, same as every other
+Postgres filesystem-access check). `utl_file.directories` itself only
+maps a name to a path -- no privilege lives in that table, so it's
+`GRANT SELECT ... TO PUBLIC` (every role needs to read it for `FOPEN`'s
+internal lookup to work) while writes to it are only reachable through
+`create_directory()`/`drop_directory()`'s own privilege check. A filename
+containing `/` or `..` is rejected outright -- no legitimate `FOPEN` call
+needs either, and allowing them would let a caller escape the registered
+directory entirely.
+
+## UTL_HTTP: deliberately deferred, not forgotten
+
+Not implemented in this pass. Network egress from inside the database is
+a materially different, higher-risk feature than everything else here --
+every other package operates purely on local data or the local
+filesystem (itself gated on existing Postgres roles, see above); letting
+SQL code make outbound HTTP calls needs its own access-control design
+(an allowlist of reachable hosts, at minimum) before it's safe to ship,
+not something to bolt on as one more package in this pass. Likely belongs
+as a Polywire-level policy (it already owns firewall/ACL decisions for
+every protocol) rather than purely inside this extension -- a real
+design discussion, not a quick follow-up.
+
+## Anonymous PL/SQL blocks (`DECLARE ... BEGIN ... END;`): an architecture
+## finding, not a feature gap in this extension
+
+Stock Postgres's grammar has **no top-level `DECLARE`/`BEGIN`/`END`
+statement** -- that syntax only exists wrapped as `DO $$ ... $$;`, and
+there is no supported extension hook that adds new top-level grammar
+productions without patching Postgres's own parser (which is exactly the
+IvorySQL/Babelfish fork-the-core approach this whole plan chose to avoid
+-- see the top-level plan discussion). So a raw Oracle anonymous block
+cannot be handed to stock Postgres as text and just work; it has to be
+rewritten to `DO $$ ... $$;` (plus syntax deltas like bare procedure
+calls needing `PERFORM`) *before* it reaches Postgres at all.
+
+That rewrite is a text-transformation step that can only live in front
+of Postgres -- i.e. in Polywire's orawire dialect-translation stage
+(which already exists for exactly this kind of protocol/dialect
+adaptation), not inside this extension. `pg_oracle`'s job is making sure
+the *rewritten* block actually runs correctly once it gets there, and
+that much is already proven: every package above was verified via real
+`DO $$ ... $$` blocks during this session, including the Oracle idiom of
+catching `UTL_FILE.GET_LINE`'s end-of-file with `EXCEPTION WHEN
+NO_DATA_FOUND` (works today, unchanged from plpgsql's own native
+behavior) and `DBMS_ASSERT` rejecting bad input inside `EXCEPTION WHEN
+OTHERS`. The concrete, scoped follow-up is the orawire-side rewriter,
+not more work here.
+
+## Remaining top-20 scope
+
+`DBMS_CRYPTO`, `DBMS_LOB`, `DBMS_SQL`, `DBMS_SESSION`,
+`DBMS_APPLICATION_INFO`, `DBMS_METADATA` (subset), `DBMS_JOB`/
+`DBMS_SCHEDULER` (subset), `DBMS_STATS` (shim), `DBMS_LOCK`,
+`DBMS_ALERT`, `DBMS_PIPE`, `UTL_RAW`, `UTL_ENCODE` -- planned to build on
+[orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it
+already covers one, rather than reimplement from scratch; `GV$*` across
+more than one instance (needs Polywire's own sharding fan-out, not just
+this extension); full privilege-accurate `ALL_*` views (today:
+owned-by-you or on-search_path, not real grant-checking).
 
 ## A real bug this design already caught
 
@@ -153,6 +228,23 @@ schemas/views/functions at install time (see the end of
 is either read-only (the views) or scoped to the caller's own session
 (`DBMS_OUTPUT`'s buffer is per-backend).
 
+## Two more real bugs this pass caught
+
+`DBMS_RANDOM.SEED(integer)`'s first version computed
+`(val % 2147483647) + 2147483647` in `int4` arithmetic -- overflows for
+completely ordinary seed values (`SEED(42)` was the very first call that
+hit it: `ERROR: integer out of range`, not a boundary case). Fixed by
+normalizing in `double precision` from the start
+(`val::double precision / 2147483647.0`, clamped) instead of doing
+modular arithmetic in a type too narrow for the intermediate result.
+
+`utl_file.create_directory(directory_name text, path text)`'s first
+version named its own parameters the same as the table's columns,
+making `ON CONFLICT (directory_name) DO UPDATE SET path = ...` genuinely
+ambiguous to plpgsql ("could refer to either a PL/pgSQL variable or a
+table column") -- found on the first real call, not by inspection. Fixed
+by prefixing the parameters (`p_directory_name`, `p_path`).
+
 ## Verified
 
 Built and smoke-tested end to end against a real local Postgres 17
@@ -171,5 +263,25 @@ db_emulation` twice in a row is a safe no-op (no duplicate-schema error);
 and a real non-superuser role with no `CREATE` privilege gets the
 graceful `NOTICE`-and-fallback path instead of a broken `SET`, then
 successfully uses `V$PARAMETER`, `DBA_TABLES`, and `DBMS_OUTPUT` after
-the grants fix above. No `pg_regress` test suite yet (tracked as
-follow-up in the `Makefile`).
+the grants fix above.
+
+`DBMS_RANDOM`/`DBMS_UTILITY`/`DBMS_ASSERT`: `VALUE()`/`VALUE(low,high)`
+stay in range; `STRING('U', 8)` returns 8 uppercase letters; `SEED()`
+handles both an ordinary value and `-2147483648` (the boundary that broke
+the pre-fix formula's sibling); `SIMPLE_SQL_NAME` correctly rejects an
+injection-shaped string, and does so in a way `EXCEPTION WHEN OTHERS`
+catches exactly like real Oracle code expects.
+
+`UTL_FILE`, end to end: `create_directory` + `fopen(..., 'w')` +
+`put_line`/`put`/`new_line` + `fclose` produced a real file on disk with
+exactly the expected bytes; reopening for read and looping
+`get_line()`/`EXCEPTION WHEN NO_DATA_FOUND` correctly read all three
+lines back and stopped at EOF; a filename containing `..` was rejected
+before ever touching the filesystem; a real non-superuser role with no
+file-role membership got a clean permission error on `FOPEN`, then
+succeeded after being granted `pg_read_server_files` -- and, separately,
+still correctly failed to open the same file for *write* until also
+granted `pg_write_server_files`, confirming the read/write split actually
+holds and isn't just "has any file role, do anything."
+
+No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).
