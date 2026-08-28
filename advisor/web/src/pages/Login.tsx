@@ -33,7 +33,7 @@ export default function Login() {
           <div className={styles.brand}>
             <div className={styles.brandMark} />
             <div>
-              <p className={styles.title}>Polygres Advisor</p>
+              <p className={styles.title}>Nexagres Advisor</p>
               <p className={styles.subtitle}>Postgres migration advisor</p>
             </div>
           </div>
@@ -75,7 +75,7 @@ export default function Login() {
         </form>
         <p className={styles.note}>
           Default admin credentials are printed to the server log on first startup if
-          POLYGRES_ADMIN_PASSWORD isn't set.
+          NEXAGRES_ADMIN_PASSWORD isn't set.
         </p>
       </div>
     </div>

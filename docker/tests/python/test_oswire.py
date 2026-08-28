@@ -1,5 +1,5 @@
 """oswire: real OpenSearch HTTP/JSON API (_search/documents/_bulk), real opensearch-py client,
-translated to Postgres underneath -- see com.polygres.wire.oswire's package for the internal
+translated to Postgres underneath -- see com.nexagres.wire.oswire's package for the internal
 Search IR this is staged around. No auth configured in the test compose file, so a bare client
 with SSL disabled is enough (matches how real OpenSearch's own dev/test setups run unauthenticated).
 """

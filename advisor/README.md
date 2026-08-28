@@ -42,7 +42,7 @@ workload capture, object browsing, and parameter inspection today.
 Backend:
 ```bash
 mvn package -DskipTests
-POLYGRES_ADVISOR_PORT=8090 java -jar target/polygres-advisor.jar
+NEXAGRES_ADVISOR_PORT=8090 java -jar target/nexagres-advisor.jar
 ```
 
 Frontend (dev, proxies `/api` to the backend):

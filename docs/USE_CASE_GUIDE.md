@@ -1,4 +1,4 @@
-# Polygres Use Case & Deployment Guide
+# Nexagres Use Case & Deployment Guide
 
 Covers both modules — **PolyAdvisor** (migration assessment) and **PolyWire** (protocol
 gateway) — plus the Docker packaging for each. Each section is self-contained; jump to what
@@ -40,7 +40,7 @@ flowchart LR
         Profiler["Schema / feature\nprofiler"]
         Workload["Workload capture\n& scorer"]
         Migrator["Easy-tier\nmigration engine"]
-        Store["Embedded HSQLDB\n(POLYGRES_DATA_DIR)\nconnections, LLM config, reports"]
+        Store["Embedded HSQLDB\n(NEXAGRES_DATA_DIR)\nconnections, LLM config, reports"]
     end
     Source[("Source DB\nOracle / MySQL /\nMariaDB / SQL Server")]
     PG[("Target Postgres")]
@@ -58,7 +58,7 @@ flowchart LR
 
 - **Stateless compute, stateful store**: the process itself holds nothing between requests;
   all durable state (saved connections, LLM provider keys, uploaded/generated reports) lives
-  in the embedded HSQLDB file store — one directory (`POLYGRES_DATA_DIR`), trivially backed up.
+  in the embedded HSQLDB file store — one directory (`NEXAGRES_DATA_DIR`), trivially backed up.
 - **Read-mostly against the source**: profiling and workload capture are read-only against the
   source database. Only the migration engine writes, and only to the Postgres target — it
   never mutates the source.
@@ -409,8 +409,8 @@ flowchart TB
 | Base (build) | `maven:3.9-eclipse-temurin-21` | same, plus a `node:22-alpine` stage to build the SPA |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
-| Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `POLYGRES_DATA_DIR` (embedded HSQLDB) |
-| How the SPA is served | n/a | `AdvisorHttpServer` runs on embedded Jetty (already a dependency) and serves the built `advisor/web` SPA itself via `SpaResourceHandler` (`POLYGRES_ADVISOR_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/polyadvisor/` for teams that want a separately-scaled static tier instead |
+| Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `NEXAGRES_DATA_DIR` (embedded HSQLDB) |
+| How the SPA is served | n/a | `AdvisorHttpServer` runs on embedded Jetty (already a dependency) and serves the built `advisor/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_ADVISOR_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/polyadvisor/` for teams that want a separately-scaled static tier instead |
 | `.dockerignore` | repo-root only — both compose files set `context: ../..`, and classic Docker only honors a root-level `.dockerignore` | same |
 
 Build standalone (no compose):

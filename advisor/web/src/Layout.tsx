@@ -32,7 +32,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className={styles.railBrand}>
           <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
-            <span className={styles.railBrandTitle}>Polygres</span>
+            <span className={styles.railBrandTitle}>Nexagres</span>
             <span className={styles.railBrandSub}>Advisor</span>
           </div>
         </div>
@@ -71,7 +71,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </nav>
       <div className={styles.main}>
         <div className={styles.topbar}>
-          <div className={styles.crumb}>polygres advisor</div>
+          <div className={styles.crumb}>nexagres advisor</div>
         </div>
         <div className={styles.content}>{children}</div>
       </div>

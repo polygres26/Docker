@@ -1,6 +1,6 @@
-# Polygres
+# Nexagres
 
-> Polygres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
+> Nexagres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
 > OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
 > executes against one real Postgres database. PolyAdvisor is a rules-based (not LLM-generated)

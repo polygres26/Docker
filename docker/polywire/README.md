@@ -1,7 +1,7 @@
 # PolyWire — Docker
 
 Multi-stage build: a `node:22-alpine` stage builds the admin SPA (`wire/web`), a
-`maven:3.9-eclipse-temurin-21` stage builds the shaded jar (`target/polygres-wire.jar`), then an
+`maven:3.9-eclipse-temurin-21` stage builds the shaded jar (`target/nexagres-wire.jar`), then an
 `eclipse-temurin:21-jre-jammy` runtime stage runs both — nothing beyond a JRE is needed at
 runtime, everything's already bundled into the shaded jar plus the built SPA's static files.
 

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package polywire;
 
-option java_package = "com.polygres.wire.grpc.proto";
+option java_package = "com.nexagres.wire.grpc.proto";
 option java_multiple_files = true;
 
 // Native PolyWire wire protocol: a thin Type-3 JDBC driver talks this

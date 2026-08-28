@@ -6,7 +6,7 @@ export type CredentialSource = 'plaintext' | 'vault' | 'cyberark'
  * Password input that can also point at an external secret instead of holding a literal value --
  * the value this component produces (`onChange`) is always the one flat string the backend
  * already expects in a password field: a plain password, or a `vault:...`/`cyberark:...`
- * reference (see `com.polygres.advisor.secrets.SecretRef` / PolyWire's twin package for the exact
+ * reference (see `com.nexagres.advisor.secrets.SecretRef` / PolyWire's twin package for the exact
  * grammar and how it's resolved at connect time). No new API shape needed -- this is purely a
  * friendlier way to build the string that already round-trips through every password field.
  */

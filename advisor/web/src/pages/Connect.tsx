@@ -31,7 +31,7 @@ export default function Connect() {
 
   return (
     <div className="app-shell">
-      <h1>Polygres Advisor</h1>
+      <h1>Nexagres Advisor</h1>
       <p style={{ color: 'var(--muted)' }}>
         Connect to a source database to assess Postgres-migration difficulty. Oracle, MySQL/MariaDB,
         and SQL Server are all supported.

@@ -4,18 +4,18 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.polygres</groupId>
-  <artifactId>polygres-advisor</artifactId>
+  <groupId>com.nexagres</groupId>
+  <artifactId>nexagres-advisor</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>Polygres Advisor</name>
+  <name>Nexagres Advisor</name>
   <description>
     Migration assessment and migration tool: connects to a source database (Oracle first,
     MariaDB/MySQL next), profiles schema + workload, scores Postgres-migration difficulty, and
     (for the easy tier) drives the actual migration + post-migration workload replay.
 
-    The connectivity layer (com.polygres.advisor.core) is a trimmed adaptation of Omnigate's
+    The connectivity layer (com.nexagres.advisor.core) is a trimmed adaptation of Omnigate's
     JDBC connection-pool/backend-target model (~/Projects/Omnigate, com.omnigate.core) --
     copied in, not depended on, per project decision to keep this repo standalone.
   </description>
@@ -133,7 +133,7 @@
   </dependencies>
 
   <build>
-    <finalName>polygres-advisor</finalName>
+    <finalName>nexagres-advisor</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -146,7 +146,7 @@
             <configuration>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>com.polygres.advisor.http.AdvisorHttpServer</mainClass>
+                  <mainClass>com.nexagres.advisor.http.AdvisorHttpServer</mainClass>
                 </transformer>
                 <!-- Merges every dependency's META-INF/services/java.sql.Driver (Oracle, MySQL,
                      MariaDB, Postgres, HSQLDB all self-register this way); without this, the

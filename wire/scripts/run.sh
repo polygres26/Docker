@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Runs polygres-wire's Main. Needs the --add-opens flags below on JDK 17+ (confirmed required on
+# Runs nexagres-wire's Main. Needs the --add-opens flags below on JDK 17+ (confirmed required on
 # JDK 25 during live testing, 2026-08-17) because embedded Apache Ignite -- used by CacheStage,
 # only actually started when POLYWIRE_CACHE_TABLES is set -- reflectively opens java.lang.reflect.Field
 # on classes across several java.base packages via BinaryClassDescriptor, which the JVM's module
 # system blocks by default from Java 17 onward. Without these flags the process throws
 # InaccessibleObjectException during Ignite startup, but only when caching is actually enabled --
-# a plain `java -jar target/polygres-wire.jar` run with the cache off (the default) works fine
+# a plain `java -jar target/nexagres-wire.jar` run with the cache off (the default) works fine
 # without any of this, which is why it wasn't caught until caching was live-tested.
 #
 # Usage: ./scripts/run.sh
@@ -33,4 +33,4 @@ exec java \
   --add-opens=java.base/java.net=ALL-UNNAMED \
   --add-opens=java.sql/java.sql=ALL-UNNAMED \
   --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
-  -jar target/polygres-wire.jar "$@"
+  -jar target/nexagres-wire.jar "$@"

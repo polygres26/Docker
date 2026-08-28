@@ -590,7 +590,7 @@ Postgres itself gets without the extension.
 
 ### 4.6 Multi-AZ distributed cache
 
-The distributed cache (Ignite, `com.polygres.wire.cluster.PolyWireCluster`) is cloud-native and
+The distributed cache (Ignite, `com.nexagres.wire.cluster.PolyWireCluster`) is cloud-native and
 AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
 static IP list), a configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1) whose
 placement is AZ-aware — a cache entry's backup never lands on a node in the same

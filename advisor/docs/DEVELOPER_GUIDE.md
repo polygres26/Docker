@@ -7,7 +7,7 @@
 ## Layout
 
 ```
-src/main/java/com/polygres/advisor/
+src/main/java/com/nexagres/advisor/
   core/      Connectivity layer -- adapted from ~/Projects/Omnigate's com.omnigate.core
              (BackendTarget/BackendConnectionPools), copied in and trimmed to the dialects
              Advisor deals with (Oracle, MySQL, MariaDB, SQL Server, Postgres). No dependency
@@ -55,11 +55,11 @@ src/main/java/com/polygres/advisor/
                  processes -- CPU-only, bound to 127.0.0.1 -- ported from Omnigate's
                  com.omnigate.assistant.LocalLlamaProcess. LocalLlamaManager runs one process per
                  distinct model path concurrently (Map<modelPath, LocalLlamaProcess>, each on its
-                 own auto-assigned port starting at POLYGRES_LLM_LOCAL_PORT) rather than a single
+                 own auto-assigned port starting at NEXAGRES_LLM_LOCAL_PORT) rather than a single
                  shared process -- so PRIMARY and JUDGE can run genuinely different local models
                  (e.g. Qwen + Gemma) at the same time without thrashing restarts on every call.
                  The server binary is found via
-                 POLYGRES_LLM_LOCAL_SERVER_PATH or PATH; the model file (a .gguf) is set on the
+                 NEXAGRES_LLM_LOCAL_SERVER_PATH or PATH; the model file (a .gguf) is set on the
                  LLM configuration page, same "operator-provided, nothing bundled or
                  auto-downloaded" posture Omnigate takes with its own local Qwen/Gemma sidecars.
                - ClaudeLlmProvider (BUILTIN -- server's own ANTHROPIC_API_KEY) and
@@ -84,8 +84,8 @@ src/main/java/com/polygres/advisor/
              stakeholder would read. Generated live on every request (GET
              /api/connections/{id}/report re-scans right then) -- never a cached copy from an
              earlier visit.
-  http/auth/ Single-admin-account session auth (AdminAuth/AuthGuard) -- POLYGRES_ADMIN_USER /
-             POLYGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
+  http/auth/ Single-admin-account session auth (AdminAuth/AuthGuard) -- NEXAGRES_ADMIN_USER /
+             NEXAGRES_ADMIN_PASSWORD, cookie session. Minimal on purpose (no OIDC/multi-user);
              see AdminAuth javadoc for the tradeoff and what Omnigate's fuller admin auth looks
              like if this needs to grow into that later.
   sizing/    SizingCalculator -- a rules-of-thumb Postgres instance-shape recommender (vCPUs,
@@ -104,15 +104,15 @@ src/main/java/com/polygres/advisor/
              snapshot has no fixed observation window. SizingRecommendation is the shared output
              shape for both entry points below.
 
-Admin + saved connections (com.polygres.advisor.core.ConnectionStore, ConnectionRecord):
+Admin + saved connections (com.nexagres.advisor.core.ConnectionStore, ConnectionRecord):
   - CRUD over a set of named source-database connections, persisted in an embedded HSQLDB file
-    at ~/.polygres/polygres-store (POLYGRES_DATA_DIR to relocate). Credentials are stored
+    at ~/.nexagres/nexagres-store (NEXAGRES_DATA_DIR to relocate). Credentials are stored
     plaintext -- a known MVP gap, called out in ConnectionRecord's javadoc.
   - Per connection: browse catalog objects, view database parameters, and run a migration
     assessment or workload capture, all using the connection's stored credentials server-side
     (the browser never sees them again after creation) and all dialect-agnostic on the UI side.
 
-Uploaded reports (com.polygres.advisor.uploads.ReportStore, com.polygres.advisor.llm.ReportAnalyzer):
+Uploaded reports (com.nexagres.advisor.uploads.ReportStore, com.nexagres.advisor.llm.ReportAnalyzer):
   - The no-live-connection on-ramp: upload a performance/workload report (Oracle AWR, a MySQL
     performance report, a SQL Server DMV/Query Store export) and get an LLM-assisted read on it,
     via the PRIMARY (+ optional JUDGE) model configured on the LLM configuration page.
@@ -123,7 +123,7 @@ Uploaded reports (com.polygres.advisor.uploads.ReportStore, com.polygres.advisor
     (ReportAnalyzer.Analysis) and the UI labels it explicitly as heuristic, not equivalent to the
     Connections flow's deterministic scoring.
   - Report text/metadata persisted the same way connections are (embedded HSQLDB for metadata +
-    cached analysis JSON; raw extracted text on disk under ~/.polygres/reports/<id>.txt, kept out
+    cached analysis JSON; raw extracted text on disk under ~/.nexagres/reports/<id>.txt, kept out
     of the database row since a real AWR export can run to several MB).
   - Multiple reports, one combined analysis: upload several files in one action (e.g. one per
     system, or several snapshots of the same system over time), select any subset on the list

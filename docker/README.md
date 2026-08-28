@@ -1,6 +1,6 @@
-# Polygres — Docker
+# Nexagres — Docker
 
-Public packaging and documentation for the Polygres project's two tools: **PolyAdvisor**
+Public packaging and documentation for the Nexagres project's two tools: **PolyAdvisor**
 (migration assessment) and **PolyWire** (protocol gateway). Their source repos are private; this
 repo is the public surface — prebuilt images, architecture, and how to run them.
 
@@ -69,7 +69,7 @@ running against these published images directly, no source checkout required. Se
 `polywire/` and `polyadvisor/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
-`wire/` and `advisor/`, which live in Polygres's private source repos — they're included here for
+`wire/` and `advisor/`, which live in Nexagres's private source repos — they're included here for
 transparency into exactly how each image is put together, not as a build-it-yourself path.
 
 ## License

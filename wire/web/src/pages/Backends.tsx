@@ -24,7 +24,7 @@ function TestResultBadge({ result }: { result: BackendTestResult }) {
  * (or committed at all) -- built after onboarding a real Supabase project surfaced exactly the
  * kind of mistake this exists to catch fast: a plausible-looking host that turned out to be
  * unreachable, found out only after saving and trying to browse it. See
- * com.polygres.wire.core.BackendConnectivityTest for the server side.
+ * com.nexagres.wire.core.BackendConnectivityTest for the server side.
  */
 function ConnectionTester() {
   const [jdbcUrl, setJdbcUrl] = useState('jdbc:postgresql://host:5432/postgres?sslmode=require')

@@ -23,7 +23,7 @@ accepted.
 
 ### 1.1 Two different numbers: exec time vs. RTT
 
-`SqlMetricsCollector` (`com.polygres.wire.core`) is the single collector every protocol feeds.
+`SqlMetricsCollector` (`com.nexagres.wire.core`) is the single collector every protocol feeds.
 It tracks two distinct things per normalized statement/operation:
 
 | Metric | What it spans | Where it comes from |

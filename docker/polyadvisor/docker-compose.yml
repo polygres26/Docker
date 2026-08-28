@@ -11,7 +11,7 @@ services:
       context: ../..
       dockerfile: docker/polyadvisor/Dockerfile
     environment:
-      POLYGRES_ADVISOR_PORT: "8090"
+      NEXAGRES_ADVISOR_PORT: "8090"
     volumes:
       # Embedded HSQLDB store (saved connections, LLM provider config, uploaded performance
       # reports) -- see ConnectionStore/LlmSettingsStore/ReportStore's javadoc. Persists across

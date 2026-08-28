@@ -4,15 +4,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.polygres</groupId>
-  <artifactId>polygres-wire</artifactId>
+  <groupId>com.nexagres</groupId>
+  <artifactId>nexagres-wire</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
-  <name>polygres-wire</name>
+  <name>nexagres-wire</name>
   <description>PolyWire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
-    (com.omnigate.*) into com.polygres.wire.*, independent standalone module, sibling to
-    polygres-advisor in this repo.</description>
+    (com.omnigate.*) into com.nexagres.wire.*, independent standalone module, sibling to
+    nexagres-advisor in this repo.</description>
 
   <properties>
     <maven.compiler.source>21</maven.compiler.source>
@@ -74,7 +74,7 @@
       <version>${gson.version}</version>
     </dependency>
     <dependency>
-      <!-- com.polygres.wire.http.auth.AccessContextResolver — real JWT parsing/signature
+      <!-- com.nexagres.wire.http.auth.AccessContextResolver — real JWT parsing/signature
            verification (JWS/JWK/JWKS) for OAuth2/OIDC bearer tokens (Okta, Auth0, Azure AD, any
            standards-compliant IdP) — the standard JVM library for this, not a hand-rolled JWT
            parser (Apache-2.0). -->
@@ -83,14 +83,14 @@
       <version>${nimbus-jose-jwt.version}</version>
     </dependency>
     <dependency>
-      <!-- com.polygres.wire.rollup.RollupConfig — real YAML parsing for the rollup definitions
+      <!-- com.nexagres.wire.rollup.RollupConfig — real YAML parsing for the rollup definitions
            config file, not a hand-rolled subset parser (Apache-2.0). -->
       <groupId>org.yaml</groupId>
       <artifactId>snakeyaml</artifactId>
       <version>${snakeyaml.version}</version>
     </dependency>
     <dependency>
-      <!-- com.polygres.wire.core.RollupStage: reuses Calcite's own materialized-view substitution
+      <!-- com.nexagres.wire.core.RollupStage: reuses Calcite's own materialized-view substitution
            machinery (RelOptMaterialization/RelOptMaterializations) to decide whether an incoming
            aggregate query can be rewritten to hit a rollup table instead of the full source table —
            real, tested query-rewrite logic, not hand-rolled SQL rewriting. Apache-2.0. -->
@@ -182,7 +182,7 @@
       <version>${mysqlconnector.version}</version>
     </dependency>
     <dependency>
-      <!-- com.polygres.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
+      <!-- com.nexagres.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
            standalone BSON library (Apache-2.0), NOT the mongo-java-driver client itself (that
            would be a MongoDB *client* dependency, nonsensical for something acting as a MongoDB
            *server*). Used purely for OP_MSG document (de)serialization; the wire-protocol framing
@@ -194,7 +194,7 @@
       <version>${bson.version}</version>
     </dependency>
     <dependency>
-      <!-- Apache Ignite core (com.polygres.wire.cluster), Apache-2.0 — embedded in-process
+      <!-- Apache Ignite core (com.nexagres.wire.cluster), Apache-2.0 — embedded in-process
            (Ignition.start(), not a separate server) for CacheStage's cluster-aware cache-aside
            result cache. Pinned to the 2.x line deliberately, not 3.x (see PolyWireCluster's javadoc). -->
       <groupId>org.apache.ignite</groupId>
@@ -270,7 +270,7 @@
       <version>${hikaricp.version}</version>
     </dependency>
     <dependency>
-      <!-- Embedded Jetty for the /metrics endpoint only (com.polygres.wire.http, once ported) —
+      <!-- Embedded Jetty for the /metrics endpoint only (com.nexagres.wire.http, once ported) —
            admin UI/API/auth/SCIM pieces of Omnigate's http package are explicitly out of scope. -->
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
@@ -375,7 +375,7 @@
   </dependencies>
 
   <build>
-    <finalName>polygres-wire</finalName>
+    <finalName>nexagres-wire</finalName>
     <extensions>
       <extension>
         <groupId>kr.motd.maven</groupId>
@@ -438,8 +438,8 @@
         </configuration>
       </plugin>
       <plugin>
-        <!-- Produces a runnable target/polygres-wire.jar (all deps bundled) with
-             com.polygres.wire.server.Main as the entry point. -->
+        <!-- Produces a runnable target/nexagres-wire.jar (all deps bundled) with
+             com.nexagres.wire.server.Main as the entry point. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
         <version>3.6.0</version>
@@ -452,7 +452,7 @@
             <configuration>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>com.polygres.wire.server.Main</mainClass>
+                  <mainClass>com.nexagres.wire.server.Main</mainClass>
                 </transformer>
                 <!-- Without this, shading collapses every dependency's META-INF/services/java.sql.Driver
                      file into a single last-jar-wins copy, silently dropping either the Postgres or
