@@ -1,0 +1,8 @@
+comment = 'pg_oracle -- Oracle compatibility for Postgres (V$/GV$/DBA_* views, DBMS_* packages, PL/SQL). Part of the Polygres extension collection.'
+default_version = '0.1'
+module_pathname = '$libdir/pg_oracle'
+relocatable = false
+# V$SQL is a thin view over pg_stat_statements -- that extension needs to be
+# in shared_preload_libraries to actually collect data, but CREATE EXTENSION
+# pg_oracle can at least ensure its catalog objects exist regardless.
+requires = 'pg_stat_statements'
