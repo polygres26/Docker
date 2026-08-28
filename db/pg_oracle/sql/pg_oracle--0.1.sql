@@ -283,3 +283,22 @@ CREATE FUNCTION dbms_output.get_line(OUT line text, OUT status int) RETURNS reco
 CREATE FUNCTION oracle_catalog.emulation_active() RETURNS boolean
   AS 'MODULE_PATHNAME', 'pg_oracle_emulation_active' LANGUAGE C STABLE;
 COMMENT ON FUNCTION oracle_catalog.emulation_active() IS 'True when this session has SET db_emulation = ''oracle''.';
+
+-- ================================================================
+-- Grants -- without these, `SET db_emulation = 'oracle'` (available to
+-- any role, PGC_USERSET) silently fails the moment that role queries
+-- v$session or calls dbms_output.put_line, since a fresh schema in
+-- Postgres grants USAGE/EXECUTE to nobody but its owner by default.
+-- Found live: a non-superuser test role hit "permission denied for
+-- schema oracle_catalog" on its very first query after SET succeeded.
+-- Every object here is read-only (views) or side-effect-free within the
+-- caller's own session (DBMS_OUTPUT's buffer is per-backend), so PUBLIC
+-- is the right grantee -- there's no privilege being handed out that a
+-- role couldn't already get some other way.
+-- ================================================================
+
+GRANT USAGE ON SCHEMA oracle_catalog TO PUBLIC;
+GRANT USAGE ON SCHEMA dbms_output TO PUBLIC;
+GRANT SELECT ON ALL TABLES IN SCHEMA oracle_catalog TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA oracle_catalog TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_output TO PUBLIC;

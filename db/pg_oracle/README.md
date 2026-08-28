@@ -45,7 +45,20 @@ extension has no dependency on Polywire and doesn't know it exists.
   `NEW_LINE`/`GET_LINE`, faithful to Oracle's "silently dropped unless
   enabled" behavior.
 - **`db_emulation` GUC** (`src/pg_oracle.c`): the session-activation
-  mechanism described above.
+  mechanism described above. It also does one more thing: on `SET
+  db_emulation = 'oracle'`, it auto-creates a schema named after the
+  current role (`CREATE SCHEMA <role> AUTHORIZATION <role>`), if one
+  doesn't already exist -- an Oracle-native pattern (schema *is*
+  username in real Oracle), and it needs no new search_path logic here
+  since Postgres's own `"$user"` search_path entry already resolves to a
+  same-named schema whenever one exists. This is what makes
+  `USER_TABLES`/`USER_TAB_COLUMNS` (owner-filtered) actually see a role's
+  own objects instead of always coming back empty because Postgres's
+  default schema is `public`, not something named after the role.
+  Isolated in its own subtransaction: a role without `CREATE` privilege
+  on the database (the common case for a non-superuser app role) gets a
+  `NOTICE` and falls back to ordinary shared-`public` resolution --
+  `SET db_emulation = 'oracle'` itself never fails because of this.
 
 ## V$SQL_PLAN's syntax delta and fidelity limits
 
@@ -124,6 +137,22 @@ Then, per-database:
 CREATE EXTENSION pg_oracle CASCADE;
 ```
 
+## A second real bug this design caught: grants
+
+The first working version created every schema/view/function owned by
+whoever ran `CREATE EXTENSION` (normally a superuser or admin role) with
+no grants to anyone else. Since `db_emulation` is `PGC_USERSET` --
+any role can `SET` it, by design, since Polywire needs to set it for
+whatever role a client authenticates as -- a plain application role could
+successfully `SET db_emulation = 'oracle'` and then hit `permission
+denied for schema oracle_catalog` on its very first query. Found live
+with a real non-superuser test role, not by inspection. Fixed with
+`GRANT USAGE`/`SELECT`/`EXECUTE ... TO PUBLIC` on this extension's
+schemas/views/functions at install time (see the end of
+`sql/pg_oracle--0.1.sql`) -- safe to grant broadly since everything here
+is either read-only (the views) or scoped to the caller's own session
+(`DBMS_OUTPUT`'s buffer is per-backend).
+
 ## Verified
 
 Built and smoke-tested end to end against a real local Postgres 17
@@ -135,5 +164,12 @@ schemas to `search_path` and unqualified `v$version`/`v$instance`/
 including the buffer-disabled-by-default and empty-buffer (`status = 1`)
 cases; `SET db_emulation = 'postgres'` correctly restores the original
 `search_path` and unqualified object creation (`CREATE TABLE`) lands back
-in `public`, confirming the prepend-vs-append fix above. No `pg_regress`
-test suite yet (tracked as follow-up in the `Makefile`).
+in `public`, confirming the prepend-vs-append fix above; the auto-created
+user schema lands unqualified `CREATE TABLE` in it (not `public`) and
+`USER_TABLES`/`USER_TAB_COLUMNS` immediately see it, re-running `SET
+db_emulation` twice in a row is a safe no-op (no duplicate-schema error);
+and a real non-superuser role with no `CREATE` privilege gets the
+graceful `NOTICE`-and-fallback path instead of a broken `SET`, then
+successfully uses `V$PARAMETER`, `DBA_TABLES`, and `DBMS_OUTPUT` after
+the grants fix above. No `pg_regress` test suite yet (tracked as
+follow-up in the `Makefile`).
