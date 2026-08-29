@@ -462,14 +462,19 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
         exact primary-key point lookups — <code>GetItem</code>, <code>find</code> by
         <code>_id</code>, or a plain SQL <code>WHERE pk = ?</code> — and this one <b>does</b> cross
         into DynamoDB and MongoDB. Both protocols store their data in Postgres tables with a fixed,
-        known physical shape (dynamowire's <code>pk_value</code>/<code>sk_value</code>/<code>item</code>
-        columns, mongowire's <code>id</code>/<code>doc</code> columns), so a point-lookup entry can
-        be keyed on the physical table and key value alone — no dialect translation needed to prove
-        two requests mean the same row. Each protocol shares its entries with any SQL client
-        (Oracle, Postgres, MySQL, SQL Server) reading that exact same physical table — DynamoDB and
-        MongoDB don't share entries directly with <i>each other</i>, since a table named
-        <code>orders</code> in DynamoDB and a collection named <code>orders</code> in MongoDB are
-        two different physical Postgres tables under the hood.
+        known physical shape — dynamowire's <code>pk_value</code>/<code>sk_value</code>/<code>item</code>
+        columns, mongowire's <code>id</code>/<code>doc</code> columns — where the whole item or
+        document lives as one <code>jsonb</code> blob rather than exploded into typed relational
+        columns. That's why the SQL panels below read back a single JSON column instead of the
+        multi-column rows the MySQL/Oracle demo above shows: it's not a formatting choice, it's the
+        real physical schema dynamowire/mongowire create, and any SQL client sees exactly that
+        table. It's also what makes a point-lookup entry cheap to key — the physical table and key
+        value alone, no dialect translation needed to prove two requests mean the same row. Each
+        protocol shares its entries with any SQL client (Oracle, Postgres, MySQL, SQL Server)
+        reading that exact same physical table — DynamoDB and MongoDB don't share entries directly
+        with <i>each other</i>, since a table named <code>orders</code> in DynamoDB and a
+        collection named <code>orders</code> in MongoDB are two different physical Postgres tables
+        under the hood.
       </p>
       <p class="pillarStrip">Point-Lookup Cache · DynamoDB ↔ SQL · MongoDB ↔ SQL · Automatically Invalidated</p>
 
@@ -518,9 +523,9 @@ ITEM
             <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
             <pre class="termBody">$ mongosh --port 28000
 
-test&gt; db.orders.insertOne({ _id: "1001", amount: 44.50 })
+test&gt; db.orders.insertOne({ _id: "1001", amount: 129.99 })
 test&gt; db.orders.find({ _id: "1001" })
-[ { _id: '1001', amount: 44.5 } ]
+[ { _id: '1001', amount: 129.99 } ]
 # row cache MISS → PostgreSQL round trip → row cached
 
 $ sql app/password@//localhost:11521/postgres
@@ -529,7 +534,7 @@ SQL&gt; SELECT doc FROM "test"."orders" WHERE id = '"1001"';
 
 DOC
 --------------------------------
-{"_id": "1001", "amount": 44.5}
+{"_id": "1001", "amount": 129.99}
 
 1 row selected.
 
