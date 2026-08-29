@@ -90,6 +90,35 @@ public final class TranslationLlmClient {
         return chatComplete(systemPrompt, sqlText, "repair");
     }
 
+    /**
+     * Asks the LLM to turn a plain-English security policy into a single, strictly-shaped JSON
+     * firewall-rule draft -- the caller ({@code MetricsServer}'s {@code /api/firewall-rules/draft}
+     * handler) is responsible for parsing and validating the result before ever showing it to an
+     * admin; this method only makes the request and returns whatever text came back (fence-
+     * stripped, same as {@link #translate}/{@link #repair}). Deliberately returns raw text rather
+     * than a parsed object -- a hallucinating LLM can return malformed JSON, and the caller needs
+     * to be able to surface that as a clear "the LLM didn't return valid JSON" error rather than
+     * this method throwing an opaque parse exception from inside a generically-named HTTP client.
+     */
+    public String draftFirewallRule(String prompt) throws Exception {
+        String systemPrompt = "You are a database firewall rule assistant. Convert the user's plain-English "
+                + "security policy into a single JSON object with EXACTLY these fields and no others:\n"
+                + "{\n"
+                + "  \"action\": \"allow\" or \"deny\",\n"
+                + "  \"priority\": integer, lower runs first -- use 100 unless the request implies otherwise,\n"
+                + "  \"statementType\": the single leading SQL keyword this rule applies to (e.g. \"SELECT\", "
+                + "\"INSERT\", \"UPDATE\", \"DELETE\"), or null to match every statement type,\n"
+                + "  \"tablePattern\": a glob (\"*\" wildcard only, e.g. \"orders\" or \"dynamo_item_*\") "
+                + "matching the table name(s) this rule applies to, or null to match every table,\n"
+                + "  \"sqlPattern\": a Java regular expression the raw SQL text must contain to match, or "
+                + "null,\n"
+                + "  \"enabled\": true,\n"
+                + "  \"description\": a short human-readable summary of what this rule does\n"
+                + "}\n"
+                + "Reply with ONLY that JSON object -- no explanation, no markdown code fences.";
+        return chatComplete(systemPrompt, prompt, "firewall-rule-draft");
+    }
+
     private String chatComplete(String systemPrompt, String userContent, String purpose) throws Exception {
         JsonObject systemMessage = new JsonObject();
         systemMessage.addProperty("role", "system");

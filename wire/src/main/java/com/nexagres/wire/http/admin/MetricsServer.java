@@ -383,7 +383,7 @@ public final class MetricsServer {
                         baseRequest.setHandled(true);
                         return;
                     }
-                    handleFirewallRules(target, request, response, firewallRuleStore);
+                    handleFirewallRules(target, request, response, firewallRuleStore, dialectTranslationStage);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -647,11 +647,13 @@ public final class MetricsServer {
     }
 
     private static void handleFirewallRules(String target, HttpServletRequest request, HttpServletResponse response,
-            FirewallRuleStore store) throws java.io.IOException {
+            FirewallRuleStore store, com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage) throws java.io.IOException {
         response.setContentType("application/json; charset=utf-8");
         try {
             Matcher idMatch = FIREWALL_RULE_ID_PATH.matcher(target);
-            if ("/api/firewall-rules".equals(target) && "GET".equals(request.getMethod())) {
+            if ("/api/firewall-rules/draft".equals(target) && "POST".equals(request.getMethod())) {
+                handleFirewallRuleDraft(request, response, dialectTranslationStage);
+            } else if ("/api/firewall-rules".equals(target) && "GET".equals(request.getMethod())) {
                 writeRulesList(response, store);
             } else if ("/api/firewall-rules".equals(target) && "POST".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
@@ -695,6 +697,106 @@ public final class MetricsServer {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
         }
+    }
+
+    /**
+     * Turns a plain-English policy into a firewall-rule DRAFT via the LLM -- never inserts
+     * anything. The response is a proposed {@code /api/firewall-rules} POST body an admin reviews
+     * (and can edit) before submitting it through that existing, already-authorized endpoint; the
+     * LLM only ever gets to propose structured data here, never touch the request path, and never
+     * write to {@code polywire_firewall_rules} directly. Shares dialect translation's own LLM
+     * provider config ({@link DialectTranslationStage#llmClient()}) rather than a second one.
+     */
+    private static void handleFirewallRuleDraft(HttpServletRequest request, HttpServletResponse response,
+            com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage) throws java.io.IOException {
+        com.nexagres.wire.core.TranslationLlmClient llmClient =
+                dialectTranslationStage == null ? null : dialectTranslationStage.llmClient();
+        if (llmClient == null) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
+                    + "or the POLYWIRE_LLM_* env vars before drafting rules from plain English\"}");
+            return;
+        }
+        JsonObject body;
+        try {
+            body = readJsonBody(request);
+        } catch (Exception e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"invalid JSON request body\"}");
+            return;
+        }
+        String prompt = optionalString(body, "prompt");
+        if (prompt == null || prompt.isBlank()) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"missing required field: prompt\"}");
+            return;
+        }
+
+        String rawLlmReply;
+        try {
+            rawLlmReply = llmClient.draftFirewallRule(prompt);
+        } catch (Exception e) {
+            log.warn("firewall-rule draft: LLM call failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM request failed: " + jsonString(e.getMessage()) + "}");
+            return;
+        }
+
+        JsonObject draft;
+        try {
+            draft = JsonParser.parseString(rawLlmReply).getAsJsonObject();
+        } catch (RuntimeException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM did not return a valid JSON object\",\"raw\":"
+                    + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        // Validate against the SAME semantics FirewallRuleStore/FirewallStage actually give these
+        // fields at runtime (see readRules()/globToPattern()) -- action must be one the DB CHECK
+        // constraint accepts, and sqlPattern is a real Java regex a hallucinating LLM can get
+        // syntactically wrong (tablePattern is a glob, translated by escaping every non-'*'
+        // character, so it can never fail to compile and needs no such check).
+        String action = optionalString(draft, "action");
+        if (action == null || !(action.equalsIgnoreCase("allow") || action.equalsIgnoreCase("deny"))) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM returned an invalid or missing action (must be "
+                    + "\\\"allow\\\" or \\\"deny\\\")\",\"raw\":" + jsonString(rawLlmReply) + "}");
+            return;
+        }
+        String sqlPattern = optionalString(draft, "sqlPattern");
+        if (sqlPattern != null) {
+            try {
+                Pattern.compile(sqlPattern);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+                response.getWriter().write("{\"error\":\"LLM returned an sqlPattern that is not a valid regular "
+                        + "expression: " + jsonString(e.getMessage()) + "\",\"raw\":" + jsonString(rawLlmReply) + "}");
+                return;
+            }
+        }
+        int priority = draft.has("priority") && draft.get("priority").isJsonPrimitive() && draft.get("priority").getAsJsonPrimitive().isNumber()
+                ? draft.get("priority").getAsInt() : 100;
+        boolean enabled = !draft.has("enabled") || (draft.get("enabled").isJsonPrimitive() && draft.get("enabled").getAsJsonPrimitive().isBoolean()
+                ? draft.get("enabled").getAsBoolean() : true);
+        String description = optionalString(draft, "description");
+
+        JsonObject normalized = new JsonObject();
+        normalized.addProperty("action", action.toLowerCase(java.util.Locale.ROOT));
+        normalized.addProperty("priority", priority);
+        normalized.addProperty("statementType", optionalString(draft, "statementType"));
+        normalized.addProperty("tablePattern", optionalString(draft, "tablePattern"));
+        normalized.addProperty("sqlPattern", sqlPattern);
+        normalized.addProperty("enabled", enabled);
+        normalized.addProperty("description", description == null ? prompt : description);
+
+        JsonObject responseBody = new JsonObject();
+        responseBody.add("draft", normalized);
+        responseBody.addProperty("applied", false);
+        responseBody.addProperty("note", "This rule has NOT been created. Review it, edit any field if "
+                + "needed, then POST it to /api/firewall-rules to actually add it.");
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseBody.toString());
     }
 
     private static void handleConfig(HttpServletRequest request, HttpServletResponse response,

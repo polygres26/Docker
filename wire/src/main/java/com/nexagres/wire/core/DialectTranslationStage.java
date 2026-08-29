@@ -50,6 +50,14 @@ public final class DialectTranslationStage implements PipelineStage {
         this.llmClient = TranslationLlmClient.fromConfig(provider, apiKey, baseUrl, model);
     }
 
+    /** The current LLM client, or {@code null} if none is configured -- read by callers that want
+     * to reuse the SAME configured provider/model for an unrelated LLM-backed feature (e.g.
+     * {@code MetricsServer}'s natural-language firewall-rule drafting) instead of standing up a
+     * second, separately-configured client. */
+    public TranslationLlmClient llmClient() {
+        return llmClient;
+    }
+
     @Override
     public ExecutionResult handle(Statement statement, PipelineChain next) throws SQLException {
         String targetName = statement.targetBackend();
