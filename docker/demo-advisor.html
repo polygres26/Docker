@@ -79,7 +79,17 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---------- Replica of Layout.tsx / Layout.module.css ---------- */
 
-.rail { width: 220px; flex: none; display: flex; flex-direction: column; padding: 16px 12px; background: var(--rail-bg); overflow-y: auto; }
+/* .app (#app-wire/#app-advisor) sits between .frame and the shell's own `flex:1` inline style --
+   without this rule it was a plain block div, so that inline flex:1 had no flex parent to apply
+   to and did nothing. Its height fell back to content-based auto, which cascaded straight down to
+   .rail: the rail's own overflow-y:auto never got a bounded box to scroll WITHIN, so it just grew
+   to its full content height and got hard-clipped by .frame's overflow:hidden past the viewport
+   edge -- nothing below the clip line was reachable by any scroll. That's the "won't scroll past
+   Backends" bug. (The shell div itself also needed an explicit min-height:0 inline -- see below --
+   since a flex item's automatic minimum size otherwise blocks it from shrinking below its own
+   content height even with flex:1 set.) */
+.app { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.rail { width: 220px; min-height: 0; flex: none; display: flex; flex-direction: column; padding: 16px 12px; background: var(--rail-bg); overflow-y: auto; }
 .railBrand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .railMark { width: 32px; height: 32px; border-radius: 9px; flex: none; background-image: var(--logo-url); background-size: cover; background-position: center; }
 .railBrandTitle { color: var(--rail-ink); font-weight: 700; font-size: 13.5px; display: block; }
@@ -271,7 +281,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
       </div>
 
       <!-- Shell -->
-      <div id="advisor-shell" class="hidden" style="display:flex; flex:1; min-width:0;">
+      <div id="advisor-shell" class="hidden" style="display:flex; flex:1; min-width:0; min-height:0;">
         <nav class="rail">
           <div class="railBrand">
             <div class="railMark"></div>
