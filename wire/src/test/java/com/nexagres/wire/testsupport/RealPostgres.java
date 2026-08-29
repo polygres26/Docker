@@ -27,6 +27,8 @@ public final class RealPostgres implements AutoCloseable {
         this.port = port;
     }
 
+    private static final String DEFAULT_IMAGE = "postgres:16-alpine";
+
     public static RealPostgres start() throws IOException, InterruptedException {
         return start(java.util.List.of());
     }
@@ -35,6 +37,16 @@ public final class RealPostgres implements AutoCloseable {
      * key=value} server args -- e.g. {@code "max_prepared_transactions=10"} for XA-recovery tests,
      * which need PREPARE TRANSACTION support that stock Postgres ships disabled (0). */
     public static RealPostgres start(java.util.List<String> postgresConfOverrides) throws IOException, InterruptedException {
+        return start(DEFAULT_IMAGE, postgresConfOverrides);
+    }
+
+    /** As {@link #start(List)}, but against a custom image instead of stock {@value
+     * #DEFAULT_IMAGE} -- e.g. a locally built image with db/pg_oracle already installed, for
+     * verifying orawire's pg_oracle-present vs pg_oracle-absent code paths (see
+     * PgOracleSupport) against the same real docker/JDBC-driven suite either way, not two
+     * different test mechanisms. */
+    public static RealPostgres start(String image, java.util.List<String> postgresConfOverrides)
+            throws IOException, InterruptedException {
         String containerName = "polywire-test-pg-" + System.nanoTime();
         int port = findFreePort();
         List<String> args = new java.util.ArrayList<>(List.of("docker", "run", "-d", "--name", containerName,
@@ -42,7 +54,7 @@ public final class RealPostgres implements AutoCloseable {
                 "-e", "POSTGRES_USER=postgres",
                 "-e", "POSTGRES_PASSWORD=postgres",
                 "-e", "POSTGRES_DB=postgres",
-                "postgres:16-alpine"));
+                image));
         for (String override : postgresConfOverrides) {
             args.add("-c");
             args.add(override);
