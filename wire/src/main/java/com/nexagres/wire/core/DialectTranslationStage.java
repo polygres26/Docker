@@ -65,6 +65,23 @@ public final class DialectTranslationStage implements PipelineStage {
         if (targetDialect == null || fromDialect == targetDialect) {
             return next.proceed(statement);
         }
+        if (fromDialect == SourceDialect.ORACLE && targetDialect == SourceDialect.POSTGRES) {
+            // Detect (and cache, per backend) whether pg_oracle is actually installed before
+            // deciding whether Oracle-dialect SQL can lean on oracle_catalog.to_char/to_date --
+            // Polywire can be deployed against a plain, unmodified Postgres backend with no
+            // pg_oracle extension at all, and DialectTranslations.normalizeOracle() has no
+            // connection of its own to detect that with (translation is a pure string transform
+            // one stage earlier than any backend connection). See PgOracleSupport's own javadoc.
+            boolean available;
+            try {
+                available = PgOracleSupport.isAvailable(target);
+            } catch (SQLException e) {
+                log.warn("pg_oracle extension detection failed against backend {}, assuming absent: {}",
+                        targetName, e.getMessage());
+                available = false;
+            }
+            PgOracleSupport.setCurrentStatementAvailable(available);
+        }
         String sqlText = statement.sqlText();
         String rewritten = translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient, cacheStore);
         return next.proceed(statement.withSqlText(rewritten));

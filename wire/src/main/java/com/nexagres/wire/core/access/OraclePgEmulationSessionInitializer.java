@@ -22,10 +22,14 @@ import java.sql.Statement;
  * userId) -- not because orawire needs it for anything today, but because it's the exact,
  * intended integration point db/pg_oracle's VPD section was designed for: an Oracle-migrated
  * app whose RLS/VPD policies already call SYS_CONTEXT('polywire_ctx', 'tenant_id') keeps
- * working unmodified once fronted by orawire, with zero policy-side changes. Best-effort: if
- * pg_oracle isn't installed in the target database at all (a Postgres backend orawire is
- * pointed at with no pg_oracle extension), db_emulation is simply an unrecognized GUC name and
- * this fails loudly rather than silently -- see the comment at the call site in RequestLoop.
+ * working unmodified once fronted by orawire, with zero policy-side changes. If pg_oracle isn't
+ * installed in the target database at all (a Postgres backend orawire is pointed at with no
+ * pg_oracle extension), {@link com.nexagres.wire.core.PgOracleSupport} detects that up front and
+ * this initializer skips both the {@code SET db_emulation} and the SYS_CONTEXT forwarding below
+ * entirely, rather than failing every statement against a plain Postgres backend the way it used
+ * to -- see that class's own javadoc, and {@link com.nexagres.wire.core.DialectTranslations} for
+ * the matching degradation on the translation side (TO_CHAR/TO_DATE left unqualified instead of
+ * pointed at a schema that doesn't exist).
  *
  * A real, subtle interaction with {@link com.nexagres.wire.core.LazyPooledConnection} found
  * live and fixed on pg_oracle's own side (db/pg_oracle's db_emulation_assign_hook, see that
@@ -63,6 +67,17 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
     @Override
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
         delegate.initialize(connection, accessContext);
+
+        // Polywire can be deployed against a plain, unmodified Postgres backend with no pg_oracle
+        // extension installed at all -- `SET db_emulation` on such a backend used to fail loudly
+        // on every single statement, since `db_emulation` is simply an unrecognized GUC name
+        // there (see this class's own now-outdated javadoc, and com.nexagres.wire.core.
+        // PgOracleSupport for the detection this replaces that with). Detected and cached per
+        // backend, not re-probed every call -- see PgOracleSupport's own javadoc for why that
+        // caching is safe.
+        if (!com.nexagres.wire.core.PgOracleSupport.isAvailable(connection)) {
+            return;
+        }
 
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET db_emulation = 'oracle'");

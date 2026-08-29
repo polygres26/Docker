@@ -233,8 +233,17 @@ public final class DialectTranslations {
                         + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema')) " + m.group(1));
         out = SqlLiterals.replaceOutsideLiterals(out, DBA_USERS,
                 m -> "(SELECT usename AS username, NULL::timestamp AS last_login FROM pg_catalog.pg_user) dba_users");
-        out = SqlLiterals.replaceOutsideLiterals(out, TO_CHAR_CALL, m -> "oracle_catalog.to_char(");
-        out = SqlLiterals.replaceOutsideLiterals(out, TO_DATE_CALL, m -> "oracle_catalog.to_date(");
+        if (PgOracleSupport.isCurrentStatementAvailable()) {
+            out = SqlLiterals.replaceOutsideLiterals(out, TO_CHAR_CALL, m -> "oracle_catalog.to_char(");
+            out = SqlLiterals.replaceOutsideLiterals(out, TO_DATE_CALL, m -> "oracle_catalog.to_date(");
+        }
+        // Else: pg_oracle isn't installed on this backend (see PgOracleSupport) -- leave TO_CHAR/
+        // TO_DATE unqualified so they resolve to plain pg_catalog.to_char/to_date instead of a
+        // schema that doesn't exist. That's a real, known downgrade (pg_catalog.to_date returns
+        // date, truncating time-of-day -- see this file's own DATE-to-TIMESTAMP fidelity notes and
+        // db/pg_oracle/test/orawire-integration/README.md's Bug 4), but a working, degraded
+        // result beats every TO_CHAR/TO_DATE statement failing outright with "schema
+        // oracle_catalog does not exist".
         out = mapOracleDdlTypes(out);
         out = applyRownumLimit(out);
         out = rewriteDecodeCalls(out);
