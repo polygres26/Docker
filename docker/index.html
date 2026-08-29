@@ -513,23 +513,23 @@ ITEM
           </div>
         </div>
         <div class="cacheDemoPanel">
-          <p class="cacheDemoStepLabel">3 — MongoDB warms a different row, Oracle hits that too</p>
+          <p class="cacheDemoStepLabel">3 — MongoDB warms its own "1001", Oracle hits that too</p>
           <div class="termWindow">
             <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
             <pre class="termBody">$ mongosh --port 28000
 
-test&gt; db.orders.insertOne({ _id: "2002", amount: 44.50 })
-test&gt; db.orders.find({ _id: "2002" })
-[ { _id: '2002', amount: 44.5 } ]
+test&gt; db.orders.insertOne({ _id: "1001", amount: 44.50 })
+test&gt; db.orders.find({ _id: "1001" })
+[ { _id: '1001', amount: 44.5 } ]
 # row cache MISS → PostgreSQL round trip → row cached
 
 $ sql app/password@//localhost:11521/postgres
 
-SQL&gt; SELECT doc FROM "test"."orders" WHERE id = '"2002"';
+SQL&gt; SELECT doc FROM "test"."orders" WHERE id = '"1001"';
 
 DOC
 --------------------------------
-{"_id": "2002", "amount": 44.5}
+{"_id": "1001", "amount": 44.5}
 
 1 row selected.
 
@@ -538,9 +538,11 @@ DOC
         </div>
       </div>
       <p class="rttNote">
-        Two different rows, two different physical tables, one Oracle client reading both from
-        cache — see <a href="polywire.html#cache-vs-round-trip">exactly how the point-lookup cache
-        key works</a>.
+        Same key, <code>"1001"</code>, in both — and no collision, because the cache key is
+        namespaced by physical table (<code>dynamo_item_orders</code> vs.
+        <code>"test"."orders"</code>), not by key value alone. One Oracle client reads both from
+        cache regardless — see <a href="polywire.html#cache-vs-round-trip">exactly how the
+        point-lookup cache key works</a>.
       </p>
 
       <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
