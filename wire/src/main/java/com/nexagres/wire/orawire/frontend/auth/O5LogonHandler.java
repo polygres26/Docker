@@ -31,9 +31,15 @@ public final class O5LogonHandler {
         boolean richAuth = reader.isAnoEligible();
         TnsPacket phaseOnePacket = readNonEmptyPacket(reader, out, largeSdu);
         FunctionCall call1 = expectFunction(phaseOnePacket, AuthConstants.FUNC_AUTH_PHASE_ONE);
-        String username = richAuth
-                ? readUsernameAndSkipPairsRich(call1.reader())
-                : readUsernameAndSkipPairs(call1.reader());
+        String username;
+        boolean dblinkClient = false;
+        if (richAuth) {
+            RichPhaseOneAuth parsed = readUsernameAndSkipPairsRich(call1.reader());
+            username = parsed.username();
+            dblinkClient = isDblinkProgram(parsed.pairs());
+        } else {
+            username = readUsernameAndSkipPairs(call1.reader());
+        }
 
         byte[] password = credentials.lookupPassword(username);
         if (password == null) {
@@ -54,7 +60,7 @@ public final class O5LogonHandler {
         byte[] cskSalt = randomBytes(CSK_SALT_LENGTH);
 
         if (richAuth) {
-            sendPhaseOneResponseRich(out, verifierData, authSesskey, cskSalt, largeSdu);
+            sendPhaseOneResponseRich(out, verifierData, authSesskey, cskSalt, dblinkClient, largeSdu);
         } else {
             sendPhaseOneResponse(out, verifierData, authSesskey, cskSalt, call1.sequenceNumber(), largeSdu);
         }
@@ -74,8 +80,10 @@ public final class O5LogonHandler {
 
         if (success) {
             byte[] comboKey = deriveComboKey(pairs, passwordHash, sessionKeyPartA, cskSalt);
-            if (richAuth) {
+            if (richAuth && dblinkClient) {
                 sendPhaseTwoSuccessRich(out, comboKey, largeSdu);
+            } else if (richAuth) {
+                sendPhaseTwoSuccessShort(out, comboKey, largeSdu);
             } else {
                 sendPhaseTwoSuccess(out, comboKey, call2.sequenceNumber(), largeSdu);
             }
@@ -293,13 +301,35 @@ public final class O5LogonHandler {
         return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
     }
 
-    private String readUsernameAndSkipPairsRich(TtcReader r) {
+    private record RichPhaseOneAuth(String username, Map<String, String> pairs) {
+    }
+
+    private RichPhaseOneAuth readUsernameAndSkipPairsRich(TtcReader r) {
         byte[] rec = r.readRemaining();
         RichAuthHeader header = readRichAuthHeader(rec, PHASE_ONE_FIRST_KEY);
         String username = readRichUsername(rec, header.usernameStart(), header.hasUser(), header.userLen());
-        readRichPairs(new TtcReader(java.util.Arrays.copyOfRange(rec, header.usernameStart() + header.userLen(),
-                rec.length)));
-        return username;
+        Map<String, String> pairs = readRichPairs(new TtcReader(
+                java.util.Arrays.copyOfRange(rec, header.usernameStart() + header.userLen(), rec.length)));
+        return new RichPhaseOneAuth(username, pairs);
+    }
+
+    /**
+     * A real distributed-database-link connection identifies itself in its phase-one
+     * {@code AUTH_PROGRAM_NM} pair as {@code oracle@<host>...} -- every other real client seen so
+     * far (native OCI {@code sqlplus}, {@code sqlcl}, JDBC) identifies as {@code sqlplus@...},
+     * {@code sqlcl@...}, or a JDBC driver name instead. This distinguishes the two phase-one
+     * terminator shapes below: confirmed via a byte-for-byte capture of a real, plain (non-dblink)
+     * {@code sqlplus} login against a real Oracle 23c instance, whose server used the SHORT
+     * (81-byte) terminator -- not the 154-byte one this codebase had generalized to every
+     * ANO-eligible/"rich" client after the dblink capture that originally produced it. The 154-byte
+     * shape is real, but it's dblink-specific, not universal; sending it to a plain sqlplus client
+     * corrupts the phase-one response from its point of view and crashes its native OCI session-key
+     * derivation (confirmed live: OCI incident oci-10847 in kpugskey, immediately after receiving
+     * this response, with no phase-two call ever sent).
+     */
+    private static boolean isDblinkProgram(Map<String, String> phaseOnePairs) {
+        String program = phaseOnePairs.get("AUTH_PROGRAM_NM");
+        return program != null && program.toLowerCase(java.util.Locale.ROOT).startsWith("oracle@");
     }
 
     private Map<String, String> readPhaseTwoPairsRich(TtcReader r) {
@@ -383,8 +413,24 @@ public final class O5LogonHandler {
         "AAQBAAAAdgUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAANgEAAAAAAAAAAAAAAAAAALDU"
             + "IBGN6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
+    // Real bytes captured from an actual Oracle Database 23c Free instance responding to a real,
+    // PLAIN (non-dblink) `sqlplus` login -- via a raw TCP-proxy capture, same technique used
+    // elsewhere in this file. This is the short terminator every ordinary rich/ANO-eligible client
+    // (native OCI sqlplus, and presumably sqlcl/JDBC if they ever negotiate rich auth) actually
+    // gets; PHASE_ONE_TERMINATOR_RICH_B64 above is real too, but it's specific to a distributed-
+    // database-link session (see isDblinkProgram) -- sending IT to a plain sqlplus login corrupts
+    // the phase-one response from that client's point of view and crashes its native OCI
+    // session-key derivation before it ever sends a phase-two call (confirmed live: OCI incident
+    // oci-10847 in kpugskey immediately after receiving the wrong-shaped response). No "varying"
+    // byte offset is patched into this one -- unlike the dblink terminator, only a single real
+    // capture of this shape exists so far, and there's no evidence yet of which (if any) byte
+    // within it varies per-session; used verbatim, the same approach already applied to
+    // LOGIN_REJECTION_PREFIX for the same reason.
+    private static final String PHASE_ONE_TERMINATOR_SHORT_B64 =
+        "AAQBAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAd";
+
     private void sendPhaseOneResponseRich(OutputStream out, byte[] verifierData, byte[] authSesskey, byte[] cskSalt,
-            boolean largeSdu) throws IOException {
+            boolean dblinkClient, boolean largeSdu) throws IOException {
         java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
         buf.write(TtcConstants.MSG_TYPE_PARAMETER);
         buf.write(6);
@@ -393,13 +439,17 @@ public final class O5LogonHandler {
         writeRichPair(buf, "AUTH_PBKDF2_CSK_SALT", hex(cskSalt), 0);
         writeRichPair(buf, "AUTH_PBKDF2_VGEN_COUNT", String.valueOf(AuthConstants.PBKDF2_VGEN_COUNT), 0);
         writeRichPair(buf, "AUTH_PBKDF2_SDER_COUNT", String.valueOf(AuthConstants.PBKDF2_SDER_COUNT), 0);
-        
+
         writeRichPair(buf, "AUTH_GLOBALLY_UNIQUE_DBID\0", RICH_TIER_DATABASE_GUID_HEX, 0);
-        byte[] terminator = java.util.Base64.getDecoder().decode(PHASE_ONE_TERMINATOR_RICH_B64);
-        
-        byte[] terminatorVaryingBytes = randomBytes(PHASE_ONE_TERMINATOR_VARYING_LENGTH);
-        System.arraycopy(terminatorVaryingBytes, 0, terminator, PHASE_ONE_TERMINATOR_VARYING_OFFSET,
-                terminatorVaryingBytes.length);
+        byte[] terminator;
+        if (dblinkClient) {
+            terminator = java.util.Base64.getDecoder().decode(PHASE_ONE_TERMINATOR_RICH_B64);
+            byte[] terminatorVaryingBytes = randomBytes(PHASE_ONE_TERMINATOR_VARYING_LENGTH);
+            System.arraycopy(terminatorVaryingBytes, 0, terminator, PHASE_ONE_TERMINATOR_VARYING_OFFSET,
+                    terminatorVaryingBytes.length);
+        } else {
+            terminator = java.util.Base64.getDecoder().decode(PHASE_ONE_TERMINATOR_SHORT_B64);
+        }
         buf.write(terminator);
         sendData(out, buf.toByteArray(), largeSdu);
     }
@@ -528,6 +578,98 @@ public final class O5LogonHandler {
         "AAQAAAAEAAAAAMoAAAAAAAQAAAAEBHDYbMsAAAAAAAQBAAAAhxUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
         "AAAAAAADAAAAAAAANgEAAAAAAAAAAAAAAAAAALDUIBGN6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
+
+    // Real bytes captured from an actual Oracle Database 23c Free instance's phase-two SUCCESS
+    // response to a real, PLAIN (non-dblink) `sqlplus` login -- same raw TCP-proxy capture as
+    // PHASE_ONE_TERMINATOR_SHORT_B64 above, same reason: PHASE_TWO_RESPONSE_EXTENDED_B64 below is
+    // real too, but specific to a distributed-database-link session (see isDblinkProgram) --
+    // sending it to a plain sqlplus client corrupts this response from that client's point of view
+    // and crashes its native OCI session-key verification (confirmed live: OCI incident oci-10847
+    // in kpu8lgn/upirtr, immediately after receiving it, right where phase-one's own crash used to
+    // be before that was fixed). Patched at runtime by locating the AUTH_SVR_RESPONSE key text
+    // itself (see sendPhaseTwoSuccessShort) rather than a hardcoded byte offset -- this template
+    // was hand-transcribed from a live capture once already and a hardcoded offset is exactly the
+    // kind of transcription mistake that already broke PHASE_ONE_TERMINATOR_SHORT_B64 once during
+    // this same investigation (an extra/missing byte silently shifts every offset after it).
+    private static final String PHASE_TWO_RESPONSE_SHORT_B64 =
+        "CDQAEwAAABNBVVRIX1ZFUlNJT05fU1RSSU5HIgAAACItIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlAAAAABAAAAAQ"
+            + "QVVUSF9WRVJTSU9OX1NRTAIAAAACMjYAAAAAEwAAABNBVVRIX1hBQ1RJT05fVFJBSVRTAQAAAAEzAAAAAA8AAAAPQVVUSF9WRVJT"
+            + "SU9OX05PCQAAAAkzODc1ODgwOTYAAAAAEwAAABNBVVRIX1ZFUlNJT05fU1RBVFVTAQAAAAEwAAAAABUAAAAVQVVUSF9DQVBBQklM"
+            + "SVRZX1RBQkxFAAAAAAAAAAAPAAAAD0FVVEhfTEFTVF9MT0dJThoAAAAaNzg3RTA1MUUxNTM0MjQwMDAwMDAwMDAwMDAAAAAACwAA"
+            + "AAtBVVRIX0RCTkFNRQgAAAAIRlJFRVBEQjEAAAAAEQAAABFBVVRIX0RCX01PVU5UX0lEAAoAAAAKMTUxNDU4NzIwMQAAAAALAAAA"
+            + "C0FVVEhfREJfSUQACgAAAAozOTYxNDMzMDA5AAAAAAwAAAAMQVVUSF9VU0VSX0lEAQAAAAE5AAAAAA8AAAAPQVVUSF9TRVNTSU9O"
+            + "X0lEAgAAAAI1MwAAAAAPAAAAD0FVVEhfU0VSSUFMX05VTQUAAAAFNDMwNDYAAAAAEAAAABBBVVRIX0lOU1RBTkNFX05PAQAAAAEx"
+            + "AAAAABAAAAAQQVVUSF9GQUlMT1ZFUl9JRAEAAAABMQAAAAAPAAAAD0FVVEhfU0VSVkVSX1BJRAMAAAADMjU1AAAAABMAAAATQVVU"
+            + "SF9TQ19TRVJWRVJfSE9TVAwAAAAMY2MzMGM0YzA4NDNmAAAAABUAAAAVQVVUSF9TQ19EQlVOSVFVRV9OQU1FBAAAAARGUkVFAAAA"
+            + "ABUAAAAVQVVUSF9TQ19JTlNUQU5DRV9OQU1FBAAAAARGUkVFAAAAABMAAAATQVVUSF9TQ19JTlNUQU5DRV9JRAEAAAABMQAAAAAb"
+            + "AAAAG0FVVEhfU0NfSU5TVEFOQ0VfU1RBUlRfVElNRSQAAAAkMjAyNi0wOC0yOSAwMDoyMzoyOC4wMDAwMDAwMDAgLTA3OjAwAAAA"
+            + "ABEAAAARQVVUSF9TQ19EQl9ET01BSU4AAAAAAAAAABQAAAAUQVVUSF9TQ19TRVJWSUNFX05BTUUIAAAACGZyZWVwZGIxAAAAABsA"
+            + "AAAbQVVUSF9PTlNfUkxCX1NVQlNDUl9QQVRURVJONAAAADQlImV2ZW50VHlwZT1kYXRhYmFzZS9ldmVudC9zZXJ2aWNlbWV0cmlj"
+            + "cy9mcmVlcGRiMSIAAAAAABoAAAAaQVVUSF9PTlNfSEFfU1VCU0NSX1BBVFRFUk5JAAAASSgiZXZlbnRUeXBlPWRhdGFiYXNlL2V2"
+            + "ZW50L3NlcnZpY2UiKSB8ICgiZXZlbnRUeXBlPWRhdGFiYXNlL2V2ZW50L2hvc3QiKQAAAAAAGgAAABpBVVRIX1NDX1JFQUxfREJV"
+            + "TklRVUVfTkFNRQQAAAAERlJFRQAAAAARAAAAEUFVVEhfSU5TVEFOQ0VOQU1FBAAAAARGUkVFAAAAAA8AAAAPQVVUSF9OTFNfTFhM"
+            + "QU4ACAAAAAhBTUVSSUNBTgAAAAAWAAAAFkFVVEhfTkxTX0xYQ1RFUlJJVE9SWQAHAAAAB0FNRVJJQ0EAAAAAFQAAABVBVVRIX05M"
+            + "U19MWENDVVJSRU5DWQABAAAAASQAAAAAFAAAABRBVVRIX05MU19MWENJU09DVVJSAAcAAAAHQU1FUklDQQAAAAAVAAAAFUFVVEhf"
+            + "TkxTX0xYQ05VTUVSSUNTAAIAAAACLiwAAAAAEwAAABNBVVRIX05MU19MWENEQVRFRk0ACQAAAAlERC1NT04tUlIAAAAAFQAAABVB"
+            + "VVRIX05MU19MWENEQVRFTEFORwAIAAAACEFNRVJJQ0FOAAAAABEAAAARQVVUSF9OTFNfTFhDU09SVAAGAAAABkJJTkFSWQAAAAAV"
+            + "AAAAFUFVVEhfTkxTX0xYQ0NBTEVOREFSAAkAAAAJR1JFR09SSUFOAAAAABUAAAAVQVVUSF9OTFNfTFhDVU5JT05DVVIAAQAAAAEk"
+            + "AAAAABMAAAATQVVUSF9OTFNfTFhDVElNRUZNAA4AAAAOSEguTUkuU1NYRkYgQU0AAAAAEwAAABNBVVRIX05MU19MWENTVE1QRk0A"
+            + "GAAAABhERC1NT04tUlIgSEguTUkuU1NYRkYgQU0AAAAAEwAAABNBVVRIX05MU19MWENUVFpORk0AEgAAABJISC5NSS5TU1hGRiBB"
+            + "TSBUWlIAAAAAEwAAABNBVVRIX05MU19MWENTVFpORk0AHAAAABxERC1NT04tUlIgSEguTUkuU1NYRkYgQU0gVFpSAAAAABgAAAAY"
+            + "QVVUSF9OTFNfTFhMRU5TRU1BTlRJQ1MABAAAAARCWVRFAAAAABkAAAAZQVVUSF9OTFNfTFhOQ0hBUkNPTlZFWENQAAUAAAAFRkFM"
+            + "U0UAAAAAEAAAABBBVVRIX05MU19MWENPTVAABgAAAAZCSU5BUlkAAAAAEQAAABFBVVRIX1NWUl9SRVNQT05TRWAAAABgNDlGRDQ4"
+            + "OTBCOTRGNAAAAnsGAAAAIAA5RUU5NTMzOTIzNDExQzNBRDhGRkZEOUFBMTk0RjI3MjJBMUY4MTk4MTYyRUU3NjI5OTE0OUIzQTVB"
+            + "M0RENEEyQkQxMUE2NjQ2QTJERkY3MTU2NAAAAAAVAAAAFUFVVEhfTUFYX09QRU5fQ1VSU09SUwMAAAADMzAwAAAAAA0AAAANQVVU"
+            + "SF9QREJfVUlEAAoAAAAKMzk2MTQzMzAwOQAAAAAUAAAAFEFVVEhfTUFYX0lERU5fTEVOR1RIAwAAAAMxMjgAAAAACgAAAApBVVRI"
+            + "X0ZMQUdTAQAAAAExAAAAABAAAAAQQVVUSF9TRVJWRVJfVFlQRQEAAAABMQAAAAAYAAAAGEFVVEhfU0VSVkVSX0NBUEFCSUxJVElF"
+            + "UwEAAAABMQAAAAAQAAAAEEFVVEhfUkVTRVRfU1RBVEUBAAAAATAAAAAAFwUBABAGAAAAFgAAAAALAAAAC4AAAAA1PDyAAAAAowAA"
+            + "AAAAWAAAAFgAAAABAAAACQAAAAQAAAAKAAAAQwAAAAsAAABEAAAADAAAAA4AAAAPAAAAFQAAACMAAAAkAAAAMgAAADMAAAA/AAAA"
+            + "QAAAAEEAAABqAAAAawAAAH0AAAAhqgAdAAAAHSJEQkEiLCJBUV9BRE1JTklTVFJBVE9SX1JPTEUiAAAAAMcABAAAAARISUdIAAAA"
+            + "AMwAAAAAAAQAAAAEAAAAAMoAAAAAAAQAAAAEBGy8TMsAAAAAAAQBAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            + "AAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAd";
+
+    private static byte[] patchAuthSvrResponse(byte[] template, String newValueHex) {
+        byte[] keyBytes = "AUTH_SVR_RESPONSE".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        int keyStart = indexOf(template, keyBytes);
+        if (keyStart < 0) {
+            throw new IllegalStateException("AUTH_SVR_RESPONSE key not found in phase-two response template");
+        }
+        int valOuterPos = keyStart + keyBytes.length;
+        int declaredLen = template[valOuterPos] & 0xFF;
+        byte[] newValueBytes = newValueHex.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        if (declaredLen != newValueBytes.length) {
+            throw new IllegalStateException("AUTH_SVR_RESPONSE template value length " + declaredLen
+                    + " does not match computed value length " + newValueBytes.length);
+        }
+        int valueStart = valOuterPos + 1 + 4;
+        byte[] patched = template.clone();
+        System.arraycopy(newValueBytes, 0, patched, valueStart, newValueBytes.length);
+        return patched;
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle) {
+        outer:
+        for (int i = 0; i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    private void sendPhaseTwoSuccessShort(OutputStream out, byte[] comboKey, boolean largeSdu) throws IOException {
+        byte[] plaintext = new byte[32];
+        RANDOM.nextBytes(plaintext);
+        System.arraycopy("SERVER_TO_CLIENT".getBytes(java.nio.charset.StandardCharsets.US_ASCII), 0, plaintext, 16, 16);
+        byte[] authSvrResponse = OracleCrypto.encryptCbcPkcs7(comboKey, plaintext);
+        String authSvrResponseHex = hex(authSvrResponse);
+        byte[] template = java.util.Base64.getDecoder().decode(PHASE_TWO_RESPONSE_SHORT_B64);
+        byte[] payload = patchAuthSvrResponse(template, authSvrResponseHex);
+        sendData(out, payload, largeSdu);
+    }
 
     private void sendPhaseTwoSuccessRich(OutputStream out, byte[] comboKey, boolean largeSdu) throws IOException {
         byte[] plaintext = new byte[32];

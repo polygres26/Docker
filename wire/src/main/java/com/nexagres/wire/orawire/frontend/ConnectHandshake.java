@@ -63,7 +63,11 @@ public final class ConnectHandshake {
         int negotiatedVersion = negotiateVersion(clientDesiredVersion);
         sendAccept(out, negotiatedVersion, clientServiceOptions, clientByteOrder);
         reader.setLargeSdu(true);
-        
+
+        // A negotiated version >= 320 is what puts O5LogonHandler on its "rich"/ANO-eligible auth
+        // path -- confirmed live: sqlcl requests 319 (legacy path, works), real native-OCI sqlplus
+        // requests 320 (rich path). See O5LogonHandler's isDblinkProgram/PHASE_ONE_TERMINATOR_SHORT
+        // for the real, captured differences within that rich path itself.
         reader.setAnoEligible(negotiatedVersion >= 320);
         return descriptor;
     }
