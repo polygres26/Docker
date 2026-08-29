@@ -330,6 +330,16 @@ public final class Main {
             stages.add(cacheStage);
         }
         stages.add(statsStage);
+        // Last, deliberately -- see QueryRepairStage's own javadoc for why it needs to wrap only
+        // the terminal executor call, nothing else in the pipeline. Shares the same LLM client/
+        // config surface dialectTranslationStage does; off by default, unlike translation.
+        boolean queryRepairEnabled = "true".equalsIgnoreCase(System.getenv(com.nexagres.wire.core.QueryRepairStage.ENABLED_ENV));
+        com.nexagres.wire.core.QueryRepairStage queryRepairStage =
+                new com.nexagres.wire.core.QueryRepairStage(queryRepairEnabled, initialLlmClient);
+        log.info("query repair (LLM self-healing on real backend SQL errors): {} (set {}=true to enable; "
+                        + "uses the same LLM provider config as dialect translation)",
+                queryRepairEnabled ? "enabled" : "disabled", com.nexagres.wire.core.QueryRepairStage.ENABLED_ENV);
+        stages.add(queryRepairStage);
         List<PipelineStage> pipelineStages = List.copyOf(stages);
 
         PgBackendPool backendPool = new PgBackendPool(options);
@@ -362,6 +372,7 @@ public final class Main {
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
                 adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
+        metricsServer.setQueryRepairStage(queryRepairStage);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
@@ -547,6 +558,7 @@ public final class Main {
             oauth.reload(c.oauthIssuer(), c.oauthAudience(), c.oauthUserIdClaim(), c.oauthRolesClaim());
             awsIamCredentials.reload(c.awsIamCredentials());
             dialectTranslationStage.reconfigureLlm(c.llmProvider(), c.llmApiKey(), c.llmBaseUrl(), c.llmModel());
+            queryRepairStage.reconfigureLlm(c.llmProvider(), c.llmApiKey(), c.llmBaseUrl(), c.llmModel());
             log.info("config: version {} applied (qos rate={}/s burst={}, {} router rule set(s), "
                             + "{} backend(s), cache={}, {} rollup definition(s), acl={} rule(s), "
                             + "oauth={}, awsIam={} credential(s))",

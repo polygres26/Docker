@@ -70,13 +70,33 @@ public final class TranslationLlmClient {
         String systemPrompt = "You are a SQL dialect translator. Translate the user's " + from
                 + " SQL statement into equivalent " + to + " SQL. Reply with ONLY the translated SQL "
                 + "statement, no explanation, no markdown code fences, no trailing semicolon commentary.";
+        return chatComplete(systemPrompt, sqlText, "translation");
+    }
 
+    /**
+     * Asks the LLM to repair a statement a real backend genuinely rejected, rather than translate
+     * between two known dialects -- see {@link com.nexagres.wire.core.QueryRepairStage}'s own
+     * javadoc for why these are different asks. {@code dialect} is passed only as context (what
+     * SQL flavor the client speaks), not a translation target: the output is always meant to run
+     * against the SAME backend that just rejected the input, so unlike {@link #translate}, there
+     * is no separate "to" dialect here.
+     */
+    public String repair(String sqlText, SourceDialect dialect, String backendErrorMessage) throws Exception {
+        String systemPrompt = "You are a SQL repair assistant. The user's " + dialect + " SQL statement "
+                + "below was rejected by the database with the error shown. Return a corrected SQL "
+                + "statement that preserves the original intent and is valid to execute as-is against "
+                + "the same database. Reply with ONLY the corrected SQL statement, no explanation, no "
+                + "markdown code fences.\n\nDatabase error: " + backendErrorMessage;
+        return chatComplete(systemPrompt, sqlText, "repair");
+    }
+
+    private String chatComplete(String systemPrompt, String userContent, String purpose) throws Exception {
         JsonObject systemMessage = new JsonObject();
         systemMessage.addProperty("role", "system");
         systemMessage.addProperty("content", systemPrompt);
         JsonObject userMessage = new JsonObject();
         userMessage.addProperty("role", "user");
-        userMessage.addProperty("content", sqlText);
+        userMessage.addProperty("content", userContent);
         JsonArray messages = new JsonArray();
         messages.add(systemMessage);
         messages.add(userMessage);
@@ -97,7 +117,7 @@ public final class TranslationLlmClient {
 
         HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
-            throw new RuntimeException("translation LLM error (HTTP " + response.statusCode() + "): " + response.body());
+            throw new RuntimeException(purpose + " LLM error (HTTP " + response.statusCode() + "): " + response.body());
         }
 
         JsonObject responseBody = gson.fromJson(response.body(), JsonObject.class);

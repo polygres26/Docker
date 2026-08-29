@@ -82,6 +82,16 @@ public final class MetricsServer {
     // field access, not a captured local), so setting it after that handler object is built is
     // still safe: no request is ever handled before this constructor call returns.
     private com.nexagres.wire.core.SqlPlanStore federationPlanStore;
+    // Same "set after construction, orthogonal and opt-in" reasoning as federationPlanStore above
+    // -- QueryRepairStage doesn't exist yet at MetricsServer construction time in Main#main
+    // either. Null means "query repair isn't wired into this pipeline" (a plain -1/-1 pair in the
+    // summary, not an error) rather than every other constructor overload above needing yet
+    // another parameter.
+    private com.nexagres.wire.core.QueryRepairStage queryRepairStage;
+
+    public void setQueryRepairStage(com.nexagres.wire.core.QueryRepairStage queryRepairStage) {
+        this.queryRepairStage = queryRepairStage;
+    }
 
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.nexagres.wire.acl.ConnectionGate.DISABLED);
@@ -359,7 +369,7 @@ public final class MetricsServer {
                     }
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
-                    response.getWriter().write(renderMetricsSummary(statsStage, mcpMetrics));
+                    response.getWriter().write(renderMetricsSummary(statsStage, mcpMetrics, queryRepairStage));
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1395,7 +1405,8 @@ public final class MetricsServer {
     }
 
     private static String renderMetricsSummary(StatsCollectorStage statsStage,
-            com.nexagres.wire.mcp.McpMetricsCollector mcpMetrics) {
+            com.nexagres.wire.mcp.McpMetricsCollector mcpMetrics,
+            com.nexagres.wire.core.QueryRepairStage queryRepairStage) {
         com.nexagres.wire.core.SqlMetricsCollector.Snapshot snap = statsStage.sqlMetricsSnapshot();
         StringBuilder json = new StringBuilder("{");
         json.append("\"protocolCounts\":{");
@@ -1464,7 +1475,12 @@ public final class MetricsServer {
                     .append(",\"avgMs\":").append(r.avgMillis())
                     .append('}');
         }
-        json.append("]}");
+        json.append("],\"queryRepair\":{\"attempted\":")
+                .append(queryRepairStage == null ? -1 : queryRepairStage.attemptCount())
+                .append(",\"repaired\":")
+                .append(queryRepairStage == null ? -1 : queryRepairStage.repairedCount())
+                .append('}');
+        json.append('}');
         return json.toString();
     }
 
