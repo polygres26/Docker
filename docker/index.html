@@ -405,8 +405,9 @@ aws sqs receive-message \                          # SQS wire
           <span class="cachePg">PostgreSQL — system of record</span>
         </div>
         <figcaption>Shared today across every protocol that goes through Polywire's dialect-translation
-        stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP. MongoDB and DynamoDB keep their
-        own protocol-specific caches (find/GetItem only) rather than this shared one — see
+        stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, for arbitrary opted-in
+        <code>SELECT</code> results. MongoDB and DynamoDB don't share entries in <i>this</i>
+        cache — but a separate, narrower point-lookup cache now does bring them in, see below —
         <a href="polywire.html#cache-vs-round-trip">exactly how the cache key works</a> for what
         does and doesn't share an entry.</figcaption>
       </figure>
@@ -453,6 +454,93 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
       <p class="rttNote">
         Written through one protocol. Cached once. Served through another — see
         <a href="polywire.html#cache-vs-round-trip">the real metrics behind this</a>.
+      </p>
+
+      <h4 class="demoSubhead" id="row-cache-dynamo-mongo">Point lookups: DynamoDB and MongoDB now share cache with SQL too<a class="permalink" href="#row-cache-dynamo-mongo" aria-label="Link to this section">#</a></h4>
+      <p class="rttNote">
+        The result cache above is unchanged, but there's now a second, narrower cache tier for
+        exact primary-key point lookups — <code>GetItem</code>, <code>find</code> by
+        <code>_id</code>, or a plain SQL <code>WHERE pk = ?</code> — and this one <b>does</b> cross
+        into DynamoDB and MongoDB. Both protocols store their data in Postgres tables with a fixed,
+        known physical shape (dynamowire's <code>pk_value</code>/<code>sk_value</code>/<code>item</code>
+        columns, mongowire's <code>id</code>/<code>doc</code> columns), so a point-lookup entry can
+        be keyed on the physical table and key value alone — no dialect translation needed to prove
+        two requests mean the same row. Each protocol shares its entries with any SQL client
+        (Oracle, Postgres, MySQL, SQL Server) reading that exact same physical table — DynamoDB and
+        MongoDB don't share entries directly with <i>each other</i>, since a table named
+        <code>orders</code> in DynamoDB and a collection named <code>orders</code> in MongoDB are
+        two different physical Postgres tables under the hood.
+      </p>
+      <p class="pillarStrip">Point-Lookup Cache · DynamoDB ↔ SQL · MongoDB ↔ SQL · Automatically Invalidated</p>
+
+      <h4 class="demoSubhead">See it happen: DynamoDB and MongoDB warm it, Oracle hits it</h4>
+      <div class="cacheDemoSteps three">
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">1 — DynamoDB writes and reads a row</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ aws dynamodb put-item --endpoint-url http://localhost:18000 \
+    --table-name orders \
+    --item '{"id":{"S":"1001"},"amount":{"N":"129.99"}}'
+
+$ aws dynamodb get-item --endpoint-url http://localhost:18000 \
+    --table-name orders --key '{"id":{"S":"1001"}}'
+{
+    "Item": {
+        "id": {"S": "1001"},
+        "amount": {"N": "129.99"}
+    }
+}
+
+# admin console: row cache MISS → PostgreSQL round trip → row cached</pre>
+          </div>
+        </div>
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">2 — Oracle asks for that same row</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQL&gt; SELECT item FROM dynamo_item_orders WHERE pk_value = '1001';
+
+ITEM
+--------------------------------------------
+{"id":{"S":"1001"},"amount":{"N":"129.99"}}
+
+1 row selected.
+
+# admin console: row cache HIT → 0 Postgres round trips</pre>
+          </div>
+        </div>
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">3 — MongoDB warms a different row, Oracle hits that too</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mongosh --port 28000
+
+test&gt; db.orders.insertOne({ _id: "2002", amount: 44.50 })
+test&gt; db.orders.find({ _id: "2002" })
+[ { _id: '2002', amount: 44.5 } ]
+# row cache MISS → PostgreSQL round trip → row cached
+
+$ sql app/password@//localhost:11521/postgres
+
+SQL&gt; SELECT doc FROM "test"."orders" WHERE id = '"2002"';
+
+DOC
+--------------------------------
+{"_id": "2002", "amount": 44.5}
+
+1 row selected.
+
+# admin console: row cache HIT → 0 Postgres round trips</pre>
+          </div>
+        </div>
+      </div>
+      <p class="rttNote">
+        Two different rows, two different physical tables, one Oracle client reading both from
+        cache — see <a href="polywire.html#cache-vs-round-trip">exactly how the point-lookup cache
+        key works</a>.
       </p>
 
       <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
@@ -663,7 +751,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
         <li><span class="uc-body"><span class="uc-title">Does Polywire support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, Oracle, and MySQL — a real per-caller identity feeds your own Postgres RLS policies. <a href="polywire.html#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API redirects traffic and waits for a real zero-replication-lag cutover before confirming. <a href="polywire.html#outages">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Can Polywire connect to Supabase, RDS, Cloud SQL, Azure, or OCI?</span><span class="uc-desc">Yes — each has a worked example and its real provider-specific gotchas. <a href="CONNECTING.md">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does Polywire cache query results?</span><span class="uc-desc">Yes — and it's shared across protocols: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache, with automatic table-level invalidation. MongoDB and DynamoDB keep their own, separate protocol-specific caches. <a href="polywire.html#cache-vs-round-trip">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Polywire cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="polywire.html#cache-vs-round-trip">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">What security features does Polywire actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="polywire.html#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Polywire free to use?</span><span class="uc-desc">Yes — Developer is free forever with every protocol and feature enabled, capped on scale. See Pricing above.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Polyadvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
@@ -754,7 +842,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
         {
           "@type": "Question",
           "name": "Does Polywire cache query results?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- Polycache, Polywire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres, and is shared across protocols: a result cached via one protocol (e.g. MySQL) is served to another (e.g. Oracle, SQL Server, PostgreSQL, gRPC, or MCP) without recomputing it. MongoDB and DynamoDB keep their own separate, protocol-specific caches (find/GetItem only) rather than sharing this one. Invalidation is automatic and table-level: any write against a cached table evicts every cached entry for that table, whether the write binds parameters or sends literal SQL values." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- two shared cache tiers, neither a per-protocol silo. Polycache's original tier, opt-in per table, serves repeat arbitrary SELECT reads without a round trip to Postgres, shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP -- a result cached via one protocol (e.g. MySQL) is served to another (e.g. Oracle) without recomputing it. A second, newer tier caches exact primary-key point lookups only (DynamoDB GetItem, MongoDB find by _id, or SQL WHERE pk = ?), keyed by the physical Postgres table and key value -- this one does bring DynamoDB and MongoDB in, each sharing its entries with any SQL client reading the same physical table (though not directly with each other, since they store data in different physical tables even under the same logical name). Invalidation is automatic and table-level in both tiers: any write evicts the affected cached entries, whether the write binds parameters or sends literal SQL values." }
         },
         {
           "@type": "Question",

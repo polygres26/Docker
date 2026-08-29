@@ -140,12 +140,18 @@
       <h3 class="subhead" id="cache-vs-round-trip">Polycache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
       <p class="statTeaser">Up to <b>9.3× faster</b> repeat reads — built-in distributed caching reduces Postgres round trips across every protocol Polywire speaks.</p>
       <p class="rttNote">
-        <b>Shared across protocols, not per-protocol silos.</b> PostgreSQL, MySQL, Oracle, SQL
-        Server, gRPC, and MCP all read and populate the same distributed cache — a result cached
-        via one protocol is served to another asking for the same row, with no duplicate cache and
-        no protocol-specific staleness window. MongoDB and DynamoDB keep their own, separate
-        protocol-specific caches (find/GetItem exact-key lookups only) rather than sharing this
-        one.
+        <b>Shared across protocols, not per-protocol silos — in two tiers.</b> PostgreSQL, MySQL,
+        Oracle, SQL Server, gRPC, and MCP all read and populate the same distributed cache for
+        arbitrary opted-in <code>SELECT</code> results — a result cached via one protocol is
+        served to another asking for the same row, with no duplicate cache and no
+        protocol-specific staleness window. A second, narrower tier now covers exact primary-key
+        point lookups only (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL
+        <code>WHERE pk = ?</code>) — and this one <i>does</i> bring DynamoDB and MongoDB in, each
+        sharing its cache entries with any SQL client reading the same physical Postgres table
+        (though not directly with each other, since they store data under different physical
+        tables even when the logical table/collection name matches). See
+        <a href="index.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
+        that looks like.
       </p>
       <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
       <p class="rttNote">
