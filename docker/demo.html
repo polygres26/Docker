@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polywire &amp; Nexagres Advisor — Interactive Demo</title>
+<meta name="description" content="Click through the Polywire and Nexagres Advisor admin consoles with synthetic data — no signup, no backend required.">
+<meta name="robots" content="noindex">
+<style>
+/* Tokens lifted verbatim from wire/web/src/index.css + advisor/web/src/index.css -- this demo
+   reuses the real product's palette rather than inventing one, per "honor what's already there." */
+:root {
+  --logo-url: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAgKADAAQAAAABAAAAgAAAAABIjgR3AABAAElEQVR4Ac19B5wcxZV+dffk2dm80q6yhAJCgAARZCSiSUbCnIkGYxvOOGHABkfsO3N3Pp993NkHR3DCxsZgfNhgksg5SkJIQhLKeZVWm3cnz3TX/3uvOs7MSsK++/3+rVF3hVevXn2v6lXsXs00LaHhn3PBJR03nFJqmiaFBAl+cOCnogOJOD3i1KXoPS4+F3Fz6RAeyA7pbUECHAI0JJ6SAaxUDB7E0ktt50fC+8pmp3KyUESqgD4BA86aseCjazqXgrIcicaPD5Ioryo+S0KyUxEsywrk+SE8VSWundYhc54+qqogAEmo+q8qGn/k/yfuGmIfkmQoqn4QQn9t9UgBCi5GqjaBR+pWaiZXCZ1YVIuKqxL9imi/12WlHP47tVw/qefmesuNxQs7BJefm9/tJLXLUSvKIan5RALVAshRk+JvCPwbeFJSX/K/tn79DcK7SX1iuGEVjr9NPNUCHPTdiqMc/ntFrp4XIta8mCc4HBITlwNzo6T0nz3VRomI7apMzhGuarmUJIrc765k4E+J7mXk9qQSHrTV+vnZuXtZ1jZBdhJiDSdD6SZx2dngBmNdMjgoKfoeJjiolETvslZcqK+ifpSuiihwrc7XoVHKqY5XXNW9RnI3OpgSvgpiv5xOnm7iGo4gPyKgEDulTwHg6+TkK56/M2fmZByUoyrKLxmRKEqHXqU6yJ1qnFO7lRS1k9cK5YKyDFxAh8SVyindQUTgaJLBTViRQPFRsQrckSgrEgbIVEq3E0Yc+AYoKlPDz2Wy8+Rom4tNWlFCO9KhcXCt4Ot5SQCqHY76KTfHDWdAOJepl1y5wESJ4Qnj0FaSen5bV5DQycSXr0cWcClpEURJglkwE5unP40nEiVTMb4WgACPgqMdaZiU8uB8EIVflbYCxIp5UKyKMvnpXXcghevh7HzCKe50ZzH5YbvsKJch/C4bO85L5gbYJJDQQ8CPhktY4VCZsiUI5Ej8MEHwqP1uO9TO01GAythLoiqjT3aXBRllDvdFejkdusstKjj73YqDmx15OadAiJONndARyQn2GLohcHgcDlV0wgP/PVg8F4Wq3BUztwhujv4Qn9vPArSOAlQyv2Dkdoldh40Gk4PCH+5PHIhRvN070tgtXSHiE86l4bIRc18GAbeiRFL18xIe0OXj5nNWJ3FURbUYxVIlo0B/kYPlrWDicKgIhpeSUawtwAFmworCztxJyFPqA2ZdnWWNECoYGzGFvhKX3VRKFUsijpiTSp3tE2ZBxOpFpI4yUWyqsqvFx86iivZ/J6AyR9tfK1NWQAV9hZdkqhHkiUp84asFlguJAtpL43P5xfK7XZJgoOK0a6Vc95zs2SisvEyN0iYer087TyRaKI2bp8vgUB3BjIhRUGw0XHQS6u7wdJBxniNipbhV8Qy2ADYNgY6IEiAvB1w7vZebI8fBnlUZewkUMxDgUhU7WGyXUgUP7BKrnpKbXpE9G2RukMobjorGDjFutnbEQm3KaZoRqdDBh5fWzbLKwXgoxbhsWXI2DVXkBw8IKsCmd1kH01NwrSgXuyB5wGcrwE7uVSI73EerSCrCeaBRyIh1L8vVT8l9q0R6n7BKLA/XDdxiSdE8XkyZqx99idZ+NDEkuTx5PZcvs5GdFQLYhGCCyzWeH4ZnbYb2aqjNiCTmotrZ8YMSohzVtbImR8WChVRMHBndZy1WIPW4VVKqVrF5sVj+F9m5TA7tFuW00NzRg2bPlYUldE0kG0XTWDH9o9pxV+r1Y0kEksinBwoa6VIyOPnXpCJmBBJdXI1wD5gMtyDExisUJwjc7GxqtoAAocsxGDqCj7N1JFQ0dk7k8Tkr09eSVSl9/zax9FG54WXZv00UB72aQLFYSrekZqDWkBqgFM2SIUPEUmLUdG3OFcbMC0Q4TiVwLpavEjMn8kDyKRqvAI68XojLxXaMHOOn1LAhQ/pUOvXHKDcL7I+2rYeTv6ceNyTA5NCkCCSBx05lmWLJn+W7f5H7N4p8r5Am1XE32irRYlE8JfKDwghTm9A1CR3QXdMMqKFBTj5BP+0mY9QRfh1wZtXSeiGcew3B7SCPkDm50to+eoASl5KV3dX2gymIyDRNakJVXImgWoiqkEBADSb+eJ/bT+l3O2KRZJp484/yxZ/JoR2iXLBtDhQALtBEOS+bOsSCW/Tpp2qv3mO+8zthFkU4BnNACkDRDW4QRliOO0a/5K4QzBHy+RAXS+X1Vb6UUHuVnXajqYw1CuQW3XU4KXwmKBAX8DjE6nmAKB8hqHD5G1YNuZimVjhwHOwWv/6atfUNIctqcER9kVXUrLJItYgTLhbn3KjB3POlbXpdPnubuWOZLOdFKCpQ/aEGQ8POIbzyrG+FTv4SNhEVsbpXlaKWGESqkkEg/zUSMdMcMNLPhdwhBgnSVPSNwfwCqWpFVeRJtkEZay6nKmxFGQI8gx7m1r1TDnSJEg11lHSaZcppc8VxC7RjztdaJhDRGw/KFc+Kj39DTDsVv9DmN63lf7HWPCMzvUKnhgAdCMPSujdJWDOv33aEC+QK8ZScFOq57D6HAjjQdqikPjIfL19BHYIKfHzEITY+CKgFq48uaKOq+Nl5Ovl5TZTZ1uTt8vDJa2doJ9KAfpnaO+FhlkT7VHHjw3o0Lot5ufwZ8ezPrPVvCGhl9UvitKu0M64RU+drU+eHJhxn/f4r5UgMqUgeU4pySVP6oABcI8nDquYyVFFQAAfiRhTOdIypmWnNmzNsry6jQx6qYdFcaBSR8vog5oCKnBWbgNwOhfN0srSfimFFXhyHPskScsUOsydjAD5cUAIOb0TrBNDftlL87Ity9yZUCRkKCSMkCgXrmXvkq78Rp39Wu+onkUi9LFkSxodTSlmUO7ZZ2zeYkw6PkH1GeK1MuaaTqIEyMI+qGynBHns6CKvMfLpV2duFRDixrmKEAIwXqsODIQECiuIkTEOlUZdT570Qzo+8QW5OAiddIBZZ4ffWZnn+bZlv3DdcQmeL+isF1WIpSmUQaz27xI61QgsLPUyjUFNaUL4RlbmctWUlAiRUBQWUTVm2LBORmtiyvvD3p+74+T8O9ncRcJoaS1VIQt6AMKSnmhdRMaUd75K5yVWpXa+boAY7dz7jiyNt+S/lrQhkAjcLl1yFgFaRVxO4lEGHgn7dfnHNA9aZ/557blmBKqqmYahpCkaf1YBE1Bp0WyVlC3DjBztkWdThElPgVrIsoE+xpB70ydpwn/Wrf+3/4vy+x39RLORIzfhVXm4RFfQuxUE0Uc2IQlxmlblQjBfJIleR+AJAqjLA3XW78dV5c1QgWGUWCPIbAVXMroy44y35s9fkQDdqO1omYNfLFkGPeo6bagTgjr4U4eTHhVkYNCJhcKSpwKYwWZaWSojKbiIzHmHEItreHaWf3pB+8YH4ld+KfOQCtH4SxLuCMvrCR4rwSKpdwTSqPwIVglUMMqZuP6gADnQoFN5+Pn53QB2qhCxEBQ3bvmCYS0bBmsiWxW/elz95U2zfJUQJoxZTFAE5YET/CSjBgUDCdHF4WBQLsrlDaCHWAcJBJC2dqK1ySdY1YfSv5YakWUbdB290JtREwAsc8D8U0iMhbcMy84efKs4/P3LJN/WpcyAFdwwsln1z674XaENDAU5pkazCgFM+XFjWbJBL0OfSBRSA6uTHyu9m+ZG5L0w5uWzs9EW5UoIhlb3qYguAmMc2yx+9I97dDuiFbmB9jTAVdFgPpYMRRwvgDMBAE/t2i33btfEzZft0sXWVDEeo+uOfLqEdq2TKo86CRZVblqMxkOlB3YffJBVCFQAAP5h/LRzVQrq25Glr3RvitMu0hTdqoyaThE5O5HYuB1HyO24Hygr0QeHEELUPDgiJbCmQmLA0yoN7oA/wpWFSl4ociMSPAfKHq3LhXiE+ycJBQabEiJFY3CUuekpe+aRYvktEaD4CuZyLECNBgR00AjWgX4VJGRwQby+Skaj28S+hKVilMn6wPOgAZCFnTTham3dJKDNovfdCWYtwr4DRP1V/yhItSxeYmVEp8B+uWExDQ3nxPuuHC8yn/lNk+mzBHCHU0y89TXEP+UJCh5oEcNNx4V0fFDACUy+RWwU5FTgxa8XcyYKiqFzOZTNVQaxzjoEfvy1D4oY35IWPy2c3izAGl0gKPvRDPXEvYoH/gB7GhLpitIqQfOQXsq9LnPtZ/dyrRTqLZRR0vhbQTzTo192ZSDUZi35R3L6+iGKR+cJYCH0DscU0wNB0mhpjxQhHa2kkRKEilhCZfvH4j6z/vEC+8yCveagiuoLAQbKQaHRM2b7YYRfTCVNPl0ShTkmR1g11HXYqkqPWRaGKf2VDY0lsldZOq7J0uJIERI6M+griJ6vFgkXyd2tEqSjiCMQaMmwIdaQuPSfQQ2wtqOJDAbBJuAPIHVusO28hA3XT3aGLrzOKpfJwXo46zPjenxJHnRJa82bpoR/n9DDGP2gYmPwiHTUFFAQKsH86K4Al0tGj87JdNCF6tsuHvm79/BK54UVbWlsgJK6BEZe8RjgVNnDZXjKWfFVE22dDgbXdn/iyYyACzA7uqU5DGWqiYIpHdop7PpDre0QYtrlEM1uziK4TdkDghy4Uq2mSflLk8qJ7S1v3/rm5M/u3owJQI6T/6JthbfLW5ddrN/80jCnYa38prX+vdMn18ZZ2fdWbxX+9cqhvtxkJA1YZQldtaGFNq0tERMrY0DkcDkUjRiRsGGHdQB8Qxs8QYU2EdP7BAZSKIhKSR52jn3aD1uHu6njltsvnwuXFeC6FNNmrgIKcpLaKHKSwwELvB7hXZTI3Ao6KuAqvS+kLVxK81CXuWieX7BMaelpUyxL9SAEMPd3ZXS5r0tREd5fYslz2bA1Z1mmpy419ozIDvGIOiVGX8c+yikUx73ztptuMw2bRsKdcth79WeG+W9Pp/lI0TLsDsDUYXUR0PRzSG1sTq4fWDw+FRkUmRo04acXQgLVzF2Gd1IAuAkkM1hzUkEyJ4y7VTvq8Vj+OCoYyHfKlSLnWUBqfBfEh43LzrYa6YU5+AQX6Yg/FqdKuGBB3bZSv7CaDEwL0ZefnUwAsBaDHorjIDFtbNpmdmyT2HiWMR67NGHt86GPl3nh2UM21YExgrEgLhZLZ1CQWfMaYPFMs+m1+zeJiVLNCBnYCaFxhYKijiVQiUt8U25nvXLrvHV0LNRljx0WPbIm2YseGgOaKT+grBfDqKcYCpDwwAYwF0TxWnHC1fuQVItrAJoQqgV2DPRBqwOojcp1Kh8AlSF9DAUECL6MaeavIYAJlc7ZlxS+3ysd2ikyebA6GhEAfC8tkmNECbLMjTJgjrBlnC+Udu4rbtpnDQ9QtUDQ3E6uYkqkjYnPbzckDe7X0AGZoFswLVEDzLcssgZ0wgVoU0GOCzBsy6K+jYb2lJaklSpv6N2wb2AHJQ1oEmIe12OjY+ImpSSkjCSRCOqnBtkLUblQjcO5QA7qosug4Qjv277XDLhTomBSMXG6G1i07+TywbS25sT4UK5yVJoii/clct+uoYBD0koKF+P0uefdm0ZUWEeDLuNMd0Ksfow+QywCtUCrv7Mpu2V0ezgBTIiLoWV2goF8Bc7DGYtvcxrmN5ebObeXssKnppAYsSRC9hjUImgdAAZh2YSegoT4STxo7BnbsynbmzDSgp7qOoT/QxhKS1ONGfHxy7KT69hgdoDCBOxoBaj3MmdIBVIKWpEIQZUisaYspp2sn3aolx/h0EMSEOwbAwQbd1ofrregQPNSM7996a6WpUSgSH18yVbHthK6qPUZwgQTjxR9slHduZpsDKprS0l394CbTAi+tDlvWnt70ym3Z7d00/8I0TMM2Cu4Y/2ClLUI/LSKKoWgsfPlFTf/0L+OOPCpayGqFvMymqfLzFjD1zuAOZnDUJUPjx6fOvLT+07eGi3X7165O5wvRqIiHgLmI6loUOKMLgJkZLOT68sOYFddHYhEMT7GYAaFYB2R/8KMNTtIHaQJ9dUQMbxO9S0T7XC3a5DNEjDYXPTgrJkzVj7GqhNjDTZmg2oB6VORimpEJSRJN/GiT/M02EQEsjsGhil9i3Lla08zDtIp7BobWduX2p4lrxWVrSdKChG5dOL/hlqsnnnRUI1PJ/i7xwsPyjaesLeuK+/cWzbJqAeVoRGtrjc0+MX7hF8LHnYuBPpFvXpf5+W27nnyoP1uQmPzyKiiQUD9dJ8y15nhienNze6JOt2i0hUYABVDd1+3OAG67n0DFMEX7kdrJd2sRdAm25BWIcCiF2Zrx6aqinLa3sg844ACrioWvDSLHRV3im2sk1nJgQsjcs8UnTbBpoRqLKdXegcFVezO7h6iwqGZ2NeHKomADTwz+pfaR2XXfvap14UdSyBVSqbxVubaukc89IN99qbx7V6GQMwHtYdNiCz8X/ugn9UQDESpyNf5Y+U72l//W98qiHCZlEQz7CRl72kHzE5oiaB2puhnN9S3hGKYbkIl0QPNm+in00QjQw2PgZBTF4Z/RZt0MZSmJqu6EflWgCqA0PCfyxVcqoEpjhAVzVBlW8QZTLhQ6yCvekzvTPNBU6LPdRwugxomF5f3DQyt2Dm7ug6GmJo2ujts9qwGWh2ZFvPSsz5gW+/YVDVeenohiYAjsq4oEENFTrHhVrn7LGuq1xkzR519odEyhYlXjwtKJN54q/uZH6WVvF1AAA0adbCLDT22QsgDWExriM1vqG4wIKk0IgyLuGOwWECKV0LxBF/GkmHevXjelRl4+YA/VeVAFjMCIcXfiCOGHdot/XiejNPXkUQzf0TvCwJb704PLtg2s6zLzOEcYo11zGGL6sd2H0YcDyigbozqiN34icd2CeFMCvHlFTdV5RpaVD30jSqHq5M9PSOQJ5eqMHSpFuSie+0Ppd/+R37iWOl4dHavTO2HBAjlg8hwPG1ObEzMaknVUP2hLWQ2TwiFGH3fswZlixjXatC+N3Ag8uVw5lIg1GodfAaDGxcVkV+1bkKdKgLBrV8i3u7FaQwMT6ADTKzRuWSgOLVnX/962UtoSkbgIxYSBMwsx6l3R06r+FvdSKNEQvvq8+Dc+EZ3cBgEC0NcWww0lctfjODxVcCyXSakyPSCe+JX58J3l3Z2wKrCLWOPAchEUQPrgeZ6si+mz2hIz6hNRjLZw0gt1n6GnFoCmoMmWWdqJ92BgVStrEoEE4gFMECzbFwgMKoCiuEC2wykPceRCuAE+B1J0F8TFi2VfjkpBNgc60PTC7u79T7yV7ewTkSSdTzMSrADoICb0qD3UMcMiGr5wXuwfL4/MmQzz61p7ZEm2z2kAvvw+jBOK8F1cKi5H727x5zutx39t9fWIEFYEATNtPfAdIypaRrVakvoxoxPTUqQGFIwbgaR7WEs2iJPu1WOjqM1VXwGw7KqgwgIxKmFAARw/ItCcoBYLTawdElcskbDLpAD8dD2zoXPPQy+UMyURTYpQQhio/tAB/9AOoAAsg+qxubNjt1wW/vhxGH140PtBH86L/QNiX5/Y3yd7+rSBAZlJ41SWMPM0SzJQPcEoJLDek4xp9SmBX2OTaGwRjc1aqonstXtBdK6aFKCy2L5WPvxT+eLDIpsRRgToqyVUrGFjIRVLHlgCMTsa9LntqWnJBK0bGlY4jEagRcLixLv1+hkorG+k7uZkOyjD6opbgSAfTTww5jY79ahIzjloYkW/uGoJdrCo7qNTzXV2dd77BKFPZgc/pQNWA0wQLYPGpk5PfuvS+GdODUVDgD4wiN7RI9/bLpZv1dbskDv2if5+UcxixUeipuLoG46bRCVGuljzl2H0KRptJ+AOvmGs//C4JRoWybhorBeto0THJA39c/sUrXE0dfO43Gqr1LD2HfHgbdY7z2JBEEccUf2xyE07yrQELstFqyi14tHt8bPHt9aT2aSmAKN04p1645EOK7uaM2tiyijVxl/B6N3RyX+oC+O2WjpHZlz3ofByNr/3Ty+Vh3NaNCExeVeGHrMqTDu1qCjH2jqSX7mo/ivnR1rptRZYGtvQbOkSjy+zFq0UK3dpfUO0lQVMYxruWEbAIqUWkRSCH+YZCn04bNCBO6NPCuDhY7kg+7u1oX1y+0oZMURdUmufKCYfq02aozU662tKE0d8RPzwUX3x0/IPt8n336L9gpCBzgGtC6cwaBqN8euyPeld6dynjhjTEYqhcSAh/XPNsgKRAnz4KOfB0AVA1SQ+1tWRqtpUq4EVgOlO/5ur8qi32OmgNX3ubGlmGxalSKI58ZkFLd+8ODlF9bRKlZpYttm648nyk8vlYJr6OBGWtFYMJywMaBgnLD1Ql8BFZ705gjMSKsQvLHoPmsqGqKfEYKZUkHs3aPvXyzVPyXFHaTPP0UYfTuTEj4s7d4E256Paiw/JP/5UblunY90aaxwaHVzGT8Z12TWUv3/Nrmtnj28JRWChIJedvgIQ5WVR4HSgVE++q/wc2CFe9eVEVsRQpsFcXQIUA/YH680D2f7Fq9FPAX1pjzUjWCXDhP/j57XdcuWo4yZRh0YycHXBUt3378/c82QhX46QLQ/RuJWWwMgo0bocGhay5C0zZaaw6sOpGXe4FCtycGkphXLDi6xseQkuWunQaY1k+xK5Z7mcdqp29KVaNMUcmBtGyB+7Rpt/ofbAj+Wf7sR0AYqDDFRm/Ic6e9P5Rzbsvfro8brpH4M6hXHRtm0Ql9GGiOVQ0oAXp1AxbBSVUxXFTlDrQZJwnVGOIAnNe4U2vH4nRv10WpyqP4bSJHlsQuN5n536p++2HzcJcpPBR1JEZHLykz/o++kfMnnYW6xWkxXj3S9ACCARQAsNGroW/OhYBIUgORGSGqByJwUcCKSNM77bDgzGmABiEEvnp6Pr0MWml+WbP7XyA3alUiUD81SzOOMyDVUIhh62KGTgKAUGPthoiCWM+Nae4uLd/TqGojZcPmSBr4OsCg0g5ERRoC/a1wJqwRpgAQ9yrUWGYBr4S5HZsJN6OoLegO1MTWxonDsjO7ojPAp5OjLbTLU7FuWeei0rEpiOUSyv0gFj+LB9SEKiBaCg5KAarH504JmqH1d4u1CcnFTGE1pycIXFHXNeWimFl1axSUIkwR0XpoM9G+XaR6zj/t5XC1k2tBJMg5EFzhtZloGZF8ZDOORLuz+aXL4re3QbVjzQ6aiLhfeD6kQEnqCizOnhv3wK8AezlLWgrh2BCohNFStfLnb302nNskyMio2aP0tMnzpcimRzFs4f+PMG55wl/rIax9+gNyBEI3GMK8nswk8YA2UUlmRWIlPt4qajUFRQQmQiwbyNLBNzYsQRSF6d2hRUilUOaiug5DrKmiAtoIfq3yKKwyJSb2tFYYAc0QmBlhoNSYalIGp+ZBiFGMoUtvXnQxhTuMKpZOA44oU4F3q/G1NXsrZunMfACVNcHQIn1KOjclEDx0lmmSuVhgvo99rnzYwdPztjpPIZQlfVOCeJnX2uJFLjMUIdgOpIOOoyARSqL9U9ahMKUc4fPhc1BFAYh+OGBAQrVW3oixCCm4BjtdISJ6mB4ENrIDVgSZB21UgoEIciooB9i3pHOn6itLAxKlPVgEw0CciHZSyAZemdA5ybl4jxcUDiYLAP+B3GeAbCsZIY8Ds83fSIhfsAFyfHCmZJAP1kQ6T9/FOyLZN7GXo7MYHkcrCzswoy1RidcWbTplcGcIoBtQtgonDAjYAhKclpU9t+wlgFMeJMBApmzgnIQzqgB99ZH5Q3ByohSBHoLTTROp5C80MyNUblY3MH1lh0QxDpD9aVu3Ne1sK4TAtJfSit4RwYi8J5K5ncItr5qcarOKt7gEJ5qD7UCA5wdGX3UVL5lNcOLBUw5410XHHuQP3kDDatqOJTOWltTk3QKrLRxFCnnHxkw7zLRze2hUXRlCgTT4NoAkQIkR2hMTf0x4aA0EehOWdPatdLIrEy3DuoHToAgCEQrf6hxLApYTFuqpZq1rYuo6ycy4ZJrcFBDXCwG0coyChFDCOqY+YYlpZRhHh0qSQ2CBzCbtyoBSEA/zmE46pvmAdUK4dS+0jZIPj85PRSESWKhNwSLbH9vXHs8yISoIOIMCEdkJ2jVP5Lw/xW9r8vxk2PnXl5ZOe6/JbV+YFejLBhLAgsrj8wR5QQ/8ET0MOhIFXs/CUjN+IQwYkoid2UkDf9U3xiEdHapo0aq2UGxPJFVmkYCwyKGRG4F62NMIAkDjVFePHgjknDGIMOk/CF+IrkTk6ItmPwqCazQ2p1wiywK4rnqGbixAHueFLr75fYXETFQZ0CLf7jTgqA3F4tc9IQzloxI7Yvkw0t2tgJiSmT4727Szu3lvd3mYUMHa2i7RO15shFADcCAgy4YKRd6iQ5F3XncBgz2p3ngZC6ow/Fgkd9UmtrEThLkc+Lla9ZezfR5nsqzl29JxS5wIY7Ig5VefEgivzUf6Dn5H1o8nM0OZRktSorxSkyyO7S2w5XAYyWqtfQvMOHHSDllCqW2FVctBWOYWgux5UFcCOe0UFy/Kg1VCsAUXj7Dqoqy94done7SKRk6+jwUUeGxeEy0ycHekR6iJbJ8DkOmCO0DLABa8KUVrrJQeir/pY0gY1dVdNpBobOLW7IeFiri2r1cS0ZQwKru9t8b4nZs0szykZdnE7pkqHk0jjY2E9SgN1s7NIjLwUAuGOSWQEBeSmsIlxB5/B21eCx9kZBbm7g4o2LHMwr+FJ2vkvDyDNXoJkR+lDXRiNbqvh4oA/APXgRR+gAXRnrBks3PVj13Ey6rKuXjSmruV4b16JrJYxu9VJWlHJoXvTGF03KTMknFWiZAZMqWv8RMkaI0757zNDjIS1K2/Bk/grZ4sY9hX37iz29VikbSoYiqVg4iUMqUkfTJIvHhXNKSE+UGg+yeNADX3CToUI42SX0w3a4eqB0DlAolOtxiRzehAVz8aUeaRTkIzkEJxgX82o1gvLHf/unFICxPqPs54Qk1MESmpwQBGSsRDEnh3rNzlIefUTYKCaiAlU4GTYSRqguHE6EDZz54e00zGcxOaLBJY0O6R0NyyyW0sVSf6GczRWH09nhdCGbhgJwEtLACZRkNJ7AYTkkgHR0IwEYEb9ctluZINwJPAaQkONQ3MGDw2xiD30idmPgAP/KiwBySdBSXb9PFuhbZeA8PSbVIRQH+4NhKCGIdC76VEJOSWeUfXlyGPJFEiAOK4S7hdUV3pjCOAiLDxiPmqVSMVsc6sc59Dy2GvB+sC7LulWiIQhZYUIcCsCGhoZ5KsZNZZN+eJvewmoSzrdgqhuJ6dGoFo3SigJNNAgSvggaeNQYEGUKXohREJDD+ZEy4GHL5BpuQpgC+XKhdAKqnkSqmLjJ0AJsMn7a/AJhATZOTCCQ6zsbeqSHGNAD7uSgB892EasuhHCW2EKpi2g9ZdoT5PMTVB2hMBqJUidOHp4W0NgU541kuWyaRROvBKDJ4A08nA8t8BEuHHCjFVRKg6rJu8xYso5EsHFi0MiTAYLYqnxU9yGRjQPWxxNajA9S2OK5D1YQWSF7VMVjK/LSxInWJBSl/SCFOkEuCzjcaH9gIJx16YBSQcXe2owrKVEqpQAGkWJV78Zlpd7TbuwKfaCAXlEsPM66/YmQQSfJbcAJHi4LVVP6jIIsF6yOttDhkyIxI9zTXdyybbhvbwHvSzY0GTMOa2iqs3p7zO3bs5MnRk+dP3bqYalwWA7159auyC15JTvQR6dFwZEwR8vkH0886Ub/S/qEU626dq4rwSIRcpwST7ip5+cGAzeGokCtElryV4YRD1Vi4mUTUOG5CnIIjcSQ0E3pOlQsxbEL6dnhPN1o1wEFkA7AXpkdkp4rG+5Ya7BNkOJm33duea9/fbH18FOorFAYPZxLQy0XqZT+g++MXXBGMlMo54tWKq6jW317cU/XvswFC8bDJOF4XDKKzURzwoS615d1L3m/v1Qut01tvHbhhO/8MHLXv257/IGeCEwRGNt5MvD0mkYIU6pVPcsH9nUvEOeyoE7WeIIcQUjC6Uhb3A6UGqBHWj6EQqovKgTjSQ5KpqCFj0GnWD/68Lp9AMkQUA1x8l8Oa3+Y40YGtgKAPggJTR4wgwB1HytxFlqtd0GsYVMszdUNLb5bzw3VH3a61JNQGMqmNI1pDnZhH72jo6TlLr113eod+VLZxNDlyCmpp26bubMrf93tG5ZuSMMI1YVLJx7e+JVLJo6u13/5wMatG4dFLIzjCwtObfvZT07SzPDTDw3g3BzkoUZFgGKbAjsqpVd6Xn2x65Eb911SHhChJqotlRejr3oDajysBtsokTptUclF+HJqPBQj269YepSqdBTqhKnuhH2cgUpRdVfsQTbCBRuCoQ7GiICerI0qL93JjepPKyeBK5uV4WmHjzrr9P3PP5PuXJGYcFqsZY6mJSiB1ApFefNVdYm64qlfXgeUycgLOdxfOuHw+LbdubO/uqp/AKeuEWgN5M3n3+p+/o093712+ksPnrngmrfWb+kzLOuxx7fhdMn3vjPn1ceH6GwkoYkeIlw0Sx8Ul36QeaW7sOmoybPOmTZ3uE9idua/FIyqGF6F9ZeA6orCBJwD9dbvcRTj8XBxd1LTfAVZ27wILL/by0WJ55L5pXXc9B4XGyBkS52pgz5YUgtAWvy4ECwXBj9mrz7z85/AF992P//20NonM02rIw3TRPJwPdKEY7aXnpv4p99tKhRpq5dSSq15dPyrl4750m0b+/sLWgxnuZALraJibx7vqv7bzzc0pCK/vu24sy5/HmewsDD1/Mv7/uEmc+K0xM7V2NGXg1bP9vz2vaUNQ6W9QuTmTT/uOxd/trA3kc/5S83FUSVAnjRMgri4SAQqA9se3+zZD7iCAomJTqXhIJs/l1vRePeanbBK4OrYo650uSzhAMq0PsKDSuoHWAEkPEVpfhOkhNNFulsWho3pn7lszDGzNz+1uH/Ltly6W8TX67GOSVNGR8NzlqwdxhSL4YcWrXNOah5Mmy8v78cUy1Yw+FMOPECPGf9wx/tv3HfK31829c57N8awvlfIokuwkr27rJ1mKZexuvPmAGYsk1o7rjrl7LOOOrZzrbZ3c2k+ppHBCyyxHkh8ASMm9koNZIYQhnC+yINL3dlp+ytwA71N4zYELwhtm5mw5fJYeS7m6anUy0e5GEo4SSp0mnjdgkag/FMKQDEQh9VmyykkvG6qshjcKa0Ba9TkGcd8eWrPB1v2rdg0sLOnNNTVgDMJUg7nsBsJYVAkaNc8ZVb8+XcHzSFdRGHRTFqiJO6q29EkPiWha799Yt+1l0/79QObyoVSQ0s8Hgtt6dnUJ/qMUjEWCc8cfdwp02bOnTojqsVWvFUe2CMTmEY78rilI6b4D8DJcCEraAG8MfwhWXCnyAqQ3MSuA0RKeDfEcfiTOhsyROrn6rjV0ycicHE16TBkYbCv4leAUgOEAAdYJ14dJXqXFcIxaRJatkds2WMmUlpjx/TpF04f7MrsWb9bTxZBGDG0DBWDeGAkOKYlvCVX/vE3po4fpT39Tt+Dz3VRDMVpVql0yTntt1wzA91ve3N4zKjIlq2lGYc1Z9PF/j36YQ2zJzaOnjVmwqSWJsD4wZr8UE82LI16vDPgykOMHGQwccTMEIBDuRTGO9Mgpc0Ybm0OoT8R6AKX4kxcfZwDFOTxL0XU4srZ+1P5JEawzZoXFUzaFQPQgB4De6yWEfr8o5kwGgeVBQm8C/02Olj0HGUxtFf27SjjXFQ4acRHHTaADjZkjmuv69/ELy0haSgUjYYv+2jquXe6x7fU/9cNh/f0Z557sw8HYaDeeF3421dP6+/LvblkzyfOm0jHWcrWyXObNq+0xlgnTWgdUx+LIHbvrn1mwYhqkVQ0HI3QAI2bqCqFko5BwLyO5uVU13j0hsUVDC94LZpetcGeNQrCqVRrIGPlh9mGhUpaBaBXfHY5liEQzEJQiI9RgMD12JS0+lMsJRv0+voQXtfCIZOevblSDnvbIKCPl2Aeq9i5KckLW0U9B9lZavOmzKXL6a6CtAaLpeyevaNPmB5ZvR4Lb2p/VssWxB1/3HHXnzs/ff6k6eOHPnXuuOfe6OcSonngHJHxg7uXF01j4UcndffmIjHr7DPGPHx7z3BhcPv+wbDAtzoiyVAyGcYqKMRFfphUqMstr+1AsfGmMdcd2qJDF5aMai0NRgLLe5ZAZ1LKIb09sGbkqTQKbOboV4adBxNQhbRrsENOqvRd7HFDXIePosKp2tlQWbQfFh+D88Sj66Jt9WOmNh0/f/T4KSkNw5F8Dof5lQIq0qqpg32njgPWlZYfaFknU16yMnf6MTi1w6BAV+XiwGAuGY8U8sa9D+9YsrZ3QjtO+0L1VPsy/bklK7vPP3PKQAZVCl8uyM6eVT+mtf6VF7aa1hCWiMCcX5CHCEhBHQz9R+HBnuAKXIjC63/4FcpYACl3jNKOnR07bHJkVIveMVqfPF1v69DoICwukk6pjc2hw0lZTQU60ykyn/lwMg2ejENpSSA3ie1ivTmBzpPiNJEuigc+kL9doemJ2L5umE6Uj3rFxqQ+blpLW3t8+9ruvp3DJtb13QtS8m4J1ULCHMuYnIjuqJpswQz58uKh/z53dLw+nMtj3wBIWfVJI13A8hvOI1qJRCyPfX3svuH4DnI0tHse3v74f3/kkUVbcYS2pTnx6StmvfNq197ufEsoRqsIquzIkMXzgEIUJri4WCpXxgLefrJKY9oiR86oa4hGhnvkUJq0RW9tRLTGJm39/VIb1safge0xLgXK5OLmcvGgdIMIeCZU+NGqhu8KskAFoY5fDROCSkBmYPTcFnHXUmvZTpFNY0FUFYrvUusblIND1qim+PQTJ+5t6UkmsygipeL8cW9IyJljjd37JJby7aETohBBP1rDWbYmHZYdx01LvLVyEMvNRtSY1JG4b9E+HunKuUfUrd4yTOYLmyNQY0h7f93AK0v333z1VKwgYZlo4TkTvnz5O1inU8XjmkUys3x2GBYBmyca9WPY6yt7WSvHk+aRM+rHtsSHu8XuTh4O0cKexKuwGO4VclrudXw63Jz4un7E5VrLkcSBiuZdPnZeILn8EShqzRUNOwVj76R29Isnfh90iy8vktc+Yr26Rgz20nlxXkyGHaexDSoyFI1+d3e3uQZda0tzrn38Q6skVWWlTuBmaPMm7inlstTPQc2QHi2HDRHckHKwr7z0/cyF85rQhbDYWMCx0mmcTBcto2PnndTyyGvdtCxJ1Aysbv3olx8sOHtKLmMuPKtj/fv97y7txYIPwQL+dFFXpRxw432vUsmKH78vWueGk3iw7z2rjflzWhpDyc61ome3LJTovECxLPDDOAPrseWyTA/LPVvF+09YL33PWnGXzOI7AE7RKAvKyc7M8XLO/hvHG7d+/9agUjgYzCi9X1uUFMHdGXHnUvlPL8k318t0P8Z/bB4QRxWX6jI5qBbDQVXeLFsDGXPvgLVkj9jUrzfHtPGN4IuTx/oPfv/uuqeei42eoRlx8ME+N3/2Cp+goS9eWaUCznN94fL23zyzjz6LUpRHz2g8+ajkC2/3fv2q8diB+On9O3Aynao/cuX+o6cr19ocmz4+fvj0lpu+tGTP/kxYYhMeB/rxyYKwoYdwVDdsRHCsIYFD86L03P4/DMrOSy47mtoJw7fjXfHqnda6Z7SebVrvPvorgygHLCXVKCoadh8IW7hJ7Rh55MRQj+hZL7uXEw6NUzTsFtlI+dEjPAkQQtC92Gnc+k+3uiHkAIVN5CNlCgRv7ROff0w+vEzuxxc9c1xtGWsSiAZ0oCPwCXp68o3ViG9xDA6ZG/eab3XqqZh2dIc2UNR+u72uc9Gz+c6VOCKrR9sklgsYeuoTqI8rd3YOfeHSUdu6shu3oCc3Tzuh6ZL5zQtPa/vk2eMG08WVm4b2duXwuqkNCZRUKn7s1DHnnj4BzbFYKl1xxZRzFoxf/mbaKuLrHKSGsB4B9JFQeF9p03Pd92/Pr/rUcR8//ozR4TrCdOkD4sXbrU1vSXwXEJ/mAg5cFC4ZsM7jiDXvOznlZqVBOVouQ5843bdcDu8QY0/U8AJKjctF33UwkXHrrUEFuEmROakAD7qgFhj57zwrn1kpc8NUKyiS6ztIwBO/IupukYY8gAIBSk6qP6ocUhSK5kDaXNetz5+ipwzx8K5kqL2hb/Gywq6VxaHNNC036vClBt6TKeL14sJgFssEt3xx8oPP7V14RtsXz2u+4ppnTzyqYWe/9uq7vV+5dML9i3aBO1VF6KxsNTdGf/jV2Zd94aV3V3V3jE2ceuaEqdMTD/96jyyEI9ga02Pob3vNnSsyzywbWJQxuz535iXzx81vmiXrR2s73pXP/6fc/r4EmqrU4MzForqPEh15vn7SZ0XbVNG9mV8YgUG0CQkd7O6hI+zZWo7X6WOODxh2UBFWqL/g59VvQhVXsBNWYepuNwD7AR6bu8Ubm0Qen45nSB3VgCmJgq5pziR9/mGiPi42dVsvrTe7B02ckuaLtUW2Qubz5p7e0qvbQp86WnZvkM0nnphoaNxy/5PZHZ259ONa3Wij7jC0BgyqMFDS45Ff3L/txNmJxb+egxnDk4s2/+Kus19b0ffv//H2N66d2dEaCYVMrNaxAlATzcY6o70tfssNR+7Zl5s2ub5/X+Hmr60f7C1ivWFQpveWe/oLOwfLu4UYHtXQfs38C06f8ZEV75SOKaMn0ba8JXdvtHJZCZlJqSQ31SIgZhbked8wLvxnkFFvdOQC8dtPlYsFOoKMWQLAJlT5nsloW183j/6UTk0KwPPlIMgUdhirmCNGVoBSl52AtLgvLQbTGCET4kjLGVAdAPqxsHb7Fcbn5sOhEuibuoyb/phftBo6AC21AsUPBqNQMDv7qS7k01b3EnPSrOlHf+e67jdX7X1nZbZroFz4AK+y0rvoeJdPRHBg7uqbl887NrJjx+DMGW2XXTRjwpjEwz85MSrMvkHsUHJ2bAFRBcaMSvR0Zx/9w7q25tTTD2156+Ue5GUYhb0mhq9pU+Zh91tTzWdM/+gnjj+tLtLwxsslfOEPy7GQcHi/zOVpvg5mtAiBAhNv2g9NtWmnfplKge1nhE47XUw+RVv1pIXPPOH1PaUAteGMpYtSWitgCZH/po0SzubEHufGTYE9jgICcHMM1OpdShh71wXyUeujC8kgovZvl2tfOQM+GsSr4GmjtT9+MX7eHbm3NpbpjVxbXbCqZDSRHFu/qFEQd8tis7Uj1nLySa1zju1evb33gy2Zvb3lbFaU8XlPOriHbvz11+kI0Y6tPae8v/How1t2bOkZ3a7/8L8+iTOGWN0kjmQmrBmT6rdt6/3Nb9/mMpPR17QidpIx0IqHEuMaps4ZN+vEyYe31ddt31TauSOvlXQcHFJjJCy44VQeTX8psWoB1K+STvDuSNyPBiylhPLx5QI6nsQ6oA/lcL2kD08wBs5NJWSuTpBfJY4CAnB7hAEXmGCIiYUdsmaEtFnG507M2YfrXzode6+o5k5mmM5aoi6m3XJuaOH7WYu+UoIMWDkoIb67SjJiMony0ch1/2arZ7Ooaw7Vj5k+YcL0/FBusLM7s6engINUOKJVwt4LXqKHrSl0bi91bugWMjNh4nRwwKt0XAe43lrm8Ue3rl27B2o19ARG7SFNT4bHtcQ7xqcmTmkZ11HXENLNLVuyi3v7rVIoFjJwSoW2E7iQZEVpNYRaNEFJZeTy6KKnU6xYZM67EljR0a/uHXL1y0UZwgcFaTXDwOkYYoLGQCDajRI8A5i7+lO5ud4D9AEsVuAG4bC1hCEiy4wKc+ZR2oVzwsdPxltwJLbTimzuKMAZM0O/vDb+6HvlZ9/Hx7KwQkdwQW2oa2RcIXWZvgQD1eD4W+9mq29TKRwtR+pkKNGRmDIhNBpnNzMlnBPCWh0+a5hPS2NYhPpFFodMUlgs4BaH7KhB4vXL449qu+1Pa2JiXENoYirc1BRrbYqOqo/WAfe+vkzn7p34vB+++BAPR3C+CDWWD2AgqQ0VHc9AjSYTa1cliAtdoP3ed2MuP5D46HX6+tfN33+t2LcbhoveZYU+6HUGpKJdA3oLBGNpbu3EgoFQzO0s/HVfYUsv5LPmAlCTpyqcLC2Ujn1Hrnnf+kT4h5fjhUKiRUnAmiqA7wKDeET7/JnJz58hbnlo8MePZeiVQzChV0GJPVZOYb5wrIqWg6Ad2JGSmcuWMl0FTWKVDVMFsCN7p0daLYmvBwxr4WGZb5aYgaS1upgRi0XzmRx4IfnMGa1NidDyd0J12uS4ljAsI5fP5nNb98JW4LydNCJ6LEafjaMKzqBTwSGGusAB2OH1VLtT5bIoBCFAeoDOIQ3uh/bwlUUsEEm8JsYdAPbiUCMxrUNbgvLUsi+xRFqGkHmwLlBoWyl2nvSoeTqa4yvgJHZcQyCjJY+aJP75EkJfQa+y47uPN0uAVED2+xenFq0orN5G0zZZ0mFYIRfMFJKTmxsBdIOmhWKgoVj4+nOpKHEkET0BJmmo7FjXgxWi1xDgyO/cUWxIhNub9e3DqKWGKOSv/8ysZe/s27ZvT0pPDZeHseWMly0jGupADNsvBn0+DjWULtyp/jMYwEjpAFWBP3hMn6CGjJACFhIVBRUMR2Ju+F2y5bDSjXPTl3099d2X6v59wdCe9YAdl4ziTVrgQB/Ip4SY8bCBJRwqIKxGHzTQmVMHAtA5Hl+sagECnzTPlU4/wsAU00FfcVCqdhLaT0SRdYpHjbmTqcOgETWWGEsSL7Y3xjV1OI44EyH+gQmZJv4pbLjvIEVZ2PNi9Omw7p4duQ9Wd994xVRqJKb5yYunfnx++49/vJpfS0WZUHbgrZbuCRl3uMhuAMcawLlSfNiMv0WE4Ra/nQ0rhNkgDjmaU08KnfHZ0Lij5BfvjTRPNv9l4VD3tvIvbhh889Hct59OTT3ZOOYC44RLDD0KYkpbMjFcICOm4KgAYiSv0wlXxwMST4PgSbggH1JACTusWN/HS1Lq8kPPlE6Ev02kM/wlOKpa1GPEwvKTHxH/sIG+XAMNQQPERUGPvKhyoVejk58czIohkwRKYIc3Vayvf/P1P/5h4dKHzoRFaIpHvnTta6vW9CXxCgXeb8THEqjuklVgGRh2pFU/1FuWsJCVJyzE30EhQ4TOk7b0aBJIyyfnfy75pbuS+CsQGAFsXF78x/O7M31Y0EBtMH/zzTS6rn94vi6K784J7f3ni//9yTTODqvhEAyqV/qRXD5s/TtitchtHRA4QIe+LQYdCPnKilI6J+riZEaCF1MGg9A4d3UXX1mJYSVYoHxoB6Snr50vlq6XT7xJh/cRoyQnZXCFJcNCgydsh2DVH/pGOKmEx6b0DvK6tenTznjy5Lmt4L90cff+nkJSxw4viGFgABVWjlXdJ4YwvygKqRUXCoDvj2bltGO0v/se/LCtdJ4GJgiSwRJiLWHhV8ORGPo6C3OSHavLfX0Ch91BgzqAg3xvP5a9+NtJMME1+5zItJNDy5/Gx9GognijIAJBKQMZUpZehWYRuESuCarWmw09pVUXkQA4QK7JDdvKN/8sjRd90c5Rfv6xs9Ztf7/5xdv37+vCV1nJBMHIqrEyzuw/cJN+7Xn0p0pK+G46+gLSC36ACmXhc540FcAP1Zm96tV7fLsAHXokPjBYfvrp3U89taunt4zzz2TbaRNOoQ+H3QgYeQ99LORhEe2Ys0PX/y7cPIYNPumExmJoARCR7Al92YmSQOv4RCaaB8Kpn6YahH4LQ1Zl5ogMr4Hy8iHdoaQglkRAVyWedrhqAT7l+BWlUjp3FIsGMaQA0sGvHsm/uyZ94fx4c4pEoWwpD9a5zZzcqPuPvJneugsnddB+iQ6rnjg2S1VCaqm4+NWN2seO0370oFy2FrN++qoB2w0Q8I+qPNd6THuQBRocBbMh0k188AeDQLQe0hiNCWm/BNWfv2xFL1qDFQvEL5ji1YISfYluzAzj4htjZ34mhDfFGCxqHXhdEsQAGg0iV7Tuu3Xom79qbmrXN60o/OmOQZ7YoFQkPwTYsFL+5fbMx7+SRD154b7M6rdyOI2NporMUEVhiwgHNGUXEKpWzmUDZXur+gDGskpdRH3YaNGa0vv3U6dHQ/eQXLm+uHIN5vc0gbehJwfZKMqRMoUDPR29d0tVBwJizTNslIYGc4Um9MzwIsFF88W5x2uPvibufUJfssrApiMwpgkmlQilcRRAg1ZwIB3QJ/fohALOptOeBpGiHZIdRk7UAoAm/4AnBl1YhcBaqzZ9dvRjn6776JWxhlYkcuqM0Hu7ijt2ZugjCZgl4kNZunzz6aGNJ2baxoV3ritkhiwctsBAQRWJymVZP//6/ud/F4M8OPWFkS2GWBhKYMU71qglmrn8IAtiTRlC1aQVvpgfmTnbX/EIJCZaJPz+/aXb/idbSGepLQJZkspBn7yEL7Eht08B8OLHOMWS4VSd1rtp+bGzxn7rmqP+7uRGfMqEEvIFzb671nrsldILi/PrNmdzOH+IJWD8bQF8TNjKa7TWSh+bpu/slk1+LcBCpYUR4f4a717AWoXo/QB60QZqQFMw6sPRKdPq5p7RdMbfNcyeF+NFBRd6bajffOzX/b+/q7N/d3nmmBk93UM5vOtDAgNkGp3Rx9TAnVqdixwjSMYYITCFMMBkPWPhUFtj/dX/VXfSlXwmmzXsJVIlrLqPrIAKUup/tCy+rfFA8fcvFvp78iV8Yht1n8bwBD0aJ1Jw/XTQJzkpin8WhifJFnyHrzS884P8MA7E1mPJat5HJn77qkkLj42BluoHiLmYxZLYsL285P38khWZDzZktndmenuzxUwBK9oCbwYoa0wGmbKAZgkg6ivQRWjJULilOT5hfPLwWanZJzQcc1L91CPi8SSoiNipV7SI/8wDmQdv379+Pf4obg4fBWpNNU5sHJ/PWj0DwxgqA3dVHDYlXHeZhbrxeh23PImWA1saHdNRd951ibNvwAqIj+5gzgMpQLUYPwdVB15ZZf7kz8XXlueyQ1n85RBXB0Tp1X14bPTRTuP10XidKA3uzOzbhvcBBD5SEsZXnLDeGcMrYefMa//mRc1nHY6lVAKI2JDy6D8u1MTe/vLe/aXde/N79uT2dRUG+otDQ6VSHjNXQh8vLdWnjMb6yOjR0fb2SMfYeMfYWEtbGF/ZUBwq2JaL8uU/FR76r/Sq9/BZogI+RVmWhbLIl2QWE+UJTRMaI62DA7mhdIZmYlz9wQd12RZIScaFQ0gyEh3dWn/8uYmP3RCecAzlqIrgZH2QJ14FUsf/mM5XemLj5UhYquzpji89FMQDL5XufiK/fmu2iIPOxITtjCujna+MJIxkY1jm9+LAWwnv5gJ0+oQcf0UO83p4cX5fi+mN9RfOa/zG+YmTJxELfxlUjk7+Nt+DPUiNASYsGNrYO4vKD/1nfsXrWWytG2GsKWCIg5eusd2Lb7bglzO1QmO8cVLTlLBM9PalYZEAgwKfmwLlTC3DktiOaErVHTEntfD62LELDfTDVH24AvmhO7Co1S3AhbpWQkcrqoZ2dlt3PV7448u5PXsz5QL6OVpusy9UHXw3rBmrkgP5vasLA7xpreDGfmwYR3pwjwV+WiTSkLhsXvwbZ4dmdxAbP4JUalUHnKeT08GfqiKtekM+9B/FJS/ge7s4goeVNPzonSfSAU0vqR2Y+OHVJ5lH391RP3ZsaiJeGuwbGMIuPK1esAA0a8Cn2WOJCRPqz/1c8qOfCyf5dHtQWleqg4jrfjPOR+eg7PDwRTlB6qkKtmSd+R9/yr+wNJMeylg4AUe9hR6pi2Gfb3DXmuKu9bSISh+Pw1fL8M1K/mwlfT0U6Eep+uOuHBGOlZFkU+iqecZXT9NmtlE+IxSMYqqbRUWQknDje+LPt1tvPF7K58qh0KcfjwAADL9JREFUKBorljVoZYOWD+iv7vEffWM1lKESiZEqDmLg79MUIyG9o258nRxdzJcLRWgLp1K0WCQyqq1+3gXJhTdEx8502mtFxgog/52KoTToD4X9rj0KcvnBgYsbcCCh50HzhLB/fr1492PZjZ2QE3uz4YtOSZx/VvT+Zbv/8uS64c09EsdJgHKUbQ4+9IIfoIdK6IdvI7EbixLYD1QhUsdnD6+eJ64/WTvsQPXLE8Nx2ZIr6Ds3iEfukK8+bGWHLUBPIxeM1Alx2oiwFYA+nTSBWLZItN6CbopMU1YUWpu1L1x/jNHf9u5zuaHBYiwemnpU/ILrY7PPOXRzTyLBNtWAHxGOAlzEnYJUPytbhkPBAySwQgNYs91M56zJHca0sbR9gSHiC13i3qXZt97uHPhgd64XAydsLzHupIMwIe6Cjg14CuEvc9L6Mcbxor1FXHOSdt2JYhx/UcZuDQcUVkHf3Sme+Jl84ff4dB/+8BIaJY0qGX120BkYtkKYP6EbRCdGO00I4QEWFuOsciwmF3yq7dpvT5wwjd4y27XO6t1t1TXpE2bpaMAQwTb3eAa6SweWGs8acrsKUPxq1XTF/uCZ0EDNzVQhRX4cXyxrf+4Uv19rbt3UP7yhZ3AXOgy83I53SfmzZrYagD7/aU6+08QGPlpWoGnexFbxueO1z80Ro/k7oIq5m5frUPkP9ohn7pVP3yt7duNjBDQ9BfTUaeLHDlotQL1DO8CiGg2y0AKUPsiNd5gwGp7/scYvfL991lw6YUJda7D21haAyFwEKrCu8Loiey3ADqomrA7xUh+aS6mhMy1+t1lbtFMM9OaznUO923L4m1/0BwPo82yo+Jg5kQLob5EDeAymSQEUTy+w4NyHLia3iGvnaJ+ZLVpxqorrnZu/KjjOy7z8oHz8HrkbfyAL9gzDEloM54sUQMBzCOBmZQB3mkvaOsDbNDiQO/OYyGe/23LmJXXIlMhdSN3MajjAFUIeEmlFaszgeI5dETySt6Y2/Jr3u4NMlHjv94hfrBVvdeFDBGa+J9+3qzjQgw0CrCDgk7RYYQDetJRJf/VLKQBhWGDD50lo0wOv0IvpbeLzc7RPzhRNfP5JSYT58puPiifulltW0SQYxOqy0acaC0PJoJMSgLhy23dMTXBmaeyE8OU3pRZem4jVAUqq9yNcNVFwaP0I+N1OfMXTb4LcqGAG5AuGuIS1HBCcbZGXxHNxLUGtemGn+MVquXo/5q7Swp8Z6bMG+miazQqg3XSsv6HiA0eoDasshClei+AQdAwwHKSGY7RLjhANulj6rPjLHXLdUuiOTvVwtec7Y0g6oPpJP2WFYHEQiJypilsWhkapRn3BNXWX3hRvHXdg6L0C+wvFzKn6BwM9Ysp5hPZRUwG1Uo7Mwk/tuN3G6BfJdlMcn2t/cK24d7m1G+/cocJi2FGU6ayWyWsYhXCtpzVpjMdpXR8naZU54jvCcXIRnchZpjb1dbnqVVpERhNixlR1UQfItBDk3MAhPGFAPhWiWgBew0cvM++CyFXfi085BkIQdZXNcYvADh8OboRT6r/meTAFuDx9GbthIzsgGy5Wgyum61BxHLlzUNyzVD60Aqfv6Z1xwGGEsWes5zEfxfobZnPKBJFlogZBtiVEX+UdlRPjl4rwO9LMMPRgznkSV1XhHQUAcUYfN6r43Aiwc4s1FOvIuaErvxM/8Xw1oAzKx0LyDWnQpCmlf5Shonxjy6rkLmKuw+PpuQ5FAYp1VQYeE79LiesPcdy15FDtcvFO8e8vy5fW4U+0WTiygnMQUXzkHgcb4qGioaOjxEVtIiLiYdlWEGM/EMnFwurB3zSnlm2vB4IIMjp35MZVnqo9LtIBPTDepK+vjJ2iX3Jz5KyrDEwQKVJdcCmBXAeHB3zKEwiqSu4EeE8/fRDIWgoIUpDkqMtqHOaP8jNFVrZXPRSdn9oThl2BKJQaKD+8Qv74GbxPYOJ0LqZ2WrGMr8THUlo4gY1vfLlba++LtG8LR7cJE38xWO0UoJWBE/9o0qEyIeDJxQqA9DD1CCCrg3UFfBh3wbWhj18fahzFNEyp0jlFsH2+B4hs3r7AEZw2DlWxgXCPYS0FVKX1BTgpA+w4vjrEl8xzjkBG5cNf+8yIu1+27nq+uL+7iE9Oa1gmoPciTB36KFnhgmzMRdpLidZCImlGaCuMkMU/WHwg7GRCQXSxArhm4D3BgoW/Pzz/IuPim0MTjuBYRcSU9s2TzSmmG1sV4MbUVJtD7jw9anb5gl0F+MIqqF0vy0c3FE01VTfqf8mhuG7cK3/0WP5/XivkMmUcwsUCARoEmSb6HhPtKkeKorEYG5VPtpZSdVbUoMNUUAHZeCUI6YXqLDRD54mwynDkfHHZd4yjTydFU+TBrwMBAv5cY+gWuBgiX0iACaVCCRlBt0m5CvCnInztpJUcfWRwqqL8bynDyYv5aa+tKf/gocxLy7L4oFAY24+kBuyC0UYYVII+FO5ISUuZkaZyqslMJcoxnlvzJitDXCqVc8XSYUeHLvtaaN5FGkaoSl6vDE6ODEoVmh6d7QrA6Y91+fgDD+T2OKEUeCXcyVsJ6HoPxOL/PA5SYW3soZfzP3pgaN3mfFQz8fdVAT12eCE0NQv86AwDFnLQPmTEwotO4YiJSVsYW8X5fHHs+MTV1425+OpUqoEKSIU7KFIVBORFUsbHA81XdkVfkYpMoAMpZezzKbcbAvaVChgJfTuPCgY+UQ7udLP1kVaK7ouC2Fz4viHrzj+n7/lj//7uQjyEQ+HQAfbiSQHYROcGQbvE1A3Qt+vwlb5SQ8q46tMTbvjalLHjaR0NmdiXPzu/24mnZ2V4pd9PW8tdq5g2XY2oWiaoFlcVVoPByMTBmL8+qVLDhu2lH9/X9z9PDxSz5ZgO6KEJVgPu6B7wihLO6+XL+D7f+ee1fv2bk44+lv9ACtDDVYGhkoXuhyJVNQ13+74q7pXUpbWZqxiHtEIMjoTk7vDN4VOLzon7K56uUE5al3+1wyGpfio7+eI7mdt+1bP4veFsmo74hvBJDXS+vKmVjIq5c+pvvGHiOefSBoKv2lcxc/Otigmqqkpyl37kGJekwmH3wBWhqAM1FBAkYl1WDXsOUAYkP3DsoRDYMgQKygaJhp7LP8i/vmTog3W5XvwBM1O2NhqzDk+c8pGGY49NYsmoEvrqooNr9UDuoDKTSAF5bBkD4QGCgMdH7TgpfgQTdEjSuHw+pHrsdK54jkNlijsuBtvJIPBUFikQ5Hkqwfdi/C63dK6DYh0xPIc/zYHdblo/n0OoiNQCam9JOvm5oFR0zhQOGse6OeQHfDKyHgWnVWFw+rEYibm/mB4fdvmT+6MOEK7IKsqlAmsJUNmQlDCVlI6ITqy9S6XEcIVxHbYCfH6/8P8rbkciPzOnEztQvk465+lPX9vt5wY3rprg1k7814VWCRcMCPpqZ8HHSEhQlljJXZuyIhT0nATBzrOCQnmr2whlomr/iAA5FGBBA5Wqq0JOF243HJwVczfE5VEd4kYFHNX5Voc4hXNjnADFKeAbIV9WAJEzsYvICNQBCSmJm3Mwxk3uOpx4JFDjGcQE5HMI+DlCjMvNlTOQilhXBBxSiJ3GVxZyVrHyQhQlLTXZSatpK+WoJRvTuAoIpvCXxM0mSMK+QM5eD6iSE8ZM4HHgJRRWmy+lUwx6Om4vL1p5ostj4sXZLr+0VZEHSmgTqwx8EvmcNfi5QQckIyq/zH63y4GOtFZcVXQ2JF74iOK6Sxq2JlxcXIeqRMzAZku5O+XA0xdaIRfp0uNTGUl+T8JgrEo1UizROgIEskcFD/JxfGphnlO5CZ24imdtgcHXY43T8EHRq8R1YXWY18i1onRVSZyk6slZ0M2WxJMmSOf4amQYlNnH1kkTfEI+PxYV4gZpHZ+DM/srUyh/ZaiTtObTEyBQnhGGoYq1l4YL7PciD9BUhAQCFawKZpUl16nqJDXFDQY6w6Zg6N/gqxxTcmUIAPM3MP9QSX2vqbr6rIlsNXDVIcg5EKhK5JbrYDbEFrxGgwjURl/79YoKmV35vdARXYE2ygmdrqZWEpKohlQ1gmqlPnAY+gAXIK7UILdx84UfgEdlyV2pOPmBQHEpK0rny9dH4hPBIfAzh+Jt3ddO40te5bQTKra1FEkxTqa+1DWCVKwS4dAEGcEE+bL5G5wQYUQh/wa2/6dJ/3aZPxwH5yU9VZtQF9hBPAAdHnw5T/LYjdelRxAPemykVTKVgLh5KvDMrs1Oxdkeys+t0cTEdwXDPT6KBLEqrS+VR2PHQhB7UcDmS9n6slaCkkS8Qq1SudKrAtr8nf6oVr6cgoVHLCqfvxxujiytG/3/AO5OvaD6OasDAAAAAElFTkSuQmCC");
+  --bg: #eef1f6; --panel: #ffffff; --text: #172033; --muted: #5c6b85; --border: #dde3ef;
+  --accent: #2f5fb8; --accent-strong: #24478f; --accent-soft: #e6edfa;
+  --hard: #c0392b; --hard-soft: #fbeae8; --medium: #b9770e; --medium-soft: #fbf1e0;
+  --easy: var(--accent); --easy-soft: var(--accent-soft);
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.06), 0 1px 1px rgba(15,23,42,.04);
+  --shadow-md: 0 8px 24px rgba(15,23,42,.10), 0 2px 6px rgba(15,23,42,.06);
+  --rail-bg: #101a2e; --rail-ink: #dce6f7; --rail-ink-dim: #7c8bab;
+  --rail-hover: #17253f; --rail-active: #1d2f4f; --rail-accent: #5b8ff0; --rail-rule: #1c2a45;
+  --demo-bg: #e4e9f3; --demo-ink: #445070;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1220; --panel: #141b2e; --text: #e6ecf9; --muted: #93a1c2; --border: #26314c;
+    --accent: #6c96e6; --accent-strong: #8fb0ee; --accent-soft: #1a2740;
+    --hard: #e58a7e; --hard-soft: #3a201e; --medium: #dba85f; --medium-soft: #332508;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 8px 24px rgba(0,0,0,.35);
+    --demo-bg: #0a0e18; --demo-ink: #8b98bd;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1220; --panel: #141b2e; --text: #e6ecf9; --muted: #93a1c2; --border: #26314c;
+  --accent: #6c96e6; --accent-strong: #8fb0ee; --accent-soft: #1a2740;
+  --hard: #e58a7e; --hard-soft: #3a201e; --medium: #dba85f; --medium-soft: #332508;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 8px 24px rgba(0,0,0,.35);
+  --demo-bg: #0a0e18; --demo-ink: #8b98bd;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--demo-bg); color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex; flex-direction: column; min-height: 100vh;
+}
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+button { font: inherit; cursor: pointer; }
+a { color: var(--accent); text-decoration: none; }
+::selection { background: var(--accent); color: #fff; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- Demo chrome (not part of either real app -- the picker + status strip) ---------- */
+
+.demoBar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 22px; border-bottom: 1px solid var(--border); background: var(--panel);
+  flex: none;
+}
+.demoBar .tag {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--demo-ink); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 10px;
+}
+.productSwitch { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+.productSwitch button {
+  border: none; background: none; padding: 7px 16px; border-radius: 7px; font-size: 13px;
+  font-weight: 600; color: var(--muted);
+}
+.productSwitch button.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
+.demoBar .hint { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+.demoBar .hint kbd {
+  font: 11px ui-monospace, monospace; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+.stage { flex: 1; display: flex; min-height: 0; padding: 20px; }
+.frame {
+  flex: 1; display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+  overflow: hidden; box-shadow: var(--shadow-md); min-height: 0;
+}
+
+/* ---------- Replica of Layout.tsx / Layout.module.css ---------- */
+
+.rail { width: 220px; flex: none; display: flex; flex-direction: column; padding: 16px 12px; background: var(--rail-bg); overflow-y: auto; }
+.railBrand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
+.railMark { width: 32px; height: 32px; border-radius: 9px; flex: none; background-image: var(--logo-url); background-size: cover; background-position: center; }
+.railBrandTitle { color: var(--rail-ink); font-weight: 700; font-size: 13.5px; display: block; }
+.railBrandSub { color: var(--rail-ink-dim); font-size: 10.5px; display: block; }
+.railSection { margin-bottom: 4px; }
+.railSectionLabel { color: var(--rail-ink-dim); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; padding: 14px 10px 6px; }
+.railGroup { display: flex; flex-direction: column; gap: 2px; }
+.railSpacer { flex: 1; }
+.railItem {
+  display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 8px;
+  color: var(--rail-ink-dim); font-size: 13.5px; white-space: nowrap; border: none; background: none;
+  width: 100%; text-align: left;
+}
+.railItem:hover { background: var(--rail-hover); color: var(--rail-ink); }
+.railItem.active { background: var(--rail-active); color: var(--rail-ink); font-weight: 600; }
+.railItem.active .ico { color: var(--rail-accent); }
+.railDivider { height: 1px; background: var(--rail-rule); margin: 10px 4px; }
+.ico { width: 17px; height: 17px; flex: none; display: inline-flex; }
+.ico svg { width: 100%; height: 100%; }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 22px; border-bottom: 1px solid var(--border); background: var(--panel); flex: none; }
+.crumb { font-size: 12px; color: var(--muted); }
+.crumb b { color: var(--text); font-weight: 650; }
+.content { flex: 1; padding: 28px 32px; overflow: auto; }
+
+/* ---------- Shared page bits ---------- */
+
+.pageTitle { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.pageLede { color: var(--muted); font-size: 13px; margin: 0 0 24px; max-width: 640px; }
+.statGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
+.statCard { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+.statCard.link { cursor: pointer; }
+.statCard.link:hover { border-color: var(--accent); }
+.statLabel { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.statLabel .ico { width: 15px; height: 15px; }
+.statValue { font-size: 26px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.statHint { font-size: 12px; color: var(--muted); }
+.statHint.warn { color: var(--medium); }
+.statHint.ok { color: var(--accent-strong); }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+.sectionTitle { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+tbody tr:last-child td { border-bottom: none; }
+td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+.rowList { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.rowItem { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.rowItem:last-child { border-bottom: none; }
+.rowName { font-weight: 600; font-size: 13.5px; }
+.rowSub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowMain { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.iconBtn { background: none; border: none; padding: 5px; border-radius: 6px; color: var(--muted); display: flex; flex: none; }
+.iconBtn:hover { background: var(--bg); color: var(--text); }
+.iconBtn.fav.is-fav { color: var(--accent); }
+.iconBtn .ico { width: 16px; height: 16px; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 650; padding: 3px 9px; border-radius: 999px; }
+.badge.ok { color: var(--accent-strong); background: var(--accent-soft); }
+.badge.warn { color: var(--medium); background: var(--medium-soft); }
+
+.stubNote { border: 1px dashed var(--border); border-radius: 10px; padding: 16px 18px; color: var(--muted); font-size: 13px; }
+
+/* ---------- Connect / Login screens ---------- */
+
+.gateWrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+.gateCard { width: 100%; max-width: 420px; }
+.gateBrand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+.gateBrand .mark { width: 36px; height: 36px; border-radius: 10px; background-image: var(--logo-url); background-size: cover; background-position: center; }
+.gateBrand .title { font-weight: 700; font-size: 16px; }
+.gateBrand .sub { font-size: 12px; color: var(--muted); }
+.gateTitle { font-size: 18px; margin: 0 0 6px; }
+.gateLede { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 13px; color: var(--muted); }
+.field input {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  color: var(--text); font-size: 14px; width: 100%;
+}
+.field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.btnPrimary { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600; width: 100%; }
+.btnPrimary:hover { background: var(--accent-strong); }
+.advToggle { display: flex; align-items: center; gap: 5px; background: none; border: none; padding: 4px 0; margin: 2px 0 14px; color: var(--muted); font-size: 12.5px; }
+.advToggle .ico { width: 14px; height: 14px; transition: transform 150ms ease; }
+.advToggle.open .ico { transform: rotate(90deg); }
+.advPanel { display: none; margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.advPanel.open { display: block; }
+.advPanel label.check { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; cursor: pointer; }
+.advPanel .hintSmall { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.advPanel input[type="number"] { width: 100px; }
+.gateNote { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }
+
+.hidden { display: none !important; }
+
+@media (max-width: 720px) {
+  .stage { padding: 0; }
+  .frame { border-radius: 0; border: none; }
+  .rail { position: absolute; z-index: 5; height: 100%; box-shadow: var(--shadow-md); transform: translateX(-100%); transition: transform 180ms ease; }
+  .rail.open { transform: translateX(0); }
+  .content { padding: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================ Demo chrome ============================================================ -->
+<div class="demoBar">
+  <a href="index.html" style="font-size:12.5px;color:var(--muted);white-space:nowrap">&larr; nexagres.dev</a>
+  <span class="tag">Interactive demo</span>
+  <div class="productSwitch" role="tablist" aria-label="Choose console">
+    <button data-product="wire" class="active" role="tab" aria-selected="true">Polywire</button>
+    <button data-product="advisor" role="tab" aria-selected="false">Nexagres Advisor</button>
+  </div>
+  <span class="hint">Click sidebar items and rows to explore &mdash; mock data, nothing here reaches a real backend.</span>
+</div>
+
+<div class="stage">
+  <div class="frame">
+
+    <!-- ============================================================ POLYWIRE ============================================================ -->
+    <div id="app-wire" class="app">
+
+      <!-- Connect gate -->
+      <div id="wire-gate" class="gateWrap">
+        <div class="gateCard">
+          <div class="gateBrand">
+            <div class="mark"></div>
+            <div><span class="title">Polywire</span><br><span class="sub">Admin console</span></div>
+          </div>
+          <div class="panel">
+            <h1 class="gateTitle">Connect</h1>
+            <p class="gateLede">
+              Enter the admin URL and bearer token for a running Polywire process. By default the
+              token is kept only in this tab's session storage (see Advanced options to change that).
+            </p>
+            <div class="field">
+              <label>Admin URL</label>
+              <input type="text" value="http://localhost:19090" readonly>
+            </div>
+            <div class="field">
+              <label>Admin token</label>
+              <input type="password" placeholder="POLYWIRE_ADMIN_TOKEN value" value="••••••••••••">
+            </div>
+            <button type="button" class="advToggle" data-adv-toggle="wire">
+              <span class="ico">${chevronRight}</span> Advanced options
+            </button>
+            <div class="advPanel" data-adv-panel="wire">
+              <label class="check">
+                <input type="checkbox">
+                <span>
+                  <span style="font-size:13px">Remember on this device</span>
+                  <span class="hintSmall">Keeps the admin URL and token in localStorage past closing the tab. Only for a machine you trust.</span>
+                </span>
+              </label>
+              <label>
+                <div style="font-size:13px;margin-bottom:4px">Request timeout (seconds)</div>
+                <input type="number" value="10">
+                <div class="hintSmall">How long to wait for the admin API before giving up.</div>
+              </label>
+            </div>
+            <button type="button" class="btnPrimary" data-enter="wire">Connect</button>
+          </div>
+          <p class="gateNote">Demo only &mdash; any values work here.</p>
+        </div>
+      </div>
+
+      <!-- Shell -->
+      <div id="wire-shell" class="hidden" style="display:flex; flex:1; min-width:0;">
+        <nav class="rail">
+          <div class="railBrand">
+            <div class="railMark"></div>
+            <div><span class="railBrandTitle">Polywire</span><span class="railBrandSub">Admin console</span></div>
+          </div>
+
+          <div class="railSection">
+            <div class="railSectionLabel">Overview</div>
+            <div class="railGroup">
+              <button class="railItem active" data-wire-page="dashboard"><span class="ico">${iLayout}</span>Dashboard</button>
+            </div>
+          </div>
+          <div class="railSection">
+            <div class="railSectionLabel">Monitoring</div>
+            <div class="railGroup">
+              <button class="railItem" data-wire-page="metrics"><span class="ico">${iActivity}</span>Metrics</button>
+              <button class="railItem" data-wire-page="topology"><span class="ico">${iWaypoints}</span>Topology</button>
+            </div>
+          </div>
+          <div class="railSection">
+            <div class="railSectionLabel">Security</div>
+            <div class="railGroup">
+              <button class="railItem" data-wire-page="firewall"><span class="ico">${iShield}</span>SQL Firewall</button>
+              <button class="railItem" data-wire-page="acl"><span class="ico">${iNetwork}</span>ACL</button>
+              <button class="railItem" data-wire-page="oauth"><span class="ico">${iKey}</span>OAuth</button>
+            </div>
+          </div>
+          <div class="railSection">
+            <div class="railSectionLabel">Traffic</div>
+            <div class="railGroup">
+              <button class="railItem" data-wire-page="backends"><span class="ico">${iServer}</span>Backends</button>
+              <button class="railItem" data-wire-page="queues"><span class="ico">${iList}</span>Queues</button>
+              <button class="railItem" data-wire-page="data"><span class="ico">${iTable}</span>Data explorer</button>
+              <button class="railItem" data-wire-page="router"><span class="ico">${iRoute}</span>Router rules</button>
+              <button class="railItem" data-wire-page="qos"><span class="ico">${iSliders}</span>QoS</button>
+              <button class="railItem" data-wire-page="federation"><span class="ico">${iMerge}</span>Federation Plans</button>
+            </div>
+          </div>
+          <div class="railSection">
+            <div class="railSectionLabel">Configuration</div>
+            <div class="railGroup">
+              <button class="railItem" data-wire-page="llm"><span class="ico">${iCpu}</span>LLM</button>
+            </div>
+          </div>
+
+          <div class="railSpacer"></div>
+          <button class="railItem" data-exit="wire" style="margin-top:8px"><span class="ico">${iLogout}</span>Disconnect</button>
+        </nav>
+
+        <div class="main">
+          <div class="topbar"><div class="crumb">polywire admin</div></div>
+          <div class="content" id="wire-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ ADVISOR ============================================================ -->
+    <div id="app-advisor" class="app hidden">
+
+      <!-- Login gate -->
+      <div id="advisor-gate" class="gateWrap">
+        <div class="gateCard">
+          <div class="gateBrand">
+            <div class="mark"></div>
+            <div><span class="title">Nexagres Advisor</span><br><span class="sub">Postgres migration advisor</span></div>
+          </div>
+          <div class="panel">
+            <h1 class="gateTitle">Sign in</h1>
+            <div class="field">
+              <label>Username</label>
+              <input type="text" value="admin" readonly>
+            </div>
+            <div class="field">
+              <label>Password</label>
+              <input type="password" placeholder="Password" value="••••••••">
+            </div>
+            <button type="button" class="btnPrimary" data-enter="advisor">Sign in</button>
+          </div>
+          <p class="gateNote">Demo only &mdash; any values work here.</p>
+        </div>
+      </div>
+
+      <!-- Shell -->
+      <div id="advisor-shell" class="hidden" style="display:flex; flex:1; min-width:0;">
+        <nav class="rail">
+          <div class="railBrand">
+            <div class="railMark"></div>
+            <div><span class="railBrandTitle">Nexagres</span><span class="railBrandSub">Advisor</span></div>
+          </div>
+
+          <div class="railSection">
+            <div class="railSectionLabel">Overview</div>
+            <div class="railGroup">
+              <button class="railItem active" data-advisor-page="dashboard"><span class="ico">${iLayout}</span>Dashboard</button>
+            </div>
+          </div>
+          <div class="railDivider"></div>
+          <div class="railSection">
+            <div class="railSectionLabel">Migration</div>
+            <div class="railGroup">
+              <button class="railItem" data-advisor-page="connections"><span class="ico">${iCompass}</span>Advisor</button>
+            </div>
+          </div>
+          <div class="railDivider"></div>
+          <div class="railSection">
+            <div class="railSectionLabel">Configuration</div>
+            <div class="railGroup">
+              <button class="railItem" data-advisor-page="llm"><span class="ico">${iCpu}</span>LLM</button>
+            </div>
+          </div>
+
+          <div class="railSpacer"></div>
+          <button class="railItem" data-exit="advisor" style="margin-top:8px"><span class="ico">${iLogout}</span>Sign out</button>
+        </nav>
+
+        <div class="main">
+          <div class="topbar"><div class="crumb">nexagres advisor</div></div>
+          <div class="content" id="advisor-content"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------------------------
+// Inline icon set (lucide-style outline strokes, hand-trimmed to just the paths this demo needs
+// so the file stays a single self-contained document with no external icon font/library).
+// ---------------------------------------------------------------------------------------------
+function svg(paths, vb) { return '<svg viewBox="' + (vb || '0 0 24 24') + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>'; }
+const iLayout = svg('<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>');
+const iActivity = svg('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>');
+const iWaypoints = svg('<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h5a4 4 0 0 0 4-4v-1a4 4 0 0 1 4-4"/>');
+const iShield = svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>');
+const iNetwork = svg('<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M12 8v4M12 12H5v4M12 12h7v4"/>');
+const iKey = svg('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6M15.5 7.5 18 10l3-3-2.5-2.5"/>');
+const iServer = svg('<rect x="2" y="3" width="20" height="7" rx="1.5"/><rect x="2" y="14" width="20" height="7" rx="1.5"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/>');
+const iList = svg('<line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>');
+const iTable = svg('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>');
+const iRoute = svg('<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M18 7v3a4 4 0 0 1-4 4H8a4 4 0 0 0-4 4"/>');
+const iSliders = svg('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
+const iMerge = svg('<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h6M18 6h-2a3 3 0 0 0-3 3v1"/>');
+const iCpu = svg('<rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>');
+const iLogout = svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>');
+const iCompass = svg('<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>');
+const iArrowDown = svg('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>');
+const iArrowUp = svg('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>');
+const iGauge = svg('<path d="M12 14 15.5 9"/><circle cx="12" cy="14" r="1.5" fill="currentColor" stroke="none"/><path d="M3 20a9 9 0 1 1 18 0"/>');
+const iStar = function(filled) { return svg('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" ' + (filled ? 'fill="currentColor"' : '') + '/>'); };
+const iZap = svg('<polygon points="13 2 3 14 11 14 9 22 21 10 13 10 13 2"/>');
+const iSearch = svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+const iTrash = svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>');
+const iDb = svg('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>');
+const iFile = svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/>');
+const chevronRight = svg('<polyline points="9 18 15 12 9 6"/>');
+
+// Substitute the ${...} placeholders written directly into the HTML above (plain text, not real
+// template-literal interpolation -- resolved with one explicit pass against a name->markup map,
+// once, after every icon constant above is defined).
+const ICONS = {
+  iLayout, iActivity, iWaypoints, iShield, iNetwork, iKey, iServer, iList, iTable,
+  iRoute, iSliders, iMerge, iCpu, iLogout, iCompass, chevronRight,
+};
+document.body.innerHTML = document.body.innerHTML.replace(/\$\{(\w+)\}/g, (_, name) => ICONS[name] || '');
+
+// ---------------------------------------------------------------------------------------------
+// Mock data
+// ---------------------------------------------------------------------------------------------
+const wireBackends = [
+  { name: 'reporting', url: 'jdbc:postgresql://reporting-host:5432/app', fav: true },
+  { name: 'analytics', url: 'jdbc:postgresql://analytics-host:5432/app', fav: false },
+  { name: 'shard0', url: 'jdbc:postgresql://shard0-host:5432/app', fav: false },
+];
+const advisorConnections = [
+  { id: 1, name: 'Prod Oracle 19c', url: 'jdbc:oracle:thin:@prod-ora:1521/ORCLPDB1', fav: true },
+  { id: 2, name: 'Legacy MySQL', url: 'jdbc:mysql://legacy-mysql:3306/app', fav: false },
+];
+
+// Synthetic but shape-accurate stand-ins for what /api/metrics/summary and /api/federation/plans
+// actually return (see WireMetricsSummary / FederationPlanEntry in wire/web/src/api/client.ts) --
+// numbers are made up, but every field, unit, and outcome bucket is real.
+const wireMetrics = {
+  protocolCounts: { postgres: 2148990, mysql: 903214, mssql: 563917 },
+  rttByOutcome: [
+    { protocol: 'postgres', outcome: 'cache_hit', calls: 1402880, avgMs: 0.4 },
+    { protocol: 'postgres', outcome: 'pg_read', calls: 611200, avgMs: 5.1 },
+    { protocol: 'postgres', outcome: 'pg_write', calls: 134910, avgMs: 7.8 },
+    { protocol: 'mysql', outcome: 'cache_hit', calls: 588441, avgMs: 0.5 },
+    { protocol: 'mysql', outcome: 'pg_read', calls: 289203, avgMs: 6.3 },
+    { protocol: 'mysql', outcome: 'pg_write', calls: 25570, avgMs: 8.9 },
+    { protocol: 'mssql', outcome: 'pg_read', calls: 498120, avgMs: 5.8 },
+    { protocol: 'mssql', outcome: 'pg_write', calls: 65797, avgMs: 9.2 },
+  ],
+  topSql: [
+    { sql: 'SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20', calls: 412990, avgMs: 2.1, avgRttMs: 1.8 },
+    { sql: 'SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = $1', calls: 288104, avgMs: 6.4, avgRttMs: 5.9 },
+    { sql: 'UPDATE inventory SET qty = qty - $1 WHERE sku = $2', calls: 160227, avgMs: 8.9, avgRttMs: 8.1 },
+    { sql: "SELECT count(*) FROM events WHERE occurred_at > now() - interval '1 hour'", calls: 94018, avgMs: 12.3, avgRttMs: 11.6 },
+    { sql: 'INSERT INTO audit_log (actor, action, payload) VALUES ($1, $2, $3)', calls: 71553, avgMs: 4.7, avgRttMs: 4.2 },
+  ],
+};
+
+const wireNodes = [
+  { nodeId: 'wire-a1f9', host: '10.0.4.12', zone: 'us-east-1a', version: '1.14.2', lastHeartbeat: '2s ago', status: 'up' },
+  { nodeId: 'wire-c203', host: '10.0.4.19', zone: 'us-east-1b', version: '1.14.2', lastHeartbeat: '4s ago', status: 'up' },
+  { nodeId: 'wire-9be0', host: '10.0.5.31', zone: 'us-east-1c', version: '1.14.1', lastHeartbeat: '41s ago', status: 'stale' },
+];
+
+const firewallRules = [
+  { priority: 10, action: 'deny', statementType: 'DROP', tablePattern: '*', enabled: true },
+  { priority: 20, action: 'deny', statementType: null, tablePattern: 'billing.*', enabled: true },
+  { priority: 30, action: 'allow', statementType: 'SELECT', tablePattern: '*', enabled: true },
+  { priority: 40, action: 'allow', statementType: null, tablePattern: '*', enabled: false },
+];
+
+const oauthConfig = {
+  issuer: 'https://auth.nexagres.internal/realms/prod',
+  audience: 'polywire-admin',
+  userIdClaim: 'sub',
+  rolesClaim: 'realm_access.roles',
+};
+
+const federationPlans = [
+  {
+    planId: 1042, capturedAt: '2026-08-29 08:14:02', backends: 'reporting, analytics', elapsedMillis: 118, rowCount: 3402, success: true,
+    sqlText: 'SELECT r.region, sum(a.revenue) FROM reporting.orders r JOIN analytics.revenue a ON a.order_id = r.id GROUP BY r.region',
+    leafScans: [
+      { backend: 'reporting', elapsedMillis: 52, rowCount: 18990, errorMessage: null },
+      { backend: 'analytics', elapsedMillis: 61, rowCount: 18990, errorMessage: null },
+    ],
+  },
+  {
+    planId: 1041, capturedAt: '2026-08-29 08:11:47', backends: 'reporting, shard0, shard1', elapsedMillis: 340, rowCount: 812, success: true,
+    sqlText: 'SELECT * FROM reporting.customers c WHERE c.id IN (SELECT customer_id FROM shard0.orders UNION SELECT customer_id FROM shard1.orders)',
+    leafScans: [
+      { backend: 'shard0', elapsedMillis: 140, rowCount: 40210, errorMessage: null },
+      { backend: 'shard1', elapsedMillis: 152, rowCount: 39887, errorMessage: null },
+      { backend: 'reporting', elapsedMillis: 38, rowCount: 812, errorMessage: null },
+    ],
+  },
+  {
+    planId: 1040, capturedAt: '2026-08-29 08:09:15', backends: 'analytics, shard0', elapsedMillis: 89, rowCount: 0, success: false,
+    sqlText: 'SELECT * FROM analytics.daily_rollup d JOIN shard0.orders o ON o.rollup_id = d.id WHERE d.day = $1',
+    leafScans: [
+      { backend: 'analytics', elapsedMillis: 41, rowCount: 220, errorMessage: null },
+      { backend: 'shard0', elapsedMillis: 44, rowCount: 0, errorMessage: 'relation "orders" does not have column "rollup_id"' },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------------------------
+function $(sel, root) { return (root || document).querySelector(sel); }
+function $all(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+
+function statCard(icon, label, value, hint, hintClass) {
+  return '<div class="statCard"><div class="statLabel"><span class="ico">' + icon + '</span>' + label + '</div>' +
+    '<div class="statValue">' + value + '</div><div class="statHint' + (hintClass ? ' ' + hintClass : '') + '">' + hint + '</div></div>';
+}
+
+function rowFavBtn(isFav, onclick) {
+  return '<button type="button" class="iconBtn fav' + (isFav ? ' is-fav' : '') + '" onclick="' + onclick + '" title="' +
+    (isFav ? 'Remove from favorites' : 'Add to favorites') + '"><span class="ico">' + iStar(isFav) + '</span></button>';
+}
+
+// ---------------------------------------------------------------------------------------------
+// Polywire pages
+// ---------------------------------------------------------------------------------------------
+function sectionHead(title, linkPage, linkLabel) {
+  return '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">' +
+    '<div class="sectionTitle" style="margin:0">' + title + '</div>' +
+    (linkPage ? '<a href="#" onclick="selectWire(\'' + linkPage + '\');return false" style="font-size:12.5px">' + linkLabel + ' &rarr;</a>' : '') +
+    '</div>';
+}
+
+function wireDashboardPage() {
+  const upNodes = wireNodes.filter((n) => n.status === 'up').length;
+  const staleNodes = wireNodes.length - upNodes;
+
+  return '<h1 class="pageTitle">Dashboard</h1>' +
+    '<p class="pageLede">Live snapshot of this Polywire process &mdash; throughput, configured backends, and node topology.</p>' +
+    '<div class="statGrid">' +
+      statCard(iArrowDown, 'Reads / sec', '842.3', '3,204,118 total reads') +
+      statCard(iArrowUp, 'Writes / sec', '96.1', '412,003 total writes') +
+      statCard(iGauge, 'Avg round-trip', '4.2ms', '1.8M samples') +
+      statCard(iActivity, 'Statements handled', '3,616,121', '0 other') +
+      statCard(iServer, 'Backends', '3', 'reporting, analytics, shard0') +
+      statCard(iWaypoints, 'Nodes up', String(upNodes) + ' / ' + wireNodes.length, staleNodes > 0 ? staleNodes + ' stale' : 'all healthy', staleNodes > 0 ? 'warn' : 'ok') +
+    '</div>' +
+
+    sectionHead('Traffic by backend', 'backends', 'Backends') +
+    '<div class="panel" style="padding:0;margin-bottom:24px"><table><thead><tr><th>Backend</th><th>Calls</th><th>Reads</th><th>Writes</th><th>Avg ms</th></tr></thead><tbody>' +
+      '<tr><td class="mono">reporting</td><td>1,204,880</td><td>1,180,220</td><td>24,660</td><td>3.9</td></tr>' +
+      '<tr><td class="mono">analytics</td><td>982,004</td><td>970,441</td><td>11,563</td><td>4.6</td></tr>' +
+      '<tr><td class="mono">shard0</td><td>1,429,237</td><td>1,390,190</td><td>39,047</td><td>4.1</td></tr>' +
+    '</tbody></table></div>' +
+
+    sectionHead('Round-trip by outcome', 'metrics', 'Metrics') +
+    '<p class="pageLede" style="margin-top:-4px">How long a cache hit takes vs. a real Postgres read or write, per wire protocol.</p>' +
+    '<div style="margin-bottom:24px">' + rttOutcomeTable(wireMetrics.rttByOutcome) + '</div>' +
+
+    sectionHead('Top SQL by cost', 'metrics', 'Metrics') +
+    '<div style="margin-bottom:24px">' + topSqlTable(wireMetrics.topSql, { limit: 4 }) + '</div>' +
+
+    sectionHead('Topology', 'topology', 'Topology') +
+    '<div style="margin-bottom:24px">' + topologyTable(wireNodes) + '</div>' +
+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">' +
+      '<div>' + sectionHead('SQL Firewall', 'firewall', 'Firewall') + firewallSummaryPanel(firewallRules) + '</div>' +
+      '<div>' + sectionHead('OAuth', 'oauth', 'OAuth') + oauthSummaryPanel(oauthConfig) + '</div>' +
+    '</div>';
+}
+
+function wireBackendsPage() {
+  const rows = wireBackends.map((b, i) =>
+    '<div class="rowItem">' +
+      rowFavBtn(b.fav, 'toggleWireFav(' + i + ')') +
+      '<div class="rowMain"><span class="rowName mono">' + b.name + '</span><span class="rowSub mono">' + b.url + '</span></div>' +
+      '<button type="button" class="iconBtn" title="Open in data explorer" onclick="selectWire(\'data\')"><span class="ico">' + iTable + '</span></button>' +
+      '<button type="button" class="iconBtn" title="Test connection" onclick="flashTested(this)"><span class="ico">' + iZap + '</span></button>' +
+    '</div>').join('');
+  return '<h1 class="pageTitle">Backends</h1>' +
+    '<p class="pageLede">Named Postgres targets the router can send statements to. Click a star to favorite &mdash; favorites float to the top.</p>' +
+    '<div class="sectionTitle">Configured backends</div>' +
+    '<div class="rowList" id="wireBackendList">' + rows + '</div>';
+}
+
+function wireStub(title, lede, note) {
+  return '<h1 class="pageTitle">' + title + '</h1><p class="pageLede">' + lede + '</p><div class="stubNote">' + note + '</div>';
+}
+
+function outcomeBadge(outcome) {
+  if (outcome === 'cache_hit') return '<span class="badge ok">cache hit</span>';
+  if (outcome === 'pg_write') return '<span class="badge warn">pg write</span>';
+  return '<span class="badge" style="color:var(--muted);background:var(--bg)">pg read</span>';
+}
+
+// Shared table builders -- the same "RTT by outcome" and "Top SQL" views appear on both the
+// Dashboard (an at-a-glance slice) and the Metrics page (the full list), so the markup lives once.
+function rttOutcomeTable(rows, opts) {
+  const limited = opts && opts.limit ? rows.slice(0, opts.limit) : rows;
+  const body = limited.map((r) =>
+    '<tr><td class="mono">' + r.protocol + '</td><td>' + outcomeBadge(r.outcome) + '</td><td>' + r.calls.toLocaleString() + '</td><td>' + r.avgMs.toFixed(1) + 'ms</td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th>Protocol</th><th>Outcome</th><th>Calls</th><th>Avg ms</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function topSqlTable(rows, opts) {
+  const limited = opts && opts.limit ? rows.slice(0, opts.limit) : rows;
+  const body = limited.map((s) =>
+    '<tr><td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.sql.replace(/"/g, '&quot;') + '">' + s.sql + '</td>' +
+    '<td>' + s.calls.toLocaleString() + '</td><td>' + s.avgMs.toFixed(1) + 'ms</td><td>' + s.avgRttMs.toFixed(1) + 'ms</td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th>Statement</th><th>Calls</th><th>Avg ms</th><th>Avg RTT</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function topologyTable(nodes) {
+  const body = nodes.map((n) =>
+    '<tr><td class="mono">' + n.nodeId + '</td><td class="mono">' + n.host + '</td><td>' + n.zone + '</td><td class="mono">' + n.version + '</td>' +
+    '<td>' + n.lastHeartbeat + '</td><td>' + (n.status === 'up' ? '<span class="badge ok">up</span>' : '<span class="badge warn">stale</span>') + '</td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th>Node</th><th>Host</th><th>Zone</th><th>Version</th><th>Last heartbeat</th><th>Status</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function firewallSummaryPanel(rules) {
+  const enabled = rules.filter((r) => r.enabled);
+  const allow = enabled.filter((r) => r.action === 'allow').length;
+  const deny = enabled.filter((r) => r.action === 'deny').length;
+  const rows = rules.map((r) =>
+    '<tr' + (r.enabled ? '' : ' style="opacity:.5"') + '><td>' + r.priority + '</td>' +
+    '<td>' + (r.action === 'deny' ? '<span class="badge warn">deny</span>' : '<span class="badge ok">allow</span>') + '</td>' +
+    '<td class="mono">' + (r.statementType || 'any') + '</td><td class="mono">' + r.tablePattern + '</td>' +
+    '<td>' + (r.enabled ? 'enabled' : 'disabled') + '</td></tr>').join('');
+  return '<div class="panel"><div style="display:flex;gap:20px;margin-bottom:14px;flex-wrap:wrap">' +
+    '<div><div class="statValue" style="font-size:20px">' + enabled.length + '<span style="font-size:12px;color:var(--muted);font-weight:500">/' + rules.length + ' enabled</span></div></div>' +
+    '<div><span class="badge ok">' + allow + ' allow</span></div><div><span class="badge warn">' + deny + ' deny</span></div>' +
+    '</div><table><thead><tr><th>Priority</th><th>Action</th><th>Statement</th><th>Table pattern</th><th>State</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function oauthSummaryPanel(cfg) {
+  const row = (label, value) => '<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+    '<span style="color:var(--muted)">' + label + '</span><span class="mono">' + (value || '<span style="color:var(--muted)">not set</span>') + '</span></div>';
+  return '<div class="panel">' +
+    '<div style="margin-bottom:10px"><span class="badge ok">configured</span></div>' +
+    row('Issuer', cfg.issuer) + row('Audience', cfg.audience) + row('User ID claim', cfg.userIdClaim) + row('Roles claim', cfg.rolesClaim) +
+    '</div>';
+}
+
+function wireMetricsPage() {
+  const totalCalls = Object.values(wireMetrics.protocolCounts).reduce((s, c) => s + c, 0);
+  const cacheHits = wireMetrics.rttByOutcome.filter((r) => r.outcome === 'cache_hit').reduce((s, r) => s + r.calls, 0);
+  const cacheable = wireMetrics.rttByOutcome.filter((r) => r.outcome !== 'pg_write').reduce((s, r) => s + r.calls, 0);
+  const hitRate = ((cacheHits / cacheable) * 100).toFixed(1);
+
+  const protoBadges = Object.entries(wireMetrics.protocolCounts).map(([proto, calls]) =>
+    '<span class="badge" style="color:var(--text);background:var(--bg);border:1px solid var(--border)"><b class="mono">' + proto + '</b>&nbsp;' + calls.toLocaleString() + '</span>').join(' ');
+
+  return '<h1 class="pageTitle">Metrics</h1>' +
+    '<p class="pageLede">Live read/write throughput, cache effectiveness, and the hottest statements since this process started.</p>' +
+    '<div class="statGrid">' +
+      statCard(iActivity, 'Statements handled', totalCalls.toLocaleString(), protoBadges) +
+      statCard(iZap, 'Cache hit rate', hitRate + '%', cacheHits.toLocaleString() + ' of ' + cacheable.toLocaleString() + ' cacheable reads', 'ok') +
+      statCard(iGauge, 'Avg round-trip', '4.2ms', '3.6M samples') +
+    '</div>' +
+    '<div class="sectionTitle">Round-trip by outcome</div>' +
+    '<div style="margin-bottom:24px">' + rttOutcomeTable(wireMetrics.rttByOutcome) + '</div>' +
+    '<div class="sectionTitle">Top SQL</div>' +
+    topSqlTable(wireMetrics.topSql);
+}
+
+function federationPlansPage() {
+  const rows = federationPlans.map((p) =>
+    '<tr class="planRow" onclick="toggleFedDetail(' + p.planId + ')" style="cursor:pointer">' +
+      '<td class="mono">#' + p.planId + '</td><td class="mono" style="font-size:12px">' + p.capturedAt + '</td>' +
+      '<td class="mono">' + p.backends + '</td><td>' + p.elapsedMillis + 'ms</td><td>' + p.rowCount.toLocaleString() + '</td>' +
+      '<td>' + (p.success ? '<span class="badge ok">success</span>' : '<span class="badge warn">failed</span>') + '</td>' +
+    '</tr>' +
+    '<tr id="fed-detail-' + p.planId + '" class="hidden"><td colspan="6" style="background:var(--bg)">' +
+      '<div style="padding:12px 4px"><div class="mono" style="font-size:12.5px;margin-bottom:10px;white-space:pre-wrap">' + p.sqlText + '</div>' +
+      '<table><thead><tr><th>Leaf backend</th><th>Elapsed</th><th>Rows</th><th>Error</th></tr></thead><tbody>' +
+      p.leafScans.map((l) => '<tr><td class="mono">' + l.backend + '</td><td>' + l.elapsedMillis + 'ms</td><td>' + l.rowCount.toLocaleString() + '</td>' +
+        '<td style="color:' + (l.errorMessage ? 'var(--hard)' : 'var(--muted)') + '">' + (l.errorMessage || '—') + '</td></tr>').join('') +
+      '</tbody></table></div></td></tr>').join('');
+
+  return '<h1 class="pageTitle">Federation Plans</h1>' +
+    '<p class="pageLede">Captured EXPLAIN PLAN FOR history for statements spanning more than one backend, with real (measured, not estimated) per-leaf timing. Click a row for the leaf-scan breakdown.</p>' +
+    '<div class="panel" style="padding:0"><table><thead><tr><th>Plan</th><th>Captured</th><th>Backends</th><th>Elapsed</th><th>Rows</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+window.toggleFedDetail = function (id) { $('#fed-detail-' + id).classList.toggle('hidden'); };
+
+const wirePages = {
+  dashboard: wireDashboardPage,
+  metrics: wireMetricsPage,
+  topology: () => '<h1 class="pageTitle">Topology</h1><p class="pageLede">Every Polywire node heartbeating against the shared config Postgres. A node is marked stale after 30s without one.</p>' + topologyTable(wireNodes),
+  firewall: () => '<h1 class="pageTitle">SQL Firewall</h1><p class="pageLede">Allow/deny rules matched against incoming statements by type, table, or pattern, evaluated in priority order.</p>' + firewallSummaryPanel(firewallRules),
+  acl: () => wireStub('ACL', 'Network-level allow rules, with PROXY protocol v2 trusted-proxy support.', 'Demo stub.'),
+  oauth: () => '<h1 class="pageTitle">OAuth</h1><p class="pageLede">Issuer, audience, and claim mapping for OAuth-authenticated connections.</p>' + oauthSummaryPanel(oauthConfig),
+  backends: wireBackendsPage,
+  queues: () => wireStub('Queues', 'sqswire-backed queues: visible/in-flight counts, DLQ routing.', 'Demo stub.'),
+  data: () => wireStub('Data explorer', 'Browse tables/columns on any configured backend and run ad hoc SQL.', 'Demo stub &mdash; opened from a Backends row above.'),
+  router: () => wireStub('Router rules', 'Schema, predicate, and value-based sharding rules.', 'Demo stub.'),
+  qos: () => wireStub('QoS', 'Rate limits, burst size, and per-class wait thresholds.', 'Demo stub.'),
+  federation: federationPlansPage,
+  llm: () => wireStub('LLM', 'Fallback LLM provider for statements the rule-based translator can’t handle.', 'Demo stub.'),
+};
+
+function selectWire(page) {
+  $all('#wire-shell .railItem[data-wire-page]').forEach((b) => b.classList.toggle('active', b.dataset.wirePage === page));
+  $('#wire-content').innerHTML = wirePages[page]();
+}
+window.selectWire = selectWire;
+
+window.toggleWireFav = function (i) { wireBackends[i].fav = !wireBackends[i].fav; wireBackends.sort((a, b) => b.fav - a.fav); selectWire('backends'); };
+window.flashTested = function (btn) {
+  const old = btn.innerHTML;
+  btn.innerHTML = '<span class="ico" style="color:var(--accent-strong)">' + iZap + '</span>';
+  btn.title = 'Connected in 6ms';
+  setTimeout(() => { btn.innerHTML = old; btn.title = 'Test connection'; }, 1400);
+};
+
+// ---------------------------------------------------------------------------------------------
+// Advisor pages
+// ---------------------------------------------------------------------------------------------
+function advisorDashboardPage() {
+  return '<h1 class="pageTitle">Dashboard</h1>' +
+    '<p class="pageLede">Overview of the databases you’ve connected and the reports you’ve analyzed.</p>' +
+    '<div class="statGrid">' +
+      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iDb + '</span>Connections</div><div class="statValue">2</div><div class="statHint">Prod Oracle 19c, Legacy MySQL</div></div>' +
+      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iFile + '</span>Reports</div><div class="statValue">5</div><div class="statHint">4 analyzed</div></div>' +
+      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iGauge + '</span>Sizing runs</div><div class="statValue">2</div><div class="statHint">run from a connection</div></div>' +
+    '</div>';
+}
+
+function advisorConnectionsPage() {
+  const rows = advisorConnections.map((c) =>
+    '<div class="rowItem">' +
+      rowFavBtn(c.fav, 'toggleAdvisorFav(' + c.id + ')') +
+      '<div class="rowMain"><span class="rowName">' + c.name + '</span><span class="rowSub mono">' + c.url + '</span></div>' +
+      '<button type="button" class="iconBtn" title="Browse objects" onclick="alert(\'Opens the object browser for \\\'' + c.name + '\\\'.\')"><span class="ico">' + iSearch + '</span></button>' +
+      '<button type="button" class="iconBtn" title="Delete connection" onclick="removeAdvisorConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
+    '</div>').join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No connections yet.</div>';
+  return '<h1 class="pageTitle">Connections</h1>' +
+    '<p class="pageLede">Databases you’re assessing for migration. Click a star to favorite.</p>' +
+    '<div class="rowList" id="advisorConnList">' + rows + '</div>' +
+    '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="alert(\'Opens the add-connection form.\')">Add connection</button>';
+}
+
+const advisorPages = {
+  dashboard: advisorDashboardPage,
+  connections: advisorConnectionsPage,
+  llm: () => wireStub('LLM', 'Provider, model, and API key used to generate migration-report narratives.', 'Demo stub.'),
+};
+
+function selectAdvisor(page) {
+  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => b.classList.toggle('active', b.dataset.advisorPage === page));
+  $('#advisor-content').innerHTML = advisorPages[page]();
+}
+window.selectAdvisor = selectAdvisor;
+
+window.toggleAdvisorFav = function (id) {
+  const c = advisorConnections.find((x) => x.id === id); c.fav = !c.fav;
+  advisorConnections.sort((a, b) => b.fav - a.fav);
+  selectAdvisor('connections');
+};
+window.removeAdvisorConn = function (id) {
+  const i = advisorConnections.findIndex((x) => x.id === id);
+  if (i >= 0) advisorConnections.splice(i, 1);
+  selectAdvisor('connections');
+};
+
+// ---------------------------------------------------------------------------------------------
+// Wiring: product switcher, nav clicks, gate -> shell transitions
+// ---------------------------------------------------------------------------------------------
+$all('.productSwitch button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    $all('.productSwitch button').forEach((b) => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+    btn.classList.add('active'); btn.setAttribute('aria-selected', 'true');
+    const product = btn.dataset.product;
+    $('#app-wire').classList.toggle('hidden', product !== 'wire');
+    $('#app-advisor').classList.toggle('hidden', product !== 'advisor');
+  });
+});
+
+$all('[data-wire-page]').forEach((btn) => btn.addEventListener('click', () => selectWire(btn.dataset.wirePage)));
+$all('[data-advisor-page]').forEach((btn) => btn.addEventListener('click', () => selectAdvisor(btn.dataset.advisorPage)));
+
+// Deep link: docker/polyadvisor.html can send visitors straight into the Advisor tab via
+// demo.html?product=advisor instead of always landing on Polywire.
+if (new URLSearchParams(location.search).get('product') === 'advisor') {
+  $('[data-product="advisor"]').click();
+}
+
+$('[data-adv-toggle="wire"]').addEventListener('click', function () {
+  this.classList.toggle('open');
+  $('[data-adv-panel="wire"]').classList.toggle('open');
+});
+
+$('[data-enter="wire"]').addEventListener('click', () => {
+  $('#wire-gate').classList.add('hidden');
+  $('#wire-shell').classList.remove('hidden');
+  selectWire('dashboard');
+});
+$('[data-exit="wire"]').addEventListener('click', () => {
+  $('#wire-shell').classList.add('hidden');
+  $('#wire-gate').classList.remove('hidden');
+});
+$('[data-enter="advisor"]').addEventListener('click', () => {
+  $('#advisor-gate').classList.add('hidden');
+  $('#advisor-shell').classList.remove('hidden');
+  selectAdvisor('dashboard');
+});
+$('[data-exit="advisor"]').addEventListener('click', () => {
+  $('#advisor-shell').classList.add('hidden');
+  $('#advisor-gate').classList.remove('hidden');
+});
+</script>
+</body>
+</html>

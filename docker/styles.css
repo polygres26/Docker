@@ -51,6 +51,10 @@
   .btn-primary:hover { opacity: 0.9; }
   .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
   .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo); }
+  /* A product section's own descriptive line (e.g. "The intelligent gateway for Postgres." right
+     under the "Polywire" h2) -- distinct from .heroTitle, which is reserved for the page's one
+     true hero. Sits between the section h2 (28px) and its .lede/.heroSub body copy (18px). */
+  .toolTagline { font-size: 21px; line-height: 1.35; letter-spacing: -0.005em; margin: 0 0 14px; color: var(--ink); font-weight: 600; }
   .heroTagline { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
   .heroTagline2 { font-size: 15px; color: var(--ink-dim); margin: 6px 0 0; }
   .credStrip { font-size: 12.5px; color: var(--ink-faint); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px 0; margin: 4px 0 20px; line-height: 1.7; }
