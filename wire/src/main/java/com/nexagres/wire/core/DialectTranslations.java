@@ -567,6 +567,12 @@ public final class DialectTranslations {
     
     private static final Pattern MSSQL_TOP =
             Pattern.compile("(?i)^(\\s*SELECT\\s+)(DISTINCT\\s+)?TOP\\s+(\\d+)\\s+");
+    // @@IDENTITY has no valid Postgres function-call shape at all (Postgres identifiers can't
+    // start with @) -- the one @@-global this project maps, onto pg_sqlserver's
+    // sys.scope_identity() (see that function's own comment for the real SCOPE_IDENTITY() vs
+    // @@IDENTITY distinction it doesn't preserve). @@ROWCOUNT/@@ERROR aren't handled -- they'd
+    // need real per-statement server-side state this project doesn't track, not just a rename.
+    private static final Pattern MSSQL_AT_AT_IDENTITY = Pattern.compile("(?i)@@IDENTITY\\b");
 
     private static final Pattern MSSQL_BEGIN_TRAN =
             Pattern.compile("(?i)^\\s*BEGIN\\s+TRAN(SACTION)?\\b.*$");
@@ -590,6 +596,7 @@ public final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_GETDATE_CALL, m -> "CURRENT_TIMESTAMP");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_ISNULL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_BRACKETED_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
+        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_AT_AT_IDENTITY, m -> "sys.scope_identity()");
         out = applyTopLimit(out);
         return out;
     }

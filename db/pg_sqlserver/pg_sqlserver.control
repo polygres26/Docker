@@ -1,0 +1,22 @@
+comment = 'pg_sqlserver -- SQL Server compatibility for Postgres (sys.* catalog views, T-SQL system functions: OBJECT_ID, SCOPE_IDENTITY, CHARINDEX, ...). Part of the Polygres extension collection.'
+default_version = '0.1'
+module_pathname = '$libdir/pg_oracle'
+relocatable = false
+# Pure SQL/plpgsql -- no C of its own (see README.md and pg_mysql.control's
+# identical note). module_pathname above points at pg_oracle's own shared
+# library, not a pg_sqlserver.so that doesn't exist: the one C function
+# this extension's SQL script needs (sys.emulation_active(), a thin
+# wrapper over pg_oracle.c's exported pg_sqlserver_emulation_active())
+# binds directly against pg_oracle's library by path in
+# sql/pg_sqlserver--0.1.sql.
+#
+# The real dependency this states: db_emulation is a single session GUC
+# that has to live in exactly one C module -- pg_oracle is that module
+# (already shipping 'postgres'/'oracle'/'mysql' values), and this
+# extension's SQL script requires pg_oracle's enum to already accept
+# 'sqlserver' too (added alongside this extension, see pg_oracle's own
+# src/pg_oracle.c). Installing pg_sqlserver without pg_oracle, or with an
+# older pg_oracle that predates the 'sqlserver' enum value, leaves
+# `SET db_emulation = 'sqlserver'` rejected as an invalid enum value
+# entirely -- a clear error from Postgres itself, not a silent no-op.
+requires = 'pg_oracle'

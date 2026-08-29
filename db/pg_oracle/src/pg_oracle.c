@@ -47,7 +47,8 @@ typedef enum DbEmulationMode
 {
 	DB_EMULATION_POSTGRES = 0,
 	DB_EMULATION_ORACLE = 1,
-	DB_EMULATION_MYSQL = 2
+	DB_EMULATION_MYSQL = 2,
+	DB_EMULATION_SQLSERVER = 3
 } DbEmulationMode;
 
 static const struct config_enum_entry db_emulation_options[] = {
@@ -55,6 +56,7 @@ static const struct config_enum_entry db_emulation_options[] = {
 	{"off", DB_EMULATION_POSTGRES, true},	/* accepted alias */
 	{"oracle", DB_EMULATION_ORACLE, false},
 	{"mysql", DB_EMULATION_MYSQL, false},
+	{"sqlserver", DB_EMULATION_SQLSERVER, false},
 	{NULL, 0, false}
 };
 
@@ -80,6 +82,16 @@ static int db_emulation_mode = DB_EMULATION_POSTGRES;
  * search_path). */
 #define MYSQL_EMULATION_SCHEMAS "mysql_catalog"
 
+/* The equivalent for SET db_emulation='sqlserver', provided by the separate
+ * pg_sqlserver extension (db/pg_sqlserver) -- same "db_emulation lives in
+ * exactly one C module" reasoning as MYSQL_EMULATION_SCHEMAS above. Just
+ * "sys" (not "sys, sqlserver_catalog" or similar): SQL Server's own
+ * convention already puts everything -- catalog views AND functions --
+ * in a single schema literally named sys, so pg_sqlserver follows that
+ * instead of inventing a second schema name nothing outside this project
+ * would recognize. */
+#define SQLSERVER_EMULATION_SCHEMAS "sys"
+
 /* Returns the schema-list string SET db_emulation=<mode> should append
  * onto search_path, or NULL for 'postgres' (nothing to append -- also
  * what an as-yet-unrecognized future mode value would fall through to,
@@ -93,6 +105,8 @@ emulation_schemas_for(int mode)
 			return ORACLE_EMULATION_SCHEMAS;
 		case DB_EMULATION_MYSQL:
 			return MYSQL_EMULATION_SCHEMAS;
+		case DB_EMULATION_SQLSERVER:
+			return SQLSERVER_EMULATION_SCHEMAS;
 		default:
 			return NULL;
 	}
@@ -270,6 +284,10 @@ db_emulation_assign_hook(int newval, void *extra)
 	{
 		/* base_len already set by the call above */
 	}
+	else if (strip_emulation_suffix(current_search_path, cur_len, SQLSERVER_EMULATION_SCHEMAS, &base_len))
+	{
+		/* base_len already set by the call above */
+	}
 
 	if (already_correct)
 	{
@@ -349,4 +367,13 @@ Datum
 pg_mysql_emulation_active(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(db_emulation_mode == DB_EMULATION_MYSQL);
+}
+
+/* Exported for db/pg_sqlserver's own SQL script (sys.emulation_active()) --
+ * pg_sqlserver has no C module of its own either, same reason. */
+PG_FUNCTION_INFO_V1(pg_sqlserver_emulation_active);
+Datum
+pg_sqlserver_emulation_active(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(db_emulation_mode == DB_EMULATION_SQLSERVER);
 }

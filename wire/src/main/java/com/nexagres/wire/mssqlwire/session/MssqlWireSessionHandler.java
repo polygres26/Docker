@@ -76,8 +76,11 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         this.options = options;
         // Same real-identity-into-native-RLS wiring as PgWireSessionHandler -- see its
-        // constructor's javadoc for the full reasoning.
-        this.terminalExecutor = new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.PostgresRlsSessionInitializer());
+        // constructor's javadoc for the full reasoning. MssqlPgEmulationSessionInitializer
+        // delegates to PostgresRlsSessionInitializer for that and adds `SET db_emulation =
+        // 'sqlserver'` on top, so pg_sqlserver's unqualified sys.tables/OBJECT_ID(...)/
+        // SCOPE_IDENTITY() etc. resolve -- see that class's own javadoc.
+        this.terminalExecutor = new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.MssqlPgEmulationSessionInitializer());
         this.pipeline = new StatementPipeline(sharedStages,
                 new RoutingBackendExecutor(backendRegistry, terminalExecutor,
                         new com.nexagres.wire.xa.XaRecoveryLog(options),
