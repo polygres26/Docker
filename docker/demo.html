@@ -181,6 +181,50 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 .advPanel input[type="number"] { width: 100px; }
 .gateNote { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }
 
+/* ---------- Metrics: gradient hero, protocol bars, donut ---------- */
+
+.metricsHero {
+  background: linear-gradient(120deg, #2f5fb8, #24478f 55%, #1f8f7e);
+  color: #fff; border-radius: 14px; padding: 22px 26px; margin-bottom: 24px;
+}
+.metricsHeroTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.metricsHeroTitle { font-size: 21px; font-weight: 700; margin: 0 0 4px; }
+.metricsHeroSub { font-size: 13px; opacity: 0.9; margin: 0; max-width: 520px; }
+.metricsHeroBadge { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,0.16); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
+.liveDot { width: 7px; height: 7px; border-radius: 50%; background: #7CFFB2; box-shadow: 0 0 0 0 rgba(124,255,178,.6); animation: pulse 1.8s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(124,255,178,.5); } 70% { box-shadow: 0 0 0 6px rgba(124,255,178,0); } 100% { box-shadow: 0 0 0 0 rgba(124,255,178,0); } }
+.metricsHeroStats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; }
+.metricsHeroStat { background: rgba(255,255,255,0.1); border-radius: 10px; padding: 12px 14px; }
+.metricsHeroStatLabel { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; margin-bottom: 6px; }
+.metricsHeroStatLabel .ico { width: 13px; height: 13px; }
+.metricsHeroStatValue { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.metricsHeroStatSub { font-size: 11px; opacity: 0.8; margin-top: 2px; }
+
+.metricsGrid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 20px; }
+@media (max-width: 900px) { .metricsGrid { grid-template-columns: 1fr; } }
+
+.protoRow { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; }
+.protoDot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.protoName { font-family: ui-monospace, monospace; width: 96px; flex: none; }
+.protoBarTrack { flex: 1; height: 7px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.protoBarFill { display: block; height: 100%; border-radius: 999px; }
+.protoCount { width: 64px; text-align: right; flex: none; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.donutWrap { display: flex; align-items: center; gap: 22px; }
+.legend { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.legendRow { display: flex; align-items: center; gap: 8px; }
+.legendDot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.legendPct { margin-left: auto; padding-left: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.costBarTrack { width: 70px; height: 6px; border-radius: 999px; background: var(--bg); overflow: hidden; flex: none; }
+.costBarFill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.numCell { text-align: right; font-variant-numeric: tabular-nums; }
+.sqlRank { color: var(--muted); font-variant-numeric: tabular-nums; width: 18px; }
+
+.tabRow { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.tabRow button { background: none; border: none; padding: 9px 4px; margin-right: 18px; font-size: 13.5px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; }
+.tabRow button.active { color: var(--text); border-bottom-color: var(--accent); }
+
 .hidden { display: none !important; }
 
 @media (max-width: 720px) {
@@ -439,24 +483,59 @@ const advisorConnections = [
 // Synthetic but shape-accurate stand-ins for what /api/metrics/summary and /api/federation/plans
 // actually return (see WireMetricsSummary / FederationPlanEntry in wire/web/src/api/client.ts) --
 // numbers are made up, but every field, unit, and outcome bucket is real.
+// Full protocol lineup Polywire actually benchmarks against (see the marketing site's own
+// "Connect · Protect · Control · Accelerate · Observe" strip) -- every protocol that fronts the
+// same Postgres, each with its own wire name and color, same convention as PROTOCOL_COLORS in
+// wire/web/src/pages/Metrics.tsx.
+const PROTOCOL_COLORS = {
+  pgwire: '#2f5fb8', mywire: '#1f7a63', mssqlwire: '#c2622f', orawire: '#8a4fd9',
+  mongowire: '#2ea3a0', dynamowire: '#d9a12f', sqswire: '#b8562f', influxwire: '#3d7fd9',
+  boltwire: '#7a4fc2', opensearchwire: '#2f9e6e', grpcwire: '#5c6b85',
+};
+function colorFor(name, i) { return PROTOCOL_COLORS[name] || ['#5b6864', '#7a8a84', '#9aa8a2'][i % 3]; }
+
 const wireMetrics = {
-  protocolCounts: { postgres: 2148990, mysql: 903214, mssql: 563917 },
+  protocolCounts: {
+    pgwire: 2148990, mywire: 903214, mssqlwire: 563917, orawire: 421066, mongowire: 288140,
+    dynamowire: 176905, sqswire: 152388, influxwire: 98244, boltwire: 61930, opensearchwire: 143520, grpcwire: 214077,
+  },
+  totalReads: 4128300, totalWrites: 462981, totalOther: 581370,
+  readsPerSec: 842.3, writesPerSec: 96.1, avgRttMs: 4.2, rttSamples: 3612880,
   rttByOutcome: [
-    { protocol: 'postgres', outcome: 'cache_hit', calls: 1402880, avgMs: 0.4 },
-    { protocol: 'postgres', outcome: 'pg_read', calls: 611200, avgMs: 5.1 },
-    { protocol: 'postgres', outcome: 'pg_write', calls: 134910, avgMs: 7.8 },
-    { protocol: 'mysql', outcome: 'cache_hit', calls: 588441, avgMs: 0.5 },
-    { protocol: 'mysql', outcome: 'pg_read', calls: 289203, avgMs: 6.3 },
-    { protocol: 'mysql', outcome: 'pg_write', calls: 25570, avgMs: 8.9 },
-    { protocol: 'mssql', outcome: 'pg_read', calls: 498120, avgMs: 5.8 },
-    { protocol: 'mssql', outcome: 'pg_write', calls: 65797, avgMs: 9.2 },
+    { protocol: 'pgwire', outcome: 'cache_hit', calls: 1402880, avgMs: 0.4 },
+    { protocol: 'pgwire', outcome: 'pg_read', calls: 611200, avgMs: 5.1 },
+    { protocol: 'pgwire', outcome: 'pg_write', calls: 134910, avgMs: 7.8 },
+    { protocol: 'mywire', outcome: 'cache_hit', calls: 588441, avgMs: 0.5 },
+    { protocol: 'mywire', outcome: 'pg_read', calls: 289203, avgMs: 6.3 },
+    { protocol: 'mywire', outcome: 'pg_write', calls: 25570, avgMs: 8.9 },
+    { protocol: 'mssqlwire', outcome: 'pg_read', calls: 498120, avgMs: 5.8 },
+    { protocol: 'mssqlwire', outcome: 'pg_write', calls: 65797, avgMs: 9.2 },
+    { protocol: 'orawire', outcome: 'cache_hit', calls: 210330, avgMs: 0.6 },
+    { protocol: 'orawire', outcome: 'pg_read', calls: 190441, avgMs: 6.9 },
+    { protocol: 'mongowire', outcome: 'cache_hit', calls: 140228, avgMs: 0.5 },
+    { protocol: 'mongowire', outcome: 'pg_read', calls: 147912, avgMs: 5.4 },
+    { protocol: 'dynamowire', outcome: 'cache_hit', calls: 98105, avgMs: 0.3 },
+    { protocol: 'dynamowire', outcome: 'pg_write', calls: 78800, avgMs: 4.7 },
+    { protocol: 'sqswire', outcome: 'enqueue', calls: 91228, avgMs: 3.1 },
+    { protocol: 'sqswire', outcome: 'dequeue', calls: 61160, avgMs: 2.6 },
   ],
   topSql: [
-    { sql: 'SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20', calls: 412990, avgMs: 2.1, avgRttMs: 1.8 },
-    { sql: 'SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = $1', calls: 288104, avgMs: 6.4, avgRttMs: 5.9 },
-    { sql: 'UPDATE inventory SET qty = qty - $1 WHERE sku = $2', calls: 160227, avgMs: 8.9, avgRttMs: 8.1 },
-    { sql: "SELECT count(*) FROM events WHERE occurred_at > now() - interval '1 hour'", calls: 94018, avgMs: 12.3, avgRttMs: 11.6 },
-    { sql: 'INSERT INTO audit_log (actor, action, payload) VALUES ($1, $2, $3)', calls: 71553, avgMs: 4.7, avgRttMs: 4.2 },
+    { sql: 'SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20', calls: 412990, avgMs: 2.1, avgRttMs: 1.8, totalMs: 867279 },
+    { sql: 'SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = $1', calls: 288104, avgMs: 6.4, avgRttMs: 5.9, totalMs: 1843866 },
+    { sql: 'UPDATE inventory SET qty = qty - $1 WHERE sku = $2', calls: 160227, avgMs: 8.9, avgRttMs: 8.1, totalMs: 1426021 },
+    { sql: "SELECT count(*) FROM events WHERE occurred_at > now() - interval '1 hour'", calls: 94018, avgMs: 12.3, avgRttMs: 11.6, totalMs: 1156421 },
+    { sql: 'INSERT INTO audit_log (actor, action, payload) VALUES ($1, $2, $3)', calls: 71553, avgMs: 4.7, avgRttMs: 4.2, totalMs: 336299 },
+    { sql: 'SELECT * FROM shard0.orders o WHERE o.region = $1', calls: 68210, avgMs: 3.9, avgRttMs: 3.4, totalMs: 266019 },
+    { sql: 'db.orders.find({customerId: ?})', calls: 55044, avgMs: 2.8, avgRttMs: 2.5, totalMs: 154123 },
+    { sql: 'GetItem(TableName=orders, Key={id})', calls: 49882, avgMs: 1.6, avgRttMs: 1.3, totalMs: 79811 },
+    { sql: 'MATCH (c:Customer)-[:PLACED]->(o:Order) WHERE c.id = $id RETURN o', calls: 31207, avgMs: 9.4, avgRttMs: 8.8, totalMs: 293345 },
+    { sql: 'SELECT * FROM audit_index WHERE actor = $1 ORDER BY ts DESC', calls: 24998, avgMs: 14.1, avgRttMs: 13.2, totalMs: 352572 },
+  ],
+  mcpTools: [
+    { tool: 'query_table', calls: 18204, errors: 3, avgMs: 12.4, totalMs: 225730 },
+    { tool: 'list_tables', calls: 9110, errors: 0, avgMs: 3.1, totalMs: 28241 },
+    { tool: 'describe_table', calls: 6624, errors: 1, avgMs: 4.6, totalMs: 30470 },
+    { tool: 'run_migration_check', calls: 842, errors: 0, avgMs: 88.2, totalMs: 74266 },
   ],
 };
 
@@ -480,27 +559,129 @@ const oauthConfig = {
   rolesClaim: 'realm_access.roles',
 };
 
+const aclConfig = {
+  ppv2Enabled: true,
+  trustedProxies: ['10.0.0.0/8', '172.16.0.0/12'],
+  rules: [
+    { priority: 10, cidr: '10.0.4.0/24', action: 'allow', note: 'app servers, us-east-1a' },
+    { priority: 20, cidr: '10.0.5.0/24', action: 'allow', note: 'app servers, us-east-1b' },
+    { priority: 30, cidr: '203.0.113.0/24', action: 'deny', note: 'decommissioned VPN range' },
+    { priority: 999, cidr: '0.0.0.0/0', action: 'deny', note: 'default deny' },
+  ],
+};
+
+const wireQueues = [
+  { name: 'orders-inbound', visible: 42, inFlight: 3, fifo: false, visibilityTimeout: 30, dlqQueueName: 'orders-inbound-dlq', maxReceiveCount: 5, backend: 'reporting' },
+  { name: 'orders-inbound-dlq', visible: 2, inFlight: 0, fifo: false, visibilityTimeout: 30, dlqQueueName: null, maxReceiveCount: null, backend: 'reporting' },
+  { name: 'billing-events.fifo', visible: 8, inFlight: 1, fifo: true, visibilityTimeout: 60, dlqQueueName: 'billing-events-dlq.fifo', maxReceiveCount: 3, backend: 'analytics' },
+];
+
+const routerRules = {
+  schema: [
+    { pattern: 'tenant_*', target: 'schema-per-tenant on shard0' },
+    { pattern: 'analytics_*', target: 'analytics backend' },
+  ],
+  predicate: [
+    { table: 'orders', predicate: "region = 'us-east'", target: 'shard0' },
+    { table: 'orders', predicate: "region = 'eu-west'", target: 'shard1' },
+  ],
+  valueShard: [
+    { table: 'orders', column: 'customer_id', strategy: 'hash mod 3', targets: 'shard0, shard1, shard2' },
+  ],
+};
+
+const qosConfig = {
+  ratePerSec: 1000, burst: 200, maxWaitMs: 250,
+  classLimits: [
+    { className: 'reporting', ratePerSec: 100, burst: 20 },
+    { className: 'batch', ratePerSec: 50, burst: 10 },
+  ],
+  poolWaitThreshold: 0.85,
+};
+
+const llmConfig = { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKeySet: true };
+
+const advisorReports = [
+  { id: 1, name: 'Prod Oracle AWR - Aug', dialect: 'oracle', filename: 'awr_prod_0828.html', uploadedAt: '2 days ago', analyzedAt: '2 days ago' },
+  { id: 2, name: 'Legacy MySQL perf report', dialect: 'mysql', filename: 'mysql_perf_report.txt', uploadedAt: '5 days ago', analyzedAt: '5 days ago' },
+  { id: 3, name: 'SQL Server DMV export', dialect: 'sqlserver', filename: 'dmv_export.csv', uploadedAt: '1 week ago', analyzedAt: null },
+];
+
+const advisorSizing = {
+  tier: 'SMALL', vcpus: 2, memoryGb: 12, storageGb: 20, iops: 3000, maxConnections: 100,
+  rationale: [
+    'vCPUs sized from captured workload concurrency (peak 14 concurrent statements observed).',
+    'Memory sized for working-set fit: schema + indexes (~6.4 GB) plus headroom for sort/hash operations.',
+    'Storage sized from current schema size (11 GB) with 80% headroom for growth.',
+    'IOPS sized from captured read/write mix at peak throughput, plus a safety margin.',
+  ],
+};
+
+const advisorLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
+
 const federationPlans = [
   {
-    planId: 1042, capturedAt: '2026-08-29 08:14:02', backends: 'reporting, analytics', elapsedMillis: 118, rowCount: 3402, success: true,
-    sqlText: 'SELECT r.region, sum(a.revenue) FROM reporting.orders r JOIN analytics.revenue a ON a.order_id = r.id GROUP BY r.region',
+    planId: 4, capturedAt: '37s ago', backends: 'shard1, shard2', elapsedMillis: 21, rowCount: 2, success: true,
+    sqlText: 'SELECT c.name, COUNT(o.id) AS n FROM shard0.customers c JOIN shard1.orders o ON o.customer_id = c.id GROUP BY c.name',
+    planText:
+'EnumerableAggregate(group=[{2}], N=[COUNT()])\n' +
+'  EnumerableHashJoin(condition=[=($0, $1)], joinType=[inner])\n' +
+'    EnumerableUnion(all=[true])\n' +
+'      JdbcToEnumerableConverter\n' +
+'        JdbcProject(customer_id=[$1])\n' +
+'          JdbcTableScan(table=[[__polywire_shard0, orders]])\n' +
+'      JdbcToEnumerableConverter\n' +
+'        JdbcProject(customer_id=[$1])\n' +
+'          JdbcTableScan(table=[[__polywire_shard1, orders]])\n' +
+'    EnumerableUnion(all=[true])\n' +
+'      JdbcToEnumerableConverter\n' +
+'        JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'      JdbcToEnumerableConverter\n' +
+'        JdbcTableScan(table=[[__polywire_shard1, customers]])',
     leafScans: [
-      { backend: 'reporting', elapsedMillis: 52, rowCount: 18990, errorMessage: null },
-      { backend: 'analytics', elapsedMillis: 61, rowCount: 18990, errorMessage: null },
+      { backend: 'shard1', elapsedMillis: 9, rowCount: 2, errorMessage: null },
+      { backend: 'shard2', elapsedMillis: 11, rowCount: 2, errorMessage: null },
     ],
   },
   {
-    planId: 1041, capturedAt: '2026-08-29 08:11:47', backends: 'reporting, shard0, shard1', elapsedMillis: 340, rowCount: 812, success: true,
-    sqlText: 'SELECT * FROM reporting.customers c WHERE c.id IN (SELECT customer_id FROM shard0.orders UNION SELECT customer_id FROM shard1.orders)',
+    planId: 3, capturedAt: '37s ago', backends: 'shard1, shard2', elapsedMillis: 14, rowCount: 2, success: true,
+    sqlText: 'SELECT c.name, o.id, o.amount FROM shard0.customers c JOIN shard1.orders o ON o.customer_id = c.id WHERE o.status = $1',
+    planText:
+'EnumerableHashJoin(condition=[=($0, $2)], joinType=[inner])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcFilter(condition=[=($2, $1)])\n' +
+'      JdbcTableScan(table=[[__polywire_shard1, orders]])',
     leafScans: [
-      { backend: 'shard0', elapsedMillis: 140, rowCount: 40210, errorMessage: null },
-      { backend: 'shard1', elapsedMillis: 152, rowCount: 39887, errorMessage: null },
-      { backend: 'reporting', elapsedMillis: 38, rowCount: 812, errorMessage: null },
+      { backend: 'shard1', elapsedMillis: 6, rowCount: 2, errorMessage: null },
+      { backend: 'shard2', elapsedMillis: 8, rowCount: 2, errorMessage: null },
     ],
   },
   {
-    planId: 1040, capturedAt: '2026-08-29 08:09:15', backends: 'analytics, shard0', elapsedMillis: 89, rowCount: 0, success: false,
+    planId: 2, capturedAt: '37s ago', backends: 'shard1, shard2', elapsedMillis: 16, rowCount: 2, success: true,
+    sqlText: 'SELECT c.name, o.id, o.amount FROM shard0.customers c JOIN shard1.orders o ON o.customer_id = c.id WHERE o.status = $1',
+    planText:
+'EnumerableHashJoin(condition=[=($0, $2)], joinType=[inner])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcFilter(condition=[=($2, $1)])\n' +
+'      JdbcTableScan(table=[[__polywire_shard1, orders]])',
+    leafScans: [
+      { backend: 'shard1', elapsedMillis: 7, rowCount: 2, errorMessage: null },
+      { backend: 'shard2', elapsedMillis: 9, rowCount: 2, errorMessage: null },
+    ],
+  },
+  {
+    planId: 1, capturedAt: '2m ago', backends: 'analytics, shard0', elapsedMillis: 89, rowCount: 0, success: false,
     sqlText: 'SELECT * FROM analytics.daily_rollup d JOIN shard0.orders o ON o.rollup_id = d.id WHERE d.day = $1',
+    planText:
+'EnumerableHashJoin(condition=[=($0, $3)], joinType=[inner])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcTableScan(table=[[__polywire_analytics, daily_rollup]])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcTableScan(table=[[__polywire_shard0, orders]])',
     leafScans: [
       { backend: 'analytics', elapsedMillis: 41, rowCount: 220, errorMessage: null },
       { backend: 'shard0', elapsedMillis: 44, rowCount: 0, errorMessage: 'relation "orders" does not have column "rollup_id"' },
@@ -593,6 +774,8 @@ function wireStub(title, lede, note) {
 function outcomeBadge(outcome) {
   if (outcome === 'cache_hit') return '<span class="badge ok">cache hit</span>';
   if (outcome === 'pg_write') return '<span class="badge warn">pg write</span>';
+  if (outcome === 'enqueue') return '<span class="badge ok">enqueue</span>';
+  if (outcome === 'dequeue') return '<span class="badge" style="color:var(--muted);background:var(--bg)">dequeue</span>';
   return '<span class="badge" style="color:var(--muted);background:var(--bg)">pg read</span>';
 }
 
@@ -601,16 +784,68 @@ function outcomeBadge(outcome) {
 function rttOutcomeTable(rows, opts) {
   const limited = opts && opts.limit ? rows.slice(0, opts.limit) : rows;
   const body = limited.map((r) =>
-    '<tr><td class="mono">' + r.protocol + '</td><td>' + outcomeBadge(r.outcome) + '</td><td>' + r.calls.toLocaleString() + '</td><td>' + r.avgMs.toFixed(1) + 'ms</td></tr>').join('');
-  return '<div class="panel" style="padding:0"><table><thead><tr><th>Protocol</th><th>Outcome</th><th>Calls</th><th>Avg ms</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+    '<tr><td class="mono">' + r.protocol + '</td><td>' + outcomeBadge(r.outcome) + '</td><td class="numCell">' + r.calls.toLocaleString() + '</td><td class="numCell">' + r.avgMs.toFixed(1) + 'ms</td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th>Protocol</th><th>Outcome</th><th style="text-align:right">Calls</th><th style="text-align:right">Avg ms</th></tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
 function topSqlTable(rows, opts) {
   const limited = opts && opts.limit ? rows.slice(0, opts.limit) : rows;
-  const body = limited.map((s) =>
-    '<tr><td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.sql.replace(/"/g, '&quot;') + '">' + s.sql + '</td>' +
-    '<td>' + s.calls.toLocaleString() + '</td><td>' + s.avgMs.toFixed(1) + 'ms</td><td>' + s.avgRttMs.toFixed(1) + 'ms</td></tr>').join('');
-  return '<div class="panel" style="padding:0"><table><thead><tr><th>Statement</th><th>Calls</th><th>Avg ms</th><th>Avg RTT</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+  const maxCost = Math.max(1, ...rows.map((s) => s.totalMs || 0));
+  const body = limited.map((s, i) =>
+    '<tr><td class="sqlRank">' + (i + 1) + '</td><td class="mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.sql.replace(/"/g, '&quot;') + '">' + s.sql + '</td>' +
+    '<td class="numCell">' + s.calls.toLocaleString() + '</td><td class="numCell">' + s.avgMs.toFixed(1) + 'ms</td><td class="numCell">' + s.avgRttMs.toFixed(1) + 'ms</td>' +
+    '<td class="numCell"><div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">' +
+      '<span>' + (s.totalMs || 0).toLocaleString() + 'ms</span>' +
+      '<span class="costBarTrack"><span class="costBarFill" style="width:' + (((s.totalMs || 0) / maxCost) * 100).toFixed(0) + '%"></span></span>' +
+    '</div></td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th></th><th>Statement</th><th style="text-align:right">Calls</th><th style="text-align:right">Avg ms</th><th style="text-align:right">Avg RTT</th><th style="text-align:right">Total cost</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function mcpToolsTable(tools) {
+  const body = tools.map((t) =>
+    '<tr><td class="mono">' + t.tool + '</td><td class="numCell">' + t.calls.toLocaleString() + '</td>' +
+    '<td class="numCell">' + (t.errors > 0 ? '<span style="color:var(--hard)">' + t.errors + '</span>' : '&mdash;') + '</td>' +
+    '<td class="numCell">' + t.avgMs.toFixed(1) + 'ms</td><td class="numCell">' + t.totalMs.toLocaleString() + 'ms</td></tr>').join('');
+  return '<div class="panel" style="padding:0"><table><thead><tr><th>Tool</th><th style="text-align:right">Calls</th><th style="text-align:right">Errors</th><th style="text-align:right">Avg time</th><th style="text-align:right">Total time</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function protocolTrafficPanel(counts) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...entries.map(([, c]) => c));
+  const rows = entries.map(([name, count], i) =>
+    '<div class="protoRow"><span class="protoDot" style="background:' + colorFor(name, i) + '"></span>' +
+    '<span class="protoName">' + name + '</span>' +
+    '<span class="protoBarTrack"><span class="protoBarFill" style="width:' + ((count / max) * 100).toFixed(0) + '%;background:' + colorFor(name, i) + '"></span></span>' +
+    '<span class="protoCount">' + count.toLocaleString() + '</span></div>').join('');
+  return '<div class="panel"><div class="sectionTitle" style="margin-bottom:2px">Wire protocol traffic</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 12px">Statements handled per protocol since process start &mdash; every protocol Polywire benchmarks, not just SQL.</p>' +
+    rows + '</div>';
+}
+
+function readWriteDonut(reads, writes, other) {
+  const total = Math.max(1, reads + writes + other);
+  const parts = [
+    { label: 'Reads', value: reads, color: 'var(--accent)' },
+    { label: 'Writes', value: writes, color: '#c2622f' },
+    { label: 'Other', value: other, color: '#8a9790' },
+  ].filter((p) => p.value > 0);
+  const r = 42, circ = 2 * Math.PI * r;
+  let offset = 0;
+  const segs = parts.map((p) => {
+    const frac = p.value / total;
+    const dash = frac * circ;
+    const seg = { ...p, frac, dash: dash + ' ' + (circ - dash), dashOffset: -offset };
+    offset += dash;
+    return seg;
+  });
+  const circles = segs.map((s) => '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="' + s.color + '" stroke-width="12" stroke-dasharray="' + s.dash + '" stroke-dashoffset="' + s.dashOffset + '" transform="rotate(-90 50 50)" stroke-linecap="butt"/>').join('');
+  const legend = segs.map((s) => '<div class="legendRow"><span class="legendDot" style="background:' + s.color + '"></span>' + s.label + '<span class="legendPct">' + (s.frac * 100).toFixed(0) + '%</span></div>').join('');
+  return '<div class="panel"><div class="sectionTitle">Reads vs. writes</div><p style="font-size:12px;color:var(--muted);margin:0 0 12px">Share of all statements executed</p>' +
+    '<div class="donutWrap"><svg width="112" height="112" viewBox="0 0 100 100" role="img" aria-label="Reads vs writes vs other">' +
+      '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="var(--border)" stroke-width="12"/>' + circles +
+      '<text x="50" y="47" text-anchor="middle" font-size="13" font-weight="700" fill="var(--text)">' + total.toLocaleString() + '</text>' +
+      '<text x="50" y="60" text-anchor="middle" font-size="7" fill="var(--muted)">statements</text>' +
+    '</svg><div class="legend">' + legend + '</div></div></div>';
 }
 
 function topologyTable(nodes) {
@@ -646,60 +881,178 @@ function oauthSummaryPanel(cfg) {
 
 function wireMetricsPage() {
   const totalCalls = Object.values(wireMetrics.protocolCounts).reduce((s, c) => s + c, 0);
-  const cacheHits = wireMetrics.rttByOutcome.filter((r) => r.outcome === 'cache_hit').reduce((s, r) => s + r.calls, 0);
-  const cacheable = wireMetrics.rttByOutcome.filter((r) => r.outcome !== 'pg_write').reduce((s, r) => s + r.calls, 0);
-  const hitRate = ((cacheHits / cacheable) * 100).toFixed(1);
+  const protoCount = Object.keys(wireMetrics.protocolCounts).length;
 
-  const protoBadges = Object.entries(wireMetrics.protocolCounts).map(([proto, calls]) =>
-    '<span class="badge" style="color:var(--text);background:var(--bg);border:1px solid var(--border)"><b class="mono">' + proto + '</b>&nbsp;' + calls.toLocaleString() + '</span>').join(' ');
-
-  return '<h1 class="pageTitle">Metrics</h1>' +
-    '<p class="pageLede">Live read/write throughput, cache effectiveness, and the hottest statements since this process started.</p>' +
-    '<div class="statGrid">' +
-      statCard(iActivity, 'Statements handled', totalCalls.toLocaleString(), protoBadges) +
-      statCard(iZap, 'Cache hit rate', hitRate + '%', cacheHits.toLocaleString() + ' of ' + cacheable.toLocaleString() + ' cacheable reads', 'ok') +
-      statCard(iGauge, 'Avg round-trip', '4.2ms', '3.6M samples') +
+  return (
+    '<div class="metricsHero">' +
+      '<div class="metricsHeroTop">' +
+        '<div><div class="metricsHeroTitle">Polywire traffic</div>' +
+        '<p class="metricsHeroSub">Live protocol usage, read/write throughput, and the SQL costing you the most &mdash; across every backend Polywire fronts.</p></div>' +
+        '<div class="metricsHeroBadge"><span class="liveDot"></span>Live &middot; updated just now</div>' +
+      '</div>' +
+      '<div class="metricsHeroStats">' +
+        '<div class="metricsHeroStat"><div class="metricsHeroStatLabel"><span class="ico">' + iArrowDown + '</span>Reads / sec</div><div class="metricsHeroStatValue">' + wireMetrics.readsPerSec.toFixed(1) + '</div><div class="metricsHeroStatSub">' + wireMetrics.totalReads.toLocaleString() + ' total reads</div></div>' +
+        '<div class="metricsHeroStat"><div class="metricsHeroStatLabel"><span class="ico">' + iArrowUp + '</span>Writes / sec</div><div class="metricsHeroStatValue">' + wireMetrics.writesPerSec.toFixed(1) + '</div><div class="metricsHeroStatSub">' + wireMetrics.totalWrites.toLocaleString() + ' total writes</div></div>' +
+        '<div class="metricsHeroStat"><div class="metricsHeroStatLabel"><span class="ico">' + iGauge + '</span>Statements total</div><div class="metricsHeroStatValue">' + totalCalls.toLocaleString() + '</div><div class="metricsHeroStatSub">since this process started</div></div>' +
+        '<div class="metricsHeroStat"><div class="metricsHeroStatLabel"><span class="ico">' + iNetwork + '</span>Protocols active</div><div class="metricsHeroStatValue">' + protoCount + '</div><div class="metricsHeroStatSub">every wire protocol benchmarked</div></div>' +
+        '<div class="metricsHeroStat"><div class="metricsHeroStatLabel"><span class="ico">' + iZap + '</span>Avg RTT</div><div class="metricsHeroStatValue">' + wireMetrics.avgRttMs.toFixed(1) + 'ms</div><div class="metricsHeroStatSub">' + wireMetrics.rttSamples.toLocaleString() + ' request(s) measured</div></div>' +
+      '</div>' +
     '</div>' +
+
+    '<div class="metricsGrid">' +
+      protocolTrafficPanel(wireMetrics.protocolCounts) +
+      readWriteDonut(wireMetrics.totalReads, wireMetrics.totalWrites, wireMetrics.totalOther) +
+    '</div>' +
+
+    sectionHead('Traffic by backend', 'backends', 'Backends') +
+    '<div style="margin-bottom:20px"><div class="panel" style="padding:0"><table><thead><tr><th>Backend</th><th style="text-align:right">Calls</th><th style="text-align:right">Reads</th><th style="text-align:right">Writes</th><th style="text-align:right">Avg</th></tr></thead><tbody>' +
+      '<tr><td class="mono">reporting</td><td class="numCell">1,204,880</td><td class="numCell">1,180,220</td><td class="numCell">24,660</td><td class="numCell">3.9ms</td></tr>' +
+      '<tr><td class="mono">analytics</td><td class="numCell">982,004</td><td class="numCell">970,441</td><td class="numCell">11,563</td><td class="numCell">4.6ms</td></tr>' +
+      '<tr><td class="mono">shard0</td><td class="numCell">1,429,237</td><td class="numCell">1,390,190</td><td class="numCell">39,047</td><td class="numCell">4.1ms</td></tr>' +
+    '</tbody></table></div></div>' +
+
+    '<div class="sectionTitle">Top 10 SQL by cost</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:-4px 0 10px">Your most expensive statements, ranked by total time spent &mdash; across every protocol, not just SQL text.</p>' +
+    '<div style="margin-bottom:20px">' + topSqlTable(wireMetrics.topSql) + '</div>' +
+
+    '<div class="sectionTitle">MCP tool calls</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:-4px 0 10px">Every tool call handled by the MCP server, with server-side time and error counts.</p>' +
+    '<div style="margin-bottom:20px">' + mcpToolsTable(wireMetrics.mcpTools) + '</div>' +
+
     '<div class="sectionTitle">Round-trip by outcome</div>' +
-    '<div style="margin-bottom:24px">' + rttOutcomeTable(wireMetrics.rttByOutcome) + '</div>' +
-    '<div class="sectionTitle">Top SQL</div>' +
-    topSqlTable(wireMetrics.topSql);
+    '<p style="font-size:12px;color:var(--muted);margin:-4px 0 10px">How long a cache hit takes vs. a real Postgres read or write, per wire protocol &mdash; the number that says whether the cache is paying for itself.</p>' +
+    rttOutcomeTable(wireMetrics.rttByOutcome)
+  );
 }
 
 function federationPlansPage() {
+  const avgMs = Math.round(federationPlans.reduce((s, p) => s + p.elapsedMillis, 0) / federationPlans.length);
   const rows = federationPlans.map((p) =>
     '<tr class="planRow" onclick="toggleFedDetail(' + p.planId + ')" style="cursor:pointer">' +
       '<td class="mono">#' + p.planId + '</td><td class="mono" style="font-size:12px">' + p.capturedAt + '</td>' +
-      '<td class="mono">' + p.backends + '</td><td>' + p.elapsedMillis + 'ms</td><td>' + p.rowCount.toLocaleString() + '</td>' +
-      '<td>' + (p.success ? '<span class="badge ok">success</span>' : '<span class="badge warn">failed</span>') + '</td>' +
+      '<td class="mono">' + p.backends + '</td><td class="numCell">' + p.elapsedMillis + 'ms</td><td class="numCell">' + p.rowCount.toLocaleString() + '</td>' +
+      '<td>' + (p.success ? '<span class="badge ok">OK</span>' : '<span class="badge warn">failed</span>') + '</td>' +
+      '<td id="fed-toggle-' + p.planId + '" style="color:var(--accent);font-size:12.5px;white-space:nowrap">+ show plan</td>' +
     '</tr>' +
-    '<tr id="fed-detail-' + p.planId + '" class="hidden"><td colspan="6" style="background:var(--bg)">' +
-      '<div style="padding:12px 4px"><div class="mono" style="font-size:12.5px;margin-bottom:10px;white-space:pre-wrap">' + p.sqlText + '</div>' +
-      '<table><thead><tr><th>Leaf backend</th><th>Elapsed</th><th>Rows</th><th>Error</th></tr></thead><tbody>' +
-      p.leafScans.map((l) => '<tr><td class="mono">' + l.backend + '</td><td>' + l.elapsedMillis + 'ms</td><td>' + l.rowCount.toLocaleString() + '</td>' +
-        '<td style="color:' + (l.errorMessage ? 'var(--hard)' : 'var(--muted)') + '">' + (l.errorMessage || '—') + '</td></tr>').join('') +
-      '</tbody></table></div></td></tr>').join('');
+    '<tr id="fed-detail-' + p.planId + '" class="hidden"><td colspan="7" style="background:var(--bg)">' +
+      '<div style="padding:14px 4px">' +
+        '<div class="mono" style="font-size:12.5px;margin-bottom:12px;white-space:pre-wrap">' + p.sqlText + '</div>' +
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px">Real Calcite plan (EXPLAIN PLAN FOR)</div>' +
+        '<pre class="mono" style="font-size:12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;margin:0 0 14px">' + (p.planText || '(plan text unavailable)') + '</pre>' +
+        '<table><thead><tr><th>Leaf backend</th><th style="text-align:right">Elapsed</th><th style="text-align:right">Rows</th><th>Error</th></tr></thead><tbody>' +
+        p.leafScans.map((l) => '<tr><td class="mono">' + l.backend + '</td><td class="numCell">' + l.elapsedMillis + 'ms</td><td class="numCell">' + l.rowCount.toLocaleString() + '</td>' +
+          '<td style="color:' + (l.errorMessage ? 'var(--hard)' : 'var(--muted)') + '">' + (l.errorMessage || '—') + '</td></tr>').join('') +
+        '</tbody></table>' +
+      '</div></td></tr>').join('');
 
   return '<h1 class="pageTitle">Federation Plans</h1>' +
-    '<p class="pageLede">Captured EXPLAIN PLAN FOR history for statements spanning more than one backend, with real (measured, not estimated) per-leaf timing. Click a row for the leaf-scan breakdown.</p>' +
-    '<div class="panel" style="padding:0"><table><thead><tr><th>Plan</th><th>Captured</th><th>Backends</th><th>Elapsed</th><th>Rows</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    '<p class="pageLede">Real captured history of every cross-shard and cross-backend JOIN Polywire has federated via Calcite &mdash; a genuine EXPLAIN PLAN FOR plan, timing, and row count per query, the same V$SQL_PLAN-style visibility a real database gives you for a query that spans several of your own backends. Refreshes every 5s.</p>' +
+    '<p style="font-size:13px;margin:0 0 16px"><b>' + federationPlans.length + '</b> captured &nbsp;&middot;&nbsp; <b>' + avgMs + ' ms</b> avg</p>' +
+    '<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th>#</th><th>When</th><th>Backends</th><th style="text-align:right">Elapsed</th><th style="text-align:right">Rows</th><th>Status</th><th>Plan</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
-window.toggleFedDetail = function (id) { $('#fed-detail-' + id).classList.toggle('hidden'); };
+window.toggleFedDetail = function (id) {
+  $('#fed-detail-' + id).classList.toggle('hidden');
+  const t = $('#fed-toggle-' + id);
+  const open = !$('#fed-detail-' + id).classList.contains('hidden');
+  t.textContent = open ? '- hide plan' : '+ show plan';
+};
+
+function aclPage() {
+  const rows = aclConfig.rules.map((r) =>
+    '<tr><td>' + r.priority + '</td><td class="mono">' + r.cidr + '</td>' +
+    '<td>' + (r.action === 'deny' ? '<span class="badge warn">deny</span>' : '<span class="badge ok">allow</span>') + '</td>' +
+    '<td style="color:var(--muted)">' + r.note + '</td></tr>').join('');
+  return '<h1 class="pageTitle">ACL</h1>' +
+    '<p class="pageLede">Network-level allow/deny rules, matched by source CIDR before a connection is even authenticated. Evaluated in priority order, first match wins.</p>' +
+    '<div class="panel" style="margin-bottom:20px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">' +
+        '<div style="font-size:13.5px;font-weight:600">PROXY protocol v2</div>' +
+        '<span class="badge ' + (aclConfig.ppv2Enabled ? 'ok">enabled' : 'warn">disabled') + '</span>' +
+      '</div>' +
+      '<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Trusts the real client IP forwarded by a load balancer instead of the LB\'s own address, for exactly these ranges:</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' + aclConfig.trustedProxies.map((p) => '<span class="badge mono" style="color:var(--text);background:var(--bg);border:1px solid var(--border)">' + p + '</span>').join('') + '</div>' +
+    '</div>' +
+    '<div class="panel" style="padding:0"><table><thead><tr><th>Priority</th><th>CIDR</th><th>Action</th><th>Note</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function queuesPage() {
+  const rows = wireQueues.map((q) =>
+    '<tr><td class="mono">' + q.name + '</td><td class="numCell">' + q.visible + '</td><td class="numCell">' + q.inFlight + '</td>' +
+    '<td>' + (q.fifo ? '<span class="badge ok">FIFO</span>' : '<span class="badge" style="color:var(--muted);background:var(--bg)">standard</span>') + '</td>' +
+    '<td class="numCell">' + q.visibilityTimeout + 's</td><td class="mono">' + (q.dlqQueueName || '&mdash;') + '</td><td class="mono">' + q.backend + '</td></tr>').join('');
+  return '<h1 class="pageTitle">Queues</h1>' +
+    '<p class="pageLede">sqswire-backed queues &mdash; the same SQS protocol your existing producers/consumers already speak, fronting real tables on Postgres.</p>' +
+    '<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th>Queue</th><th style="text-align:right">Visible</th><th style="text-align:right">In flight</th><th>Type</th><th style="text-align:right">Visibility</th><th>DLQ</th><th>Backend</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function dataExplorerPage() {
+  return '<h1 class="pageTitle">Data explorer</h1>' +
+    '<p class="pageLede">Browse tables and columns on any configured backend, and run ad hoc SQL against it.</p>' +
+    '<div class="metricsGrid">' +
+      '<div class="panel"><div class="sectionTitle">reporting &middot; public</div>' +
+        '<div class="rowList" style="border:none">' +
+          ['customers (12,204 rows)', 'orders (1,204,880 rows)', 'order_items (3,884,120 rows)', 'inventory (884 rows)'].map((t) =>
+            '<div class="rowItem" style="padding:8px 4px;border-color:var(--border)"><span class="ico" style="color:var(--muted)">' + iTable + '</span><span class="mono" style="font-size:13px">' + t + '</span></div>').join('') +
+        '</div></div>' +
+      '<div class="panel"><div class="sectionTitle">Run a query</div>' +
+        '<div class="mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">SELECT id, total, status FROM orders WHERE customer_id = 4021 ORDER BY created_at DESC LIMIT 5</div>' +
+        '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Ran in 4ms &middot; 5 rows</div>' +
+        '<table><thead><tr><th>id</th><th>total</th><th>status</th></tr></thead><tbody>' +
+          '<tr><td class="mono">88213</td><td class="numCell">142.50</td><td>shipped</td></tr>' +
+          '<tr><td class="mono">88190</td><td class="numCell">39.00</td><td>delivered</td></tr>' +
+          '<tr><td class="mono">88104</td><td class="numCell">210.75</td><td>delivered</td></tr>' +
+        '</tbody></table></div>' +
+    '</div>';
+}
+
+function routerRulesPage() {
+  const t = (rows, cols, get) => '<div class="panel" style="padding:0;margin-bottom:16px"><table><thead><tr>' + cols.map((c) => '<th>' + c + '</th>').join('') + '</tr></thead><tbody>' +
+    rows.map((r) => '<tr>' + get(r).map((v) => '<td class="mono">' + v + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  return '<h1 class="pageTitle">Router rules</h1>' +
+    '<p class="pageLede">Schema, predicate, and real-bound-value sharding rules &mdash; decoded from each protocol\'s own wire format, not just SQL text.</p>' +
+    '<div class="sectionTitle">Schema rules</div>' + t(routerRules.schema, ['Schema pattern', 'Target'], (r) => [r.pattern, r.target]) +
+    '<div class="sectionTitle">Predicate rules</div>' + t(routerRules.predicate, ['Table', 'Predicate', 'Target'], (r) => [r.table, r.predicate, r.target]) +
+    '<div class="sectionTitle">Value-shard rules</div>' + t(routerRules.valueShard, ['Table', 'Column', 'Strategy', 'Targets'], (r) => [r.table, r.column, r.strategy, r.targets]);
+}
+
+function qosPage() {
+  const classRows = qosConfig.classLimits.map((c) => '<tr><td class="mono">' + c.className + '</td><td class="numCell">' + c.ratePerSec + '/s</td><td class="numCell">' + c.burst + '</td></tr>').join('');
+  return '<h1 class="pageTitle">QoS</h1>' +
+    '<p class="pageLede">Admission control that stops one workload from taking down Postgres for everyone else.</p>' +
+    '<div class="statGrid">' +
+      statCard(iSliders, 'Global rate', qosConfig.ratePerSec + '/s', 'burst ' + qosConfig.burst) +
+      statCard(iGauge, 'Max wait', qosConfig.maxWaitMs + 'ms', 'before rejecting') +
+      statCard(iActivity, 'Pool wait threshold', (qosConfig.poolWaitThreshold * 100).toFixed(0) + '%', 'connection pool saturation that triggers shedding') +
+    '</div>' +
+    '<div class="sectionTitle">Per-class limits</div>' +
+    '<div class="panel" style="padding:0"><table><thead><tr><th>Class</th><th style="text-align:right">Rate</th><th style="text-align:right">Burst</th></tr></thead><tbody>' + classRows + '</tbody></table></div>';
+}
+
+function llmConfigPage(cfg, note) {
+  const row = (label, value) => '<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+    '<span style="color:var(--muted)">' + label + '</span><span class="mono">' + (value || '<span style="color:var(--muted)">not set</span>') + '</span></div>';
+  return '<h1 class="pageTitle">LLM</h1>' +
+    '<p class="pageLede">' + note + '</p>' +
+    '<div class="panel">' +
+      row('Provider', cfg.provider) + row('Model', cfg.model) + row('Base URL', cfg.baseUrl) +
+      row('API key', cfg.apiKeySet ? '<span class="badge ok">set</span>' : '<span class="badge warn">not set</span>') +
+    '</div>';
+}
 
 const wirePages = {
   dashboard: wireDashboardPage,
   metrics: wireMetricsPage,
   topology: () => '<h1 class="pageTitle">Topology</h1><p class="pageLede">Every Polywire node heartbeating against the shared config Postgres. A node is marked stale after 30s without one.</p>' + topologyTable(wireNodes),
   firewall: () => '<h1 class="pageTitle">SQL Firewall</h1><p class="pageLede">Allow/deny rules matched against incoming statements by type, table, or pattern, evaluated in priority order.</p>' + firewallSummaryPanel(firewallRules),
-  acl: () => wireStub('ACL', 'Network-level allow rules, with PROXY protocol v2 trusted-proxy support.', 'Demo stub.'),
+  acl: aclPage,
   oauth: () => '<h1 class="pageTitle">OAuth</h1><p class="pageLede">Issuer, audience, and claim mapping for OAuth-authenticated connections.</p>' + oauthSummaryPanel(oauthConfig),
   backends: wireBackendsPage,
-  queues: () => wireStub('Queues', 'sqswire-backed queues: visible/in-flight counts, DLQ routing.', 'Demo stub.'),
-  data: () => wireStub('Data explorer', 'Browse tables/columns on any configured backend and run ad hoc SQL.', 'Demo stub &mdash; opened from a Backends row above.'),
-  router: () => wireStub('Router rules', 'Schema, predicate, and value-based sharding rules.', 'Demo stub.'),
-  qos: () => wireStub('QoS', 'Rate limits, burst size, and per-class wait thresholds.', 'Demo stub.'),
+  queues: queuesPage,
+  data: dataExplorerPage,
+  router: routerRulesPage,
+  qos: qosPage,
   federation: federationPlansPage,
-  llm: () => wireStub('LLM', 'Fallback LLM provider for statements the rule-based translator can’t handle.', 'Demo stub.'),
+  llm: () => llmConfigPage(llmConfig, 'Fallback LLM provider for statements the rule-based dialect translator can\'t handle on its own.'),
 };
 
 function selectWire(page) {
@@ -724,9 +1077,21 @@ function advisorDashboardPage() {
     '<p class="pageLede">Overview of the databases you’ve connected and the reports you’ve analyzed.</p>' +
     '<div class="statGrid">' +
       '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iDb + '</span>Connections</div><div class="statValue">2</div><div class="statHint">Prod Oracle 19c, Legacy MySQL</div></div>' +
-      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iFile + '</span>Reports</div><div class="statValue">5</div><div class="statHint">4 analyzed</div></div>' +
-      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iGauge + '</span>Sizing runs</div><div class="statValue">2</div><div class="statHint">run from a connection</div></div>' +
+      '<div class="statCard link" onclick="selectAdvisor(\'reports\')"><div class="statLabel"><span class="ico">' + iFile + '</span>Reports</div><div class="statValue">5</div><div class="statHint">4 analyzed</div></div>' +
+      '<div class="statCard link" onclick="selectAdvisor(\'sizing\')"><div class="statLabel"><span class="ico">' + iGauge + '</span>Sizing runs</div><div class="statValue">2</div><div class="statHint">run from a connection</div></div>' +
     '</div>';
+}
+
+// The real Advisor app tabs Connections/Reports/Sizing on one another under a single "Advisor"
+// sidebar entry (see AdvisorTabs.tsx) rather than listing them as separate nav items.
+const ADVISOR_TABS = [
+  { key: 'connections', label: 'Connections' },
+  { key: 'reports', label: 'Reports' },
+  { key: 'sizing', label: 'Sizing' },
+];
+function advisorTabs(active) {
+  return '<div class="tabRow">' + ADVISOR_TABS.map((t) =>
+    '<button type="button" class="' + (t.key === active ? 'active' : '') + '" onclick="selectAdvisor(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
 }
 
 function advisorConnectionsPage() {
@@ -737,20 +1102,55 @@ function advisorConnectionsPage() {
       '<button type="button" class="iconBtn" title="Browse objects" onclick="alert(\'Opens the object browser for \\\'' + c.name + '\\\'.\')"><span class="ico">' + iSearch + '</span></button>' +
       '<button type="button" class="iconBtn" title="Delete connection" onclick="removeAdvisorConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
     '</div>').join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No connections yet.</div>';
-  return '<h1 class="pageTitle">Connections</h1>' +
+  return advisorTabs('connections') + '<h1 class="pageTitle">Connections</h1>' +
     '<p class="pageLede">Databases you’re assessing for migration. Click a star to favorite.</p>' +
     '<div class="rowList" id="advisorConnList">' + rows + '</div>' +
     '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="alert(\'Opens the add-connection form.\')">Add connection</button>';
 }
 
+function advisorReportsPage() {
+  const rows = advisorReports.map((r) =>
+    '<tr><td>' + r.name + '</td><td class="mono">' + r.dialect + '</td><td class="mono" style="font-size:12px">' + r.filename + '</td>' +
+    '<td style="color:var(--muted)">' + r.uploadedAt + '</td>' +
+    '<td>' + (r.analyzedAt ? '<span class="badge ok">analyzed ' + r.analyzedAt + '</span>' : '<span class="badge" style="color:var(--muted);background:var(--bg)">not analyzed</span>') + '</td></tr>').join('');
+  return advisorTabs('reports') + '<h1 class="pageTitle">Reports</h1>' +
+    '<p class="pageLede">Uploaded performance reports (Oracle AWR, MySQL performance report, SQL Server DMV export) &mdash; a different kind of signal than a live connection, an LLM reads it for you.</p>' +
+    '<div class="panel" style="padding:0"><table><thead><tr><th>Name</th><th>Dialect</th><th>File</th><th>Uploaded</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="alert(\'Opens the upload form.\')">Upload report</button>';
+}
+
+function advisorSizingPage() {
+  const s = advisorSizing;
+  return advisorTabs('sizing') + '<h1 class="pageTitle">Sizing</h1>' +
+    '<p class="pageLede">A starting-point Postgres instance shape, built from a fresh schema-size scan and captured workload &mdash; with the reasoning behind every number, not just the numbers.</p>' +
+    '<div class="statGrid">' +
+      statCard(iGauge, 'Tier', s.tier, 'starting point, not a ceiling') +
+      statCard(iCpu, 'vCPUs', String(s.vcpus)) +
+      statCard(iServer, 'Memory', s.memoryGb + ' GB') +
+      statCard(iDb, 'Storage', s.storageGb + ' GB') +
+      statCard(iActivity, 'IOPS', s.iops.toLocaleString()) +
+      statCard(iNetwork, 'max_connections', String(s.maxConnections)) +
+    '</div>' +
+    '<div class="sectionTitle">Rationale</div>' +
+    '<div class="panel"><ul style="margin:0;padding-left:18px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px">' +
+      s.rationale.map((r) => '<li>' + r + '</li>').join('') +
+    '</ul></div>';
+}
+
 const advisorPages = {
   dashboard: advisorDashboardPage,
   connections: advisorConnectionsPage,
-  llm: () => wireStub('LLM', 'Provider, model, and API key used to generate migration-report narratives.', 'Demo stub.'),
+  reports: advisorReportsPage,
+  sizing: advisorSizingPage,
+  llm: () => llmConfigPage(advisorLlmConfig, 'Provider and model used to generate migration-report narratives and PL/SQL summaries &mdash; local by default, nothing leaves the machine.'),
 };
 
+const ADVISOR_TAB_KEYS = ADVISOR_TABS.map((t) => t.key);
 function selectAdvisor(page) {
-  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => b.classList.toggle('active', b.dataset.advisorPage === page));
+  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => {
+    const isTabGroup = b.dataset.advisorPage === 'connections' && ADVISOR_TAB_KEYS.includes(page);
+    b.classList.toggle('active', isTabGroup || b.dataset.advisorPage === page);
+  });
   $('#advisor-content').innerHTML = advisorPages[page]();
 }
 window.selectAdvisor = selectAdvisor;
