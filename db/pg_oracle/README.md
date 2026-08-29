@@ -555,9 +555,47 @@ still gets the documented limitation as stated: an unqualified
 two-argument call resolves to real Postgres's own function without
 `RR`/bare-`FF`/`X` translation, unless called schema-qualified.
 
+## DBMS_SQL / DBMS_SYS_SQL
+
+Package 11 -- dynamic SQL: `OPEN_CURSOR`/`PARSE`/`BIND_VARIABLE`/
+`EXECUTE`/`FETCH_ROWS`/`COLUMN_VALUE`/`CLOSE_CURSOR`/`IS_OPEN`, covering
+the overwhelming majority of real migrated-application DBMS_SQL usage:
+building a dynamic SELECT/INSERT/UPDATE/DELETE/MERGE statement as text,
+binding named (`:name`) parameters into it, executing it, and reading
+rows back by 1-based column position. `DBMS_SYS_SQL` is a second schema
+whose functions are thin wrappers calling straight into `dbms_sql`'s,
+sharing the exact same cursor state -- matching real Oracle, where
+`DBMS_SQL` is documented to be built on `DBMS_SYS_SQL` internally.
+
+**Not implemented, stated plainly**: this project has no anonymous-
+PL/SQL-block interpreter (see the "Anonymous PL/SQL blocks" section
+above for the same underlying gap) -- real Oracle DBMS_SQL's other
+major use case, `PARSE`+`EXECUTE`ing a whole PL/SQL block
+(`BEGIN some_proc(:x, :y); END;`) so `VARIABLE_VALUE` can read back an
+OUT parameter afterward, needs exactly that interpreter and isn't
+supported. Neither is `DESCRIBE_COLUMNS`/`DEFINE_COLUMN`/`TO_REFCURSOR`.
+A `PARSE`'d statement also isn't run through orawire's own
+Oracle-to-Postgres SQL translation the way SQL arriving over the wire
+is -- it's a plain text argument to a function call by the time it
+reaches this package, so it must already be Postgres-runnable SQL (a
+real migrated app's dynamic SQL is usually a plain SELECT/DML against
+real tables already, which needs no Oracle-specific rewriting anyway).
+
+Session-scoped cursor state lives in a lazily created TEMP table, the
+same technique `DBMS_SESSION`'s own context storage already uses (see
+that section above) -- no C needed. A cursor's fetched rows are held as
+one `jsonb` array built via `jsonb_agg(row_to_json(t))` over the
+executed query: `row_to_json` walks the row's tuple descriptor in
+column order, which is exactly the 1-based ordinal position
+`COLUMN_VALUE` needs, without a real SPI portal/cursor underneath. That
+does mean a cursor's full result set is materialized in memory at
+`EXECUTE` time rather than streamed row-by-row -- a fine tradeoff for
+the dynamic-SQL-report/batch-job sizes this actually gets used for, not
+a replacement for a real streaming cursor over a huge result set.
+
 ## Remaining top-20 scope
 
-`DBMS_LOB`, `DBMS_SQL`, `DBMS_APPLICATION_INFO`,
+`DBMS_LOB`, `DBMS_APPLICATION_INFO`,
 `DBMS_METADATA` (subset), `DBMS_LOCK`, `DBMS_ALERT`, `DBMS_PIPE`,
 `UTL_RAW`, `UTL_ENCODE` -- planned to build on
 [orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it

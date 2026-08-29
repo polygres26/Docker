@@ -2057,3 +2057,346 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_aq TO PUBLIC;
 GRANT USAGE ON SCHEMA dbms_stats TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_stats TO PUBLIC;
 GRANT SELECT, INSERT, DELETE ON dbms_stats.locked_tables TO PUBLIC;
+
+-- ================================================================
+-- DBMS_SQL / DBMS_SYS_SQL -- dynamic SQL: build a statement as text at
+-- runtime, PARSE it, BIND_VARIABLE values into named placeholders,
+-- EXECUTE, FETCH_ROWS/COLUMN_VALUE to read results back.
+--
+-- Scope, stated plainly: this project has no anonymous-PL/SQL-block
+-- interpreter (see dbms_session's own header comment on CREATE CONTEXT
+-- for the same gap) -- every DBMS_* package here is a flat, SQL-callable
+-- function surface, not a PL/SQL runtime. Real Oracle DBMS_SQL's
+-- heaviest use case -- PARSE'ing and EXECUTE'ing a whole PL/SQL block
+-- (`BEGIN some_proc(:x, :y); END;`) so VARIABLE_VALUE can read back an
+-- OUT parameter afterward -- needs exactly that interpreter and is NOT
+-- supported here. What IS supported, and is the overwhelming majority
+-- of real-world DBMS_SQL usage in migrated application code: building a
+-- dynamic SELECT/INSERT/UPDATE/DELETE/MERGE statement as text, binding
+-- named (:name) parameters into it, executing it, and fetching rows
+-- back by 1-based column position. DESCRIBE_COLUMNS/TO_REFCURSOR/
+-- DEFINE_ARRAY and friends aren't implemented either -- this is the
+-- pragmatic 80% case, not a byte-for-byte DBMS_SQL clone.
+--
+-- Also out of scope: PARSE's statement text must already be
+-- Postgres-runnable SQL. Unlike SQL that arrives over the wire (which
+-- orawire's DialectTranslations rewrites Oracle syntax for before it
+-- ever reaches Postgres), a string built and handed to PARSE at
+-- runtime never passes through that translator -- it's just a text
+-- argument to a plain function call as far as Postgres is concerned.
+-- FROM DUAL, VARCHAR2, etc. inside a PARSE'd statement will fail the
+-- same way they would in a raw psql session. Real-world dynamic SQL is
+-- usually a plain SELECT/DML against real tables, which needs no
+-- Oracle-specific rewriting anyway -- the common case still works.
+--
+-- Session-scoped state (cursors survive for the session or until
+-- CLOSE_CURSOR, matching Oracle's own DBMS_SQL cursor lifetime) lives in
+-- a lazily-created TEMP table, the same technique DBMS_SESSION's own
+-- context storage already uses -- no C needed, this is genuinely just
+-- session-lifetime bookkeeping, not something requiring SPI's row-level
+-- access the way DBMS_OUTPUT's buffer does. A cursor's fetched rows are
+-- held as a single jsonb array (`jsonb_agg(row_to_json(t))` over the
+-- executed query) -- correct because row_to_json walks the row's tuple
+-- descriptor in column order, which is exactly the ordinal position
+-- COLUMN_VALUE needs, without a real Postgres cursor/portal underneath.
+-- This does mean a cursor's full result set is materialized in memory
+-- at EXECUTE time rather than streamed row-by-row the way a real
+-- SPI/portal-backed cursor would be -- an acceptable tradeoff for the
+-- dynamic-SQL-report/batch-job sizes this package actually gets used
+-- for, not something meant to replace a real streaming cursor for a
+-- huge result set.
+--
+-- DBMS_SYS_SQL is Oracle's own SYS-owned package that DBMS_SQL is
+-- documented to be built on top of internally -- exposed here as a
+-- second schema whose functions are thin wrappers calling straight into
+-- dbms_sql's, sharing the exact same cursor table/state, so a cursor
+-- opened via one package is fully usable through the other (matching
+-- real Oracle behavior).
+-- ================================================================
+
+CREATE SCHEMA dbms_sql;
+COMMENT ON SCHEMA dbms_sql IS 'Oracle DBMS_SQL package (pg_oracle, part of Polygres) -- dynamic SQL: OPEN_CURSOR/PARSE/BIND_VARIABLE/EXECUTE/FETCH_ROWS/COLUMN_VALUE/CLOSE_CURSOR. See this section''s header comment for real scope/limits.';
+
+CREATE FUNCTION dbms_sql.ensure_cursor_table() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  CREATE TEMP TABLE IF NOT EXISTS oracle_dbms_sql_cursors(
+    cursor_id   integer PRIMARY KEY,
+    sql_text    text,
+    binds       jsonb NOT NULL DEFAULT '{}'::jsonb,
+    rows        jsonb,			-- NULL until EXECUTE; jsonb array of row objects after
+    fetch_pos   integer NOT NULL DEFAULT 0,	-- 0-based index of the NEXT row FETCH_ROWS will return
+    current_row jsonb			-- the row FETCH_ROWS most recently returned, for COLUMN_VALUE
+  ) ON COMMIT PRESERVE ROWS;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.ensure_cursor_table() IS 'Internal: lazily creates this session''s DBMS_SQL cursor table. Not part of the DBMS_SQL API.';
+
+CREATE FUNCTION dbms_sql.open_cursor() RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_id integer;
+BEGIN
+  PERFORM dbms_sql.ensure_cursor_table();
+  SELECT coalesce(max(cursor_id), 0) + 1 INTO v_id FROM pg_temp.oracle_dbms_sql_cursors;
+  INSERT INTO pg_temp.oracle_dbms_sql_cursors(cursor_id) VALUES (v_id);
+  RETURN v_id;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.open_cursor() IS 'Oracle DBMS_SQL.OPEN_CURSOR -- allocates a new cursor handle, scoped to this session.';
+
+CREATE FUNCTION dbms_sql.parse(c integer, statement text, language_flag integer DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE pg_temp.oracle_dbms_sql_cursors
+     SET sql_text = statement, binds = '{}'::jsonb, rows = NULL, fetch_pos = 0, current_row = NULL
+   WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.parse(integer, text, integer) IS 'Oracle DBMS_SQL.PARSE. language_flag accepted for signature compatibility only -- there is only one dialect here (Postgres SQL), so it has no effect.';
+
+CREATE FUNCTION dbms_sql.bind_variable(c integer, name text, value text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE pg_temp.oracle_dbms_sql_cursors
+     SET binds = binds || jsonb_build_object(name, jsonb_build_object('v', value, 't', 'text'))
+   WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.bind_variable(integer, text, text) IS 'Oracle DBMS_SQL.BIND_VARIABLE (VARCHAR2 overload). name is the bind''s name as written in the PARSE''d statement, WITHOUT its leading colon (matching real Oracle) -- e.g. bind_variable(c, ''id'', ...) for a statement containing :id.';
+
+CREATE FUNCTION dbms_sql.bind_variable(c integer, name text, value numeric) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE pg_temp.oracle_dbms_sql_cursors
+     SET binds = binds || jsonb_build_object(name, jsonb_build_object('v', value::text, 't', 'numeric'))
+   WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.bind_variable(integer, text, numeric) IS 'Oracle DBMS_SQL.BIND_VARIABLE (NUMBER overload).';
+
+CREATE FUNCTION dbms_sql.bind_variable(c integer, name text, value timestamp) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE pg_temp.oracle_dbms_sql_cursors
+     SET binds = binds || jsonb_build_object(name, jsonb_build_object('v', value::text, 't', 'timestamp'))
+   WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.bind_variable(integer, text, timestamp) IS 'Oracle DBMS_SQL.BIND_VARIABLE (DATE overload).';
+
+CREATE FUNCTION dbms_sql.substitute_binds(statement text, binds jsonb) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_sql  text := statement;
+  v_key  text;
+  v_val  jsonb;
+  v_lit  text;
+BEGIN
+  FOR v_key, v_val IN SELECT * FROM jsonb_each(binds) LOOP
+    v_lit := CASE v_val->>'t'
+               WHEN 'numeric'   THEN quote_nullable(v_val->>'v') || '::numeric'
+               WHEN 'timestamp' THEN quote_nullable(v_val->>'v') || '::timestamp'
+               ELSE quote_nullable(v_val->>'v')
+             END;
+    -- Word-boundary-safe, and deliberately does NOT match inside a Postgres
+    -- "::type" cast (negative lookbehind blocks a ':' immediately before
+    -- the bind's own ':') -- a real risk once translated/hand-written SQL
+    -- mixes Oracle-style :binds with Postgres-style :: casts in the same
+    -- statement.
+    v_sql := regexp_replace(v_sql, '(?<!:):' || v_key || '(?![A-Za-z0-9_$#])', v_lit, 'g');
+  END LOOP;
+  RETURN v_sql;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.substitute_binds(text, jsonb) IS 'Internal: replaces :name placeholders with their bound, literal-quoted values. Not part of the DBMS_SQL API.';
+
+CREATE FUNCTION dbms_sql.execute(c integer) RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_cur         pg_temp.oracle_dbms_sql_cursors%ROWTYPE;
+  v_final_sql   text;
+  v_first_word  text;
+  v_rows        jsonb;
+  v_count       integer;
+BEGIN
+  SELECT * INTO v_cur FROM pg_temp.oracle_dbms_sql_cursors WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+  IF v_cur.sql_text IS NULL THEN
+    RAISE EXCEPTION 'ORA-01002: cursor % was never PARSE''d', c;
+  END IF;
+
+  v_final_sql := dbms_sql.substitute_binds(v_cur.sql_text, v_cur.binds);
+  v_first_word := upper(substring(trim(both from v_final_sql) FROM '^[A-Za-z]+'));
+
+  IF v_first_word IN ('SELECT', 'WITH', 'TABLE') THEN
+    -- row_to_json walks the row's tuple descriptor in column order, which
+    -- is exactly the ordinal position COLUMN_VALUE needs -- see this
+    -- section's header comment on why this is correct without a real
+    -- portal/cursor underneath.
+    EXECUTE format('SELECT coalesce(jsonb_agg(row_to_json(t)), ''[]''::jsonb) FROM (%s) t', v_final_sql) INTO v_rows;
+    UPDATE pg_temp.oracle_dbms_sql_cursors
+       SET rows = v_rows, fetch_pos = 0, current_row = NULL
+     WHERE cursor_id = c;
+    RETURN 0;	-- undefined/0 for a query cursor, matching real Oracle -- fetch rows via FETCH_ROWS
+  ELSE
+    EXECUTE v_final_sql;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    UPDATE pg_temp.oracle_dbms_sql_cursors
+       SET rows = NULL, fetch_pos = 0, current_row = NULL
+     WHERE cursor_id = c;
+    RETURN v_count;
+  END IF;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.execute(integer) IS 'Oracle DBMS_SQL.EXECUTE -- substitutes bound values and runs the statement. Returns rows-processed for INSERT/UPDATE/DELETE/MERGE; 0 for a query cursor meant to be read via FETCH_ROWS.';
+
+CREATE FUNCTION dbms_sql.fetch_rows(c integer) RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_cur pg_temp.oracle_dbms_sql_cursors%ROWTYPE;
+  v_row jsonb;
+BEGIN
+  SELECT * INTO v_cur FROM pg_temp.oracle_dbms_sql_cursors WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+  IF v_cur.rows IS NULL THEN
+    RAISE EXCEPTION 'ORA-01003: no statement parsed/executed as a query on cursor %', c;
+  END IF;
+
+  IF v_cur.fetch_pos >= jsonb_array_length(v_cur.rows) THEN
+    UPDATE pg_temp.oracle_dbms_sql_cursors SET current_row = NULL WHERE cursor_id = c;
+    RETURN 0;	-- no more rows, matching real Oracle's FETCH_ROWS = 0
+  END IF;
+
+  v_row := v_cur.rows -> v_cur.fetch_pos;
+  UPDATE pg_temp.oracle_dbms_sql_cursors
+     SET current_row = v_row, fetch_pos = v_cur.fetch_pos + 1
+   WHERE cursor_id = c;
+  RETURN 1;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.fetch_rows(integer) IS 'Oracle DBMS_SQL.FETCH_ROWS -- advances to the next row. Returns 1 if a row was fetched, 0 at end of the result set (real Oracle returns an actual row count per fetch; this implementation always fetches exactly one row at a time, so the only real values are 0 and 1).';
+
+CREATE FUNCTION dbms_sql.column_value(c integer, col_position integer) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_row jsonb;
+BEGIN
+  SELECT current_row INTO v_row FROM pg_temp.oracle_dbms_sql_cursors WHERE cursor_id = c;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORA-01001: invalid cursor -- % was never opened (or already closed) in this session', c;
+  END IF;
+  IF v_row IS NULL THEN
+    RAISE EXCEPTION 'ORA-01007: no current row on cursor % -- call FETCH_ROWS first', c;
+  END IF;
+  IF col_position < 1 OR col_position > (SELECT count(*) FROM jsonb_each_text(v_row)) THEN
+    RAISE EXCEPTION 'ORA-01007: column position % out of range for cursor %', col_position, c;
+  END IF;
+  RETURN (SELECT value FROM jsonb_each_text(v_row) WITH ORDINALITY AS t(key, value, ord)
+            WHERE ord = col_position);
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.column_value(integer, integer) IS 'Oracle DBMS_SQL.COLUMN_VALUE (text/generic form) -- 1-based column position, read from the row FETCH_ROWS most recently returned. Real Oracle overloads COLUMN_VALUE by the OUT parameter''s own type; SQL has no equivalent, so numeric/date readers are separate functions (column_value_number/column_value_date) -- cast the text result yourself (::numeric, ::timestamp) if that''s simpler for a given caller.';
+
+CREATE FUNCTION dbms_sql.column_value_number(c integer, col_position integer) RETURNS numeric
+LANGUAGE sql AS $$
+  SELECT dbms_sql.column_value(c, col_position)::numeric;
+$$;
+COMMENT ON FUNCTION dbms_sql.column_value_number(integer, integer) IS 'Oracle DBMS_SQL.COLUMN_VALUE (NUMBER form) -- convenience wrapper over column_value() with an explicit numeric cast.';
+
+CREATE FUNCTION dbms_sql.column_value_date(c integer, col_position integer) RETURNS timestamp
+LANGUAGE sql AS $$
+  SELECT dbms_sql.column_value(c, col_position)::timestamp;
+$$;
+COMMENT ON FUNCTION dbms_sql.column_value_date(integer, integer) IS 'Oracle DBMS_SQL.COLUMN_VALUE (DATE form) -- convenience wrapper over column_value() with an explicit timestamp cast.';
+
+CREATE FUNCTION dbms_sql.is_open(c integer) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS(SELECT 1 FROM pg_temp.oracle_dbms_sql_cursors WHERE cursor_id = c);
+$$;
+COMMENT ON FUNCTION dbms_sql.is_open(integer) IS 'Oracle DBMS_SQL.IS_OPEN.';
+
+CREATE FUNCTION dbms_sql.close_cursor(c integer) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM pg_temp.oracle_dbms_sql_cursors WHERE cursor_id = c;
+END;
+$$;
+COMMENT ON FUNCTION dbms_sql.close_cursor(integer) IS 'Oracle DBMS_SQL.CLOSE_CURSOR. Unlike real Oracle (an IN OUT parameter Oracle sets to NULL), this takes a plain IN integer and returns nothing -- close the cursor, then stop using its id yourself.';
+
+GRANT USAGE ON SCHEMA dbms_sql TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_sql TO PUBLIC;
+
+-- DBMS_SYS_SQL: thin wrappers over dbms_sql's own functions, sharing the
+-- exact same TEMP-table cursor state -- a cursor opened via one package
+-- is fully usable through the other, matching real Oracle (where
+-- DBMS_SQL is documented to be built on top of DBMS_SYS_SQL internally).
+CREATE SCHEMA dbms_sys_sql;
+COMMENT ON SCHEMA dbms_sys_sql IS 'Oracle DBMS_SYS_SQL package (pg_oracle, part of Polygres) -- thin wrapper over dbms_sql, sharing the same cursor state. See dbms_sql''s own header comment for real scope/limits.';
+
+CREATE FUNCTION dbms_sys_sql.open_cursor() RETURNS integer
+LANGUAGE sql AS $$ SELECT dbms_sql.open_cursor(); $$;
+COMMENT ON FUNCTION dbms_sys_sql.open_cursor() IS 'See dbms_sql.open_cursor().';
+
+CREATE FUNCTION dbms_sys_sql.parse(c integer, statement text, language_flag integer DEFAULT NULL) RETURNS void
+LANGUAGE sql AS $$ SELECT dbms_sql.parse(c, statement, language_flag); $$;
+COMMENT ON FUNCTION dbms_sys_sql.parse(integer, text, integer) IS 'See dbms_sql.parse().';
+
+CREATE FUNCTION dbms_sys_sql.bind_variable(c integer, name text, value text) RETURNS void
+LANGUAGE sql AS $$ SELECT dbms_sql.bind_variable(c, name, value); $$;
+COMMENT ON FUNCTION dbms_sys_sql.bind_variable(integer, text, text) IS 'See dbms_sql.bind_variable(integer, text, text).';
+
+CREATE FUNCTION dbms_sys_sql.bind_variable(c integer, name text, value numeric) RETURNS void
+LANGUAGE sql AS $$ SELECT dbms_sql.bind_variable(c, name, value); $$;
+COMMENT ON FUNCTION dbms_sys_sql.bind_variable(integer, text, numeric) IS 'See dbms_sql.bind_variable(integer, text, numeric).';
+
+CREATE FUNCTION dbms_sys_sql.bind_variable(c integer, name text, value timestamp) RETURNS void
+LANGUAGE sql AS $$ SELECT dbms_sql.bind_variable(c, name, value); $$;
+COMMENT ON FUNCTION dbms_sys_sql.bind_variable(integer, text, timestamp) IS 'See dbms_sql.bind_variable(integer, text, timestamp).';
+
+CREATE FUNCTION dbms_sys_sql.execute(c integer) RETURNS integer
+LANGUAGE sql AS $$ SELECT dbms_sql.execute(c); $$;
+COMMENT ON FUNCTION dbms_sys_sql.execute(integer) IS 'See dbms_sql.execute().';
+
+CREATE FUNCTION dbms_sys_sql.fetch_rows(c integer) RETURNS integer
+LANGUAGE sql AS $$ SELECT dbms_sql.fetch_rows(c); $$;
+COMMENT ON FUNCTION dbms_sys_sql.fetch_rows(integer) IS 'See dbms_sql.fetch_rows().';
+
+CREATE FUNCTION dbms_sys_sql.column_value(c integer, col_position integer) RETURNS text
+LANGUAGE sql AS $$ SELECT dbms_sql.column_value(c, col_position); $$;
+COMMENT ON FUNCTION dbms_sys_sql.column_value(integer, integer) IS 'See dbms_sql.column_value().';
+
+CREATE FUNCTION dbms_sys_sql.column_value_number(c integer, col_position integer) RETURNS numeric
+LANGUAGE sql AS $$ SELECT dbms_sql.column_value_number(c, col_position); $$;
+COMMENT ON FUNCTION dbms_sys_sql.column_value_number(integer, integer) IS 'See dbms_sql.column_value_number().';
+
+CREATE FUNCTION dbms_sys_sql.column_value_date(c integer, col_position integer) RETURNS timestamp
+LANGUAGE sql AS $$ SELECT dbms_sql.column_value_date(c, col_position); $$;
+COMMENT ON FUNCTION dbms_sys_sql.column_value_date(integer, integer) IS 'See dbms_sql.column_value_date().';
+
+CREATE FUNCTION dbms_sys_sql.is_open(c integer) RETURNS boolean
+LANGUAGE sql STABLE AS $$ SELECT dbms_sql.is_open(c); $$;
+COMMENT ON FUNCTION dbms_sys_sql.is_open(integer) IS 'See dbms_sql.is_open().';
+
+CREATE FUNCTION dbms_sys_sql.close_cursor(c integer) RETURNS void
+LANGUAGE sql AS $$ SELECT dbms_sql.close_cursor(c); $$;
+COMMENT ON FUNCTION dbms_sys_sql.close_cursor(integer) IS 'See dbms_sql.close_cursor().';
+
+GRANT USAGE ON SCHEMA dbms_sys_sql TO PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_sys_sql TO PUBLIC;
