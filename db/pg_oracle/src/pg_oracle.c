@@ -46,13 +46,15 @@ PG_MODULE_MAGIC;
 typedef enum DbEmulationMode
 {
 	DB_EMULATION_POSTGRES = 0,
-	DB_EMULATION_ORACLE = 1
+	DB_EMULATION_ORACLE = 1,
+	DB_EMULATION_MYSQL = 2
 } DbEmulationMode;
 
 static const struct config_enum_entry db_emulation_options[] = {
 	{"postgres", DB_EMULATION_POSTGRES, false},
 	{"off", DB_EMULATION_POSTGRES, true},	/* accepted alias */
 	{"oracle", DB_EMULATION_ORACLE, false},
+	{"mysql", DB_EMULATION_MYSQL, false},
 	{NULL, 0, false}
 };
 
@@ -64,6 +66,75 @@ static int db_emulation_mode = DB_EMULATION_POSTGRES;
  * doesn't currently happen, but keeps the precedent unsurprising as more
  * package schemas are added in later phases (top-20 DBMS_* rollout). */
 #define ORACLE_EMULATION_SCHEMAS "dbms_output, dbms_random, dbms_utility, dbms_assert, dbms_network_acl_admin, dbms_crypto, dbms_scheduler, dbms_aqadm, dbms_aq, dbms_stats, dbms_session, dbms_sql, dbms_sys_sql, utl_file, utl_http, oracle_catalog"
+
+/* The equivalent for SET db_emulation='mysql', provided by the separate
+ * pg_mysql extension (db/pg_mysql) -- db_emulation itself has to live in
+ * exactly one C module (Postgres has no way for two independently loaded
+ * .so's to both own a GUC named "db_emulation"), so pg_oracle is that one
+ * shared owner and pg_mysql declares a real `requires = 'pg_oracle'`
+ * dependency on it rather than hiding the coupling. pg_mysql's own SQL
+ * script is the only thing that needs mysql_catalog to actually exist;
+ * this C module doesn't reference it directly and works fine with
+ * db_emulation='mysql' set even if pg_mysql isn't installed (the schema
+ * just wouldn't resolve to anything, same as any other missing schema on
+ * search_path). */
+#define MYSQL_EMULATION_SCHEMAS "mysql_catalog"
+
+/* Returns the schema-list string SET db_emulation=<mode> should append
+ * onto search_path, or NULL for 'postgres' (nothing to append -- also
+ * what an as-yet-unrecognized future mode value would fall through to,
+ * safely: no C module owns it yet, so there is nothing to add). */
+static const char *
+emulation_schemas_for(int mode)
+{
+	switch (mode)
+	{
+		case DB_EMULATION_ORACLE:
+			return ORACLE_EMULATION_SCHEMAS;
+		case DB_EMULATION_MYSQL:
+			return MYSQL_EMULATION_SCHEMAS;
+		default:
+			return NULL;
+	}
+}
+
+/*
+ * If search_path currently ends with (or is exactly) the given emulation
+ * schema-list suffix, sets *base_len to the length of search_path with
+ * that suffix (and its preceding ", ") stripped off and returns true.
+ * Otherwise returns false and leaves *base_len untouched. Shared by both
+ * the "is the target mode's suffix already there" check and the "which
+ * OTHER mode's suffix, if any, needs to be stripped before appending a
+ * new one" check below -- switching directly between two emulation modes
+ * (oracle -> mysql with no intervening 'postgres') must not stack suffixes
+ * or leave a stale sibling-mode suffix behind.
+ */
+static bool
+strip_emulation_suffix(const char *search_path, size_t search_path_len,
+						const char *schemas, size_t *base_len)
+{
+	size_t		schemas_len = strlen(schemas);
+
+	if (search_path == NULL)
+		return false;
+	if (strcmp(search_path, schemas) == 0)
+	{
+		*base_len = 0;
+		return true;
+	}
+	if (search_path_len >= schemas_len + 2)
+	{
+		const char *tail = search_path + (search_path_len - schemas_len);
+		const char *sep = search_path + (search_path_len - schemas_len - 2);
+
+		if (strcmp(tail, schemas) == 0 && strncmp(sep, ", ", 2) == 0)
+		{
+			*base_len = search_path_len - schemas_len - 2;
+			return true;
+		}
+	}
+	return false;
+}
 
 /*
  * Create a schema literally named after the current role, if one doesn't
@@ -138,10 +209,10 @@ static void
 db_emulation_assign_hook(int newval, void *extra)
 {
 	const char *current_search_path;
-	const char *suffix = ", " ORACLE_EMULATION_SCHEMAS;
 	size_t		cur_len;
-	size_t		suffix_len = strlen(suffix);
-	bool		already_appended;
+	const char *new_schemas = emulation_schemas_for(newval);
+	size_t		base_len;
+	bool		already_correct = false;
 	StringInfoData buf;
 
 	/*
@@ -149,14 +220,14 @@ db_emulation_assign_hook(int newval, void *extra)
 	 * return was the actual bug, found live via a real orawire+sqlcl
 	 * connection -- see db/pg_oracle/README.md): search_path can be
 	 * overwritten wholesale by code entirely outside this extension's
-	 * control between two `SET db_emulation = 'oracle'` calls on what
+	 * control between two `SET db_emulation = '<mode>'` calls on what
 	 * this GUC's own C-level state considers "the same session" --
 	 * Polywire's own LazyPooledConnection issues its own unconditional
 	 * `SET search_path TO "<tenant>", public` the first time its Java
 	 * wrapper object opens a (possibly pool-reused) physical connection,
 	 * with no idea this extension's search_path append exists to
-	 * preserve. If db_emulation_mode's enum value happens to already be
-	 * ORACLE on that same physical backend (a real, observed case: the
+	 * preserve. If db_emulation_mode's enum value happens to already
+	 * match on that same physical backend (a real, observed case: the
 	 * backend process persists across what Polywire's own code thinks
 	 * are separate logical connections), the old "value didn't change,
 	 * nothing to do" assumption was simply wrong -- search_path had
@@ -169,69 +240,74 @@ db_emulation_assign_hook(int newval, void *extra)
 	 *
 	 * Fixed by reconciling against the ACTUAL current search_path text
 	 * on every call, unconditionally: idempotent either way, so a
-	 * genuinely repeated `SET db_emulation = 'oracle'` where nothing
+	 * genuinely repeated `SET db_emulation = '<mode>'` where nothing
 	 * external touched search_path is just a cheap string-suffix check
 	 * that changes nothing.
 	 */
 	current_search_path = GetConfigOption("search_path", false, false);
 	cur_len = current_search_path ? strlen(current_search_path) : 0;
-	already_appended = current_search_path != NULL &&
-		(strcmp(current_search_path, ORACLE_EMULATION_SCHEMAS) == 0 ||
-		 (cur_len >= suffix_len &&
-		  strcmp(current_search_path + (cur_len - suffix_len), suffix) == 0));
+	base_len = cur_len;
+
+	/*
+	 * Strip off whichever known emulation suffix (if any) is currently
+	 * active. Checking the NEW target's own suffix first lets the
+	 * already-correct case short-circuit below; falling through to check
+	 * every OTHER known mode's suffix handles switching directly between
+	 * two emulation modes (oracle -> mysql with no intervening
+	 * 'postgres') without stacking suffixes or leaving a stale
+	 * sibling-mode suffix behind.
+	 */
+	if (new_schemas != NULL &&
+		strip_emulation_suffix(current_search_path, cur_len, new_schemas, &base_len))
+	{
+		already_correct = true;
+	}
+	else if (strip_emulation_suffix(current_search_path, cur_len, ORACLE_EMULATION_SCHEMAS, &base_len))
+	{
+		/* base_len already set by the call above */
+	}
+	else if (strip_emulation_suffix(current_search_path, cur_len, MYSQL_EMULATION_SCHEMAS, &base_len))
+	{
+		/* base_len already set by the call above */
+	}
+
+	if (already_correct)
+	{
+		db_emulation_mode = newval;
+		return;					/* already exactly the desired state -- nothing to reconcile */
+	}
 
 	initStringInfo(&buf);
-	if (newval == DB_EMULATION_ORACLE)
-	{
-		if (already_appended)
-		{
-			db_emulation_mode = newval;
-			pfree(buf.data);
-			return;				/* already exactly the desired state -- nothing to reconcile */
-		}
+	if (base_len > 0)
+		appendBinaryStringInfo(&buf, current_search_path, base_len);
 
+	if (new_schemas != NULL)
+	{
 		/* Appended, not prepended: search_path's first existing entry is
 		 * also where an unqualified CREATE TABLE/FUNCTION/etc. lands.
-		 * Prepending oracle_catalog/dbms_output/utl_file would silently
-		 * redirect a plain `CREATE TABLE foo(...)` into this extension's
-		 * own schemas instead of the caller's -- found live: a CREATE
-		 * TABLE issued right after SET db_emulation='oracle' landed in
-		 * dbms_output instead of public. Appending keeps unqualified
-		 * *lookups* working (DBMS_OUTPUT.PUT_LINE, V$SESSION still
-		 * resolve) without touching where new objects are created. */
-		if (current_search_path != NULL && current_search_path[0] != '\0')
-			appendStringInfo(&buf, "%s, ", current_search_path);
-		appendStringInfoString(&buf, ORACLE_EMULATION_SCHEMAS);
+		 * Prepending oracle_catalog/dbms_output/utl_file (or
+		 * mysql_catalog) would silently redirect a plain `CREATE TABLE
+		 * foo(...)` into this extension's own schemas instead of the
+		 * caller's -- found live: a CREATE TABLE issued right after SET
+		 * db_emulation='oracle' landed in dbms_output instead of public.
+		 * Appending keeps unqualified *lookups* working (DBMS_OUTPUT.
+		 * PUT_LINE, V$SESSION still resolve) without touching where new
+		 * objects are created. */
+		if (buf.len > 0)
+			appendStringInfoString(&buf, ", ");
+		appendStringInfoString(&buf, new_schemas);
 
-		ensure_user_schema();
-	}
-	else
-	{
-		if (!already_appended)
-		{
-			db_emulation_mode = newval;
-			pfree(buf.data);
-			return;				/* nothing to strip -- already not there (or edited by hand) */
-		}
-
-		/* Switching back to 'postgres': strip exactly the suffix we added
-		 * (a plain string match, not a schema-list parse -- if the user
-		 * has since edited search_path by hand, leave it alone rather
-		 * than guess wrong). The exact-match case (search_path was
-		 * empty before oracle mode ever applied, so it's now exactly
-		 * ORACLE_EMULATION_SCHEMAS with no ", " prefix to strip) leaves
-		 * an empty result -- a genuinely empty search_path, which is
-		 * what it would have been before oracle mode ran in that case. */
-		if (strcmp(current_search_path, ORACLE_EMULATION_SCHEMAS) != 0)
-			appendBinaryStringInfo(&buf, current_search_path, cur_len - suffix_len);
+		if (newval == DB_EMULATION_ORACLE)
+			ensure_user_schema();	/* Oracle-specific: schema-per-role, see this function's own header comment */
 	}
 
 	db_emulation_mode = newval;
 
-	/* buf.data can legitimately be an empty string here (the postgres-mode
-	 * exact-match edge case above) and still need to be applied -- SET
-	 * search_path to '' is a real, valid (if unusual) state, distinct
-	 * from "don't touch it", so this can't be guarded on buf.len > 0. */
+	/* buf.data can legitimately be an empty string here (switching to
+	 * 'postgres' when search_path was empty before any emulation mode
+	 * ever applied) and still need to be applied -- SET search_path to ''
+	 * is a real, valid (if unusual) state, distinct from "don't touch
+	 * it", so this can't be guarded on buf.len > 0. */
 	SetConfigOption("search_path", buf.data, PGC_USERSET, PGC_S_SESSION);
 
 	pfree(buf.data);
@@ -263,4 +339,14 @@ Datum
 pg_oracle_emulation_active(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(db_emulation_mode == DB_EMULATION_ORACLE);
+}
+
+/* Exported for db/pg_mysql's own SQL script (mysql_catalog.emulation_active())
+ * -- pg_mysql has no C module of its own; db_emulation has to live in
+ * exactly one, see MYSQL_EMULATION_SCHEMAS's own comment above. */
+PG_FUNCTION_INFO_V1(pg_mysql_emulation_active);
+Datum
+pg_mysql_emulation_active(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(db_emulation_mode == DB_EMULATION_MYSQL);
 }

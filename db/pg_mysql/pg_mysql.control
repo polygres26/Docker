@@ -1,0 +1,25 @@
+comment = 'pg_mysql -- MySQL compatibility for Postgres (mysql_catalog functions: LAST_INSERT_ID, GROUP_CONCAT, DATE_FORMAT, ...). Part of the Polygres extension collection.'
+default_version = '0.1'
+module_pathname = '$libdir/pg_oracle'
+relocatable = false
+# Pure SQL/plpgsql -- no C of its own (see README.md). module_pathname above
+# points at pg_oracle's own shared library, not a pg_mysql.so that doesn't
+# exist: the one C function this extension's SQL script needs
+# (mysql_catalog.emulation_active(), a thin wrapper over pg_oracle.c's
+# exported pg_mysql_emulation_active()) is bound directly against
+# pg_oracle's library by path in sql/pg_mysql--0.1.sql, same technique any
+# Postgres C function can use to call into a different extension's already-
+# loaded library. module_pathname itself is otherwise unused since this
+# script never writes bare 'MODULE_PATHNAME' anywhere.
+#
+# The real dependency this states: db_emulation is a single session GUC
+# that has to live in exactly one C module (Postgres has no way for two
+# independently loaded .so's to both own a GUC of the same name) -- pg_oracle
+# is that module, already shipping 'postgres'/'oracle' values, and this
+# extension's SQL script (see sql/pg_mysql--0.1.sql) requires pg_oracle's
+# enum to already accept 'mysql' too (added alongside this extension, see
+# pg_oracle's own src/pg_oracle.c). Installing pg_mysql without pg_oracle,
+# or with an older pg_oracle that predates the 'mysql' enum value, leaves
+# `SET db_emulation = 'mysql'` rejected as an invalid enum value entirely --
+# a clear error from Postgres itself, not a silent no-op.
+requires = 'pg_oracle'

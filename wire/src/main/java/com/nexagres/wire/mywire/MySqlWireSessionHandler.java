@@ -50,7 +50,14 @@ public final class MySqlWireSessionHandler implements Runnable {
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
     
-    private final JdbcBackendExecutor terminalExecutor = new JdbcBackendExecutor(null);
+    // See com.nexagres.wire.core.access.MySqlPgEmulationSessionInitializer's own header comment --
+    // the mywire equivalent of orawire's OraclePgEmulationSessionInitializer (RequestLoop.java):
+    // `SET db_emulation = 'mysql'` once per statement (cheap/idempotent when already set, see
+    // pg_oracle.c's own db_emulation_assign_hook), so pg_mysql's unqualified LAST_INSERT_ID(),
+    // GROUP_CONCAT(...), DATE_FORMAT(...), etc. resolve without db/pg_mysql needing every caller
+    // to schema-qualify mysql_catalog.* by hand.
+    private final JdbcBackendExecutor terminalExecutor =
+            new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.MySqlPgEmulationSessionInitializer());
     private final StatementPipeline pipeline;
     private final com.nexagres.wire.core.SqlMetricsCollector sqlMetrics;
 

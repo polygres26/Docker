@@ -379,6 +379,80 @@ public final class DialectTranslations {
         return parts;
     }
 
+    /**
+     * Rewrites MySQL's {@code GROUP_CONCAT(expr SEPARATOR 'sep')} clause syntax -- not valid
+     * Postgres function-call syntax at all, so it can't be left as-is the way most other MySQL
+     * functions can once {@code mysql_catalog} is on {@code search_path} (see pg_mysql's own
+     * header comment) -- into a plain two-argument call to {@code mysql_catalog.group_concat(expr,
+     * 'sep')}. A bare {@code GROUP_CONCAT(expr)} (no SEPARATOR clause, ordinary call syntax) is
+     * left untouched; it resolves directly to {@code mysql_catalog.group_concat(text)}'s own
+     * default-comma overload without any rewriting needed.
+     *
+     * <p>Uses the same balanced-paren/string-literal-aware scan as {@link #rewriteDecodeCalls},
+     * not a naive regex -- {@code expr} can itself contain parens/commas (e.g. {@code
+     * GROUP_CONCAT(CONCAT(a, b) SEPARATOR ',')}). Does NOT support an {@code ORDER BY} clause
+     * inside {@code GROUP_CONCAT} (real MySQL: {@code GROUP_CONCAT(x ORDER BY y SEPARATOR ',')}) --
+     * a real, stated limitation (see pg_mysql's own README), not a silent mistranslation: a
+     * top-level {@code ORDER BY} keyword inside the call is treated as part of {@code expr} and
+     * left for Postgres itself to reject with a real syntax error, not silently reordered wrong.
+     */
+    private static String rewriteGroupConcatSeparatorCalls(String sql) {
+        StringBuilder result = new StringBuilder();
+        Matcher m = MYSQL_GROUP_CONCAT_CALL.matcher(sql);
+        int searchFrom = 0;
+        int copiedUpTo = 0;
+        while (m.find(searchFrom)) {
+            if (SqlLiterals.isInsideStringLiteral(sql, m.start())) {
+                searchFrom = m.end();
+                continue;
+            }
+            int openParenIdx = m.end() - 1;
+            int closeParenIdx = matchingCloseParen(sql, openParenIdx);
+            if (closeParenIdx < 0) {
+                break;			// unbalanced -- leave the rest of the string untouched
+            }
+            String inner = sql.substring(openParenIdx + 1, closeParenIdx);
+            int sepKeywordIdx = findTopLevelSeparatorKeyword(inner);
+            if (sepKeywordIdx >= 0) {
+                String expr = inner.substring(0, sepKeywordIdx).trim();
+                String sepLiteral = inner.substring(sepKeywordIdx + "SEPARATOR".length()).trim();
+                result.append(sql, copiedUpTo, openParenIdx + 1).append(expr).append(", ").append(sepLiteral);
+                copiedUpTo = closeParenIdx;
+            }
+            // No SEPARATOR clause: nothing to rewrite for this call -- leave it exactly as
+            // written (copiedUpTo untouched) and continue scanning past it.
+            searchFrom = closeParenIdx + 1;
+        }
+        result.append(sql, copiedUpTo, sql.length());
+        return result.toString();
+    }
+
+    private static int findTopLevelSeparatorKeyword(String inner) {
+        int depth = 0;
+        boolean inString = false;
+        for (int i = 0; i < inner.length(); i++) {
+            char c = inner.charAt(i);
+            if (c == '\'') {
+                if (inString && i + 1 < inner.length() && inner.charAt(i + 1) == '\'') {
+                    i++;
+                    continue;
+                }
+                inString = !inString;
+            } else if (!inString && c == '(') {
+                depth++;
+            } else if (!inString && c == ')') {
+                depth--;
+            } else if (!inString && depth == 0
+                    && inner.regionMatches(true, i, "SEPARATOR", 0, "SEPARATOR".length())
+                    && (i == 0 || Character.isWhitespace(inner.charAt(i - 1)))
+                    && (i + "SEPARATOR".length() >= inner.length()
+                            || Character.isWhitespace(inner.charAt(i + "SEPARATOR".length())))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static String applyRownumLimit(String sql) {
         Matcher matcher = ROWNUM.matcher(sql);
         if (!matcher.find() || SqlLiterals.isInsideStringLiteral(sql, matcher.start())) {
@@ -420,6 +494,7 @@ public final class DialectTranslations {
     
     private static final Pattern MYSQL_LIMIT_OFFSET_COUNT =
             Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)\\s*,\\s*(\\d+)\\b");
+    private static final Pattern MYSQL_GROUP_CONCAT_CALL = Pattern.compile("(?i)\\bGROUP_CONCAT\\s*\\(");
     private static final Pattern SHOW_TABLES = Pattern.compile("(?i)^\\s*SHOW\\s+TABLES\\s*;?\\s*$");
     private static final Pattern SHOW_DATABASES = Pattern.compile("(?i)^\\s*SHOW\\s+DATABASES\\s*;?\\s*$");
 
@@ -441,6 +516,7 @@ public final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NVL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_LIMIT_OFFSET_COUNT,
                 m -> "LIMIT " + m.group(2) + " OFFSET " + m.group(1));
+        out = rewriteGroupConcatSeparatorCalls(out);
         return out;
     }
 
