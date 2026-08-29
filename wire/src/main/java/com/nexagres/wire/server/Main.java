@@ -342,6 +342,16 @@ public final class Main {
         stages.add(queryRepairStage);
         List<PipelineStage> pipelineStages = List.copyOf(stages);
 
+        // Deterministic detection (a real per-protocol rate vs. its own EMA baseline), optional
+        // LLM narration -- see AnomalyDetectionScheduler's own javadoc. Reads dialectTranslationStage's
+        // llmClient() fresh every cycle (a Supplier, not a captured reference) so a later
+        // PUT /api/llm-config change is picked up without restarting this scheduler too.
+        com.nexagres.wire.core.AnomalyDetectionScheduler anomalyScheduler = com.nexagres.wire.core.AnomalyDetectionScheduler
+                .startIfConfigured(statsStage, dialectTranslationStage::llmClient);
+        log.info("anomaly detection: {} (set POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES=<minutes> to enable; "
+                + "LLM narration is optional on top of that and uses the same LLM provider config)",
+                anomalyScheduler == null ? "disabled" : "enabled");
+
         PgBackendPool backendPool = new PgBackendPool(options);
 
         com.nexagres.wire.acl.ClientAcl clientAcl = com.nexagres.wire.acl.ClientAcl.parse(config.aclRules());
@@ -373,6 +383,7 @@ public final class Main {
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
                 adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
         metricsServer.setQueryRepairStage(queryRepairStage);
+        metricsServer.setAnomalyScheduler(anomalyScheduler);
         metricsServer.start();
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,

@@ -119,6 +119,38 @@ public final class TranslationLlmClient {
         return chatComplete(systemPrompt, prompt, "firewall-rule-draft");
     }
 
+    /**
+     * Asks the LLM for ONE short plain-English sentence explaining a traffic anomaly {@link
+     * AnomalyDetectionScheduler} already detected deterministically -- this method is never asked
+     * to decide whether something is anomalous, only to phrase a numeric fact a human would
+     * otherwise have to interpret unassisted. {@code topSql} is passed as context only (what was
+     * actually running around the time of the spike), capped to a handful of entries so the
+     * prompt stays small.
+     */
+    public String summarizeAnomaly(String protocol, double baselinePerSec, double currentPerSec, double ratio,
+            java.util.List<SqlMetricsCollector.SqlStat> topSql) throws Exception {
+        StringBuilder context = new StringBuilder();
+        context.append("Protocol: ").append(protocol).append('\n');
+        context.append("Baseline rate: ").append(String.format(java.util.Locale.ROOT, "%.2f", baselinePerSec)).append("/s\n");
+        context.append("Current rate: ").append(String.format(java.util.Locale.ROOT, "%.2f", currentPerSec)).append("/s\n");
+        context.append("Ratio: ").append(String.format(java.util.Locale.ROOT, "%.1f", ratio)).append("x\n");
+        context.append("Top SQL by total cost right now (normalized, may be unrelated to the spike):\n");
+        int shown = 0;
+        for (SqlMetricsCollector.SqlStat s : topSql) {
+            if (shown++ >= 5) {
+                break;
+            }
+            context.append("- ").append(s.normalizedSql()).append(" (").append(s.calls()).append(" calls)\n");
+        }
+        String systemPrompt = "You are a database traffic monitoring assistant. A monitoring system has "
+                + "already deterministically detected a traffic-rate anomaly with the numbers below -- your "
+                + "only job is to explain it in ONE short, plain-English sentence a non-expert on-call "
+                + "engineer would understand at a glance. Do not restate all the numbers verbatim; interpret "
+                + "them. Do not speculate about a root cause you can't actually see in the data provided. "
+                + "Reply with ONLY that one sentence, no explanation, no markdown.";
+        return chatComplete(systemPrompt, context.toString(), "anomaly-summary");
+    }
+
     private String chatComplete(String systemPrompt, String userContent, String purpose) throws Exception {
         JsonObject systemMessage = new JsonObject();
         systemMessage.addProperty("role", "system");

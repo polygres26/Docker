@@ -93,6 +93,13 @@ public final class MetricsServer {
         this.queryRepairStage = queryRepairStage;
     }
 
+    // Same "set after construction, orthogonal and opt-in" reasoning as queryRepairStage above.
+    private com.nexagres.wire.core.AnomalyDetectionScheduler anomalyScheduler;
+
+    public void setAnomalyScheduler(com.nexagres.wire.core.AnomalyDetectionScheduler anomalyScheduler) {
+        this.anomalyScheduler = anomalyScheduler;
+    }
+
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.nexagres.wire.acl.ConnectionGate.DISABLED);
     }
@@ -370,6 +377,22 @@ public final class MetricsServer {
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(renderMetricsSummary(statsStage, mcpMetrics, queryRepairStage));
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if ("/api/anomalies".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(renderAnomalies(anomalyScheduler));
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1491,6 +1514,27 @@ public final class MetricsServer {
         try (var reader = request.getReader()) {
             return JsonParser.parseReader(reader).getAsJsonObject();
         }
+    }
+
+    private static String renderAnomalies(com.nexagres.wire.core.AnomalyDetectionScheduler anomalyScheduler) {
+        if (anomalyScheduler == null) {
+            return "{\"enabled\":false,\"notes\":[]}";
+        }
+        StringBuilder json = new StringBuilder("{\"enabled\":true,\"notes\":[");
+        boolean first = true;
+        for (var note : anomalyScheduler.recentNotes(50)) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"timestamp\":").append(jsonString(note.timestamp().toString()))
+                    .append(",\"protocol\":").append(jsonString(note.protocol()))
+                    .append(",\"baselinePerSec\":").append(String.format(java.util.Locale.ROOT, "%.3f", note.baselinePerSec()))
+                    .append(",\"currentPerSec\":").append(String.format(java.util.Locale.ROOT, "%.3f", note.currentPerSec()))
+                    .append(",\"ratio\":").append(String.format(java.util.Locale.ROOT, "%.2f", note.ratio()))
+                    .append(",\"narrative\":").append(note.narrative() == null ? "null" : jsonString(note.narrative()))
+                    .append('}');
+        }
+        json.append("]}");
+        return json.toString();
     }
 
     private static String renderConfig(Supplier<ConfigStore.Version> currentVersionSupplier) {
