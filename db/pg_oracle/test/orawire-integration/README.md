@@ -73,12 +73,44 @@ narrows what's accepted, never silently truncates data the way keeping a wrong o
 Verified live: `CREATE TABLE` with all five of these types succeeded, and a subsequent
 `INSERT`/`SELECT` round-tripped real data correctly.
 
-**Not fixed, explicitly out of scope for this pass**: Oracle's `DATE` type actually stores a
-time-of-day component (unlike Postgres's own `DATE`, which is date-only) -- full fidelity needs
-`DATE` mapped to Postgres `TIMESTAMP`, not left as `DATE`. Skipped here because it's a more
-consequential semantic change (affects every existing `DATE`-typed schema element's behavior,
-not just DDL parsing) that deserves its own dedicated look rather than being bundled into this
-pass.
+## Bug 4 (follow-up pass): DATE-to-TIMESTAMP fidelity, and a new bug it surfaced
+
+Oracle's `DATE` type always carries a time-of-day component to the second, unlike Postgres's own
+`DATE`, which is date-only. Fixed on both sides of the same gap:
+
+- `DialectTranslations.java`'s `mapOracleDdlTypes()` now maps a `DATE` column type to `TIMESTAMP`
+  in `CREATE TABLE`/`ALTER TABLE` statements (`\bDATE\b`, doesn't false-positive on `TO_DATE`/
+  `SYSDATE` -- no word boundary between the preceding letter and `D`). Verified live:
+  `information_schema.columns` shows `timestamp without time zone` for a `DATE`-declared column
+  after this fix.
+- `pg_oracle`'s own `oracle_catalog.to_date()` was changed to `RETURNS timestamp`, not `date` --
+  it originally returned `date` (matching `pg_catalog.to_date`'s own signature), which silently
+  truncated any parsed time-of-day to midnight.
+
+**That second fix surfaced a more serious bug while testing it live**: a bare, unqualified
+`TO_DATE('2026-06-15 09:45:30', 'YYYY-MM-DD HH24:MI:SS')` inside a real `INSERT` **silently
+stored `2026-06-15 00:00:00`** -- the time was genuinely gone from the database, not just
+displayed oddly. Root cause: Postgres always resolves an exact-argument-type overload tie in
+`pg_catalog`'s favor over this extension's search_path additions (the same limitation already
+documented for `TO_CHAR`'s two-argument form), so the bare call resolved to `pg_catalog.to_date
+(text, text)` -- which returns `date` -- instead of `pg_oracle`'s fixed `timestamp`-returning
+version. A formatting quirk for `TO_CHAR` was one thing; silent data loss on `TO_DATE` in an
+`INSERT` was a different order of severity and needed a real fix, not another documented
+limitation.
+
+Fixed by having `DialectTranslations.java` schema-qualify every bare `TO_CHAR(`/`TO_DATE(` call
+to `oracle_catalog.to_char(`/`oracle_catalog.to_date(` unconditionally (a negative lookbehind for
+a preceding `.` avoids double-qualifying an already-qualified call) -- this bypasses the overload
+tie entirely rather than trying to win it. That in turn required adding the two-argument
+`timestamp`/`timestamptz` overloads to `oracle_catalog.to_char()` that hadn't existed before
+(previously reasoned to be unreachable and therefore not worth adding, since nothing schema-
+qualified calls to them yet) -- found live, again the hard way, when the qualifying rewrite
+alone produced a *new* "function does not exist" error for the very case it was meant to fix.
+
+Verified live end to end: `TO_CHAR(SYSDATE, 'DD-MON-RR')` now correctly returns `28-AUG-26` (RR
+translated) through the real wire protocol, not the previously-observed literal `28-AUG-RR`; a
+real `INSERT ... TO_DATE('2026-06-15 09:45:30', 'YYYY-MM-DD HH24:MI:SS')` now correctly stores
+and reads back the full timestamp, `2026-06-15 09:45:30`, not midnight.
 
 ## How to reproduce
 

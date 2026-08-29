@@ -600,51 +600,75 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 COMMENT ON FUNCTION oracle_catalog.translate_nls_format(text) IS 'Internal -- see this section''s header comment for exactly which three tokens this rewrites and the quoted-literal-text caveat.';
 
--- date/timestamp overloads only, deliberately, not date/timestamptz
--- TWO-ARGUMENT forms beyond the exact `date` type: pg_catalog's own
--- to_char(timestamp[tz], text) already exists as an EXACT type match,
--- and Postgres always searches pg_catalog first for a tied exact match
--- regardless of this extension's search_path additions -- adding a
--- same-signature oracle_catalog.to_char(timestamp, text) would simply
--- never be chosen, not a real override. The ONE-ARGUMENT forms below
--- are always safe (pg_catalog has zero one-arg to_char candidates for
--- any type, confirmed live), and the two-argument `date` form is safe
--- too (pg_catalog has no plain-`date` to_char overload at all, only
--- timestamp/timestamptz). Stated plainly: an explicit two-argument
--- TO_CHAR(some_timestamp, 'DD-MON-RR') call still resolves to real
--- Postgres's own to_char and will NOT get RR/bare-FF/X translation in
--- this version -- only the one-arg (NLS-default-format) and the
--- explicit-format `date`-typed forms do.
+-- Every form here takes an optional format argument (default NULL),
+-- exactly one overload per type -- NOT a one-arg-only version plus a
+-- separate two-arg version, which would make Postgres's own overload
+-- resolution ambiguous for a plain one-argument call (two candidates
+-- both matching). This used to be one-arg-only for timestamp/
+-- timestamptz specifically, reasoning that pg_catalog's own exact-type
+-- two-arg overload would always win an unqualified call's tie anyway
+-- (still true) -- but that reasoning stopped applying once orawire
+-- started schema-qualifying every TO_CHAR/TO_DATE call itself
+-- (wire/.../DialectTranslations.java's TO_CHAR_CALL/TO_DATE_CALL
+-- rewrite), which bypasses the tie entirely by never giving pg_catalog
+-- a chance to compete. Found live, the hard way: schema-qualifying the
+-- call without ALSO having a matching two-arg overload here just traded
+-- one error for another (`oracle_catalog.to_char(timestamp with time
+-- zone, unknown) does not exist`) -- unqualified calls remain safe
+-- either way since pg_catalog has no one-arg candidates for any type,
+-- confirmed live, so a plain one-argument call landing here instead of
+-- pg_catalog is never a regression.
 CREATE FUNCTION oracle_catalog.to_char(p_date date, p_fmt text DEFAULT NULL) RETURNS text
   AS $$ SELECT to_char(p_date::timestamp, oracle_catalog.translate_nls_format(coalesce(p_fmt, oracle_catalog.get_nls_parameter('NLS_DATE_FORMAT')))); $$
   LANGUAGE sql STABLE;
-COMMENT ON FUNCTION oracle_catalog.to_char(date, text) IS 'Oracle TO_CHAR(DATE) -- defaults to NLS_DATE_FORMAT (session-settable via alter_session_set) when no format is given, translating RR/bare-FF/X first. See this section''s header comment for why only the `date`-typed overload gets an explicit-format form.';
+COMMENT ON FUNCTION oracle_catalog.to_char(date, text) IS 'Oracle TO_CHAR(DATE) -- defaults to NLS_DATE_FORMAT (session-settable via alter_session_set) when no format is given, translating RR/bare-FF/X first.';
 
-CREATE FUNCTION oracle_catalog.to_char(p_ts timestamp without time zone) RETURNS text
-  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT'))); $$
+CREATE FUNCTION oracle_catalog.to_char(p_ts timestamp without time zone, p_fmt text DEFAULT NULL) RETURNS text
+  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(coalesce(p_fmt, oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT')))); $$
   LANGUAGE sql STABLE;
-CREATE FUNCTION oracle_catalog.to_char(p_ts timestamptz) RETURNS text
-  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT'))); $$
+CREATE FUNCTION oracle_catalog.to_char(p_ts timestamptz, p_fmt text DEFAULT NULL) RETURNS text
+  AS $$ SELECT to_char(p_ts, oracle_catalog.translate_nls_format(coalesce(p_fmt, oracle_catalog.get_nls_parameter('NLS_TIMESTAMP_FORMAT')))); $$
   LANGUAGE sql STABLE;
-COMMENT ON FUNCTION oracle_catalog.to_char(timestamp) IS 'Oracle TO_CHAR(TIMESTAMP) -- one-argument form only (real Postgres to_char has no bare TO_CHAR(some_date)/TO_CHAR(some_timestamp) at all, confirmed live -- this is a genuinely new capability, not an override), using NLS_TIMESTAMP_FORMAT.';
+COMMENT ON FUNCTION oracle_catalog.to_char(timestamp, text) IS 'Oracle TO_CHAR(TIMESTAMP) -- defaults to NLS_TIMESTAMP_FORMAT when no format is given, translating RR/bare-FF/X first (real Postgres to_char has no bare one-argument TO_CHAR(some_date)/TO_CHAR(some_timestamp) at all, confirmed live -- the no-format case here is a genuinely new capability, not an override).';
 
-CREATE FUNCTION oracle_catalog.to_date(p_str text, p_fmt text DEFAULT NULL) RETURNS date
+-- RETURNS timestamp, not date -- a real fidelity fix, not a style choice:
+-- Oracle's DATE type always carries a time-of-day component (unlike
+-- Postgres's own DATE, which is date-only), so Oracle's real TO_DATE
+-- can and does return a time -- `TO_DATE('2026-01-01 14:30:00',
+-- 'YYYY-MM-DD HH24:MI:SS')` is a completely ordinary, common call.
+-- Returning plain `date` here (as the very first version of this
+-- function did, and as pg_catalog's own to_date(text,text) still does)
+-- silently truncated that time component to midnight -- exactly the
+-- Oracle-DATE-vs-Postgres-DATE mismatch this whole function exists to
+-- paper over, so getting its OWN return type wrong here would have been
+-- a real, live data-loss bug for any parsed timestamp string, not a
+-- hypothetical one. Built on to_timestamp() (which returns timestamptz)
+-- cast down to plain timestamp: to_timestamp() parses the string's
+-- literal components without doing any real timezone-conversion
+-- arithmetic, so the cast just discards the spurious session-timezone
+-- label it attaches, leaving the intended naive local value -- matching
+-- Oracle's own DATE, which has no timezone concept at all.
+CREATE FUNCTION oracle_catalog.to_date(p_str text, p_fmt text DEFAULT NULL) RETURNS timestamp
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
   IF p_fmt IS NULL THEN
-    RETURN to_date(p_str, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_DATE_FORMAT')));
+    RETURN to_timestamp(p_str, oracle_catalog.translate_nls_format(oracle_catalog.get_nls_parameter('NLS_DATE_FORMAT')))::timestamp;
   END IF;
-  -- Two-argument form: pg_catalog.to_date(text, text) already exists as
-  -- an exact match and always wins the tie -- this branch only actually
-  -- runs when called schema-qualified (oracle_catalog.to_date(...)) or
-  -- once an orawire-side rewrite targets it explicitly; a bare
-  -- unqualified two-argument TO_DATE(str, fmt) still resolves to real
-  -- Postgres's own to_date without RR/bare-FF/X translation, same
-  -- caveat as to_char's two-argument timestamp forms above.
-  RETURN to_date(p_str, oracle_catalog.translate_nls_format(p_fmt));
+  -- Two-argument form: pg_catalog.to_date(text, text) also exists, as an
+  -- exact match on argument types (return type doesn't factor into
+  -- overload resolution at all), and would normally win the tie for a
+  -- bare unqualified call -- but orawire schema-qualifies every TO_DATE
+  -- call itself now (wire/.../DialectTranslations.java's TO_DATE_CALL
+  -- rewrite, added after finding live that the un-rewritten version
+  -- silently truncated a real INSERT's time-of-day to midnight), which
+  -- bypasses that tie entirely rather than trying to win it. Calling
+  -- this two-argument form directly (schema-qualified, or via any other
+  -- caller that isn't relying on unqualified resolution) always gets
+  -- this fidelity fix and RR/bare-FF/X translation regardless.
+  RETURN to_timestamp(p_str, oracle_catalog.translate_nls_format(p_fmt))::timestamp;
 END;
 $$;
-COMMENT ON FUNCTION oracle_catalog.to_date(text, text) IS 'Oracle TO_DATE -- one-argument form (using NLS_DATE_FORMAT) is always safe/new; the two-argument form only actually applies RR/bare-FF/X translation when called schema-qualified -- see this function''s own comment.';
+COMMENT ON FUNCTION oracle_catalog.to_date(text, text) IS 'Oracle TO_DATE -- returns timestamp (preserving time-of-day), not Postgres''s own date, since Oracle''s DATE always carries a time component. See this function''s own comment for how orawire''s own schema-qualifying rewrite keeps this reachable even for a bare, unqualified TO_DATE(...) call.';
 
 -- ================================================================
 -- Phase 2 (packages 2-4 of the top-20): DBMS_RANDOM, DBMS_UTILITY,

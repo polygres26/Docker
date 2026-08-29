@@ -529,22 +529,31 @@ make the extremely common bare `TO_CHAR(some_date)`/`TO_DATE(some_str)`
 Oracle idiom (relying on the session's NLS default format) work at all,
 not just work better.
 
-**A stated scope limit, not a silent gap**: the explicit-two-argument
-form is only translation-aware for the `date` type specifically (no
-existing `pg_catalog` overload to collide with there); `pg_catalog`
-already has an *exact* two-argument overload for `timestamp`/
-`timestamptz`/`text` types, and Postgres always resolves an exact-type
-tie in `pg_catalog`'s favor regardless of this extension's search_path
-additions -- verified this is real, not assumed (`pg_catalog` is
-implicitly searched first unless a caller deliberately reorders it,
-which this extension does not attempt, on purpose: reordering
-`pg_catalog`'s effective priority globally to win that tie would risk
-shadowing unrelated built-ins throughout the whole session for a
-narrow gain). A bare, unqualified two-argument
-`TO_DATE(str, 'DD-MON-RR')`/`TO_CHAR(some_timestamp, 'DD-MON-RR')` call
-still resolves to real Postgres's own function and will not get
-`RR`/bare-`FF`/`X` translation -- only the one-argument (NLS-default)
-forms, and the explicit-format `date`-typed overload, do.
+**A stated scope limit this extension alone can't close -- and a real bug
+found chasing it**: `pg_catalog` already has an *exact* two-argument
+overload for `to_char`/`to_date` over `timestamp`/`timestamptz`/`text`
+types, and Postgres always resolves an exact-type tie in `pg_catalog`'s
+favor regardless of this extension's search_path additions -- verified
+this is real, not assumed (`pg_catalog` is implicitly searched first
+unless a caller deliberately reorders it, which this extension does not
+attempt, on purpose: reordering `pg_catalog`'s effective priority
+globally to win that tie would risk shadowing unrelated built-ins
+throughout the whole session for a narrow gain). So `oracle_catalog`
+defines two-argument overloads for `date`/`timestamp`/`timestamptz` all
+the same (real fidelity when reached), but a **bare, unqualified**
+two-argument call still can't win that tie on its own -- fixed instead
+one layer up, in orawire itself: `DialectTranslations.java` now
+schema-qualifies every `TO_CHAR(`/`TO_DATE(` call to
+`oracle_catalog.to_char(`/`oracle_catalog.to_date(` unconditionally,
+bypassing the tie entirely rather than trying to win it (see
+`test/orawire-integration/README.md`'s bug 4 for the full story --
+finding this also surfaced a genuine data-loss bug: a bare `TO_DATE(...)`
+inside a real `INSERT` was silently storing midnight instead of the
+parsed time before this fix). A caller reaching `pg_oracle` some other
+way than through orawire (a raw `psql` session, some other gateway)
+still gets the documented limitation as stated: an unqualified
+two-argument call resolves to real Postgres's own function without
+`RR`/bare-`FF`/`X` translation, unless called schema-qualified.
 
 ## Remaining top-20 scope
 
@@ -857,9 +866,16 @@ amount of direct-`psql` testing could have caught, all in `wire/`, not this exte
    deterministic translation rule at all and fell through to an unconfigured LLM fallback. Fixed
    with a real type mapper in `DialectTranslations.java`, verified with a real `INSERT`/`SELECT`
    round-trip through all five types.
+4. Oracle `DATE`'s time-of-day semantics (a follow-up pass): `DATE` columns now map to
+   `TIMESTAMP` in DDL, and `oracle_catalog.to_date()` returns `timestamp`, not `date`. Fixing the
+   latter surfaced a *more* serious bug than the three above: a bare `TO_DATE(...)` call inside a
+   real `INSERT` was silently storing midnight instead of the parsed time -- Postgres's
+   `pg_catalog.to_date` always won the overload tie over this extension's own fixed version.
+   Fixed by having orawire schema-qualify every `TO_CHAR`/`TO_DATE` call unconditionally, which
+   also required adding two-argument `timestamp`/`timestamptz` overloads to
+   `oracle_catalog.to_char()` that hadn't existed before.
 
 See `test/orawire-integration/README.md` for the full story of each, including the exact
-contrasts and debug output that pointed at each real cause, and what's explicitly still out of
-scope (Oracle `DATE`'s time-of-day semantics need a real `TIMESTAMP` mapping, not yet done).
+contrasts and debug output that pointed at each real cause.
 
 No `pg_regress` test suite yet (tracked as follow-up in the `Makefile`).
