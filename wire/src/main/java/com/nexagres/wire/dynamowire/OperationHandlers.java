@@ -16,14 +16,14 @@ import java.util.Map;
 final class OperationHandlers {
 
     private final PgItemStore store;
-    private final DynamoCache cache;
+    private final com.nexagres.wire.cluster.RowCache cache;
     private final com.nexagres.wire.core.SqlMetricsCollector sqlMetrics;
 
-    OperationHandlers(PgItemStore store, DynamoCache cache) {
+    OperationHandlers(PgItemStore store, com.nexagres.wire.cluster.RowCache cache) {
         this(store, cache, null);
     }
 
-    OperationHandlers(PgItemStore store, DynamoCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
+    OperationHandlers(PgItemStore store, com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.cache = cache;
         this.sqlMetrics = sqlMetrics;
@@ -37,10 +37,14 @@ final class OperationHandlers {
         }
     }
 
+    // Keyed by the PHYSICAL Postgres table name (store.tableToPgName), not schema.tableName()
+    // (dynamowire's own logical DynamoDB table name) -- this is what lets a SQL SELECT against
+    // the same physical table (e.g. "SELECT item FROM dynamo_item_orders WHERE pk_value = ?")
+    // compute the identical key and share this cache entry. See RowCache's own javadoc.
     private String cacheKeyFor(TableSchema schema, Map<String, AttributeValue> attrs) {
         String pk = attrs.get(schema.partitionKeyName()).scalar;
         String sk = schema.hasSortKey() ? attrs.get(schema.sortKeyName()).scalar : null;
-        return DynamoCache.key(schema.tableName(), pk, sk);
+        return com.nexagres.wire.cluster.RowCache.key(store.tableToPgName(schema.tableName()), pk, sk);
     }
 
     JsonObject dispatch(String operation, JsonObject req) {

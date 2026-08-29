@@ -27,38 +27,45 @@ public final class DynamoWireServer {
     private final OperationHandlers handlers;
     private final com.nexagres.wire.core.SqlMetricsCollector sqlMetrics;
 
+    /** Lets {@code Main} wire this server's own table-schema knowledge (physical table name ->
+     * primary/sort key columns) into CacheStage's SQL-side row-cache lookup, once this server has
+     * actually been constructed -- see CacheStage#setDynamoTableLookup. */
+    public PgItemStore store() {
+        return store;
+    }
+
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, null);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
-            DynamoCache cache) {
+            com.nexagres.wire.cluster.RowCache cache) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, com.nexagres.wire.acl.ConnectionGate.DISABLED);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
-            DynamoCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate) {
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate,
                 com.nexagres.wire.http.auth.AccessContextResolver.DISABLED,
                 com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore.DISABLED);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
-            DynamoCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate, oauth,
                 com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore.DISABLED);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
-            DynamoCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth,
             com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials) {
         this(port, pgHost, pgPort, pgDatabase, pgUser, pgPassword, cache, connectionGate, oauth, awsIamCredentials, null);
     }
 
     public DynamoWireServer(int port, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
-            DynamoCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth,
             com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
             com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
@@ -73,7 +80,7 @@ public final class DynamoWireServer {
      * (nothing configured) behaves exactly like the single-backend constructor above, pointed at
      * the registry's default target -- see {@link PgItemStore}'s javadoc for the full story.
      */
-    public DynamoWireServer(int port, com.nexagres.wire.core.BackendRegistry backendRegistry, DynamoCache cache,
+    public DynamoWireServer(int port, com.nexagres.wire.core.BackendRegistry backendRegistry, com.nexagres.wire.cluster.RowCache cache,
             com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth,
             com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,
@@ -81,7 +88,7 @@ public final class DynamoWireServer {
         this(port, new PgItemStore(backendRegistry), cache, connectionGate, oauth, awsIamCredentials, sqlMetrics);
     }
 
-    private DynamoWireServer(int port, PgItemStore store, DynamoCache cache,
+    private DynamoWireServer(int port, PgItemStore store, com.nexagres.wire.cluster.RowCache cache,
             com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth,
             com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials,

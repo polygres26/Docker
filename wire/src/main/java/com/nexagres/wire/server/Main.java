@@ -167,11 +167,16 @@ public final class Main {
             log.info("result cache disabled (set POLYWIRE_CACHE_TABLES to enable)");
         }
 
-        com.nexagres.wire.dynamowire.DynamoCache dynamoCache = dynamoCacheEnabled
-                ? com.nexagres.wire.dynamowire.DynamoCache.create(cacheCluster, dynamoCacheTtlMs)
+        // Renamed from "dynamoCache": this is now the shared, cross-protocol RowCache (see its
+        // own javadoc) -- dynamowire's GetItem is still the only thing that populates/reads it
+        // directly, but CacheStage's own SQL-side row-cache fast path (wired below, once
+        // dynamoWireServer exists) shares this exact same instance, not a second cache.
+        com.nexagres.wire.cluster.RowCache dynamoCache = dynamoCacheEnabled
+                ? com.nexagres.wire.cluster.RowCache.create(cacheCluster, dynamoCacheTtlMs)
                 : null;
         log.info("dynamowire GetItem cache: {} (POLYWIRE_DYNAMOWIRE_CACHE_ENABLED, default on; "
-                        + "exact-key GetItem only, not Query/Scan) ttlMs={}",
+                        + "exact-key GetItem only, not Query/Scan; shared with a matching SQL "
+                        + "SELECT-by-primary-key via pgwire/mywire/mssqlwire/orawire) ttlMs={}",
                 dynamoCacheEnabled ? "enabled" : "disabled", dynamoCacheTtlMs == null ? "30000" : dynamoCacheTtlMs);
 
         com.nexagres.wire.mongowire.MongoCache mongoCache = mongoCacheEnabled
@@ -416,6 +421,18 @@ public final class Main {
                     connectionGate, oauth, awsIamCredentials, sqlMetrics);
             dynamoWireServer.start();
             log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+            // Cross-protocol row-cache sharing: CacheStage was built before dynamowire existed
+            // (both need constructing before either can be wired to the other), so this closes
+            // the loop -- a SELECT-by-primary-key against a dynamowire-backed table via
+            // pgwire/mywire/mssqlwire/orawire can now hit the exact same RowCache entry GetItem
+            // populated, and vice versa. See CacheStage#tryRowCacheLookup's own javadoc.
+            if (cacheStage != null && dynamoCache != null) {
+                cacheStage.setRowCache(dynamoCache, physicalTable -> {
+                    com.nexagres.wire.dynamowire.TableSchema schema = dynamoWireServer.store().lookupByPhysicalTable(physicalTable);
+                    return schema == null ? null : schema.hasSortKey();
+                });
+                log.info("cross-protocol row cache: SQL SELECT-by-primary-key against a dynamowire table now shares its cache entry");
+            }
         } catch (Exception e) {
             log.error("dynamowire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring dynamowire back.",

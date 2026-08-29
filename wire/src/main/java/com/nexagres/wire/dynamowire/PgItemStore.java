@@ -80,6 +80,21 @@ public final class PgItemStore {
     // fresh). Keyed by table name only -- schema is identical regardless of which shard backend
     // ends up serving a given item.
     private final ConcurrentHashMap<String, TableSchema> schemaCache = new ConcurrentHashMap<>();
+
+    // Reverse index (physical Postgres table name -> schema), alongside schemaCache's own
+    // dynamo-table-name-keyed lookup -- lets CacheStage recognize "is this table a dynamowire
+    // table, and does it have a sort key" from the bare table name a SQL FROM/WHERE clause
+    // actually contains, without dynamowire's own logical table name ever entering the SQL path.
+    // See RowCache's own javadoc for why the shared cache key has to be built from this physical
+    // name, not schema.tableName().
+    private final ConcurrentHashMap<String, TableSchema> physicalTableIndex = new ConcurrentHashMap<>();
+
+    /** Nullable: null means "not a dynamowire-backed table" (or dynamowire hasn't loaded/created
+     * it in this process yet -- a cold DescribeTable via the SQL side isn't attempted, so a table
+     * only reachable so far via dynamowire's own GetItem/PutItem is what populates this). */
+    public TableSchema lookupByPhysicalTable(String physicalTableName) {
+        return physicalTableIndex.get(physicalTableName);
+    }
     private final ConcurrentHashMap<String, Boolean> catalogEnsured = new ConcurrentHashMap<>();
 
     public PgItemStore(String host, int port, String database, String user, String password) {
@@ -314,6 +329,7 @@ public final class PgItemStore {
             }
             TableSchema schema = new TableSchema(tableName, pkName, pkType, skName, skType, "ACTIVE", now);
             schemaCache.put(tableName, schema);
+            physicalTableIndex.put(pg, schema);
             return schema;
         } catch (SQLException e) {
             throw new RuntimeException("CreateTable failed for " + tableName, e);
@@ -344,6 +360,7 @@ public final class PgItemStore {
             throw new RuntimeException("DeleteTable failed for " + tableName, e);
         } finally {
             schemaCache.remove(tableName);
+            physicalTableIndex.remove(pgTableName(tableName));
         }
     }
 
@@ -358,6 +375,7 @@ public final class PgItemStore {
         // table that's mid-delete -- the next DeleteTable-triggered invalidation (or this same
         // one, if it hasn't happened yet) cleans it up; nothing reads a torn/partial value.
         schemaCache.put(tableName, loaded);
+        physicalTableIndex.put(pgTableName(tableName), loaded);
         return loaded;
     }
 
