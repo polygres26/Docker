@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polywire &amp; Nexagres Advisor — Interactive Demo</title>
-<meta name="description" content="Click through the Polywire and Nexagres Advisor admin consoles with synthetic data — no signup, no backend required.">
+<title>Polywire — Interactive Demo</title>
+<meta name="description" content="Click through the Polywire admin console with synthetic data — no signup, no backend required.">
 <meta name="robots" content="noindex">
 <style>
 /* Tokens lifted verbatim from wire/web/src/index.css + advisor/web/src/index.css -- this demo
@@ -65,12 +65,6 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--demo-ink); background: var(--bg); border: 1px solid var(--border);
   border-radius: 999px; padding: 4px 10px;
 }
-.productSwitch { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
-.productSwitch button {
-  border: none; background: none; padding: 7px 16px; border-radius: 7px; font-size: 13px;
-  font-weight: 600; color: var(--muted);
-}
-.productSwitch button.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
 .demoBar .hint { font-size: 12.5px; color: var(--muted); margin-left: auto; }
 .demoBar .hint kbd {
   font: 11px ui-monospace, monospace; background: var(--bg); border: 1px solid var(--border);
@@ -242,10 +236,6 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 <div class="demoBar">
   <a href="index.html" style="font-size:12.5px;color:var(--muted);white-space:nowrap">&larr; nexagres.dev</a>
   <span class="tag">Interactive demo</span>
-  <div class="productSwitch" role="tablist" aria-label="Choose console">
-    <button data-product="wire" class="active" role="tab" aria-selected="true">Polywire</button>
-    <button data-product="advisor" role="tab" aria-selected="false">Nexagres Advisor</button>
-  </div>
   <span class="hint">Click sidebar items and rows to explore &mdash; mock data, nothing here reaches a real backend.</span>
 </div>
 
@@ -353,72 +343,6 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         <div class="main">
           <div class="topbar"><div class="crumb">polywire admin</div></div>
           <div class="content" id="wire-content"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============================================================ ADVISOR ============================================================ -->
-    <div id="app-advisor" class="app hidden">
-
-      <!-- Login gate -->
-      <div id="advisor-gate" class="gateWrap">
-        <div class="gateCard">
-          <div class="gateBrand">
-            <div class="mark"></div>
-            <div><span class="title">Nexagres Advisor</span><br><span class="sub">Postgres migration advisor</span></div>
-          </div>
-          <div class="panel">
-            <h1 class="gateTitle">Sign in</h1>
-            <div class="field">
-              <label>Username</label>
-              <input type="text" value="admin" readonly>
-            </div>
-            <div class="field">
-              <label>Password</label>
-              <input type="password" placeholder="Password" value="••••••••">
-            </div>
-            <button type="button" class="btnPrimary" data-enter="advisor">Sign in</button>
-          </div>
-          <p class="gateNote">Demo only &mdash; any values work here.</p>
-        </div>
-      </div>
-
-      <!-- Shell -->
-      <div id="advisor-shell" class="hidden" style="display:flex; flex:1; min-width:0;">
-        <nav class="rail">
-          <div class="railBrand">
-            <div class="railMark"></div>
-            <div><span class="railBrandTitle">Nexagres</span><span class="railBrandSub">Advisor</span></div>
-          </div>
-
-          <div class="railSection">
-            <div class="railSectionLabel">Overview</div>
-            <div class="railGroup">
-              <button class="railItem active" data-advisor-page="dashboard"><span class="ico">${iLayout}</span>Dashboard</button>
-            </div>
-          </div>
-          <div class="railDivider"></div>
-          <div class="railSection">
-            <div class="railSectionLabel">Migration</div>
-            <div class="railGroup">
-              <button class="railItem" data-advisor-page="connections"><span class="ico">${iCompass}</span>Advisor</button>
-            </div>
-          </div>
-          <div class="railDivider"></div>
-          <div class="railSection">
-            <div class="railSectionLabel">Configuration</div>
-            <div class="railGroup">
-              <button class="railItem" data-advisor-page="llm"><span class="ico">${iCpu}</span>LLM</button>
-            </div>
-          </div>
-
-          <div class="railSpacer"></div>
-          <button class="railItem" data-exit="advisor" style="margin-top:8px"><span class="ico">${iLogout}</span>Sign out</button>
-        </nav>
-
-        <div class="main">
-          <div class="topbar"><div class="crumb">nexagres advisor</div></div>
-          <div class="content" id="advisor-content"></div>
         </div>
       </div>
     </div>
@@ -1169,25 +1093,6 @@ window.removeAdvisorConn = function (id) {
 // ---------------------------------------------------------------------------------------------
 // Wiring: product switcher, nav clicks, gate -> shell transitions
 // ---------------------------------------------------------------------------------------------
-$all('.productSwitch button').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    $all('.productSwitch button').forEach((b) => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
-    btn.classList.add('active'); btn.setAttribute('aria-selected', 'true');
-    const product = btn.dataset.product;
-    $('#app-wire').classList.toggle('hidden', product !== 'wire');
-    $('#app-advisor').classList.toggle('hidden', product !== 'advisor');
-  });
-});
-
-$all('[data-wire-page]').forEach((btn) => btn.addEventListener('click', () => selectWire(btn.dataset.wirePage)));
-$all('[data-advisor-page]').forEach((btn) => btn.addEventListener('click', () => selectAdvisor(btn.dataset.advisorPage)));
-
-// Deep link: docker/polyadvisor.html can send visitors straight into the Advisor tab via
-// demo.html?product=advisor instead of always landing on Polywire.
-if (new URLSearchParams(location.search).get('product') === 'advisor') {
-  $('[data-product="advisor"]').click();
-}
-
 $('[data-adv-toggle="wire"]').addEventListener('click', function () {
   this.classList.toggle('open');
   $('[data-adv-panel="wire"]').classList.toggle('open');
@@ -1201,15 +1106,6 @@ $('[data-enter="wire"]').addEventListener('click', () => {
 $('[data-exit="wire"]').addEventListener('click', () => {
   $('#wire-shell').classList.add('hidden');
   $('#wire-gate').classList.remove('hidden');
-});
-$('[data-enter="advisor"]').addEventListener('click', () => {
-  $('#advisor-gate').classList.add('hidden');
-  $('#advisor-shell').classList.remove('hidden');
-  selectAdvisor('dashboard');
-});
-$('[data-exit="advisor"]').addEventListener('click', () => {
-  $('#advisor-shell').classList.add('hidden');
-  $('#advisor-gate').classList.remove('hidden');
 });
 </script>
 </body>
