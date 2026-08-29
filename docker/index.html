@@ -550,6 +550,71 @@ DOC
         point-lookup cache key works</a>.
       </p>
 
+      <h4 class="demoSubhead" id="join-dynamo-mongo">It's just Postgres: JOIN a DynamoDB or MongoDB table with your own<a class="permalink" href="#join-dynamo-mongo" aria-label="Link to this section">#</a></h4>
+      <p class="rttNote">
+        A different, simpler consequence of the same fact the cache sharing above relies on:
+        <code>dynamo_item_orders</code> and <code>"test"."orders"</code> aren't virtual views or
+        an API bridge — they're ordinary Postgres tables sitting in the same database as
+        everything else. So a plain SQL client can <code>JOIN</code> them against a real
+        relational table it owns, using Postgres's own <code>jsonb</code> operators
+        (<code>-&gt;&gt;</code>) to pull a field out of the stored item/document. Orawire's own SQL
+        translation is narrow by design — it rewrites a couple of known Oracle idioms (bind
+        variables, <code>DUAL</code>) and otherwise passes SQL through — so this
+        <code>-&gt;&gt;</code> is genuine Postgres syntax reaching genuine Postgres, not something
+        orawire invented from Oracle's own <code>JSON_VALUE</code>. One thing this is <b>not</b>:
+        a cache hit. The point-lookup cache only recognizes one exact single-table shape
+        (<code>WHERE pk_value = ?</code> / <code>WHERE id = ?</code>, nothing else) — a
+        <code>JOIN</code> always falls through to a real, live Postgres query.
+      </p>
+      <div class="cacheDemoSteps">
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">Oracle joins its own table with the DynamoDB-backed one</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQL&gt; SELECT c.name, o.item-&gt;&gt;'amount' AS amount
+  2  FROM customers c
+  3  JOIN dynamo_item_orders o ON o.pk_value = c.customer_id
+  4  WHERE c.customer_id = '1001';
+
+NAME    AMOUNT
+------  -------
+Ada      129.99
+
+1 row selected.
+
+# a real join, Oracle relational table + DynamoDB's own physical table -- not a cache hit</pre>
+          </div>
+        </div>
+        <div class="cacheDemoPanel">
+          <p class="cacheDemoStepLabel">Oracle joins its own table with the MongoDB-backed one</p>
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQL&gt; SELECT c.name, o.doc-&gt;&gt;'amount' AS amount
+  2  FROM customers c
+  3  JOIN "test"."orders" o ON o.id = '"' || c.customer_id || '"'
+  4  WHERE c.customer_id = '1001';
+
+NAME    AMOUNT
+------  -------
+Ada      129.99
+
+1 row selected.
+
+# mongowire stores id as Mongo's own Extended-JSON text, so a join predicate
+# must match that literal quoted form -- not a cache hit either</pre>
+          </div>
+        </div>
+      </div>
+      <p class="rttNote">
+        Two entirely different write paths — one via DynamoDB's API, one via MongoDB's — landing
+        in tables one Oracle <code>JOIN</code> reads alongside its own relational data, no ETL, no
+        federation layer, no separate query engine.
+      </p>
+
       <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
