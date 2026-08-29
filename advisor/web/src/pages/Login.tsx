@@ -18,7 +18,7 @@ export default function Login() {
     setError(null)
     try {
       await login(username, password)
-      navigate('/connections')
+      navigate('/dashboard')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

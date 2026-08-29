@@ -1,8 +1,26 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Search, Star, Trash2 } from 'lucide-react'
 import { type Connection, createConnection, deleteConnection, listConnections } from '../api/client'
 import AdvisorTabs from '../components/AdvisorTabs'
 import CredentialField from '../components/CredentialField'
+
+// Favorite connections pinned to the top of the list, same pattern as versitygw's bucket
+// favorites (star icon, persists across sessions -- see
+// https://github.com/versity/versitygw/wiki/WebGUI#buckets).
+const FAVORITES_KEY = 'advisor.favoriteConnections'
+
+function loadFavorites(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? '[]'))
+  } catch {
+    return new Set()
+  }
+}
+
+function saveFavorites(favs: Set<string>) {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favs]))
+}
 
 export default function Connections() {
   const [connections, setConnections] = useState<Connection[]>([])
@@ -12,6 +30,16 @@ export default function Connections() {
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [favorites, setFavorites] = useState<Set<string>>(loadFavorites)
+
+  function toggleFavorite(id: string) {
+    setFavorites((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      saveFavorites(next)
+      return next
+    })
+  }
 
   async function refresh() {
     setConnections(await listConnections())
@@ -44,8 +72,19 @@ export default function Connections() {
 
       <div className="panel" style={{ marginBottom: 20, maxWidth: 640 }}>
         {connections.length === 0 && <p style={{ color: 'var(--muted)' }}>No connections yet.</p>}
-        {connections.map((c) => (
-          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+        {[...connections]
+          .sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)))
+          .map((c) => (
+          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => toggleFavorite(c.id)}
+              title={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
+              aria-label={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
+              style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: favorites.has(c.id) ? 'var(--accent)' : 'var(--muted)', display: 'flex', flexShrink: 0 }}
+            >
+              <Star size={15} strokeWidth={1.8} fill={favorites.has(c.id) ? 'currentColor' : 'none'} />
+            </button>
             <div style={{ minWidth: 0, flex: 1 }}>
               <Link to={`/connections/${c.id}`} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{c.name}</Link>
               {/* Full JDBC URL can run well past the panel width (SQL Server's "database=...;encrypt=...;" style
@@ -62,8 +101,21 @@ export default function Connections() {
                 {c.jdbcUrl}
               </Link>
             </div>
-            <button onClick={() => handleDelete(c.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer', flexShrink: 0 }}>
-              Delete
+            <Link
+              to={`/connections/${c.id}`}
+              title="Browse objects"
+              aria-label="Browse objects"
+              style={{ display: 'flex', color: 'var(--muted)', flexShrink: 0, padding: 4 }}
+            >
+              <Search size={16} strokeWidth={1.8} />
+            </Link>
+            <button
+              onClick={() => handleDelete(c.id)}
+              title="Delete connection"
+              aria-label="Delete connection"
+              style={{ background: 'none', border: 'none', padding: 4, color: 'var(--hard)', cursor: 'pointer', flexShrink: 0, display: 'flex' }}
+            >
+              <Trash2 size={16} strokeWidth={1.8} />
             </button>
           </div>
         ))}

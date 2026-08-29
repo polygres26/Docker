@@ -1,15 +1,22 @@
 import {
-  Activity, Cpu, GitMerge, KeyRound, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties, Waypoints,
+  Activity, Cpu, GitMerge, KeyRound, LayoutDashboard, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties, Waypoints,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { clearConnection } from './api/client'
 import logo from './assets/logo.png'
 import styles from './Layout.module.css'
 
-// Four groups matching the three questions someone actually has when they open Polywire's admin
-// UI ("what's happening", "who's allowed to do what", "where does traffic go and how fast"),
-// plus Configuration for settings that aren't specific to any one of those.
+// Overview is its own single-item group (like versitygw's Admin Dashboard, always first) ahead
+// of the three groups matching the questions someone actually has when they open Polywire's admin
+// UI ("what's happening", "who's allowed to do what", "where does traffic go and how fast"), plus
+// Configuration for settings that aren't specific to any one of those.
 const GROUPS = [
+  {
+    label: 'Overview',
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    ],
+  },
   {
     label: 'Monitoring',
     items: [

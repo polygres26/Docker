@@ -1,6 +1,10 @@
 import { useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { getStoredConnection, storeConnection, testConnection } from '../api/client'
+import {
+  getRememberPreference, getRequestTimeoutMs, getStoredConnection, setRequestTimeoutMs,
+  storeConnection, testConnection,
+} from '../api/client'
 
 /**
  * Entry screen for this SPA. Polywire's admin API is bearer-token protected and deliberately has
@@ -17,16 +21,20 @@ export default function Connect() {
   const [adminToken, setAdminToken] = useState('')
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [remember, setRemember] = useState(getRememberPreference)
+  const [timeoutSec, setTimeoutSec] = useState(getRequestTimeoutMs() / 1000)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setTesting(true)
     setError(null)
     try {
+      setRequestTimeoutMs(Math.max(1, timeoutSec) * 1000)
       const baseUrl = adminUrl.trim().replace(/\/+$/, '')
       await testConnection(baseUrl, adminToken)
-      storeConnection(baseUrl, adminToken)
-      navigate('/metrics')
+      storeConnection(baseUrl, adminToken, remember)
+      navigate('/dashboard')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -55,8 +63,8 @@ export default function Connect() {
         <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
           Enter the admin URL and bearer token for a running Polywire process
           (<code>POLYWIRE_ADMIN_TOKEN</code>). This browser talks to Polywire's admin API directly
-          -- nothing is sent anywhere else. The token is kept only in this tab's session storage
-          and is cleared when the tab closes.
+          -- nothing is sent anywhere else. By default the token is kept only in this tab's session
+          storage and is cleared when the tab closes (see Advanced options to change that).
         </p>
 
         <form onSubmit={handleSubmit}>
@@ -80,6 +88,48 @@ export default function Connect() {
               placeholder="POLYWIRE_ADMIN_TOKEN value"
             />
           </div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none',
+              padding: '4px 0', margin: '2px 0 14px', color: 'var(--muted)', fontSize: 12.5,
+              cursor: 'pointer',
+            }}
+          >
+            {showAdvanced ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
+            Advanced options
+          </button>
+
+          {showAdvanced && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                <div>
+                  <div style={{ fontSize: 13 }}>Remember on this device</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                    Keeps the admin URL and token in this browser (localStorage) past closing the tab, instead of
+                    clearing them when it closes. Only turn this on for a machine you trust.
+                  </div>
+                </div>
+              </label>
+              <label style={{ display: 'block' }}>
+                <div style={{ fontSize: 13, marginBottom: 4 }}>Request timeout (seconds)</div>
+                <input
+                  type="number"
+                  min={1}
+                  value={timeoutSec}
+                  onChange={(e) => setTimeoutSec(Number(e.target.value))}
+                  style={{ width: 100 }}
+                />
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>
+                  How long to wait for the admin API before giving up, on this connect attempt and every request
+                  after it. Raise this if you're on a slow link to a remote Polywire process.
+                </div>
+              </label>
+            </div>
+          )}
+
           <button type="submit" className="primary" disabled={testing || !adminUrl.trim() || !adminToken.trim()}>
             {testing ? 'Connecting…' : 'Connect'}
           </button>

@@ -1,9 +1,30 @@
 import { useEffect, useState } from 'react'
+import { PlugZap, Star, TableProperties } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import {
   type BackendInfo, type BackendTestResult, type WireConfig,
   getWireConfig, listBackends, saveWireConfig, testBackendConnection, testConfiguredBackend,
 } from '../api/client'
 import CredentialField from '../components/CredentialField'
+
+// Favorite backends pinned to the top of the configured-backends list, same pattern as
+// versitygw's bucket favorites (star icon, persists across sessions -- see
+// https://github.com/versity/versitygw/wiki/WebGUI#buckets). Scoped to localStorage (not
+// sessionStorage, unlike the connection token) since "which backends I care about" is a per-user
+// preference worth keeping across tabs and restarts, not sensitive like the admin token.
+const FAVORITES_KEY = 'polywire.favoriteBackends'
+
+function loadFavorites(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? '[]'))
+  } catch {
+    return new Set()
+  }
+}
+
+function saveFavorites(favs: Set<string>) {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favs]))
+}
 
 function TestResultBadge({ result }: { result: BackendTestResult }) {
   return (
@@ -75,7 +96,11 @@ function ConnectionTester() {
   )
 }
 
-function ConfiguredBackendRow({ backend }: { backend: BackendInfo }) {
+function ConfiguredBackendRow({ backend, favorite, onToggleFavorite }: {
+  backend: BackendInfo
+  favorite: boolean
+  onToggleFavorite: () => void
+}) {
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<BackendTestResult | null>(null)
 
@@ -94,12 +119,36 @@ function ConfiguredBackendRow({ backend }: { backend: BackendInfo }) {
   return (
     <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          type="button"
+          onClick={onToggleFavorite}
+          title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+          aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
+          style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: favorite ? 'var(--accent)' : 'var(--muted)', display: 'flex', flexShrink: 0 }}
+        >
+          <Star size={15} strokeWidth={1.8} fill={favorite ? 'currentColor' : 'none'} />
+        </button>
         <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{backend.name}</span>
         <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {backend.jdbcUrl}
         </span>
-        <button type="button" onClick={handleTest} disabled={testing} style={{ flexShrink: 0 }}>
-          {testing ? 'Testing…' : 'Test'}
+        <Link
+          to="/data"
+          title="Open in data explorer"
+          aria-label="Open in data explorer"
+          style={{ display: 'flex', color: 'var(--muted)', flexShrink: 0, padding: 4 }}
+        >
+          <TableProperties size={16} strokeWidth={1.8} />
+        </Link>
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing}
+          title="Test connection"
+          aria-label="Test connection"
+          style={{ background: 'none', border: 'none', padding: 4, cursor: testing ? 'default' : 'pointer', color: 'var(--muted)', display: 'flex', flexShrink: 0 }}
+        >
+          <PlugZap size={16} strokeWidth={1.8} />
         </button>
       </div>
       {result && <TestResultBadge result={result} />}
@@ -121,6 +170,16 @@ export default function Backends() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [configured, setConfigured] = useState<BackendInfo[] | null>(null)
+  const [favorites, setFavorites] = useState<Set<string>>(loadFavorites)
+
+  function toggleFavorite(name: string) {
+    setFavorites((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      saveFavorites(next)
+      return next
+    })
+  }
 
   function apply(s: WireConfig) {
     setBackends((s.backends ?? '').split(';').map((r) => r.trim()).filter(Boolean).join('\n'))
@@ -179,7 +238,16 @@ export default function Backends() {
           {configured && configured.length > 0 && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Configured backends</div>
-              {configured.map((b) => <ConfiguredBackendRow key={b.name} backend={b} />)}
+              {[...configured]
+                .sort((a, b) => Number(favorites.has(b.name)) - Number(favorites.has(a.name)))
+                .map((b) => (
+                  <ConfiguredBackendRow
+                    key={b.name}
+                    backend={b}
+                    favorite={favorites.has(b.name)}
+                    onToggleFavorite={() => toggleFavorite(b.name)}
+                  />
+                ))}
             </div>
           )}
 

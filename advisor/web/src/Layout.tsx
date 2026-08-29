@@ -1,5 +1,5 @@
 import {
-  Compass, Cpu, LogOut,
+  Compass, Cpu, LayoutDashboard, LogOut,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
@@ -36,6 +36,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span className={styles.railBrandSub}>Advisor</span>
           </div>
         </div>
+
+        <div className={styles.railSection}>
+          <div className={styles.railSectionLabel}>Overview</div>
+          <div className={styles.railGroup}>
+            <NavLink to="/dashboard" className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
+              <LayoutDashboard size={17} strokeWidth={1.8} />
+              Dashboard
+            </NavLink>
+          </div>
+        </div>
+
+        <div className={styles.railDivider} />
 
         <div className={styles.railSection}>
           <div className={styles.railSectionLabel}>Migration</div>

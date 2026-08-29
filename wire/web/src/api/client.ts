@@ -10,22 +10,72 @@
 
 const BASE_URL_KEY = 'polywire.adminUrl'
 const TOKEN_KEY = 'polywire.adminToken'
+const REMEMBER_KEY = 'polywire.remember'
+const TIMEOUT_KEY = 'polywire.requestTimeoutMs'
+
+const DEFAULT_TIMEOUT_MS = 10_000
+
+// "Remember on this device" (advanced, off by default) trades the sessionStorage default -- gone
+// the moment the tab closes -- for localStorage, so the token survives a reload/restart. Whichever
+// store was actually used to save it is also where every later read/clear looks, so a stored
+// connection is never split across the two.
+function storageFor(remember: boolean): Storage {
+  return remember ? localStorage : sessionStorage
+}
 
 export function getStoredConnection(): { baseUrl: string; token: string } | null {
-  const baseUrl = sessionStorage.getItem(BASE_URL_KEY)
-  const token = sessionStorage.getItem(TOKEN_KEY)
+  const store = localStorage.getItem(TOKEN_KEY) !== null ? localStorage : sessionStorage
+  const baseUrl = store.getItem(BASE_URL_KEY)
+  const token = store.getItem(TOKEN_KEY)
   if (!baseUrl || !token) return null
   return { baseUrl, token }
 }
 
-export function storeConnection(baseUrl: string, token: string): void {
-  sessionStorage.setItem(BASE_URL_KEY, baseUrl.replace(/\/+$/, ''))
-  sessionStorage.setItem(TOKEN_KEY, token)
+export function storeConnection(baseUrl: string, token: string, remember = false): void {
+  const store = storageFor(remember)
+  store.setItem(BASE_URL_KEY, baseUrl.replace(/\/+$/, ''))
+  store.setItem(TOKEN_KEY, token)
+  localStorage.setItem(REMEMBER_KEY, String(remember))
 }
 
 export function clearConnection(): void {
   sessionStorage.removeItem(BASE_URL_KEY)
   sessionStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(BASE_URL_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+export function getRememberPreference(): boolean {
+  return localStorage.getItem(REMEMBER_KEY) === 'true'
+}
+
+/** Request timeout (advanced, defaults to 10s): every `fetch()` below is wrapped in an
+ * AbortController on this timer so a hung admin process fails fast with a clear message instead
+ * of leaving the UI stuck on "Connecting…"/a spinner forever. Persisted alongside the connection
+ * (localStorage, not session-scoped -- a slow-network preference isn't a secret). */
+export function getRequestTimeoutMs(): number {
+  const raw = Number(localStorage.getItem(TIMEOUT_KEY))
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS
+}
+
+export function setRequestTimeoutMs(ms: number): void {
+  localStorage.setItem(TIMEOUT_KEY, String(ms))
+}
+
+async function fetchWithTimeout(input: string, options: RequestInit): Promise<Response> {
+  const timeoutMs = getRequestTimeoutMs()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...options, signal: controller.signal })
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs}ms (Advanced options → Request timeout)`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Redirect target after a 401 or an explicit disconnect. Kept as one place so it's easy to change. */
@@ -39,7 +89,7 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     window.location.href = CONNECT_PATH
     throw new UnauthorizedError('not connected')
   }
-  const res = await fetch(`${conn.baseUrl}${path}`, {
+  const res = await fetchWithTimeout(`${conn.baseUrl}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -63,7 +113,7 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
 /** Connect-screen probe: unlike `api()`, this takes the candidate baseUrl/token as arguments
  * instead of reading them from sessionStorage, since nothing has been stored yet. */
 export async function testConnection(baseUrl: string, token: string): Promise<WireMetricsSummary> {
-  const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/metrics/summary`, {
+  const res = await fetchWithTimeout(`${baseUrl.replace(/\/+$/, '')}/api/metrics/summary`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   const isJson = res.headers.get('content-type')?.includes('application/json')

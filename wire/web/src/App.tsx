@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { getStoredConnection } from './api/client'
 import Layout from './Layout'
 import Connect from './pages/Connect'
+import Dashboard from './pages/Dashboard'
 import Metrics from './pages/Metrics'
 import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
@@ -29,6 +30,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/connect" element={<Connect />} />
+      <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/metrics" element={<RequireAuth><Metrics /></RequireAuth>} />
       <Route path="/topology" element={<RequireAuth><Topology /></RequireAuth>} />
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
@@ -41,7 +43,7 @@ export default function App() {
       <Route path="/qos" element={<RequireAuth><Qos /></RequireAuth>} />
       <Route path="/federation-plans" element={<RequireAuth><FederationPlans /></RequireAuth>} />
       <Route path="/llm-config" element={<RequireAuth><LlmConfig /></RequireAuth>} />
-      <Route path="/" element={<Navigate to="/metrics" replace />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
 }

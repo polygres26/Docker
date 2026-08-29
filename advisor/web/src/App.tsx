@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { checkSession } from './api/client'
 import Layout from './Layout'
 import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
 import Connections from './pages/Connections'
 import ConnectionDetail from './pages/ConnectionDetail'
 import Connect from './pages/Connect'
@@ -29,6 +30,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/connections" element={<RequireAuth><Connections /></RequireAuth>} />
       <Route path="/connections/:id" element={<RequireAuth><ConnectionDetail /></RequireAuth>} />
       <Route path="/llm-settings" element={<RequireAuth><LlmSettings /></RequireAuth>} />
@@ -37,7 +39,7 @@ export default function App() {
       <Route path="/sizing" element={<RequireAuth><Sizing /></RequireAuth>} />
       <Route path="/quick-scan" element={<RequireAuth><Connect /></RequireAuth>} />
       <Route path="/report" element={<RequireAuth><Report /></RequireAuth>} />
-      <Route path="/" element={<Navigate to="/connections" replace />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
 }
