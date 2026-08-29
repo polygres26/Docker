@@ -160,23 +160,47 @@ public final class MySqlWireSessionHandler implements Runnable {
         pos[0] += 23;
         String username = MySqlPacket.readNulString(response, pos);
         int authLen = response[pos[0]++] & 0xFF;
-        // This first auth_response is NOT necessarily computed with mysql_native_password, even
+        // This first auth_response is NOT always computed with mysql_native_password, even
         // though that's the only plugin this server declares in the handshake and the only one it
-        // implements: modern client defaults (confirmed live -- MySQL Connector/J 8.4 and 9.1
+        // implements: modern JDBC client defaults (confirmed live -- MySQL Connector/J 8.4 and 9.1
         // both, despite the server's declared plugin) optimistically guess caching_sha2_password
         // for their very first response regardless, and only actually honor the server-declared
-        // plugin after an explicit AuthSwitchRequest. So this value is discarded, not compared --
-        // an AuthSwitchRequest is always sent next, and only the client's response to THAT (which
-        // every compliant client, by spec, must compute with the requested plugin) is checked.
+        // plugin after an explicit AuthSwitchRequest.
+        byte[] firstAuthResponse = Arrays.copyOfRange(response, pos[0], pos[0] + authLen);
         pos[0] += authLen;
-
-        packets.writePayload(out, MySqlMessages.authSwitchRequest("mysql_native_password", scramble));
-        byte[] switchResponse = packets.readPayload(in);
+        if ((clientCapabilities & MySqlMessages.CLIENT_CONNECT_WITH_DB) != 0) {
+            MySqlPacket.readNulString(response, pos);	// database -- not used, just needs skipping
+        }
+        String firstPluginName = (clientCapabilities & MySqlMessages.CLIENT_PLUGIN_AUTH) != 0
+                ? MySqlPacket.readNulString(response, pos)
+                : null;
 
         byte[] expected = credentials.lookupPassword(username);
         String expectedPassword = expected == null ? "" : new String(expected, StandardCharsets.UTF_8);
         byte[] expectedScramble = MySqlMessages.nativePasswordScramble(expectedPassword, scramble);
-        if (!Arrays.equals(expectedScramble, switchResponse)) {
+
+        // Try the first response directly before falling back to an AuthSwitchRequest -- confirmed
+        // live via a raw packet capture that this differs by client, and by more than just the
+        // plugin name each one declares: the real native mysql client (Oracle's official CLI,
+        // libmysqlclient-based, distinct from the JDBC driver) correctly honors the server-declared
+        // plugin on its FIRST response and does not expect a redundant AuthSwitchRequest asking it
+        // to "switch" to the exact same plugin it already used -- sending one anyway desyncs its
+        // native auth state machine ("ERROR 2012: Error in server handshake"). A JDBC client's
+        // first response, even when it names "mysql_native_password" in firstPluginName, doesn't
+        // reliably contain a scramble actually computed that way (confirmed live: trusting
+        // firstPluginName alone broke real JDBC logins outright, "Access denied", even though the
+        // name matched) -- so this checks the ACTUAL bytes against what's expected, not the
+        // client's self-declared plugin name, and only falls back to the switch when they don't
+        // match. firstPluginName itself ends up unused for this decision, but is still parsed
+        // above since CLIENT_PLUGIN_AUTH means it's really on the wire and must be consumed before
+        // whatever might follow it.
+        byte[] actualResponse = firstAuthResponse;
+        if (authLen != expectedScramble.length || !Arrays.equals(expectedScramble, firstAuthResponse)) {
+            packets.writePayload(out, MySqlMessages.authSwitchRequest("mysql_native_password", scramble));
+            actualResponse = packets.readPayload(in);
+        }
+
+        if (!Arrays.equals(expectedScramble, actualResponse)) {
             packets.writePayload(out, MySqlMessages.errPacket(1045, "28000",
                     "Access denied for user '" + username + "'"));
             return null;
