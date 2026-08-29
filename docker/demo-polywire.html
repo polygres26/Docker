@@ -1091,8 +1091,10 @@ window.removeAdvisorConn = function (id) {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Wiring: product switcher, nav clicks, gate -> shell transitions
+// Wiring: nav clicks, gate -> shell transitions
 // ---------------------------------------------------------------------------------------------
+$all('[data-wire-page]').forEach((btn) => btn.addEventListener('click', () => selectWire(btn.dataset.wirePage)));
+
 $('[data-adv-toggle="wire"]').addEventListener('click', function () {
   this.classList.toggle('open');
   $('[data-adv-panel="wire"]').classList.toggle('open');

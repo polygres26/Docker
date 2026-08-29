@@ -1052,8 +1052,10 @@ window.removeAdvisorConn = function (id) {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Wiring: product switcher, nav clicks, gate -> shell transitions
+// Wiring: nav clicks, gate -> shell transitions
 // ---------------------------------------------------------------------------------------------
+$all('[data-advisor-page]').forEach((btn) => btn.addEventListener('click', () => selectAdvisor(btn.dataset.advisorPage)));
+
 $('[data-enter="advisor"]').addEventListener('click', () => {
   $('#advisor-gate').classList.add('hidden');
   $('#advisor-shell').classList.remove('hidden');
