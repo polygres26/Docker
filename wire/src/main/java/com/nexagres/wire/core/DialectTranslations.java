@@ -497,9 +497,27 @@ public final class DialectTranslations {
     private static final Pattern MYSQL_GROUP_CONCAT_CALL = Pattern.compile("(?i)\\bGROUP_CONCAT\\s*\\(");
     private static final Pattern SHOW_TABLES = Pattern.compile("(?i)^\\s*SHOW\\s+TABLES\\s*;?\\s*$");
     private static final Pattern SHOW_DATABASES = Pattern.compile("(?i)^\\s*SHOW\\s+DATABASES\\s*;?\\s*$");
+    // MySQL's introspection commands -- see db/pg_mysql/sql/pg_mysql--0.1.sql's own header comment
+    // on this section for why the actual logic (real pg_catalog/information_schema joins) lives in
+    // mysql_catalog's table-valued functions and this side just extracts the table/pattern name
+    // and rewrites to a plain SELECT against it, the same split as SHOW TABLES/SHOW DATABASES
+    // above but with real per-command logic instead of a hardcoded query.
+    private static final Pattern SHOW_COLUMNS =
+            Pattern.compile("(?i)^\\s*SHOW\\s+(?:COLUMNS|FIELDS)\\s+FROM\\s+`?(\\w+)`?"
+                    + "(?:\\s+(?:FROM|IN)\\s+`?\\w+`?)?(?:\\s+LIKE\\s+('(?:[^']|'')*'))?\\s*;?\\s*$");
+    private static final Pattern DESCRIBE_TABLE =
+            Pattern.compile("(?i)^\\s*(?:DESCRIBE|DESC)\\s+`?(\\w+)`?\\s*;?\\s*$");
+    private static final Pattern SHOW_INDEX =
+            Pattern.compile("(?i)^\\s*SHOW\\s+(?:INDEX|INDEXES|KEYS)\\s+FROM\\s+`?(\\w+)`?"
+                    + "(?:\\s+(?:FROM|IN)\\s+`?\\w+`?)?\\s*;?\\s*$");
+    private static final Pattern SHOW_VARIABLES =
+            Pattern.compile("(?i)^\\s*SHOW\\s+(?:GLOBAL\\s+|SESSION\\s+)?VARIABLES"
+                    + "(?:\\s+LIKE\\s+('(?:[^']|'')*'))?\\s*;?\\s*$");
+    private static final Pattern SHOW_CREATE_TABLE =
+            Pattern.compile("(?i)^\\s*SHOW\\s+CREATE\\s+TABLE\\s+`?(\\w+)`?\\s*;?\\s*$");
 
     private static String normalizeMysql(String sql) {
-        
+
         if (SHOW_TABLES.matcher(sql).matches()) {
             return "SELECT tablename AS \"Tables\" FROM pg_catalog.pg_tables "
                     + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename";
@@ -507,6 +525,28 @@ public final class DialectTranslations {
         if (SHOW_DATABASES.matcher(sql).matches()) {
             return "SELECT datname AS \"Database\" FROM pg_catalog.pg_database "
                     + "WHERE datistemplate = false ORDER BY datname";
+        }
+        Matcher showColumns = SHOW_COLUMNS.matcher(sql);
+        if (showColumns.matches()) {
+            String select = "SELECT * FROM mysql_catalog.show_columns('" + showColumns.group(1).replace("'", "''") + "')";
+            return showColumns.group(2) != null ? select + " WHERE \"Field\" LIKE " + showColumns.group(2) : select;
+        }
+        Matcher describe = DESCRIBE_TABLE.matcher(sql);
+        if (describe.matches()) {
+            return "SELECT * FROM mysql_catalog.show_columns('" + describe.group(1).replace("'", "''") + "')";
+        }
+        Matcher showIndex = SHOW_INDEX.matcher(sql);
+        if (showIndex.matches()) {
+            return "SELECT * FROM mysql_catalog.show_index('" + showIndex.group(1).replace("'", "''") + "')";
+        }
+        Matcher showVariables = SHOW_VARIABLES.matcher(sql);
+        if (showVariables.matches()) {
+            String select = "SELECT * FROM mysql_catalog.show_variables()";
+            return showVariables.group(1) != null ? select + " WHERE \"Variable_name\" LIKE " + showVariables.group(1) : select;
+        }
+        Matcher showCreateTable = SHOW_CREATE_TABLE.matcher(sql);
+        if (showCreateTable.matches()) {
+            return "SELECT * FROM mysql_catalog.show_create_table('" + showCreateTable.group(1).replace("'", "''") + "')";
         }
         String out = sql;
         out = SqlLiterals.replaceOutsideLiterals(out, MYSQL_NEXTVAL_CALL, m -> m.group(1) + ".NEXTVAL");

@@ -217,3 +217,187 @@ COMMENT ON AGGREGATE mysql_catalog.group_concat(text, text) IS 'MySQL GROUP_CONC
 
 GRANT USAGE ON SCHEMA mysql_catalog TO PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA mysql_catalog TO PUBLIC;
+
+-- ================================================================
+-- SHOW COLUMNS / DESCRIBE, SHOW INDEX, SHOW VARIABLES, SHOW CREATE TABLE --
+-- MySQL's introspection commands, the single highest-hit-rate real gap
+-- once basic function compatibility (LAST_INSERT_ID, GROUP_CONCAT, etc.)
+-- works: `mysqldump`, MySQL Workbench, phpMyAdmin, and most ORMs'
+-- introspection (Sequelize, Django, TypeORM) issue these constantly, the
+-- same reason SHOW TABLES/SHOW DATABASES were already worth translating
+-- first. DialectTranslations.java rewrites each SHOW ... shape into a
+-- plain SELECT against one of the table-valued functions below -- this
+-- package holds the actual logic (real joins across pg_catalog/
+-- information_schema, not expressible as a single flat regex
+-- substitution the way SHOW TABLES/SHOW DATABASES were).
+--
+-- Real, stated fidelity limits, not hidden: MySQL's own SHOW COLUMNS
+-- "Type"/SHOW CREATE TABLE column-type text is genuinely MySQL type
+-- syntax (`int(11)`, `varchar(50) CHARACTER SET utf8mb4`) -- what's
+-- returned here is a best-effort MySQL-shaped approximation from
+-- Postgres's own type system (see mysql_shaped_type_name() below), close
+-- enough for a human or a tool that only checks "is there a column named
+-- X of roughly type Y", not a byte-for-byte match a strict schema-diff
+-- tool would accept. SHOW CREATE TABLE similarly reconstructs a
+-- plausible CREATE TABLE statement (columns + PRIMARY KEY), not
+-- MySQL-specific table options (ENGINE=, CHARSET=, AUTO_INCREMENT=n).
+-- ================================================================
+
+CREATE FUNCTION mysql_catalog.mysql_shaped_type_name(
+  p_data_type text, p_char_len integer, p_num_precision integer, p_num_scale integer
+) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p_data_type
+    WHEN 'character varying' THEN 'varchar(' || coalesce(p_char_len, 255) || ')'
+    WHEN 'character' THEN 'char(' || coalesce(p_char_len, 1) || ')'
+    WHEN 'text' THEN 'text'
+    WHEN 'numeric' THEN 'decimal(' || coalesce(p_num_precision, 10) || ',' || coalesce(p_num_scale, 0) || ')'
+    WHEN 'integer' THEN 'int(11)'
+    WHEN 'bigint' THEN 'bigint(20)'
+    WHEN 'smallint' THEN 'smallint(6)'
+    WHEN 'boolean' THEN 'tinyint(1)'
+    WHEN 'real' THEN 'float'
+    WHEN 'double precision' THEN 'double'
+    WHEN 'timestamp without time zone' THEN 'datetime'
+    WHEN 'timestamp with time zone' THEN 'timestamp'
+    WHEN 'date' THEN 'date'
+    WHEN 'uuid' THEN 'char(36)'
+    WHEN 'bytea' THEN 'blob'
+    WHEN 'jsonb' THEN 'json'
+    WHEN 'json' THEN 'json'
+    ELSE p_data_type
+  END;
+$$;
+COMMENT ON FUNCTION mysql_catalog.mysql_shaped_type_name(text, integer, integer, integer) IS 'Internal: best-effort MySQL-shaped type name for SHOW COLUMNS/SHOW CREATE TABLE -- see this section''s header comment for real fidelity limits. Not part of the MySQL-compatible API.';
+
+CREATE FUNCTION mysql_catalog.show_columns(p_table text)
+RETURNS TABLE("Field" text, "Type" text, "Null" text, "Key" text, "Default" text, "Extra" text)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    c.column_name,
+    mysql_catalog.mysql_shaped_type_name(c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale),
+    CASE WHEN c.is_nullable = 'YES' THEN 'YES' ELSE 'NO' END,
+    coalesce((
+      SELECT CASE tc.constraint_type
+               WHEN 'PRIMARY KEY' THEN 'PRI'
+               WHEN 'UNIQUE' THEN 'UNI'
+               ELSE 'MUL'
+             END
+      FROM information_schema.key_column_usage kcu
+      JOIN information_schema.table_constraints tc
+        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+      WHERE kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name
+      ORDER BY CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 1 WHEN 'UNIQUE' THEN 2 ELSE 3 END
+      LIMIT 1
+    ), ''),
+    c.column_default,
+    CASE WHEN c.column_default LIKE 'nextval(%' THEN 'auto_increment' ELSE '' END
+  FROM information_schema.columns c
+  WHERE c.table_name = p_table
+    AND c.table_schema NOT IN ('pg_catalog', 'information_schema')
+    AND c.table_schema = ANY (current_schemas(false))
+  ORDER BY c.ordinal_position;
+$$;
+COMMENT ON FUNCTION mysql_catalog.show_columns(text) IS 'Backs MySQL SHOW COLUMNS FROM/DESCRIBE/DESC (see DialectTranslations.java''s rewrite). See this section''s header comment for Type fidelity limits.';
+
+CREATE FUNCTION mysql_catalog.show_index(p_table text)
+RETURNS TABLE("Table" text, "Non_unique" integer, "Key_name" text, "Seq_in_index" integer,
+              "Column_name" text, "Collation" text, "Cardinality" bigint, "Sub_part" integer,
+              "Packed" text, "Null" text, "Index_type" text, "Comment" text, "Index_comment" text)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    t.relname,
+    (NOT ix.indisunique)::integer,
+    i.relname,
+    k.ord::integer,
+    a.attname,
+    'A',
+    NULL::bigint,
+    NULL::integer,
+    NULL::text,
+    CASE WHEN a.attnotnull THEN '' ELSE 'YES' END,
+    am.amname,
+    '',
+    ''
+  FROM pg_catalog.pg_index ix
+  JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+  JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid
+  JOIN pg_catalog.pg_am am ON am.oid = i.relam
+  JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+  JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+  JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+  WHERE t.relname = p_table
+    AND n.nspname = ANY (current_schemas(false))
+  ORDER BY i.relname, k.ord;
+$$;
+COMMENT ON FUNCTION mysql_catalog.show_index(text) IS 'Backs MySQL SHOW INDEX FROM (see DialectTranslations.java''s rewrite). Cardinality/Sub_part/Packed are always NULL -- Postgres''s planner statistics don''t map onto MySQL''s per-index cardinality estimate the same way, and fabricating a number would be actively misleading (same principle as DBMS_STATS''s own honest gaps in db/pg_oracle).';
+
+CREATE FUNCTION mysql_catalog.show_variables() RETURNS TABLE("Variable_name" text, "Value" text)
+LANGUAGE sql STABLE AS $$
+  SELECT * FROM (VALUES
+    ('version', current_setting('server_version') || '-polywire'),
+    ('version_comment', 'Polywire mywire (Postgres compatibility)'),
+    ('character_set_client', 'utf8mb4'),
+    ('character_set_connection', 'utf8mb4'),
+    ('character_set_results', 'utf8mb4'),
+    ('character_set_server', 'utf8mb4'),
+    ('collation_connection', 'utf8mb4_general_ci'),
+    ('collation_server', 'utf8mb4_general_ci'),
+    ('sql_mode', ''),
+    ('autocommit', 'ON'),
+    ('time_zone', current_setting('TimeZone')),
+    ('max_allowed_packet', '67108864'),
+    ('wait_timeout', '28800')
+  ) AS v(name, value)
+$$;
+COMMENT ON FUNCTION mysql_catalog.show_variables() IS 'Backs MySQL SHOW VARIABLES [LIKE ...] (see DialectTranslations.java''s rewrite). A small, curated, mostly-static set covering what tools/ORMs actually probe at connect time -- not an exhaustive port of MySQL''s hundreds of real variables.';
+
+CREATE FUNCTION mysql_catalog.show_create_table(p_table text)
+RETURNS TABLE("Table" text, "Create Table" text)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_schema text;
+  v_cols text;
+  v_pk text;
+  v_body text;
+BEGIN
+  SELECT c.table_schema INTO v_schema
+  FROM information_schema.columns c
+  WHERE c.table_name = p_table
+    AND c.table_schema NOT IN ('pg_catalog', 'information_schema')
+    AND c.table_schema = ANY (current_schemas(false))
+  LIMIT 1;
+
+  IF v_schema IS NULL THEN
+    RETURN;	-- no such table on search_path -- caller sees an empty result, same as a real miss
+  END IF;
+
+  SELECT string_agg(
+           '  `' || c.column_name || '` '
+             || mysql_catalog.mysql_shaped_type_name(c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale)
+             || CASE WHEN c.is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END
+             || CASE WHEN c.column_default LIKE 'nextval(%' THEN ' AUTO_INCREMENT' ELSE '' END,
+           E',\n' ORDER BY c.ordinal_position)
+    INTO v_cols
+  FROM information_schema.columns c
+  WHERE c.table_schema = v_schema AND c.table_name = p_table;
+
+  SELECT '  PRIMARY KEY (' || string_agg('`' || kcu.column_name || '`', ',' ORDER BY kcu.ordinal_position) || ')'
+    INTO v_pk
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+  WHERE tc.table_schema = v_schema AND tc.table_name = p_table AND tc.constraint_type = 'PRIMARY KEY';
+
+  v_body := 'CREATE TABLE `' || p_table || '` (' || E'\n' || v_cols
+            || CASE WHEN v_pk IS NOT NULL THEN ',' || E'\n' || v_pk ELSE '' END
+            || E'\n)';
+
+  "Table" := p_table;
+  "Create Table" := v_body;
+  RETURN NEXT;
+END;
+$$;
+COMMENT ON FUNCTION mysql_catalog.show_create_table(text) IS 'Backs MySQL SHOW CREATE TABLE (see DialectTranslations.java''s rewrite). Reconstructs columns + PRIMARY KEY only -- no ENGINE=/CHARSET=/AUTO_INCREMENT=n table options, no secondary-index DDL. See this section''s header comment for the full fidelity statement.';
+
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA mysql_catalog TO PUBLIC;
