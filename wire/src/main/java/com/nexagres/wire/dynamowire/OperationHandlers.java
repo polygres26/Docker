@@ -63,6 +63,11 @@ final class OperationHandlers {
             case "BatchWriteItem" -> batchWriteItem(req);
             case "TransactGetItems" -> transactGetItems(req);
             case "TransactWriteItems" -> transactWriteItems(req);
+            case "ExecuteStatement" -> executeStatement(req);
+            case "BatchExecuteStatement" -> batchExecuteStatement(req);
+            case "ExecuteTransaction" -> throw new DynamoException("UnknownOperationException",
+                    "dynamowire's PartiQL support covers ExecuteStatement and BatchExecuteStatement "
+                            + "today, not ExecuteTransaction -- a disclosed gap, not a silent one.");
             default -> throw new DynamoException("UnknownOperationException", "Operation not implemented by dynamowire: " + operation);
         };
     }
@@ -521,6 +526,205 @@ final class OperationHandlers {
             ps.setString(4, PgItemStore.itemToJson(item).toString());
             ps.executeUpdate();
         }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // PartiQL: ExecuteStatement / BatchExecuteStatement -- see PartiQlParser's own javadoc for the
+    // full design. Both funnel through executePartiQl, which does the actual parse -> resolve ->
+    // execute -> reuses GetItem/Query/PutItem/UpdateItem/DeleteItem's own store methods unchanged.
+    // -------------------------------------------------------------------------------------------
+
+    private record PartiQlResult(java.util.List<Map<String, AttributeValue>> items) {}
+
+    private JsonObject executeStatement(JsonObject req) {
+        String statementText = req.get("Statement").getAsString();
+        JsonArray paramsArr = req.has("Parameters") && !req.get("Parameters").isJsonNull()
+                ? req.getAsJsonArray("Parameters") : new JsonArray();
+        PartiQlResult result = executePartiQl(statementText, paramsArr);
+        JsonObject resp = new JsonObject();
+        JsonArray items = new JsonArray();
+        if (result.items() != null) {
+            for (Map<String, AttributeValue> item : result.items()) items.add(PgItemStore.itemToJson(item));
+        }
+        resp.add("Items", items);
+        return resp;
+    }
+
+    private JsonObject batchExecuteStatement(JsonObject req) {
+        JsonArray responses = new JsonArray();
+        for (var e : req.getAsJsonArray("Statements")) {
+            JsonObject s = e.getAsJsonObject();
+            String statementText = s.get("Statement").getAsString();
+            JsonArray paramsArr = s.has("Parameters") && !s.get("Parameters").isJsonNull()
+                    ? s.getAsJsonArray("Parameters") : new JsonArray();
+            JsonObject entry = new JsonObject();
+            try {
+                PartiQlResult result = executePartiQl(statementText, paramsArr);
+                // Real BatchExecuteStatement returns at most one Item per statement (each
+                // statement is expected to target a single item, same as ExecuteStatement's own
+                // UPDATE/DELETE/INSERT constraint here) -- a SELECT matching more than one row
+                // (a partition-key-only query on a table with a sort key) just reports the first.
+                if (result.items() != null && !result.items().isEmpty()) {
+                    entry.add("Item", PgItemStore.itemToJson(result.items().get(0)));
+                }
+            } catch (DynamoException de) {
+                JsonObject err = new JsonObject();
+                err.addProperty("Code", de.dynamoErrorType);
+                err.addProperty("Message", de.getMessage());
+                entry.add("Error", err);
+            }
+            responses.add(entry);
+        }
+        JsonObject resp = new JsonObject();
+        resp.add("Responses", responses);
+        return resp;
+    }
+
+    private PartiQlResult executePartiQl(String statementText, JsonArray paramsArr) {
+        String substituted = PartiQlParser.substitutePositionalParams(statementText);
+        PartiQlParser.Statement stmt = PartiQlParser.parse(substituted);
+        ExpressionContext ctx = new ExpressionContext();
+        for (int i = 0; i < paramsArr.size(); i++) {
+            ctx.values.put(":p" + i, AttributeValue.fromJson(paramsArr.get(i)));
+        }
+        if (stmt instanceof PartiQlParser.Select sel) {
+            TableSchema schema = store.describeTable(sel.table());
+            KeyConditionParser kc = KeyConditionParser.parse(sel.whereExpr(), schema, ctx);
+            long start = System.nanoTime();
+            PgItemStore.PageResult page = store.query(schema, kc, ctx, null, null, null, true);
+            recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - start);
+            return new PartiQlResult(page.items());
+        }
+        if (stmt instanceof PartiQlParser.Insert ins) {
+            TableSchema schema = store.describeTable(ins.table());
+            Map<String, AttributeValue> item = resolvePartiQlItemValue(ins.valueToken(), ctx);
+            long start = System.nanoTime();
+            store.putItem(schema, item, null, ctx, false);
+            recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - start);
+            if (cache != null) cache.invalidate(cacheKeyFor(schema, item));
+            return new PartiQlResult(null);
+        }
+        if (stmt instanceof PartiQlParser.Update upd) {
+            TableSchema schema = store.describeTable(upd.table());
+            Map<String, AttributeValue> key = resolvePartiQlKey(schema, upd.keyTokens(), ctx);
+            long start = System.nanoTime();
+            store.updateItem(schema, key, "SET " + upd.setClause(), null, ctx);
+            recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - start);
+            if (cache != null) cache.invalidate(cacheKeyFor(schema, key));
+            return new PartiQlResult(null);
+        }
+        if (stmt instanceof PartiQlParser.Delete del) {
+            TableSchema schema = store.describeTable(del.table());
+            Map<String, AttributeValue> key = resolvePartiQlKey(schema, del.keyTokens(), ctx);
+            long start = System.nanoTime();
+            store.deleteItem(schema, key, null, ctx, false);
+            recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - start);
+            if (cache != null) cache.invalidate(cacheKeyFor(schema, key));
+            return new PartiQlResult(null);
+        }
+        throw new DynamoException("ValidationException", "Unsupported PartiQL statement");
+    }
+
+    /** Maps a WHERE clause's {attributeName -> valueToken} pairs onto the table's actual
+     * partition/sort key names -- PartiQlParser only knows syntax, not schema, so this is where a
+     * clause referencing something other than a real key column is caught. */
+    private Map<String, AttributeValue> resolvePartiQlKey(TableSchema schema, Map<String, String> keyTokens, ExpressionContext ctx) {
+        Map<String, AttributeValue> key = new LinkedHashMap<>();
+        String pkToken = keyTokens.get(schema.partitionKeyName());
+        if (pkToken == null) {
+            throw new DynamoException("ValidationException",
+                    "WHERE clause must include the partition key: " + schema.partitionKeyName());
+        }
+        key.put(schema.partitionKeyName(), resolvePartiQlTokenValue(pkToken, ctx));
+        if (schema.hasSortKey()) {
+            String skToken = keyTokens.get(schema.sortKeyName());
+            if (skToken == null) {
+                throw new DynamoException("ValidationException",
+                        "WHERE clause must include the sort key: " + schema.sortKeyName());
+            }
+            key.put(schema.sortKeyName(), resolvePartiQlTokenValue(skToken, ctx));
+        }
+        if (keyTokens.size() > (schema.hasSortKey() ? 2 : 1)) {
+            throw new DynamoException("ValidationException",
+                    "WHERE clause references an attribute that isn't a key column on this table");
+        }
+        return key;
+    }
+
+    /** {@code INSERT ... VALUE} is either a single {@code ?}/{@code :pN} parameter resolving to a
+     * whole item (an {@code AttributeValue.Type.M}, the overwhelmingly common real usage -- the
+     * AWS SDK itself has no API for constructing a literal PartiQL tuple string, only for binding
+     * a real Map as a parameter), or a literal {@code {'k': v, ...}} tuple for simple/manual use. */
+    private Map<String, AttributeValue> resolvePartiQlItemValue(String valueToken, ExpressionContext ctx) {
+        String t = valueToken.trim();
+        if (t.startsWith(":")) {
+            AttributeValue v = ctx.resolveValue(t);
+            if (v.type != AttributeValue.Type.M) {
+                throw new DynamoException("ValidationException", "INSERT ... VALUE parameter must be a map (a full item)");
+            }
+            return v.map;
+        }
+        if (t.startsWith("{") && t.endsWith("}")) {
+            Map<String, AttributeValue> item = new LinkedHashMap<>();
+            for (String pair : splitTopLevelPartiQl(t.substring(1, t.length() - 1))) {
+                int colon = pair.indexOf(':');
+                if (colon < 0) {
+                    throw new DynamoException("ValidationException", "Malformed INSERT VALUE tuple entry: " + pair);
+                }
+                String key = stripPartiQlQuotes(pair.substring(0, colon).trim());
+                item.put(key, resolvePartiQlTokenValue(pair.substring(colon + 1).trim(), ctx));
+            }
+            return item;
+        }
+        throw new DynamoException("ValidationException",
+                "INSERT ... VALUE must be a ? parameter (a full item map) or a literal {...} tuple, not: " + valueToken);
+    }
+
+    private static AttributeValue resolvePartiQlTokenValue(String token, ExpressionContext ctx) {
+        if (token.startsWith(":")) {
+            return ctx.resolveValue(token);
+        }
+        String t = token.trim();
+        if (t.equalsIgnoreCase("NULL")) return AttributeValue.ofNull();
+        if (t.equalsIgnoreCase("true") || t.equalsIgnoreCase("false")) return AttributeValue.ofBool(Boolean.parseBoolean(t));
+        if (t.length() >= 2 && t.startsWith("'") && t.endsWith("'")) {
+            return AttributeValue.ofS(t.substring(1, t.length() - 1).replace("''", "'"));
+        }
+        try {
+            new java.math.BigDecimal(t);
+            return AttributeValue.ofN(t);
+        } catch (NumberFormatException e) {
+            throw new DynamoException("ValidationException", "Could not interpret PartiQL literal: " + token);
+        }
+    }
+
+    private static java.util.List<String> splitTopLevelPartiQl(String s) {
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        boolean inStr = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\'') {
+                inStr = !inStr;
+            } else if (!inStr && (c == '{' || c == '[')) {
+                depth++;
+            } else if (!inStr && (c == '}' || c == ']')) {
+                depth--;
+            } else if (!inStr && depth == 0 && c == ',') {
+                parts.add(s.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.add(s.substring(start));
+        return parts;
+    }
+
+    private static String stripPartiQlQuotes(String s) {
+        if (s.length() >= 2 && ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith("\"") && s.endsWith("\"")))) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
     }
 
     private static String optString(JsonObject obj, String key) {
