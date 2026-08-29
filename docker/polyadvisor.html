@@ -73,6 +73,13 @@
         <li><span class="uc-body"><span class="uc-title">Connect a database</span><span class="uc-desc">A read-only connection profiles the real schema, feature usage, and query workload directly — no data leaves your database, only metadata and query statistics. Deterministic: run it twice, get the same score.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
       </ul>
+      <figure class="embedFigure">
+        <iframe class="embedFrame" src="demo-advisor.html?page=connections&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Connections" loading="lazy"></iframe>
+        <figcaption>
+          Live and click-through, not a screenshot — try adding, favoriting, or browsing a connection yourself.
+          <a class="embedOpenLink" href="demo-advisor.html?page=connections&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+        </figcaption>
+      </figure>
 
       <h3 class="subhead" id="what-you-get">What you get<a class="permalink" href="#what-you-get" aria-label="Link to this section">#</a></h3>
       <ul class="whatyouget">
@@ -83,6 +90,13 @@
         <li><span class="wg-body"><span class="wg-title">Postgres sizing recommendation</span><span class="wg-desc">vCPUs, memory, storage, and IOPS from a live connection's schema size and captured workload — or from an uploaded report's signals — with the caveats and the reasoning behind every number spelled out, not just the numbers themselves.</span></span></li>
         <li><span class="wg-body"><span class="wg-title">PL/SQL summarization (Oracle sources)</span><span class="wg-desc">An LLM explains what a package or procedure actually does in plain English, with an optional second-opinion "judge" model for a review pass — advisory only, layered on top of the rules-based score, never replacing it.</span></span></li>
       </ul>
+      <figure class="embedFigure">
+        <iframe class="embedFrame" src="demo-advisor.html?page=reports&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Reports" loading="lazy"></iframe>
+        <figcaption>
+          Uploaded-report management, live — analyzed/not-analyzed status per file, the same view either data path lands you on.
+          <a class="embedOpenLink" href="demo-advisor.html?page=reports&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+        </figcaption>
+      </figure>
       <p class="rttNote">
         <b>Where Polyadvisor is still early:</b> saved connection credentials are stored as-is
         today — encryption at rest is planned but not yet built, so treat this like any other tool
@@ -136,10 +150,25 @@
         <img src="docs/polyadvisor-sizing.png" alt="Polyadvisor's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
         <figcaption>Sizing recommendation for the same connection — a starting-point Postgres instance shape built from a fresh schema-size scan and workload capture, with the caveats and the line-by-line rationale behind every number shown alongside it, not hidden behind a tooltip.</figcaption>
       </figure>
-      <p class="lede" style="margin-top:24px">
-        Prefer to click through it yourself? <a href="demo-advisor.html" class="btn btn-primary">Open the interactive demo →</a>
-        No signup, no database required — synthetic data, real layout.
+      <p class="rttNote">
+        The two screenshots above are the real product against a real connection. The embed below
+        is the click-through demo — synthetic data standing in for a real connection, but the same
+        console, every page explorable, nothing left as a static picture.
       </p>
+      <figure class="embedFigure">
+        <iframe class="embedFrame" src="demo-advisor.html?page=sizing&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Sizing" loading="lazy"></iframe>
+        <figcaption>
+          Sizing, live — vCPUs, memory, storage, IOPS, and the reasoning behind each number.
+          <a class="embedOpenLink" href="demo-advisor.html?page=sizing&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+        </figcaption>
+      </figure>
+      <figure class="embedFigure">
+        <iframe class="embedFrame" src="demo-advisor.html" title="Live click-through demo: Polyadvisor, full console" loading="lazy"></iframe>
+        <figcaption>
+          The full console, starting from sign-in — every section above lives inside this one app.
+          <a class="embedOpenLink" href="demo-advisor.html" target="_blank" rel="noopener">Open full-screen →</a>
+        </figcaption>
+      </figure>
     </section>
 
     <footer>
