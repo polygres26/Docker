@@ -23,12 +23,12 @@ public final class MongoWireSessionHandler implements Runnable {
         this(clientSocket, pgUrl, pgUser, pgPassword, null, null);
     }
 
-    public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword, MongoCache cache) {
+    public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword, com.nexagres.wire.cluster.RowCache cache) {
         this(clientSocket, pgUrl, pgUser, pgPassword, cache, null);
     }
 
     public MongoWireSessionHandler(Socket clientSocket, String pgUrl, String pgUser, String pgPassword,
-            MongoCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(() -> openConnection(pgUrl, pgUser, pgPassword));
         this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
@@ -42,7 +42,7 @@ public final class MongoWireSessionHandler implements Runnable {
      * at the registry's default target -- see {@link PostgresDocumentStore}'s javadoc.
      */
     public MongoWireSessionHandler(Socket clientSocket, com.nexagres.wire.core.BackendRegistry backendRegistry,
-            MongoCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
+            com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(backendRegistry);
         this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
@@ -51,6 +51,14 @@ public final class MongoWireSessionHandler implements Runnable {
 
     private static Connection openConnection(String url, String user, String password) throws SQLException {
         return DriverManager.getConnection(url, user, password);
+    }
+
+    /** Lets {@code CacheStage} (in a different package, and {@code PostgresDocumentStore} itself
+     * is package-private) recognize a SQL statement's target table as a mongowire collection --
+     * delegates to the store's static registry, populated across every session as collections are
+     * created. */
+    public static boolean isKnownMongoTable(String physicalTableLower) {
+        return PostgresDocumentStore.isKnownPhysicalTable(physicalTableLower);
     }
 
     @Override

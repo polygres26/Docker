@@ -61,11 +61,32 @@ public final class CacheStage implements PipelineStage {
                     + "\\s+where\\s+pk_value\\s*=\\s*\\?(\\s+and\\s+sk_value\\s*=\\s*\\?)?\\s*;?\\s*$",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-    /** {@code null} return means "not a known row-cacheable table" -- dynamowire is the only
-     * implementation today (see Main's wiring), keyed by the PHYSICAL table name a SQL statement
-     * actually contains. Non-null means "yes, and here's whether it has a sort key" -- needed to
-     * tell a genuine single-row lookup (every key column pinned) from one that could still match
-     * more than one row (only the partition key pinned on a table that also has a sort key). */
+    // mongowire's own fixed physical shape is simpler than dynamowire's -- always exactly one key
+    // column ("id", holding the Mongo Extended-JSON form of _id) and one value column ("doc", the
+    // whole document as jsonb -- see PostgresDocumentStore's own DDL). No sort-key equivalent
+    // exists for Mongo documents, so unlike the dynamowire patterns above there's only ever one
+    // shape each for lookup and write.
+    //
+    // Unlike dynamowire's physical names (always a bare lowercase identifier), PostgresDocumentStore
+    // ALWAYS double-quotes both the schema and the table ("db"."collection", case-preserving) --
+    // see its own qualifiedTable()/quoteIdent() -- so each identifier part here must accept an
+    // optional pair of double quotes, unlike the dynamowire patterns' bare-identifier-only groups.
+    private static final String MONGO_IDENT = "\"?([A-Za-z_][\\w$]*)\"?";
+    private static final Pattern MONGO_ROW_LOOKUP = Pattern.compile(
+            "^\\s*select\\s+doc\\s+from\\s+" + MONGO_IDENT + "\\." + MONGO_IDENT
+                    + "\\s+where\\s+id\\s*=\\s*\\?\\s*;?\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern MONGO_ROW_WRITE = Pattern.compile(
+            "^\\s*(?:update\\s+" + MONGO_IDENT + "\\." + MONGO_IDENT + "\\s+set\\s+.+?"
+                    + "|delete\\s+from\\s+" + MONGO_IDENT + "\\." + MONGO_IDENT + ")"
+                    + "\\s+where\\s+id\\s*=\\s*\\?\\s*;?\\s*$",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /** {@code null} return means "not a known dynamowire-backed table", keyed by the PHYSICAL
+     * table name a SQL statement actually contains. Non-null means "yes, and here's whether it
+     * has a sort key" -- needed to tell a genuine single-row lookup (every key column pinned)
+     * from one that could still match more than one row (only the partition key pinned on a
+     * table that also has a sort key). */
     @FunctionalInterface
     public interface RowTableLookup {
         Boolean hasSortKey(String physicalTable);
@@ -94,14 +115,15 @@ public final class CacheStage implements PipelineStage {
     // hit" timing row unrecorded, same as before this feature existed.
     private volatile com.nexagres.wire.core.SqlMetricsCollector sqlMetrics;
 
-    // Both nullable, and both set post-construction by Main once RowCache and dynamowire's own
-    // PgItemStore exist (Main builds CacheStage before either) -- exactly the same
-    // set-after-the-fact pattern sqlMetrics above already uses. Either being null just means the
-    // SQL-side row-cache fast path is skipped entirely and every SELECT falls through to this
-    // stage's original, unaffected behavior -- there's no dynamowire-shaped-table detection
-    // possible without both.
+    // All nullable, and all set post-construction by Main once RowCache and each protocol's own
+    // table-lookup exist (Main builds CacheStage before either) -- exactly the same
+    // set-after-the-fact pattern sqlMetrics above already uses. rowCache being null disables the
+    // SQL-side row-cache fast path entirely; rowTableLookup/mongoTableLookup being null just
+    // means THAT protocol's table shape is never recognized -- either, both, or neither can be
+    // wired independently (e.g. dynamowire's row cache enabled, mongowire's disabled).
     private volatile RowCache rowCache;
     private volatile RowTableLookup rowTableLookup;
+    private volatile java.util.function.Predicate<String> mongoTableLookup;
 
     public CacheStage(PolyWireCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
         this.cluster = cluster;
@@ -206,64 +228,101 @@ public final class CacheStage implements PipelineStage {
         this.sqlMetrics = sqlMetrics;
     }
 
-    /** Called once from {@code Main} right after both RowCache and dynamowire's PgItemStore
-     * exist, wiring up the SQL-side half of the shared cross-protocol row cache. */
-    public void setRowCache(RowCache rowCache, RowTableLookup rowTableLookup) {
+    /** Called once from {@code Main} right after RowCache is constructed -- shared by both
+     * protocols' own table-lookup setters below. */
+    public void setRowCache(RowCache rowCache) {
         this.rowCache = rowCache;
+    }
+
+    /** Called once from {@code Main} right after dynamowire's PgItemStore exists, wiring up the
+     * SQL-side half of the shared cross-protocol row cache for dynamowire-backed tables. */
+    public void setDynamoRowTableLookup(RowTableLookup rowTableLookup) {
         this.rowTableLookup = rowTableLookup;
     }
 
+    /** As {@link #setDynamoRowTableLookup}, for mongowire-backed tables -- a simple predicate
+     * (not {@link RowTableLookup}) since a Mongo document's key is always just {@code _id}, no
+     * sort-key equivalent to report. */
+    public void setMongoRowTableLookup(java.util.function.Predicate<String> mongoTableLookup) {
+        this.mongoTableLookup = mongoTableLookup;
+    }
+
     /** @return {@code null} if {@code sql} isn't the exact single-table/primary-key-equality
-     *      SELECT shape this fast path recognizes, or if the target table isn't a known
-     *      row-cacheable (today: dynamowire-backed) table -- either way, the caller falls through
-     *      to this stage's original behavior untouched. Otherwise fully handles the statement
-     *      (cache hit, or a real execution that then populates the row cache) and returns the
-     *      result directly. */
+     *      SELECT shape either protocol's fast path recognizes, or if the target table isn't a
+     *      known row-cacheable table -- either way, the caller falls through to this stage's
+     *      original behavior untouched. Otherwise fully handles the statement (cache hit, or a
+     *      real execution that then populates the row cache) and returns the result directly. */
     private ExecutionResult tryRowCacheLookup(Statement statement, PipelineChain next) throws SQLException {
-        if (rowCache == null || rowTableLookup == null) {
+        if (rowCache == null) {
             return null;
         }
         String sql = statement.sqlText();
         List<Object> binds = statement.bindParams();
-        String table;
-        String pk;
-        String sk = null;
-        Matcher withSk = ROW_LOOKUP_WITH_SK.matcher(sql);
-        Matcher noSk = ROW_LOOKUP_NO_SK.matcher(sql);
-        if (withSk.matches()) {
-            table = normalizeTable(withSk.group(1));
-            Boolean hasSk = rowTableLookup.hasSortKey(table);
-            if (hasSk == null || !hasSk || binds == null || binds.size() < 2) {
-                return null;
+
+        if (rowTableLookup != null) {
+            Matcher withSk = ROW_LOOKUP_WITH_SK.matcher(sql);
+            Matcher noSk = ROW_LOOKUP_NO_SK.matcher(sql);
+            String table = null;
+            String pk = null;
+            String sk = null;
+            if (withSk.matches()) {
+                table = normalizeTable(withSk.group(1));
+                Boolean hasSk = rowTableLookup.hasSortKey(table);
+                if (hasSk != null && hasSk && binds != null && binds.size() >= 2) {
+                    pk = String.valueOf(binds.get(0));
+                    sk = String.valueOf(binds.get(1));
+                } else {
+                    table = null;
+                }
+            } else if (noSk.matches()) {
+                table = normalizeTable(noSk.group(1));
+                Boolean hasSk = rowTableLookup.hasSortKey(table);
+                // hasSk == true here means the table's real key is (pk, sk) together -- a WHERE
+                // clause pinning only pk_value could still match more than one row, so this is
+                // NOT a safe point lookup even though it's syntactically the same shape as one.
+                if (hasSk != null && !hasSk && binds != null && !binds.isEmpty()) {
+                    pk = String.valueOf(binds.get(0));
+                } else {
+                    table = null;
+                }
             }
-            pk = String.valueOf(binds.get(0));
-            sk = String.valueOf(binds.get(1));
-        } else if (noSk.matches()) {
-            table = normalizeTable(noSk.group(1));
-            Boolean hasSk = rowTableLookup.hasSortKey(table);
-            // hasSk == true here means the table's real key is (pk, sk) together -- a WHERE
-            // clause pinning only pk_value could still match more than one row, so this is NOT a
-            // safe point lookup even though it's syntactically the same shape as one that is.
-            if (hasSk == null || hasSk || binds == null || binds.isEmpty()) {
-                return null;
+            if (table != null) {
+                return lookupOrExecuteAndCache(RowCache.key(table, pk, sk), "item", statement, next);
             }
-            pk = String.valueOf(binds.get(0));
-        } else {
-            return null;
         }
-        String key = RowCache.key(table, pk, sk);
+
+        if (mongoTableLookup != null) {
+            Matcher m = MONGO_ROW_LOOKUP.matcher(sql);
+            if (m.matches()) {
+                String table = normalizeTable(m.group(1) + "." + m.group(2));
+                if (mongoTableLookup.test(table) && binds != null && !binds.isEmpty()) {
+                    return lookupOrExecuteAndCache(RowCache.key(table, String.valueOf(binds.get(0)), null), "doc", statement, next);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** Shared by both protocols' row-cache fast paths: a cache hit returns immediately (recorded
+     * as a real {@code cache_hit} RTT outcome under the CALLING statement's own protocol -- e.g.
+     * a pgwire SELECT hitting a row dynamowire populated shows up as a pgwire hit, not a
+     * dynamowire one); a miss executes for real and populates the cache from the single returned
+     * column's value, whatever that value's shape is for this table (dynamowire's typed item
+     * JSON, mongowire's document JSON) -- this method doesn't need to know or care which. */
+    private ExecutionResult lookupOrExecuteAndCache(String key, String valueColumnName, Statement statement, PipelineChain next) throws SQLException {
         long start = System.nanoTime();
-        String cachedJson = rowCache.get(key);
-        if (cachedJson != null) {
+        String cached = rowCache.get(key);
+        if (cached != null) {
             if (sqlMetrics != null) {
                 sqlMetrics.recordRttOutcome(
                         com.nexagres.wire.core.SqlMetricsCollector.protocolName(statement.sourceDialect()),
                         com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - start);
             }
             log.debug("row cache hit: {}", key);
-            com.nexagres.wire.core.ColumnInfo itemColumn =
-                    new com.nexagres.wire.core.ColumnInfo("item", java.sql.Types.VARCHAR, 0, 0, 0, false);
-            return ExecutionResult.ofQuery(List.of(itemColumn), List.of(List.of(cachedJson)));
+            com.nexagres.wire.core.ColumnInfo column =
+                    new com.nexagres.wire.core.ColumnInfo(valueColumnName, java.sql.Types.VARCHAR, 0, 0, 0, false);
+            return ExecutionResult.ofQuery(List.of(column), List.of(List.of(cached)));
         }
         ExecutionResult result = next.proceed(statement);
         if (result.isQuery() && result.rows().size() == 1) {
@@ -279,38 +338,48 @@ public final class CacheStage implements PipelineStage {
      * WHERE clause pins every one of a row-cacheable table's key columns (see {@code ROW_WRITE}'s
      * own comment above for why that's the only case it's safe to act on). */
     private void invalidateRowCacheForPointWrite(Statement statement) {
-        if (rowCache == null || rowTableLookup == null) {
+        if (rowCache == null) {
             return;
         }
-        Matcher m = ROW_WRITE.matcher(statement.sqlText());
-        if (!m.matches()) {
-            return;
-        }
-        String table = normalizeTable(m.group(1) != null ? m.group(1) : m.group(2));
-        Boolean hasSk = rowTableLookup.hasSortKey(table);
-        if (hasSk == null) {
-            return;
-        }
-        boolean suppliedSk = m.group(3) != null;
-        if (hasSk != suppliedSk) {
-            // Table has a sort key but this write only pinned the partition key (or vice versa,
-            // which the regex shouldn't even let happen) -- can't safely name one exact row.
-            return;
-        }
+        String sql = statement.sqlText();
         List<Object> binds = statement.bindParams();
-        int needed = suppliedSk ? 2 : 1;
-        if (binds == null || binds.size() < needed) {
-            return;
+
+        if (rowTableLookup != null) {
+            Matcher m = ROW_WRITE.matcher(sql);
+            if (m.matches()) {
+                String table = normalizeTable(m.group(1) != null ? m.group(1) : m.group(2));
+                Boolean hasSk = rowTableLookup.hasSortKey(table);
+                boolean suppliedSk = m.group(3) != null;
+                // Table has a sort key but this write only pinned the partition key (or vice
+                // versa, which the regex shouldn't even let happen) -- can't safely name one
+                // exact row, so hasSk must agree with what the WHERE clause actually supplied.
+                if (hasSk != null && hasSk == suppliedSk) {
+                    int needed = suppliedSk ? 2 : 1;
+                    if (binds != null && binds.size() >= needed) {
+                        // pk_value = ? [AND sk_value = ?] is pinned at the very end of the matched
+                        // SQL by ROW_WRITE's own anchor ($), so its bind(s) are always the LAST
+                        // one or two elements of bindParams -- NOT necessarily index 0/1. An
+                        // UPDATE's own SET clause can (and typically does) bind earlier values
+                        // first, e.g. "UPDATE t SET item = ? WHERE pk_value = ?" has bindParams =
+                        // [newItemJson, pk], not [pk, ...].
+                        String pk = String.valueOf(binds.get(binds.size() - needed));
+                        String sk = suppliedSk ? String.valueOf(binds.get(binds.size() - 1)) : null;
+                        rowCache.invalidate(RowCache.key(table, pk, sk));
+                        return;
+                    }
+                }
+            }
         }
-        // pk_value = ? [AND sk_value = ?] is pinned at the very end of the matched SQL by
-        // ROW_WRITE's own anchor ($), so its bind(s) are always the LAST one or two elements of
-        // bindParams -- NOT necessarily index 0/1. An UPDATE's own SET clause can (and typically
-        // does) bind earlier values first, e.g. "UPDATE t SET item = ? WHERE pk_value = ?" has
-        // bindParams = [newItemJson, pk], not [pk, ...]. Indexing from the end is correct for
-        // both UPDATE and DELETE regardless of how many binds a SET clause contributes.
-        String pk = String.valueOf(binds.get(binds.size() - needed));
-        String sk = suppliedSk ? String.valueOf(binds.get(binds.size() - 1)) : null;
-        rowCache.invalidate(RowCache.key(table, pk, sk));
+
+        if (mongoTableLookup != null) {
+            Matcher m = MONGO_ROW_WRITE.matcher(sql);
+            if (m.matches()) {
+                String table = normalizeTable(m.group(1) != null ? m.group(1) + "." + m.group(2) : m.group(3) + "." + m.group(4));
+                if (mongoTableLookup.test(table) && binds != null && !binds.isEmpty()) {
+                    rowCache.invalidate(RowCache.key(table, String.valueOf(binds.get(binds.size() - 1)), null));
+                }
+            }
+        }
     }
 
     private static byte[] serialize(ExecutionResult result) {

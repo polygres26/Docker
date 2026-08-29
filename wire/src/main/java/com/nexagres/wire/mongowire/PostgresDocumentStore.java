@@ -23,10 +23,10 @@ import org.slf4j.LoggerFactory;
  * Document storage for mongowire, backed by Postgres. Two modes, same shape as dynamowire's
  * {@code PgItemStore}:
  *
- * <p><b>Single-backend (legacy):</b> {@link #PostgresDocumentStore(ConnectionSupplier, MongoCache)}
+ * <p><b>Single-backend (legacy):</b> {@link #PostgresDocumentStore(ConnectionSupplier)}
  * -- one fixed connection supplier, exactly as before this class supported sharding at all.
  *
- * <p><b>Sharded:</b> {@link #PostgresDocumentStore(BackendRegistry, MongoCache)} routes by
+ * <p><b>Sharded:</b> {@link #PostgresDocumentStore(BackendRegistry)} routes by
  * hashing the document's {@code _id} across {@code backendRegistry.shardGroup()} -- read fresh on
  * every call (not captured once), so a config change takes effect immediately, no restart,
  * matching {@code PgItemStore}'s dynamowire sharding and {@code RouterStage}'s SQL sharding.
@@ -56,6 +56,26 @@ final class PostgresDocumentStore {
     private final BackendRegistry backendRegistry;
     private final ConcurrentHashMap<String, Boolean> ensuredTables = new ConcurrentHashMap<>();
     private volatile List<String> lastLoggedShardGroup = null;
+
+    // Reverse index (lowercased "db.collection" -> present), alongside ensuredTables' own
+    // per-backend DDL dedup -- lets CacheStage recognize "is this table a mongowire collection"
+    // from the bare table name a SQL FROM/WHERE clause actually contains, the same role
+    // PgItemStore.physicalTableIndex plays for dynamowire. Lowercased because Postgres folds an
+    // unquoted identifier to lowercase; a genuinely mixed-case collection name (quoted in
+    // Postgres to preserve case) won't match here and simply won't get the SQL-side cache
+    // fast path -- a missed optimization, not a correctness bug, same tradeoff CacheStage's own
+    // normalizeTable() already makes everywhere else.
+    //
+    // static, unlike ensuredTables above -- PostgresDocumentStore itself is constructed FRESH per
+    // client session (see MongoWireSessionHandler), so an instance-level set would never be
+    // visible to CacheStage's shared, cross-session, cross-protocol lookup.
+    private static final java.util.Set<String> knownPhysicalTables = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Nullable in spirit only -- returns false, never null, since "not sharing the row cache"
+     * and "not a known table" collapse to the same answer for CacheStage's purposes. */
+    static boolean isKnownPhysicalTable(String physicalTableLower) {
+        return knownPhysicalTables.contains(physicalTableLower);
+    }
 
     interface ConnectionSupplier {
         Connection get() throws SQLException;
@@ -155,6 +175,7 @@ final class PostgresDocumentStore {
      * against its primary, or a shard added to an existing group) never gets the table created on
      * it at all, and every write there would fail with "relation does not exist". */
     private void ensureTable(String db, String collection) throws SQLException {
+        knownPhysicalTables.add((db + "." + collection).toLowerCase(java.util.Locale.ROOT));
         for (Connection conn : allBackendConnections()) {
             try (conn) {
                 String key = db + "." + collection + "@" + conn.getMetaData().getURL();

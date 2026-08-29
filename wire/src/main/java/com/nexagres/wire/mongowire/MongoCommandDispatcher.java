@@ -19,14 +19,14 @@ final class MongoCommandDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
     private final PostgresDocumentStore store;
-    private final MongoCache cache;
+    private final com.nexagres.wire.cluster.RowCache cache;
     private final com.nexagres.wire.core.SqlMetricsCollector sqlMetrics;
 
-    MongoCommandDispatcher(PostgresDocumentStore store, MongoCache cache) {
+    MongoCommandDispatcher(PostgresDocumentStore store, com.nexagres.wire.cluster.RowCache cache) {
         this(store, cache, null);
     }
 
-    MongoCommandDispatcher(PostgresDocumentStore store, MongoCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
+    MongoCommandDispatcher(PostgresDocumentStore store, com.nexagres.wire.cluster.RowCache cache, com.nexagres.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.cache = cache;
         this.sqlMetrics = sqlMetrics;
@@ -235,19 +235,20 @@ final class MongoCommandDispatcher {
         
         String idJson = cache != null ? MongoQueryTranslator.exactIdEquality(filter) : null;
         if (idJson != null) {
-            String cacheKey = MongoCache.key(db, collection, idJson);
+            String physicalTable = db + "." + collection;
+            String cacheKey = com.nexagres.wire.cluster.RowCache.key(physicalTable, idJson, null);
             long cacheStart = System.nanoTime();
-            Document cached = cache.get(cacheKey);
-            if (cached != null) {
+            String cachedJson = cache.get(cacheKey);
+            if (cachedJson != null) {
                 log.debug("mongowire cache hit: {}", cacheKey);
                 recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - cacheStart);
-                docs = List.of(cached);
+                docs = List.of(BsonJson.fromJson(cachedJson));
             } else {
                 long readStart = System.nanoTime();
                 docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
                 recordRttOutcome(com.nexagres.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
                 if (!docs.isEmpty()) {
-                    cache.put(cacheKey, docs.get(0));
+                    cache.put(cacheKey, BsonJson.toJson(docs.get(0)));
                 }
             }
         } else {
@@ -287,7 +288,7 @@ final class MongoCommandDispatcher {
             modified += result.count();
             if (cache != null) {
                 for (String idJson : result.ids()) {
-                    cache.invalidate(MongoCache.key(db, collection, idJson));
+                    cache.invalidate(com.nexagres.wire.cluster.RowCache.key(db + "." + collection, idJson, null));
                 }
             }
         }
@@ -312,7 +313,7 @@ final class MongoCommandDispatcher {
             deleted += result.count();
             if (cache != null) {
                 for (String idJson : result.ids()) {
-                    cache.invalidate(MongoCache.key(db, collection, idJson));
+                    cache.invalidate(com.nexagres.wire.cluster.RowCache.key(db + "." + collection, idJson, null));
                 }
             }
         }

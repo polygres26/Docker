@@ -167,24 +167,34 @@ public final class Main {
             log.info("result cache disabled (set POLYWIRE_CACHE_TABLES to enable)");
         }
 
-        // Renamed from "dynamoCache": this is now the shared, cross-protocol RowCache (see its
-        // own javadoc) -- dynamowire's GetItem is still the only thing that populates/reads it
-        // directly, but CacheStage's own SQL-side row-cache fast path (wired below, once
-        // dynamoWireServer exists) shares this exact same instance, not a second cache.
-        com.nexagres.wire.cluster.RowCache dynamoCache = dynamoCacheEnabled
-                ? com.nexagres.wire.cluster.RowCache.create(cacheCluster, dynamoCacheTtlMs)
+        // One shared, cross-protocol RowCache (see its own javadoc) for BOTH dynamowire's GetItem
+        // and mongowire's exact-_id find -- previously two separate cache instances (DynamoCache/
+        // MongoCache), each invisible to the other and to SQL. Now a single Ignite cache region:
+        // dynamowire's PutItem/GetItem, mongowire's insertOne/find, and CacheStage's own SQL-side
+        // row-cache fast path (wired below, once each protocol's own table-lookup exists) all
+        // read/write the exact same entries for the same underlying row.
+        //
+        // Only one TTL now, not two: POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS wins when set (falling back
+        // to POLYWIRE_MONGOWIRE_CACHE_TTL_MS if only that one is), since they'd otherwise disagree
+        // about the TTL of entries in the one cache region they share -- a real, disclosed
+        // narrowing versus the old two-independent-TTLs behavior, not a silent one.
+        com.nexagres.wire.cluster.RowCache rowCache = (dynamoCacheEnabled || mongoCacheEnabled)
+                ? com.nexagres.wire.cluster.RowCache.create(cacheCluster,
+                        dynamoCacheTtlMs != null ? dynamoCacheTtlMs : mongoCacheTtlMs)
                 : null;
         log.info("dynamowire GetItem cache: {} (POLYWIRE_DYNAMOWIRE_CACHE_ENABLED, default on; "
                         + "exact-key GetItem only, not Query/Scan; shared with a matching SQL "
-                        + "SELECT-by-primary-key via pgwire/mywire/mssqlwire/orawire) ttlMs={}",
+                        + "SELECT-by-primary-key via pgwire/mywire/mssqlwire/orawire, and with "
+                        + "mongowire's own exact-_id find on the same underlying table) ttlMs={}",
                 dynamoCacheEnabled ? "enabled" : "disabled", dynamoCacheTtlMs == null ? "30000" : dynamoCacheTtlMs);
+        com.nexagres.wire.cluster.RowCache dynamoCache = dynamoCacheEnabled ? rowCache : null;
 
-        com.nexagres.wire.mongowire.MongoCache mongoCache = mongoCacheEnabled
-                ? com.nexagres.wire.mongowire.MongoCache.create(cacheCluster, mongoCacheTtlMs)
-                : null;
         log.info("mongowire find cache: {} (POLYWIRE_MONGOWIRE_CACHE_ENABLED, default on; "
-                        + "exact-_id find only, not filtered find) ttlMs={}",
+                        + "exact-_id find only, not filtered find; shared with a matching SQL "
+                        + "SELECT-by-id via pgwire/mywire/mssqlwire/orawire, and with dynamowire's "
+                        + "own GetItem on the same underlying table) ttlMs={}",
                 mongoCacheEnabled ? "enabled" : "disabled", mongoCacheTtlMs == null ? "30000" : mongoCacheTtlMs);
+        com.nexagres.wire.cluster.RowCache mongoCache = mongoCacheEnabled ? rowCache : null;
 
         String rollupYaml = config.rollupDefinitionsYaml();
         if (rollupYaml == null || rollupYaml.isBlank()) {
@@ -402,6 +412,15 @@ public final class Main {
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
         listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics, backendRegistry));
+        // Cross-protocol row-cache sharing, mongowire's half: unlike dynamowire's PgItemStore,
+        // PostgresDocumentStore's physical-table registry is a static field (it's constructed
+        // fresh per client session, so nothing else could be shared across sessions) -- so this
+        // can be wired immediately, with no server-instance handle to wait on.
+        if (cacheStage != null && mongoCache != null) {
+            cacheStage.setRowCache(mongoCache);
+            cacheStage.setMongoRowTableLookup(com.nexagres.wire.mongowire.MongoWireSessionHandler::isKnownMongoTable);
+            log.info("cross-protocol row cache: SQL SELECT-by-id against a mongowire collection now shares its cache entry");
+        }
         int boltWirePort = parseIntEnv("POLYWIRE_BOLTWIRE_PORT", 7687);
         listenerExecutor.submit(() -> acceptBoltWireLoop(boltWirePort, backendRegistry, sessionExecutor, connectionGate));
 
@@ -427,7 +446,8 @@ public final class Main {
             // pgwire/mywire/mssqlwire/orawire can now hit the exact same RowCache entry GetItem
             // populated, and vice versa. See CacheStage#tryRowCacheLookup's own javadoc.
             if (cacheStage != null && dynamoCache != null) {
-                cacheStage.setRowCache(dynamoCache, physicalTable -> {
+                cacheStage.setRowCache(dynamoCache);
+                cacheStage.setDynamoRowTableLookup(physicalTable -> {
                     com.nexagres.wire.dynamowire.TableSchema schema = dynamoWireServer.store().lookupByPhysicalTable(physicalTable);
                     return schema == null ? null : schema.hasSortKey();
                 });
@@ -659,7 +679,7 @@ public final class Main {
     }
 
     private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
-            com.nexagres.wire.mongowire.MongoCache mongoCache, com.nexagres.wire.acl.ConnectionGate connectionGate,
+            com.nexagres.wire.cluster.RowCache mongoCache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.core.SqlMetricsCollector sqlMetrics, BackendRegistry backendRegistry) {
         int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
