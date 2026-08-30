@@ -102,6 +102,33 @@ public final class RollupConfig {
         return number.intValue();
     }
 
+    /** The inverse of {@link #parse} -- serializes a full definition list back into the same
+     * {@code rollups:} YAML document shape, in list order. Exposed (not just used internally) so
+     * other admin-surface code that needs to rebuild this exact document -- e.g. {@code
+     * MetricsServer}'s rollup-suggestion draft endpoint, which merges one LLM-proposed definition
+     * into the REST of the current definitions unchanged -- shares this one serializer instead of
+     * a second, possibly-drifting copy of the YAML shape. Round-trips through {@link #parse}: the
+     * shape produced here is exactly what that method accepts. */
+    public static String toYaml(List<RollupDefinition> definitions) {
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        List<Object> rollups = new ArrayList<>();
+        for (RollupDefinition def : definitions) {
+            Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("name", def.name());
+            entry.put("backend", def.backendName());
+            entry.put("source_table", def.sourceTable());
+            entry.put("group_by", def.groupByColumns());
+            entry.put("aggregations", def.aggregations());
+            entry.put("refresh_interval_minutes", def.refreshIntervalMinutes());
+            entry.put("max_staleness_minutes", def.maxStalenessMinutes());
+            rollups.add(entry);
+        }
+        root.put("rollups", rollups);
+        var options = new org.yaml.snakeyaml.DumperOptions();
+        options.setDefaultFlowStyle(org.yaml.snakeyaml.DumperOptions.FlowStyle.BLOCK);
+        return new Yaml(options).dump(root);
+    }
+
     @SuppressWarnings("unchecked")
     private static List<String> stringList(Object node) {
         if (node == null) {

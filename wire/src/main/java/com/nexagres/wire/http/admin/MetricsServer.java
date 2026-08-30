@@ -438,6 +438,20 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && "/api/rollup-suggestions/draft".equals(target) && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleRollupSuggestionDraft(response, configStore, statsStage, dialectTranslationStage);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (federationPlanStore != null && "/api/federation/plans".equals(target)) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -962,6 +976,139 @@ public final class MetricsServer {
         responseBody.addProperty("applied", false);
         responseBody.addProperty("note", "This has NOT been applied. Review it, then PUT the "
                 + "*IfApplied field(s) above into the matching field(s) of /api/config to actually apply it.");
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseBody.toString());
+    }
+
+    /**
+     * Proposes ONE new {@code RollupStage} pre-aggregation definition via the LLM -- never writes
+     * to {@code polywire_config}. Validated by literally running the candidate through {@code
+     * RollupConfig.parse} (the real parser {@code Main}'s own config-reload path uses, not a
+     * second copy of its grammar), merged into the rest of the current definitions unchanged via
+     * {@code RollupConfig.toYaml}, and returned as {@code rollupDefinitionsYamlIfApplied} -- exactly
+     * what an admin pastes into {@code PUT /api/config}'s {@code rollupDefinitionsYaml} field to
+     * actually apply it. Same "LLM proposes, a human applies through the endpoint that already
+     * existed" shape {@link #handleFirewallRuleDraft}/{@link #handleQosSuggestionDraft} use.
+     */
+    private static void handleRollupSuggestionDraft(HttpServletResponse response, ConfigStore configStore,
+            StatsCollectorStage statsStage, com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage)
+            throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        com.nexagres.wire.core.TranslationLlmClient llmClient =
+                dialectTranslationStage == null ? null : dialectTranslationStage.llmClient();
+        if (llmClient == null) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
+                    + "or the POLYWIRE_LLM_* env vars before requesting rollup suggestions\"}");
+            return;
+        }
+
+        PolyWireConfig current;
+        java.util.List<com.nexagres.wire.rollup.RollupDefinition> existingRollups;
+        try {
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+            existingRollups = com.nexagres.wire.rollup.RollupConfig.parse(current.rollupDefinitionsYaml());
+        } catch (java.sql.SQLException e) {
+            log.warn("rollup-suggestion draft: could not read current config", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+            return;
+        } catch (IllegalArgumentException e) {
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":\"current rollupDefinitionsYaml does not parse: "
+                    + e.getMessage().replace("\"", "'") + "\"}");
+            return;
+        }
+
+        StringBuilder context = new StringBuilder();
+        context.append("Existing rollup definitions:\n");
+        if (existingRollups.isEmpty()) {
+            context.append("(none)\n");
+        } else {
+            for (var def : existingRollups) {
+                context.append("- ").append(def.name()).append(": ").append(def.definingSql()).append('\n');
+            }
+        }
+        context.append("Recent expensive/frequent SQL (normalized, calls, total ms):\n");
+        for (var s : statsStage.sqlMetricsSnapshot().topSql()) {
+            context.append("- ").append(s.normalizedSql()).append(" (").append(s.calls()).append(" calls, ")
+                    .append(s.totalMillis()).append("ms total)\n");
+        }
+
+        String rawLlmReply;
+        try {
+            rawLlmReply = llmClient.draftRollupSuggestion(context.toString());
+        } catch (Exception e) {
+            log.warn("rollup-suggestion draft: LLM call failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM request failed: " + jsonString(e.getMessage()) + "\"}");
+            return;
+        }
+
+        JsonObject draft;
+        try {
+            draft = JsonParser.parseString(rawLlmReply).getAsJsonObject();
+        } catch (RuntimeException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM did not return a valid JSON object\",\"raw\":"
+                    + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        if (!draft.has("name") || draft.get("name").isJsonNull()) {
+            response.setStatus(HttpServletResponse.SC_OK);
+            JsonObject nothing = new JsonObject();
+            nothing.addProperty("draft", (String) null);
+            nothing.addProperty("note", "the LLM found nothing in recent SQL worth pre-aggregating");
+            response.getWriter().write(nothing.toString());
+            return;
+        }
+
+        String candidateYaml;
+        try {
+            String name = draft.get("name").getAsString();
+            String backend = optionalString(draft, "backend");
+            if (backend == null) {
+                backend = "default";
+            }
+            String sourceTable = draft.has("sourceTable") ? draft.get("sourceTable").getAsString() : null;
+            var groupBy = new java.util.ArrayList<String>();
+            if (draft.has("groupBy") && draft.get("groupBy").isJsonArray()) {
+                draft.get("groupBy").getAsJsonArray().forEach(e -> groupBy.add(e.getAsString()));
+            }
+            var aggregations = new java.util.ArrayList<String>();
+            if (draft.has("aggregations") && draft.get("aggregations").isJsonArray()) {
+                draft.get("aggregations").getAsJsonArray().forEach(e -> aggregations.add(e.getAsString()));
+            }
+            int refreshMinutes = draft.has("refreshIntervalMinutes") ? draft.get("refreshIntervalMinutes").getAsInt() : 0;
+            int stalenessMinutes = draft.has("maxStalenessMinutes") ? draft.get("maxStalenessMinutes").getAsInt() : 0;
+
+            String candidateSingleYaml = com.nexagres.wire.rollup.RollupConfig.toYaml(java.util.List.of(
+                    new com.nexagres.wire.rollup.RollupDefinition(name, backend, sourceTable,
+                            groupBy, aggregations, refreshMinutes, stalenessMinutes)));
+            java.util.List<com.nexagres.wire.rollup.RollupDefinition> parsedNew =
+                    com.nexagres.wire.rollup.RollupConfig.parse(candidateSingleYaml);
+            var candidateList = new java.util.ArrayList<>(existingRollups);
+            candidateList.addAll(parsedNew);
+            candidateYaml = com.nexagres.wire.rollup.RollupConfig.toYaml(candidateList);
+        } catch (RuntimeException e) {
+            // Covers both a malformed draft (missing/wrong-typed field -> Gson exception) and a
+            // draft that's real JSON but fails RollupConfig's own grammar (bad name, bad
+            // aggregation expression shape, non-positive interval) -- IllegalArgumentException is
+            // exactly what RollupConfig.parse throws for the latter.
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM returned an invalid rollup definition: "
+                    + e.getMessage().replace("\"", "'") + "\",\"raw\":" + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        JsonObject responseBody = new JsonObject();
+        responseBody.add("draft", draft);
+        responseBody.addProperty("rollupDefinitionsYamlIfApplied", candidateYaml);
+        responseBody.addProperty("applied", false);
+        responseBody.addProperty("note", "This has NOT been applied. Review it, then PUT "
+                + "rollupDefinitionsYamlIfApplied's value into /api/config's rollupDefinitionsYaml field "
+                + "to actually apply it.");
         response.setStatus(HttpServletResponse.SC_OK);
         response.getWriter().write(responseBody.toString());
     }

@@ -164,6 +164,41 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Asks the LLM to propose ONE new {@code RollupStage} pre-aggregation definition, based on
+     * the existing definitions and recent expensive/frequent SQL given in {@code context}. The
+     * caller (MetricsServer's {@code /api/rollup-suggestions/draft} handler) validates the result
+     * by literally running it through {@code RollupConfig.parse} -- the real parser the runtime
+     * itself uses, not a second copy of its grammar -- and merges it into the rest of the current
+     * definitions unchanged before ever showing it to an admin, the same "small, reviewable, LLM
+     * proposes / human applies through the endpoint that already existed" shape every drafting
+     * feature in this series uses.
+     */
+    public String draftRollupSuggestion(String context) throws Exception {
+        String systemPrompt = "You are a database performance assistant. Given the existing rollup "
+                + "(pre-aggregation) definitions and recent expensive/frequent SQL below, look for a "
+                + "GROUP BY query shape that runs often enough or costs enough to be worth pre-aggregating, "
+                + "and propose ONE new rollup definition for it. Reply with a single JSON object with "
+                + "EXACTLY these fields and no others:\n"
+                + "{\n"
+                + "  \"name\": a plain identifier (letters/digits/underscore, not starting with a digit), "
+                + "not already used by an existing definition,\n"
+                + "  \"backend\": the backend name to run it against (use \"default\" unless the context "
+                + "names a specific one),\n"
+                + "  \"sourceTable\": the table the rollup aggregates,\n"
+                + "  \"groupBy\": a list of the GROUP BY expressions/columns,\n"
+                + "  \"aggregations\": a list of aggregation expressions, each EXACTLY in the form "
+                + "\"SUM|COUNT|AVG|MIN|MAX(expr) AS alias\",\n"
+                + "  \"refreshIntervalMinutes\": positive integer,\n"
+                + "  \"maxStalenessMinutes\": positive integer, at least refreshIntervalMinutes,\n"
+                + "  \"rationale\": a short plain-English sentence explaining why this rollup is worth it\n"
+                + "}\n"
+                + "If nothing in the given SQL is actually worth pre-aggregating, reply with exactly "
+                + "{\"name\": null} instead. Reply with ONLY that JSON object -- no explanation, no markdown "
+                + "code fences.";
+        return chatComplete(systemPrompt, context, "rollup-suggestion-draft");
+    }
+
+    /**
      * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
      * plain-English narrative of what an MCP client actually did against the database -- for an
      * admin who wants to know "what did this agent do in its last session" without reading raw
