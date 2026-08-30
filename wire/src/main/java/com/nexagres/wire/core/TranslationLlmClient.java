@@ -246,6 +246,23 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Turns a real table/column/foreign-key listing into a short plain-English data dictionary --
+     * pure narration of the actual schema, like {@link #narrateExplainPlan}: the caller ({@code
+     * PolyWireMcpServer}'s {@code document_schema} tool) always returns the real structured
+     * listing alongside this, and this method is told explicitly not to invent business meaning
+     * beyond what the names/types/foreign keys actually show.
+     */
+    public String documentSchema(String schemaContext) throws Exception {
+        String systemPrompt = "You are a database documentation assistant. Given the table/column list "
+                + "and foreign-key relationships below, write a short plain-English data dictionary -- "
+                + "1-2 sentences per table describing what it most likely represents and how it relates "
+                + "to other tables, based ONLY on what's actually in the schema (names, types, foreign "
+                + "keys). Don't invent business meaning you can't reasonably infer from that. Reply with "
+                + "ONLY the documentation, plain paragraphs, no markdown headers or code fences.";
+        return chatComplete(systemPrompt, schemaContext, "schema-documentation");
+    }
+
+    /**
      * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
      * plain-English narrative of what an MCP client actually did against the database -- for an
      * admin who wants to know "what did this agent do in its last session" without reading raw

@@ -213,6 +213,12 @@ public final class PolyWireMcpServer {
                         "table", stringSchema("Table name, optionally schema-qualified as schema.table"),
                         "schema", stringSchema("Schema name (default: public)")),
                         List.of("table"))));
+        tools.add(toolDef("document_schema",
+                "List every table/column in the database (excludes system schemas) and, when an LLM "
+                        + "provider is configured, generate a short plain-English data dictionary describing "
+                        + "what each table likely represents and how tables relate via foreign keys. The raw "
+                        + "table/column listing is always returned either way.",
+                objectSchema(Map.of(), List.of())));
         tools.add(toolDef("explain_query",
                 "Get a real Postgres EXPLAIN plan for a read-only SQL SELECT, plus a short plain-English "
                         + "narration of what the plan does (sequential scans, missing indexes, expensive "
@@ -291,6 +297,11 @@ public final class PolyWireMcpServer {
             } else if ("explain_query".equals(toolName)) {
                 boolean analyze = arguments.has("analyze") && "true".equalsIgnoreCase(arguments.get("analyze").getAsString());
                 ResultWithNote outcome = runExplainQuery(backend, requireString(arguments, "sql"), analyze, accessContext);
+                isError = !outcome.result().success();
+                errorMessage = outcome.result().error();
+                writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
+            } else if ("document_schema".equals(toolName)) {
+                ResultWithNote outcome = runDocumentSchema(backend, accessContext);
                 isError = !outcome.result().success();
                 errorMessage = outcome.result().error();
                 writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
@@ -424,6 +435,39 @@ public final class PolyWireMcpServer {
     }
 
     /**
+     * Lists every table/column (a real, executed, firewall/QoS/stats-covered SQL statement via
+     * {@link #runSql}, not a bypass) and, when an LLM is configured, has it generate a short
+     * plain-English data dictionary on top -- pure narration of the real schema, same "always
+     * return the real fact, LLM commentary is purely additive" shape {@link #runExplainQuery}
+     * uses. The narrative is built from a richer context than the returned {@code Result} alone
+     * (adds foreign-key relationships via {@link #introspectForeignKeys}, gathered the same
+     * non-pipeline "just context" way {@link #introspectSchemaContext} already does) since
+     * describing how tables relate needs that, not just their own columns.
+     */
+    private ResultWithNote runDocumentSchema(Connection backend, com.nexagres.wire.core.AccessContext accessContext) {
+        AdHocQueryRunner.Result result = runSql(backend,
+                "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns "
+                        + "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+                        + "ORDER BY table_schema, table_name, ordinal_position", accessContext);
+        if (!result.success()) {
+            return new ResultWithNote(result, null);
+        }
+        com.nexagres.wire.core.TranslationLlmClient llmClient = llmClientSupplier == null ? null : llmClientSupplier.get();
+        if (llmClient == null) {
+            return new ResultWithNote(result, null);
+        }
+        String schemaContext = introspectSchemaContext(backend) + "\n\n" + introspectForeignKeys(backend);
+        try {
+            String documentation = llmClient.documentSchema(schemaContext);
+            return new ResultWithNote(result, documentation);
+        } catch (Exception e) {
+            log.warn("document_schema: LLM documentation failed ({}) -- returning the raw table/column listing only",
+                    e.getMessage());
+            return new ResultWithNote(result, null);
+        }
+    }
+
+    /**
      * {@code EXPLAIN (FORMAT JSON[, ANALYZE, BUFFERS]) <sql>}, run through the same {@link
      * AdHocQueryRunner#run} pipeline every other tool uses (firewall, QoS, translation, stats --
      * not a bypass), then optionally narrated by the LLM. The safest tool in this series: pure
@@ -495,6 +539,43 @@ public final class PolyWireMcpServer {
             return "(schema introspection failed: " + e.getMessage() + ")";
         }
         return sb.length() == 0 ? "(no user tables found)" : sb.toString();
+    }
+
+    /** Real foreign-key relationships -- what {@link #introspectSchemaContext} can't show (each
+     * table's own columns say nothing about how tables relate to EACH OTHER), and the specific
+     * thing {@code document_schema}'s narrative most needs beyond a bare column list. Capped at
+     * 200 for the same "a schema this wide has bigger problems than a truncated summary" reasoning
+     * {@link #introspectSchemaContext}'s own 400-column cap uses. */
+    private static String introspectForeignKeys(Connection backend) {
+        StringBuilder sb = new StringBuilder();
+        try (var st = backend.createStatement();
+                var rs = st.executeQuery(
+                        "SELECT tc.table_schema, tc.table_name, kcu.column_name, "
+                                + "ccu.table_schema, ccu.table_name, ccu.column_name "
+                                + "FROM information_schema.table_constraints tc "
+                                + "JOIN information_schema.key_column_usage kcu "
+                                + "  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+                                + "JOIN information_schema.constraint_column_usage ccu "
+                                + "  ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
+                                + "WHERE tc.constraint_type = 'FOREIGN KEY' "
+                                + "  AND tc.table_schema NOT IN ('pg_catalog', 'information_schema') "
+                                + "ORDER BY tc.table_schema, tc.table_name LIMIT 200")) {
+            sb.append("Foreign keys:\n");
+            boolean any = false;
+            while (rs.next()) {
+                any = true;
+                sb.append(rs.getString(1)).append('.').append(rs.getString(2)).append('.').append(rs.getString(3))
+                        .append(" -> ").append(rs.getString(4)).append('.').append(rs.getString(5)).append('.')
+                        .append(rs.getString(6)).append('\n');
+            }
+            if (!any) {
+                sb.append("(none)\n");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("document_schema: foreign-key introspection failed ({}) -- documenting without them", e.getMessage());
+            return "Foreign keys: (introspection failed: " + e.getMessage() + ")";
+        }
+        return sb.toString();
     }
 
     /** Deterministic, not LLM-decided -- see {@link #runNaturalLanguageQuery}'s own javadoc for
