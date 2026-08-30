@@ -90,6 +90,15 @@
       <artifactId>mysql-binlog-connector-java</artifactId>
       <version>0.29.2</version>
     </dependency>
+    <!-- Matches wire/pom.xml's own mssql-jdbc version exactly, same lockstep reasoning as
+         mysql-connector-j above. SQL Server's own Change Data Capture feature (cdc.fn_cdc_get_all_changes_*,
+         sys.fn_cdc_get_max_lsn/increment_lsn) is queried through plain JDBC; no separate CDC
+         client library needed, unlike MySQL's binlog or MongoDB's change streams. -->
+    <dependency>
+      <groupId>com.microsoft.sqlserver</groupId>
+      <artifactId>mssql-jdbc</artifactId>
+      <version>12.8.1.jre11</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
