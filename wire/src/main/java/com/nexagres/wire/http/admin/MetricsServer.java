@@ -452,6 +452,21 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && backendRegistry != null && "/api/router-suggestions/draft".equals(target)
+                        && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleRouterSuggestionDraft(response, configStore, statsStage, dialectTranslationStage, backendRegistry);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (federationPlanStore != null && "/api/federation/plans".equals(target)) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -1109,6 +1124,150 @@ public final class MetricsServer {
         responseBody.addProperty("note", "This has NOT been applied. Review it, then PUT "
                 + "rollupDefinitionsYamlIfApplied's value into /api/config's rollupDefinitionsYaml field "
                 + "to actually apply it.");
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseBody.toString());
+    }
+
+    /**
+     * Proposes ONE new per-table hash-sharding rule via the LLM -- never writes to {@code
+     * polywire_config}. Never proposes a backend that isn't real: the LLM is given exactly the
+     * currently-configured backend names as context, and the draft is rejected outright if it
+     * names anything else -- an LLM can hallucinate a plausible-sounding backend name even when
+     * told the real list, so this is checked in code, not trusted from the prompt alone. The
+     * response's {@code routerTableShardsIfApplied} field is exactly what an admin pastes into
+     * the existing {@code PUT /api/config}'s {@code routerTableShards} field to actually apply it,
+     * same shape every other drafting feature in this series uses.
+     */
+    private static void handleRouterSuggestionDraft(HttpServletResponse response, ConfigStore configStore,
+            StatsCollectorStage statsStage, com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage,
+            com.nexagres.wire.core.BackendRegistry backendRegistry) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        com.nexagres.wire.core.TranslationLlmClient llmClient =
+                dialectTranslationStage == null ? null : dialectTranslationStage.llmClient();
+        if (llmClient == null) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
+                    + "or the POLYWIRE_LLM_* env vars before requesting router/sharding suggestions\"}");
+            return;
+        }
+
+        PolyWireConfig current;
+        try {
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+        } catch (java.sql.SQLException e) {
+            log.warn("router-suggestion draft: could not read current config", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+            return;
+        }
+
+        java.util.Set<String> configuredBackends = new java.util.LinkedHashSet<>();
+        for (var target : backendRegistry.all()) {
+            configuredBackends.add(target.name());
+        }
+
+        StringBuilder context = new StringBuilder();
+        context.append("Configured backends: ").append(String.join(", ", configuredBackends)).append('\n');
+        context.append("Current routerTableShards rules (table:strategy:column:backends): ")
+                .append(current.routerTableShards() == null || current.routerTableShards().isBlank()
+                        ? "(none)" : current.routerTableShards())
+                .append('\n');
+        context.append("Recent load by backend (calls, reads, writes, avg execution ms):\n");
+        for (var b : statsStage.sqlMetricsSnapshot().byBackend()) {
+            context.append("- ").append(b.backend()).append(": ").append(b.calls()).append(" calls, ")
+                    .append(b.reads()).append(" reads, ").append(b.writes()).append(" writes, avg ")
+                    .append(b.avgMillis()).append("ms\n");
+        }
+
+        String rawLlmReply;
+        try {
+            rawLlmReply = llmClient.draftTableShardSuggestion(context.toString());
+        } catch (Exception e) {
+            log.warn("router-suggestion draft: LLM call failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM request failed: " + jsonString(e.getMessage()) + "\"}");
+            return;
+        }
+
+        JsonObject draft;
+        try {
+            draft = JsonParser.parseString(rawLlmReply).getAsJsonObject();
+        } catch (RuntimeException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM did not return a valid JSON object\",\"raw\":"
+                    + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        if (!draft.has("table") || draft.get("table").isJsonNull()) {
+            response.setStatus(HttpServletResponse.SC_OK);
+            JsonObject nothing = new JsonObject();
+            nothing.addProperty("draft", (String) null);
+            nothing.addProperty("note", "the LLM found nothing in recent load worth sharding");
+            response.getWriter().write(nothing.toString());
+            return;
+        }
+
+        String table = optionalString(draft, "table");
+        String shardColumn = optionalString(draft, "shardColumn");
+        java.util.List<String> backends = new java.util.ArrayList<>();
+        if (draft.has("backends") && draft.get("backends").isJsonArray()) {
+            draft.get("backends").getAsJsonArray().forEach(e -> backends.add(e.getAsString()));
+        }
+        // Grammar delimiters this entry will be embedded in -- table:strategy:column:backend,backend
+        // pipe-separated from any other entry -- so none of these three fields can contain them
+        // without corrupting every OTHER rule in the same spec, not just this new one.
+        String grammarChars = "|:;";
+        boolean tableOk = table != null && !table.isBlank() && table.chars().noneMatch(c -> grammarChars.indexOf(c) >= 0);
+        boolean columnOk = shardColumn != null && !shardColumn.isBlank()
+                && shardColumn.chars().noneMatch(c -> grammarChars.indexOf(c) >= 0);
+        boolean backendsOk = backends.size() >= 2 && backends.stream()
+                .allMatch(b -> b != null && !b.isBlank() && configuredBackends.contains(b) && b.chars().noneMatch(c -> grammarChars.indexOf(c) >= 0));
+        if (!tableOk || !columnOk || !backendsOk) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM returned an invalid sharding proposal -- table/"
+                    + "shardColumn must be non-blank and free of ':'/'|'/';' , and backends must be 2 or "
+                    + "more names from the real configured list (" + String.join(", ", configuredBackends)
+                    + ")\",\"raw\":" + jsonString(rawLlmReply) + "}");
+            return;
+        }
+        String existingSpec = current.routerTableShards();
+        if (existingSpec != null && !existingSpec.isBlank()) {
+            for (String entry : existingSpec.split("\\|")) {
+                String existingTable = entry.split(":", 2)[0].trim();
+                if (existingTable.equalsIgnoreCase(table)) {
+                    response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+                    response.getWriter().write("{\"error\":\"table \\\"" + table.replace("\"", "'")
+                            + "\\\" already has a routerTableShards rule -- refusing to propose a duplicate\"}");
+                    return;
+                }
+            }
+        }
+
+        String newEntry = table + ":hash:" + shardColumn + ":" + String.join(",", backends);
+        String candidateSpec = existingSpec == null || existingSpec.isBlank() ? newEntry : existingSpec + "|" + newEntry;
+        // Real end-to-end confirmation using the actual runtime parser -- RouterStage's own
+        // tableShardSpec parsing silently DROPS a malformed entry rather than throwing (unlike
+        // RollupConfig.parse), so the only reliable check is confirming the parsed rule count
+        // actually grew by exactly one, not assuming our own deterministic checks above were
+        // the only way this could go wrong.
+        int expectedCount = (existingSpec == null || existingSpec.isBlank() ? 0 : existingSpec.split("\\|").length) + 1;
+        int actualCount = com.nexagres.wire.core.RouterStage.fromConfig(null, null, null, null, candidateSpec, backendRegistry)
+                .tableShardRules().size();
+        if (actualCount != expectedCount) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"the candidate routerTableShards entry failed to parse "
+                    + "correctly -- refusing to propose it\",\"raw\":" + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        JsonObject responseBody = new JsonObject();
+        responseBody.add("draft", draft);
+        responseBody.addProperty("routerTableShardsIfApplied", candidateSpec);
+        responseBody.addProperty("applied", false);
+        responseBody.addProperty("note", "This has NOT been applied. Review it, then PUT "
+                + "routerTableShardsIfApplied's value into /api/config's routerTableShards field to "
+                + "actually apply it.");
         response.setStatus(HttpServletResponse.SC_OK);
         response.getWriter().write(responseBody.toString());
     }

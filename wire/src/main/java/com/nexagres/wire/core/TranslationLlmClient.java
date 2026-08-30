@@ -199,6 +199,36 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Asks the LLM to propose ONE new per-table hash-sharding rule ({@code
+     * RouterStage.TableShardRule}), based on recent per-backend load and the list of currently
+     * configured backends given in {@code context}. Deliberately restricted to the {@code hash}
+     * sharding strategy only, the simplest and most common case -- the caller (MetricsServer's
+     * {@code /api/router-suggestions/draft} handler) validates the proposed backends are real,
+     * currently-configured names (an LLM cannot know a backend exists that isn't in the context
+     * it was given, but it CAN hallucinate a plausible-sounding one anyway) before ever showing
+     * the draft to an admin.
+     */
+    public String draftTableShardSuggestion(String context) throws Exception {
+        String systemPrompt = "You are a database sharding assistant. Given the list of currently "
+                + "configured backends and recent per-backend load below, look for a table that would "
+                + "benefit from being horizontally sharded (hashed) across multiple backends -- for "
+                + "example because one backend is carrying disproportionate load. Propose ONE such "
+                + "table, restricted to hash sharding only. Reply with a single JSON object with EXACTLY "
+                + "these fields and no others:\n"
+                + "{\n"
+                + "  \"table\": the table name to shard,\n"
+                + "  \"shardColumn\": the column to hash on (e.g. a tenant or customer id),\n"
+                + "  \"backends\": a list of 2 or more backend names, from EXACTLY the configured list "
+                + "given below, to spread this table's rows across,\n"
+                + "  \"rationale\": a short plain-English sentence explaining why\n"
+                + "}\n"
+                + "If nothing in the given load data actually justifies sharding a table right now, reply "
+                + "with exactly {\"table\": null} instead. Reply with ONLY that JSON object -- no "
+                + "explanation, no markdown code fences.";
+        return chatComplete(systemPrompt, context, "router-suggestion-draft");
+    }
+
+    /**
      * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
      * plain-English narrative of what an MCP client actually did against the database -- for an
      * admin who wants to know "what did this agent do in its last session" without reading raw
