@@ -99,6 +99,15 @@
       <artifactId>mssql-jdbc</artifactId>
       <version>12.8.1.jre11</version>
     </dependency>
+    <!-- Matches wire/pom.xml's own ojdbc11 version exactly, same lockstep reasoning as the other
+         vendor drivers above. Oracle's own LogMiner feature (DBMS_LOGMNR.START_LOGMNR/END_LOGMNR,
+         V$LOGMNR_CONTENTS) is queried through plain JDBC; no separate CDC client library needed,
+         same as SQL Server CDC. -->
+    <dependency>
+      <groupId>com.oracle.database.jdbc</groupId>
+      <artifactId>ojdbc11</artifactId>
+      <version>23.8.0.25.04</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
