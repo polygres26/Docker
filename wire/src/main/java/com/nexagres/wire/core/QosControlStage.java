@@ -54,6 +54,22 @@ public final class QosControlStage implements PipelineStage {
         long maxWait = maxWaitEnv == null || maxWaitEnv.isBlank() ? 0 : Long.parseLong(maxWaitEnv);
         ClassLimit defaultLimit = new ClassLimit(rate, burst, maxWait);
 
+        Map<String, ClassLimit> classLimits = parseClassLimitsSpec(classLimitsSpec, maxWait);
+
+        long poolWaitThreshold = poolWaitThresholdEnv == null || poolWaitThresholdEnv.isBlank()
+                ? -1 : Long.parseLong(poolWaitThresholdEnv);
+
+        return new QosControlStage(defaultLimit, classLimits, poolWaitThreshold, telemetry, clusterSizeSupplier);
+    }
+
+    /** {@code "class:rate:burst[:maxWait]"} entries, comma-separated -- the same grammar {@code
+     * POLYWIRE_QOS_CLASS_LIMITS}/{@code polywire_config.qos_class_limits} has always used.
+     * Exposed (not just inlined into {@link #fromConfig}) so other admin-surface code that needs
+     * to read or rebuild this exact string -- e.g. {@code MetricsServer}'s QoS-tuning-suggestion
+     * draft endpoint, which merges one proposed class change into the rest of the current spec
+     * unchanged -- shares this one parser instead of a second, possibly-drifting copy of the
+     * grammar. */
+    public static Map<String, ClassLimit> parseClassLimitsSpec(String classLimitsSpec, long defaultMaxWait) {
         Map<String, ClassLimit> classLimits = new HashMap<>();
         if (classLimitsSpec != null && !classLimitsSpec.isBlank()) {
             for (String entry : classLimitsSpec.split(",")) {
@@ -61,16 +77,27 @@ public final class QosControlStage implements PipelineStage {
                 if (parts.length >= 3) {
                     double classRate = Double.parseDouble(parts[1].trim());
                     double classBurst = Double.parseDouble(parts[2].trim());
-                    long classMaxWait = parts.length >= 4 ? Long.parseLong(parts[3].trim()) : maxWait;
+                    long classMaxWait = parts.length >= 4 ? Long.parseLong(parts[3].trim()) : defaultMaxWait;
                     classLimits.put(parts[0].trim(), new ClassLimit(classRate, classBurst, classMaxWait));
                 }
             }
         }
+        return classLimits;
+    }
 
-        long poolWaitThreshold = poolWaitThresholdEnv == null || poolWaitThresholdEnv.isBlank()
-                ? -1 : Long.parseLong(poolWaitThresholdEnv);
-
-        return new QosControlStage(defaultLimit, classLimits, poolWaitThreshold, telemetry, clusterSizeSupplier);
+    /** The inverse of {@link #parseClassLimitsSpec} -- rebuilds the {@code
+     * "class:rate:burst:maxWait"} spec string from a limits map, in insertion order. */
+    public static String formatClassLimitsSpec(Map<String, ClassLimit> classLimits) {
+        StringBuilder spec = new StringBuilder();
+        for (var entry : classLimits.entrySet()) {
+            if (spec.length() > 0) {
+                spec.append(',');
+            }
+            ClassLimit limit = entry.getValue();
+            spec.append(entry.getKey()).append(':').append(limit.ratePerSecond()).append(':')
+                    .append(limit.burstCapacity()).append(':').append(limit.maxWaitMillis());
+        }
+        return spec.toString();
     }
 
     @Override

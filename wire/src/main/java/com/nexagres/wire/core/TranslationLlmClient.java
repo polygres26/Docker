@@ -151,6 +151,33 @@ public final class TranslationLlmClient {
         return chatComplete(systemPrompt, context.toString(), "anomaly-summary");
     }
 
+    /**
+     * Asks the LLM to propose ONE targeted QoS rate-limit change (the "default" limit or a single
+     * workload class), based only on the current config and recent backend load given in {@code
+     * context}. Deliberately scoped to one class per call, the same "small, reviewable blast
+     * radius" reasoning {@link #draftFirewallRule} uses -- the caller (MetricsServer's
+     * {@code /api/qos-suggestions/draft} handler) merges the single proposed change into the
+     * REST of the current {@code qosClassLimits} config unchanged and returns that as the draft,
+     * never applying anything itself.
+     */
+    public String draftQosTuning(String context) throws Exception {
+        String systemPrompt = "You are a database QoS tuning assistant. Given the current QoS "
+                + "configuration and recent backend load below, propose ONE targeted rate-limit change "
+                + "-- either the \"default\" limit or a single existing (or, if clearly warranted, new) "
+                + "workload class -- that would plausibly improve throughput or reduce contention, based "
+                + "ONLY on the data given. Reply with a single JSON object with EXACTLY these fields and "
+                + "no others:\n"
+                + "{\n"
+                + "  \"target\": \"default\" or a workload class name,\n"
+                + "  \"ratePerSecond\": number,\n"
+                + "  \"burstCapacity\": number,\n"
+                + "  \"maxWaitMillis\": integer, 0 or greater,\n"
+                + "  \"rationale\": a short plain-English sentence explaining why\n"
+                + "}\n"
+                + "Reply with ONLY that JSON object -- no explanation, no markdown code fences.";
+        return chatComplete(systemPrompt, context, "qos-tuning-draft");
+    }
+
     private String chatComplete(String systemPrompt, String userContent, String purpose) throws Exception {
         JsonObject systemMessage = new JsonObject();
         systemMessage.addProperty("role", "system");

@@ -424,6 +424,20 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && "/api/qos-suggestions/draft".equals(target) && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleQosSuggestionDraft(response, configStore, statsStage, dialectTranslationStage);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (federationPlanStore != null && "/api/federation/plans".equals(target)) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -818,6 +832,122 @@ public final class MetricsServer {
         responseBody.addProperty("applied", false);
         responseBody.addProperty("note", "This rule has NOT been created. Review it, edit any field if "
                 + "needed, then POST it to /api/firewall-rules to actually add it.");
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseBody.toString());
+    }
+
+    /**
+     * Proposes ONE targeted QoS rate-limit change via the LLM -- never writes to {@code
+     * polywire_config}. The response's {@code qosClassLimitsIfApplied}/{@code
+     * qosRatePerSecIfApplied} etc. fields are exactly what an admin would paste into a
+     * {@code PUT /api/config} body to actually apply it -- that existing, already-authorized
+     * endpoint is the only write path, same "LLM proposes structured data, a human applies it
+     * through the endpoint that already existed" shape {@link #handleFirewallRuleDraft} uses.
+     *
+     * <p>Context given to the LLM is per-BACKEND load ({@code StatsCollectorStage}'s own
+     * snapshot) -- there is no per-workload-CLASS throughput tracked anywhere in this codebase
+     * today (QoS buckets key on workload class, but {@code SqlMetricsCollector} never has), so a
+     * suggestion here is necessarily backend-level evidence applied to a class-level knob, not a
+     * precise class-level measurement. Disclosed in the prompt itself, not hidden.
+     */
+    private static void handleQosSuggestionDraft(HttpServletResponse response, ConfigStore configStore,
+            StatsCollectorStage statsStage, com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage)
+            throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        com.nexagres.wire.core.TranslationLlmClient llmClient =
+                dialectTranslationStage == null ? null : dialectTranslationStage.llmClient();
+        if (llmClient == null) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
+                    + "or the POLYWIRE_LLM_* env vars before requesting QoS tuning suggestions\"}");
+            return;
+        }
+
+        PolyWireConfig current;
+        try {
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+        } catch (java.sql.SQLException e) {
+            log.warn("qos-suggestion draft: could not read current config", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+            return;
+        }
+
+        StringBuilder context = new StringBuilder();
+        context.append("Current default limit: ratePerSecond=").append(current.qosRatePerSec())
+                .append(", burstCapacity=").append(current.qosBurst())
+                .append(", maxWaitMillis=").append(current.qosMaxWaitMs()).append('\n');
+        context.append("Current per-class limits (class:rate:burst:maxWait): ")
+                .append(current.qosClassLimits() == null || current.qosClassLimits().isBlank() ? "(none)" : current.qosClassLimits())
+                .append('\n');
+        context.append("Pool wait threshold (threads awaiting a connection before treating a backend as "
+                + "saturated): ").append(current.qosPoolWaitThreshold() == null ? "(disabled)" : current.qosPoolWaitThreshold()).append('\n');
+        context.append("Recent load by backend (calls, reads, writes, avg execution ms):\n");
+        for (var b : statsStage.sqlMetricsSnapshot().byBackend()) {
+            context.append("- ").append(b.backend()).append(": ").append(b.calls()).append(" calls, ")
+                    .append(b.reads()).append(" reads, ").append(b.writes()).append(" writes, avg ")
+                    .append(b.avgMillis()).append("ms\n");
+        }
+
+        String rawLlmReply;
+        try {
+            rawLlmReply = llmClient.draftQosTuning(context.toString());
+        } catch (Exception e) {
+            log.warn("qos-suggestion draft: LLM call failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM request failed: " + jsonString(e.getMessage()) + "\"}");
+            return;
+        }
+
+        JsonObject draft;
+        try {
+            draft = JsonParser.parseString(rawLlmReply).getAsJsonObject();
+        } catch (RuntimeException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM did not return a valid JSON object\",\"raw\":"
+                    + jsonString(rawLlmReply) + "}");
+            return;
+        }
+
+        String target = optionalString(draft, "target");
+        Double ratePerSecond = draft.has("ratePerSecond") && draft.get("ratePerSecond").isJsonPrimitive()
+                && draft.get("ratePerSecond").getAsJsonPrimitive().isNumber() ? draft.get("ratePerSecond").getAsDouble() : null;
+        Double burstCapacity = draft.has("burstCapacity") && draft.get("burstCapacity").isJsonPrimitive()
+                && draft.get("burstCapacity").getAsJsonPrimitive().isNumber() ? draft.get("burstCapacity").getAsDouble() : null;
+        Long maxWaitMillis = draft.has("maxWaitMillis") && draft.get("maxWaitMillis").isJsonPrimitive()
+                && draft.get("maxWaitMillis").getAsJsonPrimitive().isNumber() ? draft.get("maxWaitMillis").getAsLong() : null;
+        if (target == null || target.isBlank() || ratePerSecond == null || ratePerSecond <= 0
+                || burstCapacity == null || burstCapacity <= 0 || maxWaitMillis == null || maxWaitMillis < 0) {
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM returned an incomplete or invalid tuning proposal "
+                    + "(target/ratePerSecond/burstCapacity/maxWaitMillis)\",\"raw\":" + jsonString(rawLlmReply) + "}");
+            return;
+        }
+        String rationale = optionalString(draft, "rationale");
+
+        JsonObject responseBody = new JsonObject();
+        JsonObject normalized = new JsonObject();
+        normalized.addProperty("target", target);
+        normalized.addProperty("ratePerSecond", ratePerSecond);
+        normalized.addProperty("burstCapacity", burstCapacity);
+        normalized.addProperty("maxWaitMillis", maxWaitMillis);
+        normalized.addProperty("rationale", rationale);
+        responseBody.add("draft", normalized);
+
+        if ("default".equalsIgnoreCase(target)) {
+            responseBody.addProperty("qosRatePerSecIfApplied", String.valueOf(ratePerSecond));
+            responseBody.addProperty("qosBurstIfApplied", String.valueOf(burstCapacity));
+            responseBody.addProperty("qosMaxWaitMsIfApplied", String.valueOf(maxWaitMillis));
+        } else {
+            var classLimits = new java.util.LinkedHashMap<>(com.nexagres.wire.core.QosControlStage.parseClassLimitsSpec(
+                    current.qosClassLimits(), maxWaitMillis));
+            classLimits.put(target, new com.nexagres.wire.core.QosControlStage.ClassLimit(ratePerSecond, burstCapacity, maxWaitMillis));
+            responseBody.addProperty("qosClassLimitsIfApplied",
+                    com.nexagres.wire.core.QosControlStage.formatClassLimitsSpec(classLimits));
+        }
+        responseBody.addProperty("applied", false);
+        responseBody.addProperty("note", "This has NOT been applied. Review it, then PUT the "
+                + "*IfApplied field(s) above into the matching field(s) of /api/config to actually apply it.");
         response.setStatus(HttpServletResponse.SC_OK);
         response.getWriter().write(responseBody.toString());
     }
