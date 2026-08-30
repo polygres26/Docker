@@ -221,6 +221,42 @@ final class PostgresDocumentStore {
         return document;
     }
 
+    /** Real UPSERT (ON CONFLICT ... DO UPDATE), unlike {@link #insertOne}'s deliberate plain
+     * INSERT -- insertOne needs a genuine duplicate-key failure for mongowire's own real
+     * DuplicateKey error mapping (see MongoErrorMappingIntegrationTest); a CDC replay stream has
+     * the opposite need, since a resumed-after-restart stream can legitimately redeliver an event
+     * for a document it (or the initial snapshot) already wrote, and that must be a no-op
+     * overwrite, not an error. {@code document} must already carry a real {@code _id} -- unlike
+     * insertOne, this never invents one, since a CDC event's identity has to be the SOURCE
+     * document's own id, never a fresh one minted here. */
+    void upsertOne(String db, String collection, Document document) throws SQLException {
+        String idJson = idJsonFor(document.get("_id"));
+        String docJson = BsonJson.toJson(document);
+        ensureTable(db, collection);
+        try (Connection conn = shardConnectionFor(idJson);
+                PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO " + qualifiedTable(db, collection) + " (id, doc) VALUES (?, ?) "
+                                + "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc")) {
+            ps.setString(1, idJson);
+            ps.setObject(2, jsonb(docJson));
+            ps.executeUpdate();
+        }
+    }
+
+    /** Real DELETE by exact id -- the CDC delete-event counterpart to {@link #upsertOne}, using
+     * the same idempotent-by-id reasoning: deleting an id that's already gone (a redelivered
+     * event after a restart) is a silent no-op, not an error, same as a SQL DELETE with no
+     * matching row always is. */
+    void deleteById(String db, String collection, String idJson) throws SQLException {
+        ensureTable(db, collection);
+        try (Connection conn = shardConnectionFor(idJson);
+                PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM " + qualifiedTable(db, collection) + " WHERE id = ?")) {
+            ps.setString(1, idJson);
+            ps.executeUpdate();
+        }
+    }
+
     List<Document> find(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where, int limit) throws SQLException {
         ensureTable(db, collection);
         String idJson = MongoQueryTranslator.exactIdEquality(filter);
