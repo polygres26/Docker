@@ -1,4 +1,4 @@
-package com.nexagres.wire.testsupport;
+package com.nexagres.migration.testsupport;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -12,11 +12,11 @@ import org.bson.Document;
 
 /**
  * A real, disposable single-node MongoDB replica set, managed via the plain {@code docker} CLI --
- * same discipline as {@link RealPostgres} (not Testcontainers; see that class's own javadoc for
- * why). A single-node REPLICA SET, not a plain standalone server, because change streams need the
- * oplog, which only exists on a replica set -- {@link com.nexagres.wire.mongowire.MongoChangeStreamCdcWorker}
- * and anything else in this project that opens a real change stream needs this, not plain
- * {@code mongo:7}.
+ * same discipline as {@code wire}'s own {@code RealPostgres} test helper (not Testcontainers; see
+ * that class's own javadoc for why). A single-node REPLICA SET, not a plain standalone server,
+ * because change streams need the oplog, which only exists on a replica set -- {@link
+ * com.nexagres.migration.connectors.mongo.MongoSource} and anything else in this project that
+ * opens a real change stream needs this, not plain {@code mongo:7}.
  */
 public final class RealMongo implements AutoCloseable {
 

@@ -336,24 +336,28 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <!-- The real MongoDB client driver, now a real main-scope dependency (was test-scope
-           only until MongoChangeStreamCdcWorker needed a real client to connect to a SOURCE
-           MongoDB deployment as a CDC forward-sync consumer, a genuinely different use case from
-           the one that was reverted below). The main-scope org.mongodb:bson dependency elsewhere
-           in this file is BSON-codec-only, explicitly not this; see that dependency's own comment.
-           MongoDB as a real Polywire BACKEND ENGINE (via Calcite's own calcite-mongodb adapter,
-           i.e. querying Mongo the way SchemaFederationStage queries a SQL backend) was attempted
-           and reverted; see SchemaFederationStage's own git history/commit message for the full
-           real finding: calcite-mongodb 1.42.0 is compiled against mongodb-driver-sync 4.10.2
-           (confirmed via its own real pom.xml) and throws a real NoSuchMethodError against this
-           project's required 5.5.1 (needed for mongowire/bson's own lockstep-version requirement
-           above), a genuine, unresolved binary-incompatible version conflict. That conflict is
-           irrelevant here: calcite-mongodb itself is NOT a dependency of this project (confirmed
-           by grep), it was the thing reverted, not left behind as dead weight, so there is no
-           competing mongodb-driver-sync version on the classpath to collide with this one. -->
+      <!-- The real MongoDB client driver, test scope only. The main-scope org.mongodb:bson
+           dependency elsewhere in this file is BSON-codec-only, explicitly not this; see that
+           dependency's own comment. Was briefly promoted to a real main-scope dependency for a
+           CDC forward-sync worker that lived directly in this module (needed a real client to
+           connect to a SOURCE MongoDB deployment); that worker has since moved to the separate
+           nexagres-migration module (see its own pom.xml), which depends on this module's own
+           gRPC stub classes instead of duplicating them, so wire itself no longer needs a real
+           Mongo client of its own; back to test-only here. This is the first real MongoDB client
+           library any mongowire test was verified against (mongowire had no integration test at
+           all before that). MongoDB as a real Polywire BACKEND ENGINE (via Calcite's own
+           calcite-mongodb adapter, i.e. querying Mongo the way SchemaFederationStage queries a
+           SQL backend) was attempted and reverted; see SchemaFederationStage's own git history/
+           commit message for the full real finding: calcite-mongodb 1.42.0 is compiled against
+           mongodb-driver-sync 4.10.2 (confirmed via its own real pom.xml) and throws a real
+           NoSuchMethodError against this project's required 5.5.1 (needed for mongowire/bson's
+           own lockstep-version requirement above), a genuine, unresolved binary-incompatible
+           version conflict between the two real requirements, not a bug in this project's own
+           code. -->
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
       <version>5.5.1</version>
+      <scope>test</scope>
     </dependency>
     <!-- Real Neo4j Bolt client, test only, per boltwire's own javadoc: Phase 1's Cypher support
          is deliberately narrow (RETURN literal only), but the wire protocol itself (handshake,

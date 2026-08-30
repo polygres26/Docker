@@ -1,5 +1,6 @@
-package com.nexagres.wire.migration;
+package com.nexagres.migration.checkpoint;
 
+import com.nexagres.migration.core.StateStore;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -7,15 +8,20 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
- * Durable resume-point storage for every CDC worker in this package -- one row per source (e.g.
- * {@code "mongo:mydb.orders"}), in the TARGET Postgres (the same database the migration writes
- * into, not a separate control-plane database), so a worker restarted after a crash resumes
- * exactly where it left off instead of either replaying the whole source from scratch or silently
- * skipping whatever changed while it was down. Every write is a single UPSERT keyed on {@code
- * source_key}, so "save" and "create-if-missing" are the same call -- there's no separate insert
- * path to keep in sync with the update one.
+ * Durable resume-point storage for every {@link com.nexagres.migration.core.Source} in this
+ * project -- one row per source (e.g. {@code "mongo:mydb.orders"}), in the TARGET Postgres (the
+ * same database the migration writes into, not a separate control-plane database), so a worker
+ * restarted after a crash resumes exactly where it left off instead of either replaying the whole
+ * source from scratch or silently skipping whatever changed while it was down.
+ *
+ * <p>Deliberately connects to the target Postgres DIRECTLY (not through {@link
+ * com.nexagres.migration.sink.PolywireGrpcSink}) -- a checkpoint is migration-infrastructure
+ * bookkeeping, not customer data, and doesn't need Polywire's firewall/cache/QoS semantics
+ * applied to it; going through the full pipeline for this would only add latency and risk
+ * (a firewall rule that happens to match {@code polywire_cdc_checkpoints} would break resumability
+ * itself) for no real benefit.
  */
-public final class CdcCheckpointStore {
+public final class CdcCheckpointStore implements StateStore {
 
     private final String jdbcUrl;
     private final String user;
@@ -41,9 +47,7 @@ public final class CdcCheckpointStore {
         }
     }
 
-    /** {@code null} means this source has never been checkpointed -- the caller's own signal to
-     * run a fresh initial snapshot (see {@code MongoChangeStreamCdcWorker#runLoop}) instead of
-     * resuming a stream from a point that doesn't exist. */
+    @Override
     public String load(String sourceKey) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
@@ -59,8 +63,9 @@ public final class CdcCheckpointStore {
      * eventually want this batched (every N events or every T seconds) rather than after every
      * single change event, but correctness (never advancing the checkpoint past an event that
      * wasn't actually applied yet) matters far more than shaving round trips here, and every
-     * apply in this package is already idempotent by id, so a slightly-stale checkpoint after a
-     * crash just means a few harmless replayed upserts, never lost data. */
+     * apply path in this project is already idempotent by id, so a slightly-stale checkpoint
+     * after a crash just means a few harmless replayed upserts, never lost data. */
+    @Override
     public void save(String sourceKey, String resumeTokenJson) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
