@@ -213,6 +213,16 @@ public final class PolyWireMcpServer {
                         "table", stringSchema("Table name, optionally schema-qualified as schema.table"),
                         "schema", stringSchema("Schema name (default: public)")),
                         List.of("table"))));
+        tools.add(toolDef("explain_query",
+                "Get a real Postgres EXPLAIN plan for a read-only SQL SELECT, plus a short plain-English "
+                        + "narration of what the plan does (sequential scans, missing indexes, expensive "
+                        + "sorts, etc.) when an LLM provider is configured -- the raw plan is always "
+                        + "returned either way. Set analyze=true to run EXPLAIN ANALYZE instead (executes "
+                        + "the query for real, timing information included) -- still SELECT-only.",
+                objectSchema(Map.of(
+                        "sql", stringSchema("The read-only SELECT statement to explain"),
+                        "analyze", stringSchema("\"true\" to run EXPLAIN ANALYZE (executes the query); default false")),
+                        List.of("sql"))));
         tools.add(toolDef("query_natural_language",
                 "Ask a question in plain English. Drafts a read-only SQL SELECT via an LLM, has a second "
                         + "LLM pass judge (and correct, if needed) it against the schema and the question, then "
@@ -274,7 +284,13 @@ public final class PolyWireMcpServer {
         String errorMessage = null;
         try (Connection backend = PgConnections.open(options)) {
             if ("query_natural_language".equals(toolName)) {
-                Nl2SqlOutcome outcome = runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
+                ResultWithNote outcome = runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
+                isError = !outcome.result().success();
+                errorMessage = outcome.result().error();
+                writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
+            } else if ("explain_query".equals(toolName)) {
+                boolean analyze = arguments.has("analyze") && "true".equalsIgnoreCase(arguments.get("analyze").getAsString());
+                ResultWithNote outcome = runExplainQuery(backend, requireString(arguments, "sql"), analyze, accessContext);
                 isError = !outcome.result().success();
                 errorMessage = outcome.result().error();
                 writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
@@ -334,7 +350,7 @@ public final class PolyWireMcpServer {
         return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, accessContext);
     }
 
-    private record Nl2SqlOutcome(AdHocQueryRunner.Result result, String note) {
+    private record ResultWithNote(AdHocQueryRunner.Result result, String note) {
     }
 
     /**
@@ -351,11 +367,11 @@ public final class PolyWireMcpServer {
      * either LLM call said -- this tool never runs a write, full stop. That's on top of, not
      * instead of, the real firewall every statement still passes through.
      */
-    private Nl2SqlOutcome runNaturalLanguageQuery(Connection backend, String question,
+    private ResultWithNote runNaturalLanguageQuery(Connection backend, String question,
             com.nexagres.wire.core.AccessContext accessContext) {
         com.nexagres.wire.core.TranslationLlmClient llmClient = llmClientSupplier == null ? null : llmClientSupplier.get();
         if (llmClient == null) {
-            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
+            return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
                     "no LLM provider configured -- set it via PUT /api/llm-config or the POLYWIRE_LLM_* env vars "
                             + "before using query_natural_language"), null);
         }
@@ -365,7 +381,7 @@ public final class PolyWireMcpServer {
         try {
             draftedSql = llmClient.draftSqlFromNaturalLanguage("Schema:\n" + schemaContext + "\n\nQuestion: " + question);
         } catch (Exception e) {
-            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
+            return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
                     "LLM SQL drafting failed: " + e.getMessage()), null);
         }
 
@@ -392,7 +408,7 @@ public final class PolyWireMcpServer {
         }
 
         if (!isReadOnlySelect(finalSql)) {
-            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "42501",
+            return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "42501",
                     "the drafted/judged SQL is not a read-only SELECT -- query_natural_language never "
                             + "executes writes; use execute_sql directly if a write is really intended: " + finalSql),
                     null);
@@ -404,7 +420,47 @@ public final class PolyWireMcpServer {
         }
         String note = "Executed SQL: " + finalSql
                 + (corrected ? "\nThe judge corrected the drafted SQL" + (reasoning == null ? "." : ": " + reasoning) : "");
-        return new Nl2SqlOutcome(result, note);
+        return new ResultWithNote(result, note);
+    }
+
+    /**
+     * {@code EXPLAIN (FORMAT JSON[, ANALYZE, BUFFERS]) <sql>}, run through the same {@link
+     * AdHocQueryRunner#run} pipeline every other tool uses (firewall, QoS, translation, stats --
+     * not a bypass), then optionally narrated by the LLM. The safest tool in this series: pure
+     * narration of a real fact Postgres itself computed, nothing for the LLM to decide and
+     * nothing to validate afterward -- the raw plan is always returned, with or without an LLM
+     * configured; the narrative is purely additive when one is.
+     *
+     * <p>{@code isReadOnlySelect} still gates this the same way {@link #runNaturalLanguageQuery}
+     * is gated: {@code analyze=true} genuinely EXECUTES the statement (that's what {@code
+     * ANALYZE} means), so refusing anything but a real read here matters just as much as it does
+     * there, for the same reason.
+     */
+    private ResultWithNote runExplainQuery(Connection backend, String sql, boolean analyze,
+            com.nexagres.wire.core.AccessContext accessContext) {
+        if (!isReadOnlySelect(sql)) {
+            return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "42501",
+                    "explain_query only accepts a read-only SELECT -- analyze=true genuinely executes the "
+                            + "statement, so this is not the tool for anything else: " + sql), null);
+        }
+        String explainSql = "EXPLAIN (FORMAT JSON" + (analyze ? ", ANALYZE, BUFFERS" : "") + ") " + sql;
+        AdHocQueryRunner.Result result = runSql(backend, explainSql, accessContext);
+        if (!result.success() || result.rows().isEmpty() || result.rows().get(0).isEmpty()) {
+            return new ResultWithNote(result, null);
+        }
+        String planJson = String.valueOf(result.rows().get(0).get(0));
+
+        com.nexagres.wire.core.TranslationLlmClient llmClient = llmClientSupplier == null ? null : llmClientSupplier.get();
+        if (llmClient == null) {
+            return new ResultWithNote(result, null);
+        }
+        try {
+            String narrative = llmClient.narrateExplainPlan(sql, planJson);
+            return new ResultWithNote(result, narrative);
+        } catch (Exception e) {
+            log.warn("explain_query: LLM narration failed ({}) -- returning the raw plan only", e.getMessage());
+            return new ResultWithNote(result, null);
+        }
     }
 
     /** Only what an LLM needs to draft/judge plausible SQL -- table and column names/types, not a
@@ -572,9 +628,10 @@ public final class PolyWireMcpServer {
     }
 
     /** As {@link #toolCallResult(AdHocQueryRunner.Result)}, with one extra text content item
-     * prepended -- {@code query_natural_language}'s own way of showing the SQL it actually ran
-     * (and the judge's correction, if any) alongside the result, since that's the whole point of
-     * "judge corrects" being visible rather than silent. */
+     * prepended -- {@code query_natural_language}'s way of showing the SQL it actually ran (and
+     * the judge's correction, if any) alongside the result, and {@code explain_query}'s way of
+     * showing the LLM's narration alongside the raw plan, since in both cases the point is the
+     * LLM's contribution being visible, not silent. */
     private static JsonObject toolCallResult(AdHocQueryRunner.Result result, String note) {
         JsonObject callResult = toolCallResult(result);
         if (note == null) {

@@ -229,6 +229,23 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Turns a real Postgres {@code EXPLAIN} plan into a short plain-English explanation -- the
+     * safest category of LLM-backed feature in this series: pure narration of a fact Postgres
+     * itself already computed, no decision of any kind, nothing to validate or gate afterward
+     * (see {@code PolyWireMcpServer}'s {@code explain_query} tool, which always returns the real
+     * plan JSON alongside this narrative, never the narrative alone).
+     */
+    public String narrateExplainPlan(String sql, String planJson) throws Exception {
+        String systemPrompt = "You are a Postgres query performance assistant. Below is the SQL that was "
+                + "run and its real EXPLAIN plan (JSON format). Explain in 2-4 short plain-English "
+                + "sentences what the plan actually does and call out anything a non-expert should know -- "
+                + "a sequential scan on a large table, a missing index, an expensive sort or nested loop, "
+                + "etc. Only describe what's actually in the plan; don't speculate about the schema beyond "
+                + "it. Reply with ONLY the explanation, no markdown, no restating the raw JSON.";
+        return chatComplete(systemPrompt, "SQL:\n" + sql + "\n\nEXPLAIN plan (JSON):\n" + planJson, "explain-narration");
+    }
+
+    /**
      * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
      * plain-English narrative of what an MCP client actually did against the database -- for an
      * admin who wants to know "what did this agent do in its last session" without reading raw
