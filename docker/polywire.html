@@ -622,14 +622,17 @@
 
       <h3 class="subhead" id="ai-features">AI features beyond MCP<a class="permalink" href="#ai-features" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        MCP is one way an AI agent reaches Polywire — a client speaking a protocol. These five are
-        different: Polywire itself calling an LLM, at specific points in its own pipeline, to do
-        something a fixed rule can't. All five share the same design discipline: <b>a deterministic
-        decision stays deterministic</b> — whether to retry a failed query, whether a rate is
-        anomalous — the LLM only phrases or drafts, it never decides; and <b>nothing an LLM
-        produces is ever applied automatically</b> — a draft is returned as plain JSON an admin
-        reviews and applies through an endpoint that already existed and was already authorized,
-        never a new write path. All five read one shared LLM provider config
+        MCP is one way an AI agent reaches Polywire — a client speaking a protocol. These ten are
+        different: Polywire itself calling an LLM, at specific points in its own pipeline (five in
+        the shared admin/pipeline surface, five as their own MCP tools), to do something a fixed
+        rule can't. All ten share the same design discipline: <b>a deterministic decision stays
+        deterministic</b> — whether to retry a failed query, whether a rate is anomalous, whether a
+        statement is a genuine read — the LLM only phrases, drafts, or judges, it never makes the
+        call alone; and <b>nothing an LLM produces is ever applied or executed without a check</b>
+        — a draft is plain JSON an admin reviews and applies through an endpoint that already
+        existed, a narration always comes with the real fact it describes, and anything that
+        actually runs still passes through Polywire's own firewall/QoS/pipeline like every other
+        statement. All ten read one shared LLM provider config
         (<code>POLYWIRE_LLM_PROVIDER</code>/<code>API_KEY</code>/<code>BASE_URL</code>/<code>MODEL</code>,
         hot-reloadable via <code>PUT /api/llm-config</code> with no restart) — configure it once,
         every feature below picks it up.
@@ -686,9 +689,57 @@
           into 2-4 plain-English sentences, called to flag failures and writes, never to invent an
           action that didn't happen.</p>
         </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDraft">Judged</span><span class="obsPill aiDetect">Read-only enforced</span></div>
+          <h4>Natural-language querying (with a judge)</h4>
+          <p>The MCP <code>query_natural_language</code> tool drafts a read-only SQL <code>SELECT</code>
+          from a plain-English question (grounded in a real schema summary, not guessed blind), then
+          a SECOND, independent LLM call judges that draft against the schema and the question and
+          can correct it — visibly, not silently. The judged SQL runs through the exact same
+          firewall/QoS/cache pipeline every other tool uses. One thing is deterministic, not
+          LLM-decided: a plain read-only check refuses anything that isn't a real
+          <code>SELECT</code>/<code>WITH</code> before it's ever executed, regardless of what either
+          LLM call said.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDraft">Draft only</span></div>
+          <h4>Rollup (pre-aggregation) suggestions</h4>
+          <p><code>POST /api/rollup-suggestions/draft</code> looks at recent expensive/frequent SQL
+          and proposes ONE new <code>RollupStage</code> pre-aggregation definition — validated by
+          literally running it through the real parser the runtime itself uses, not a second copy
+          of that grammar. Returns a ready-to-paste YAML document for the existing
+          <code>PUT /api/config</code>; nothing is ever written automatically.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDraft">Draft only</span></div>
+          <h4>Table-sharding suggestions</h4>
+          <p><code>POST /api/router-suggestions/draft</code> proposes ONE new per-table hash-sharding
+          rule based on real per-backend load. An LLM can hallucinate a plausible-sounding backend
+          name even when given the real list — so every proposed backend is checked in code against
+          the actual configured registry before the draft is ever shown, not trusted from the
+          model's own output.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiNarrate">Pure narration</span></div>
+          <h4>EXPLAIN plan narration</h4>
+          <p>The MCP <code>explain_query</code> tool runs a real Postgres <code>EXPLAIN</code> (optionally
+          <code>ANALYZE</code>) and, with an LLM configured, explains the plan in plain English —
+          sequential scans, missing indexes, expensive sorts. The raw plan is always returned either
+          way. Since <code>ANALYZE</code> genuinely executes the statement, the same read-only check
+          <code>query_natural_language</code> uses gates this tool too.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiNarrate">Pure narration</span></div>
+          <h4>Schema documentation</h4>
+          <p>The MCP <code>document_schema</code> tool lists every real table/column and foreign-key
+          relationship, then — with an LLM configured — writes a short plain-English data dictionary
+          on top: what each table likely represents and how it relates to others, based only on
+          what's actually in the schema. The raw listing always comes back regardless of whether an
+          LLM is reachable.</p>
+        </div>
       </div>
       <p class="rttNote">
-        Every one of these five was built with a real, no-mock integration test — a real Polywire
+        Every one of these ten was built with a real, no-mock integration test — a real Polywire
         subprocess, a real disposable Postgres, and a real local HTTP server standing in for the
         LLM endpoint (there's no free, deterministic, offline real LLM to point a CI run at) — the
         same discipline as everything else on this page.
