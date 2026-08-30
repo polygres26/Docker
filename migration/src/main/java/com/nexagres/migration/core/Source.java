@@ -23,6 +23,18 @@ public interface Source extends AutoCloseable {
     default void ensureTargetSchema(Sink sink) throws Exception {
     }
 
+    /** Called once by the {@link com.nexagres.migration.coordinator.Coordinator}, after {@link
+     * #ensureTargetSchema} but BEFORE any partition is read, for a source that needs to establish
+     * its own live-change-feed resume point up front (Mongo change streams, DynamoDB Streams, a
+     * binlog/WAL position) -- capturing that point before the (possibly long, possibly
+     * multi-partition-parallel) initial snapshot starts is what guarantees a write landing on the
+     * source mid-snapshot is never silently missed by {@link #streamChanges} afterward. A no-op
+     * default for a source with no such concept (a plain point-in-time export). Idempotent: an
+     * implementation should skip straight through if a resume point was already checkpointed by a
+     * prior run. */
+    default void prepareChangeFeed(Sink sink, StateStore checkpoints) throws Exception {
+    }
+
     /** However many partitions this source can usefully split into for parallel reads -- a
      * single-element list is always valid (no partitioning), just not maximally parallel. */
     List<Partition> listPartitions() throws Exception;

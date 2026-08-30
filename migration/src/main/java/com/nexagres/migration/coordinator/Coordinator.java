@@ -46,6 +46,11 @@ public final class Coordinator {
      * source's own {@link Source#close()} is called from another thread. */
     public void run() throws Exception {
         source.ensureTargetSchema(sink);
+        // Must happen before any partition is read (see Source#prepareChangeFeed's own javadoc):
+        // captures the live-change-feed resume point up front so a write landing on the source
+        // during the initial snapshot -- which may now run as N parallel partitions, not one
+        // sequential pass -- is never silently missed.
+        source.prepareChangeFeed(sink, checkpoints);
         List<Partition> partitions = source.listPartitions();
         int workers = Math.min(parallelism, Math.max(1, partitions.size()));
         log.info("migration: {} partition(s), {} parallel worker(s) for the initial sync", partitions.size(), workers);

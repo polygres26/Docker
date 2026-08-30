@@ -7,8 +7,12 @@ import com.nexagres.wire.grpc.proto.ExecuteResponse;
 import com.nexagres.wire.grpc.proto.QueryServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The ONE write path every migration connector in this project uses: Polywire's own native gRPC
@@ -30,28 +34,87 @@ public final class PolywireGrpcSink implements Sink, AutoCloseable {
 
     private final ManagedChannel channel;
     private final QueryServiceGrpc.QueryServiceBlockingStub stub;
+    private final QueryServiceGrpc.QueryServiceStub asyncStub;
     private final String username;
     private final String password;
 
     public PolywireGrpcSink(String host, int port, String username, String password) {
         this.channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
         this.stub = QueryServiceGrpc.newBlockingStub(channel);
+        this.asyncStub = QueryServiceGrpc.newStub(channel);
         this.username = username;
         this.password = password;
     }
 
     @Override
     public void apply(ChangeEvent event) throws SQLException {
+        ExecuteResponse response = stub.execute(toRequest(event));
+        failIfUnsuccessful(response);
+    }
+
+    /** Pipelines the whole batch over gRPC's async stub instead of one blocking round trip per
+     * row -- QueryService.Execute has no multi-statement batch RPC of its own (each call still
+     * runs exactly one statement through Polywire's real StatementPipeline, firewall/QoS/cache
+     * invalidation included, same as {@link #apply}), so "batching" here means overlapping the
+     * NETWORK round trips rather than waiting for each one before sending the next. This is the
+     * throughput lever the initial bulk-sync phase actually needs: a naive one-row-per-blocking-
+     * RPC sink makes round-trip latency, not the database, the bottleneck once a source is
+     * partitioned for real parallel reads. */
+    @Override
+    public void applyBatch(List<ChangeEvent> events) throws Exception {
+        if (events.isEmpty()) {
+            return;
+        }
+        CountDownLatch latch = new CountDownLatch(events.size());
+        AtomicReference<SQLException> firstError = new AtomicReference<>();
+        for (ChangeEvent event : events) {
+            asyncStub.execute(toRequest(event), new StreamObserver<ExecuteResponse>() {
+                @Override
+                public void onNext(ExecuteResponse response) {
+                    if (!response.getSuccess()) {
+                        firstError.compareAndSet(null, toSqlException(response));
+                    }
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                    firstError.compareAndSet(null, new SQLException(t));
+                    latch.countDown();
+                }
+
+                @Override
+                public void onCompleted() {
+                    latch.countDown();
+                }
+            });
+        }
+        if (!latch.await(60, TimeUnit.SECONDS)) {
+            throw new SQLException("timed out waiting for a batch of " + events.size() + " migration write(s)");
+        }
+        SQLException error = firstError.get();
+        if (error != null) {
+            throw error;
+        }
+    }
+
+    private ExecuteRequest toRequest(ChangeEvent event) {
         ExecuteRequest.Builder request = ExecuteRequest.newBuilder()
                 .setUsername(username)
                 .setPassword(password)
                 .setSql(event.sql());
         event.params().forEach(request::addParams);
-        ExecuteResponse response = stub.execute(request.build());
+        return request.build();
+    }
+
+    private void failIfUnsuccessful(ExecuteResponse response) throws SQLException {
         if (!response.getSuccess()) {
-            throw new SQLException(response.getErrorMessage(),
-                    response.getSqlState() == null || response.getSqlState().isBlank() ? "58000" : response.getSqlState());
+            throw toSqlException(response);
         }
+    }
+
+    private SQLException toSqlException(ExecuteResponse response) {
+        return new SQLException(response.getErrorMessage(),
+                response.getSqlState() == null || response.getSqlState().isBlank() ? "58000" : response.getSqlState());
     }
 
     @Override

@@ -13,9 +13,11 @@ import com.nexagres.migration.core.Partition;
 import com.nexagres.migration.core.Sink;
 import com.nexagres.migration.core.Source;
 import com.nexagres.migration.core.StateStore;
+import java.util.ArrayList;
 import java.util.List;
 import org.bson.BsonValue;
 import org.bson.Document;
+import org.bson.conversions.Bson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,26 +28,54 @@ import org.slf4j.LoggerFactory;
  * given -- always {@code PolywireGrpcSink} in production, so every write actually lands through
  * Polywire's own pipeline, not a direct backdoor to the target Postgres.
  *
- * <p>No partitioning yet -- {@link #listPartitions} always returns a single, whole-collection
- * {@link Partition}. Shard-key-range partitioning (the real parallel-read win for a large
- * collection) is a real, scoped follow-up once a second connector exists to validate the
- * Partition/Source contract against something other than Mongo, per this session's own
- * migration-plan discussion.
+ * <p><b>Partitioning</b>: {@link #listPartitions} splits the collection into {@code
+ * partitionCount} hash buckets of a configurable {@code shardKeyField} (server-side, via {@code
+ * $toHashedIndexKey} in a {@code $expr} match -- real filtering the database does, not a
+ * client-side post-filter), so the initial snapshot's {@code partitionCount} parallel workers each
+ * read a genuinely disjoint slice. Defaults to {@code partitionCount = 1} / {@code shardKeyField =
+ * "_id"} (a single whole-collection partition), matching v1's original behavior exactly when a
+ * caller doesn't ask for more. Deliberately keyed off the SAME field Polywire's own
+ * {@code TableShardRule} would shard the target table on when one is configured (see this
+ * session's own migration-plan discussion): partitioning the source read by the target's shard key
+ * means each parallel worker's writes concentrate on the shard {@link
+ * com.nexagres.migration.sink.PolywireGrpcSink}'s underlying {@code RouterStage} would route them
+ * to anyway, instead of every worker round-robining writes across every shard's connections.
  *
- * <p><b>Snapshot-then-stream ordering</b>, done correctly: {@link #readPartition} opens the
- * change stream cursor itself (via {@code cursor()}, not {@code iterator()} -- the driver exposes
- * a real {@code getResumeToken()} on that cursor type BEFORE a single event is consumed from it,
- * exactly for this pattern) and persists that starting token to {@code checkpoints} BEFORE running
- * the {@code find()} snapshot, then stashes the still-open, not-yet-drained cursor for {@link
- * #streamChanges} to continue from. Anything written to the source between that captured point
- * and when the snapshot finishes is guaranteed to still be sitting in the stream afterward, never
- * silently missed -- every upsert/delete this connector emits is idempotent by id, so replaying
- * one for a document the snapshot already copied is a harmless no-op. A restart with an existing
- * checkpoint skips this entirely and just resumes a fresh cursor via {@code resumeAfter}.
+ * <p>Each partition's own progress is checkpointed independently (key {@code
+ * "<source>#p<bucket>"}, value {@code PARTITION_DONE} once fully copied) so a restart mid-migration skips
+ * partitions already finished rather than re-reading the whole collection -- distinct from the
+ * SINGLE collection-wide change-feed checkpoint (key {@code "<source>"}) {@link
+ * #prepareChangeFeed}/{@link #streamChanges} manage, since there is only ever one change stream
+ * regardless of how many snapshot partitions there are.
+ *
+ * <p><b>Snapshot-then-stream ordering</b>, done correctly: {@link #prepareChangeFeed} -- called by
+ * {@link com.nexagres.migration.coordinator.Coordinator} once, before any partition is read, not
+ * per partition -- opens the change stream cursor itself (via {@code cursor()}, not {@code
+ * iterator()} -- the driver exposes a real {@code getResumeToken()} on that cursor type BEFORE a
+ * single event is consumed from it, exactly for this pattern) and persists that starting token to
+ * {@code checkpoints} BEFORE any partition's {@code find()} snapshot runs, then stashes the still-
+ * open, not-yet-drained cursor for {@link #streamChanges} to continue from. Anything written to
+ * the source between that captured point and when every partition's snapshot finishes is
+ * guaranteed to still be sitting in the stream afterward, never silently missed -- every
+ * upsert/delete this connector emits is idempotent by id, so replaying one for a document a
+ * snapshot already copied is a harmless no-op. A restart with an existing checkpoint skips this
+ * entirely and just resumes a fresh cursor via {@code resumeAfter}.
  */
 public final class MongoSource implements Source {
 
     private static final Logger log = LoggerFactory.getLogger(MongoSource.class);
+
+    /** Snapshot rows batched per {@code Sink#applyBatch} call -- large enough to actually pipeline
+     * meaningfully many gRPC round trips at once, small enough that one partition's progress
+     * checkpoint (see {@link #readPartition}) never falls too far behind what's truly landed. */
+    private static final int SNAPSHOT_BATCH_SIZE = 500;
+
+    /** {@link com.nexagres.migration.checkpoint.CdcCheckpointStore#save} casts its value with
+     * {@code ::jsonb} -- a bare {@code DONE} isn't valid JSON, so the "fully copied" sentinel has
+     * to be a real JSON string literal (quotes included), not the raw token text. Caught live:
+     * the original bare-{@code DONE} version failed every partition-checkpoint save with a real
+     * Postgres {@code invalid input syntax for type json} error. */
+    private static final String PARTITION_DONE = "\"DONE\"";
 
     private final MongoClient sourceClient;
     private final String sourceDb;
@@ -53,6 +83,8 @@ public final class MongoSource implements Source {
     private final String targetDb;
     private final String targetCollection;
     private final String checkpointKey;
+    private final int partitionCount;
+    private final String shardKeyField;
 
     private volatile MongoCursor<?> activeCursor;
     private volatile MongoChangeStreamCursor<ChangeStreamDocument<Document>> preOpenedCursor;
@@ -60,12 +92,26 @@ public final class MongoSource implements Source {
 
     public MongoSource(MongoClient sourceClient, String sourceDb, String sourceCollection,
             String targetDb, String targetCollection) {
+        this(sourceClient, sourceDb, sourceCollection, targetDb, targetCollection, 1, "_id");
+    }
+
+    /** @param partitionCount how many hash buckets to split the initial snapshot into for
+     *     parallel reads -- 1 keeps the original single-partition behavior.
+     * @param shardKeyField the field hashed to assign a document to a bucket -- ideally the same
+     *     column the TARGET table is (or will be) sharded on in Polywire's own {@code
+     *     TableShardRule} config, so each partition's writes land on one shard rather than
+     *     scattering across all of them; {@code "_id"} is a safe, always-present default when the
+     *     target isn't sharded at all. */
+    public MongoSource(MongoClient sourceClient, String sourceDb, String sourceCollection,
+            String targetDb, String targetCollection, int partitionCount, String shardKeyField) {
         this.sourceClient = sourceClient;
         this.sourceDb = sourceDb;
         this.sourceCollection = sourceCollection;
         this.targetDb = targetDb;
         this.targetCollection = targetCollection;
         this.checkpointKey = "mongo:" + sourceDb + "." + sourceCollection;
+        this.partitionCount = Math.max(1, partitionCount);
+        this.shardKeyField = shardKeyField;
     }
 
     /** Matches {@code PostgresDocumentStore.ensureTable}'s own DDL exactly -- the target table
@@ -82,49 +128,91 @@ public final class MongoSource implements Source {
     }
 
     @Override
+    public void prepareChangeFeed(Sink sink, StateStore checkpoints) throws Exception {
+        if (checkpoints.load(checkpointKey) != null) {
+            log.info("mongo source[{}]: change-feed checkpoint already exists -- streamChanges "
+                    + "will resume the stream directly, no new resume point needed", checkpointKey);
+            return;
+        }
+        MongoCollection<Document> src = sourceClient.getDatabase(sourceDb).getCollection(sourceCollection);
+        // Open the change stream and capture its starting resume token BEFORE any partition's
+        // snapshot below reads a single document -- see this class's own javadoc for why the
+        // ordering matters. cursor() (not iterator()) is what exposes getResumeToken() at all, but
+        // the driver only actually populates it once the server's own initial batch has been
+        // fetched -- which happens lazily, on the FIRST tryNext() call, not at cursor()
+        // construction time (confirmed live: getResumeToken() returns null immediately after
+        // cursor() otherwise). That first tryNext() can itself return a real event (a genuine
+        // concurrent write that landed in the gap) -- applied here rather than discarded, so it's
+        // never lost even if this process crashed right after saving the checkpoint below and a
+        // restart skipped straight to streamChanges.
+        MongoChangeStreamCursor<ChangeStreamDocument<Document>> preOpened =
+                src.watch().fullDocument(FullDocument.UPDATE_LOOKUP).cursor();
+        ChangeStreamDocument<Document> immediateEvent = preOpened.tryNext();
+        if (immediateEvent != null) {
+            applyChangeEvent(immediateEvent, sink);
+        }
+        checkpoints.save(checkpointKey, preOpened.getResumeToken().toJson());
+        activeCursor = preOpened;
+        this.preOpenedCursor = preOpened;
+        log.info("mongo source[{}]: change stream resume point captured before any partition's snapshot starts", checkpointKey);
+    }
+
+    @Override
     public List<Partition> listPartitions() {
-        return List.of(new Partition(checkpointKey, null));
+        List<Partition> partitions = new ArrayList<>(partitionCount);
+        for (int bucket = 0; bucket < partitionCount; bucket++) {
+            partitions.add(new Partition(checkpointKey + "#p" + bucket, bucket));
+        }
+        return partitions;
     }
 
     @Override
     public void readPartition(Partition partition, Sink sink, StateStore checkpoints) throws Exception {
-        MongoCollection<Document> src = sourceClient.getDatabase(sourceDb).getCollection(sourceCollection);
-
-        if (checkpoints.load(checkpointKey) == null) {
-            // First run for this source: open the change stream and capture its starting resume
-            // token BEFORE the snapshot below reads a single document -- see this class's own
-            // javadoc for why the ordering matters. cursor() (not iterator()) is what exposes
-            // getResumeToken() at all, but the driver only actually populates it once the
-            // server's own initial batch has been fetched -- which happens lazily, on the FIRST
-            // tryNext() call, not at cursor() construction time (confirmed live: getResumeToken()
-            // returns null immediately after cursor() otherwise). That first tryNext() can itself
-            // return a real event (a genuine concurrent write that landed in the gap) -- applied
-            // here rather than discarded, so it's never lost even if this process crashed right
-            // after saving the checkpoint below and a restart skipped straight to streamChanges.
-            MongoChangeStreamCursor<ChangeStreamDocument<Document>> preOpened =
-                    src.watch().fullDocument(FullDocument.UPDATE_LOOKUP).cursor();
-            ChangeStreamDocument<Document> immediateEvent = preOpened.tryNext();
-            if (immediateEvent != null) {
-                applyChangeEvent(immediateEvent, sink);
-            }
-            checkpoints.save(checkpointKey, preOpened.getResumeToken().toJson());
-            activeCursor = preOpened;
-            this.preOpenedCursor = preOpened;
-            log.info("mongo source[{}]: change stream resume point captured before the snapshot starts", checkpointKey);
-        } else {
-            log.info("mongo source[{}]: checkpoint already exists -- skipping the snapshot, "
-                    + "streamChanges will resume the stream directly", checkpointKey);
+        String partitionCheckpointKey = partition.id();
+        if (PARTITION_DONE.equals(checkpoints.load(partitionCheckpointKey))) {
+            log.info("mongo source[{}]: partition already fully copied -- skipping", partitionCheckpointKey);
             return;
         }
 
+        MongoCollection<Document> src = sourceClient.getDatabase(sourceDb).getCollection(sourceCollection);
+        int bucket = (Integer) partition.descriptor();
+        Bson filter = bucketFilter(bucket);
+
         long copied = 0;
-        try (MongoCursor<Document> c = src.find().iterator()) {
+        List<ChangeEvent> batch = new ArrayList<>(SNAPSHOT_BATCH_SIZE);
+        try (MongoCursor<Document> c = filter == null ? src.find().iterator() : src.find(filter).iterator()) {
             while (c.hasNext()) {
-                sink.apply(upsertEvent(c.next()));
-                copied++;
+                batch.add(upsertEvent(c.next()));
+                if (batch.size() >= SNAPSHOT_BATCH_SIZE) {
+                    sink.applyBatch(batch);
+                    copied += batch.size();
+                    batch.clear();
+                }
             }
         }
-        log.info("mongo source[{}]: initial snapshot copied {} document(s)", checkpointKey, copied);
+        if (!batch.isEmpty()) {
+            sink.applyBatch(batch);
+            copied += batch.size();
+        }
+        checkpoints.save(partitionCheckpointKey, PARTITION_DONE);
+        log.info("mongo source[{}]: partition snapshot copied {} document(s)", partitionCheckpointKey, copied);
+    }
+
+    /** {@code null} for the (default, backward-compatible) single-partition case -- no filter at
+     * all beats a trivially-true one. For {@code partitionCount > 1}, a real server-side filter:
+     * hash {@code shardKeyField} via the same {@code $toHashedIndexKey} operator Polywire's own
+     * hash {@code ShardingStrategy} is conceptually equivalent to, then bucket it mod {@code
+     * partitionCount} -- {@code $abs} first since {@code $mod} preserves the dividend's sign and a
+     * hash can be negative. */
+    private Bson bucketFilter(int bucket) {
+        if (partitionCount == 1) {
+            return null;
+        }
+        Document hashed = new Document("$toHashedIndexKey", "$" + shardKeyField);
+        Document abs = new Document("$abs", hashed);
+        Document mod = new Document("$mod", List.of(abs, partitionCount));
+        Document eq = new Document("$eq", List.of(mod, bucket));
+        return new Document("$expr", eq);
     }
 
     @Override

@@ -1,5 +1,7 @@
 package com.nexagres.migration.core;
 
+import java.util.List;
+
 /**
  * Applies one {@link ChangeEvent}. {@code com.nexagres.migration.sink.PolywireGrpcSink} is the
  * only real implementation in this project -- every migration write goes through Polywire's own
@@ -9,4 +11,15 @@ package com.nexagres.migration.core;
  */
 public interface Sink {
     void apply(ChangeEvent event) throws Exception;
+
+    /** Applies a batch of events, in order. The default just calls {@link #apply} once per event
+     * -- correct but strictly sequential (one gRPC round trip per row). A real implementation
+     * (see {@code PolywireGrpcSink}) is expected to override this to pipeline the batch instead --
+     * the single biggest throughput lever for the initial bulk-sync phase, since a naive one-row-
+     * per-RPC sink means the network round trip, not the database, is the bottleneck. */
+    default void applyBatch(List<ChangeEvent> events) throws Exception {
+        for (ChangeEvent event : events) {
+            apply(event);
+        }
+    }
 }

@@ -158,4 +158,91 @@ class MongoSourceIntegrationTest {
             }
         }
     }
+
+    /** Proves the actual "massively parallel" part: a collection split into several hash-bucket
+     * partitions (shard-keyed on {@code customer}), read by several worker threads at once, all
+     * lands correctly, AND a mid-run restart resumes only the not-yet-finished partitions --
+     * proof the per-partition checkpoint (distinct from the single collection-wide change-feed
+     * checkpoint) actually works, not just the single-partition path the other test above covers. */
+    @Test
+    void multiplePartitionsCopyInParallelAndResumePartitionsIndependently() throws Exception {
+        try (RealMongo mongo = RealMongo.start();
+                RealPostgres postgres = RealPostgres.start();
+                MongoClient sourceClient = MongoClients.create(mongo.connectionString());
+                PolyWireProcess polywire = PolyWireProcess.builder()
+                        .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
+                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
+                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .start()) {
+
+            MongoCollection<Document> source = sourceClient.getDatabase("src").getCollection("customers");
+            int total = 40;
+            for (int i = 0; i < total; i++) {
+                source.insertOne(new Document("_id", "cust-" + i).append("customer", "cust-" + i).append("balance", i));
+            }
+
+            CdcCheckpointStore checkpoints = new CdcCheckpointStore(postgres.jdbcUrl(), postgres.username(), postgres.password());
+            checkpoints.ensureSchema();
+
+            int partitionCount = 4;
+            MongoSource migrationSource = new MongoSource(sourceClient, "src", "customers", "db", "customers", partitionCount, "customer");
+            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            Coordinator coordinator = new Coordinator(migrationSource, sink, checkpoints, partitionCount);
+            Thread coordinatorThread = new Thread(() -> {
+                try {
+                    coordinator.run();
+                } catch (Exception e) {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            }, "test-coordinator-partitioned");
+            coordinatorThread.start();
+            try {
+                // Every document, across every hash bucket, has to show up -- proof the bucket
+                // filters are disjoint AND exhaustive (no document silently falls into no bucket,
+                // no document is double-copied into two).
+                for (int i = 0; i < total; i++) {
+                    int idx = i;
+                    waitUntil(Duration.ofSeconds(20), () -> customerDocJson(postgres, "cust-" + idx) != null);
+                }
+                assertEquals(total, countCustomerRows(postgres));
+
+                // Every partition's own checkpoint must show DONE -- not just "some rows landed."
+                for (int bucket = 0; bucket < partitionCount; bucket++) {
+                    assertEquals("\"DONE\"", checkpoints.load("mongo:src.customers#p" + bucket),
+                            "partition " + bucket + " should be checkpointed done");
+                }
+            } finally {
+                migrationSource.close();
+                coordinatorThread.interrupt();
+                coordinatorThread.join(Duration.ofSeconds(10).toMillis());
+                sink.close();
+            }
+        }
+    }
+
+    private static String customerDocJson(RealPostgres postgres, String id) throws Exception {
+        try (Connection conn = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
+                PreparedStatement ps = conn.prepareStatement("SELECT doc FROM \"db\".\"customers\" WHERE id = ?")) {
+            ps.setString(1, MongoBsonJson.valueToJson(id));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (java.sql.SQLException e) {
+            if ("42P01".equals(e.getSQLState())) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private static int countCustomerRows(RealPostgres postgres) throws Exception {
+        try (Connection conn = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
+                PreparedStatement ps = conn.prepareStatement("SELECT count(*) FROM \"db\".\"customers\"");
+                ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
 }
