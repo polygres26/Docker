@@ -29,6 +29,12 @@
          connects to a genuine SOURCE MongoDB deployment as a CDC consumer, a different use case
          from anything wire itself does. -->
     <mongodb-driver-sync.version>5.5.1</mongodb-driver-sync.version>
+    <!-- Matches wire/pom.xml's own awssdk.version exactly (there test-scope only, used to
+         validate dynamowire's wire protocol against a real AWS SDK client; see that pom's own
+         dependency comment). This module needs it compile-scope: DynamoSource connects to a
+         genuine SOURCE DynamoDB deployment (and its Streams) as a CDC consumer, a different use
+         case from anything wire itself does. -->
+    <awssdk.version>2.46.7</awssdk.version>
   </properties>
 
   <dependencies>
@@ -48,6 +54,14 @@
     <!-- NOT transitively available from nexagres-wire above; wire keeps this test-scope only
          (see its own pom's comment), so this module's own real, compile-scope need for it (a
          genuine client connecting to a SOURCE MongoDB deployment) has to be declared here. -->
+    <!-- Streams operations (DescribeStream/GetShardIterator/GetRecords) live under this same
+         artifact's software.amazon.awssdk.services.dynamodb.streams package; AWS SDK v2 does not
+         ship a separate dynamodb-streams artifact. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>dynamodb</artifactId>
+      <version>${awssdk.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
