@@ -62,6 +62,17 @@
       <artifactId>dynamodb</artifactId>
       <version>${awssdk.version}</version>
     </dependency>
+    <!-- Test-scope only in wire (real client SigV4 signing/JSON parsing validates sqswire's
+         emulated responses); this module needs it compile-scope, same reasoning as every other
+         real SOURCE client dependency here: SqsSource connects to a genuine source SQS-API
+         endpoint (real AWS, or, since sqswire is API-compatible, a running Polywire instance's
+         own sqswire frontend, useful for this project's own tests without needing real AWS
+         credentials). -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sqs</artifactId>
+      <version>${awssdk.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
