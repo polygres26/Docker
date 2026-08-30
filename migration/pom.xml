@@ -119,6 +119,18 @@
       <artifactId>ojdbc11</artifactId>
       <version>23.8.0.25.04</version>
     </dependency>
+    <!-- Matches wire/pom.xml's own neo4j-java-driver version exactly, same lockstep reasoning as
+         every other vendor driver above (there test-scope only, negotiating Bolt 4.4 against
+         boltwire). Neo4jSource has no separate CDC library to add: real Neo4j Community Edition
+         and boltwire both have no exposed change-tracking mechanism at all (Neo4j CDC is an
+         Enterprise-only feature); this connector is snapshot-only, documented in its own
+         javadoc. InfluxSource needs no new dependency at all: influxwire (and real InfluxDB v1)
+         speak a plain HTTP/JSON API, read here via the JDK's own java.net.http.HttpClient. -->
+    <dependency>
+      <groupId>org.neo4j.driver</groupId>
+      <artifactId>neo4j-java-driver</artifactId>
+      <version>5.28.4</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
