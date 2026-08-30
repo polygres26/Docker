@@ -42,6 +42,7 @@ public final class PolyWireMcpServer {
     private final List<RegisteredFunctionTool> functionTools;
     private final McpMetricsCollector metrics;
     private final com.nexagres.wire.audit.AuditLog auditLog;
+    private final java.util.function.Supplier<com.nexagres.wire.core.TranslationLlmClient> llmClientSupplier;
 
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
@@ -61,6 +62,13 @@ public final class PolyWireMcpServer {
         this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, metrics, null);
     }
 
+    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+            BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
+            com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
+            com.nexagres.wire.audit.AuditLog auditLog) {
+        this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, metrics, auditLog, () -> null);
+    }
+
     /**
      * Full constructor -- adds {@code metrics}, the shared {@link McpMetricsCollector} instance
      * {@code MetricsServer} reads from to render {@code /api/metrics/summary}'s {@code mcpTools}
@@ -73,11 +81,18 @@ public final class PolyWireMcpServer {
      * metrics} but never actually reached the audit trail every other protocol's login/query
      * events do, which meant {@code /api/mcp-audit/summarize}'s "what did this agent actually do"
      * question had no real per-call data to answer from, only aggregate counters.
+     *
+     * <p>{@code llmClientSupplier}, read fresh on every {@code query_natural_language} call (same
+     * "current hot-reloadable client" pattern {@link com.nexagres.wire.core.QueryRepairStage}
+     * uses), powers that one tool's natural-language-to-SQL drafting and judging -- see {@link
+     * #runNaturalLanguageQuery}. {@code () -> null} on every other constructor overload disables
+     * just that tool (it errors clearly, "no LLM provider configured"), not the whole server.
      */
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
-            com.nexagres.wire.audit.AuditLog auditLog) {
+            com.nexagres.wire.audit.AuditLog auditLog,
+            java.util.function.Supplier<com.nexagres.wire.core.TranslationLlmClient> llmClientSupplier) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
@@ -85,6 +100,7 @@ public final class PolyWireMcpServer {
         this.oauth = oauth;
         this.metrics = metrics;
         this.auditLog = auditLog;
+        this.llmClientSupplier = llmClientSupplier;
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -197,6 +213,15 @@ public final class PolyWireMcpServer {
                         "table", stringSchema("Table name, optionally schema-qualified as schema.table"),
                         "schema", stringSchema("Schema name (default: public)")),
                         List.of("table"))));
+        tools.add(toolDef("query_natural_language",
+                "Ask a question in plain English. Drafts a read-only SQL SELECT via an LLM, has a second "
+                        + "LLM pass judge (and correct, if needed) it against the schema and the question, then "
+                        + "executes the judged SQL through the same firewall/QoS/cache pipeline every other tool "
+                        + "uses and returns the result along with the SQL that actually ran. Never executes "
+                        + "writes -- use execute_sql directly if a write is really intended. Requires an LLM "
+                        + "provider configured (PUT /api/llm-config or POLYWIRE_LLM_*).",
+                objectSchema(Map.of("question", stringSchema("The question to answer, in plain English")),
+                        List.of("question"))));
         for (RegisteredFunctionTool tool : functionTools) {
             tools.add(toolDef(tool.toolName(), tool.description(), tool.inputSchema()));
         }
@@ -248,18 +273,25 @@ public final class PolyWireMcpServer {
         boolean isError = true;
         String errorMessage = null;
         try (Connection backend = PgConnections.open(options)) {
-            AdHocQueryRunner.Result result = switch (toolName) {
-                case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
-                case "list_tables" -> runSql(backend,
-                        "SELECT schemaname, tablename FROM pg_catalog.pg_tables "
-                                + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
-                                + "ORDER BY schemaname, tablename", accessContext);
-                case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
-                default -> runRegisteredTool(backend, toolName, arguments, accessContext);
-            };
-            isError = !result.success();
-            errorMessage = result.error();
-            writeResult(response, id, toolCallResult(result));
+            if ("query_natural_language".equals(toolName)) {
+                Nl2SqlOutcome outcome = runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
+                isError = !outcome.result().success();
+                errorMessage = outcome.result().error();
+                writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
+            } else {
+                AdHocQueryRunner.Result result = switch (toolName) {
+                    case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
+                    case "list_tables" -> runSql(backend,
+                            "SELECT schemaname, tablename FROM pg_catalog.pg_tables "
+                                    + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
+                                    + "ORDER BY schemaname, tablename", accessContext);
+                    case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
+                    default -> runRegisteredTool(backend, toolName, arguments, accessContext);
+                };
+                isError = !result.success();
+                errorMessage = result.error();
+                writeResult(response, id, toolCallResult(result));
+            }
         } catch (RuntimeException | java.sql.SQLException e) {
             errorMessage = e.getMessage();
             writeError(response, id, -32602, e.getMessage());
@@ -300,6 +332,152 @@ public final class PolyWireMcpServer {
     private AdHocQueryRunner.Result runSql(Connection backend, String sql,
             com.nexagres.wire.core.AccessContext accessContext) {
         return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, accessContext);
+    }
+
+    private record Nl2SqlOutcome(AdHocQueryRunner.Result result, String note) {
+    }
+
+    /**
+     * "Draft, judge, execute" -- the {@code NL2SQL_QUERY_EXECUTED}/{@code NL2SQL_JUDGE_CORRECTED}
+     * audit event types existed in {@link com.nexagres.wire.audit.AuditEvent.Type} unused before
+     * this method, which is what this tool actually is: an LLM drafts a Postgres SELECT from
+     * plain English, a SECOND, independent LLM call judges that draft against the schema and the
+     * original question (and can correct it), then the judged SQL runs through the exact same
+     * {@link AdHocQueryRunner#run} pipeline every other tool uses -- firewall, QoS, dialect
+     * translation, cache, stats -- never a bypass.
+     *
+     * <p>The one thing that's deterministic here, not LLM-decided: {@link #isReadOnlySelect}
+     * refuses anything that isn't a plain read before it's ever executed, regardless of what
+     * either LLM call said -- this tool never runs a write, full stop. That's on top of, not
+     * instead of, the real firewall every statement still passes through.
+     */
+    private Nl2SqlOutcome runNaturalLanguageQuery(Connection backend, String question,
+            com.nexagres.wire.core.AccessContext accessContext) {
+        com.nexagres.wire.core.TranslationLlmClient llmClient = llmClientSupplier == null ? null : llmClientSupplier.get();
+        if (llmClient == null) {
+            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
+                    "no LLM provider configured -- set it via PUT /api/llm-config or the POLYWIRE_LLM_* env vars "
+                            + "before using query_natural_language"), null);
+        }
+
+        String schemaContext = introspectSchemaContext(backend);
+        String draftedSql;
+        try {
+            draftedSql = llmClient.draftSqlFromNaturalLanguage("Schema:\n" + schemaContext + "\n\nQuestion: " + question);
+        } catch (Exception e) {
+            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
+                    "LLM SQL drafting failed: " + e.getMessage()), null);
+        }
+
+        String finalSql = draftedSql;
+        boolean corrected = false;
+        String reasoning = null;
+        try {
+            String rawVerdict = llmClient.judgeSql("Schema:\n" + schemaContext + "\n\nQuestion: " + question
+                    + "\n\nDrafted SQL:\n" + draftedSql);
+            JsonObject verdict = JsonParser.parseString(rawVerdict).getAsJsonObject();
+            if (verdict.has("sql") && verdict.get("sql").isJsonPrimitive()) {
+                finalSql = verdict.get("sql").getAsString();
+            }
+            corrected = verdict.has("corrected") && verdict.get("corrected").isJsonPrimitive()
+                    && verdict.get("corrected").getAsJsonPrimitive().isBoolean() && verdict.get("corrected").getAsBoolean();
+            reasoning = verdict.has("reasoning") && verdict.get("reasoning").isJsonPrimitive()
+                    ? verdict.get("reasoning").getAsString() : null;
+        } catch (Exception e) {
+            // The judge is a safety/quality improvement, not a hard dependency -- if it fails
+            // (bad JSON, HTTP error) run the un-judged draft rather than refusing the whole
+            // request, same "narrate/verify, don't block on it" tolerance QueryRepairStage's own
+            // LLM-failure handling uses.
+            log.warn("nl2sql: judge step failed ({}) -- running the un-judged draft as-is", e.getMessage());
+        }
+
+        if (!isReadOnlySelect(finalSql)) {
+            return new Nl2SqlOutcome(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "42501",
+                    "the drafted/judged SQL is not a read-only SELECT -- query_natural_language never "
+                            + "executes writes; use execute_sql directly if a write is really intended: " + finalSql),
+                    null);
+        }
+
+        AdHocQueryRunner.Result result = runSql(backend, finalSql, accessContext);
+        if (auditLog != null) {
+            recordNl2SqlAudit(question, draftedSql, finalSql, corrected, reasoning, result, accessContext);
+        }
+        String note = "Executed SQL: " + finalSql
+                + (corrected ? "\nThe judge corrected the drafted SQL" + (reasoning == null ? "." : ": " + reasoning) : "");
+        return new Nl2SqlOutcome(result, note);
+    }
+
+    /** Only what an LLM needs to draft/judge plausible SQL -- table and column names/types, not a
+     * full pg_catalog dump. Capped at 400 columns total so a very wide database doesn't blow out
+     * the prompt; a real database with more than that has bigger problems for this tool than a
+     * truncated schema summary. Uses {@code backend} directly (a plain query, not routed through
+     * {@code sharedStages}) since this is context-gathering, not a monitored/audited operation in
+     * its own right -- the real, audited operation is the SQL this context leads to. */
+    private static String introspectSchemaContext(Connection backend) {
+        StringBuilder sb = new StringBuilder();
+        String lastTable = null;
+        try (var st = backend.createStatement();
+                var rs = st.executeQuery(
+                        "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns "
+                                + "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+                                + "ORDER BY table_schema, table_name, ordinal_position LIMIT 400")) {
+            while (rs.next()) {
+                String table = rs.getString(1) + "." + rs.getString(2);
+                if (!table.equals(lastTable)) {
+                    if (lastTable != null) {
+                        sb.append('\n');
+                    }
+                    sb.append(table).append(": ");
+                    lastTable = table;
+                } else {
+                    sb.append(", ");
+                }
+                sb.append(rs.getString(3)).append(' ').append(rs.getString(4));
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("nl2sql: schema introspection failed ({}) -- drafting without schema context", e.getMessage());
+            return "(schema introspection failed: " + e.getMessage() + ")";
+        }
+        return sb.length() == 0 ? "(no user tables found)" : sb.toString();
+    }
+
+    /** Deterministic, not LLM-decided -- see {@link #runNaturalLanguageQuery}'s own javadoc for
+     * why. Doesn't need to be airtight against every disguised write (a WITH ... INSERT CTE, say)
+     * to be worth having: it's a first-line check on top of the real firewall every statement
+     * still passes through via {@link AdHocQueryRunner#run}, not the only line of defense. */
+    private static boolean isReadOnlySelect(String sql) {
+        String upper = sql.strip().toUpperCase(java.util.Locale.ROOT);
+        return upper.startsWith("SELECT") || upper.startsWith("WITH");
+    }
+
+    private void recordNl2SqlAudit(String question, String draftedSql, String finalSql, boolean corrected,
+            String reasoning, AdHocQueryRunner.Result result, com.nexagres.wire.core.AccessContext accessContext) {
+        String userId = accessContext == null || accessContext.isAnonymous() ? "anonymous" : accessContext.userId();
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("question", truncate(question, 300));
+        details.put("draftedSql", truncate(draftedSql, 300));
+        details.put("finalSql", truncate(finalSql, 300));
+        details.put("success", String.valueOf(result.success()));
+        if (!result.success()) {
+            details.put("error", result.error());
+        }
+        auditLog.record(com.nexagres.wire.audit.AuditEvent.of(
+                com.nexagres.wire.audit.AuditEvent.Type.NL2SQL_QUERY_EXECUTED, userId,
+                "NL2SQL query " + (result.success() ? "executed" : "failed") + ": " + truncate(question, 120), details));
+        if (corrected) {
+            Map<String, String> judgeDetails = new LinkedHashMap<>(details);
+            judgeDetails.put("reasoning", reasoning == null ? "" : reasoning);
+            auditLog.record(com.nexagres.wire.audit.AuditEvent.of(
+                    com.nexagres.wire.audit.AuditEvent.Type.NL2SQL_JUDGE_CORRECTED, userId,
+                    "NL2SQL judge corrected the drafted SQL", judgeDetails));
+        }
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) {
+            return null;
+        }
+        return s.length() > max ? s.substring(0, max) + "…" : s;
     }
 
     private AdHocQueryRunner.Result runDescribeTable(Connection backend, JsonObject arguments,
@@ -390,6 +568,25 @@ public final class PolyWireMcpServer {
         }
         content.add(textContent);
         callResult.add("content", content);
+        return callResult;
+    }
+
+    /** As {@link #toolCallResult(AdHocQueryRunner.Result)}, with one extra text content item
+     * prepended -- {@code query_natural_language}'s own way of showing the SQL it actually ran
+     * (and the judge's correction, if any) alongside the result, since that's the whole point of
+     * "judge corrects" being visible rather than silent. */
+    private static JsonObject toolCallResult(AdHocQueryRunner.Result result, String note) {
+        JsonObject callResult = toolCallResult(result);
+        if (note == null) {
+            return callResult;
+        }
+        JsonObject noteContent = new JsonObject();
+        noteContent.addProperty("type", "text");
+        noteContent.addProperty("text", note);
+        JsonArray combined = new JsonArray();
+        combined.add(noteContent);
+        callResult.getAsJsonArray("content").forEach(combined::add);
+        callResult.add("content", combined);
         return callResult;
     }
 

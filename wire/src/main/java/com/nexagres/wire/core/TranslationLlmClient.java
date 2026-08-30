@@ -120,6 +120,50 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Drafts a read-only Postgres SELECT from a plain-English question and a schema summary --
+     * the first of the two LLM calls {@code query_natural_language} (see {@code
+     * PolyWireMcpServer#runNaturalLanguageQuery}) makes; the second, independent one is {@link
+     * #judgeSql}. Deliberately two separate calls rather than one -- the same reason a code
+     * review is a different pass than writing the code: a model judging a draft against the
+     * original question afresh catches mistakes a single pass asked to "get it right the first
+     * time" tends not to notice in its own output.
+     */
+    public String draftSqlFromNaturalLanguage(String schemaAndQuestion) throws Exception {
+        String systemPrompt = "You are a natural-language-to-SQL assistant for a Postgres database. Given "
+                + "the schema and question below, draft ONE Postgres SELECT statement that answers the "
+                + "question. Read-only ONLY -- never INSERT/UPDATE/DELETE/DDL, even if the question seems "
+                + "to ask for a change; if you can't answer with a SELECT alone, draft the closest read "
+                + "that's still useful. Reply with ONLY the SQL statement, no explanation, no markdown code "
+                + "fences.";
+        return chatComplete(systemPrompt, schemaAndQuestion, "nl2sql-draft");
+    }
+
+    /**
+     * Judges (and, if needed, corrects) a drafted SELECT against the schema and the original
+     * question -- see {@link #draftSqlFromNaturalLanguage}'s own javadoc for why this is a
+     * separate call rather than folded into drafting. This method only phrases/decides what the
+     * caller asked it to decide for THIS one draft; {@code PolyWireMcpServer} still runs its own
+     * deterministic read-only check on whatever SQL comes back before ever executing it -- this
+     * judge is a quality/safety improvement layered on top of that check, not a replacement for
+     * it.
+     */
+    public String judgeSql(String context) throws Exception {
+        String systemPrompt = "You are a SQL judge reviewing a natural-language-to-SQL draft before it "
+                + "runs. Given the schema, the user's original question, and the drafted SQL below, check "
+                + "whether the SQL actually answers the question, references only tables/columns that "
+                + "exist in the schema, and is a genuine read (SELECT only, nothing else). Reply with a "
+                + "single JSON object with EXACTLY these fields and no others:\n"
+                + "{\n"
+                + "  \"corrected\": true or false -- whether you changed the drafted SQL,\n"
+                + "  \"sql\": the SQL to actually run -- the draft unchanged if it's already correct, or "
+                + "your fixed version if not,\n"
+                + "  \"reasoning\": one short plain-English sentence explaining your verdict\n"
+                + "}\n"
+                + "Reply with ONLY that JSON object -- no explanation, no markdown code fences.";
+        return chatComplete(systemPrompt, context, "nl2sql-judge");
+    }
+
+    /**
      * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
      * plain-English narrative of what an MCP client actually did against the database -- for an
      * admin who wants to know "what did this agent do in its last session" without reading raw
