@@ -119,12 +119,35 @@ public final class MongoSource implements Source {
      * live-traffic path (which calls {@code ensureTable} on demand before every write), gRPC's
      * generic {@code QueryService.Execute} has no such hook, so this connector has to create it
      * itself, once, up front. {@code IF NOT EXISTS} makes this safe even when mongowire has
-     * already created the table from prior live traffic. */
+     * already created the table from prior live traffic.
+     *
+     * <p>{@code IF NOT EXISTS} is NOT, on its own, safe against two callers racing to create the
+     * SAME object concurrently -- confirmed live under {@code DistributedCoordinator} (every
+     * worker process calls this): Postgres's existence check and the actual create aren't atomic
+     * against each other, so two concurrent {@code CREATE TABLE IF NOT EXISTS}/{@code CREATE
+     * SCHEMA IF NOT EXISTS} calls for an object neither has created yet can both pass the check
+     * and then both attempt the create, and the loser gets a real {@code 23505 unique_violation}
+     * (on {@code pg_type}/{@code pg_namespace}), not a graceful no-op. Since the intent here is
+     * purely "make sure it exists," swallowing that specific race is correct, not papering over a
+     * real bug: by the time this call returns with that error, the object DOES exist -- another
+     * worker just won the race to create it. */
     @Override
     public void ensureTargetSchema(Sink sink) throws Exception {
-        sink.apply(new ChangeEvent("CREATE SCHEMA IF NOT EXISTS \"" + targetDb + "\"", List.of()));
-        sink.apply(new ChangeEvent("CREATE TABLE IF NOT EXISTS " + qualifiedTargetTable()
-                + " (id text PRIMARY KEY, doc jsonb NOT NULL)", List.of()));
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE SCHEMA IF NOT EXISTS \"" + targetDb + "\"");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE TABLE IF NOT EXISTS " + qualifiedTargetTable()
+                + " (id text PRIMARY KEY, doc jsonb NOT NULL)");
+    }
+
+    private static void applyTolerantOfConcurrentCreateRace(Sink sink, String ddl) throws Exception {
+        try {
+            sink.apply(new ChangeEvent(ddl, List.of()));
+        } catch (java.sql.SQLException e) {
+            if (!"23505".equals(e.getSQLState())) {
+                throw e;
+            }
+            log.info("ensureTargetSchema: lost a benign concurrent CREATE race to another worker "
+                    + "(23505 on the object catalog) -- the object exists either way, continuing");
+        }
     }
 
     @Override
