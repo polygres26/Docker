@@ -1,5 +1,5 @@
 import {
-  Compass, Cpu, LayoutDashboard, LogOut,
+  Compass, Cpu, LayoutDashboard, LogOut, RefreshCw,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from './api/client'
@@ -58,6 +58,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             >
               <Compass size={17} strokeWidth={1.8} />
               Advisor
+            </NavLink>
+          </div>
+        </div>
+
+        <div className={styles.railDivider} />
+
+        {/* Deliberately named "Data Sync," not "Migration" -- the sidebar already has a
+            "Migration" section above for Advisor's own per-database ASSESSMENT tools (Connections/
+            Reports/Sizing). This is nexagres-migration's live data-movement progress report; the
+            two products are easy to conflate by name, so this label is chosen to keep them
+            visually distinct rather than reusing the word. */}
+        <div className={styles.railSection}>
+          <div className={styles.railSectionLabel}>Data Sync</div>
+          <div className={styles.railGroup}>
+            <NavLink to="/data-sync" className={({ isActive }) => `${styles.railItem} ${isActive ? styles.railItemActive : ''}`}>
+              <RefreshCw size={17} strokeWidth={1.8} />
+              Progress
             </NavLink>
           </div>
         </div>

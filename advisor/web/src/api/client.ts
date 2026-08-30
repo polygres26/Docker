@@ -310,3 +310,18 @@ export async function runReportsSizing(ids: string[]): Promise<SizingRecommendat
   return api('/api/reports/sizing', { method: 'POST', body: JSON.stringify({ ids }) })
 }
 
+// --- Data Sync (nexagres-migration progress report) ---
+
+export interface MigrationSourceStatus {
+  sourceKey: string
+  eventsApplied: number
+  lastCheckpointAt: string | null
+  partitionsTotal: number
+  partitionsDone: number
+  leaderWorkerId: string | null
+}
+
+export async function getMigrationStatus(connectionId: string): Promise<MigrationSourceStatus[]> {
+  return api(`/api/migration/status?connectionId=${encodeURIComponent(connectionId)}`)
+}
+
