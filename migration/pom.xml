@@ -67,6 +67,29 @@
       <artifactId>mongodb-driver-sync</artifactId>
       <version>${mongodb-driver-sync.version}</version>
     </dependency>
+    <!-- Matches wire/pom.xml's own mysql-connector-j version exactly (there compile-scope,
+         pinned specifically at 8.4.0 because newer 9.x releases dropped client-side
+         mysql_native_password support mywire's own SERVER-side handshake relies on; that concern
+         doesn't apply here, since MySqlSource is a plain JDBC CLIENT authenticating however the
+         real source MySQL server wants, but staying in lockstep avoids two different driver
+         versions/behaviors for the same vendor in this repo for no real reason). -->
+    <dependency>
+      <groupId>com.mysql</groupId>
+      <artifactId>mysql-connector-j</artifactId>
+      <version>8.4.0</version>
+    </dependency>
+    <!-- Real MySQL binlog (ROW-format) protocol client; a mature, MIT-licensed, actively
+         maintained library (originally shyiko/mysql-binlog-connector-java, now maintained under
+         Zendesk's groupId), added as a normal Maven dependency, not vendored/copied source;
+         distinct from this session's earlier, deliberate decision NOT to reuse Dsync's own
+         AGPL-3.0 source, which was about copying code, not about depending on OSS libraries at
+         all. Parsing MySQL's binary replication protocol by hand would be real, unnecessary
+         reinvention of a well-solved problem. -->
+    <dependency>
+      <groupId>com.zendesk</groupId>
+      <artifactId>mysql-binlog-connector-java</artifactId>
+      <version>0.29.2</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
