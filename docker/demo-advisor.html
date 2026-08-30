@@ -156,6 +156,23 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 
 .stubNote { border: 1px dashed var(--border); border-radius: 10px; padding: 16px 18px; color: var(--muted); font-size: 13px; }
 
+/* ---------- Object explorer (per-connection Objects tab) ---------- */
+.objLayout { display: flex; gap: 20px; align-items: flex-start; }
+.objTree { width: 260px; flex: none; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 6px; max-height: 560px; overflow-y: auto; }
+.objTreeGroupLabel { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 10px 10px 4px; }
+.objTreeItem { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--text); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.objTreeItem:hover { background: var(--bg); }
+.objTreeItem.active { background: var(--accent); color: #fff; }
+.objDetail { flex: 1; min-width: 0; }
+.objDetailTitle { font-size: 14px; font-weight: 700; margin: 0 0 12px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.ddlBlock { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; overflow-x: auto; margin: 0 0 16px; font-size: 12.5px; line-height: 1.6; white-space: pre; }
+.llmSummary { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; color: var(--text); }
+.llmSummary h3, .llmSummary strong { font-weight: 700; }
+.effortBadge { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 650; }
+.effortBadge.trivial { color: var(--accent-strong); background: var(--accent-soft); }
+.effortBadge.moderate { color: var(--medium); background: var(--medium-soft); }
+.effortBadge.substantial { color: #b8562f; background: rgba(184,86,47,0.12); }
+
 /* ---------- Connect / Login screens ---------- */
 
 .gateWrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
@@ -515,6 +532,214 @@ const advisorSizing = {
 };
 
 const advisorLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
+
+// Per-connection object explorer -- schema, objects grouped by type, real-shaped DDL, and a
+// canned "LLM migration summary" per object revealed on demand (see openAdvisorObjectExplorer /
+// toggleObjectLlm below). Shapes mirror the real Advisor app's own Objects tab: a schema
+// introspection scan grouped INDEX/PROCEDURE/SEQUENCE/TABLE, DDL for the selected object, and a
+// per-object "Summarize with LLM" action producing Summary/Non-trivial Constructs/Effort sections.
+const advisorObjects = {
+  1: {
+    schema: 'MIGRATION_RO',
+    groups: [
+      { type: 'INDEX', items: [
+        { name: 'SYS_C008689',
+          ddl: 'CREATE UNIQUE INDEX "MIGRATION_RO"."SYS_C008689" ON "MIGRATION_RO"."EMPLOYEES" ("EMP_ID")',
+          llm: null },
+        { name: 'SYS_C008691',
+          ddl: 'CREATE UNIQUE INDEX "MIGRATION_RO"."SYS_C008691" ON "MIGRATION_RO"."RAISE_AUDIT_LOG" ("LOG_ID")',
+          llm: null },
+      ]},
+      { type: 'PROCEDURE', items: [
+        { name: 'APPLY_ANNUAL_RAISE',
+          ddl: 'PROCEDURE apply_annual_raise (\n' +
+               '  p_dept_id IN NUMBER,\n' +
+               '  p_pct     IN NUMBER\n' +
+               ') AS\n' +
+               '  v_count NUMBER := 0;\n' +
+               'BEGIN\n' +
+               '  FOR emp_rec IN (\n' +
+               '    SELECT emp_id, salary FROM employees\n' +
+               '    WHERE dept_id = p_dept_id\n' +
+               '    FOR UPDATE\n' +
+               '  ) LOOP\n' +
+               '    UPDATE employees\n' +
+               '    SET salary = emp_rec.salary * (1 + p_pct/100)\n' +
+               '    WHERE emp_id = emp_rec.emp_id;\n' +
+               '    v_count := v_count + 1;\n' +
+               '  END LOOP;\n' +
+               '  INSERT INTO raise_audit_log (dept_id, pct, emp_count, applied_at)\n' +
+               '  VALUES (p_dept_id, p_pct, v_count, SYSDATE);\n' +
+               '  COMMIT;\n' +
+               'EXCEPTION\n' +
+               '  WHEN OTHERS THEN\n' +
+               '    ROLLBACK;\n' +
+               '    RAISE;\n' +
+               'END apply_annual_raise;',
+          llm: { effort: 'moderate',
+            summary: 'This PL/SQL procedure gives every employee in a given department a percentage ' +
+              'raise. It locks the affected rows, updates each salary individually, counts how many ' +
+              'employees were touched, writes one audit-log row for the whole batch, and commits. Any ' +
+              'exception rolls the batch back and re-raises.',
+            constructs: [
+              'FOR UPDATE — row-locks every selected employee for the duration of the loop; plpgsql’s SELECT ... FOR UPDATE inside a cursor loop does the same thing, no rewrite needed beyond syntax.',
+              'Implicit cursor-for-loop (FOR emp_rec IN (SELECT ...) LOOP) — maps directly to plpgsql’s own FOR ... IN (SELECT ...) LOOP; no %ROWTYPE declaration required in Postgres, the loop variable is inferred.',
+              'SYSDATE — maps to Postgres now() (or CURRENT_DATE if only the date part matters, which applied_at’s column type will decide).',
+              'WHEN OTHERS THEN ROLLBACK; RAISE; — plpgsql’s EXCEPTION WHEN OTHERS THEN RAISE; is the direct equivalent; an explicit COMMIT/ROLLBACK inside a function needs the caller’s transaction boundary considered (Postgres functions don’t control the outer transaction the way a top-level PL/SQL block called via autocommit does).',
+            ],
+            estimate: 'Moderate',
+            estimateReason: 'Every construct here (FOR UPDATE, cursor loop, exception handler) has a ' +
+              'direct plpgsql equivalent — no autonomous transactions, no DBMS_* package calls, no ' +
+              'dynamic SQL. Expect a mostly mechanical PL/SQL → plpgsql rewrite, plus deciding whether ' +
+              'this becomes a plain function (called within the caller’s transaction) or needs to run ' +
+              'as its own transaction via pg_background/dblink for the same batch-commit semantics.' } },
+      ]},
+      { type: 'SEQUENCE', items: [
+        { name: 'ISEQ$$_82834',
+          ddl: 'CREATE SEQUENCE "MIGRATION_RO"."ISEQ$$_82834" MINVALUE 1 MAXVALUE 9999999999999999999999999999 ' +
+               'INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER NOCYCLE NOKEEP NOSCALE GLOBAL',
+          llm: { effort: 'trivial',
+            summary: 'The system-generated sequence backing EMPLOYEES’ identity column (Oracle’s ' +
+              '"GENERATED ALWAYS AS IDENTITY" creates one of these under the hood, not a sequence you ' +
+              'declared yourself).',
+            constructs: [
+              'GLOBAL / NOSCALE / NOKEEP — Oracle RAC/sharding-related sequence flags with no Postgres ' +
+              'equivalent, but also nothing a single-instance Postgres migration needs to replicate.',
+            ],
+            estimate: 'Trivial',
+            estimateReason: 'A plain CREATE SEQUENCE with default settings replaces this; the identity ' +
+              'column it backs migrates as a normal Postgres GENERATED ALWAYS AS IDENTITY column, which ' +
+              'creates its own sequence automatically.' } },
+      ]},
+      { type: 'TABLE', items: [
+        { name: 'EMPLOYEES',
+          ddl: 'CREATE TABLE "MIGRATION_RO"."EMPLOYEES"\n' +
+               '   (   "EMP_ID" NUMBER GENERATED ALWAYS AS IDENTITY,\n' +
+               '       "DEPT_ID" NUMBER,\n' +
+               '       "NAME" VARCHAR2(100),\n' +
+               '       "SALARY" NUMBER(10,2),\n' +
+               '        CONSTRAINT "EMPLOYEES_PK" PRIMARY KEY ("EMP_ID")\n' +
+               '   )',
+          llm: { effort: 'trivial',
+            summary: 'A straightforward employee roster: one row per employee, department id, name, ' +
+              'and current salary.',
+            constructs: [
+              'NUMBER(10,2) — maps to Postgres numeric(10,2), an exact decimal type, not a lossy float.',
+              'GENERATED ALWAYS AS IDENTITY — Postgres has this exact syntax natively (SQL-standard identity columns), no rewrite needed.',
+            ],
+            estimate: 'Trivial',
+            estimateReason: 'No Oracle-specific types, no triggers, no LOBs — a direct 1:1 column mapping.' } },
+        { name: 'RAISE_AUDIT_LOG',
+          ddl: 'CREATE TABLE "MIGRATION_RO"."RAISE_AUDIT_LOG"\n' +
+               '   (   "LOG_ID" NUMBER GENERATED ALWAYS AS IDENTITY,\n' +
+               '       "DEPT_ID" NUMBER,\n' +
+               '       "PCT" NUMBER,\n' +
+               '       "EMP_COUNT" NUMBER,\n' +
+               '       "APPLIED_AT" DATE,\n' +
+               '        CONSTRAINT "RAISE_AUDIT_LOG_PK" PRIMARY KEY ("LOG_ID")\n' +
+               '   )',
+          llm: { effort: 'trivial',
+            summary: 'One audit row per APPLY_ANNUAL_RAISE run — which department, what percentage, how ' +
+              'many employees it touched, and when.',
+            constructs: [
+              'DATE — Oracle’s DATE always carries a time component; Postgres’ timestamp (not date) is the faithful equivalent unless the time-of-day is genuinely never needed.',
+            ],
+            estimate: 'Trivial',
+            estimateReason: 'Plain scalar columns only, written by exactly one procedure — no surprises.' } },
+      ]},
+    ],
+  },
+  2: {
+    schema: 'app',
+    groups: [
+      { type: 'TABLE', items: [
+        { name: 'orders',
+          ddl: 'CREATE TABLE `orders` (\n' +
+               '  `id` int NOT NULL AUTO_INCREMENT,\n' +
+               '  `customer_id` int NOT NULL,\n' +
+               '  `total` decimal(10,2) NOT NULL,\n' +
+               '  `status` enum(\'pending\',\'paid\',\'shipped\') NOT NULL DEFAULT \'pending\',\n' +
+               '  PRIMARY KEY (`id`)\n' +
+               ') ENGINE=InnoDB',
+          llm: { effort: 'moderate',
+            summary: 'The orders table for a small e-commerce schema — one row per order, its ' +
+              'customer, total, and a fixed set of status values.',
+            constructs: [
+              'AUTO_INCREMENT — maps to Postgres GENERATED ALWAYS AS IDENTITY (or a plain serial).',
+              'enum(\'pending\',\'paid\',\'shipped\') — MySQL’s inline enum has no direct Postgres ' +
+              'column-type equivalent; migrates cleanly to either a Postgres CREATE TYPE ... AS ENUM or ' +
+              'a plain text column with a CHECK constraint, depending on how often the value set changes.',
+            ],
+            estimate: 'Moderate',
+            estimateReason: 'Mechanical column mapping except the enum, which needs one explicit design ' +
+              'decision (native enum type vs. check-constrained text) before the CREATE TABLE can be ' +
+              'ported.' } },
+      ]},
+      { type: 'PROCEDURE', items: [
+        { name: 'recalc_order_total',
+          ddl: 'CREATE PROCEDURE recalc_order_total(IN p_order_id INT)\n' +
+               'BEGIN\n' +
+               '  UPDATE orders o\n' +
+               '  SET total = (SELECT SUM(price * qty) FROM order_items WHERE order_id = p_order_id)\n' +
+               '  WHERE o.id = p_order_id;\n' +
+               'END',
+          llm: { effort: 'trivial',
+            summary: 'Recomputes one order’s total from its line items.',
+            constructs: [
+              'MySQL stored procedure syntax — migrates to a plpgsql FUNCTION (Postgres procedures exist ' +
+              'too, but the UPDATE ... FROM shape here is simplest as a function or a plain query).',
+            ],
+            estimate: 'Trivial',
+            estimateReason: 'A single UPDATE with a scalar subquery — direct translation, no MySQL-only ' +
+              'constructs.' } },
+      ]},
+    ],
+  },
+};
+
+// Findings/Workload/Parameters -- lighter-weight than Objects (the real Advisor app's own tabs
+// alongside it), but real, specific content per connection rather than a placeholder.
+const advisorFindings = {
+  1: [
+    { severity: 'moderate', title: 'Autonomous-transaction-shaped audit logging pattern',
+      detail: 'APPLY_ANNUAL_RAISE writes its audit row and COMMITs inside the same procedure the caller invoked — decide whether the Postgres version keeps that as part of the caller’s transaction or needs to genuinely run independently.' },
+    { severity: 'trivial', title: '2 tables, both with a plain numeric identity PK',
+      detail: 'EMPLOYEES and RAISE_AUDIT_LOG both use GENERATED ALWAYS AS IDENTITY — Postgres supports this exact syntax natively.' },
+    { severity: 'trivial', title: 'No LOBs, no Oracle-specific types',
+      detail: 'No BLOB/CLOB/XMLTYPE columns found in this schema — the common source of substantial migration effort elsewhere isn’t present here.' },
+  ],
+  2: [
+    { severity: 'moderate', title: '1 inline MySQL ENUM column',
+      detail: 'orders.status uses MySQL’s inline enum(...) — needs one explicit decision (native Postgres enum type vs. CHECK-constrained text) before porting.' },
+    { severity: 'trivial', title: '1 stored procedure, no MySQL-only constructs',
+      detail: 'recalc_order_total is a single UPDATE with a scalar subquery — ports directly to a plpgsql function.' },
+  ],
+};
+
+const advisorWorkload = {
+  1: [
+    { sql: 'SELECT * FROM employees WHERE dept_id = :1', calls: 41200, avgMs: 1.8 },
+    { sql: 'CALL apply_annual_raise(:1, :2)', calls: 340, avgMs: 62.4 },
+    { sql: 'SELECT * FROM raise_audit_log ORDER BY applied_at DESC', calls: 980, avgMs: 3.1 },
+  ],
+  2: [
+    { sql: 'SELECT * FROM orders WHERE customer_id = ?', calls: 88400, avgMs: 2.4 },
+    { sql: 'CALL recalc_order_total(?)', calls: 15200, avgMs: 4.7 },
+  ],
+};
+
+const advisorParameters = {
+  1: [
+    { param: 'sga_target', value: '4G', pgEquivalent: 'shared_buffers', pgSuggestion: '1G (25% of instance memory, tuned from the sizing scan)' },
+    { param: 'pga_aggregate_target', value: '1536M', pgEquivalent: 'work_mem × max_connections', pgSuggestion: '16MB (per-operation, not a shared pool)' },
+    { param: 'optimizer_mode', value: 'ALL_ROWS', pgEquivalent: '(planner has no equivalent mode switch)', pgSuggestion: 'n/a — tune via statistics/indexes instead' },
+    { param: 'open_cursors', value: '300', pgEquivalent: 'max_connections × statement caching', pgSuggestion: '100 (from captured peak concurrency)' },
+  ],
+  2: [
+    { param: 'innodb_buffer_pool_size', value: '2G', pgEquivalent: 'shared_buffers', pgSuggestion: '512MB (25% of instance memory)' },
+    { param: 'max_connections', value: '151', pgEquivalent: 'max_connections', pgSuggestion: '100' },
+  ],
+};
 
 const federationPlans = [
   {
@@ -996,7 +1221,7 @@ function advisorConnectionsPage() {
     '<div class="rowItem">' +
       rowFavBtn(c.fav, 'toggleAdvisorFav(' + c.id + ')') +
       '<div class="rowMain"><span class="rowName">' + c.name + '</span><span class="rowSub mono">' + c.url + '</span></div>' +
-      '<button type="button" class="iconBtn" title="Browse objects" onclick="alert(\'Opens the object browser for \\\'' + c.name + '\\\'.\')"><span class="ico">' + iSearch + '</span></button>' +
+      '<button type="button" class="iconBtn" title="Browse objects" onclick="openAdvisorObjectExplorer(' + c.id + ')"><span class="ico">' + iSearch + '</span></button>' +
       '<button type="button" class="iconBtn" title="Delete connection" onclick="removeAdvisorConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
     '</div>').join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No connections yet.</div>';
   return advisorTabs('connections') + '<h1 class="pageTitle">Connections</h1>' +
@@ -1041,6 +1266,145 @@ const advisorPages = {
   sizing: advisorSizingPage,
   llm: () => llmConfigPage(advisorLlmConfig, 'Provider and model used to generate migration-report narratives and PL/SQL summaries &mdash; local by default, nothing leaves the machine.'),
 };
+
+// ---------------------------------------------------------------------------------------------
+// Object explorer -- per-connection Findings/Objects/Workload/Parameters, entered from a
+// connection's "Browse objects" button and exited via its own "&larr; Connections" link, matching
+// the real Advisor app's own per-connection detail view (not one of the top-level Advisor tabs).
+// ---------------------------------------------------------------------------------------------
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+const OBJECT_EXPLORER_TABS = [
+  { key: 'findings', label: 'Findings' },
+  { key: 'objects', label: 'Objects' },
+  { key: 'workload', label: 'Workload' },
+  { key: 'parameters', label: 'Parameters' },
+];
+
+let objectExplorerState = { connId: null, tab: 'objects', selType: null, selIndex: 0, revealed: {} };
+
+function openAdvisorObjectExplorer(connId) {
+  const data = advisorObjects[connId];
+  objectExplorerState = {
+    connId,
+    tab: 'objects',
+    selType: data && data.groups.length ? data.groups[0].type : null,
+    selIndex: 0,
+    revealed: {},
+  };
+  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => b.classList.toggle('active', b.dataset.advisorPage === 'connections'));
+  $('#advisor-content').innerHTML = renderObjectExplorer();
+}
+window.openAdvisorObjectExplorer = openAdvisorObjectExplorer;
+
+function renderObjectExplorer() {
+  const conn = advisorConnections.find((c) => c.id === objectExplorerState.connId);
+  if (!conn) return advisorConnectionsPage();
+  const tabsRow = '<div class="tabRow">' + OBJECT_EXPLORER_TABS.map((t) =>
+    '<button type="button" class="' + (t.key === objectExplorerState.tab ? 'active' : '') + '" onclick="selectObjectExplorerTab(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
+  const body = {
+    findings: findingsTabContent,
+    objects: objectsTabContent,
+    workload: workloadTabContent,
+    parameters: parametersTabContent,
+  }[objectExplorerState.tab](conn.id);
+  return '<button type="button" class="iconBtn" style="padding:0;margin-bottom:16px;color:var(--muted);gap:6px;width:auto;display:inline-flex;align-items:center" onclick="selectAdvisor(\'connections\')">' +
+      '<span class="ico" style="transform:rotate(180deg)">' + chevronRight + '</span>&larr; Connections</button>' +
+    '<h1 class="pageTitle">' + esc(conn.name) + '</h1>' +
+    '<p class="pageLede mono" style="margin-bottom:20px">' + esc(conn.url) + '</p>' +
+    tabsRow + body;
+}
+
+window.selectObjectExplorerTab = function (tab) {
+  objectExplorerState.tab = tab;
+  $('#advisor-content').innerHTML = renderObjectExplorer();
+};
+
+function objectsTabContent(connId) {
+  const data = advisorObjects[connId];
+  if (!data || !data.groups.length) {
+    return '<div class="stubNote">No objects found on this connection yet &mdash; run a schema scan from the connection list.</div>';
+  }
+  const tree = data.groups.map((g) => {
+    const items = g.items.map((item, i) => {
+      const active = g.type === objectExplorerState.selType && i === objectExplorerState.selIndex;
+      return '<button type="button" class="objTreeItem' + (active ? ' active' : '') + '" onclick="selectObjectTreeItem(\'' + g.type + '\',' + i + ')" title="' + esc(item.name) + '">' + esc(item.name) + '</button>';
+    }).join('');
+    return '<div class="objTreeGroupLabel">' + g.type + ' (' + g.items.length + ')</div>' + items;
+  }).join('');
+
+  const group = data.groups.find((g) => g.type === objectExplorerState.selType) || data.groups[0];
+  const item = group.items[objectExplorerState.selIndex] || group.items[0];
+  const revealKey = group.type + ':' + item.name;
+  const revealed = !!objectExplorerState.revealed[revealKey];
+
+  let llmPanel = '';
+  if (item.llm) {
+    if (!revealed) {
+      llmPanel = '<button type="button" class="btnPrimary" style="width:auto" onclick="toggleObjectLlm(\'' + revealKey + '\')">Summarize with LLM</button>';
+    } else {
+      const l = item.llm;
+      const effortClass = l.effort ? l.effort.toLowerCase() : 'moderate';
+      llmPanel =
+        '<button type="button" class="btnPrimary" style="width:auto;margin-bottom:14px" onclick="toggleObjectLlm(\'' + revealKey + '\')">Hide LLM summary</button>' +
+        '<div class="llmSummary">' +
+          '<div style="font-weight:700;margin-bottom:6px">Summary</div>' + esc(l.summary) +
+          '<div style="font-weight:700;margin:16px 0 6px">Non-trivial constructs</div>' +
+          '<ul style="margin:0;padding-left:18px">' + l.constructs.map((c) => '<li style="margin-bottom:6px">' + esc(c) + '</li>').join('') + '</ul>' +
+          '<div style="font-weight:700;margin:16px 0 6px">Rough migration-effort estimate</div>' +
+          '<div style="margin-bottom:4px"><span class="effortBadge ' + effortClass + '">' + esc(l.estimate) + '</span></div>' +
+          esc(l.estimateReason) +
+        '</div>';
+    }
+  } else {
+    llmPanel = '<div class="stubNote">Nothing non-trivial to summarize for this object type.</div>';
+  }
+
+  return '<div class="objLayout">' +
+    '<div class="objTree">' + tree + '</div>' +
+    '<div class="objDetail">' +
+      '<div class="objDetailTitle">' + group.type + ': ' + esc(data.schema) + '.' + esc(item.name) + '</div>' +
+      '<pre class="ddlBlock">' + esc(item.ddl) + '</pre>' +
+      llmPanel +
+    '</div>' +
+  '</div>';
+}
+
+window.selectObjectTreeItem = function (type, index) {
+  objectExplorerState.selType = type;
+  objectExplorerState.selIndex = index;
+  $('#advisor-content').innerHTML = renderObjectExplorer();
+};
+
+window.toggleObjectLlm = function (key) {
+  objectExplorerState.revealed[key] = !objectExplorerState.revealed[key];
+  $('#advisor-content').innerHTML = renderObjectExplorer();
+};
+
+function findingsTabContent(connId) {
+  const findings = advisorFindings[connId] || [];
+  if (!findings.length) return '<div class="stubNote">No findings yet &mdash; run a schema scan to generate them.</div>';
+  const sevBadge = (sev) => '<span class="effortBadge ' + sev + '">' + sev + '</span>';
+  return '<div class="rowList">' + findings.map((f) =>
+    '<div class="rowItem" style="align-items:flex-start">' +
+      '<div style="flex:none;padding-top:2px">' + sevBadge(f.severity) + '</div>' +
+      '<div class="rowMain"><span class="rowName">' + esc(f.title) + '</span><span class="rowSub" style="white-space:normal">' + esc(f.detail) + '</span></div>' +
+    '</div>').join('') + '</div>';
+}
+
+function workloadTabContent(connId) {
+  const rows = (advisorWorkload[connId] || []).map((r) =>
+    '<tr><td class="mono" style="font-size:12.5px">' + esc(r.sql) + '</td><td class="numCell">' + r.calls.toLocaleString() + '</td><td class="numCell">' + r.avgMs.toFixed(1) + '</td></tr>').join('');
+  return '<p class="pageLede">Captured statements against this connection, most expensive first.</p>' +
+    '<div class="panel" style="padding:0"><table><thead><tr><th>Statement</th><th style="text-align:right">Calls</th><th style="text-align:right">Avg ms</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function parametersTabContent(connId) {
+  const rows = (advisorParameters[connId] || []).map((p) =>
+    '<tr><td class="mono">' + esc(p.param) + '</td><td class="mono">' + esc(p.value) + '</td><td class="mono">' + esc(p.pgEquivalent) + '</td><td>' + esc(p.pgSuggestion) + '</td></tr>').join('');
+  return '<p class="pageLede">Source engine parameters, their closest Postgres equivalent, and a suggested starting value.</p>' +
+    '<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th>Parameter</th><th>Value</th><th>Postgres equivalent</th><th>Suggested</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
 
 const ADVISOR_TAB_KEYS = ADVISOR_TABS.map((t) => t.key);
 function selectAdvisor(page) {
