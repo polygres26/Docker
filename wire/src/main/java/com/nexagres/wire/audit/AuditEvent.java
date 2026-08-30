@@ -22,8 +22,10 @@ public record AuditEvent(Instant timestamp, Type type, String userId, String sum
         ONTOLOGY_RELATIONSHIP_AUTO_ACCEPTED,
         
         NL2SQL_QUERY_EXECUTED,
-        
-        NL2SQL_JUDGE_CORRECTED
+
+        NL2SQL_JUDGE_CORRECTED,
+
+        MCP_TOOL_CALLED
     }
 
     public AuditEvent {

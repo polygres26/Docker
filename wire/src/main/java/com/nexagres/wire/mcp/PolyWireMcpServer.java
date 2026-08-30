@@ -41,6 +41,7 @@ public final class PolyWireMcpServer {
     private final Server server;
     private final List<RegisteredFunctionTool> functionTools;
     private final McpMetricsCollector metrics;
+    private final com.nexagres.wire.audit.AuditLog auditLog;
 
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
@@ -54,22 +55,36 @@ public final class PolyWireMcpServer {
         this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, new McpMetricsCollector());
     }
 
+    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+            BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
+            com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics) {
+        this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, metrics, null);
+    }
+
     /**
      * Full constructor -- adds {@code metrics}, the shared {@link McpMetricsCollector} instance
      * {@code MetricsServer} reads from to render {@code /api/metrics/summary}'s {@code mcpTools}
      * field and {@code /metrics}' {@code polywire_mcp_tool_*} series. Passed in (not constructed
      * internally and exposed via a getter) so both this class and {@code MetricsServer} share the
      * exact same instance regardless of which one {@code Main} happens to construct first.
+     *
+     * <p>{@code auditLog}, if non-null, gets one {@code MCP_TOOL_CALLED} event per real tool
+     * invocation (see {@link #handleToolsCall}) -- previously MCP traffic was counted in {@code
+     * metrics} but never actually reached the audit trail every other protocol's login/query
+     * events do, which meant {@code /api/mcp-audit/summarize}'s "what did this agent actually do"
+     * question had no real per-call data to answer from, only aggregate counters.
      */
     public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
-            com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics) {
+            com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
+            com.nexagres.wire.audit.AuditLog auditLog) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
         this.connectionGate = connectionGate;
         this.oauth = oauth;
         this.metrics = metrics;
+        this.auditLog = auditLog;
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -231,6 +246,7 @@ public final class PolyWireMcpServer {
 
         long startNanos = System.nanoTime();
         boolean isError = true;
+        String errorMessage = null;
         try (Connection backend = PgConnections.open(options)) {
             AdHocQueryRunner.Result result = switch (toolName) {
                 case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
@@ -242,12 +258,43 @@ public final class PolyWireMcpServer {
                 default -> runRegisteredTool(backend, toolName, arguments, accessContext);
             };
             isError = !result.success();
+            errorMessage = result.error();
             writeResult(response, id, toolCallResult(result));
         } catch (RuntimeException | java.sql.SQLException e) {
+            errorMessage = e.getMessage();
             writeError(response, id, -32602, e.getMessage());
         } finally {
-            metrics.record(toolName, System.nanoTime() - startNanos, isError);
+            long elapsedNanos = System.nanoTime() - startNanos;
+            metrics.record(toolName, elapsedNanos, isError);
+            if (auditLog != null) {
+                recordToolCallAudit(toolName, arguments, accessContext, isError, errorMessage, elapsedNanos);
+            }
         }
+    }
+
+    /** One real per-call audit event -- see the full constructor's own javadoc for why this
+     * matters beyond just {@code metrics}' aggregate counters. {@code arguments} is truncated the
+     * same way {@code SqlMetricsCollector.normalize} caps SQL text, for the same reason: an
+     * {@code execute_sql} call's own {@code sql} argument can be arbitrarily long, and an audit
+     * summary is a place to know WHAT ran, not to store the full statement text a second time. */
+    private void recordToolCallAudit(String toolName, JsonObject arguments,
+            com.nexagres.wire.core.AccessContext accessContext, boolean isError, String errorMessage, long elapsedNanos) {
+        String userId = accessContext == null || accessContext.isAnonymous() ? "anonymous" : accessContext.userId();
+        String argsText = arguments.toString();
+        if (argsText.length() > 300) {
+            argsText = argsText.substring(0, 300) + "…";
+        }
+        Map<String, String> details = new java.util.LinkedHashMap<>();
+        details.put("tool", toolName);
+        details.put("arguments", argsText);
+        details.put("success", String.valueOf(!isError));
+        details.put("elapsedMs", String.valueOf(elapsedNanos / 1_000_000));
+        if (isError && errorMessage != null) {
+            details.put("error", errorMessage);
+        }
+        String summary = "MCP tool \"" + toolName + "\" " + (isError ? "failed" : "succeeded");
+        auditLog.record(com.nexagres.wire.audit.AuditEvent.of(
+                com.nexagres.wire.audit.AuditEvent.Type.MCP_TOOL_CALLED, userId, summary, details));
     }
 
     private AdHocQueryRunner.Result runSql(Connection backend, String sql,

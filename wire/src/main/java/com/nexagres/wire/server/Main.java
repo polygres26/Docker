@@ -535,7 +535,7 @@ public final class Main {
         int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
         com.nexagres.wire.mcp.PolyWireMcpServer mcpServer = new com.nexagres.wire.mcp.PolyWireMcpServer(
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"),
-                oauth, mcpMetrics);
+                oauth, mcpMetrics, auditLog);
         mcpServer.start();
         log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
 

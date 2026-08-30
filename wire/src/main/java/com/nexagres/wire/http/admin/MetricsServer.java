@@ -554,6 +554,20 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (auditLog != null && "/api/mcp-audit/summarize".equals(target) && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleMcpAuditSummarize(request, response, auditLog, dialectTranslationStage);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (configStore != null && "/api/llm-config".equals(target)) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -1516,6 +1530,99 @@ public final class MetricsServer {
         json.append(']');
         response.setStatus(HttpServletResponse.SC_OK);
         response.getWriter().write(json.toString());
+    }
+
+    /**
+     * Turns real {@code MCP_TOOL_CALLED} audit events into a short plain-English narrative -- an
+     * optional {@code userId} in the request body filters to just that caller's activity (MCP has
+     * no first-class "session" concept at this dispatch point, so {@code accessContext.userId()}
+     * is the natural grouping key -- {@code "anonymous"} if OAuth isn't enforced). Reads from
+     * {@link com.nexagres.wire.audit.AuditLog#recent}, which returns EVERY event type most-recent-
+     * first, so this filters client-side for {@code MCP_TOOL_CALLED} rather than assuming the
+     * store has a type-filtered query -- it doesn't, confirmed by reading {@code AuditLog}/{@code
+     * AuditLogStore} rather than assuming.
+     */
+    private static void handleMcpAuditSummarize(HttpServletRequest request, HttpServletResponse response,
+            com.nexagres.wire.audit.AuditLog auditLog, com.nexagres.wire.core.DialectTranslationStage dialectTranslationStage)
+            throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        com.nexagres.wire.core.TranslationLlmClient llmClient =
+                dialectTranslationStage == null ? null : dialectTranslationStage.llmClient();
+        if (llmClient == null) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
+                    + "or the POLYWIRE_LLM_* env vars before summarizing MCP activity\"}");
+            return;
+        }
+        JsonObject body;
+        try {
+            body = request.getContentLength() > 0 ? readJsonBody(request) : new JsonObject();
+        } catch (Exception e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"invalid JSON request body\"}");
+            return;
+        }
+        String userIdFilter = optionalString(body, "userId");
+        int limit = body.has("limit") && body.get("limit").isJsonPrimitive() && body.get("limit").getAsJsonPrimitive().isNumber()
+                ? body.get("limit").getAsInt() : 25;
+
+        // recent() returns every event type -- scan a generously larger window (10x the requested
+        // limit, capped) so a busy audit log full of unrelated login/firewall events doesn't
+        // starve out real MCP_TOOL_CALLED rows before this filter ever sees enough of them.
+        java.util.List<com.nexagres.wire.audit.AuditEvent> matched = new java.util.ArrayList<>();
+        for (com.nexagres.wire.audit.AuditEvent event : auditLog.recent(Math.min(limit * 10, 2000))) {
+            if (event.type() != com.nexagres.wire.audit.AuditEvent.Type.MCP_TOOL_CALLED) {
+                continue;
+            }
+            if (userIdFilter != null && !userIdFilter.isBlank() && !userIdFilter.equals(event.userId())) {
+                continue;
+            }
+            matched.add(event);
+            if (matched.size() >= limit) {
+                break;
+            }
+        }
+
+        if (matched.isEmpty()) {
+            response.setStatus(HttpServletResponse.SC_OK);
+            JsonObject empty = new JsonObject();
+            empty.addProperty("summary", (String) null);
+            empty.addProperty("eventCount", 0);
+            empty.addProperty("note", "no matching MCP_TOOL_CALLED audit events found -- nothing to summarize");
+            response.getWriter().write(empty.toString());
+            return;
+        }
+
+        StringBuilder context = new StringBuilder();
+        for (com.nexagres.wire.audit.AuditEvent event : matched) {
+            context.append(event.timestamp()).append(" user=").append(event.userId()).append(": ")
+                    .append(event.summary());
+            String args = event.details().get("arguments");
+            if (args != null) {
+                context.append(" args=").append(args);
+            }
+            String error = event.details().get("error");
+            if (error != null) {
+                context.append(" error=").append(error);
+            }
+            context.append('\n');
+        }
+
+        String summary;
+        try {
+            summary = llmClient.summarizeMcpActivity(context.toString());
+        } catch (Exception e) {
+            log.warn("mcp-audit summarize: LLM call failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+            response.getWriter().write("{\"error\":\"LLM request failed: " + jsonString(e.getMessage()) + "\"}");
+            return;
+        }
+
+        JsonObject responseBody = new JsonObject();
+        responseBody.addProperty("summary", summary);
+        responseBody.addProperty("eventCount", matched.size());
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseBody.toString());
     }
 
     private static long parseLongParam(String raw, long defaultValue) {

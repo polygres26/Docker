@@ -120,6 +120,26 @@ public final class TranslationLlmClient {
     }
 
     /**
+     * Asks the LLM to turn a list of real {@code MCP_TOOL_CALLED} audit events into a short
+     * plain-English narrative of what an MCP client actually did against the database -- for an
+     * admin who wants to know "what did this agent do in its last session" without reading raw
+     * audit JSON line by line. {@code context} is caller-built (see {@code MetricsServer}'s
+     * {@code /api/mcp-audit/summarize} handler) from real {@link
+     * com.nexagres.wire.audit.AuditEvent} rows, not invented -- this method only phrases what's
+     * already there, the same "narrate, don't decide" split every other LLM-backed feature here
+     * uses ({@link #summarizeAnomaly}, {@link QueryRepairStage}, etc.).
+     */
+    public String summarizeMcpActivity(String context) throws Exception {
+        String systemPrompt = "You are a database audit assistant. Below is a chronological list of real "
+                + "tool calls an MCP (Model Context Protocol) client made against a database, most recent "
+                + "first. Summarize what the client actually did in 2-4 short plain-English sentences -- "
+                + "call out any failed calls and anything that looks like a write (INSERT/UPDATE/DELETE/DDL), "
+                + "since those matter most to an admin reviewing this after the fact. Do not invent actions "
+                + "that aren't in the list. Reply with ONLY the summary, no markdown, no restating the raw list.";
+        return chatComplete(systemPrompt, context, "mcp-activity-summary");
+    }
+
+    /**
      * Asks the LLM for ONE short plain-English sentence explaining a traffic anomaly {@link
      * AnomalyDetectionScheduler} already detected deterministically -- this method is never asked
      * to decide whether something is anomalous, only to phrase a numeric fact a human would
