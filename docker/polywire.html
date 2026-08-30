@@ -67,6 +67,7 @@
           <li><a href="#graphdb-bolt-cypher">GraphDB (Neo4j Bolt+Cypher)</a></li>
           <li><a href="#rollups">Rollups</a></li>
           <li><a href="#observability">Observability</a></li>
+          <li><a href="#ai-features">AI features beyond MCP</a></li>
           <li><a href="#multi-az">Multi-AZ deployment</a></li>
           <li><a href="#security">Security</a></li>
           <li><a href="#outages">Planned/unplanned outages</a></li>
@@ -618,6 +619,80 @@
         </div>
       </div>
       </details>
+
+      <h3 class="subhead" id="ai-features">AI features beyond MCP<a class="permalink" href="#ai-features" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        MCP is one way an AI agent reaches Polywire — a client speaking a protocol. These five are
+        different: Polywire itself calling an LLM, at specific points in its own pipeline, to do
+        something a fixed rule can't. All five share the same design discipline: <b>a deterministic
+        decision stays deterministic</b> — whether to retry a failed query, whether a rate is
+        anomalous — the LLM only phrases or drafts, it never decides; and <b>nothing an LLM
+        produces is ever applied automatically</b> — a draft is returned as plain JSON an admin
+        reviews and applies through an endpoint that already existed and was already authorized,
+        never a new write path. All five read one shared LLM provider config
+        (<code>POLYWIRE_LLM_PROVIDER</code>/<code>API_KEY</code>/<code>BASE_URL</code>/<code>MODEL</code>,
+        hot-reloadable via <code>PUT /api/llm-config</code> with no restart) — configure it once,
+        every feature below picks it up.
+      </p>
+      <div class="obsGrid">
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiAuto">Self-healing</span><span class="obsPill">Off by default</span></div>
+          <h4>Query repair</h4>
+          <p>When Postgres genuinely rejects a statement with a narrow, deliberately-chosen set of
+          SQLSTATEs (syntax error, undefined function, datatype mismatch, feature not supported —
+          never "this table doesn't exist," which no LLM can fix), the LLM gets one shot at
+          rewriting it, retried exactly once. Any second failure surfaces the ORIGINAL Postgres
+          error, not a confusing second one. Set <code>POLYWIRE_QUERY_REPAIR_ENABLED=true</code> to
+          enable — off by default since rewriting a rejected statement is more invasive than
+          translating a known dialect gap.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDraft">Draft only</span></div>
+          <h4>Natural-language firewall rules</h4>
+          <p><code>POST /api/firewall-rules/draft</code> turns "block any DELETE against orders
+          without a WHERE clause" into a structured rule — action, priority, statement type,
+          table/SQL pattern — validated against the exact same grammar the firewall itself uses
+          (a real regex compile-check catches an LLM's invalid syntax before it's ever shown).
+          Nothing is inserted; an admin reviews it and submits it through the existing
+          <code>POST /api/firewall-rules</code>.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDetect">Deterministic detection</span></div>
+          <h4>Traffic anomaly detection</h4>
+          <p>A background scan compares each protocol's traffic rate against its own recent
+          baseline (an exponential moving average) and flags a real threshold breach — 3× baseline
+          by default, with a minimum-rate floor so near-zero traffic isn't flagged on noise. The
+          LLM's only job is turning that into one plain-English sentence; with no LLM configured,
+          the raw numeric anomaly is still recorded. Set
+          <code>POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES=&lt;n&gt;</code> to enable, read back via
+          <code>GET /api/anomalies</code>.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill aiDraft">Draft only</span></div>
+          <h4>QoS tuning suggestions</h4>
+          <p><code>POST /api/qos-suggestions/draft</code> proposes ONE targeted rate-limit change —
+          the default limit or a single workload class — based on current config and recent
+          per-backend load. Returns ready-to-paste fields for the existing
+          <code>PUT /api/config</code>, never writes anything itself. Honestly scoped: the evidence
+          is per-backend load, not per-workload-class throughput, since that's the only traffic
+          signal actually tracked today.</p>
+        </div>
+        <div class="obsCard">
+          <div class="obsPills"><span class="obsPill">Real audit trail</span></div>
+          <h4>MCP audit + summarization</h4>
+          <p>Every MCP tool call now lands a real audit event — tool, arguments, success/failure,
+          latency — the same audit trail every other protocol's login/query activity already
+          reaches. <code>POST /api/mcp-audit/summarize</code> turns a client's recent tool calls
+          into 2-4 plain-English sentences, called to flag failures and writes, never to invent an
+          action that didn't happen.</p>
+        </div>
+      </div>
+      <p class="rttNote">
+        Every one of these five was built with a real, no-mock integration test — a real Polywire
+        subprocess, a real disposable Postgres, and a real local HTTP server standing in for the
+        LLM endpoint (there's no free, deterministic, offline real LLM to point a CI run at) — the
+        same discipline as everything else on this page.
+      </p>
 
       <h3 class="subhead" id="multi-az">Multi-AZ deployment<a class="permalink" href="#multi-az" aria-label="Link to this section">#</a></h3>
       <figure>

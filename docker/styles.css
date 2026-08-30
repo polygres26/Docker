@@ -309,6 +309,9 @@
   .obsPill.scrape { color: var(--teal); background: var(--teal-soft); }
   .obsPill.direct { color: var(--indigo); background: var(--indigo-soft); }
   .obsPill.collector { color: var(--amber); background: var(--amber-soft); }
+  .obsPill.aiAuto { color: var(--teal); background: var(--teal-soft); }
+  .obsPill.aiDraft { color: var(--indigo); background: var(--indigo-soft); }
+  .obsPill.aiDetect { color: var(--amber); background: var(--amber-soft); }
 
   .whatyouget { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 18px; }
   .whatyouget li { display: flex; gap: 12px; align-items: flex-start; }
