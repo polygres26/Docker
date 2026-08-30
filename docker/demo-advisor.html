@@ -1216,6 +1216,9 @@ function advisorTabs(active) {
     '<button type="button" class="' + (t.key === active ? 'active' : '') + '" onclick="selectAdvisor(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
 }
 
+let showAddConnForm = false;
+let addConnPending = null; // { name, url, user } captured on submit, shown mid-test before landing in the list
+
 function advisorConnectionsPage() {
   const rows = advisorConnections.map((c) =>
     '<div class="rowItem">' +
@@ -1224,22 +1227,136 @@ function advisorConnectionsPage() {
       '<button type="button" class="iconBtn" title="Browse objects" onclick="openAdvisorObjectExplorer(' + c.id + ')"><span class="ico">' + iSearch + '</span></button>' +
       '<button type="button" class="iconBtn" title="Delete connection" onclick="removeAdvisorConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
     '</div>').join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No connections yet.</div>';
+  const formOrButton = showAddConnForm
+    ? addConnFormHtml()
+    : '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="toggleAddConnForm(true)">Add connection</button>';
   return advisorTabs('connections') + '<h1 class="pageTitle">Connections</h1>' +
     '<p class="pageLede">Databases you’re assessing for migration. Click a star to favorite.</p>' +
     '<div class="rowList" id="advisorConnList">' + rows + '</div>' +
-    '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="alert(\'Opens the add-connection form.\')">Add connection</button>';
+    formOrButton;
 }
+
+function addConnFormHtml() {
+  return '<div class="panel" style="margin-top:16px;max-width:440px" id="addConnForm">' +
+    '<div class="sectionTitle">Add connection</div>' +
+    '<div class="field"><label for="addConnName">Name</label><input id="addConnName" placeholder="e.g. Staging Oracle"></div>' +
+    '<div class="field"><label for="addConnUrl">JDBC URL</label><input id="addConnUrl" class="mono" placeholder="jdbc:oracle:thin:@host:1521/service"></div>' +
+    '<div class="field"><label for="addConnUser">Username</label><input id="addConnUser" placeholder="app_readonly"></div>' +
+    '<div class="field" style="margin-bottom:0"><label for="addConnPass">Password</label><input id="addConnPass" type="password" placeholder="••••••••"></div>' +
+    '<div id="addConnStatus" style="min-height:18px;font-size:12.5px;color:var(--muted);margin:10px 0 0"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button type="button" class="btnPrimary" style="width:auto" id="addConnSubmitBtn" onclick="submitAddConn()">Test &amp; connect</button>' +
+      '<button type="button" class="iconBtn" style="width:auto;color:var(--muted)" onclick="toggleAddConnForm(false)">Cancel</button>' +
+    '</div>' +
+  '</div>';
+}
+
+window.toggleAddConnForm = function (show) {
+  showAddConnForm = show;
+  addConnPending = null;
+  selectAdvisor('connections');
+  if (show) { const el = $('#addConnName'); if (el) el.focus(); }
+};
+
+window.submitAddConn = function () {
+  const name = $('#addConnName').value.trim();
+  const url = $('#addConnUrl').value.trim();
+  if (!name || !url) {
+    $('#addConnStatus').innerHTML = '<span style="color:#c2622f">Name and JDBC URL are both required.</span>';
+    return;
+  }
+  const btn = $('#addConnSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Testing connection…';
+  $('#addConnStatus').textContent = 'Opening a connection with the given credentials…';
+  // Real network round trip isn't possible from a static demo page -- this is the one place that
+  // simulates latency (setTimeout) rather than mutating state instantly, since "test the
+  // connection" is itself the thing being demonstrated, not just a list update.
+  setTimeout(() => {
+    if (!showAddConnForm) return; // cancelled while "testing"
+    $('#addConnStatus').innerHTML = '<span style="color:var(--accent-strong)">Connected in 340ms.</span>';
+    btn.textContent = 'Connected';
+    setTimeout(() => {
+      const nextId = advisorConnections.length ? Math.max.apply(null, advisorConnections.map((c) => c.id)) + 1 : 1;
+      advisorConnections.push({ id: nextId, name, url, fav: false });
+      showAddConnForm = false;
+      selectAdvisor('connections');
+    }, 500);
+  }, 900);
+};
+
+let showUploadForm = false;
 
 function advisorReportsPage() {
   const rows = advisorReports.map((r) =>
     '<tr><td>' + r.name + '</td><td class="mono">' + r.dialect + '</td><td class="mono" style="font-size:12px">' + r.filename + '</td>' +
     '<td style="color:var(--muted)">' + r.uploadedAt + '</td>' +
     '<td>' + (r.analyzedAt ? '<span class="badge ok">analyzed ' + r.analyzedAt + '</span>' : '<span class="badge" style="color:var(--muted);background:var(--bg)">not analyzed</span>') + '</td></tr>').join('');
+  const formOrButton = showUploadForm
+    ? uploadReportFormHtml()
+    : '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="toggleUploadForm(true)">Upload report</button>';
   return advisorTabs('reports') + '<h1 class="pageTitle">Reports</h1>' +
     '<p class="pageLede">Uploaded performance reports (Oracle AWR, MySQL performance report, SQL Server DMV export) &mdash; a different kind of signal than a live connection, an LLM reads it for you.</p>' +
     '<div class="panel" style="padding:0"><table><thead><tr><th>Name</th><th>Dialect</th><th>File</th><th>Uploaded</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-    '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="alert(\'Opens the upload form.\')">Upload report</button>';
+    formOrButton;
 }
+
+function uploadReportFormHtml() {
+  return '<div class="panel" style="margin-top:16px;max-width:440px" id="uploadReportForm">' +
+    '<div class="sectionTitle">Upload report</div>' +
+    '<div class="field"><label for="uploadReportName">Name</label><input id="uploadReportName" placeholder="e.g. Staging Oracle AWR - Sep"></div>' +
+    '<div class="field"><label for="uploadReportDialect">Dialect</label>' +
+      '<select id="uploadReportDialect" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;width:100%">' +
+        '<option value="oracle">Oracle (AWR/Statspack)</option>' +
+        '<option value="mysql">MySQL performance report</option>' +
+        '<option value="sqlserver">SQL Server (DMV export)</option>' +
+      '</select>' +
+    '</div>' +
+    '<div class="field" style="margin-bottom:0"><label for="uploadReportFile">File</label><input id="uploadReportFile" type="file" onchange="onUploadReportFileChosen(this)"></div>' +
+    '<div id="uploadReportStatus" style="min-height:18px;font-size:12.5px;color:var(--muted);margin:10px 0 0"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button type="button" class="btnPrimary" style="width:auto" id="uploadReportSubmitBtn" onclick="submitUploadReport()">Upload</button>' +
+      '<button type="button" class="iconBtn" style="width:auto;color:var(--muted)" onclick="toggleUploadForm(false)">Cancel</button>' +
+    '</div>' +
+  '</div>';
+}
+
+window.toggleUploadForm = function (show) {
+  showUploadForm = show;
+  selectAdvisor('reports');
+  if (show) { const el = $('#uploadReportName'); if (el) el.focus(); }
+};
+
+window.onUploadReportFileChosen = function (input) {
+  const status = $('#uploadReportStatus');
+  if (input.files && input.files[0]) {
+    status.innerHTML = 'Selected: <span class="mono">' + esc(input.files[0].name) + '</span>';
+    if (!$('#uploadReportName').value.trim()) {
+      $('#uploadReportName').value = input.files[0].name.replace(/\.[^.]+$/, '');
+    }
+  }
+};
+
+window.submitUploadReport = function () {
+  const name = $('#uploadReportName').value.trim();
+  const dialect = $('#uploadReportDialect').value;
+  const fileInput = $('#uploadReportFile');
+  const filename = fileInput.files && fileInput.files[0] ? fileInput.files[0].name : null;
+  if (!name || !filename) {
+    $('#uploadReportStatus').innerHTML = '<span style="color:#c2622f">Choose a file and give the report a name.</span>';
+    return;
+  }
+  const btn = $('#uploadReportSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+  setTimeout(() => {
+    if (!showUploadForm) return; // cancelled while "uploading"
+    const nextId = advisorReports.length ? Math.max.apply(null, advisorReports.map((r) => r.id)) + 1 : 1;
+    advisorReports.push({ id: nextId, name, dialect, filename, uploadedAt: 'just now', analyzedAt: null });
+    showUploadForm = false;
+    selectAdvisor('reports');
+  }, 700);
+};
 
 function advisorSizingPage() {
   const s = advisorSizing;
