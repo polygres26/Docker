@@ -15,6 +15,7 @@ import com.nexagres.migration.core.Source;
 import com.nexagres.migration.core.StateStore;
 import java.util.ArrayList;
 import java.util.List;
+import org.bson.BsonTimestamp;
 import org.bson.BsonValue;
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -173,8 +174,10 @@ public final class MongoSource implements Source {
         ChangeStreamDocument<Document> immediateEvent = preOpened.tryNext();
         if (immediateEvent != null) {
             applyChangeEvent(immediateEvent, sink);
+            checkpoints.save(checkpointKey, preOpened.getResumeToken().toJson(), eventTimestamp(immediateEvent));
+        } else {
+            checkpoints.save(checkpointKey, preOpened.getResumeToken().toJson());
         }
-        checkpoints.save(checkpointKey, preOpened.getResumeToken().toJson());
         activeCursor = preOpened;
         this.preOpenedCursor = preOpened;
         log.info("mongo source[{}]: change stream resume point captured before any partition's snapshot starts", checkpointKey);
@@ -268,9 +271,21 @@ public final class MongoSource implements Source {
                     continue;
                 }
                 applyChangeEvent(event, sink);
-                checkpoints.save(checkpointKey, event.getResumeToken().toJson());
+                checkpoints.save(checkpointKey, event.getResumeToken().toJson(), eventTimestamp(event));
             }
         }
+    }
+
+    /** A change event's own {@code clusterTime} -- the server's wall-clock time when the write
+     * actually happened on the SOURCE, not when this worker got around to applying it. This is
+     * what makes a real lag metric ({@code now() - eventTimestamp}) meaningful: {@code
+     * updated_at} on the checkpoint row only proves the worker is alive and saving, not that it's
+     * caught up. Falls back to "now" on the rare event that genuinely has no clusterTime (seen in
+     * practice on some synthetic/test event shapes, never on a real server-generated one) rather
+     * than making the caller handle a null. */
+    private static java.time.Instant eventTimestamp(ChangeStreamDocument<Document> event) {
+        BsonTimestamp clusterTime = event.getClusterTime();
+        return clusterTime == null ? java.time.Instant.now() : java.time.Instant.ofEpochSecond(clusterTime.getTime());
     }
 
     private void applyChangeEvent(ChangeStreamDocument<Document> event, Sink sink) throws Exception {

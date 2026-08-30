@@ -316,6 +316,7 @@ export interface MigrationSourceStatus {
   sourceKey: string
   eventsApplied: number
   lastCheckpointAt: string | null
+  lagSeconds: number | null
   partitionsTotal: number
   partitionsDone: number
   leaderWorkerId: string | null

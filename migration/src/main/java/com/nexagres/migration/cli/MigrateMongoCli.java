@@ -3,9 +3,11 @@ package com.nexagres.migration.cli;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
+import com.nexagres.migration.checkpoint.DeadLetterStore;
 import com.nexagres.migration.connectors.mongo.MongoSource;
 import com.nexagres.migration.coordinator.Coordinator;
 import com.nexagres.migration.sink.PolywireGrpcSink;
+import com.nexagres.migration.sink.ResilientSink;
 
 /**
  * Standalone entry point: migrate one MongoDB collection to a running Polywire instance, over
@@ -49,13 +51,24 @@ public final class MigrateMongoCli {
         String checkpointPassword = require("CHECKPOINT_JDBC_PASSWORD");
 
         int parallelism = Integer.parseInt(System.getenv().getOrDefault("MIGRATION_PARALLELISM", "4"));
+        int partitionCount = Integer.parseInt(System.getenv().getOrDefault("MIGRATION_PARTITION_COUNT", "1"));
+        String shardKeyField = System.getenv().getOrDefault("MIGRATION_SHARD_KEY_FIELD", "_id");
+        int maxRetries = Integer.parseInt(System.getenv().getOrDefault("MIGRATION_MAX_RETRIES", "5"));
+        long retryBackoffMillis = Long.parseLong(System.getenv().getOrDefault("MIGRATION_RETRY_BACKOFF_MS", "1000"));
 
         CdcCheckpointStore checkpoints = new CdcCheckpointStore(checkpointJdbcUrl, checkpointUser, checkpointPassword);
         checkpoints.ensureSchema();
+        // Same target Postgres/credentials as the checkpoint store -- a dead letter is
+        // migration-infrastructure bookkeeping, exactly like a checkpoint (see DeadLetterStore's
+        // own javadoc), so it belongs in the same place, not a separately configured store.
+        DeadLetterStore deadLetters = new DeadLetterStore(checkpointJdbcUrl, checkpointUser, checkpointPassword);
+        deadLetters.ensureSchema();
 
         try (MongoClient sourceClient = MongoClients.create(sourceUri);
-                MongoSource source = new MongoSource(sourceClient, sourceDb, sourceCollection, targetDb, targetCollection);
-                PolywireGrpcSink sink = new PolywireGrpcSink(grpcHost, grpcPort, grpcUser, grpcPassword)) {
+                MongoSource source = new MongoSource(sourceClient, sourceDb, sourceCollection, targetDb, targetCollection,
+                        partitionCount, shardKeyField);
+                PolywireGrpcSink grpcSink = new PolywireGrpcSink(grpcHost, grpcPort, grpcUser, grpcPassword)) {
+            ResilientSink sink = new ResilientSink(grpcSink, deadLetters, maxRetries, retryBackoffMillis);
             new Coordinator(source, sink, checkpoints, parallelism).run();
         }
     }

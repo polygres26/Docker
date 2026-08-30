@@ -6,6 +6,8 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
+import java.time.Instant;
 
 /**
  * Durable resume-point storage for every {@link com.nexagres.migration.core.Source} in this
@@ -43,7 +45,11 @@ public final class CdcCheckpointStore implements StateStore {
                     + "source_key text PRIMARY KEY, "
                     + "resume_token jsonb NOT NULL, "
                     + "events_applied bigint NOT NULL DEFAULT 0, "
-                    + "updated_at timestamptz NOT NULL DEFAULT now())");
+                    + "updated_at timestamptz NOT NULL DEFAULT now(), "
+                    + "last_event_at timestamptz)");
+            // Added after the table already shipped in earlier runs -- IF NOT EXISTS makes this
+            // safe to run against a pre-existing table from before this column existed.
+            st.execute("ALTER TABLE polywire_cdc_checkpoints ADD COLUMN IF NOT EXISTS last_event_at timestamptz");
         }
     }
 
@@ -75,6 +81,27 @@ public final class CdcCheckpointStore implements StateStore {
                                 + "events_applied = polywire_cdc_checkpoints.events_applied + 1, updated_at = now()")) {
             ps.setString(1, sourceKey);
             ps.setString(2, resumeTokenJson);
+            ps.executeUpdate();
+        }
+    }
+
+    /** Same as {@link #save(String, String)}, plus {@code last_event_at} -- the SOURCE's own
+     * timestamp for the event being checkpointed, not when this write happened. This is the one
+     * real lag signal Advisor's Data Sync report can show: {@code now() - last_event_at} tells you
+     * how far behind the live change feed actually is, where {@code updated_at} alone only proves
+     * the worker process is still alive and saving checkpoints, not that it's caught up. */
+    @Override
+    public void save(String sourceKey, String resumeTokenJson, Instant eventTimestamp) throws SQLException {
+        try (Connection conn = open();
+                PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO polywire_cdc_checkpoints (source_key, resume_token, events_applied, updated_at, last_event_at) "
+                                + "VALUES (?, ?::jsonb, 1, now(), ?) "
+                                + "ON CONFLICT (source_key) DO UPDATE SET resume_token = EXCLUDED.resume_token, "
+                                + "events_applied = polywire_cdc_checkpoints.events_applied + 1, updated_at = now(), "
+                                + "last_event_at = EXCLUDED.last_event_at")) {
+            ps.setString(1, sourceKey);
+            ps.setString(2, resumeTokenJson);
+            ps.setTimestamp(3, Timestamp.from(eventTimestamp));
             ps.executeUpdate();
         }
     }

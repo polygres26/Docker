@@ -38,11 +38,15 @@ public final class MigrationStatusStore {
     private static final String UNDEFINED_TABLE = "42P01";
 
     /** One row of the report -- one migration source (e.g. {@code "mongo:src.orders"}), aggregated
-     * across whatever workers have touched it. */
+     * across whatever workers have touched it. {@code lagSeconds} is {@code null} when {@code
+     * last_event_at} isn't populated yet (a source whose worker predates the {@code
+     * last_event_at} column, or hasn't replicated a live change since restarting) -- distinct from
+     * {@code 0}, which means "caught up." */
     public record SourceStatus(
             String sourceKey,
             long eventsApplied,
             String lastCheckpointAt,
+            Long lagSeconds,
             int partitionsTotal,
             int partitionsDone,
             String leaderWorkerId
@@ -52,23 +56,30 @@ public final class MigrationStatusStore {
     public List<SourceStatus> listStatuses(String jdbcUrl, String user, String password, String poolKey) throws SQLException {
         Map<String, Long> eventsApplied = new LinkedHashMap<>();
         Map<String, String> lastCheckpointAt = new LinkedHashMap<>();
+        Map<String, Long> lagSeconds = new LinkedHashMap<>();
         Map<String, int[]> partitionCounts = new LinkedHashMap<>(); // [total, done]
         Map<String, String> leaderWorkerId = new LinkedHashMap<>();
 
         try (Connection conn = BackendConnectionPools.borrow(poolKey, jdbcUrl, user, password)) {
-            // The change-feed checkpoint row for a source (key has no "#p" partition suffix) --
-            // events_applied/updated_at are the only "is this still moving" signal available
-            // without instrumenting the change-feed loop itself (a real follow-up: this is a
-            // proxy for live-CDC health, not exact replication lag).
+            // The change-feed checkpoint row for a source (key has no "#p" partition suffix).
+            // last_event_at (added for Phase 3 of this session's migration plan) is the SOURCE's
+            // own timestamp for the last applied event -- EXTRACT(EPOCH FROM (now() -
+            // last_event_at)) is a real replication-lag figure, not just "a checkpoint was saved
+            // recently" (updated_at alone only proves the worker is alive, not caught up).
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT source_key, events_applied, updated_at FROM polywire_cdc_checkpoints "
-                            + "WHERE source_key NOT LIKE '%#p%' ORDER BY source_key");
+                    "SELECT source_key, events_applied, updated_at, "
+                            + "EXTRACT(EPOCH FROM (now() - last_event_at))::bigint AS lag_seconds "
+                            + "FROM polywire_cdc_checkpoints WHERE source_key NOT LIKE '%#p%' ORDER BY source_key");
                     ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String key = rs.getString("source_key");
                     eventsApplied.put(key, rs.getLong("events_applied"));
                     Instant updatedAt = rs.getTimestamp("updated_at").toInstant();
                     lastCheckpointAt.put(key, updatedAt.toString());
+                    long lag = rs.getLong("lag_seconds");
+                    if (!rs.wasNull()) {
+                        lagSeconds.put(key, lag);
+                    }
                 }
             } catch (SQLException e) {
                 if (!UNDEFINED_TABLE.equals(e.getSQLState())) {
@@ -118,6 +129,7 @@ public final class MigrationStatusStore {
                     key,
                     eventsApplied.getOrDefault(key, 0L),
                     lastCheckpointAt.get(key),
+                    lagSeconds.get(key),
                     counts[0],
                     counts[1],
                     leaderWorkerId.get(key)));

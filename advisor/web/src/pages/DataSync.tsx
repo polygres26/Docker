@@ -11,6 +11,20 @@ function progressPct(status: MigrationSourceStatus): number {
   return Math.round((status.partitionsDone / status.partitionsTotal) * 100)
 }
 
+function formatLag(seconds: number | null): string {
+  if (seconds === null) return '—'
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+  return `${Math.round(seconds / 3600)}h`
+}
+
+function lagColor(seconds: number | null): string {
+  if (seconds === null) return 'var(--muted)'
+  if (seconds < 30) return 'var(--accent-strong)'
+  if (seconds < 300) return 'var(--medium)'
+  return 'var(--hard)'
+}
+
 function formatTimestamp(iso: string | null): string {
   if (!iso) return '—'
   try {
@@ -102,6 +116,7 @@ export default function DataSync() {
                 <th style={{ padding: '8px 10px' }}>Source</th>
                 <th style={{ padding: '8px 10px' }}>Initial sync</th>
                 <th style={{ padding: '8px 10px' }}>Events applied (change feed)</th>
+                <th style={{ padding: '8px 10px' }}>Lag</th>
                 <th style={{ padding: '8px 10px' }}>Last checkpoint</th>
                 <th style={{ padding: '8px 10px' }}>Change-feed leader</th>
               </tr>
@@ -121,6 +136,7 @@ export default function DataSync() {
                     </div>
                   </td>
                   <td style={{ padding: '10px', fontVariantNumeric: 'tabular-nums' }}>{s.eventsApplied.toLocaleString()}</td>
+                  <td style={{ padding: '10px', fontVariantNumeric: 'tabular-nums', color: lagColor(s.lagSeconds), fontWeight: 600 }}>{formatLag(s.lagSeconds)}</td>
                   <td style={{ padding: '10px', color: 'var(--muted)' }}>{formatTimestamp(s.lastCheckpointAt)}</td>
                   <td style={{ padding: '10px', color: 'var(--muted)' }}>{s.leaderWorkerId ?? '—'}</td>
                 </tr>
