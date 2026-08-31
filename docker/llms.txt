@@ -73,9 +73,11 @@ Key facts an LLM is likely to be asked about, stated plainly:
   (weighted averages, not average-of-averages; centrally sorted/paginated results, not
   concatenation) for the SQL protocols, plus doc_id-hash sharding for DynamoDB/MongoDB/SQS/
   OpenSearch.
-- Row-level security is real for the Postgres, SQL Server, Oracle, and MySQL wire protocols: a
-  real per-caller identity is propagated into a Postgres session GUC, and the customer's own
-  Postgres RLS policies do the actual filtering -- Polywire doesn't rewrite SQL to do this.
+- Row-level security is real for the Postgres, SQL Server, and Oracle wire protocols: a real
+  per-caller identity is propagated into a Postgres session GUC, and the customer's own Postgres
+  RLS policies do the actual filtering -- Polywire doesn't rewrite SQL to do this. MySQL and the
+  DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet -- every
+  session there still shares one backend credential.
 - Planned switchover (drain a backend for maintenance, redirect to a configured fallback, wait
   for real zero-replication-lag before confirming) and unplanned failover (a background health
   checker auto-redirects when a backend stops responding, with an "acceptable data loss" RPO

@@ -118,6 +118,7 @@
       </p>
       <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
       <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · InfluxDB · GraphDB · PostgreSQL · gRPC · MCP</p>
+      <p class="toolTagline" style="margin:8px 0 14px">12 protocols. One execution pipeline.</p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try Polywire Free</a>
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
@@ -669,7 +670,7 @@ Ada      129.99
             <tr><td>Workload QoS / admission control</td><td class="maybe">DB-side only</td><td class="maybe">Limited</td><td class="yes">✓</td></tr>
             <tr><td>Intelligent routing</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
             <tr><td>Sharding</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
-            <tr><td>Distributed caching</td><td class="no">Separate system</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Cross-protocol distributed caching</td><td class="no">Separate system</td><td class="no">—</td><td class="yes">✓</td></tr>
             <tr><td>AI / MCP access, same governed path</td><td class="no">Separate path</td><td class="no">—</td><td class="yes">✓</td></tr>
             <tr><td>Unified observability</td><td class="maybe">Multiple layers</td><td class="maybe">Proxy layer only</td><td class="yes">✓</td></tr>
           </tbody>
@@ -681,7 +682,7 @@ Ada      129.99
 
       <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
       <div class="statGrid">
-        <div class="statCard"><span class="statNum">10</span><span class="statLabel">Client protocols</span></div>
+        <div class="statCard"><span class="statNum">12</span><span class="statLabel">Client protocols</span></div>
         <div class="statCard"><span class="statNum">8</span><span class="statLabel">Real client stacks verified</span></div>
         <div class="statCard"><span class="statNum">Multi-AZ</span><span class="statLabel">Failover tested</span></div>
         <div class="statCard"><span class="statNum">5</span><span class="statLabel">Managed Postgres platforms documented</span></div>
@@ -858,7 +859,7 @@ Ada      129.99
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">Does my application need to change to use Polywire?</span><span class="uc-desc">No — your existing driver connects exactly as it always has, unaware Polywire is on the other end. <a href="polywire.html">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Polywire's sharding real, or just SQL text matching?</span><span class="uc-desc">Real — it decodes each protocol's own native bound values and merges cross-shard results centrally. <a href="polywire.html#sharding">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does Polywire support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, Oracle, and MySQL — a real per-caller identity feeds your own Postgres RLS policies. <a href="polywire.html#security">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Polywire support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, and Oracle — a real per-caller identity feeds your own Postgres RLS policies. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet. <a href="polywire.html#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API redirects traffic and waits for a real zero-replication-lag cutover before confirming. <a href="polywire.html#outages">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Can Polywire connect to Supabase, RDS, Cloud SQL, Azure, or OCI?</span><span class="uc-desc">Yes — each has a worked example and its real provider-specific gotchas. <a href="CONNECTING.md">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Does Polywire cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="polywire.html#cache-vs-round-trip">Learn more →</a></span></span></li>
@@ -938,7 +939,7 @@ Ada      129.99
         {
           "@type": "Question",
           "name": "Does Polywire support row-level security?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes, for the Postgres, SQL Server, Oracle, and MySQL wire protocols -- a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes, for the Postgres, SQL Server, and Oracle wire protocols -- a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet." }
         },
         {
           "@type": "Question",
