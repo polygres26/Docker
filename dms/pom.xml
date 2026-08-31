@@ -36,6 +36,9 @@
     <mariadb.version>3.5.1</mariadb.version>
     <mssql.version>12.8.1.jre11</mssql.version>
     <junit.version>5.11.3</junit.version>
+    <!-- Matches migration/pom.xml's own awssdk.version exactly; same reasoning that pom gives
+         for pinning to wire's version: one version across every module that touches AWS. -->
+    <awssdk.version>2.46.7</awssdk.version>
   </properties>
 
   <dependencies>
@@ -117,6 +120,17 @@
       <groupId>org.hsqldb</groupId>
       <artifactId>hsqldb</artifactId>
       <version>2.7.3</version>
+    </dependency>
+
+    <!-- Hyperscaler secret store: AWS Secrets Manager, for SecretRef.AwsSecretsManager (see
+         com.nexagres.dms.secrets.SecretRef/SecretResolver). Azure Key Vault and GCP Secret
+         Manager are resolved over plain HTTPS with java.net.http instead (same style as this
+         module's own Vault/CyberArk resolvers); neither needs a dedicated SDK dependency the
+         way AWS's SigV4 signing genuinely benefits from one. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>secretsmanager</artifactId>
+      <version>${awssdk.version}</version>
     </dependency>
 
     <!-- PDF report generation (Findings tab "Download report") -->

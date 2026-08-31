@@ -36,10 +36,11 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
 
     /**
      * Read-only autocommit connection borrowed from this target's shared pool. {@code password}
-     * may be a {@code vault:...}/{@code cyberark:...} secret reference instead of a literal --
-     * resolved here, on every open, so a rotated secret takes effect on the next connection
-     * rather than requiring a restart (see {@code com.nexagres.dms.secrets.SecretResolver}).
-     * A literal password round-trips through unchanged.
+     * may be a {@code vault:...}/{@code cyberark:...}/{@code awssm:...}/{@code azurekv:...}/
+     * {@code gcpsm:...} secret reference instead of a literal -- resolved here, on every open, so
+     * a rotated secret takes effect on the next connection rather than requiring a restart (see
+     * {@code com.nexagres.dms.secrets.SecretResolver}). A literal password round-trips through
+     * unchanged.
      */
     public Connection open() throws SQLException {
         String resolvedPassword = com.nexagres.dms.secrets.SecretResolver.resolve(password);

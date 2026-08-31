@@ -9,12 +9,13 @@ import java.util.UUID;
  * a createdAt); {@link #toTarget()} is how it becomes the thing {@link CatalogProfiler}-family
  * classes actually connect with.
  *
- * <p><b>Known gap, called out explicitly rather than glossed over:</b> {@link ConnectionStore}
- * persists this record -- including {@code password} -- as plaintext JSON on local disk. That is
- * an MVP shortcut, not a production posture. Real hardening (encryption at rest, or delegating to
- * something like Omnigate's {@code com.omnigate.secrets.SecretResolver}/Vault integration) is a
- * known follow-up; every API response redacts {@code password} to {@code null} (see
- * {@link #redacted()}) so it at least never round-trips back to the browser.
+ * <p>{@code password} is encrypted at rest (AES-256-GCM, opt-in via {@code
+ * NEXAGRES_ENCRYPTION_KEY} -- see {@link ConnectionStore}'s own javadoc) by {@link
+ * ConnectionStore}, or can instead be a {@code vault:}/{@code cyberark:}/{@code awssm:}/
+ * {@code azurekv:}/{@code gcpsm:} secret reference resolved at connect time (see {@code
+ * com.nexagres.dms.secrets.SecretResolver} and {@link BackendTarget#open}) so the real credential
+ * is never stored here at all. Either way, every API response redacts {@code password} to
+ * {@code null} (see {@link #redacted()}) so it never round-trips back to the browser.
  */
 public class ConnectionRecord {
     public String id;
