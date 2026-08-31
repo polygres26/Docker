@@ -185,11 +185,11 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 .gateLede { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .field label { font-size: 13px; color: var(--muted); }
-.field input {
+.field input, .field select {
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
-  color: var(--text); font-size: 14px; width: 100%;
+  color: var(--text); font-size: 14px; width: 100%; font-family: inherit;
 }
-.field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .btnPrimary { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600; width: 100%; }
 .btnPrimary:hover { background: var(--accent-strong); }
 .advToggle { display: flex; align-items: center; gap: 5px; background: none; border: none; padding: 4px 0; margin: 2px 0 14px; color: var(--muted); font-size: 12.5px; }
@@ -316,6 +316,13 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
             <div class="railSectionLabel">Migration Advisor</div>
             <div class="railGroup">
               <button class="railItem" data-dms-page="connections"><span class="ico">${iCompass}</span>Assessment</button>
+            </div>
+          </div>
+          <div class="railDivider"></div>
+          <div class="railSection">
+            <div class="railSectionLabel">Migration Service</div>
+            <div class="railGroup">
+              <button class="railItem" data-dms-page="datasync"><span class="ico">${iZap}</span>Data Sync</button>
             </div>
           </div>
           <div class="railDivider"></div>
@@ -532,6 +539,100 @@ const dmsSizing = {
 };
 
 const dmsLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
+
+// Migration Service mock data -- jobs this "process" has launched (MigrationJobRunner's own
+// in-memory registry, in the real app) and the live progress table each one feeds
+// (MigrationStatusStore, reading the target's own checkpoint/lease bookkeeping tables).
+let dmsDataSyncTab = 'launch';
+const dmsMigrationJobs = [
+  { id: 1, connector: 'MONGO', status: 'RUNNING', startedAt: '3 min ago', finishedAt: null, error: null },
+  { id: 2, connector: 'MYSQL', status: 'COMPLETED', startedAt: '2 hours ago', finishedAt: '47 min ago', error: null },
+  { id: 3, connector: 'ORACLE', status: 'FAILED', startedAt: '1 day ago', finishedAt: '1 day ago', error: 'LogMiner: ORA-01031 insufficient privileges' },
+];
+const dmsMigrationStatuses = [
+  { sourceKey: 'mongo:src.orders', partitionsDone: 6, partitionsTotal: 6, eventsApplied: 18420, lagSeconds: 4, lastCheckpointAt: 'just now', leader: 'worker-1' },
+  { sourceKey: 'mysql:legacy.customers', partitionsDone: 3, partitionsTotal: 3, eventsApplied: 942, lagSeconds: 61, lastCheckpointAt: '1 min ago', leader: 'worker-2' },
+];
+
+function dataSyncTabsFn(active) {
+  const tabs = [{ key: 'launch', label: 'Launch' }, { key: 'status', label: 'Status' }];
+  return '<div class="tabRow">' + tabs.map((t) =>
+    '<button type="button" class="' + (t.key === active ? 'active' : '') + '" onclick="selectDataSyncTab(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
+}
+
+function jobStatusBadge(status) {
+  if (status === 'RUNNING') return '<span class="badge warn">RUNNING</span>';
+  if (status === 'COMPLETED') return '<span class="badge ok">COMPLETED</span>';
+  return '<span class="badge" style="color:#c0392b;background:#fde8e8">FAILED</span>';
+}
+
+function dataSyncJobsTable() {
+  const rows = dmsMigrationJobs.map((j) =>
+    '<tr><td class="mono">' + j.connector + '</td><td>' + jobStatusBadge(j.status) + '</td>' +
+    '<td>' + j.startedAt + '</td><td>' + (j.finishedAt || '—') + '</td>' +
+    '<td style="color:#c0392b;font-size:12.5px">' + (j.error || '—') + '</td></tr>').join('');
+  return '<div class="panel" style="overflow-x:auto"><table><thead><tr>' +
+    '<th>Connector</th><th>Status</th><th>Started</th><th>Finished</th><th>Error</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function dataSyncLaunchPage() {
+  return dataSyncTabsFn('launch') + '<h1 class="pageTitle">Migration Service</h1>' +
+    '<p class="pageLede">Launch a real, massively-parallel <code>nexagres-migration</code> run, writing into Polywire over its own gRPC driver &mdash; never a direct JDBC backdoor.</p>' +
+    '<div class="panel" style="max-width:560px">' +
+      '<div class="sectionTitle">Start a migration</div>' +
+      '<div class="field"><label>Connector</label><select id="dsConnector">' +
+        '<option>MongoDB</option><option>MySQL</option><option>SQL Server</option><option>Oracle</option>' +
+        '<option>DynamoDB</option><option>Amazon SQS</option><option>Neo4j</option><option>InfluxDB</option>' +
+      '</select></div>' +
+      '<div class="field"><label>Target Postgres connection</label><select><option>Prod Oracle 19c</option><option>Legacy MySQL</option></select></div>' +
+      '<div class="field"><label>Source connection string</label><input class="mono" placeholder="mongodb://host:27017"></div>' +
+      '<div class="field" style="margin-bottom:0;max-width:160px"><label>Parallelism</label><input value="1"></div>' +
+      '<div style="min-height:18px;font-size:12px;color:var(--muted);margin:10px 0 0">Parallelism &gt; 1 requires an Enterprise license &mdash; unlicensed installs run correctly, just serially.</div>' +
+      '<div style="margin-top:14px"><button type="button" class="btnPrimary" style="width:auto" onclick="mockStartMigration()">Start migration</button></div>' +
+    '</div>' +
+    '<div class="sectionTitle" style="margin-top:24px">Jobs launched from this DMS process</div>' +
+    dataSyncJobsTable();
+}
+
+function dataSyncStatusPage() {
+  const rows = dmsMigrationStatuses.map((s) => {
+    const pct = Math.round((s.partitionsDone / s.partitionsTotal) * 100);
+    const lagOk = s.lagSeconds < 30;
+    return '<tr><td class="mono">' + s.sourceKey + '</td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;min-width:80px;height:6px;border-radius:3px;background:var(--bg);border:1px solid var(--border);overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (pct === 100 ? '#1e8a4c' : '#e0a94f') + '"></div></div><span class="mono" style="color:var(--muted);white-space:nowrap">' + s.partitionsDone + '/' + s.partitionsTotal + '</span></div></td>' +
+      '<td class="mono">' + s.eventsApplied.toLocaleString() + '</td>' +
+      '<td><span class="badge ' + (lagOk ? 'ok' : 'warn') + '">' + s.lagSeconds + 's</span></td>' +
+      '<td>' + s.lastCheckpointAt + '</td><td class="mono">' + s.leader + '</td></tr>';
+  }).join('');
+  return dataSyncTabsFn('status') + '<h1 class="pageTitle">Migration Service</h1>' +
+    '<p class="pageLede">Live initial-sync progress and change-feed activity for every source checkpointed against a target connection.</p>' +
+    '<div class="panel" style="overflow-x:auto"><table><thead><tr>' +
+    '<th>Source</th><th>Initial sync</th><th>Events applied</th><th>Lag</th><th>Last checkpoint</th><th>Leader</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function dmsDataSyncPage() {
+  return dmsDataSyncTab === 'status' ? dataSyncStatusPage() : dataSyncLaunchPage();
+}
+
+window.selectDataSyncTab = function (tab) {
+  dmsDataSyncTab = tab;
+  $('#dms-content').innerHTML = dmsDataSyncPage();
+};
+
+const DATA_SYNC_CONNECTOR_LABELS = {
+  MongoDB: 'MONGO', MySQL: 'MYSQL', 'SQL Server': 'SQLSERVER', Oracle: 'ORACLE',
+  DynamoDB: 'DYNAMODB', 'Amazon SQS': 'SQS', Neo4j: 'NEO4J', InfluxDB: 'INFLUXDB',
+};
+window.mockStartMigration = function () {
+  const select = $('#dsConnector');
+  const connectorLabel = select ? select.value : 'MongoDB';
+  const connector = DATA_SYNC_CONNECTOR_LABELS[connectorLabel] || connectorLabel.toUpperCase();
+  const nextId = dmsMigrationJobs.length ? Math.max.apply(null, dmsMigrationJobs.map((j) => j.id)) + 1 : 1;
+  dmsMigrationJobs.unshift({ id: nextId, connector: connector, status: 'RUNNING', startedAt: 'just now', finishedAt: null, error: null });
+  selectDataSyncTab('status');
+};
 
 // Per-connection object explorer -- schema, objects grouped by type, real-shaped DDL, and a
 // canned "LLM migration summary" per object revealed on demand (see openDmsObjectExplorer /
@@ -1381,6 +1482,7 @@ const dmsPages = {
   connections: dmsConnectionsPage,
   reports: dmsReportsPage,
   sizing: dmsSizingPage,
+  datasync: dmsDataSyncPage,
   llm: () => llmConfigPage(dmsLlmConfig, 'Provider and model used to generate migration-report narratives and PL/SQL summaries &mdash; local by default, nothing leaves the machine.'),
 };
 
@@ -1568,6 +1670,34 @@ $('[data-exit="dms"]').addEventListener('click', () => {
 const params = new URLSearchParams(location.search);
 if (params.get('autoEnter') === '1') {
   enterDms(params.get('page'));
+  // Two more deep-link params, mainly for reproducibly capturing a specific state as a static
+  // screenshot (see docker/docs/*.png) rather than user-facing navigation of their own:
+  // explore=<connectionId>[&tab=findings|objects|workload|parameters] opens that connection's
+  // object explorer (optionally on a specific sub-tab, default 'objects'); addForm=1 opens the
+  // Connections page with the "Add connection" form already expanded.
+  const explore = params.get('explore');
+  if (explore != null) {
+    openDmsObjectExplorer(Number(explore));
+    const tab = params.get('tab');
+    if (tab) selectObjectExplorerTab(tab);
+    const selType = params.get('selType');
+    if (selType) selectObjectTreeItem(selType, Number(params.get('selIndex') || 0));
+    if (params.get('revealLlm') === '1') {
+      const data = dmsObjects[Number(explore)];
+      const group = data && data.groups.find((g) => g.type === objectExplorerState.selType);
+      const item = group && group.items[objectExplorerState.selIndex];
+      if (item) toggleObjectLlm(group.type + ':' + item.name);
+    }
+  } else if (params.get('addForm') === '1') {
+    window.toggleAddConnForm(true);
+    // Filled-in example values -- purely so a screenshot of this state shows realistic content
+    // instead of empty placeholders; never submitted anywhere real.
+    const name = $('#addConnName'), url = $('#addConnUrl'), user = $('#addConnUser'), pass = $('#addConnPass');
+    if (name) name.value = 'Staging Oracle';
+    if (url) url.value = 'jdbc:oracle:thin:@staging-ora:1521/ORCLPDB1';
+    if (user) user.value = 'migration_ro';
+    if (pass) pass.value = 'hunter2hunter2';
+  }
 }
 </script>
 </body>

@@ -56,7 +56,8 @@
       <h2>Nexagres DMS</h2>
       <p class="lede">
         Tool for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: assess how hard the
-        migration is, then bridge your existing application to Postgres while you do it.
+        migration is, launch and track the real data-movement run, and bridge your existing
+        application to Postgres while you do it.
       </p>
       <details class="onThisPage">
         <summary>On this page<span class="otpCurrent"></span></summary>
@@ -65,6 +66,7 @@
           <li><a href="#what-you-get">What you get</a></li>
           <li><a href="#llm-assist">Connecting with an LLM's help</a></li>
           <li><a href="#admin-console-dms">Admin console</a></li>
+          <li><a href="#migration-service">Migration Service: launch and track a migration</a></li>
         </ul>
       </details>
 
@@ -143,8 +145,8 @@
 
       <h3 class="subhead" id="admin-console-dms">Admin console<a class="permalink" href="#admin-console-dms" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/admin-dms.png" alt="Nexagres DMS's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
-        <figcaption>Nexagres DMS's Findings dashboard against a real MySQL 8.0 connection — complexity tier, overall score, feature inventory, and the itemized per-feature breakdown behind that score, each line with its own point cost and reasoning. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
+        <img src="docs/admin-dms.png" alt="Nexagres DMS's Findings tab for a connected MySQL database: two itemized migration findings, each with a severity badge (moderate, trivial) and a plain-English explanation of what it means for a Postgres port">
+        <figcaption>The Findings tab against a real MySQL connection — each item found in the schema, its severity, and a plain-English explanation of what it actually means for the port. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
       </figure>
       <figure>
         <img src="docs/dms-sizing.png" alt="Nexagres DMS's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
@@ -162,6 +164,38 @@
           <a class="embedOpenLink" href="demo-dms.html?page=sizing&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
+      <h3 class="subhead" id="migration-service">Migration Service: launch and track a migration<a class="permalink" href="#migration-service" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Assessment tells you what you're dealing with; Migration Service is where you actually
+        move the data — real, massively-parallel <a href="https://github.com/polygres26/Docker/tree/main/docker/dms" target="_blank" rel="noopener"><code>nexagres-migration</code></a> runs
+        (MongoDB change streams, MySQL binlog, SQL Server/Oracle native CDC, DynamoDB Streams,
+        SQS, Neo4j snapshot, InfluxDB timestamp-cursor tail), launched from a form and tracked to
+        completion, without ever leaving Nexagres DMS. Every write lands through
+        <a href="polywire.html">Polywire</a>'s own gRPC driver — never a direct JDBC connection to
+        the target — so a migration in progress is subject to the exact same firewall, QoS, and
+        cache pipeline as any other client.
+      </p>
+      <figure>
+        <img src="docs/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through Polywire's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
+        <figcaption>Every source connector feeds the same pipeline: parallel initial snapshot, then (where the source has one) a live change-data-capture tail owned by exactly one leader, retried and dead-lettered on failure, and written into Postgres exclusively through Polywire's own gRPC driver. Local thread-pool parallelism is free; a distributed worker fleet sharing one lease store is the Enterprise tier. A readiness checker rolls partitions, lag, dead letters, and row-level verification into one go/no-go signal before you cut over.</figcaption>
+      </figure>
+      <p class="rttNote">
+        <b>Launch</b> picks a connector, the target Postgres connection, and the source's own
+        credentials, then starts the run server-side. <b>Status</b> shows the same live progress
+        every worker process itself checkpoints against — partitions done, events applied,
+        change-feed lag, and which worker currently owns the live tail — for every source pointed
+        at that target, not just the one you just launched. Parallelism above 1 needs an
+        Enterprise Polywire license; without one, a migration still runs correctly, just serially,
+        one partition at a time.
+      </p>
+      <figure class="embedFigure">
+        <iframe class="embedFrame" src="demo-dms.html?page=datasync&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Migration Service" loading="lazy"></iframe>
+        <figcaption>
+          Launch and Status, live — start a mock migration and watch it show up in both tabs.
+          <a class="embedOpenLink" href="demo-dms.html?page=datasync&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+        </figcaption>
+      </figure>
+
       <figure class="embedFigure">
         <iframe class="embedFrame" src="demo-dms.html" title="Live click-through demo: Nexagres DMS, full console" loading="lazy"></iframe>
         <figcaption>
