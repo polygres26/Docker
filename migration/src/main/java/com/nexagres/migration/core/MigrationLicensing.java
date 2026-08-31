@@ -17,22 +17,47 @@ import org.slf4j.LoggerFactory;
  * trust model, one thing for a customer to buy. See {@link License}'s own javadoc for the full
  * "deliberately offline, fails closed" design this class inherits by simply delegating to it.
  *
- * <p>Two independent gates, matching this module's own two levels of parallelism:
+ * <p>Gates, matching this module's own published free/Enterprise packaging table (see the
+ * homepage's "Suggested NexaGres DMS packaging" section):
  * <ul>
  *   <li>{@link #enforceLocalParallelism} -- {@link Coordinator}'s local thread pool, N partitions
- *   read concurrently within ONE process. Free/Developer tier still works, just serially (one
- *   partition at a time) -- correctness is identical either way, only throughput differs.
+ *   read concurrently within ONE process ("Parallel snapshot workers" / "Parallel table/partition
+ *   migration" rows). Free/Developer tier still works, just serially (one partition at a time) --
+ *   correctness is identical either way, only throughput differs.
  *   <li>{@link #requireEnterpriseForDistributedCoordination} -- {@link DistributedCoordinator}
- *   itself, i.e. running MULTIPLE worker processes/containers against the same source. This is
- *   the "real massively parallel way to move data" the paid tier is actually selling: local
- *   thread-pool parallelism alone tops out at one machine's CPU count, but a fleet of worker
- *   processes does not. Gated at construction (throws, doesn't silently degrade) because degrading
- *   it the same way as local parallelism (quietly forcing parallelism=1 per process) would NOT
- *   actually enforce anything -- a free-tier user could still launch 50 single-partition-at-a-time
- *   processes and get real fleet-wide parallelism for free. Refusing to construct the object at
- *   all is the only enforcement point that's actually enforceable here, the same reasoning
- *   {@code ConnectionGate}'s per-instance cap in {@code wire} is built around.
+ *   itself, i.e. running MULTIPLE worker processes/containers against the same source ("HA
+ *   migration workers" row). This is the "real massively parallel way to move data" the paid tier
+ *   is actually selling: local thread-pool parallelism alone tops out at one machine's CPU count,
+ *   but a fleet of worker processes does not. Gated at construction (throws, doesn't silently
+ *   degrade) because degrading it the same way as local parallelism (quietly forcing
+ *   parallelism=1 per process) would NOT actually enforce anything -- a free-tier user could still
+ *   launch 50 single-partition-at-a-time processes and get real fleet-wide parallelism for free.
+ *   Refusing to construct the object at all is the only enforcement point that's actually
+ *   enforceable here, the same reasoning {@code ConnectionGate}'s per-instance cap in
+ *   {@code wire} is built around.
+ *   <li>{@link #resilientRetryAndDeadLetterAllowed} -- whether a failed write gets retried and,
+ *   on exhausted retries, dead-lettered rather than immediately killing the run ("Failed-row
+ *   retry / DLQ" row). Free tier: any write failure is fatal to the run, the same "fail loud on
+ *   the first bad row" behavior every connector had before {@code ResilientSink} existed.
+ *   <li>{@link #requireCapacityForAnotherConcurrentJob} -- caps a free/Developer install to one
+ *   RUNNING migration job at a time ("Multiple migrations concurrently: 1 vs. unlimited" row).
+ *   Refuses to start a second job outright (same refuse-don't-degrade reasoning as distributed
+ *   coordination -- there's no meaningful "degraded" way to run two jobs as if they were one).
+ *   <li>{@link #requireEnterpriseForCutoverReadiness} -- {@code CutoverReadinessChecker} itself
+ *   ("Zero/minimal-downtime cutover" row): the single ready/not-ready signal an operator actually
+ *   cuts a connection over on. Free tier still has every underlying signal it rolls up (checkpoint
+ *   lag, dead-letter count) individually readable via {@code MigrationStatusStore}; what's gated
+ *   is the packaged go/no-go verdict itself.
  * </ul>
+ *
+ * <p>Deliberately NOT gated, honestly stated rather than silently implied: CDC itself (every
+ * connector's live change-feed tail runs identically regardless of license -- only how many
+ * partitions/processes read it in parallel is gated), row-level validation/reconciliation
+ * ({@code RowChecksum}/{@code VerificationResult} are plain, license-free utility classes),
+ * migration-progress monitoring ({@code MigrationStatusStore} reads every bookkeeping table for
+ * any caller), bandwidth/workload throttling, source-side production protection, and SSO/RBAC/
+ * audit for the DMS admin console -- none of these have a real implementation to gate yet. See
+ * the packaging table's own footnote for the current, honest state of each.
  */
 public final class MigrationLicensing {
 
@@ -93,5 +118,50 @@ public final class MigrationLicensing {
                 + "Enterprise feature -- set a valid POLYWIRE_LICENSE_KEY to run DistributedCoordinator. "
                 + "On the free/Developer tier, use Coordinator instead: a single process that migrates "
                 + "the same data correctly, serially (one partition at a time) without a license key.");
+    }
+
+    /** Whether a failed write should be retried (and, on exhausted retries, dead-lettered) rather
+     * than propagating immediately and killing the run -- {@code true} only under a valid
+     * Enterprise license. A caller on the free tier should skip wrapping its sink in
+     * {@code ResilientSink} entirely when this returns {@code false}, so a failure fails loud and
+     * immediately (the pre-{@code ResilientSink} behavior every connector had), rather than
+     * silently degrading retry count to zero (which would look identical to a hang, not a clear
+     * failure). */
+    public static boolean resilientRetryAndDeadLetterAllowed() {
+        return currentTier() == LicenseTier.ENTERPRISE;
+    }
+
+    /** Throws if starting one more concurrent migration job would exceed the free/Developer tier's
+     * cap of one RUNNING job at a time. {@code currentlyRunningJobs} is the caller's own count of
+     * jobs already in a RUNNING state (this class has no job registry of its own -- {@code
+     * MigrationJobRunner} owns that). Enterprise: never throws, no cap. */
+    public static void requireCapacityForAnotherConcurrentJob(int currentlyRunningJobs) {
+        if (currentTier() == LicenseTier.ENTERPRISE) {
+            return;
+        }
+        if (currentlyRunningJobs >= 1) {
+            throw new IllegalStateException("The free/Developer tier runs one migration job at a time "
+                    + "(" + currentlyRunningJobs + " already running) -- set a valid POLYWIRE_LICENSE_KEY "
+                    + "to run multiple migrations concurrently. Wait for the current job to finish, or "
+                    + "stop it, before starting another.");
+        }
+    }
+
+    /** Throws unless the current process is Enterprise-licensed -- {@code
+     * CutoverReadinessChecker} itself is a paid feature: the packaged single ready/not-ready
+     * signal, not the underlying bookkeeping it reads (every individual signal -- checkpoint lag,
+     * dead-letter count, partition completion -- stays freely readable via {@code
+     * MigrationStatusStore} on every tier; what's gated is rolling them into one verdict an
+     * operator actually cuts a connection over on). */
+    public static void requireEnterpriseForCutoverReadiness() {
+        if (currentTier() == LicenseTier.ENTERPRISE) {
+            return;
+        }
+        throw new IllegalStateException("Cutover-readiness checking (the packaged ready/not-ready "
+                + "signal CutoverReadinessChecker produces) is an Enterprise feature -- set a valid "
+                + "POLYWIRE_LICENSE_KEY to use it. The underlying signals it rolls up (checkpoint lag, "
+                + "dead-letter count, partition completion) are still freely readable via "
+                + "MigrationStatusStore on the free/Developer tier -- you can assess cutover readiness "
+                + "manually from those, just not via this single packaged verdict.");
     }
 }

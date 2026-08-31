@@ -5,8 +5,10 @@ import com.nexagres.dms.core.ConnectionStore;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.checkpoint.DeadLetterStore;
 import com.nexagres.migration.coordinator.Coordinator;
+import com.nexagres.migration.core.MigrationLicensing;
 import com.nexagres.migration.sink.PolywireGrpcSink;
 import com.nexagres.migration.sink.ResilientSink;
+import com.nexagres.migration.core.Sink;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +87,7 @@ public final class MigrationJobRunner {
     });
 
     public JobState start(MigrationJobRequest request) {
+        MigrationLicensing.requireCapacityForAnotherConcurrentJob((int) countRunningJobs());
         MigrationConnectorType type = parseConnectorType(request.connectorType);
         Optional<ConnectionRecord> target = connectionStore.get(request.targetConnectionId);
         if (target.isEmpty()) {
@@ -111,6 +114,14 @@ public final class MigrationJobRunner {
 
         executor.submit(() -> runJob(state, built, targetConnection, request));
         return state;
+    }
+
+    /** Count of jobs this registry still considers RUNNING, for {@link
+     * MigrationLicensing#requireCapacityForAnotherConcurrentJob} -- deliberately recomputed from
+     * {@link JobState#status} rather than tracked as a separate counter, since {@code status} is
+     * the single source of truth {@code runJob}'s {@code finally} block already updates. */
+    private long countRunningJobs() {
+        return jobs.values().stream().filter(j -> "RUNNING".equals(j.status)).count();
     }
 
     public List<JobState> list() {
@@ -148,7 +159,13 @@ public final class MigrationJobRunner {
 
             try (PolywireGrpcSink grpcSink = new PolywireGrpcSink(request.polywireGrpcHost, request.polywireGrpcPort,
                     request.polywireGrpcUser, request.polywireGrpcPassword)) {
-                ResilientSink sink = new ResilientSink(grpcSink, deadLetters, 5, 1000);
+                // Free/Developer tier: write straight to gRPC, no retry/dead-letter wrapper -- a
+                // failed write is immediately fatal to the run (see MigrationLicensing's own
+                // javadoc on why this is honest, not degraded: the pre-ResilientSink behavior
+                // every connector already had). Enterprise: wrap in ResilientSink as before.
+                Sink sink = MigrationLicensing.resilientRetryAndDeadLetterAllowed()
+                        ? new ResilientSink(grpcSink, deadLetters, 5, 1000)
+                        : grpcSink;
                 new Coordinator(built.source(), sink, checkpoints, request.parallelism).run();
             }
             state.status = "COMPLETED";

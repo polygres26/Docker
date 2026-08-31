@@ -6,10 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.checkpoint.DeadLetterStore;
+import com.nexagres.migration.core.MigrationLicensing;
+import com.nexagres.migration.core.MigrationLicensingTestSupport;
 import com.nexagres.migration.coordinator.PartitionLeaseStore;
 import com.nexagres.migration.testsupport.RealPostgres;
 import com.nexagres.migration.verify.VerificationResult;
+import com.nexagres.wire.license.LicenseTier;
 import java.time.Instant;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -19,10 +24,25 @@ import org.junit.jupiter.api.Test;
  * default), becomes ready on partitions+lag+dead-letters, then flips back to not ready the moment
  * any ONE gate regresses (a fresh dead letter; a lease reopened mid-run), and a supplied
  * verification mismatch fails the report even when every bookkeeping-table gate is green.
+ *
+ * <p>Forces Enterprise tier for the duration of this class -- {@link CutoverReadinessChecker}
+ * itself is now an Enterprise-only feature (see {@link MigrationLicensing}'s own javadoc); the
+ * free-tier refusal path is covered separately by {@code MigrationLicensingTest}, so this class
+ * can stay focused on the underlying readiness logic instead of re-asserting the license gate.
  */
 class CutoverReadinessCheckerIntegrationTest {
 
     private static final String SOURCE_KEY = "mysql:mydb.orders";
+
+    @BeforeEach
+    void forceEnterpriseTier() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
+    }
+
+    @AfterEach
+    void resetTier() {
+        MigrationLicensingTestSupport.reset();
+    }
 
     @Test
     void reportsNotReadyUntilEveryGatePasses() throws Exception {

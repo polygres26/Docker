@@ -1,5 +1,6 @@
 package com.nexagres.migration.readiness;
 
+import com.nexagres.migration.core.MigrationLicensing;
 import com.nexagres.migration.verify.VerificationResult;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -73,6 +74,7 @@ public final class CutoverReadinessChecker {
      */
     public CutoverReadinessReport check(String sourceKey, boolean hasLiveChangeFeed, long maxLagSeconds,
             VerificationResult verification) throws SQLException {
+        MigrationLicensing.requireEnterpriseForCutoverReadiness();
         List<ReadinessCheck> checks = new ArrayList<>();
         try (Connection conn = open()) {
             checks.add(checkPartitions(conn, sourceKey));

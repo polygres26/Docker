@@ -2,6 +2,7 @@ package com.nexagres.dms.migration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mongodb.client.MongoClient;
@@ -121,6 +122,21 @@ class MigrationJobRunnerIntegrationTest {
 
                 assertTrue(runner.list().stream().anyMatch(j -> j.id.equals(state.id)),
                         "the started job should show up in the job list");
+                // Free tier (no POLYWIRE_LICENSE_KEY in this test env): a second job while this one
+                // is still RUNNING must be refused outright, not silently queued or double-run --
+                // proves MigrationLicensing.requireCapacityForAnotherConcurrentJob is actually wired
+                // into the real HTTP-facing start() path, not just unit-tested in isolation.
+                MigrationJobRequest secondRequest = new MigrationJobRequest();
+                secondRequest.connectorType = "MONGO";
+                secondRequest.targetConnectionId = targetConnection.id;
+                secondRequest.polywireGrpcHost = "localhost";
+                secondRequest.polywireGrpcPort = polywire.port("grpc");
+                secondRequest.polywireGrpcUser = postgres.username();
+                secondRequest.polywireGrpcPassword = postgres.password();
+                secondRequest.sourceConfig = request.sourceConfig;
+                IllegalStateException capacity = assertThrows(IllegalStateException.class,
+                        () -> runner.start(secondRequest));
+                assertTrue(capacity.getMessage().contains("POLYWIRE_LICENSE_KEY"));
             } finally {
                 // Ask the job's live change-feed loop to stop before this test's own try-with-
                 // resources tears down the real Mongo/Postgres/Polywire containers underneath it --

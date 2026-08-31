@@ -50,6 +50,29 @@ class MigrationLicensingTest {
     }
 
     @Test
+    void freeTierDisallowsResilientRetryAndOneMoreConcurrentJobAndCutoverReadiness() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
+        assertEquals(false, MigrationLicensing.resilientRetryAndDeadLetterAllowed());
+
+        assertDoesNotThrow(() -> MigrationLicensing.requireCapacityForAnotherConcurrentJob(0));
+        IllegalStateException capacity = assertThrows(IllegalStateException.class,
+                () -> MigrationLicensing.requireCapacityForAnotherConcurrentJob(1));
+        assertEquals(true, capacity.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+
+        IllegalStateException cutover = assertThrows(IllegalStateException.class,
+                MigrationLicensing::requireEnterpriseForCutoverReadiness);
+        assertEquals(true, cutover.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+    }
+
+    @Test
+    void enterpriseTierAllowsResilientRetryUnlimitedConcurrentJobsAndCutoverReadiness() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
+        assertEquals(true, MigrationLicensing.resilientRetryAndDeadLetterAllowed());
+        assertDoesNotThrow(() -> MigrationLicensing.requireCapacityForAnotherConcurrentJob(50));
+        assertDoesNotThrow(MigrationLicensing::requireEnterpriseForCutoverReadiness);
+    }
+
+    @Test
     void enterpriseTierStillFloorsParallelismAtOne() {
         MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
         assertEquals(1, MigrationLicensing.enforceLocalParallelism(0));
