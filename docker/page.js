@@ -34,6 +34,15 @@
   }
   updateNavHeight();
   window.addEventListener('resize', updateNavHeight, { passive: true });
+  // requestAnimationFrame callbacks are paused for as long as the document stays hidden (a
+  // background tab, a prerendered tab not yet swapped in) -- confirmed live: a rAF scheduled
+  // while hidden never fires until the tab becomes visible. Re-running the measurement on the
+  // visibility transition means a tab that loaded in the background still gets a correct
+  // --nav-h the moment someone actually looks at it, instead of being stuck on the CSS
+  // fallback (var(--nav-h, 49px)) forever.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) updateNavHeight();
+  });
 
   // Active-section highlight in the sticky nav -- only meaningful for same-page hash links
   // (index.html's #pricing/#faq/#contact); PolyWire/PolyAdvisor/Docs are real page links now and
