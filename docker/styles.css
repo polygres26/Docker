@@ -1,3 +1,15 @@
+/* This is the readable SOURCE. Pages link styles.min.css (comments stripped, then whitespace
+   collapsed -- generated in that order specifically: comments are stripped BEFORE any
+   string-literal handling, because a comment containing a natural-language apostrophe
+   ("section's", "doesn't") will otherwise get misread as a CSS string delimiter and pair with
+   some unrelated apostrophe far later in the file, silently swallowing everything in between --
+   confirmed as the exact cause of a real outage the first time this was attempted). Edit this
+   file, then regenerate styles.min.css from it before publishing. Verify the regeneration by
+   diffing every extracted selector and declaration between the two files (not just "it loads") --
+   see the commit that introduced this note for the exact verification script; a minifier that
+   silently drops content is worse than no minifier at all. Don't hand-edit styles.min.css, and
+   don't let the two drift. */
+
   :root {
     --paper: #ffffff;
     --paper-raised: #f6f7f9;
