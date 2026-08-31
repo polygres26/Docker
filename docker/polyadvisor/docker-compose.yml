@@ -1,7 +1,7 @@
 version: "3.8"
 
 # Run from the repo root: docker compose -f docker/polyadvisor/docker-compose.yml up --build
-# One container: AdvisorHttpServer (embedded Jetty) serves both the JSON API and the built SPA
+# One container: DmsHttpServer (embedded Jetty) serves both the JSON API and the built SPA
 # directly (SpaResourceHandler) -- no nginx needed. See Dockerfile's own comment if you'd rather
 # front it with a separate static tier instead.
 
@@ -11,7 +11,7 @@ services:
       context: ../..
       dockerfile: docker/polyadvisor/Dockerfile
     environment:
-      NEXAGRES_ADVISOR_PORT: "8090"
+      NEXAGRES_DMS_PORT: "8090"
     volumes:
       # Embedded HSQLDB store (saved connections, LLM provider config, uploaded performance
       # reports) -- see ConnectionStore/LlmSettingsStore/ReportStore's javadoc. Persists across

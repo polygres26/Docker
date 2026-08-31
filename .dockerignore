@@ -7,9 +7,9 @@
 **/dependency-reduced-pom.xml
 **/*.class
 
-advisor/web/node_modules/
-advisor/web/dist/
-advisor/web/.vite/
+dms/web/node_modules/
+dms/web/dist/
+dms/web/.vite/
 
 .git/
 .DS_Store

@@ -1,6 +1,6 @@
-# PolyAdvisor frontend -- the Vite/React SPA in advisor/web, built to static files and served by
+# PolyAdvisor frontend -- the Vite/React SPA in dms/web, built to static files and served by
 # nginx, which also proxies /api to the backend container (the same job Vite's own dev-server
-# proxy does for `npm run dev` -- see advisor/web/vite.config.ts's comment). Build context is the
+# proxy does for `npm run dev` -- see dms/web/vite.config.ts's comment). Build context is the
 # repo root -- see docker-compose.yml.
 
 # ---- build stage ----
@@ -8,10 +8,10 @@ FROM node:22-alpine AS build
 WORKDIR /build
 
 # Dependency layer cached separately from source.
-COPY advisor/web/package.json advisor/web/package-lock.json ./
+COPY dms/web/package.json dms/web/package-lock.json ./
 RUN npm ci
 
-COPY advisor/web/ .
+COPY dms/web/ .
 RUN npm run build
 
 # ---- runtime stage ----

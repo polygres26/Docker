@@ -14,7 +14,7 @@
     over Polywire's own native gRPC driver (QueryService.Execute), never a direct JDBC backdoor
     to the target Postgres, so every migration write goes through Polywire's real firewall/QoS/
     cache-invalidation pipeline like any other client. Independent standalone module, sibling to
-    nexagres-wire and nexagres-advisor in this repo; depends on nexagres-wire only to reuse its
+    nexagres-wire and nexagres-dms in this repo; depends on nexagres-wire only to reuse its
     already-generated QueryService gRPC stub classes (com.nexagres.wire.grpc.proto.*), not any of
     wire's internal package-private classes.</description>
 
@@ -143,8 +143,8 @@
     <plugins>
       <!-- Publishes this module's src/test/java classes (RealMongo, RealPostgres,
            PolyWireProcess, etc. under testsupport/) as a second, `tests`-classified jar;
-           advisor now depends on it (test scope only, see advisor/pom.xml's own comment) so
-           MigrationJobRunnerIntegrationTest can prove the NEW advisor-side job-launching glue
+           dms now depends on it (test scope only, see dms/pom.xml's own comment) so
+           MigrationJobRunnerIntegrationTest can prove the NEW dms-side job-launching glue
            against real infrastructure using the SAME real-container test helpers every connector's
            own integration test already relies on, instead of re-implementing (or, worse,
            mocking) them a second time in a different module. -->

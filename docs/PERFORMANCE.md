@@ -65,7 +65,7 @@ client-paced inside it.
 - **API**: `GET /api/metrics/summary` (admin HTTP, bearer-token gated) — `topSql[]` per
   fingerprint (`avgMs`, `avgRttMs`, nullable when a call site doesn't report RTT), plus an
   overall `avgRttMs`/`rttSamples`, `byBackend[]`, protocol counts, reads/writes-per-sec.
-- **UI**: the Metrics page (`advisor/web`) — an "Avg RTT" hero tile and an "Avg RTT" column on
+- **UI**: the Metrics page (`dms/web`) — an "Avg RTT" hero tile and an "Avg RTT" column on
   the top-SQL table, with **"—"** (not a misleading `0ms`) wherever a call site genuinely
   doesn't report it.
 - **Fingerprinting**: SQL text is normalized (string/number literals → `?`) so `SELECT * FROM t

@@ -51,7 +51,7 @@ const GROUPS = [
   },
 ]
 
-/** Shell for every connected route: labeled, grouped sidebar + topbar, matching advisor/web's
+/** Shell for every connected route: labeled, grouped sidebar + topbar, matching dms/web's
  * Layout but scoped to Polywire alone -- there's no Migration/Advisor product sharing this rail. */
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()

@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Serves the built {@code wire/web} SPA (static JS/CSS/HTML) directly out of this same embedded
- * Jetty admin process -- same pattern as advisor's own {@code com.nexagres.advisor.http.SpaResourceHandler}
+ * Jetty admin process -- same pattern as advisor's own {@code com.nexagres.dms.http.SpaResourceHandler}
  * (that class can't be reused across modules, so this is a deliberate, small duplicate rather than
  * a new cross-module dependency).
  *
@@ -37,7 +37,7 @@ public class SpaResourceHandler extends AbstractHandler {
         this.delegate = new ResourceHandler();
         delegate.setDirectoriesListed(false);
         delegate.setWelcomeFiles(new String[] {"index.html"});
-        // See advisor's twin class for why redirect-welcome must stay off: a client-side router
+        // See dms's twin class for why redirect-welcome must stay off: a client-side router
         // only has a route for "/", not for a redirected "/index.html".
         delegate.setRedirectWelcome(false);
         delegate.setResourceBase(webDir);

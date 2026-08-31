@@ -33,10 +33,10 @@ as a temporary cutover bridge while Polyadvisor migrates schema/data behind the 
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 flowchart LR
     subgraph Client["Your browser"]
-        UI["advisor/web\nReact + Vite SPA"]
+        UI["dms/web\nReact + Vite SPA"]
     end
     subgraph Advisor["Polyadvisor process"]
-        HTTP["AdvisorHttpServer\n(REST API)"]
+        HTTP["DmsHttpServer\n(REST API)"]
         Profiler["Schema / feature\nprofiler"]
         Workload["Workload capture\n& scorer"]
         Migrator["Easy-tier\nmigration engine"]
@@ -341,7 +341,7 @@ module's own `docker/*/README.md` for why).
 For iterative Java development without Docker:
 
 ```bash
-cd advisor && mvn package -DskipTests && ./scripts/run.sh   # if present
+cd dms && mvn package -DskipTests && ./scripts/run.sh   # if present
 cd wire && mvn package -DskipTests && scripts/run.sh
 ```
 
@@ -410,7 +410,7 @@ flowchart TB
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
 | Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `NEXAGRES_DATA_DIR` (embedded HSQLDB) |
-| How the SPA is served | n/a | `AdvisorHttpServer` runs on embedded Jetty (already a dependency) and serves the built `advisor/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_ADVISOR_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/polyadvisor/` for teams that want a separately-scaled static tier instead |
+| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/polyadvisor/` for teams that want a separately-scaled static tier instead |
 | `.dockerignore` | repo-root only — both compose files set `context: ../..`, and classic Docker only honors a root-level `.dockerignore` | same |
 
 Build standalone (no compose):
@@ -432,14 +432,14 @@ Every end-user-facing feature in both modules, in one place, with its config kno
 | Feature | What it does | Where |
 |---|---|---|
 | Source connection management | Save/reuse connections to Oracle, MySQL, MariaDB, SQL Server | web UI + `ConnectionStore` |
-| Schema profiler | Inventories tables, columns, types, constraints, indexes on the source | `AdvisorHttpServer` |
+| Schema profiler | Inventories tables, columns, types, constraints, indexes on the source | `DmsHttpServer` |
 | Feature-usage detection | Flags source-specific features with no direct Postgres equivalent (proprietary types, stored-proc dialects, partitioning schemes, etc.) | profiler |
 | Workload capture | Samples real query traffic against the source to weight the assessment by actual usage, not just schema shape | `Workload capture` |
 | Migration difficulty scoring | Produces an object-by-object and overall difficulty score | scorer |
 | Easy-tier automated migration | Executes the migration itself for objects scored low-risk, writing only to the Postgres target | migration engine |
 | LLM-assisted narrative reports | Optional natural-language summary/explanation sections in the report | pluggable LLM provider config |
 | Report storage & history | Past assessment/migration reports kept for comparison over time | `ReportStore` (embedded HSQLDB) |
-| React/TS web UI | Full workflow — connect, profile, review score, trigger migration, read reports | `advisor/web` |
+| React/TS web UI | Full workflow — connect, profile, review score, trigger migration, read reports | `dms/web` |
 
 ### 8.2 Polywire — protocol frontends
 

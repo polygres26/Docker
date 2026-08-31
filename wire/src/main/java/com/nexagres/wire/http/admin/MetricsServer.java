@@ -58,7 +58,7 @@ import org.slf4j.LoggerFactory;
  * supplied, {@code GET /api/queues} also lists every sqswire queue (depth, FIFO/DLQ attributes,
  * resolved shard backend) and {@code DELETE /api/queues/{name}} removes one -- see
  * {@link #handleQueues}.
- * Meant to be called server-to-server (e.g. by PolyAdvisor's own backend, proxying on behalf of
+ * Meant to be called server-to-server (e.g. by Nexagres DMS's own backend, proxying on behalf of
  * an already-authenticated admin session), not directly from a browser -- there's no CORS
  * handling and no session/cookie machinery here on purpose.
  */
@@ -149,7 +149,7 @@ public final class MetricsServer {
      * round-trip, and {@code adminWebDir} (see {@code POLYWIRE_ADMIN_WEB_DIR} in {@code Main}), the
      * built {@code wire/web} SPA's {@code dist/} directory. When set, static assets are served by
      * {@link SpaResourceHandler} for anything this handler doesn't claim -- same "embedded Jetty
-     * does both jobs" approach as advisor's {@code AdvisorHttpServer}/{@code SpaResourceHandler}.
+     * does both jobs" approach as dms's {@code DmsHttpServer}/{@code SpaResourceHandler}.
      */
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
             Supplier<ConfigStore.Version> currentVersionSupplier, com.nexagres.wire.acl.ConnectionGate connectionGate,
@@ -1341,7 +1341,7 @@ public final class MetricsServer {
      * {@code polywire_config} row {@code /api/config} manages (see {@link PolyWireConfig}). Kept
      * as its own route rather than folded into {@code /api/config} because the response shape is
      * deliberately different: {@code GET} never echoes the decrypted {@code apiKey} back (only
-     * {@code apiKeySet: boolean}), mirroring PolyAdvisor's {@code LlmSettingsStore}/{@code
+     * {@code apiKeySet: boolean}), mirroring Nexagres DMS's {@code LlmSettingsStore}/{@code
      * WireConnectionStore} "the browser never has the real secret to send back" convention. A
      * PUT with a blank/omitted {@code apiKey} keeps whatever key is already stored -- same
      * convention as {@code WireConnectionStore#save}.

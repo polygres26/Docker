@@ -12,7 +12,7 @@
   <description>Polywire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
     (com.omnigate.*) into com.nexagres.wire.*, independent standalone module, sibling to
-    nexagres-advisor in this repo.</description>
+    nexagres-dms in this repo.</description>
 
   <properties>
     <maven.compiler.source>21</maven.compiler.source>

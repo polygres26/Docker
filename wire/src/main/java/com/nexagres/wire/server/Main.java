@@ -364,7 +364,7 @@ public final class Main {
 
         int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
         // POLYWIRE_ADMIN_WEB_DIR: path to the built wire/web SPA (its `dist/`). Opt-in, same
-        // pattern as advisor's NEXAGRES_ADVISOR_WEB_DIR -- unset means API-only.
+        // pattern as advisor's NEXAGRES_DMS_WEB_DIR -- unset means API-only.
         String adminWebDir = System.getenv("POLYWIRE_ADMIN_WEB_DIR");
         // Constructed here (before both MetricsServer and the MCP server below, whichever order
         // they end up in) so both share the exact same instance -- MetricsServer reads it,
