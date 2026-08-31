@@ -8,13 +8,13 @@ repo is the public surface — prebuilt images, architecture, and how to run the
 
 | Tool | What it does | Image |
 |---|---|---|
-| **Nexagres DMS** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/polyadvisor` |
+| **Nexagres DMS** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/dms` |
 | **Polywire** | A mid-tier gateway that speaks Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, and Amazon SQS wire protocols on one side and real Postgres on the other — so an existing app keeps its driver and connection code while the data lives in Postgres. | `ghcr.io/polygres26/polywire` |
 
 ## Run Nexagres DMS
 
 ```bash
-docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/polyadvisor:latest
+docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/dms:latest
 ```
 
 Open `http://localhost:8090`. State (saved connections, LLM config, uploaded reports) persists in
