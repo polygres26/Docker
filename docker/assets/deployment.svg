@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1540 1000" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, PolyWire instances spread across three availability zones each holding a primary or backup PolyCache copy, a Postgres data plane (one primary shard and its secondaries/replicas, one per zone) fronted by each zone's own PolyWire instances, and a separate config-primary Postgres (polywire_config / firewall rules) with a standby for automatic failover, pushing config changes to every zone via LISTEN/NOTIFY.">
+<svg viewBox="0 0 1540 1000" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="NexaGate multi-AZ cloud deployment: client applications behind a network load balancer, NexaGate instances spread across three availability zones each holding a primary or backup NexaCache copy, a Postgres data plane (one primary shard and its secondaries/replicas, one per zone) fronted by each zone's own NexaGate instances, and a separate config-primary Postgres (polywire_config / firewall rules) with a standby for automatic failover, pushing config changes to every zone via LISTEN/NOTIFY.">
   <defs>
     <marker id="dArrowSolid" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#5a3fd6"/>
@@ -14,7 +14,7 @@
   <rect x="0" y="0" width="1540" height="1000" fill="#ffffff"/>
 
   <!-- ===================== HEADER ===================== -->
-  <text x="770" y="44" font-size="32" font-weight="800" fill="#1c1c2e" text-anchor="middle">PolyWire <tspan fill="#5a3fd6">Cloud Deployment</tspan></text>
+  <text x="770" y="44" font-size="32" font-weight="800" fill="#1c1c2e" text-anchor="middle">NexaGate <tspan fill="#5a3fd6">Cloud Deployment</tspan></text>
 
   <!-- ===================== CLIENT APPLICATIONS ===================== -->
   <rect x="460" y="76" width="620" height="56" rx="10" fill="#f4f0fc" stroke="#c9bdf2" stroke-width="1.5"/>
@@ -58,7 +58,7 @@
     <rect x="52" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="70" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="87" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="114" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="114" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="114" y="381" font-size="12" fill="#4a4964">instance 1a</text>
     <text x="114" y="396" font-size="12" fill="#4a4964">holds primary</text>
     <text x="114" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -66,7 +66,7 @@
     <rect x="258" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="276" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="293" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="320" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="320" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="320" y="381" font-size="12" fill="#4a4964">instance 1b</text>
     <text x="320" y="396" font-size="12" fill="#4a4964">holds backup</text>
     <text x="320" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -90,7 +90,7 @@
     <rect x="564" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="582" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="599" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="626" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="626" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="626" y="381" font-size="12" fill="#4a4964">instance 2a</text>
     <text x="626" y="396" font-size="12" fill="#4a4964">holds primary</text>
     <text x="626" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -98,7 +98,7 @@
     <rect x="770" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="788" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="805" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="832" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="832" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="832" y="381" font-size="12" fill="#4a4964">instance 2b</text>
     <text x="832" y="396" font-size="12" fill="#4a4964">holds backup</text>
     <text x="832" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -122,7 +122,7 @@
     <rect x="1076" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="1094" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="1111" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="1138" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="1138" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="1138" y="381" font-size="12" fill="#4a4964">instance 3a</text>
     <text x="1138" y="396" font-size="12" fill="#4a4964">holds primary</text>
     <text x="1138" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -130,7 +130,7 @@
     <rect x="1282" y="336" width="196" height="112" rx="10" fill="#ffffff" stroke="#c9bdf2" stroke-width="1.5"/>
     <rect x="1300" y="352" width="34" height="34" rx="4" fill="#eeeafc" stroke="#5a3fd6" stroke-width="1.5"/>
     <text x="1317" y="374" font-size="14" text-anchor="middle" fill="#5a3fd6">⬡</text>
-    <text x="1344" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">PolyWire</text>
+    <text x="1344" y="364" font-size="13.5" font-weight="800" fill="#1c1c2e">NexaGate</text>
     <text x="1344" y="381" font-size="12" fill="#4a4964">instance 3b</text>
     <text x="1344" y="396" font-size="12" fill="#4a4964">holds backup</text>
     <text x="1344" y="411" font-size="12" fill="#4a4964">copies</text>
@@ -202,7 +202,7 @@
     <text x="66" y="896" font-size="14" text-anchor="middle" fill="#fff">i</text>
     <text x="92" y="884" font-size="13" font-weight="700" fill="#1c1c2e">Data-plane Postgres — one logical shard set, replicated/shared across zones by your existing Postgres HA</text>
     <text x="92" y="902" font-size="13" fill="#33324a">(RDS Multi-AZ, Cloud SQL HA, Azure Flexible Server zone-redundant HA, or self-managed streaming replication).</text>
-    <text x="92" y="920" font-size="13" fill="#33324a">PolyWire's RouterStage sends each request to the shard/replica that owns it — it does not replicate data itself.</text>
+    <text x="92" y="920" font-size="13" fill="#33324a">NexaGate's RouterStage sends each request to the shard/replica that owns it — it does not replicate data itself.</text>
   </g>
 
   <g>

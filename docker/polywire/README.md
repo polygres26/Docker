@@ -1,4 +1,4 @@
-# PolyWire — Docker
+# NexaGate — Docker
 
 Multi-stage build: a `node:22-alpine` stage builds the admin SPA (`wire/web`), a
 `maven:3.9-eclipse-temurin-21` stage builds the shaded jar (`target/nexagres-wire.jar`), then an
@@ -15,7 +15,7 @@ subdirectory it can `COPY` from):
 docker compose -f docker/polywire/docker-compose.yml up --build
 ```
 
-This starts a real Postgres backend plus PolyWire itself, pointed at each other. Once healthy:
+This starts a real Postgres backend plus NexaGate itself, pointed at each other. Once healthy:
 
 ```bash
 psql -h localhost -p 15432 -U postgres -d postgres
@@ -29,7 +29,7 @@ the same port.
 
 ## Connecting to a real Postgres
 
-The compose file above stands up its own Postgres for a self-contained demo. To point PolyWire at
+The compose file above stands up its own Postgres for a self-contained demo. To point NexaGate at
 an existing Postgres instead — on-prem, Supabase, Amazon RDS, Google Cloud SQL, or Azure Database
 for PostgreSQL — see **[../CONNECTING.md](../CONNECTING.md)** for a copy-pasteable `docker run`/
 `docker-compose.yml` per target, plus the real, provider-specific gotchas each one hits (Supabase's
@@ -55,7 +55,7 @@ docker build -f docker/polywire/Dockerfile -t polywire:latest .
 
 ## Configuration
 
-Every PolyWire setting is an env var — see `Main.java`'s and `ServerOptions.java`'s own javadoc
+Every NexaGate setting is an env var — see `Main.java`'s and `ServerOptions.java`'s own javadoc
 for the complete, authoritative list (QoS, cache, ACL, OAuth, AWS IAM SigV4, TLS, cluster/
 sharding, ...). The compose file above only sets the minimum needed to connect to a real backend
 (`POLYWIRE_*`) plus the shared dev auth credential (`POLYWIRE_AUTH_*`) — everything else uses its

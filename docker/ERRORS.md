@@ -3,7 +3,7 @@
 A client that speaks Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, or GraphDB (Neo4j) expects a
 real failure — a duplicate key, a missing table, a dead connection — to come back in *that*
 protocol's own native error shape, with the exact code/name a driver's own retry, reconnect, and
-error-handling logic keys off. Underneath every one of them, PolyWire is talking to real Postgres,
+error-handling logic keys off. Underneath every one of them, NexaGate is talking to real Postgres,
 which raises its own SQLSTATE for the same failure. This page documents how each protocol
 translates that real Postgres SQLSTATE into a genuine native error — not a generic
 `internal error` that leaves the client's own driver logic (retry-on-duplicate-key, reconnect-on-
@@ -11,7 +11,7 @@ connection-loss, etc.) with nothing to key off.
 
 Every mapping below was verified — against the vendor's own official documentation, or empirically
 against that protocol's real client library (the AWS SDK, `opensearch-java`, `mongodb-driver-sync`,
-a real Oracle/MySQL/SQL Server JDBC driver) actually parsing PolyWire's response — not guessed.
+a real Oracle/MySQL/SQL Server JDBC driver) actually parsing NexaGate's response — not guessed.
 Where a vendor genuinely has no dedicated code for a condition, this page says so plainly rather
 than inventing a plausible-looking one.
 
@@ -49,7 +49,7 @@ unexpected server-side failure encoding a result row (e.g. a value PackStream ha
 for) -- rather than inventing a finer-grained mapping real Neo4j's own error catalog would draw
 differently. Every one of these is a message a real Bolt client driver already knows how to parse
 into its own typed exception, since the shape (a real `Neo.*`-namespaced code string plus message
-text) is exactly what the wire protocol itself defines, not a PolyWire-specific convention.
+text) is exactly what the wire protocol itself defines, not a NexaGate-specific convention.
 
 ---
 
@@ -66,7 +66,7 @@ text) is exactly what the wire protocol itself defines, not a PolyWire-specific 
 | Throttling / resource limit | `ORA-00018` max sessions exceeded | `1040` Too many connections | *(no single documented number — see note)* | `91 ShutdownInProgress`\* | `InternalServerError`\* | *(default — see note)* | `503 no_shard_available_action_exception`\* |
 | Timeout / statement canceled | `ORA-01013` user requested cancel | `3024` (statement timeout) | *(no numbered error — signaled via TDS "attention" packet)* | — | — | — | — |
 | Backend unreachable / connection lost | `ORA-03113` end-of-file on communication channel | Lost connection to MySQL server during query | Communication link failure | `91 ShutdownInProgress` | `500 InternalServerError` | default `InternalError` | `503 no_shard_available_action_exception` |
-| Unsupported operation | *(no PolyWire SQLSTATE maps here today — each protocol's own app-level validation handles this before reaching Postgres)* | | | | | | |
+| Unsupported operation | *(no NexaGate SQLSTATE maps here today — each protocol's own app-level validation handles this before reaching Postgres)* | | | | | | |
 
 \* `53300` (too_many_connections) reuses the same "backend unreachable" native error as an actual
 connection drop in MongoDB/DynamoDB/OpenSearch — none of the three has a dedicated *"the pool is
@@ -91,9 +91,9 @@ the client, matching how each vendor's own driver actually treats them (retry/re
 The most consequential mapping on this page: every wire protocol's driver ecosystem has
 reconnect/retry logic that keys off a *specific* code for "the backend connection is gone," not a
 generic error. Oracle drivers check for `ORA-03113` specifically; that behavior only works if
-PolyWire sends that exact number, not a plausible-sounding stand-in.
+NexaGate sends that exact number, not a plausible-sounding stand-in.
 
-PolyWire distinguishes three real Postgres SQLSTATEs that all mean "the backend is unreachable,"
+NexaGate distinguishes three real Postgres SQLSTATEs that all mean "the backend is unreachable,"
 each confirmed live against a real outage (`RealPostgres#stop()`, not assumed):
 
 | SQLSTATE | When it fires | 
@@ -109,10 +109,10 @@ OpenSearch's `no_shard_available_action_exception` — so a driver written again
 protocols gets exactly the signal its own reconnect logic expects, regardless of which of the three
 underlying SQLSTATEs actually fired.
 
-**What this does *not* cover:** if PolyWire itself dies (as opposed to Postgres dying underneath a
-live PolyWire), the client's own transport layer detects a closed socket directly — no in-protocol
-error code is sent or expected, since there's no PolyWire process left to send one. This page is
-about translating a real error *from* Postgres, not about PolyWire's own process lifecycle.
+**What this does *not* cover:** if NexaGate itself dies (as opposed to Postgres dying underneath a
+live NexaGate), the client's own transport layer detects a closed socket directly — no in-protocol
+error code is sent or expected, since there's no NexaGate process left to send one. This page is
+about translating a real error *from* Postgres, not about NexaGate's own process lifecycle.
 
 Every mapping in this document is exercised end-to-end against that protocol's own real client
 library — not just checked for the right JSON shape, but confirmed to raise the exact typed

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PolyWire — Interactive Demo</title>
-<meta name="description" content="Click through the PolyWire admin console with synthetic data — no signup, no backend required.">
+<title>NexaGate — Interactive Demo</title>
+<meta name="description" content="Click through the NexaGate admin console with synthetic data — no signup, no backend required.">
 <meta name="robots" content="noindex">
 <style>
 /* Tokens lifted verbatim from wire/web/src/index.css + dms/web/src/index.css -- this demo
@@ -260,12 +260,12 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         <div class="gateCard">
           <div class="gateBrand">
             <div class="mark"></div>
-            <div><span class="title">PolyWire</span><br><span class="sub">Admin console</span></div>
+            <div><span class="title">NexaGate</span><br><span class="sub">Admin console</span></div>
           </div>
           <div class="panel">
             <h1 class="gateTitle">Connect</h1>
             <p class="gateLede">
-              Enter the admin URL and bearer token for a running PolyWire process. By default the
+              Enter the admin URL and bearer token for a running NexaGate process. By default the
               token is kept only in this tab's session storage (see Advanced options to change that).
             </p>
             <div class="field">
@@ -304,7 +304,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         <nav class="rail">
           <div class="railBrand">
             <div class="railMark"></div>
-            <div><span class="railBrandTitle">PolyWire</span><span class="railBrandSub">Admin console</span></div>
+            <div><span class="railBrandTitle">NexaGate</span><span class="railBrandSub">Admin console</span></div>
           </div>
 
           <div class="railSection">
@@ -417,7 +417,7 @@ const advisorConnections = [
 // Synthetic but shape-accurate stand-ins for what /api/metrics/summary and /api/federation/plans
 // actually return (see WireMetricsSummary / FederationPlanEntry in wire/web/src/api/client.ts) --
 // numbers are made up, but every field, unit, and outcome bucket is real.
-// Full protocol lineup PolyWire actually benchmarks against (see the marketing site's own
+// Full protocol lineup NexaGate actually benchmarks against (see the marketing site's own
 // "Connect · Protect · Control · Accelerate · Observe" strip) -- every protocol that fronts the
 // same Postgres, each with its own wire name and color, same convention as PROTOCOL_COLORS in
 // wire/web/src/pages/Metrics.tsx.
@@ -640,7 +640,7 @@ function rowFavBtn(isFav, onclick) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// PolyWire pages
+// NexaGate pages
 // ---------------------------------------------------------------------------------------------
 function sectionHead(title, linkPage, linkLabel) {
   return '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">' +
@@ -654,7 +654,7 @@ function wireDashboardPage() {
   const staleNodes = wireNodes.length - upNodes;
 
   return '<h1 class="pageTitle">Dashboard</h1>' +
-    '<p class="pageLede">Live snapshot of this PolyWire process &mdash; throughput, configured backends, and node topology.</p>' +
+    '<p class="pageLede">Live snapshot of this NexaGate process &mdash; throughput, configured backends, and node topology.</p>' +
     '<div class="statGrid">' +
       statCard(iArrowDown, 'Reads / sec', '842.3', '3,204,118 total reads') +
       statCard(iArrowUp, 'Writes / sec', '96.1', '412,003 total writes') +
@@ -752,7 +752,7 @@ function protocolTrafficPanel(counts) {
     '<span class="protoBarTrack"><span class="protoBarFill" style="width:' + ((count / max) * 100).toFixed(0) + '%;background:' + colorFor(name, i) + '"></span></span>' +
     '<span class="protoCount">' + count.toLocaleString() + '</span></div>').join('');
   return '<div class="panel"><div class="sectionTitle" style="margin-bottom:2px">Wire protocol traffic</div>' +
-    '<p style="font-size:12px;color:var(--muted);margin:0 0 12px">Statements handled per protocol since process start &mdash; every protocol PolyWire benchmarks, not just SQL.</p>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 12px">Statements handled per protocol since process start &mdash; every protocol NexaGate benchmarks, not just SQL.</p>' +
     rows + '</div>';
 }
 
@@ -820,8 +820,8 @@ function wireMetricsPage() {
   return (
     '<div class="metricsHero">' +
       '<div class="metricsHeroTop">' +
-        '<div><div class="metricsHeroTitle">PolyWire traffic</div>' +
-        '<p class="metricsHeroSub">Live protocol usage, read/write throughput, and the SQL costing you the most &mdash; across every backend PolyWire fronts.</p></div>' +
+        '<div><div class="metricsHeroTitle">NexaGate traffic</div>' +
+        '<p class="metricsHeroSub">Live protocol usage, read/write throughput, and the SQL costing you the most &mdash; across every backend NexaGate fronts.</p></div>' +
         '<div class="metricsHeroBadge"><span class="liveDot"></span>Live &middot; updated just now</div>' +
       '</div>' +
       '<div class="metricsHeroStats">' +
@@ -880,7 +880,7 @@ function federationPlansPage() {
       '</div></td></tr>').join('');
 
   return '<h1 class="pageTitle">Federation Plans</h1>' +
-    '<p class="pageLede">Real captured history of every cross-shard and cross-backend JOIN PolyWire has federated via Calcite &mdash; a genuine EXPLAIN PLAN FOR plan, timing, and row count per query, the same V$SQL_PLAN-style visibility a real database gives you for a query that spans several of your own backends. Refreshes every 5s.</p>' +
+    '<p class="pageLede">Real captured history of every cross-shard and cross-backend JOIN NexaGate has federated via Calcite &mdash; a genuine EXPLAIN PLAN FOR plan, timing, and row count per query, the same V$SQL_PLAN-style visibility a real database gives you for a query that spans several of your own backends. Refreshes every 5s.</p>' +
     '<p style="font-size:13px;margin:0 0 16px"><b>' + federationPlans.length + '</b> captured &nbsp;&middot;&nbsp; <b>' + avgMs + ' ms</b> avg</p>' +
     '<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th>#</th><th>When</th><th>Backends</th><th style="text-align:right">Elapsed</th><th style="text-align:right">Rows</th><th>Status</th><th>Plan</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
@@ -976,7 +976,7 @@ function llmConfigPage(cfg, note) {
 const wirePages = {
   dashboard: wireDashboardPage,
   metrics: wireMetricsPage,
-  topology: () => '<h1 class="pageTitle">Topology</h1><p class="pageLede">Every PolyWire node heartbeating against the shared config Postgres. A node is marked stale after 30s without one.</p>' + topologyTable(wireNodes),
+  topology: () => '<h1 class="pageTitle">Topology</h1><p class="pageLede">Every NexaGate node heartbeating against the shared config Postgres. A node is marked stale after 30s without one.</p>' + topologyTable(wireNodes),
   firewall: () => '<h1 class="pageTitle">SQL Firewall</h1><p class="pageLede">Allow/deny rules matched against incoming statements by type, table, or pattern, evaluated in priority order.</p>' + firewallSummaryPanel(firewallRules),
   acl: aclPage,
   oauth: () => '<h1 class="pageTitle">OAuth</h1><p class="pageLede">Issuer, audience, and claim mapping for OAuth-authenticated connections.</p>' + oauthSummaryPanel(oauthConfig),

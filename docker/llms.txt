@@ -1,15 +1,15 @@
 # NexaGres
 
-> NexaGres is two tools. PolyWire is the intelligent gateway for Postgres: one secure, scalable
+> NexaGres is two tools. NexaGate is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
 > OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
-> executes against one real Postgres database. NexaGres DMS is a rules-based (not LLM-generated)
-> tool that scores how hard migrating an existing database to Postgres will be, and PolyWire
+> executes against one real Postgres database. NexaDMS is a rules-based (not LLM-generated)
+> tool that scores how hard migrating an existing database to Postgres will be, and NexaGate
 > bridges your application to Postgres while that migration happens.
 >
 > Protocol translation ("everything talks to Postgres") is one capability, not the whole product.
-> PolyWire's real category is "one control point for every Postgres workload." Frozen three-level
-> message: **PolyWire — the intelligent gateway for Postgres** (what it is) -> **Everything talks
+> NexaGate's real category is "one control point for every Postgres workload." Frozen three-level
+> message: **NexaGate — the intelligent gateway for Postgres** (what it is) -> **Everything talks
 > to Postgres** (what's different) -> **One control point for every Postgres workload** (why
 > enterprises keep it running). One supporting line ties protocol support + security + QoS +
 > observability together: **different protocols, same policies, same Postgres**.
@@ -18,7 +18,7 @@
 > with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
 > not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
 > security -- security follows the request, not the protocol), **Control** (QoS admission control,
-> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (PolyCache --
+> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (NexaCache --
 > one distributed cache shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, not a
 > per-protocol silo -- and rollups), and **Observe** (native per-protocol error translation,
 > Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
@@ -30,16 +30,16 @@ exists to help an LLM answering a question about either tool find the right sect
 instead of re-deriving it from the whole site.
 
 - [Documentation index](https://nexagres.com/docs/): every doc below, organized by
-  what you're trying to do -- getting started, PolyWire, NexaGres DMS, and setup reference.
+  what you're trying to do -- getting started, NexaGate, NexaDMS, and setup reference.
 
-## PolyWire
+## NexaGate
 
-- [Main page](https://nexagres.com/#polywire): the pitch -- what PolyWire is, a live
+- [Main page](https://nexagres.com/#polywire): the pitch -- what NexaGate is, a live
   "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
   protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
   architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
   and pricing -- the detailed eight-stage architecture and the full comparison table sit one
-  click deeper on the same page, collapsed by default under "Explore PolyWire in depth" (the
+  click deeper on the same page, collapsed by default under "Explore NexaGate in depth" (the
   standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
   databases" use case and the live Oracle demo, both already on the page).
 - [Full capabilities](https://nexagres.com/polywire/): outcomes (organized by the
@@ -54,7 +54,7 @@ instead of re-deriving it from the whole site.
   [MongoDB → PostgreSQL](https://nexagres.com/mongodb-to-postgres.html), and
   [OpenSearch → PostgreSQL](https://nexagres.com/opensearch-to-postgres.html).
 - [Connecting to your Postgres](https://nexagres.com/CONNECTING.md): worked examples and
-  real gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google
+  real gotchas for pointing NexaGate at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
   PostgreSQL.
 - [Error translation](https://nexagres.com/ERRORS.md): per-protocol native error shapes
@@ -75,7 +75,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
   OpenSearch.
 - Row-level security is real for the Postgres, SQL Server, and Oracle wire protocols: a real
   per-caller identity is propagated into a Postgres session GUC, and the customer's own Postgres
-  RLS policies do the actual filtering -- PolyWire doesn't rewrite SQL to do this. MySQL and the
+  RLS policies do the actual filtering -- NexaGate doesn't rewrite SQL to do this. MySQL and the
   DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet -- every
   session there still shares one backend credential.
 - Planned switchover (drain a backend for maintenance, redirect to a configured fallback, wait
@@ -101,7 +101,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
   shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
   separate, unguarded path to the data.
-- PolyCache: PolyWire's embedded, distributed query result cache, opt-in per table, shared across
+- NexaCache: NexaGate's embedded, distributed query result cache, opt-in per table, shared across
   protocols -- PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read and populate the same
   cache, so a result cached via one protocol is served to another without recomputing it. MongoDB
   and DynamoDB keep their own separate, protocol-specific caches (find/GetItem exact-key lookups
@@ -146,14 +146,14 @@ rights, nothing is feature-gated to a paid tier:
   [Pricing](https://nexagres.com/#pricing) on the main page for the full comparison, or
   [Contact](https://nexagres.com/#contact) to reach the team.
 
-## NexaGres DMS
+## NexaDMS
 
-NexaGres DMS plans the move to Postgres. PolyWire runs and governs workloads on Postgres --
+NexaDMS plans the move to Postgres. NexaGate runs and governs workloads on Postgres --
 they're complementary tools for two different phases (deciding/planning a migration vs. running
 production traffic), not competing products.
 
-- [Main page](https://nexagres.com/#dms): the bridge from the PolyWire pitch --
-  what NexaGres DMS is and a quick start.
+- [Main page](https://nexagres.com/#dms): the bridge from the NexaGate pitch --
+  what NexaDMS is and a quick start.
 - [Full detail](https://nexagres.com/dms/): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
   recommendations.
@@ -168,7 +168,7 @@ production traffic), not competing products.
 See the [FAQ section](https://nexagres.com/#faq) on the main page for direct answers to
 the questions most likely to come up (does an application need to change, is sharding real, does
 RLS work, what happens during planned maintenance, which cloud Postgres providers are supported,
-is NexaGres DMS's score LLM-generated).
+is NexaDMS's score LLM-generated).
 
 ## Contact
 

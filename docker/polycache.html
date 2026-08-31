@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PolyCache — Cross-Protocol Distributed Cache</title>
-<meta name="description" content="PolyCache: PolyWire's distributed, cross-protocol cache -- a result written through one wire protocol and read back through another comes back as a cache hit, zero Postgres round trips, with live terminal walkthroughs for both cache tiers.">
+<title>NexaCache — Cross-Protocol Distributed Cache</title>
+<meta name="description" content="NexaCache: NexaGate's distributed, cross-protocol cache -- a result written through one wire protocol and read back through another comes back as a cache hit, zero Postgres round trips, with live terminal walkthroughs for both cache tiers.">
 <link rel="canonical" href="https://nexagres.com/polycache.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,11 +14,11 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/polycache.html">
-<meta property="og:title" content="PolyCache — Cross-Protocol Distributed Cache">
+<meta property="og:title" content="NexaCache — Cross-Protocol Distributed Cache">
 <meta property="og:description" content="A result written through one wire protocol and read back through another comes back as a cache hit -- zero Postgres round trips.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="PolyCache — Cross-Protocol Distributed Cache">
+<meta name="twitter:title" content="NexaCache — Cross-Protocol Distributed Cache">
 <meta name="twitter:description" content="A result written through one wire protocol and read back through another comes back as a cache hit -- zero Postgres round trips.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 </head>
@@ -27,10 +27,10 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">PolyWire</a>
-      <a href="/dms/">DMS</a>
-      <a href="/polycache.html" class="active">PolyCache</a>
-      <a href="/db-compat/">DB Compat</a>
+      <a href="/polywire/">NexaGate</a>
+      <a href="/dms/">NexaDMS</a>
+      <a href="/polycache.html" class="active">NexaCache</a>
+      <a href="/db-compat/">NexaCompat</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="/docs/">Docs</a>
@@ -46,7 +46,7 @@
         <h1 class="eyebrow">NexaGres</h1>
       </div>
       <p class="lede">
-        <a href="/">← Back to home</a> — <b>PolyCache is PolyWire's own distributed cache,
+        <a href="/">← Back to home</a> — <b>NexaCache is NexaGate's own distributed cache,
         shared across every protocol it speaks.</b> A result written through one wire protocol and
         read back through another comes back as a cache hit — zero Postgres round trips on the
         second read, confirmed live below.
@@ -55,9 +55,9 @@
     <section class="tool" id="polycache-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
-        <span class="badge">Part of PolyWire</span>
+        <span class="badge">Part of NexaGate</span>
       </div>
-      <h2>PolyCache</h2>
+      <h2>NexaCache</h2>
       <p class="lede">
         Two real, live cache tiers — an arbitrary-<code>SELECT</code> result cache shared across
         six protocols, and a narrower exact-primary-key point-lookup cache that also brings in
@@ -67,8 +67,8 @@
 
       <h3 class="subhead" id="distributed-cache">Cache once. Access across protocols.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        A result cached through one PolyWire protocol can be served through another — across
-        PolyWire instances — without another Postgres round trip. <b>One distributed cache,
+        A result cached through one NexaGate protocol can be served through another — across
+        NexaGate instances — without another Postgres round trip. <b>One distributed cache,
         not a per-protocol silo.</b> Confirmed live: a row read via a Postgres client, then asked
         for again through a MySQL client, comes back as a cache hit — zero Postgres round trips
         on the second read.
@@ -78,14 +78,14 @@
           <div class="cacheFlowRow">
             <span class="cacheChip">MySQL client</span>
             <span class="cacheArrow">→</span>
-            <span class="cacheHub">PolyWire<br><span class="cacheHubSub">PolyCache</span></span>
+            <span class="cacheHub">NexaGate<br><span class="cacheHubSub">NexaCache</span></span>
             <span class="cacheArrow">←</span>
             <span class="cacheChip">Oracle client</span>
           </div>
           <span class="cacheArrowDown">↓ same cached result</span>
           <span class="cachePg">PostgreSQL — system of record</span>
         </div>
-        <figcaption>Shared today across every protocol that goes through PolyWire's dialect-translation
+        <figcaption>Shared today across every protocol that goes through NexaGate's dialect-translation
         stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, for arbitrary opted-in
         <code>SELECT</code> results. MongoDB and DynamoDB don't share entries in <i>this</i>
         cache — but a separate, narrower point-lookup cache now does bring them in, see below —
@@ -111,7 +111,7 @@ mysql&gt; SELECT * FROM orders WHERE order_id = 1001;
 +----------+-------------+--------+
 1 row in set
 
-# admin console: PolyCache MISS → PostgreSQL round trip → result cached</pre>
+# admin console: NexaCache MISS → PostgreSQL round trip → result cached</pre>
           </div>
         </div>
         <div class="cacheDemoPanel">
@@ -128,7 +128,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
 
 1 row selected.
 
-# admin console: PolyCache HIT → 0 Postgres round trips</pre>
+# admin console: NexaCache HIT → 0 Postgres round trips</pre>
           </div>
         </div>
       </div>
