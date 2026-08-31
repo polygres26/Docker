@@ -91,6 +91,7 @@
       <a href="#dms">DMS</a>
       <a href="#pricing">Pricing</a>
       <a href="polycache.html">PolyCache</a>
+      <a href="db-compat.html">DB Compat</a>
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
       <a href="docs.html">Docs</a>
@@ -652,6 +653,42 @@ aws sqs receive-message \                          # SQS wire
       <p class="pricingNote">
         Full row-by-row capability breakdown, including exactly which real license check backs
         each row: <a href="dms.html#dms-packaging">NexaGres DMS capability table →</a>
+      </p>
+
+      <h3 class="subhead" id="db-compat-pricing">DB Compatibility Layer<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
+      <p class="lede">
+        Oracle/SQL Server/MySQL catalog and built-in-function compatibility inside Postgres
+        itself — <code>V$SESSION</code>, <code>DBMS_OUTPUT.PUT_LINE</code>, <code>sys.objects</code>,
+        <code>GROUP_CONCAT</code> — is an Enterprise-only add-on, not a Free/Enterprise split: the
+        same <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks PolyWire and NexaGres
+        DMS's own Enterprise tiers.
+      </p>
+      <div class="pricingGrid">
+        <div class="priceCard">
+          <h3>Developer</h3>
+          <p class="priceTag">Not included</p>
+          <p class="priceSub">A session still connects and runs ordinary SQL normally.</p>
+          <ul>
+            <li class="limit">No unqualified <code>V$</code>/<code>DBA_*</code>/<code>DBMS_*</code> resolution</li>
+            <li class="limit">No unqualified <code>sys.*</code>/T-SQL function resolution</li>
+            <li class="limit">No unqualified MySQL built-in function resolution</li>
+          </ul>
+        </div>
+        <div class="priceCard enterprise">
+          <h3>Enterprise</h3>
+          <p class="priceTag">Contact us</p>
+          <p class="priceSub">For a migrated application that still calls vendor catalog objects or built-ins.</p>
+          <ul>
+            <li>Oracle: V$/GV$ views, DBA_*/USER_*/ALL_* views, 13 DBMS_*/UTL_* packages</li>
+            <li>MySQL: GROUP_CONCAT, DATE_FORMAT, SHOW COLUMNS/INDEX/VARIABLES, and more</li>
+            <li>SQL Server: sys.* catalog views, OBJECT_ID, SCOPE_IDENTITY, and more T-SQL functions</li>
+            <li>Enterprise support</li>
+          </ul>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a PolyWire Architecture Review →</a></p>
+        </div>
+      </div>
+      <p class="pricingNote">
+        Full per-engine compatibility tables: <a href="db-compat.html">DB Compatibility Layer →</a>
       </p>
     </section>
 

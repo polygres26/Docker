@@ -31,6 +31,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://polygres26.github.io/db-compat.html</loc>
+    <lastmod>2026-08-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://polygres26.github.io/oracle-to-postgres.html</loc>
     <lastmod>2026-08-26</lastmod>
     <changefreq>monthly</changefreq>
