@@ -1,5 +1,6 @@
 package com.nexagres.migration.coordinator;
 
+import com.nexagres.migration.core.MigrationLicensing;
 import com.nexagres.migration.core.Partition;
 import com.nexagres.migration.core.Sink;
 import com.nexagres.migration.core.Source;
@@ -39,6 +40,13 @@ import org.slf4j.LoggerFactory;
  *   is done, the same way a real distributed batch job's workers exit after their shard of the
  *   work completes.
  * </ol>
+ *
+ * <p><b>Paid/free line:</b> this class IS the "real massively parallel way to move data" this
+ * session's migration plan gates behind a license -- see {@link
+ * MigrationLicensing#requireEnterpriseForDistributedCoordination} for why running MULTIPLE worker
+ * processes at all (not just this-process parallelism, see {@link Coordinator}'s own gate) is the
+ * paid tier, and why it's enforced by refusing to construct rather than silently degrading.
+ * Free/Developer tier: use {@link Coordinator} instead.
  */
 public final class DistributedCoordinator {
 
@@ -55,13 +63,14 @@ public final class DistributedCoordinator {
 
     public DistributedCoordinator(Source source, Sink sink, StateStore checkpoints, PartitionLeaseStore leases,
             String sourceKey, String workerId, int parallelism, long leaseTtlSeconds) {
+        MigrationLicensing.requireEnterpriseForDistributedCoordination();
         this.source = source;
         this.sink = sink;
         this.checkpoints = checkpoints;
         this.leases = leases;
         this.sourceKey = sourceKey;
         this.workerId = workerId;
-        this.parallelism = Math.max(1, parallelism);
+        this.parallelism = MigrationLicensing.enforceLocalParallelism(parallelism);
         this.leaseTtlSeconds = leaseTtlSeconds;
     }
 

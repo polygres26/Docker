@@ -8,10 +8,12 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.connectors.mongo.MongoSource;
+import com.nexagres.migration.core.MigrationLicensingTestSupport;
 import com.nexagres.migration.sink.PolywireGrpcSink;
 import com.nexagres.migration.testsupport.PolyWireProcess;
 import com.nexagres.migration.testsupport.RealMongo;
 import com.nexagres.migration.testsupport.RealPostgres;
+import com.nexagres.wire.license.LicenseTier;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -20,6 +22,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;
 import org.bson.Document;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -35,8 +39,25 @@ import org.junit.jupiter.api.Test;
  * leadership and is the one that actually replicates a live post-snapshot write -- the other
  * worker exits as soon as its share of the initial sync is done, never touching the change feed
  * at all.
+ *
+ * <p>Forces {@link LicenseTier#ENTERPRISE} for the duration of this test class via {@link
+ * MigrationLicensingTestSupport} -- {@link DistributedCoordinator} itself is the Enterprise-only
+ * "real massively parallel way to move data" (see {@code MigrationLicensing}'s own javadoc), and
+ * a genuine Enterprise license key can't be minted from this module's tests (it needs wire's
+ * real, deliberately offline signing private key). This override is what lets the actual
+ * distributed-coordination MECHANICS above still get full, real end-to-end coverage.
  */
 class DistributedCoordinatorIntegrationTest {
+
+    @BeforeEach
+    void forceEnterpriseTier() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
+    }
+
+    @AfterEach
+    void resetLicenseTier() {
+        MigrationLicensingTestSupport.reset();
+    }
 
     private static String customerDocJson(RealPostgres postgres, String idJson) throws Exception {
         try (Connection conn = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());

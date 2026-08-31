@@ -1,5 +1,6 @@
 package com.nexagres.migration.coordinator;
 
+import com.nexagres.migration.core.MigrationLicensing;
 import com.nexagres.migration.core.Partition;
 import com.nexagres.migration.core.Sink;
 import com.nexagres.migration.core.Source;
@@ -25,6 +26,12 @@ import org.slf4j.LoggerFactory;
  * exactly so a later, genuinely distributed runner (partitions farmed out to separate
  * machines/processes over a real transport, not just local threads) can replace this class
  * without any connector needing to change at all.
+ *
+ * <p><b>Paid/free line:</b> {@code parallelism > 1} is an Enterprise feature -- see {@link
+ * MigrationLicensing#enforceLocalParallelism} for why and how. Without a valid {@code
+ * POLYWIRE_LICENSE_KEY}, this coordinator silently runs serially (one partition at a time) rather
+ * than refusing to run at all: a free/Developer-tier migration is fully correct, just not
+ * parallel.
  */
 public final class Coordinator {
 
@@ -39,7 +46,7 @@ public final class Coordinator {
         this.source = source;
         this.sink = sink;
         this.checkpoints = checkpoints;
-        this.parallelism = Math.max(1, parallelism);
+        this.parallelism = MigrationLicensing.enforceLocalParallelism(parallelism);
     }
 
     /** Runs the initial sync, then blocks in the live change feed until interrupted or the
