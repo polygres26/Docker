@@ -7,7 +7,7 @@ import {
 } from '../api/client'
 
 /**
- * Entry screen for this SPA. Polywire's admin API is bearer-token protected and deliberately has
+ * Entry screen for this SPA. NexaGate's admin API is bearer-token protected and deliberately has
  * no session/cookie machinery (see MetricsServer's javadoc) -- so instead of a login form backed
  * by a server session, this just collects the admin URL + token once and keeps them in
  * sessionStorage (cleared when the tab closes, unlike localStorage). Every subsequent request
@@ -50,10 +50,10 @@ export default function Connect() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800,
           fontFamily: 'ui-monospace, monospace',
         }}>
-          PW
+          NG
         </div>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 16 }}>Polywire</div>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>NexaGate</div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>Admin console</div>
         </div>
       </div>
@@ -61,8 +61,8 @@ export default function Connect() {
       <div className="panel">
         <h1 style={{ fontSize: 18, marginTop: 0, marginBottom: 6 }}>Connect</h1>
         <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-          Enter the admin URL and bearer token for a running Polywire process
-          (<code>POLYWIRE_ADMIN_TOKEN</code>). This browser talks to Polywire's admin API directly
+          Enter the admin URL and bearer token for a running NexaGate process
+          (<code>POLYWIRE_ADMIN_TOKEN</code>). This browser talks to NexaGate's admin API directly
           -- nothing is sent anywhere else. By default the token is kept only in this tab's session
           storage and is cleared when the tab closes (see Advanced options to change that).
         </p>
@@ -124,7 +124,7 @@ export default function Connect() {
                 />
                 <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>
                   How long to wait for the admin API before giving up, on this connect attempt and every request
-                  after it. Raise this if you're on a slow link to a remote Polywire process.
+                  after it. Raise this if you're on a slow link to a remote NexaGate process.
                 </div>
               </label>
             </div>

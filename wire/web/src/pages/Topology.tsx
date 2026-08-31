@@ -42,7 +42,7 @@ function groupByZone(nodes: NodeInfo[]): Array<[string, NodeInfo[]]> {
 }
 
 /**
- * Deployment topology for Polywire -- which nodes exist, in which availability zones, and
+ * Deployment topology for NexaGate -- which nodes exist, in which availability zones, and
  * whether each is currently healthy. Each instance heartbeats its identity to the shared config
  * Postgres roughly every 10s; a node is marked "stale" once its heartbeat is more than 30s old
  * (could be down, could just be a slow network blip -- not a hard failure signal on its own).
@@ -104,9 +104,9 @@ export default function Topology() {
       <div className={styles.hero}>
         <div className={styles.heroTop}>
           <div>
-            <h1 className={styles.heroTitle}>Polywire topology</h1>
+            <h1 className={styles.heroTitle}>NexaGate topology</h1>
             <p className={styles.heroSubtitle}>
-              Every Polywire instance in this deployment, grouped by zone.
+              Every NexaGate instance in this deployment, grouped by zone.
             </p>
           </div>
           <div className={styles.heroBadge}>
@@ -132,7 +132,7 @@ export default function Topology() {
         <div className={styles.card}>
           <div className={styles.empty}>
             No nodes have heartbeated yet. This is expected right after a fresh deploy — the
-            heartbeat table populates once at least one Polywire instance has started and checked
+            heartbeat table populates once at least one NexaGate instance has started and checked
             in against the shared config Postgres.
           </div>
         </div>

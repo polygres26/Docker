@@ -6,7 +6,7 @@ export type CredentialSource = 'plaintext' | 'vault' | 'cyberark'
  * Password input that can also point at an external secret instead of holding a literal value --
  * the value this component produces (`onChange`) is always the one flat string the backend
  * already expects in a password field: a plain password, or a `vault:...`/`cyberark:...`
- * reference (see `com.nexagres.dms.secrets.SecretRef` / Polywire's twin package for the exact
+ * reference (see `com.nexagres.dms.secrets.SecretRef` / NexaGate's twin package for the exact
  * grammar and how it's resolved at connect time). No new API shape needed -- this is purely a
  * friendlier way to build the string that already round-trips through every password field.
  */
@@ -23,7 +23,7 @@ export default function CredentialField({
   const [plaintext, setPlaintext] = useState(initialSource === 'plaintext' ? value : '')
   const [vaultPath, setVaultPath] = useState(initialSource === 'vault' ? value.replace(/^vault:/, '').split('#')[0] : 'secret/data/prod/postgres')
   const [vaultField, setVaultField] = useState(initialSource === 'vault' && value.includes('#') ? value.split('#')[1] : 'password')
-  const [cyberarkQuery, setCyberarkQuery] = useState(initialSource === 'cyberark' ? value.replace(/^cyberark:/, '') : 'AppID=Polywire&Safe=DB-Secrets&Object=prod-postgres')
+  const [cyberarkQuery, setCyberarkQuery] = useState(initialSource === 'cyberark' ? value.replace(/^cyberark:/, '') : 'AppID=NexaGate&Safe=DB-Secrets&Object=prod-postgres')
 
   function emit(nextSource: CredentialSource, nextPlaintext: string, nextVaultPath: string, nextVaultField: string, nextCyberarkQuery: string) {
     if (nextSource === 'plaintext') onChange(nextPlaintext)
@@ -87,7 +87,7 @@ export default function CredentialField({
         <input
           value={cyberarkQuery}
           onChange={(e) => { setCyberarkQuery(e.target.value); emit('cyberark', plaintext, vaultPath, vaultField, e.target.value) }}
-          placeholder="AppID=Polywire&Safe=DB-Secrets&Object=prod-postgres"
+          placeholder="AppID=NexaGate&Safe=DB-Secrets&Object=prod-postgres"
           style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
         />
       )}

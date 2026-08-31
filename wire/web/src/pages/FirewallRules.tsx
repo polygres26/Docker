@@ -10,7 +10,7 @@ import {
 
 /**
  * SQL Firewall rule management -- create/edit/delete against `polywire_firewall_rules`, straight
- * against Polywire's own admin API. Changes take effect on every running Polywire process within
+ * against NexaGate's own admin API. Changes take effect on every running NexaGate process within
  * milliseconds (LISTEN/NOTIFY), no restart.
  */
 export default function FirewallRules() {

@@ -1,6 +1,6 @@
 /* Wide, labeled, grouped sidebar -- replaces the earlier icon-only-with-tooltip rail now that
    there are enough destinations (4 Advisor + 7 Wire) that hover-to-discover stopped scaling.
-   Structure: brand mark, then named sections ("Advisor", "PolyWire") each with a small caption
+   Structure: brand mark, then named sections ("Advisor", "NexaGate") each with a small caption
    label, matching the grouped-sidebar pattern in the reference admin themes this was modeled on. */
 
 .shell { display: flex; min-height: 100%; }

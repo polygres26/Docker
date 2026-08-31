@@ -221,7 +221,7 @@ export default function Backends() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Backends</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         Named Postgres targets the router can send statements to. Each entry's host must already
-        be in <code>POLYWIRE_TRUSTED_BACKEND_HOSTS</code> on the Polywire process, or it's
+        be in <code>POLYWIRE_TRUSTED_BACKEND_HOSTS</code> on the NexaGate process, or it's
         silently skipped.
       </p>
 
@@ -257,8 +257,8 @@ export default function Backends() {
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
                 The password segment doesn't have to be a literal password -- it's resolved at connect time, so a
                 secret reference works too: <code>vault:secret/data/prod/postgres#password</code> (needs{' '}
-                <code>VAULT_ADDR</code>/<code>VAULT_TOKEN</code> on Polywire) or{' '}
-                <code>cyberark:AppID=Polywire&amp;Safe=DB-Secrets&amp;Object=prod-postgres</code> (needs{' '}
+                <code>VAULT_ADDR</code>/<code>VAULT_TOKEN</code> on NexaGate) or{' '}
+                <code>cyberark:AppID=NexaGate&amp;Safe=DB-Secrets&amp;Object=prod-postgres</code> (needs{' '}
                 <code>CYBERARK_CCP_URL</code>). A plain password still works exactly as before.
               </div>
               <textarea
