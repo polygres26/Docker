@@ -104,10 +104,11 @@
       </figure>
       <p class="rttNote">
         <b>Where NexaGres DMS is still early:</b> connection credentials are encrypted at rest
-        (AES-256-GCM) when <code>NEXAGRES_ENCRYPTION_KEY</code> is set, or resolved from Vault/
-        CyberArk instead of being stored at all — but that's opt-in, and a bare install without it
-        stores a plain password, so set it (or use a secret reference) for anything beyond local
-        dev. A second, read-only admin account and SSO login are both available (Enterprise) — see
+        (AES-256-GCM) when <code>NEXAGRES_ENCRYPTION_KEY</code> is set, or resolved from Vault,
+        CyberArk, AWS Secrets Manager, Azure Key Vault, or GCP Secret Manager instead of being
+        stored at all — but that's opt-in, and a bare install without it stores a plain password,
+        so set it (or use a secret reference) for anything beyond local dev. A second, read-only
+        admin account and SSO login are both available (Enterprise) — see
         <a href="#dms-packaging">Free vs. Enterprise</a> below; a bare-install free/Developer tier
         still has just the one shared admin account. Bandwidth/workload throttling, source
         production protection, and structured audit logging are also covered there.
@@ -123,15 +124,16 @@
       <h3 class="subhead" id="llm-assist">Connecting, exploring, and reviewing PL/SQL with an LLM's help<a class="permalink" href="#llm-assist" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
-        reference into Vault or CyberArk if you'd rather not store the secret in NexaGres DMS at
-        all. Once it's saved, Objects lists everything that user can see, grouped by type and
+        reference into HashiCorp Vault, CyberArk, AWS Secrets Manager, Azure Key Vault, or GCP
+        Secret Manager if you'd rather not store the secret in NexaGres DMS at all. Once it's
+        saved, Objects lists everything that user can see, grouped by type and
         (for a multi-schema connection) owner-qualified so a package in one schema is never
         confused for one in another. Selecting a routine shows its real source, pulled live from
         the database, not a cached copy.
       </p>
       <figure>
-        <img src="docs/dms-add-connection.png" alt="NexaGres DMS's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
-        <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved from Vault/CyberArk at connect time instead of being stored at all.</figcaption>
+        <img src="docs/dms-add-connection.png" alt="NexaGres DMS's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with several credential-source options above the password field">
+        <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved at connect time instead of being stored at all. Six credential sources are supported: Vault, CyberArk, AWS Secrets Manager, Azure Key Vault, and GCP Secret Manager, alongside a plain password (this screenshot predates the three hyperscaler options; the toggle above the password field has six buttons today, not three).</figcaption>
       </figure>
       <p class="rttNote">
         <b>What the LLM step actually does, precisely:</b> select a package, procedure, or
@@ -279,8 +281,9 @@
         the same mechanism (a token-bucket rate limiter on the write path, which backpressures the
         read side too): free tier always runs at a fixed default cap that protects the source
         without needing to be tuned; Enterprise can raise, lower, or effectively disable it.
-        Encryption at rest (AES-256-GCM) and Vault/CyberArk secret references are real and
-        unrestricted on every tier — opt-in via <code>NEXAGRES_ENCRYPTION_KEY</code>, not something
+        Encryption at rest (AES-256-GCM) and every secret-reference source (Vault, CyberArk, AWS
+        Secrets Manager, Azure Key Vault, GCP Secret Manager) are real and unrestricted on every
+        tier — opt-in via <code>NEXAGRES_ENCRYPTION_KEY</code> or a secret reference, not something
         a license key changes. Audit logging, the second read-only account, and SSO bearer-token
         login are genuinely new capabilities, Enterprise-only, and inert (not merely hidden) on the
         free/Developer tier. Everything else runs identically regardless of license — CDC,
