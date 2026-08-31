@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Polywire — The Intelligent Gateway for Postgres | Nexagres</title>
-<meta name="description" content="Polywire is the intelligent gateway for Postgres: one control point that connects, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Different protocols, same policies, same Postgres. Polyadvisor scores how hard your migration to Postgres will be.">
+<meta name="description" content="Polywire is the intelligent gateway for Postgres: one control point that connects, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Different protocols, same policies, same Postgres. Nexagres DMS scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://polygres26.github.io/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -15,11 +15,11 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/">
 <meta property="og:title" content="Polywire — The Intelligent Gateway for Postgres">
-<meta property="og:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus Polyadvisor, a rules-based migration-difficulty assessor.">
+<meta property="og:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus Nexagres DMS, a rules-based migration-difficulty assessor.">
 <meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Polywire — The Intelligent Gateway for Postgres">
-<meta name="twitter:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus Polyadvisor, a rules-based migration-difficulty assessor.">
+<meta name="twitter:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus Nexagres DMS, a rules-based migration-difficulty assessor.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
 
 <!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
@@ -58,11 +58,11 @@
     },
     {
       "@type": "SoftwareApplication",
-      "name": "Polyadvisor",
+      "name": "Nexagres DMS",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "A rules-based (not LLM-generated) migration-difficulty assessor for moving an Oracle, MySQL, MariaDB, or SQL Server database to Postgres -- scores difficulty, breaks down what drives the score, and recommends Postgres sizing. Reproducible: running it twice against the same database gives the same answer.",
-      "url": "https://polygres26.github.io/polyadvisor.html",
+      "url": "https://polygres26.github.io/dms.html",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
     },
     {
@@ -89,7 +89,7 @@
     <div class="siteNavInner">
       <a href="#polywire">Polywire</a>
       <a href="#pricing">Pricing</a>
-      <a href="#polyadvisor">Polyadvisor</a>
+      <a href="#dms">DMS</a>
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
       <a href="docs.html">Docs</a>
@@ -794,21 +794,21 @@ Ada      129.99
       </p>
     </section>
 
-    <section class="tool" id="polyadvisor">
+    <section class="tool" id="dms">
       <div class="kicker">
         <span class="num">03</span>
         <span class="badge">ghcr.io/polygres26/polyadvisor</span>
       </div>
       <p class="bridgeKicker">Also from Nexagres</p>
-      <h2>Polyadvisor — know before you migrate</h2>
+      <h2>Nexagres DMS — know before you migrate</h2>
       <p class="lede">
-        <b>Polyadvisor plans the move to Postgres. Polywire runs and governs workloads on
+        <b>Nexagres DMS plans the move to Postgres. Polywire runs and governs workloads on
         Postgres.</b> Assess → size → plan → move — Oracle, MySQL, MariaDB, SQL Server →
         Postgres, with a rules-based, reproducible difficulty score (not LLM-generated).
       </p>
-      <p class="rttNote"><a href="polyadvisor.html">Explore Polyadvisor — assessment, sizing, and PL/SQL review with an LLM's help →</a></p>
+      <p class="rttNote"><a href="dms.html">Explore Nexagres DMS — assessment, sizing, and PL/SQL review with an LLM's help →</a></p>
       <div class="heroCtas">
-        <a class="btn btn-secondary" href="demo-advisor.html">Click-Through Demo</a>
+        <a class="btn btn-secondary" href="demo-dms.html">Click-Through Demo</a>
       </div>
     </section>
 
@@ -827,7 +827,7 @@ Ada      129.99
         <li><span class="uc-body"><span class="uc-title">Does Polywire use AI for anything beyond MCP?</span><span class="uc-desc">Yes — ten features where Polywire itself calls an LLM at a specific pipeline point: self-healing query repair on a real backend SQL error, natural-language firewall-rule drafting, traffic anomaly detection with plain-English narration, QoS tuning suggestions, MCP activity summarization, natural-language querying with a second LLM pass judging (and correcting) the drafted SQL, rollup pre-aggregation suggestions, table-sharding suggestions, EXPLAIN plan narration, and auto-generated schema documentation. Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. <a href="polywire.html#ai-features">See all ten →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">What security features does Polywire actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="polywire.html#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Polywire free to use?</span><span class="uc-desc">Yes — Developer is free forever with every protocol and feature enabled, capped on scale. See Pricing above.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Is Polyadvisor's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is Nexagres DMS's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
       </ul>
     </section>
 
@@ -841,7 +841,7 @@ Ada      129.99
         where Polywire fits. Pick "Architecture Review" below.
       </p>
       <p class="lede" style="margin-bottom: 18px;">
-        <b>Report an issue or ask a question</b> — for either Polywire or Polyadvisor. Include
+        <b>Report an issue or ask a question</b> — for either Polywire or Nexagres DMS. Include
         what you were trying to do and, for a bug, what you expected vs. what happened. Goes
         straight to the team, no email address to copy or scrape.
       </p>
@@ -859,7 +859,7 @@ Ada      129.99
           <select id="contactSubject" name="subject">
             <option>Architecture Review</option>
             <option>Polywire question</option>
-            <option>Polyadvisor question</option>
+            <option>DMS question</option>
             <option>Bug report</option>
             <option>Feature request</option>
             <option>Something else</option>
@@ -934,7 +934,7 @@ Ada      129.99
         },
         {
           "@type": "Question",
-          "name": "Is Polyadvisor's migration score generated by an LLM?",
+          "name": "Is Nexagres DMS's migration score generated by an LLM?",
           "acceptedAnswer": { "@type": "Answer", "text": "No -- it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it." }
         }
       ]

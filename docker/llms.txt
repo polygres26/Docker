@@ -3,7 +3,7 @@
 > Nexagres is two tools. Polywire is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
 > OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
-> executes against one real Postgres database. Polyadvisor is a rules-based (not LLM-generated)
+> executes against one real Postgres database. Nexagres DMS is a rules-based (not LLM-generated)
 > tool that scores how hard migrating an existing database to Postgres will be, and Polywire
 > bridges your application to Postgres while that migration happens.
 >
@@ -30,7 +30,7 @@ exists to help an LLM answering a question about either tool find the right sect
 instead of re-deriving it from the whole site.
 
 - [Documentation index](https://polygres26.github.io/docs.html): every doc below, organized by
-  what you're trying to do -- getting started, Polywire, Polyadvisor, and setup reference.
+  what you're trying to do -- getting started, Polywire, Nexagres DMS, and setup reference.
 
 ## Polywire
 
@@ -144,15 +144,15 @@ rights, nothing is feature-gated to a paid tier:
   [Pricing](https://polygres26.github.io/#pricing) on the main page for the full comparison, or
   [Contact](https://polygres26.github.io/#contact) to reach the team.
 
-## Polyadvisor
+## Nexagres DMS
 
-Polyadvisor plans the move to Postgres. Polywire runs and governs workloads on Postgres --
+Nexagres DMS plans the move to Postgres. Polywire runs and governs workloads on Postgres --
 they're complementary tools for two different phases (deciding/planning a migration vs. running
 production traffic), not competing products.
 
-- [Main page](https://polygres26.github.io/#polyadvisor): the bridge from the Polywire pitch --
-  what Polyadvisor is and a quick start.
-- [Full detail](https://polygres26.github.io/polyadvisor.html): how assessment works (live
+- [Main page](https://polygres26.github.io/#dms): the bridge from the Polywire pitch --
+  what Nexagres DMS is and a quick start.
+- [Full detail](https://polygres26.github.io/dms.html): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
   recommendations.
 - Rules-based migration-difficulty scoring for Oracle/MySQL/MariaDB/SQL Server -> Postgres --
@@ -166,7 +166,7 @@ production traffic), not competing products.
 See the [FAQ section](https://polygres26.github.io/#faq) on the main page for direct answers to
 the questions most likely to come up (does an application need to change, is sharding real, does
 RLS work, what happens during planned maintenance, which cloud Postgres providers are supported,
-is Polyadvisor's score LLM-generated).
+is Nexagres DMS's score LLM-generated).
 
 ## Contact
 

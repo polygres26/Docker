@@ -69,9 +69,13 @@
 
   // Legacy-anchor redirect: PolyWire's deep technical-detail sections used to live on this page
   // at #outcomes, #sharding, etc. -- now they live on polywire.html, and #two-ways-to-assess/
-  // #what-you-get/#llm-assist/#admin-console-polyadvisor moved to polyadvisor.html. A bookmarked
-  // or shared link to one of the old anchors would otherwise land on this page with nothing to
-  // scroll to; this forwards it to the new page's matching anchor instead, once, on load.
+  // #what-you-get/#llm-assist/#admin-console-polyadvisor moved to dms.html (variable/string names
+  // below keep their original "polyadvisor" spelling deliberately -- they're the OLD anchor names
+  // real external bookmarks/shared links may still use, from before Polyadvisor was renamed to
+  // Nexagres DMS; renaming these strings would break exactly the backward-compat this redirect
+  // exists for). A bookmarked or shared link to one of the old anchors would otherwise land on
+  // this page with nothing to scroll to; this forwards it to the new page's matching anchor
+  // instead, once, on load.
   var MOVED_TO_POLYWIRE = ['outcomes', 'use-cases', 'admin-console-polywire', 'cache-vs-round-trip',
     'sharding', 'sqs-enqueue-dequeue', 'rollups', 'observability', 'multi-az', 'security',
     'outages', 'error-handling'];
@@ -82,7 +86,12 @@
     if (MOVED_TO_POLYWIRE.indexOf(hash) !== -1) {
       window.location.replace('polywire.html#' + hash);
     } else if (MOVED_TO_POLYADVISOR.indexOf(hash) !== -1) {
-      window.location.replace('polyadvisor.html#' + hash);
+      window.location.replace('dms.html#' + hash);
+    } else if (hash === 'polyadvisor') {
+      // The #polyadvisor section itself was renamed to #dms on this same page (the Polyadvisor
+      // -> Nexagres DMS rebrand) -- an in-page hash swap, not a cross-page redirect like the
+      // cases above, since the section never left this page.
+      window.location.hash = 'dms';
     }
   }
 
@@ -94,7 +103,7 @@
   // hidden `_gotcha` field is Formspree's own honeypot -- a real visitor never sees or fills
   // it (see .hp-field's off-screen CSS), so anything that does is treated as spam and dropped
   // silently on Formspree's side before it ever reaches the inbox. Guarded by contactForm's
-  // existence -- only index.html has this form; harmless no-op on polywire.html/polyadvisor.html.
+  // existence -- only index.html has this form; harmless no-op on polywire.html/dms.html.
   var contactForm = document.getElementById('contactForm');
   var contactStatus = document.getElementById('contactStatus');
   var contactSubmitBtn = document.getElementById('contactSubmitBtn');

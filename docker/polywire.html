@@ -28,7 +28,7 @@
     <div class="siteNavInner">
       <a href="index.html">Home</a>
       <a href="polywire.html" class="active">Polywire</a>
-      <a href="polyadvisor.html">Polyadvisor</a>
+      <a href="dms.html">DMS</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#faq">FAQ</a>
@@ -125,7 +125,7 @@
         <li><span class="uc-body"><span class="uc-title">Property-graph queries without running Neo4j</span><span class="uc-desc">Real Bolt+Cypher — <code>CREATE</code>, <code>MATCH ... WHERE ... RETURN</code>, bounded variable-length paths — against a real Postgres nodes/edges schema, spoken to the official <code>neo4j</code> driver over the real Bolt wire protocol. See "GraphDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. Polywire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run Polywire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Polywire while Polyadvisor (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Polywire while Nexagres DMS (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
       </ul>
 
       <h3 class="subhead" id="admin-console-polywire">Admin console<a class="permalink" href="#admin-console-polywire" aria-label="Link to this section">#</a></h3>

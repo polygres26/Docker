@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polyadvisor — Migration Assessment</title>
-<meta name="description" content="Polyadvisor: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
-<link rel="canonical" href="https://polygres26.github.io/polyadvisor.html">
+<title>Nexagres DMS — Migration Assessment</title>
+<meta name="description" content="Nexagres DMS: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
+<link rel="canonical" href="https://polygres26.github.io/dms.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
 <link rel="icon" type="image/png" href="docs/logo.png">
@@ -13,14 +13,14 @@
 <link rel="stylesheet" href="styles.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://polygres26.github.io/polyadvisor.html">
-<meta property="og:title" content="Polyadvisor — Migration Assessment">
+<meta property="og:url" content="https://polygres26.github.io/dms.html">
+<meta property="og:title" content="Nexagres DMS — Migration Assessment">
 <meta property="og:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
-<meta property="og:image" content="https://polygres26.github.io/docs/admin-polyadvisor.png">
+<meta property="og:image" content="https://polygres26.github.io/docs/admin-dms.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Polyadvisor — Migration Assessment">
+<meta name="twitter:title" content="Nexagres DMS — Migration Assessment">
 <meta name="twitter:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
-<meta name="twitter:image" content="https://polygres26.github.io/docs/admin-polyadvisor.png">
+<meta name="twitter:image" content="https://polygres26.github.io/docs/admin-dms.png">
 </head>
 <body>
   <a href="#main" class="skipLink">Skip to content</a>
@@ -28,7 +28,7 @@
     <div class="siteNavInner">
       <a href="index.html">Home</a>
       <a href="polywire.html">Polywire</a>
-      <a href="polyadvisor.html" class="active">Polyadvisor</a>
+      <a href="dms.html" class="active">DMS</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#faq">FAQ</a>
@@ -42,18 +42,18 @@
         <h1 class="eyebrow">Nexagres</h1>
       </div>
       <p class="lede">
-        <a href="index.html">← Back to home</a> — <b>Polyadvisor plans the move to Postgres.
+        <a href="index.html">← Back to home</a> — <b>Nexagres DMS plans the move to Postgres.
         <a href="polywire.html">Polywire</a> runs and governs workloads on Postgres.</b>
-        Polyadvisor tells you how hard moving to Postgres will be; Polywire keeps your
+        Nexagres DMS tells you how hard moving to Postgres will be; Polywire keeps your
         application running while you do it.
       </p>
     </header>
-    <section class="tool" id="polyadvisor-detail" style="margin-top:0; padding-top:0; border-top:none;">
+    <section class="tool" id="dms-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/polyadvisor</span>
       </div>
-      <h2>Polyadvisor</h2>
+      <h2>Nexagres DMS</h2>
       <p class="lede">
         Tool for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: assess how hard the
         migration is, then bridge your existing application to Postgres while you do it.
@@ -64,7 +64,7 @@
           <li><a href="#two-ways-to-assess">Two ways to get an assessment</a></li>
           <li><a href="#what-you-get">What you get</a></li>
           <li><a href="#llm-assist">Connecting with an LLM's help</a></li>
-          <li><a href="#admin-console-polyadvisor">Admin console</a></li>
+          <li><a href="#admin-console-dms">Admin console</a></li>
         </ul>
       </details>
 
@@ -74,10 +74,10 @@
         <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
       </ul>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-advisor.html?page=connections&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Connections" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=connections&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Connections" loading="lazy"></iframe>
         <figcaption>
           Live and click-through, not a screenshot — try adding, favoriting, or browsing a connection yourself.
-          <a class="embedOpenLink" href="demo-advisor.html?page=connections&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+          <a class="embedOpenLink" href="demo-dms.html?page=connections&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
 
@@ -91,14 +91,14 @@
         <li><span class="wg-body"><span class="wg-title">PL/SQL summarization (Oracle sources)</span><span class="wg-desc">An LLM explains what a package or procedure actually does in plain English, with an optional second-opinion "judge" model for a review pass — advisory only, layered on top of the rules-based score, never replacing it.</span></span></li>
       </ul>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-advisor.html?page=reports&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Reports" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=reports&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Reports" loading="lazy"></iframe>
         <figcaption>
           Uploaded-report management, live — analyzed/not-analyzed status per file, the same view either data path lands you on.
-          <a class="embedOpenLink" href="demo-advisor.html?page=reports&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+          <a class="embedOpenLink" href="demo-dms.html?page=reports&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
       <p class="rttNote">
-        <b>Where Polyadvisor is still early:</b> saved connection credentials are stored as-is
+        <b>Where Nexagres DMS is still early:</b> saved connection credentials are stored as-is
         today — encryption at rest is planned but not yet built, so treat this like any other tool
         you'd point at a database with a password in a config file. There's a single shared admin
         account, no per-user roles or SSO yet. Worth knowing before you point it at anything you
@@ -115,19 +115,19 @@
       <h3 class="subhead" id="llm-assist">Connecting, exploring, and reviewing PL/SQL with an LLM's help<a class="permalink" href="#llm-assist" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
-        reference into Vault or CyberArk if you'd rather not store the secret in Polyadvisor at
+        reference into Vault or CyberArk if you'd rather not store the secret in Nexagres DMS at
         all. Once it's saved, Objects lists everything that user can see, grouped by type and
         (for a multi-schema connection) owner-qualified so a package in one schema is never
         confused for one in another. Selecting a routine shows its real source, pulled live from
         the database, not a cached copy.
       </p>
       <figure>
-        <img src="docs/polyadvisor-add-connection.png" alt="Polyadvisor's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
+        <img src="docs/dms-add-connection.png" alt="Nexagres DMS's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
         <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved from Vault/CyberArk at connect time instead of being stored at all.</figcaption>
       </figure>
       <p class="rttNote">
         <b>What the LLM step actually does, precisely:</b> select a package, procedure, or
-        function and Polyadvisor can ask an LLM to explain it — a plain-English summary of what
+        function and Nexagres DMS can ask an LLM to explain it — a plain-English summary of what
         it does, a bullet list of the specific constructs that are non-trivial to port to
         Postgres (cursor locking, <code>DBMS_OUTPUT</code>, autonomous transactions, and the
         like), and a trivial/moderate/substantial effort estimate with its reasoning. This is a
@@ -137,17 +137,17 @@
         provider if you configure one on the LLM page.
       </p>
       <figure>
-        <img src="docs/polyadvisor-plsql-summarize.png" alt="Polyadvisor's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
+        <img src="docs/dms-plsql-summarize.png" alt="Nexagres DMS's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
         <figcaption>A real Oracle procedure's source (left: cursor <code>FOR UPDATE</code> loop, <code>DBMS_OUTPUT</code>, exception handling) and the LLM's live output below it — a summary, the specific constructs that need manual attention when porting to Postgres, and an effort estimate. Explanation and risk-flagging, not automated translation.</figcaption>
       </figure>
 
-      <h3 class="subhead" id="admin-console-polyadvisor">Admin console<a class="permalink" href="#admin-console-polyadvisor" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="admin-console-dms">Admin console<a class="permalink" href="#admin-console-dms" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/admin-polyadvisor.png" alt="Polyadvisor's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
-        <figcaption>Polyadvisor's Findings dashboard against a real MySQL 8.0 connection — complexity tier, overall score, feature inventory, and the itemized per-feature breakdown behind that score, each line with its own point cost and reasoning. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
+        <img src="docs/admin-dms.png" alt="Nexagres DMS's Findings dashboard for a connected MySQL 8.0 database: an EASY complexity tier with an overall score of 20 on a 0-100+ scale, a feature inventory (tables, views, triggers, procedures, functions), and an itemized migration-complexity breakdown per feature with per-item point costs and plain-English rationale">
+        <figcaption>Nexagres DMS's Findings dashboard against a real MySQL 8.0 connection — complexity tier, overall score, feature inventory, and the itemized per-feature breakdown behind that score, each line with its own point cost and reasoning. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
       </figure>
       <figure>
-        <img src="docs/polyadvisor-sizing.png" alt="Polyadvisor's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
+        <img src="docs/dms-sizing.png" alt="Nexagres DMS's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
         <figcaption>Sizing recommendation for the same connection — a starting-point Postgres instance shape built from a fresh schema-size scan and workload capture, with the caveats and the line-by-line rationale behind every number shown alongside it, not hidden behind a tooltip.</figcaption>
       </figure>
       <p class="rttNote">
@@ -156,17 +156,17 @@
         console, every page explorable, nothing left as a static picture.
       </p>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-advisor.html?page=sizing&amp;autoEnter=1" title="Live click-through demo: Polyadvisor Sizing" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=sizing&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Sizing" loading="lazy"></iframe>
         <figcaption>
           Sizing, live — vCPUs, memory, storage, IOPS, and the reasoning behind each number.
-          <a class="embedOpenLink" href="demo-advisor.html?page=sizing&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
+          <a class="embedOpenLink" href="demo-dms.html?page=sizing&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-advisor.html" title="Live click-through demo: Polyadvisor, full console" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html" title="Live click-through demo: Nexagres DMS, full console" loading="lazy"></iframe>
         <figcaption>
           The full console, starting from sign-in — every section above lives inside this one app.
-          <a class="embedOpenLink" href="demo-advisor.html" target="_blank" rel="noopener">Open full-screen →</a>
+          <a class="embedOpenLink" href="demo-dms.html" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
     </section>

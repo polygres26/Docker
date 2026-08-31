@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nexagres Advisor — Interactive Demo</title>
-<meta name="description" content="Click through the Nexagres Advisor console with synthetic data — no signup, no backend required.">
+<title>Nexagres DMS — Interactive Demo</title>
+<meta name="description" content="Click through the Nexagres DMS console with synthetic data — no signup, no backend required.">
 <meta name="robots" content="noindex">
 <style>
 /* Tokens lifted verbatim from wire/web/src/index.css + dms/web/src/index.css -- this demo
@@ -79,7 +79,7 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---------- Replica of Layout.tsx / Layout.module.css ---------- */
 
-/* .app (#app-wire/#app-advisor) sits between .frame and the shell's own `flex:1` inline style --
+/* .app (#app-wire/#app-dms) sits between .frame and the shell's own `flex:1` inline style --
    without this rule it was a plain block div, so that inline flex:1 had no flex parent to apply
    to and did nothing. Its height fell back to content-based auto, which cascaded straight down to
    .rail: the rail's own overflow-y:auto never got a bounded box to scroll WITHIN, so it just grew
@@ -272,14 +272,14 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
   <div class="frame">
 
     <!-- ============================================================ ADVISOR ============================================================ -->
-    <div id="app-advisor" class="app">
+    <div id="app-dms" class="app">
 
       <!-- Login gate -->
-      <div id="advisor-gate" class="gateWrap">
+      <div id="dms-gate" class="gateWrap">
         <div class="gateCard">
           <div class="gateBrand">
             <div class="mark"></div>
-            <div><span class="title">Nexagres Advisor</span><br><span class="sub">Postgres migration advisor</span></div>
+            <div><span class="title">Nexagres DMS</span><br><span class="sub">Database Migration Service</span></div>
           </div>
           <div class="panel">
             <h1 class="gateTitle">Sign in</h1>
@@ -291,48 +291,48 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
               <label>Password</label>
               <input type="password" placeholder="Password" value="••••••••">
             </div>
-            <button type="button" class="btnPrimary" data-enter="advisor">Sign in</button>
+            <button type="button" class="btnPrimary" data-enter="dms">Sign in</button>
           </div>
           <p class="gateNote">Demo only &mdash; any values work here.</p>
         </div>
       </div>
 
       <!-- Shell -->
-      <div id="advisor-shell" class="hidden" style="display:flex; flex:1; min-width:0; min-height:0;">
+      <div id="dms-shell" class="hidden" style="display:flex; flex:1; min-width:0; min-height:0;">
         <nav class="rail">
           <div class="railBrand">
             <div class="railMark"></div>
-            <div><span class="railBrandTitle">Nexagres</span><span class="railBrandSub">Advisor</span></div>
+            <div><span class="railBrandTitle">Nexagres</span><span class="railBrandSub">DMS</span></div>
           </div>
 
           <div class="railSection">
             <div class="railSectionLabel">Overview</div>
             <div class="railGroup">
-              <button class="railItem active" data-advisor-page="dashboard"><span class="ico">${iLayout}</span>Dashboard</button>
+              <button class="railItem active" data-dms-page="dashboard"><span class="ico">${iLayout}</span>Dashboard</button>
             </div>
           </div>
           <div class="railDivider"></div>
           <div class="railSection">
-            <div class="railSectionLabel">Migration</div>
+            <div class="railSectionLabel">Migration Advisor</div>
             <div class="railGroup">
-              <button class="railItem" data-advisor-page="connections"><span class="ico">${iCompass}</span>Advisor</button>
+              <button class="railItem" data-dms-page="connections"><span class="ico">${iCompass}</span>Assessment</button>
             </div>
           </div>
           <div class="railDivider"></div>
           <div class="railSection">
             <div class="railSectionLabel">Configuration</div>
             <div class="railGroup">
-              <button class="railItem" data-advisor-page="llm"><span class="ico">${iCpu}</span>LLM</button>
+              <button class="railItem" data-dms-page="llm"><span class="ico">${iCpu}</span>LLM</button>
             </div>
           </div>
 
           <div class="railSpacer"></div>
-          <button class="railItem" data-exit="advisor" style="margin-top:8px"><span class="ico">${iLogout}</span>Sign out</button>
+          <button class="railItem" data-exit="dms" style="margin-top:8px"><span class="ico">${iLogout}</span>Sign out</button>
         </nav>
 
         <div class="main">
-          <div class="topbar"><div class="crumb">nexagres advisor</div></div>
-          <div class="content" id="advisor-content"></div>
+          <div class="topbar"><div class="crumb">nexagres dms</div></div>
+          <div class="content" id="dms-content"></div>
         </div>
       </div>
     </div>
@@ -389,7 +389,7 @@ const wireBackends = [
   { name: 'analytics', url: 'jdbc:postgresql://analytics-host:5432/app', fav: false },
   { name: 'shard0', url: 'jdbc:postgresql://shard0-host:5432/app', fav: false },
 ];
-const advisorConnections = [
+const dmsConnections = [
   { id: 1, name: 'Prod Oracle 19c', url: 'jdbc:oracle:thin:@prod-ora:1521/ORCLPDB1', fav: true },
   { id: 2, name: 'Legacy MySQL', url: 'jdbc:mysql://legacy-mysql:3306/app', fav: false },
 ];
@@ -515,13 +515,13 @@ const qosConfig = {
 
 const llmConfig = { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKeySet: true };
 
-const advisorReports = [
+const dmsReports = [
   { id: 1, name: 'Prod Oracle AWR - Aug', dialect: 'oracle', filename: 'awr_prod_0828.html', uploadedAt: '2 days ago', analyzedAt: '2 days ago' },
   { id: 2, name: 'Legacy MySQL perf report', dialect: 'mysql', filename: 'mysql_perf_report.txt', uploadedAt: '5 days ago', analyzedAt: '5 days ago' },
   { id: 3, name: 'SQL Server DMV export', dialect: 'sqlserver', filename: 'dmv_export.csv', uploadedAt: '1 week ago', analyzedAt: null },
 ];
 
-const advisorSizing = {
+const dmsSizing = {
   tier: 'SMALL', vcpus: 2, memoryGb: 12, storageGb: 20, iops: 3000, maxConnections: 100,
   rationale: [
     'vCPUs sized from captured workload concurrency (peak 14 concurrent statements observed).',
@@ -531,14 +531,14 @@ const advisorSizing = {
   ],
 };
 
-const advisorLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
+const dmsLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
 
 // Per-connection object explorer -- schema, objects grouped by type, real-shaped DDL, and a
-// canned "LLM migration summary" per object revealed on demand (see openAdvisorObjectExplorer /
-// toggleObjectLlm below). Shapes mirror the real Advisor app's own Objects tab: a schema
+// canned "LLM migration summary" per object revealed on demand (see openDmsObjectExplorer /
+// toggleObjectLlm below). Shapes mirror the real DMS app's own Objects tab: a schema
 // introspection scan grouped INDEX/PROCEDURE/SEQUENCE/TABLE, DDL for the selected object, and a
 // per-object "Summarize with LLM" action producing Summary/Non-trivial Constructs/Effort sections.
-const advisorObjects = {
+const dmsObjects = {
   1: {
     schema: 'MIGRATION_RO',
     groups: [
@@ -697,9 +697,9 @@ const advisorObjects = {
   },
 };
 
-// Findings/Workload/Parameters -- lighter-weight than Objects (the real Advisor app's own tabs
+// Findings/Workload/Parameters -- lighter-weight than Objects (the real DMS app's own tabs
 // alongside it), but real, specific content per connection rather than a placeholder.
-const advisorFindings = {
+const dmsFindings = {
   1: [
     { severity: 'moderate', title: 'Autonomous-transaction-shaped audit logging pattern',
       detail: 'APPLY_ANNUAL_RAISE writes its audit row and COMMITs inside the same procedure the caller invoked — decide whether the Postgres version keeps that as part of the caller’s transaction or needs to genuinely run independently.' },
@@ -716,7 +716,7 @@ const advisorFindings = {
   ],
 };
 
-const advisorWorkload = {
+const dmsWorkload = {
   1: [
     { sql: 'SELECT * FROM employees WHERE dept_id = :1', calls: 41200, avgMs: 1.8 },
     { sql: 'CALL apply_annual_raise(:1, :2)', calls: 340, avgMs: 62.4 },
@@ -728,7 +728,7 @@ const advisorWorkload = {
   ],
 };
 
-const advisorParameters = {
+const dmsParameters = {
   1: [
     { param: 'sga_target', value: '4G', pgEquivalent: 'shared_buffers', pgSuggestion: '1G (25% of instance memory, tuned from the sizing scan)' },
     { param: 'pga_aggregate_target', value: '1536M', pgEquivalent: 'work_mem × max_connections', pgSuggestion: '16MB (per-operation, not a shared pool)' },
@@ -1192,47 +1192,47 @@ window.flashTested = function (btn) {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Advisor pages
+// Migration Advisor pages
 // ---------------------------------------------------------------------------------------------
-function advisorDashboardPage() {
+function dmsDashboardPage() {
   return '<h1 class="pageTitle">Dashboard</h1>' +
     '<p class="pageLede">Overview of the databases you’ve connected and the reports you’ve analyzed.</p>' +
     '<div class="statGrid">' +
-      '<div class="statCard link" onclick="selectAdvisor(\'connections\')"><div class="statLabel"><span class="ico">' + iDb + '</span>Connections</div><div class="statValue">2</div><div class="statHint">Prod Oracle 19c, Legacy MySQL</div></div>' +
-      '<div class="statCard link" onclick="selectAdvisor(\'reports\')"><div class="statLabel"><span class="ico">' + iFile + '</span>Reports</div><div class="statValue">5</div><div class="statHint">4 analyzed</div></div>' +
-      '<div class="statCard link" onclick="selectAdvisor(\'sizing\')"><div class="statLabel"><span class="ico">' + iGauge + '</span>Sizing runs</div><div class="statValue">2</div><div class="statHint">run from a connection</div></div>' +
+      '<div class="statCard link" onclick="selectDms(\'connections\')"><div class="statLabel"><span class="ico">' + iDb + '</span>Connections</div><div class="statValue">2</div><div class="statHint">Prod Oracle 19c, Legacy MySQL</div></div>' +
+      '<div class="statCard link" onclick="selectDms(\'reports\')"><div class="statLabel"><span class="ico">' + iFile + '</span>Reports</div><div class="statValue">5</div><div class="statHint">4 analyzed</div></div>' +
+      '<div class="statCard link" onclick="selectDms(\'sizing\')"><div class="statLabel"><span class="ico">' + iGauge + '</span>Sizing runs</div><div class="statValue">2</div><div class="statHint">run from a connection</div></div>' +
     '</div>';
 }
 
-// The real Advisor app tabs Connections/Reports/Sizing on one another under a single "Advisor"
-// sidebar entry (see AdvisorTabs.tsx) rather than listing them as separate nav items.
-const ADVISOR_TABS = [
+// The real DMS app tabs Connections/Reports/Sizing on one another under a single "Migration Advisor"
+// sidebar entry (see DmsTabs.tsx) rather than listing them as separate nav items.
+const DMS_TABS = [
   { key: 'connections', label: 'Connections' },
   { key: 'reports', label: 'Reports' },
   { key: 'sizing', label: 'Sizing' },
 ];
-function advisorTabs(active) {
-  return '<div class="tabRow">' + ADVISOR_TABS.map((t) =>
-    '<button type="button" class="' + (t.key === active ? 'active' : '') + '" onclick="selectAdvisor(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
+function dmsTabsFn(active) {
+  return '<div class="tabRow">' + DMS_TABS.map((t) =>
+    '<button type="button" class="' + (t.key === active ? 'active' : '') + '" onclick="selectDms(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
 }
 
 let showAddConnForm = false;
 let addConnPending = null; // { name, url, user } captured on submit, shown mid-test before landing in the list
 
-function advisorConnectionsPage() {
-  const rows = advisorConnections.map((c) =>
+function dmsConnectionsPage() {
+  const rows = dmsConnections.map((c) =>
     '<div class="rowItem">' +
-      rowFavBtn(c.fav, 'toggleAdvisorFav(' + c.id + ')') +
+      rowFavBtn(c.fav, 'toggleDmsFav(' + c.id + ')') +
       '<div class="rowMain"><span class="rowName">' + c.name + '</span><span class="rowSub mono">' + c.url + '</span></div>' +
-      '<button type="button" class="iconBtn" title="Browse objects" onclick="openAdvisorObjectExplorer(' + c.id + ')"><span class="ico">' + iSearch + '</span></button>' +
-      '<button type="button" class="iconBtn" title="Delete connection" onclick="removeAdvisorConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
+      '<button type="button" class="iconBtn" title="Browse objects" onclick="openDmsObjectExplorer(' + c.id + ')"><span class="ico">' + iSearch + '</span></button>' +
+      '<button type="button" class="iconBtn" title="Delete connection" onclick="removeDmsConn(' + c.id + ')"><span class="ico">' + iTrash + '</span></button>' +
     '</div>').join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No connections yet.</div>';
   const formOrButton = showAddConnForm
     ? addConnFormHtml()
     : '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="toggleAddConnForm(true)">Add connection</button>';
-  return advisorTabs('connections') + '<h1 class="pageTitle">Connections</h1>' +
+  return dmsTabsFn('connections') + '<h1 class="pageTitle">Connections</h1>' +
     '<p class="pageLede">Databases you’re assessing for migration. Click a star to favorite.</p>' +
-    '<div class="rowList" id="advisorConnList">' + rows + '</div>' +
+    '<div class="rowList" id="dmsConnList">' + rows + '</div>' +
     formOrButton;
 }
 
@@ -1254,7 +1254,7 @@ function addConnFormHtml() {
 window.toggleAddConnForm = function (show) {
   showAddConnForm = show;
   addConnPending = null;
-  selectAdvisor('connections');
+  selectDms('connections');
   if (show) { const el = $('#addConnName'); if (el) el.focus(); }
 };
 
@@ -1277,25 +1277,25 @@ window.submitAddConn = function () {
     $('#addConnStatus').innerHTML = '<span style="color:var(--accent-strong)">Connected in 340ms.</span>';
     btn.textContent = 'Connected';
     setTimeout(() => {
-      const nextId = advisorConnections.length ? Math.max.apply(null, advisorConnections.map((c) => c.id)) + 1 : 1;
-      advisorConnections.push({ id: nextId, name, url, fav: false });
+      const nextId = dmsConnections.length ? Math.max.apply(null, dmsConnections.map((c) => c.id)) + 1 : 1;
+      dmsConnections.push({ id: nextId, name, url, fav: false });
       showAddConnForm = false;
-      selectAdvisor('connections');
+      selectDms('connections');
     }, 500);
   }, 900);
 };
 
 let showUploadForm = false;
 
-function advisorReportsPage() {
-  const rows = advisorReports.map((r) =>
+function dmsReportsPage() {
+  const rows = dmsReports.map((r) =>
     '<tr><td>' + r.name + '</td><td class="mono">' + r.dialect + '</td><td class="mono" style="font-size:12px">' + r.filename + '</td>' +
     '<td style="color:var(--muted)">' + r.uploadedAt + '</td>' +
     '<td>' + (r.analyzedAt ? '<span class="badge ok">analyzed ' + r.analyzedAt + '</span>' : '<span class="badge" style="color:var(--muted);background:var(--bg)">not analyzed</span>') + '</td></tr>').join('');
   const formOrButton = showUploadForm
     ? uploadReportFormHtml()
     : '<button type="button" class="btnPrimary" style="width:auto;margin-top:16px" onclick="toggleUploadForm(true)">Upload report</button>';
-  return advisorTabs('reports') + '<h1 class="pageTitle">Reports</h1>' +
+  return dmsTabsFn('reports') + '<h1 class="pageTitle">Reports</h1>' +
     '<p class="pageLede">Uploaded performance reports (Oracle AWR, MySQL performance report, SQL Server DMV export) &mdash; a different kind of signal than a live connection, an LLM reads it for you.</p>' +
     '<div class="panel" style="padding:0"><table><thead><tr><th>Name</th><th>Dialect</th><th>File</th><th>Uploaded</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
     formOrButton;
@@ -1323,7 +1323,7 @@ function uploadReportFormHtml() {
 
 window.toggleUploadForm = function (show) {
   showUploadForm = show;
-  selectAdvisor('reports');
+  selectDms('reports');
   if (show) { const el = $('#uploadReportName'); if (el) el.focus(); }
 };
 
@@ -1351,16 +1351,16 @@ window.submitUploadReport = function () {
   btn.textContent = 'Uploading…';
   setTimeout(() => {
     if (!showUploadForm) return; // cancelled while "uploading"
-    const nextId = advisorReports.length ? Math.max.apply(null, advisorReports.map((r) => r.id)) + 1 : 1;
-    advisorReports.push({ id: nextId, name, dialect, filename, uploadedAt: 'just now', analyzedAt: null });
+    const nextId = dmsReports.length ? Math.max.apply(null, dmsReports.map((r) => r.id)) + 1 : 1;
+    dmsReports.push({ id: nextId, name, dialect, filename, uploadedAt: 'just now', analyzedAt: null });
     showUploadForm = false;
-    selectAdvisor('reports');
+    selectDms('reports');
   }, 700);
 };
 
-function advisorSizingPage() {
-  const s = advisorSizing;
-  return advisorTabs('sizing') + '<h1 class="pageTitle">Sizing</h1>' +
+function dmsSizingPage() {
+  const s = dmsSizing;
+  return dmsTabsFn('sizing') + '<h1 class="pageTitle">Sizing</h1>' +
     '<p class="pageLede">A starting-point Postgres instance shape, built from a fresh schema-size scan and captured workload &mdash; with the reasoning behind every number, not just the numbers.</p>' +
     '<div class="statGrid">' +
       statCard(iGauge, 'Tier', s.tier, 'starting point, not a ceiling') +
@@ -1376,18 +1376,18 @@ function advisorSizingPage() {
     '</ul></div>';
 }
 
-const advisorPages = {
-  dashboard: advisorDashboardPage,
-  connections: advisorConnectionsPage,
-  reports: advisorReportsPage,
-  sizing: advisorSizingPage,
-  llm: () => llmConfigPage(advisorLlmConfig, 'Provider and model used to generate migration-report narratives and PL/SQL summaries &mdash; local by default, nothing leaves the machine.'),
+const dmsPages = {
+  dashboard: dmsDashboardPage,
+  connections: dmsConnectionsPage,
+  reports: dmsReportsPage,
+  sizing: dmsSizingPage,
+  llm: () => llmConfigPage(dmsLlmConfig, 'Provider and model used to generate migration-report narratives and PL/SQL summaries &mdash; local by default, nothing leaves the machine.'),
 };
 
 // ---------------------------------------------------------------------------------------------
 // Object explorer -- per-connection Findings/Objects/Workload/Parameters, entered from a
 // connection's "Browse objects" button and exited via its own "&larr; Connections" link, matching
-// the real Advisor app's own per-connection detail view (not one of the top-level Advisor tabs).
+// the real DMS app's own per-connection detail view (not one of the top-level Migration Advisor tabs).
 // ---------------------------------------------------------------------------------------------
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
@@ -1400,8 +1400,8 @@ const OBJECT_EXPLORER_TABS = [
 
 let objectExplorerState = { connId: null, tab: 'objects', selType: null, selIndex: 0, revealed: {} };
 
-function openAdvisorObjectExplorer(connId) {
-  const data = advisorObjects[connId];
+function openDmsObjectExplorer(connId) {
+  const data = dmsObjects[connId];
   objectExplorerState = {
     connId,
     tab: 'objects',
@@ -1409,14 +1409,14 @@ function openAdvisorObjectExplorer(connId) {
     selIndex: 0,
     revealed: {},
   };
-  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => b.classList.toggle('active', b.dataset.advisorPage === 'connections'));
-  $('#advisor-content').innerHTML = renderObjectExplorer();
+  $all('#dms-shell .railItem[data-dms-page]').forEach((b) => b.classList.toggle('active', b.dataset.dmsPage === 'connections'));
+  $('#dms-content').innerHTML = renderObjectExplorer();
 }
-window.openAdvisorObjectExplorer = openAdvisorObjectExplorer;
+window.openDmsObjectExplorer = openDmsObjectExplorer;
 
 function renderObjectExplorer() {
-  const conn = advisorConnections.find((c) => c.id === objectExplorerState.connId);
-  if (!conn) return advisorConnectionsPage();
+  const conn = dmsConnections.find((c) => c.id === objectExplorerState.connId);
+  if (!conn) return dmsConnectionsPage();
   const tabsRow = '<div class="tabRow">' + OBJECT_EXPLORER_TABS.map((t) =>
     '<button type="button" class="' + (t.key === objectExplorerState.tab ? 'active' : '') + '" onclick="selectObjectExplorerTab(\'' + t.key + '\')">' + t.label + '</button>').join('') + '</div>';
   const body = {
@@ -1425,7 +1425,7 @@ function renderObjectExplorer() {
     workload: workloadTabContent,
     parameters: parametersTabContent,
   }[objectExplorerState.tab](conn.id);
-  return '<button type="button" class="iconBtn" style="padding:0;margin-bottom:16px;color:var(--muted);gap:6px;width:auto;display:inline-flex;align-items:center" onclick="selectAdvisor(\'connections\')">' +
+  return '<button type="button" class="iconBtn" style="padding:0;margin-bottom:16px;color:var(--muted);gap:6px;width:auto;display:inline-flex;align-items:center" onclick="selectDms(\'connections\')">' +
       '<span class="ico" style="transform:rotate(180deg)">' + chevronRight + '</span>&larr; Connections</button>' +
     '<h1 class="pageTitle">' + esc(conn.name) + '</h1>' +
     '<p class="pageLede mono" style="margin-bottom:20px">' + esc(conn.url) + '</p>' +
@@ -1434,11 +1434,11 @@ function renderObjectExplorer() {
 
 window.selectObjectExplorerTab = function (tab) {
   objectExplorerState.tab = tab;
-  $('#advisor-content').innerHTML = renderObjectExplorer();
+  $('#dms-content').innerHTML = renderObjectExplorer();
 };
 
 function objectsTabContent(connId) {
-  const data = advisorObjects[connId];
+  const data = dmsObjects[connId];
   if (!data || !data.groups.length) {
     return '<div class="stubNote">No objects found on this connection yet &mdash; run a schema scan from the connection list.</div>';
   }
@@ -1490,16 +1490,16 @@ function objectsTabContent(connId) {
 window.selectObjectTreeItem = function (type, index) {
   objectExplorerState.selType = type;
   objectExplorerState.selIndex = index;
-  $('#advisor-content').innerHTML = renderObjectExplorer();
+  $('#dms-content').innerHTML = renderObjectExplorer();
 };
 
 window.toggleObjectLlm = function (key) {
   objectExplorerState.revealed[key] = !objectExplorerState.revealed[key];
-  $('#advisor-content').innerHTML = renderObjectExplorer();
+  $('#dms-content').innerHTML = renderObjectExplorer();
 };
 
 function findingsTabContent(connId) {
-  const findings = advisorFindings[connId] || [];
+  const findings = dmsFindings[connId] || [];
   if (!findings.length) return '<div class="stubNote">No findings yet &mdash; run a schema scan to generate them.</div>';
   const sevBadge = (sev) => '<span class="effortBadge ' + sev + '">' + sev + '</span>';
   return '<div class="rowList">' + findings.map((f) =>
@@ -1510,64 +1510,64 @@ function findingsTabContent(connId) {
 }
 
 function workloadTabContent(connId) {
-  const rows = (advisorWorkload[connId] || []).map((r) =>
+  const rows = (dmsWorkload[connId] || []).map((r) =>
     '<tr><td class="mono" style="font-size:12.5px">' + esc(r.sql) + '</td><td class="numCell">' + r.calls.toLocaleString() + '</td><td class="numCell">' + r.avgMs.toFixed(1) + '</td></tr>').join('');
   return '<p class="pageLede">Captured statements against this connection, most expensive first.</p>' +
     '<div class="panel" style="padding:0"><table><thead><tr><th>Statement</th><th style="text-align:right">Calls</th><th style="text-align:right">Avg ms</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
 function parametersTabContent(connId) {
-  const rows = (advisorParameters[connId] || []).map((p) =>
+  const rows = (dmsParameters[connId] || []).map((p) =>
     '<tr><td class="mono">' + esc(p.param) + '</td><td class="mono">' + esc(p.value) + '</td><td class="mono">' + esc(p.pgEquivalent) + '</td><td>' + esc(p.pgSuggestion) + '</td></tr>').join('');
   return '<p class="pageLede">Source engine parameters, their closest Postgres equivalent, and a suggested starting value.</p>' +
     '<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th>Parameter</th><th>Value</th><th>Postgres equivalent</th><th>Suggested</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
-const ADVISOR_TAB_KEYS = ADVISOR_TABS.map((t) => t.key);
-function selectAdvisor(page) {
-  $all('#advisor-shell .railItem[data-advisor-page]').forEach((b) => {
-    const isTabGroup = b.dataset.advisorPage === 'connections' && ADVISOR_TAB_KEYS.includes(page);
-    b.classList.toggle('active', isTabGroup || b.dataset.advisorPage === page);
+const DMS_TAB_KEYS = DMS_TABS.map((t) => t.key);
+function selectDms(page) {
+  $all('#dms-shell .railItem[data-dms-page]').forEach((b) => {
+    const isTabGroup = b.dataset.dmsPage === 'connections' && DMS_TAB_KEYS.includes(page);
+    b.classList.toggle('active', isTabGroup || b.dataset.dmsPage === page);
   });
-  $('#advisor-content').innerHTML = advisorPages[page]();
+  $('#dms-content').innerHTML = dmsPages[page]();
 }
-window.selectAdvisor = selectAdvisor;
+window.selectDms = selectDms;
 
-window.toggleAdvisorFav = function (id) {
-  const c = advisorConnections.find((x) => x.id === id); c.fav = !c.fav;
-  advisorConnections.sort((a, b) => b.fav - a.fav);
-  selectAdvisor('connections');
+window.toggleDmsFav = function (id) {
+  const c = dmsConnections.find((x) => x.id === id); c.fav = !c.fav;
+  dmsConnections.sort((a, b) => b.fav - a.fav);
+  selectDms('connections');
 };
-window.removeAdvisorConn = function (id) {
-  const i = advisorConnections.findIndex((x) => x.id === id);
-  if (i >= 0) advisorConnections.splice(i, 1);
-  selectAdvisor('connections');
+window.removeDmsConn = function (id) {
+  const i = dmsConnections.findIndex((x) => x.id === id);
+  if (i >= 0) dmsConnections.splice(i, 1);
+  selectDms('connections');
 };
 
 // ---------------------------------------------------------------------------------------------
 // Wiring: nav clicks, gate -> shell transitions
 // ---------------------------------------------------------------------------------------------
-$all('[data-advisor-page]').forEach((btn) => btn.addEventListener('click', () => selectAdvisor(btn.dataset.advisorPage)));
+$all('[data-dms-page]').forEach((btn) => btn.addEventListener('click', () => selectDms(btn.dataset.dmsPage)));
 
-function enterAdvisor(page) {
-  $('#advisor-gate').classList.add('hidden');
-  $('#advisor-shell').classList.remove('hidden');
-  selectAdvisor(page && advisorPages[page] ? page : 'dashboard');
+function enterDms(page) {
+  $('#dms-gate').classList.add('hidden');
+  $('#dms-shell').classList.remove('hidden');
+  selectDms(page && dmsPages[page] ? page : 'dashboard');
 }
-$('[data-enter="advisor"]').addEventListener('click', () => enterAdvisor());
-$('[data-exit="advisor"]').addEventListener('click', () => {
-  $('#advisor-shell').classList.add('hidden');
-  $('#advisor-gate').classList.remove('hidden');
+$('[data-enter="dms"]').addEventListener('click', () => enterDms());
+$('[data-exit="dms"]').addEventListener('click', () => {
+  $('#dms-shell').classList.add('hidden');
+  $('#dms-gate').classList.remove('hidden');
 });
 
-// Deep link: docker/polyadvisor.html embeds this page in an iframe per section, each pointed at
+// Deep link: docker/dms.html embeds this page in an iframe per section, each pointed at
 // the page most relevant to that section's own content (e.g. ?page=sizing next to the sizing
 // writeup) via ?page=<key>&autoEnter=1 -- autoEnter skips the login gate entirely so the embed
 // opens straight into the console instead of asking a page visitor who's just skimming to sign
-// in first. Opening demo-advisor.html directly (no query string) still lands on the real gate.
+// in first. Opening demo-dms.html directly (no query string) still lands on the real gate.
 const params = new URLSearchParams(location.search);
 if (params.get('autoEnter') === '1') {
-  enterAdvisor(params.get('page'));
+  enterDms(params.get('page'));
 }
 </script>
 </body>

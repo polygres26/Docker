@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "docker-static-docs",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd docker && python3 -m http.server 8099"],
+      "port": 8099
+    },
+    {
       "name": "wire-web",
       "runtimeExecutable": "sh",
       "runtimeArgs": ["-c", "cd wire/web && npm run dev -- --port 5174"],

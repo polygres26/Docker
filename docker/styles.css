@@ -200,7 +200,7 @@
   figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
   figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px;  }
 
-  /* Live click-through embeds (demo-polywire.html / demo-advisor.html in an iframe) -- same
+  /* Live click-through embeds (demo-polywire.html / demo-dms.html in an iframe) -- same
      figure/figcaption rhythm as a screenshot above, but the frame itself is interactive. */
   .embedFigure { margin: 24px 0 32px; }
   .embedFrame { display: block; width: 100%; height: 560px; border-radius: 12px; border: 1px solid var(--line); }

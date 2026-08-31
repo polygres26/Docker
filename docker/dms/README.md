@@ -1,4 +1,4 @@
-# Polyadvisor — Docker
+# Nexagres DMS — Docker
 
 One image, one container: `DmsHttpServer` runs on embedded Jetty (already a dependency of
 this module) and serves the built `dms/web` SPA directly via `SpaResourceHandler`, alongside
@@ -22,7 +22,7 @@ via `SpaResourceHandler`, standard SPA-hosting behavior.
 ## Building the image standalone
 
 ```bash
-docker build -f docker/dms/Dockerfile -t polyadvisor:latest .
+docker build -f docker/dms/Dockerfile -t nexagres-dms:latest .
 ```
 
 (Still run from the repo root — same reason as above.)
@@ -43,7 +43,7 @@ backend container so it only serves the API.
 
 ## Data persistence
 
-Polyadvisor's own state (saved connections, LLM provider config, uploaded performance reports)
+Nexagres DMS's own state (saved connections, LLM provider config, uploaded performance reports)
 lives in an embedded HSQLDB file store at `NEXAGRES_DATA_DIR` (default `/data` in this image,
 `~/.nexagres` outside a container — see `ConnectionStore`/`LlmSettingsStore`/`ReportStore`'s
 javadoc). `docker-compose.yml` mounts this as a named volume (`polyadvisor-data`) so it survives
