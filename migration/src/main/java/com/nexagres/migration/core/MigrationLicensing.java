@@ -48,6 +48,12 @@ import org.slf4j.LoggerFactory;
  *   cuts a connection over on. Free tier still has every underlying signal it rolls up (checkpoint
  *   lag, dead-letter count) individually readable via {@code MigrationStatusStore}; what's gated
  *   is the packaged go/no-go verdict itself.
+ *   <li>{@link #requireEnterpriseForAutomaticCutover} -- {@code AutomaticCutoverScheduler}
+ *   ("Automatic cutover at the right time" row): a SEPARATE, higher gate than readiness itself --
+ *   free/Developer tier can still ask "are we ready?" on demand via {@code CutoverReadinessCli}
+ *   with a key (readiness itself is Enterprise per the gate above), but actually watching
+ *   continuously and firing the cutover action itself, unattended, the instant every gate turns
+ *   green, is the paid automation on top of that manual check.
  * </ul>
  *
  * <p>Deliberately NOT gated, honestly stated rather than silently implied: CDC itself (every
@@ -163,5 +169,21 @@ public final class MigrationLicensing {
                 + "dead-letter count, partition completion) are still freely readable via "
                 + "MigrationStatusStore on the free/Developer tier -- you can assess cutover readiness "
                 + "manually from those, just not via this single packaged verdict.");
+    }
+
+    /** Throws unless the current process is Enterprise-licensed -- {@code
+     * AutomaticCutoverScheduler} itself is a paid feature, one step up from {@link
+     * #requireEnterpriseForCutoverReadiness}: continuously polling readiness and firing the
+     * cutover action automatically, unattended, the moment every gate turns green, rather than an
+     * operator running a manual check and deciding when to act on it themselves. */
+    public static void requireEnterpriseForAutomaticCutover() {
+        if (currentTier() == LicenseTier.ENTERPRISE) {
+            return;
+        }
+        throw new IllegalStateException("Automatic cutover (continuously polling readiness and firing "
+                + "the cutover action the moment every gate turns green, unattended) is an Enterprise "
+                + "feature -- set a valid POLYWIRE_LICENSE_KEY to use AutomaticCutoverScheduler. On the "
+                + "free/Developer tier, run CutoverReadinessCli yourself (or poll "
+                + "CutoverReadinessChecker from your own script) and decide when to cut over by hand.");
     }
 }

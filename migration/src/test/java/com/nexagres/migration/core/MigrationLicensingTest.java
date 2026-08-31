@@ -73,6 +73,18 @@ class MigrationLicensingTest {
     }
 
     @Test
+    void automaticCutoverIsItsOwnGateSeparateFromManualCutoverReadiness() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                MigrationLicensing::requireEnterpriseForAutomaticCutover);
+        assertEquals(true, e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, e.getMessage().contains("AutomaticCutoverScheduler"));
+
+        MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
+        assertDoesNotThrow(MigrationLicensing::requireEnterpriseForAutomaticCutover);
+    }
+
+    @Test
     void enterpriseTierStillFloorsParallelismAtOne() {
         MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
         assertEquals(1, MigrationLicensing.enforceLocalParallelism(0));
