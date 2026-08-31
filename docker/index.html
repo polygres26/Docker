@@ -129,16 +129,10 @@
       <p class="heroTagline2">One control point for every Postgres workload.</p>
 
       <h3 class="subhead" id="why">Put an intelligent control point in front of Postgres.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Connect</h4><p>Any client. One Postgres — with live semantic execution translation, not just protocol framing. Oracle, MySQL, SQL Server, MongoDB, OpenSearch, DynamoDB, SQS, InfluxDB, GraphDB, PostgreSQL, gRPC, and MCP — every one keeps its own driver and protocol.</p></div>
-        <div class="obsCard"><h4>Protect</h4><p>A SQL firewall, connection ACL, authentication, and Postgres row-level security identity all apply before a request reaches Postgres — the same policies regardless of which protocol the caller speaks.</p></div>
-        <div class="obsCard"><h4>Control</h4><p>QoS admission control, routing, connection pooling, sharding, and planned/unplanned failover — protect backend capacity and keep Postgres available under load.</p></div>
-        <div class="obsCard"><h4>Accelerate</h4><p>One distributed cache shared across protocols — a result cached via MySQL is served to Oracle, SQL Server, Postgres, gRPC, and MCP too, no round trip. Rollups keep pre-aggregated tables fresh automatically.</p></div>
-        <div class="obsCard"><h4>Observe</h4><p>See every request before it reaches Postgres — client → protocol → SQL → policy → route → backend → latency → error — exported to the tools you already run.</p></div>
-      </div>
       <p class="rttNote">
-        <b>Different protocols. Same policies. Same Postgres.</b> One control point for every
-        Postgres workload.
+        Connect, protect, control, accelerate, observe — the same five things, applied identically
+        no matter which protocol the caller speaks. <b>Different protocols. Same policies. Same
+        Postgres.</b> <a href="polywire.html#outcomes">See each one broken out in detail →</a>
       </p>
 
       <h3 class="subhead" id="architecture-simple">What is PolyWire?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
@@ -378,6 +372,14 @@ aws sqs receive-message \                          # SQS wire
         </p>
       </details>
 
+      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
+        <b>Security follows the request, not the protocol.</b>
+      </p>
+      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
+      <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
+
       <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         <b>QoS for Postgres, at the gateway.</b> Prioritize, throttle, bound concurrency, and
@@ -409,14 +411,6 @@ aws sqs receive-message \                          # SQS wire
       </figure>
       <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
       <p class="rttNote"><a href="polycache.html">Explore PolyCache — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
-
-      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote">
-        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
-        <b>Security follows the request, not the protocol.</b>
-      </p>
-      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
-      <p class="rttNote"><a href="polywire.html#security">Full, honestly-scoped security detail →</a></p>
 
       <details class="exploreMore">
         <summary class="exploreSummary">Explore PolyWire in depth — detailed architecture, comparison →</summary>
@@ -483,10 +477,10 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <p class="rttNote">
         Every row below is verified against that protocol's real client library, not a synthetic
-        harness — this table states only what's actually confirmed today; see
-        <a href="polywire.html">full capabilities</a> and <a href="ERRORS.md">ERRORS.md</a> for
-        the complete per-protocol detail, including known limitations.
+        harness — this table states only what's actually confirmed today.
       </p>
+      <details class="methodDetails">
+        <summary>See the full per-protocol compatibility table →</summary>
       <div class="rttTableWrap">
         <table class="rttTable compareTable">
           <thead>
@@ -507,8 +501,11 @@ aws sqs receive-message \                          # SQS wire
       <p class="rttNote">
         "—" means not yet implemented for that protocol, stated plainly rather than omitted — see
         <a href="polywire.html#security">Security</a> for exactly which protocols propagate a
-        real per-caller identity today.
+        real per-caller identity today, and <a href="polywire.html">full capabilities</a> /
+        <a href="ERRORS.md">ERRORS.md</a> for the complete per-protocol detail including known
+        limitations.
       </p>
+      </details>
 
       <h3 class="subhead" id="production">Built for production<a class="permalink" href="#production" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">

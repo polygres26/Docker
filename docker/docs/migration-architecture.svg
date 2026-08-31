@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1540 1080" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus (where the source supports it) a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through Polywire's own gRPC driver -- never a direct JDBC backdoor -- into the target Postgres. Target-Postgres bookkeeping (CdcCheckpointStore, PartitionLeaseStore, DeadLetterStore, CutoverReadinessChecker) connects directly since it is migration infrastructure, not customer data. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal before a connection is pointed at Postgres for good.">
+<svg viewBox="0 0 1540 1080" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus (where the source supports it) a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through PolyWire's own gRPC driver -- never a direct JDBC backdoor -- into the target Postgres. Target-Postgres bookkeeping (CdcCheckpointStore, PartitionLeaseStore, DeadLetterStore, CutoverReadinessChecker) connects directly since it is migration infrastructure, not customer data. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal before a connection is pointed at Postgres for good.">
   <defs>
     <marker id="mArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#6a4fd6"/>
@@ -16,7 +16,7 @@
   <!-- ===================== HEADER ===================== -->
   <text x="20" y="46" font-size="30" font-weight="800" fill="#5a3fd6">nexagres-migration</text>
   <line x1="330" y1="18" x2="330" y2="66" stroke="#d7d3e8" stroke-width="2"/>
-  <text x="352" y="48" font-size="19" font-weight="600" fill="#33324a">Massively-parallel, low-downtime migration into Postgres -- through Polywire's own gRPC driver, never a JDBC backdoor.</text>
+  <text x="352" y="48" font-size="19" font-weight="600" fill="#33324a">Massively-parallel, low-downtime migration into Postgres -- through PolyWire's own gRPC driver, never a JDBC backdoor.</text>
 
   <!-- ===================== LEFT: SOURCE CONNECTORS ===================== -->
   <g>
@@ -90,7 +90,7 @@
     <text x="92" y="805" font-size="12" font-weight="500" fill="#5b5a72">Timestamp-cursor live tail</text>
     <text x="92" y="821" font-size="11.5" font-weight="500" fill="#8b8aa0">real change-data capture</text>
   </g>
-  <text x="200" y="864" font-size="12" text-anchor="middle" fill="#8b8aa0">every target schema matched byte-for-byte to Polywire's own wire protocol</text>
+  <text x="200" y="864" font-size="12" text-anchor="middle" fill="#8b8aa0">every target schema matched byte-for-byte to PolyWire's own wire protocol</text>
 
   <!-- connector arrows: sources -> pipeline -->
   <path d="M380,199 C 405,199 405,240 430,240" fill="none" stroke="#8b8aa0" stroke-width="1.5" marker-end="url(#mArrowDash)"/>
@@ -155,7 +155,7 @@
   <!-- Stage 5: PolywireGrpcSink -->
   <rect x="430" y="604" width="600" height="76" rx="10" fill="#efe9fb" stroke="#8b6fe8" stroke-width="2"/>
   <text x="452" y="631" font-size="15" font-weight="800" fill="#5a3fd6">5. PolywireGrpcSink</text>
-  <text x="452" y="651" font-size="12" font-weight="600" fill="#33324a">QueryService.Execute -- Polywire's own native gRPC driver</text>
+  <text x="452" y="651" font-size="12" font-weight="600" fill="#33324a">QueryService.Execute -- PolyWire's own native gRPC driver</text>
   <text x="452" y="667" font-size="11.5" font-weight="500" fill="#8b8aa0">NEVER a direct JDBC connection to target data -- same firewall/QoS/cache path as any client</text>
 
   <!-- bookkeeping side box -->
@@ -181,7 +181,7 @@
   <line x1="623" y1="680" x2="623" y2="704" stroke="#8b8aa0" stroke-width="1.5" stroke-dasharray="4,3"/>
   <line x1="906" y1="890" x2="906" y2="854" stroke="#8b8aa0" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mArrowDash)"/>
 
-  <!-- arrow into Polywire -->
+  <!-- arrow into PolyWire -->
   <line x1="1030" y1="642" x2="1080" y2="642" stroke="#6a4fd6" stroke-width="2.5" marker-end="url(#mArrow)"/>
 
   <!-- ===================== RIGHT: POLYWIRE + POSTGRES ===================== -->
