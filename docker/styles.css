@@ -1,10 +1,3 @@
-/* This is the readable SOURCE. Pages link styles.min.css (a minified build of this exact file,
-   generated with a comment-stripping/whitespace-collapsing pass -- no new selectors or rules) to
-   cut network payload size, per a real Lighthouse/PageSpeed finding on the live site. Edit this
-   file, then regenerate styles.min.css from it before publishing -- don't hand-edit the minified
-   copy, and don't let the two drift: styles.min.css should always be exactly this file, minified,
-   nothing more. */
-
   :root {
     --paper: #ffffff;
     --paper-raised: #f6f7f9;
