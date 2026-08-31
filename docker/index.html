@@ -11,6 +11,13 @@
 <link rel="icon" type="image/png" href="/assets/logo.png">
 <link rel="apple-touch-icon" href="/assets/logo.png">
 
+<!-- The only cross-origin request this page ever makes: the contact form's fetch() to
+     Formspree on submit (see page.js). Preconnecting here lets the DNS/TCP/TLS handshake happen
+     in the background while someone's still reading the page, so the actual request -- whenever
+     they submit -- doesn't pay that latency. Not used anywhere else on the site; every other page
+     is entirely same-origin, so this tag is deliberately only on index.html. -->
+<link rel="preconnect" href="https://formspree.io">
+
 <!-- Open Graph / Twitter Card -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/">
@@ -176,7 +183,7 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
-          <span class="archTierLabel archHubLabel">POLYWIRE</span>
+          <span class="archTierLabel archHubLabel">NEXAGATE</span>
           <span class="archTierDetail archHubFlow">Connect · Protect · Control · Accelerate · Observe</span>
         </div>
         <div class="archArrow">↓</div>

@@ -104,12 +104,24 @@
     'outages', 'error-handling'];
   var MOVED_TO_POLYADVISOR = ['two-ways-to-assess', 'what-you-get', 'llm-assist', 'admin-console-polyadvisor'];
   var hash = window.location.hash.replace('#', '');
-  var onIndexPage = /(^|\/)(index\.html)?$/.test(window.location.pathname);
+  // Exact match, not the regex this used to be -- /(^|\/)(index\.html)?$/ was written back when
+  // every page was a flat file (/something.html), where it happened to only match "/" and
+  // "/index.html". Once polywire.html/dms.html/etc. moved to clean dir/index.html URLs (every
+  // real page now ends in "/"), that same regex started matching EVERY page, not just the real
+  // index -- confirmed live: visiting /polywire/#outcomes fired this redirect a second time,
+  // producing a request for the nonexistent /polywire/polywire.html (a real 404, caught live).
+  // Only "/" and "/index.html" are ever the actual index page; nothing else should match.
+  var onIndexPage = window.location.pathname === '/' || window.location.pathname === '/index.html';
   if (onIndexPage && hash) {
     if (MOVED_TO_POLYWIRE.indexOf(hash) !== -1) {
-      window.location.replace('polywire.html#' + hash);
+      // Absolute path, not "polywire.html" -- a relative target resolves against whatever
+      // directory the CURRENT page lives in, which is fine from "/" but was exactly what broke
+      // when this whole check could also (wrongly) fire from inside /polywire/ itself. Absolute
+      // is correct regardless of where this ever runs from, and matches the real clean-URL path
+      // besides (the flat polywire.html now only exists as a redirect stub to this same target).
+      window.location.replace('/polywire/#' + hash);
     } else if (MOVED_TO_POLYADVISOR.indexOf(hash) !== -1) {
-      window.location.replace('dms.html#' + hash);
+      window.location.replace('/dms/#' + hash);
     } else if (hash === 'polyadvisor') {
       // The #polyadvisor section itself was renamed to #dms on this same page (the Polyadvisor
       // -> Nexagres DMS rebrand) -- an in-page hash swap, not a cross-page redirect like the

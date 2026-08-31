@@ -142,7 +142,7 @@
   <!-- ===================== MIDDLE: PIPELINE ===================== -->
   <g>
     <rect x="470" y="96" width="540" height="42" rx="8" fill="#4c33a8"/>
-    <text x="495" y="123" font-size="16" font-weight="700" fill="#ffffff" letter-spacing="0.5">POLYWIRE PROCESS — ONE SHARED PIPELINE</text>
+    <text x="495" y="123" font-size="16" font-weight="700" fill="#ffffff" letter-spacing="0.5">NEXAGATE PROCESS — ONE SHARED PIPELINE</text>
   </g>
 
   <!-- stage box template: number badge + icon + title + detail -->

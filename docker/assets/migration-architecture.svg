@@ -184,10 +184,10 @@
   <!-- arrow into NexaGate -->
   <line x1="1030" y1="642" x2="1080" y2="642" stroke="#6a4fd6" stroke-width="2.5" marker-end="url(#mArrow)"/>
 
-  <!-- ===================== RIGHT: POLYWIRE + POSTGRES ===================== -->
+  <!-- ===================== RIGHT: NEXAGATE + POSTGRES ===================== -->
   <g>
     <rect x="1090" y="96" width="430" height="38" rx="8" fill="#0f6660"/>
-    <text x="1108" y="121" font-size="15.5" font-weight="700" fill="#ffffff" letter-spacing="0.4">POLYWIRE (real, running instance)</text>
+    <text x="1108" y="121" font-size="15.5" font-weight="700" fill="#ffffff" letter-spacing="0.4">NEXAGATE (real, running instance)</text>
     <rect x="1090" y="144" width="430" height="560" rx="10" fill="#ffffff" stroke="#c9c4e0" stroke-width="1.5"/>
   </g>
 
