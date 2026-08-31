@@ -170,9 +170,10 @@ SELECT SCOPE_IDENTITY();                     -- sys.scope_identity</code>
 
       <h3 class="subhead" id="db-compat-pricing">Pricing<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        The DB Compatibility Layer is an <b>Enterprise</b> feature. A valid
-        <code>POLYWIRE_LICENSE_KEY</code> — the same key that unlocks PolyWire's own Enterprise
-        tier and NexaGres DMS's parallel migration — is what makes <code>orawire</code>/
+        The DB Compatibility Layer is an <b>Enterprise</b> feature, starting at $5,000/year per
+        production deployment. A valid <code>POLYWIRE_LICENSE_KEY</code> — the same key that
+        unlocks PolyWire's own Enterprise tier and NexaGres DMS's parallel migration — is what
+        makes <code>orawire</code>/
         <code>mywire</code>/<code>mssqlwire</code> issue <code>SET db_emulation = '...'</code> on
         connect. On the free/Developer tier, a session still connects and runs ordinary SQL
         normally; it just runs against plain, unmodified Postgres semantics, exactly as it would

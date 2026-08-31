@@ -49,9 +49,10 @@
         {
           "@type": "Offer",
           "name": "Enterprise",
+          "price": "15000",
           "priceCurrency": "USD",
-          "description": "Everything in Developer, unlimited connections/instances/backends, licensed for commercial production use, with enterprise support. Contact for pricing.",
-          "url": "https://polygres26.github.io/#contact"
+          "description": "Starting at $15,000/year per production deployment/cluster. Everything in Developer, unlimited connections/instances/backends, licensed for commercial production use, with enterprise support.",
+          "url": "https://polygres26.github.io/#pricing"
         }
       ],
       "softwareHelp": "https://polygres26.github.io/docs.html"
@@ -63,7 +64,36 @@
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "A rules-based (not LLM-generated) migration-difficulty assessor for moving an Oracle, MySQL, MariaDB, or SQL Server database to Postgres -- scores difficulty, breaks down what drives the score, and recommends Postgres sizing. Reproducible: running it twice against the same database gives the same answer.",
       "url": "https://polygres26.github.io/dms.html",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      "offers": [
+        { "@type": "Offer", "name": "Developer", "price": "0", "priceCurrency": "USD" },
+        {
+          "@type": "Offer",
+          "name": "Enterprise",
+          "price": "7500",
+          "priceCurrency": "USD",
+          "description": "Starting at $7,500/year per migration environment.",
+          "url": "https://polygres26.github.io/#pricing"
+        }
+      ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "DB Compatibility Layer",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows (Docker)",
+      "description": "Postgres extensions (pg_oracle/pg_mysql/pg_sqlserver) that resolve real Oracle/SQL Server/MySQL catalog objects and built-in functions -- V$SESSION, DBMS_OUTPUT, sys.objects, GROUP_CONCAT -- natively inside stock Postgres.",
+      "url": "https://polygres26.github.io/db-compat.html",
+      "offers": [
+        { "@type": "Offer", "name": "Free / Basic", "price": "0", "priceCurrency": "USD" },
+        {
+          "@type": "Offer",
+          "name": "Enterprise",
+          "price": "5000",
+          "priceCurrency": "USD",
+          "description": "Starting at $5,000/year per production deployment.",
+          "url": "https://polygres26.github.io/#pricing"
+        }
+      ]
     },
     {
       "@type": "Organization",
@@ -560,6 +590,31 @@ aws sqs receive-message \                          # SQS wire
         paid tier: an evaluation on Developer proves the exact architecture you'd run in
         production.
       </p>
+
+      <div class="rttTableWrap">
+        <table class="rttTable">
+          <thead>
+            <tr><th>Product</th><th>Developer</th><th>Enterprise starting price</th><th>Pricing metric</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>PolyWire</td><td>Free</td><td>$15,000/year</td><td>per production deployment/cluster</td></tr>
+            <tr><td>NexaGres DMS</td><td>Free</td><td>$7,500/year</td><td>per migration environment</td></tr>
+            <tr><td>DB Compatibility Layer</td><td>Free / Basic</td><td>$5,000/year</td><td>per production deployment</td></tr>
+            <tr><td>NexaGres Platform</td><td>Free (dev)</td><td>$20,000/year</td><td>bundle of all three</td></tr>
+            <tr><td>Enterprise Unlimited</td><td>—</td><td>Custom, ~$75,000+</td><td>company/business-unit agreement</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="pricingNote">
+        <b>NexaGres Platform</b> bundles PolyWire, NexaGres DMS, and the DB Compatibility Layer
+        under one license at a discount to buying all three separately.
+        <b>Enterprise Unlimited</b> is a company- or business-unit-wide agreement — unlimited
+        deployments and migration environments across every product, negotiated directly. Starting
+        prices above are exactly that — a starting point for the smallest real production
+        footprint each product is sold against; talk to us for a quote on yours.
+        <a href="#contact">Schedule a PolyWire Architecture Review →</a>
+      </p>
+
       <div class="pricingGrid">
         <div class="priceCard">
           <h3>Developer</h3>
@@ -582,10 +637,10 @@ aws sqs receive-message \                          # SQS wire
         </div>
         <div class="priceCard enterprise">
           <h3>Enterprise</h3>
-          <p class="priceTag">Contact us</p>
+          <p class="priceTag">$15,000 <small>/ year, starting</small></p>
           <p class="priceSub">
-            <b>Simple infrastructure pricing.</b> Per PolyWire instance — no per-protocol fees,
-            no per-database fees. For production deployments of any size.
+            <b>Simple infrastructure pricing.</b> Per production deployment/cluster — no
+            per-protocol fees, no per-database fees. For production deployments of any size.
           </p>
           <ul>
             <li>Everything in Developer, unrestricted</li>
@@ -634,8 +689,8 @@ aws sqs receive-message \                          # SQS wire
         </div>
         <div class="priceCard enterprise">
           <h3>Enterprise</h3>
-          <p class="priceTag">Contact us</p>
-          <p class="priceSub">For production migrations run at real scale.</p>
+          <p class="priceTag">$7,500 <small>/ year, starting</small></p>
+          <p class="priceSub">Per migration environment. For production migrations run at real scale.</p>
           <ul>
             <li>Everything in Developer, unrestricted</li>
             <li>Parallel snapshot/partition workers, single process</li>
@@ -659,14 +714,14 @@ aws sqs receive-message \                          # SQS wire
       <p class="lede">
         Oracle/SQL Server/MySQL catalog and built-in-function compatibility inside Postgres
         itself — <code>V$SESSION</code>, <code>DBMS_OUTPUT.PUT_LINE</code>, <code>sys.objects</code>,
-        <code>GROUP_CONCAT</code> — is an Enterprise-only add-on, not a Free/Enterprise split: the
-        same <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks PolyWire and NexaGres
+        <code>GROUP_CONCAT</code> — is what the Enterprise tier below unlocks. The same
+        <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks PolyWire and NexaGres
         DMS's own Enterprise tiers.
       </p>
       <div class="pricingGrid">
         <div class="priceCard">
-          <h3>Developer</h3>
-          <p class="priceTag">Not included</p>
+          <h3>Free / Basic</h3>
+          <p class="priceTag">$0</p>
           <p class="priceSub">A session still connects and runs ordinary SQL normally.</p>
           <ul>
             <li class="limit">No unqualified <code>V$</code>/<code>DBA_*</code>/<code>DBMS_*</code> resolution</li>
@@ -676,8 +731,8 @@ aws sqs receive-message \                          # SQS wire
         </div>
         <div class="priceCard enterprise">
           <h3>Enterprise</h3>
-          <p class="priceTag">Contact us</p>
-          <p class="priceSub">For a migrated application that still calls vendor catalog objects or built-ins.</p>
+          <p class="priceTag">$5,000 <small>/ year, starting</small></p>
+          <p class="priceSub">Per production deployment. For a migrated application that still calls vendor catalog objects or built-ins.</p>
           <ul>
             <li>Oracle: V$/GV$ views, DBA_*/USER_*/ALL_* views, 13 DBMS_*/UTL_* packages</li>
             <li>MySQL: GROUP_CONCAT, DATE_FORMAT, SHOW COLUMNS/INDEX/VARIABLES, and more</li>
