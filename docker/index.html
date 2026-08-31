@@ -800,16 +800,54 @@ Ada      129.99
         <span class="badge">ghcr.io/polygres26/dms</span>
       </div>
       <p class="bridgeKicker">Also from Nexagres</p>
-      <h2>Nexagres DMS — know before you migrate</h2>
+      <h2>Nexagres DMS — know before you migrate, then move the data for real</h2>
       <p class="lede">
-        <b>Nexagres DMS plans the move to Postgres. Polywire runs and governs workloads on
-        Postgres.</b> Assess → size → plan → move — Oracle, MySQL, MariaDB, SQL Server →
-        Postgres, with a rules-based, reproducible difficulty score (not LLM-generated).
+        <b>Nexagres DMS plans the move to Postgres and does it. Polywire runs and governs
+        workloads on Postgres.</b> Two halves, one tool: <b>Migration Advisor</b> assesses —
+        Oracle, MySQL, MariaDB, SQL Server → Postgres, a rules-based, reproducible difficulty
+        score (not LLM-generated). <b>Migration Service</b> moves the data — real,
+        massively-parallel change-data-capture runs, launched and tracked without leaving the app.
       </p>
+
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">Migration Advisor — assess</span><span class="uc-desc">Connect a database (read-only) or upload a performance report; get a migration-difficulty score and tier, a feature inventory weighted by real cost, schema/workload/parameter browsing, a downloadable findings report, a Postgres sizing recommendation, and PL/SQL summarization with an LLM's help. <a href="dms.html#two-ways-to-assess">Assessment detail →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Migration Service — move the data</span><span class="uc-desc"><b>Launch</b> a real <code>nexagres-migration</code> run against a connector and a target connection; <b>Status</b> tracks the same live progress every worker checkpoints — partitions done, events applied, change-feed lag, current leader — for every source pointed at that target. Every write lands through Polywire's own gRPC driver, never a direct JDBC connection. <a href="dms.html#migration-service">Migration Service detail →</a></span></span></li>
+      </ul>
+
       <p class="rttNote"><a href="dms.html">Explore Nexagres DMS — assessment, sizing, and PL/SQL review with an LLM's help →</a></p>
       <div class="heroCtas">
         <a class="btn btn-secondary" href="demo-dms.html">Click-Through Demo</a>
       </div>
+
+      <h3 class="subhead" id="dms-sources">Sources Migration Service accepts<a class="permalink" href="#dms-sources" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Every source gets a real, parallel initial snapshot. Where the source has a genuine
+        change-tracking mechanism, Migration Service also runs a live change-data-capture (CDC)
+        tail after the snapshot — not a polling re-scan. Where it doesn't (a queue; a graph
+        database with no CDC in its free tier), that's stated plainly below, not glossed over.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Source</th><th>Initial snapshot</th><th>Live CDC</th><th>Mechanism</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>MongoDB</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Change streams + resume tokens</td></tr>
+            <tr><td>MySQL</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Binary log, ROW format</td></tr>
+            <tr><td>SQL Server</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Native CDC (<code>cdc.fn_cdc_get_all_changes_*</code>)</td></tr>
+            <tr><td>Oracle</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>LogMiner, SCN-checkpointed</td></tr>
+            <tr><td>DynamoDB</td><td class="yes">✓ parallel scan</td><td class="yes">✓</td><td>DynamoDB Streams, shard-polled</td></tr>
+            <tr><td>Amazon SQS</td><td class="maybe">n/a — a queue</td><td class="maybe">n/a</td><td>Drain-forward-delete, at-least-once (matches SQS's own guarantee)</td></tr>
+            <tr><td>Neo4j</td><td class="yes">✓ parallel</td><td class="no">—</td><td>Snapshot only — Neo4j has no CDC outside Enterprise edition</td></tr>
+            <tr><td>InfluxDB</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Timestamp-cursor live tail</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        Every target schema is matched byte-for-byte to Polywire's own wire protocol store, so a
+        real client speaking that protocol can use the migrated data immediately.
+        <a href="dms.html#migration-service">Full architecture diagram →</a>
+      </p>
     </section>
 
     <section class="tool" id="faq">
