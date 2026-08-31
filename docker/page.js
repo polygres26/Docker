@@ -12,14 +12,28 @@
   // Measures the real sticky nav height into --nav-h so each section's "On this page" panel
   // sticks flush beneath it instead of a hardcoded guess -- stays correct if the nav ever
   // wraps to two lines on a narrow viewport.
+  //
+  // getBoundingClientRect() forces a synchronous layout flush if anything on the page has
+  // pending, unflushed style changes at the moment it's called (a real Lighthouse "forced
+  // reflow" finding on this exact call, since window resize events can fire in a rapid burst
+  // -- one per pixel while a user drags a window edge -- each one re-forcing layout before the
+  // browser would otherwise have batched it into the next natural paint). Deferred into
+  // requestAnimationFrame, with only one measurement ever in flight, so a burst of resize
+  // events collapses into a single read-then-write that runs at the browser's own next paint
+  // instead of forcing a fresh layout on every single event.
   var siteNavEl = document.querySelector('.siteNav');
+  var navHeightRaf = null;
   function updateNavHeight() {
-    if (siteNavEl) {
-      document.documentElement.style.setProperty('--nav-h', siteNavEl.getBoundingClientRect().height + 'px');
-    }
+    if (navHeightRaf !== null) return;
+    navHeightRaf = requestAnimationFrame(function () {
+      navHeightRaf = null;
+      if (siteNavEl) {
+        document.documentElement.style.setProperty('--nav-h', siteNavEl.getBoundingClientRect().height + 'px');
+      }
+    });
   }
   updateNavHeight();
-  window.addEventListener('resize', updateNavHeight);
+  window.addEventListener('resize', updateNavHeight, { passive: true });
 
   // Active-section highlight in the sticky nav -- only meaningful for same-page hash links
   // (index.html's #pricing/#faq/#contact); PolyWire/PolyAdvisor/Docs are real page links now and
