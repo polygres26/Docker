@@ -3,8 +3,8 @@
 Oracle compatibility for stock Postgres -- the first extension in the
 **Polygres** collection (`db/pg_oracle`, `db/pg_mysql`, `db/pg_sqlserver`
 planned; see the top-level plan discussion for why MongoDB is out for now
-and why this is a plain `CREATE EXTENSION`, not a forked Postgres binary
-the way IvorySQL/Babelfish are).
+and why this is a plain `CREATE EXTENSION`, not a forked Postgres
+binary).
 
 ## What it does
 
@@ -212,8 +212,8 @@ Stock Postgres's grammar has **no top-level `DECLARE`/`BEGIN`/`END`
 statement** -- that syntax only exists wrapped as `DO $$ ... $$;`, and
 there is no supported extension hook that adds new top-level grammar
 productions without patching Postgres's own parser (which is exactly the
-IvorySQL/Babelfish fork-the-core approach this whole plan chose to avoid
--- see the top-level plan discussion). So a raw Oracle anonymous block
+fork-the-core approach this whole plan chose to avoid -- see the
+top-level plan discussion). So a raw Oracle anonymous block
 cannot be handed to stock Postgres as text and just work; it has to be
 rewritten to `DO $$ ... $$;` (plus syntax deltas like bare procedure
 calls needing `PERFORM`) *before* it reaches Postgres at all.

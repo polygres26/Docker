@@ -61,8 +61,8 @@
       <h2>DB Compatibility Layer</h2>
       <p class="lede">
         Three plain Postgres extensions — <code>pg_oracle</code>, <code>pg_mysql</code>,
-        <code>pg_sqlserver</code> — not a forked Postgres binary the way IvorySQL or Babelfish
-        are, and not a wire-protocol translator the way PolyWire itself is. PolyWire lets an
+        <code>pg_sqlserver</code> — not a forked Postgres binary, and not a wire-protocol
+        translator the way PolyWire itself is. PolyWire lets an
         Oracle/MySQL/SQL Server <em>client</em> speak its native wire protocol to Postgres; this
         layer lets Postgres <em>itself</em> resolve the catalog objects and built-in functions
         that client's SQL actually references, once that traffic arrives. The two compose: PolyWire's
@@ -158,6 +158,14 @@ SELECT SCOPE_IDENTITY();                     -- sys.scope_identity</code>
         MongoDB compatibility is out of scope for this layer (a document store, not a
         catalog/function-surface problem the way the three SQL engines above are) — see
         PolyWire's <code>mongowire</code> frontend for document workloads instead.
+      </p>
+      <p class="rttNote">
+        The tables above are what's real today, not the ceiling — more catalog views, packages,
+        and built-in functions get added to <code>pg_oracle</code>/<code>pg_mysql</code>/
+        <code>pg_sqlserver</code> as real migrations surface a gap, the same demand-driven way
+        NexaGres DMS's own connector list grew. If a specific <code>V$</code> view, <code>DBMS_*</code>
+        package, or vendor function your application actually calls isn't listed above, that's
+        the kind of gap worth raising — see <a href="index.html#contact">Contact</a>.
       </p>
 
       <h3 class="subhead" id="db-compat-pricing">Pricing<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
