@@ -88,8 +88,8 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="#polywire">PolyWire</a>
-      <a href="#pricing">Pricing</a>
       <a href="#dms">DMS</a>
+      <a href="#pricing">Pricing</a>
       <a href="polycache.html">PolyCache</a>
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
@@ -527,9 +527,29 @@ aws sqs receive-message \                          # SQS wire
 
     </section>
 
-    <section class="tool" id="pricing">
+    <section class="tool" id="dms">
       <div class="kicker">
         <span class="num">02</span>
+        <span class="badge">ghcr.io/polygres26/dms</span>
+      </div>
+      <p class="bridgeKicker">Also from NexaGres</p>
+      <h2>NexaGres DMS</h2>
+      <h3 class="toolTagline">Know before you migrate. Then move for real.</h3>
+      <div class="stepFlow">
+        <div class="stepFlowItem"><h4>Assess</h4><p>Understand migration difficulty.</p></div>
+        <span class="stepFlowArrow">→</span>
+        <div class="stepFlowItem"><h4>Size</h4><p>Plan the target Postgres environment.</p></div>
+        <span class="stepFlowArrow">→</span>
+        <div class="stepFlowItem"><h4>Migrate</h4><p>Massively parallel snapshot + CDC.</p></div>
+        <span class="stepFlowArrow">→</span>
+        <div class="stepFlowItem"><h4>Run</h4><p>PolyWire keeps applications connected and governed.</p></div>
+      </div>
+      <p class="rttNote"><a href="dms.html">Explore NexaGres DMS →</a></p>
+    </section>
+
+    <section class="tool" id="pricing">
+      <div class="kicker">
+        <span class="num">03</span>
       </div>
       <h2>Pricing</h2>
       <p class="lede">
@@ -633,26 +653,6 @@ aws sqs receive-message \                          # SQS wire
         Full row-by-row capability breakdown, including exactly which real license check backs
         each row: <a href="dms.html#dms-packaging">NexaGres DMS capability table →</a>
       </p>
-    </section>
-
-    <section class="tool" id="dms">
-      <div class="kicker">
-        <span class="num">03</span>
-        <span class="badge">ghcr.io/polygres26/dms</span>
-      </div>
-      <p class="bridgeKicker">Also from NexaGres</p>
-      <h2>NexaGres DMS</h2>
-      <h3 class="toolTagline">Know before you migrate. Then move for real.</h3>
-      <div class="stepFlow">
-        <div class="stepFlowItem"><h4>Assess</h4><p>Understand migration difficulty.</p></div>
-        <span class="stepFlowArrow">→</span>
-        <div class="stepFlowItem"><h4>Size</h4><p>Plan the target Postgres environment.</p></div>
-        <span class="stepFlowArrow">→</span>
-        <div class="stepFlowItem"><h4>Migrate</h4><p>Massively parallel snapshot + CDC.</p></div>
-        <span class="stepFlowArrow">→</span>
-        <div class="stepFlowItem"><h4>Run</h4><p>PolyWire keeps applications connected and governed.</p></div>
-      </div>
-      <p class="rttNote"><a href="dms.html">Explore NexaGres DMS →</a></p>
     </section>
 
     <section class="tool" id="faq">
