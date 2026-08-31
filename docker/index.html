@@ -584,6 +584,51 @@ aws sqs receive-message \                          # SQS wire
         applications, demos, benchmarks, and a genuine three-instance HA/failover test; a
         meaningful production deployment will reach them quickly by design.
       </p>
+
+      <h3 class="subhead" id="dms-pricing">NexaGres DMS<a class="permalink" href="#dms-pricing" aria-label="Link to this section">#</a></h3>
+      <p class="lede">
+        Assessment — connect, score, size, browse, report — is unrestricted on every tier. What's
+        paid is the parts of actually moving the data that scale past a single-process,
+        single-migration setup: real parallelism, unattended cutover, and multi-tenant capacity.
+        Same <code>POLYWIRE_LICENSE_KEY</code> as PolyWire — one key, one thing to buy.
+      </p>
+      <div class="pricingGrid">
+        <div class="priceCard">
+          <h3>Developer</h3>
+          <p class="priceTag">$0 <small>/ forever</small></p>
+          <p class="priceSub">For evaluation, a real migration test, and one-migration-at-a-time production use.</p>
+          <ul>
+            <li>Full assessment: compatibility analysis, feature inventory, Postgres sizing</li>
+            <li>Real data migration — snapshot + live CDC, every source connector</li>
+            <li>Automatic resume/checkpointing, data validation, progress monitoring</li>
+            <li class="limit">Serial migration — one partition/table read at a time</li>
+            <li class="limit">One migration job running at a time</li>
+            <li class="limit">A failed row stops the run — no retry or dead-letter queue</li>
+            <li class="limit">No packaged cutover-readiness verdict or automatic cutover</li>
+            <li class="limit">Community support</li>
+          </ul>
+        </div>
+        <div class="priceCard enterprise">
+          <h3>Enterprise</h3>
+          <p class="priceTag">Contact us</p>
+          <p class="priceSub">For production migrations run at real scale.</p>
+          <ul>
+            <li>Everything in Developer, unrestricted</li>
+            <li>Parallel snapshot/partition workers, single process</li>
+            <li>A distributed worker fleet — real, multi-process parallelism</li>
+            <li>Failed-row retry with dead-letter queue</li>
+            <li>Cutover-readiness verdict, plus automatic cutover the instant it's ready</li>
+            <li>Unlimited concurrent migrations</li>
+            <li>Enterprise support</li>
+          </ul>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a PolyWire Architecture Review →</a></p>
+        </div>
+      </div>
+      <p class="pricingNote">
+        Full row-by-row capability breakdown, including which of these are enforced today by a
+        real license check versus not yet built: <a href="dms.html#dms-packaging">NexaGres DMS
+        capability table →</a>
+      </p>
     </section>
 
     <section class="tool" id="dms">
