@@ -141,6 +141,24 @@
 
   <build>
     <plugins>
+      <!-- Publishes this module's src/test/java classes (RealMongo, RealPostgres,
+           PolyWireProcess, etc. under testsupport/) as a second, `tests`-classified jar;
+           advisor now depends on it (test scope only, see advisor/pom.xml's own comment) so
+           MigrationJobRunnerIntegrationTest can prove the NEW advisor-side job-launching glue
+           against real infrastructure using the SAME real-container test helpers every connector's
+           own integration test already relies on, instead of re-implementing (or, worse,
+           mocking) them a second time in a different module. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>

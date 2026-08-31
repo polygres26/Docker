@@ -326,3 +326,41 @@ export async function getMigrationStatus(connectionId: string): Promise<Migratio
   return api(`/api/migration/status?connectionId=${encodeURIComponent(connectionId)}`)
 }
 
+// --- Data Sync (launching a migration job) ---
+
+export type MigrationConnectorType =
+  | 'MONGO' | 'MYSQL' | 'SQLSERVER' | 'ORACLE' | 'DYNAMODB' | 'SQS' | 'NEO4J' | 'INFLUXDB'
+
+export interface MigrationJobRequest {
+  connectorType: MigrationConnectorType
+  targetConnectionId: string
+  polywireGrpcHost: string
+  polywireGrpcPort: number
+  polywireGrpcUser: string
+  polywireGrpcPassword: string
+  parallelism: number
+  sourceConfig: Record<string, string>
+}
+
+export interface MigrationJobState {
+  id: string
+  connectorType: string
+  sourceKeyHint: string
+  status: 'RUNNING' | 'COMPLETED' | 'FAILED'
+  errorMessage: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export async function startMigrationJob(req: MigrationJobRequest): Promise<MigrationJobState> {
+  return api<MigrationJobState>('/api/migration/jobs', { method: 'POST', body: JSON.stringify(req) })
+}
+
+export async function listMigrationJobs(): Promise<MigrationJobState[]> {
+  return api<MigrationJobState[]>('/api/migration/jobs')
+}
+
+export async function stopMigrationJob(jobId: string): Promise<void> {
+  await fetch(`/api/migration/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
+}
+

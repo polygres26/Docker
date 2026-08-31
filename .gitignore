@@ -2,6 +2,11 @@ target/
 dependency-reduced-pom.xml
 *.class
 
+# Apache Ignite's own working directory, created wherever a JVM running nexagres-wire (or
+# anything depending on it, like advisor's own migration-launching tests) happens to run from --
+# not a build artifact of any single module, so not scoped under target/.
+ignite/
+
 advisor/web/node_modules/
 advisor/web/dist/
 advisor/web/.vite/

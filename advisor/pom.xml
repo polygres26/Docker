@@ -124,10 +124,33 @@
       <version>3.0.3</version>
     </dependency>
 
+    <!-- Lets Advisor actually LAUNCH a nexagres-migration run (MigrationJobRunner), not just read
+         its bookkeeping tables the way MigrationStatusStore already did before this dependency
+         existed. Brings in nexagres-wire, every connector's real vendor client (mongodb-driver-
+         sync, the AWS SDK dynamodb/sqs modules, the mysql-binlog-connector, neo4j-java-driver,
+         mssql-jdbc/ojdbc11) transitively; deliberately the exact same jars every Migrate*Cli
+         entry point already runs against, not a second copy pinned to different versions. -->
+    <dependency>
+      <groupId>com.nexagres</groupId>
+      <artifactId>nexagres-migration</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- migration's own testsupport helpers (RealMongo, RealPostgres, PolyWireProcess); see
+         migration/pom.xml's test-jar execution; so MigrationJobRunnerIntegrationTest proves the
+         new job-launching glue against real infrastructure using the SAME helpers every
+         connector's own integration test already relies on. -->
+    <dependency>
+      <groupId>com.nexagres</groupId>
+      <artifactId>nexagres-migration</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+      <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -173,6 +196,39 @@
             </configuration>
           </execution>
         </executions>
+      </plugin>
+      <!-- Same add-opens set nexagres-migration's own pom.xml carries for its test JVM (see that
+           pom's own comment); needed here too now that this module's tests (via the new
+           nexagres-migration test dependency, MigrationJobRunnerIntegrationTest) pull in
+           ignite-core transitively through nexagres-wire, and IgniteJdbcThinDriver's static
+           initializer throws under the module system's default reflection restrictions without
+           these; confirmed live, not hypothetical: every DriverManager.getConnection call in
+           this module's tests failed with NoClassDefFoundError before this was added. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.1</version>
+        <configuration>
+          <argLine>
+            --add-opens=java.base/jdk.internal.access=ALL-UNNAMED
+            --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED
+            --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
+            --add-opens=java.base/java.lang=ALL-UNNAMED
+            --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+            --add-opens=java.base/java.io=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED
+            --add-opens=java.base/java.util=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED
+            --add-opens=java.base/java.math=ALL-UNNAMED
+            --add-opens=java.base/java.time=ALL-UNNAMED
+            --add-opens=java.base/java.text=ALL-UNNAMED
+            --add-opens=java.base/java.net=ALL-UNNAMED
+            --add-opens=java.sql/java.sql=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+          </argLine>
+        </configuration>
       </plugin>
     </plugins>
   </build>
