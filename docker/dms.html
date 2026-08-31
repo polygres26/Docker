@@ -69,6 +69,7 @@
           <li><a href="#admin-console-dms">Admin console</a></li>
           <li><a href="#migration-service">Migration Service: launch and track a migration</a></li>
           <li><a href="#dms-sources">Sources Migration Service accepts</a></li>
+          <li><a href="#dms-packaging">Free vs. Enterprise</a></li>
         </ul>
       </details>
 
@@ -226,6 +227,55 @@
           <a class="embedOpenLink" href="demo-dms.html?page=datasync&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
+
+      <h3 class="subhead" id="dms-packaging">Free vs. Enterprise<a class="permalink" href="#dms-packaging" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Assessment (the whole first half of this page — connect, score, size, browse, report) is
+        unrestricted on every tier. What's paid is the parts of actually MOVING the data that scale
+        past a single-process, single-migration setup: real parallelism, unattended operation, and
+        multi-tenant capacity. Reuses the same <code>POLYWIRE_LICENSE_KEY</code> as PolyWire itself
+        — one key, one thing to buy.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Capability</th><th>Developer / Free</th><th>Enterprise</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Migration assessment</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Compatibility analysis</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Target Postgres sizing</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Schema conversion</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Data migration</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Single-stream snapshot</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Parallel snapshot workers †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Parallel table/partition migration †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>CDC (live change-feed tail)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Automatic resume/checkpointing</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Failed-row retry / DLQ †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Data validation / reconciliation</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Cutover-readiness check †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Automatic cutover at the right time †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Migration progress monitoring</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Bandwidth / workload throttling</td><td class="maybe">Planned</td><td class="maybe">Planned</td></tr>
+            <tr><td>Source production protection</td><td class="maybe">Planned</td><td class="maybe">Planned</td></tr>
+            <tr><td>Multiple migrations concurrently †</td><td>1</td><td class="yes">Unlimited</td></tr>
+            <tr><td>HA migration workers †</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Encryption / enterprise secrets</td><td class="maybe">Planned</td><td class="maybe">Planned</td></tr>
+            <tr><td>SSO / RBAC / audit</td><td class="maybe">Planned</td><td class="maybe">Planned</td></tr>
+            <tr><td>Support</td><td>Community</td><td class="yes">Enterprise</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        <b>†</b> enforced today by a real license gate in <code>nexagres-migration</code> — not a
+        marketing line, a check that actually throws or clamps when it's not licensed. Rows marked
+        <b>Planned</b> are honest about where they stand: no license tier changes their behavior
+        yet because the underlying capability isn't built, so nobody is charged for something that
+        doesn't exist. Everything else runs identically regardless of license — CDC, validation,
+        progress monitoring, and resumable checkpointing all work the same way whether or not a
+        <code>POLYWIRE_LICENSE_KEY</code> is set.
+      </p>
 
       <figure class="embedFigure">
         <iframe class="embedFrame" src="demo-dms.html" title="Live click-through demo: NexaGres DMS, full console" loading="lazy"></iframe>
