@@ -42,6 +42,11 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
         if (!com.nexagres.wire.core.PgSqlServerSupport.isAvailable(connection)) {
             return;
         }
+        // Enterprise-only -- see DbCompatLicensing's own javadoc. Free tier: the session just
+        // runs against plain Postgres semantics, same as pg_sqlserver not being installed at all.
+        if (!com.nexagres.wire.license.DbCompatLicensing.dbEmulationAllowed()) {
+            return;
+        }
 
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET db_emulation = 'sqlserver'");

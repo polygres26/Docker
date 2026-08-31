@@ -78,6 +78,13 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
         if (!com.nexagres.wire.core.PgOracleSupport.isAvailable(connection)) {
             return;
         }
+        // Enterprise-only -- see DbCompatLicensing's own javadoc. Free tier: the session just
+        // runs against plain Postgres semantics, same as pg_oracle not being installed at all
+        // (which also means no SYS_CONTEXT propagation below -- that's part of the same gate,
+        // not a separate check, since it's meaningless without db_emulation active).
+        if (!com.nexagres.wire.license.DbCompatLicensing.dbEmulationAllowed()) {
+            return;
+        }
 
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET db_emulation = 'oracle'");
