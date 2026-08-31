@@ -42,11 +42,11 @@ needed, just open it in a browser.
 
 ## Architecture
 
-![PolyWire architecture: nine client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane](docs/architecture.png)
+![PolyWire architecture: twelve client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane](assets/architecture.png)
 
 ## Multi-AZ deployment
 
-![PolyWire multi-AZ cloud deployment: stateless instances per zone behind a network load balancer, primary/backup cache copies replicating across zones, a config-primary Postgres with standby failover](docs/deployment.png)
+![PolyWire multi-AZ cloud deployment: stateless instances per zone behind a network load balancer, primary/backup cache copies replicating across zones, a config-primary Postgres with standby failover](assets/deployment.png)
 
 Every piece of this diagram is real and tested today: the load balancer fan-out, per-zone
 instance scaling, config-primary failover, and the cross-zone cache backup replication — a cache
