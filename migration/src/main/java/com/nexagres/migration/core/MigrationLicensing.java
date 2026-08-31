@@ -48,6 +48,10 @@ import org.slf4j.LoggerFactory;
  *   cuts a connection over on. Free tier still has every underlying signal it rolls up (checkpoint
  *   lag, dead-letter count) individually readable via {@code MigrationStatusStore}; what's gated
  *   is the packaged go/no-go verdict itself.
+ *   <li>{@link #requireEnterpriseForCustomThrottle} -- {@code ThrottledSink}'s configurable rate
+ *   ("Bandwidth / workload throttling" row). The DEFAULT rate ({@link
+ *   #DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND}) always applies on every tier ("Source
+ *   production protection" row) -- what's gated is only the ability to override that default.
  *   <li>{@link #requireEnterpriseForAutomaticCutover} -- {@code AutomaticCutoverScheduler}
  *   ("Automatic cutover at the right time" row): a SEPARATE, higher gate than readiness itself --
  *   free/Developer tier can still ask "are we ready?" on demand via {@code CutoverReadinessCli}
@@ -68,6 +72,13 @@ import org.slf4j.LoggerFactory;
 public final class MigrationLicensing {
 
     private static final Logger log = LoggerFactory.getLogger(MigrationLicensing.class);
+
+    /** The always-applied default for {@code ThrottledSink} when a caller doesn't override it --
+     * see {@link #requireEnterpriseForCustomThrottle()}'s own javadoc. Generous enough that a
+     * normal migration (thousands to low millions of rows) never notices it, conservative enough
+     * that an accidental initial-sync-against-a-tiny-production-replica doesn't turn into a
+     * thundering herd. */
+    public static final double DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND = 2000.0;
 
     // Test-only escape hatch: null (the real, always-used-in-production path) means "resolve via
     // License.current().tier(), the genuine offline-signature-verified value." Package-private so
@@ -169,6 +180,21 @@ public final class MigrationLicensing {
                 + "dead-letter count, partition completion) are still freely readable via "
                 + "MigrationStatusStore on the free/Developer tier -- you can assess cutover readiness "
                 + "manually from those, just not via this single packaged verdict.");
+    }
+
+    /** Throws unless Enterprise -- required only when a caller wants a DIFFERENT rate than {@link
+     * #DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND}. The default itself always applies regardless
+     * of license (see {@code ThrottledSink}'s own javadoc: a free-tier migration is never
+     * literally unthrottled), so this gate is "can you configure it," not "does it run at all." */
+    public static void requireEnterpriseForCustomThrottle() {
+        if (currentTier() == LicenseTier.ENTERPRISE) {
+            return;
+        }
+        throw new IllegalStateException("A custom throughput cap (anything other than the default "
+                + DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND + " events/sec) is an Enterprise feature "
+                + "-- set a valid POLYWIRE_LICENSE_KEY to configure maxEventsPerSecond. The "
+                + "free/Developer tier always runs at the default cap, which protects the source "
+                + "without needing to be tuned.");
     }
 
     /** Throws unless the current process is Enterprise-licensed -- {@code

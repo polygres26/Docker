@@ -8,6 +8,7 @@ import com.nexagres.migration.coordinator.Coordinator;
 import com.nexagres.migration.core.MigrationLicensing;
 import com.nexagres.migration.sink.PolywireGrpcSink;
 import com.nexagres.migration.sink.ResilientSink;
+import com.nexagres.migration.sink.ThrottledSink;
 import com.nexagres.migration.core.Sink;
 import java.time.Instant;
 import java.util.List;
@@ -100,6 +101,9 @@ public final class MigrationJobRunner {
         if (request.polywireGrpcPort <= 0) {
             throw new IllegalArgumentException("polywireGrpcPort must be a positive port number");
         }
+        if (request.maxEventsPerSecond != null) {
+            MigrationLicensing.requireEnterpriseForCustomThrottle();
+        }
 
         // Built (and any exception from a malformed sourceConfig) happens on the CALLING thread --
         // a bad request should fail the HTTP call itself with a real error, not silently "start" a
@@ -163,9 +167,14 @@ public final class MigrationJobRunner {
                 // failed write is immediately fatal to the run (see MigrationLicensing's own
                 // javadoc on why this is honest, not degraded: the pre-ResilientSink behavior
                 // every connector already had). Enterprise: wrap in ResilientSink as before.
-                Sink sink = MigrationLicensing.resilientRetryAndDeadLetterAllowed()
+                Sink baseSink = MigrationLicensing.resilientRetryAndDeadLetterAllowed()
                         ? new ResilientSink(grpcSink, deadLetters, 5, 1000)
                         : grpcSink;
+                // Always throttled -- request.maxEventsPerSecond was already validated (Enterprise
+                // required to set it at all) back in start(), on the calling thread.
+                double rate = request.maxEventsPerSecond != null ? request.maxEventsPerSecond
+                        : MigrationLicensing.DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND;
+                Sink sink = new ThrottledSink(baseSink, rate);
                 new Coordinator(built.source(), sink, checkpoints, request.parallelism).run();
             }
             state.status = "COMPLETED";

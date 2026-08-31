@@ -73,6 +73,17 @@ class MigrationLicensingTest {
     }
 
     @Test
+    void freeTierCannotCustomizeThrottleButEnterpriseCan() {
+        MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                MigrationLicensing::requireEnterpriseForCustomThrottle);
+        assertEquals(true, e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+
+        MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
+        assertDoesNotThrow(MigrationLicensing::requireEnterpriseForCustomThrottle);
+    }
+
+    @Test
     void automaticCutoverIsItsOwnGateSeparateFromManualCutoverReadiness() {
         MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
         IllegalStateException e = assertThrows(IllegalStateException.class,

@@ -30,5 +30,10 @@ public class MigrationJobRequest {
     public String polywireGrpcUser;
     public String polywireGrpcPassword;
     public int parallelism = 1;
+    /** Overrides {@code MigrationLicensing.DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND} -- {@code
+     * null} (the default) means "use the default cap." Setting any non-null value requires
+     * Enterprise (see {@code MigrationLicensing#requireEnterpriseForCustomThrottle}); the free
+     * tier can't raise, lower, or disable the default, only run at it. */
+    public Double maxEventsPerSecond;
     public Map<String, String> sourceConfig;
 }

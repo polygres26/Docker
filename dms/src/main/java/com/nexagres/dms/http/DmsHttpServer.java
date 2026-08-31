@@ -1,10 +1,14 @@
 package com.nexagres.dms.http;
 
+import com.nexagres.dms.core.AuditLogStore;
 import com.nexagres.dms.http.auth.AdminAuth;
+import com.nexagres.dms.http.auth.AuditGuard;
 import com.nexagres.dms.http.auth.AuthGuard;
 import com.nexagres.dms.http.auth.LoginRoute;
 import com.nexagres.dms.http.auth.LogoutRoute;
 import com.nexagres.dms.http.auth.SessionRoute;
+import com.nexagres.dms.http.auth.SsoAuth;
+import com.nexagres.dms.http.auth.SsoLoginRoute;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Comparator;
@@ -42,7 +46,8 @@ public class DmsHttpServer extends AbstractHandler {
     private final Map<String, RouteHandler> routes = new LinkedHashMap<>();
 
     public DmsHttpServer() {
-        AdminAuth auth = new AdminAuth();
+        AuditLogStore auditLog = new AuditLogStore();
+        AdminAuth auth = new AdminAuth(auditLog);
 
         routes.put("/api/health", (req, res) -> {
             res.setContentType("application/json");
@@ -52,14 +57,33 @@ public class DmsHttpServer extends AbstractHandler {
         routes.put("/api/session", new SessionRoute(auth));
         routes.put("/api/logout", AuthGuard.require(auth, new LogoutRoute(auth)));
 
+        // SSO (bearer-token) login is registered only when both a signing secret is configured AND
+        // the process is Enterprise-licensed (see SsoAuth's own constructor gate) -- unset/free
+        // means this route simply doesn't exist, a plain 404, not a route that exists and always
+        // rejects. A misconfigured secret with no Enterprise license logs a warning and moves on,
+        // the same degrade-don't-crash-startup reasoning AdminAuth's own viewer-account gate uses.
+        String ssoSecret = System.getenv("NEXAGRES_SSO_JWT_SECRET");
+        if (ssoSecret != null && !ssoSecret.isBlank()) {
+            try {
+                SsoAuth ssoAuth = new SsoAuth(ssoSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        System.getenv("NEXAGRES_SSO_ISSUER"));
+                routes.put("/api/sso-login", new SsoLoginRoute(ssoAuth, auth));
+            } catch (IllegalStateException e) {
+                log.warn("NEXAGRES_SSO_JWT_SECRET is set, but {} -- /api/sso-login will not be registered.",
+                        e.getMessage());
+            }
+        }
+
         routes.put("/api/scan", AuthGuard.require(auth, new ScanRoute()));
         routes.put("/api/workload", AuthGuard.require(auth, new WorkloadRoute()));
         routes.put("/api/summarize", AuthGuard.require(auth, new SummarizeRoute()));
-        routes.put("/api/connections", AuthGuard.require(auth, new ConnectionsRoute()));
+        routes.put("/api/connections",
+                AuditGuard.wrap(auth, auditLog, AuthGuard.requireAdminForMutations(auth, new ConnectionsRoute())));
         routes.put("/api/llm-settings", AuthGuard.require(auth, new LlmSettingsRoute()));
         routes.put("/api/reports", AuthGuard.require(auth, new ReportsRoute()));
         routes.put("/api/migration/status", AuthGuard.require(auth, new MigrationStatusRoute()));
-        routes.put("/api/migration/jobs", AuthGuard.require(auth, new MigrationJobsRoute()));
+        routes.put("/api/migration/jobs",
+                AuditGuard.wrap(auth, auditLog, AuthGuard.requireAdminForMutations(auth, new MigrationJobsRoute())));
     }
 
     @Override
