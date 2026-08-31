@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * {@link ResourceHandler}. Any path that doesn't resolve to a real file -- a client-side route
  * like {@code /reports/42}, which only React Router knows how to render -- falls back to
  * {@code index.html} instead of a 404, standard SPA-hosting behavior (the same fallback nginx's
- * {@code try_files ... /index.html} directive gives you, see {@code docker/polyadvisor/
+ * {@code try_files ... /index.html} directive gives you, see {@code docker/dms/
  * nginx.conf}).
  *
  * <p>Only reached for requests {@link DmsHttpServer} didn't claim -- see the {@code

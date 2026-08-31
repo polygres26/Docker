@@ -331,7 +331,7 @@ docker compose -f docker/polywire/docker-compose.yml up --build
 **Polyadvisor** (one container — API + SPA served together by embedded Jetty):
 
 ```bash
-docker compose -f docker/polyadvisor/docker-compose.yml up --build
+docker compose -f docker/dms/docker-compose.yml up --build
 ```
 
 Then open `http://localhost:8080`. Both commands must run from the **repo root** — the build
@@ -388,7 +388,7 @@ flowchart TB
   Kubernetes `NetworkPolicy`-equivalent) — this is infrastructure config, not something to put
   in application config management that developers can edit.
 - **Container images**: build with the Dockerfiles under `docker/polywire/` and
-  `docker/polyadvisor/`, push to a registry (e.g. `ghcr.io` — see the repo root
+  `docker/dms/`, push to a registry (e.g. `ghcr.io` — see the repo root
   `.env.example` for the token fields needed), deploy via your platform's normal rolling
   update mechanism (ECS service, GKE/EKS Deployment, etc.).
 - **Secrets**: `POLYWIRE_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
@@ -405,12 +405,12 @@ flowchart TB
 
 | | Polywire | Polyadvisor |
 |---|---|---|
-| Images | 1 (`docker/polywire/Dockerfile`) | 1 (`docker/polyadvisor/Dockerfile`) — API + SPA in one container |
+| Images | 1 (`docker/polywire/Dockerfile`) | 1 (`docker/dms/Dockerfile`) — API + SPA in one container |
 | Base (build) | `maven:3.9-eclipse-temurin-21` | same, plus a `node:22-alpine` stage to build the SPA |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
 | Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `NEXAGRES_DATA_DIR` (embedded HSQLDB) |
-| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/polyadvisor/` for teams that want a separately-scaled static tier instead |
+| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/dms/` for teams that want a separately-scaled static tier instead |
 | `.dockerignore` | repo-root only — both compose files set `context: ../..`, and classic Docker only honors a root-level `.dockerignore` | same |
 
 Build standalone (no compose):
@@ -418,7 +418,7 @@ Build standalone (no compose):
 ```bash
 # from repo root
 docker build -f docker/polywire/Dockerfile -t polywire:latest .
-docker build -f docker/polyadvisor/Dockerfile -t polyadvisor:latest .
+docker build -f docker/dms/Dockerfile -t polyadvisor:latest .
 ```
 
 ---

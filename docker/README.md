@@ -66,11 +66,12 @@ running against these published images directly, no source checkout required. Se
 
 ## Image packaging reference
 
-`polywire/` and `polyadvisor/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
+`polywire/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
-`wire/` and `advisor/`, which live in Nexagres's private source repos — they're included here for
-transparency into exactly how each image is put together, not as a build-it-yourself path.
+`wire/` and `dms/` (formerly `advisor/`), which live in Nexagres's private source repos — they're
+included here for transparency into exactly how each image is put together, not as a
+build-it-yourself path.
 
 ## License
 
