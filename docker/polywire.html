@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polywire — Full Capabilities of the Intelligent Postgres Gateway</title>
-<meta name="description" content="Polywire's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, Polycache benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
+<title>PolyWire — Full Capabilities of the Intelligent Postgres Gateway</title>
+<meta name="description" content="PolyWire's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, PolyCache benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
 <link rel="canonical" href="https://polygres26.github.io/polywire.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,12 +14,12 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/polywire.html">
-<meta property="og:title" content="Polywire — Full Capabilities of the Intelligent Postgres Gateway">
-<meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Polycache benchmarks, sharding, observability, security, and error translation — the full Polywire technical detail.">
+<meta property="og:title" content="PolyWire — Full Capabilities of the Intelligent Postgres Gateway">
+<meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
 <meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Polywire — Full Capabilities of the Intelligent Postgres Gateway">
-<meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Polycache benchmarks, sharding, observability, security, and error translation — the full Polywire technical detail.">
+<meta name="twitter:title" content="PolyWire — Full Capabilities of the Intelligent Postgres Gateway">
+<meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, PolyCache benchmarks, sharding, observability, security, and error translation — the full PolyWire technical detail.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
 </head>
 <body>
@@ -27,8 +27,9 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="index.html">Home</a>
-      <a href="polywire.html" class="active">Polywire</a>
+      <a href="polywire.html" class="active">PolyWire</a>
       <a href="dms.html">DMS</a>
+      <a href="polycache.html">PolyCache</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#faq">FAQ</a>
@@ -38,11 +39,11 @@
   <div class="wrap" id="main">
     <header>
       <div class="brandRow">
-        <img src="docs/logo.png" alt="Nexagres" class="brandMark">
-        <h1 class="eyebrow">Nexagres</h1>
+        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <h1 class="eyebrow">NexaGres</h1>
       </div>
       <p class="lede">
-        <a href="index.html">← Back to the Polywire overview</a> — Polywire is the intelligent
+        <a href="index.html">← Back to the PolyWire overview</a> — PolyWire is the intelligent
         gateway for Postgres. This page is the full technical detail behind that: every outcome,
         use case, benchmark, and honestly-scoped capability, organized by what it does — Connect,
         Protect, Control, Accelerate, Observe.
@@ -53,14 +54,14 @@
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/polywire</span>
       </div>
-      <h2>Polywire: full capabilities</h2>
+      <h2>PolyWire: full capabilities</h2>
       <details class="onThisPage">
         <summary>On this page<span class="otpCurrent"></span></summary>
         <ul class="otpList">
           <li><a href="#outcomes">Outcomes</a></li>
           <li><a href="#use-cases">Use cases</a></li>
           <li><a href="#admin-console-polywire">Admin console</a></li>
-          <li><a href="#cache-vs-round-trip">Polycache vs. round trip</a></li>
+          <li><a href="#cache-vs-round-trip">PolyCache vs. round trip</a></li>
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
           <li><a href="#influxdb-line-protocol">InfluxDB</a></li>
@@ -77,7 +78,7 @@
 
       <h3 class="subhead" id="outcomes">Outcomes, by pillar<a class="permalink" href="#outcomes" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Everything below rolls up into the same five things Polywire does — <b>Connect, Protect,
+        Everything below rolls up into the same five things PolyWire does — <b>Connect, Protect,
         Control, Accelerate, Observe</b> — grouped here instead of as one flat list, so it's clear
         which outcome each capability is actually buying you.
       </p>
@@ -86,7 +87,7 @@
       <div class="obsGrid">
         <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
         <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real Postgres access through the same SQL firewall, ACL, and QoS controls as every other client — not a separate, unguarded path to your data.</p></div>
-        <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no Polywire-specific SDK to learn first.</p></div>
+        <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no PolyWire-specific SDK to learn first.</p></div>
       </div>
 
       <p class="pillarLabel">Protect</p>
@@ -102,7 +103,7 @@
 
       <p class="pillarLabel">Accelerate</p>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, Polycache, and rollups.</p></div>
+        <div class="obsCard"><h4>Max performance</h4><p>Smart routing, QoS control, PolyCache, and rollups.</p></div>
         <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
       </div>
 
@@ -119,27 +120,27 @@
         <li><span class="uc-body"><span class="uc-title">Connection pooling for Postgres</span><span class="uc-desc">Every backend is fronted by a bounded connection pool — many client connections share a small, fixed set of real Postgres connections, the same problem PgBouncer solves, built into the same gateway that's already translating and firewalling the traffic.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Horizontal sharding, by real bound values</span><span class="uc-desc">Route by schema, predicate, or a real bound parameter value — decoded from each protocol's own wire format across Postgres, Oracle, SQL Server, and MySQL, not just SQL text — with genuine cross-shard merge (not concatenation) for aggregates, sorted/paginated hits, and DynamoDB/MongoDB/SQS/OpenSearch sharding alongside SQL. See "Sharding" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Query result caching (Polycache)</span><span class="uc-desc">Polywire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — Polywire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Query result caching (PolyCache)</span><span class="uc-desc">PolyWire's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — PolyWire keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Time-series writes without running InfluxDB</span><span class="uc-desc">A real line-protocol <code>/write</code> endpoint and a bounded InfluxQL <code>/query</code> (WHERE, GROUP BY time(), mean/sum/count/min/max) land on Postgres — a real TimescaleDB hypertable when the backend has the extension, a plain indexed table otherwise. See "InfluxDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Property-graph queries without running Neo4j</span><span class="uc-desc">Real Bolt+Cypher — <code>CREATE</code>, <code>MATCH ... WHERE ... RETURN</code>, bounded variable-length paths — against a real Postgres nodes/edges schema, spoken to the official <code>neo4j</code> driver over the real Bolt wire protocol. See "GraphDB" below.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. Polywire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run Polywire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Polywire while Nexagres DMS (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. PolyWire lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run PolyWire indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run PolyWire while NexaGres DMS (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
       </ul>
 
       <h3 class="subhead" id="admin-console-polywire">Admin console<a class="permalink" href="#admin-console-polywire" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/admin-polywire.png" alt="Polywire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, traffic by backend (routing/sharding target), and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar grouped into four real labeled sections — Monitoring (Metrics, Topology), Security (SQL Firewall, ACL, OAuth), Traffic (Backends, Queues, Data Explorer, Router Rules — where shard/routing targets are configured, QoS), and Configuration (LLM)">
-        <figcaption>Polywire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, and a sidebar that groups controls the same way this page does: Security (SQL firewall, ACL, OAuth) as its own labeled section, Router Rules for sharding/routing targets under Traffic, deployment topology, backends, queues, and LLM configuration for dialect translation — all in one place, not scattered across each protocol's own tooling.</figcaption>
+        <img src="docs/admin-polywire.png" alt="PolyWire's admin console: a Metrics dashboard showing live protocol traffic across all nine protocols including gRPC and OpenSearch shown as their own distinct rows, reads/writes per second, top SQL by cost, per-tool MCP call counts and error rates, traffic by backend (routing/sharding target), and a cache-hit-vs-Postgres RTT breakdown covering every protocol including OpenSearch, with a sidebar grouped into four real labeled sections — Monitoring (Metrics, Topology), Security (SQL Firewall, ACL, OAuth), Traffic (Backends, Queues, Data Explorer, Router Rules — where shard/routing targets are configured, QoS), and Configuration (LLM)">
+        <figcaption>PolyWire ships its own admin app — live traffic metrics across every protocol (gRPC and MCP shown separately, not merged into one label), per-tool MCP call counts and error rates, cache-hit-vs-Postgres RTT for every protocol including OpenSearch, and a sidebar that groups controls the same way this page does: Security (SQL firewall, ACL, OAuth) as its own labeled section, Router Rules for sharding/routing targets under Traffic, deployment topology, backends, queues, and LLM configuration for dialect translation — all in one place, not scattered across each protocol's own tooling.</figcaption>
       </figure>
       <p class="lede" style="margin-top:24px">
         Prefer to click through it yourself? <a href="demo-polywire.html" class="btn btn-primary">Open the interactive demo →</a>
         No signup, no backend required — synthetic data, real layout.
       </p>
 
-      <h3 class="subhead" id="cache-vs-round-trip">Polycache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
-      <p class="statTeaser">Up to <b>9.3× faster</b> repeat reads — built-in distributed caching reduces Postgres round trips across every protocol Polywire speaks.</p>
+      <h3 class="subhead" id="cache-vs-round-trip">PolyCache hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
+      <p class="statTeaser">Up to <b>9.3× faster</b> repeat reads — built-in distributed caching reduces Postgres round trips across every protocol PolyWire speaks.</p>
       <p class="rttNote">
         <b>Shared across protocols, not per-protocol silos — in two tiers.</b> PostgreSQL, MySQL,
         Oracle, SQL Server, gRPC, and MCP all read and populate the same distributed cache for
@@ -151,13 +152,13 @@
         sharing its cache entries with any SQL client reading the same physical Postgres table
         (though not directly with each other, since they store data under different physical
         tables even when the logical table/collection name matches). See
-        <a href="index.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
+        <a href="polycache.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
         that looks like.
       </p>
       <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
       <p class="rttNote">
         A sophisticated question to ask here: how does a request from one protocol resolve to the
-        <i>same</i> cache entry as an equivalent request from another? Polywire doesn't parse two
+        <i>same</i> cache entry as an equivalent request from another? PolyWire doesn't parse two
         differently-worded queries and recognize they mean the same thing — it's simpler and more
         literal than that, on purpose. Every cache entry's key is built from: the backend the
         request targets, the SQL text <b>after</b> dialect translation (the same stage that turns
@@ -175,7 +176,7 @@
         used bind parameters or literal values — a simple, coarse invalidation, not row-level
         tracking, so a write to one row briefly costs a cache miss on unrelated rows in the same
         table too. Entries expire after a configurable TTL (30 seconds by default) even without a
-        write. There's no cross-instance consistency protocol beyond that: every Polywire instance
+        write. There's no cross-instance consistency protocol beyond that: every PolyWire instance
         in the cluster reads and writes the same distributed cache directly, so a write anywhere is
         visible everywhere on its very next read, bounded by ordinary distributed-cache propagation
         time, not a separate sync step.
@@ -183,9 +184,9 @@
       <details class="methodDetails">
         <summary>See benchmark methodology and full numbers →</summary>
       <p class="rttNote">
-        <b>Polycache</b> is Polywire's embedded, distributed query result cache — the same admin
+        <b>PolyCache</b> is PolyWire's embedded, distributed query result cache — the same admin
         console tracks this per wire protocol: how long a cache hit takes against
-        a real Postgres read or write. Measured on a local loopback deployment (client, Polywire,
+        a real Postgres read or write. Measured on a local loopback deployment (client, PolyWire,
         and Postgres all on one machine), 30+ samples per cell — every protocol's connections were
         opened together and warmed with an equal number of throwaway calls each before any sample
         was taken, then measured in round-robin order (one call per protocol, repeated) rather
@@ -193,7 +194,7 @@
         protocol in its own sequential block produced skewed numbers — whichever protocol ran
         first absorbed the JVM's own warm-up cost — so it's corrected below. The point isn't the
         absolute millisecond figures, which shrink further over a real network, it's that the
-        cache consistently wins on every protocol Polywire speaks, without any application-side
+        cache consistently wins on every protocol PolyWire speaks, without any application-side
         caching code, and that a real Postgres round trip costs about the same regardless of which
         wire protocol asked for it.
       </p>
@@ -283,7 +284,7 @@
       <details class="methodDetails">
         <summary>See sharding detail →</summary>
       <p class="rttNote">
-        Polywire routes by a real bound parameter value — not just SQL text — across
+        PolyWire routes by a real bound parameter value — not just SQL text — across
         <b>Postgres, Oracle, SQL Server, and MySQL</b> wire protocols, decoding each protocol's
         own native binary bind-parameter encoding (Postgres extended-query, Oracle,
         SQL Server <code>sp_executesql</code>, MySQL <code>COM_STMT_EXECUTE</code>) so a client's
@@ -368,8 +369,8 @@
         against a plain Postgres table, one per measurement, tags and fields stored as
         <code>jsonb</code>. Like oswire and sqswire, influxwire has no result cache of its own
         (a time-series write is a new point, not a repeatable read to serve from cache) and sits
-        outside the shared pipeline Polycache's other six protocols share -- see
-        <a href="index.html#distributed-cache">the distributed cache section</a> for that scope.
+        outside the shared pipeline PolyCache's other six protocols share -- see
+        <a href="polycache.html">PolyCache</a> for that scope.
       </p>
       <p class="rttNote">
         <b>TimescaleDB, detected not required.</b> influxwire checks whether the target Postgres
@@ -438,8 +439,8 @@
         including bounded variable-length paths (<code>[*1..3]</code>, translated to a real Postgres
         <code>WITH RECURSIVE</code> query with cycle detection) -- an unbounded <code>[*]</code> path is
         rejected at parse time rather than accepted and left to run away against a large graph.
-        Like influxwire, boltwire has no result cache of its own and sits outside Polycache's shared
-        pipeline -- see <a href="index.html#distributed-cache">the distributed cache section</a> for
+        Like influxwire, boltwire has no result cache of its own and sits outside PolyCache's shared
+        pipeline -- see <a href="polycache.html">PolyCache</a> for
         that scope.
       </p>
       <div class="rttTableWrap">
@@ -479,11 +480,11 @@
       </p>
 
       <h3 class="subhead" id="rollups">Rollups: pre-aggregated tables, kept fresh automatically<a class="permalink" href="#rollups" aria-label="Link to this section">#</a></h3>
-      <p class="statTeaser">Define a rollup once — Polywire keeps it fresh and rewrites matching queries to use it automatically, no application change.</p>
+      <p class="statTeaser">Define a rollup once — PolyWire keeps it fresh and rewrites matching queries to use it automatically, no application change.</p>
       <details class="methodDetails">
         <summary>See rollup configuration and detail →</summary>
       <p class="rttNote">
-        A rollup is a real Postgres table Polywire creates and keeps current for you — the
+        A rollup is a real Postgres table PolyWire creates and keeps current for you — the
         materialized result of a <code>GROUP BY</code>/aggregate query you define once, not a view
         and not something your application maintains by hand. Define it in YAML (a
         <code>POLYWIRE_ROLLUP_DEFINITIONS_FILE</code>, or the same field via the admin API):
@@ -503,26 +504,26 @@
     max_staleness_minutes: 30</code>
       </div>
       <p class="rttNote">
-        Every 15 minutes, Polywire runs exactly the SQL you'd write by hand to keep this current —
+        Every 15 minutes, PolyWire runs exactly the SQL you'd write by hand to keep this current —
         <code>DROP TABLE IF EXISTS polywire_rollup_daily_order_totals;</code> then
         <code>CREATE TABLE polywire_rollup_daily_order_totals AS SELECT customer_id, order_date,
         SUM(amount) AS total_amount, COUNT(*) AS order_count FROM orders GROUP BY customer_id,
         order_date;</code> — against the real <code>orders</code> table, on the backend named
-        <code>primary</code>. <code>max_staleness_minutes</code> is the cutoff past which Polywire
+        <code>primary</code>. <code>max_staleness_minutes</code> is the cutoff past which PolyWire
         stops trusting that table for acceleration until the next refresh succeeds.
       </p>
       <p class="rttNote">
         <b>Acceleration is automatic and always on for a fresh, matching rollup — there's no
-        separate switch to flip.</b> Polywire embeds a genuine SQL parser, validator, and
+        separate switch to flip.</b> PolyWire embeds a genuine SQL parser, validator, and
         relational query planner inside its own pipeline. When a client sends an aggregate query
-        against <code>orders</code>, Polywire parses it, checks whether a fresh rollup's source
+        against <code>orders</code>, PolyWire parses it, checks whether a fresh rollup's source
         table is mentioned, and rewrites the query to read from
         <code>polywire_rollup_daily_order_totals</code> instead whenever its
         materialized-view matcher can prove that substitution is valid for that specific query
         shape — defining the rollup above <i>is</i> turning rewriting on for it, nothing else to
         configure. Your application still just queries <code>orders</code> — it never has to know
         the rollup exists. If the rollup is stale, doesn't apply, or the rewrite can't be proven
-        safe for that query, Polywire falls straight through to the real table unchanged — a
+        safe for that query, PolyWire falls straight through to the real table unchanged — a
         rollup can only ever make a matching query faster, never make an unmatched one wrong.
       </p>
       <p class="rttNote">
@@ -541,7 +542,7 @@
       <details class="methodDetails">
         <summary>See export surfaces and per-platform detail →</summary>
       <p class="rttNote">
-        Polywire exposes two real, independent export surfaces — a Prometheus-format
+        PolyWire exposes two real, independent export surfaces — a Prometheus-format
         <code>/metrics</code> endpoint and a periodic OTLP metrics push, over either gRPC
         (<code>:4317</code>, the default) or HTTP (<code>:4318</code>, set
         <code>POLYWIRE_OTEL_PROTOCOL=http</code>) — and how each platform gets that data differs
@@ -550,14 +551,14 @@
         OpenTelemetry Collector in between to translate into their native API. OTLP/HTTP exists
         for the networks gRPC doesn't reach cleanly — corporate proxies and L7 load balancers that
         only forward plain HTTP/HTTPS. This is metrics only today — no traces or logs — and
-        Polywire doesn't set a <code>service.name</code> resource attribute, so a receiving
+        PolyWire doesn't set a <code>service.name</code> resource attribute, so a receiving
         platform identifies its data by the <code>polywire_*</code> metric-name prefix, not a
         service tag.
       </p>
 
       <figure>
-        <img src="docs/observability.svg" alt="Polywire observability integration diagram: Polywire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics">
-        <figcaption>How Polywire's metrics reach each platform: a Prometheus scrape, a direct OTLP push, or a push routed through an OpenTelemetry Collector, depending on what the destination platform natively accepts.</figcaption>
+        <img src="docs/observability.svg" alt="PolyWire observability integration diagram: PolyWire exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics">
+        <figcaption>How PolyWire's metrics reach each platform: a Prometheus scrape, a direct OTLP push, or a push routed through an OpenTelemetry Collector, depending on what the destination platform natively accepts.</figcaption>
       </figure>
 
       <div class="rttTableWrap">
@@ -622,8 +623,8 @@
 
       <h3 class="subhead" id="ai-features">AI features beyond MCP<a class="permalink" href="#ai-features" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        MCP is one way an AI agent reaches Polywire — a client speaking a protocol. These ten are
-        different: Polywire itself calling an LLM, at specific points in its own pipeline (five in
+        MCP is one way an AI agent reaches PolyWire — a client speaking a protocol. These ten are
+        different: PolyWire itself calling an LLM, at specific points in its own pipeline (five in
         the shared admin/pipeline surface, five as their own MCP tools), to do something a fixed
         rule can't. All ten share the same design discipline: <b>a deterministic decision stays
         deterministic</b> — whether to retry a failed query, whether a rate is anomalous, whether a
@@ -631,7 +632,7 @@
         call alone; and <b>nothing an LLM produces is ever applied or executed without a check</b>
         — a draft is plain JSON an admin reviews and applies through an endpoint that already
         existed, a narration always comes with the real fact it describes, and anything that
-        actually runs still passes through Polywire's own firewall/QoS/pipeline like every other
+        actually runs still passes through PolyWire's own firewall/QoS/pipeline like every other
         statement. All ten read one shared LLM provider config
         (<code>POLYWIRE_LLM_PROVIDER</code>/<code>API_KEY</code>/<code>BASE_URL</code>/<code>MODEL</code>,
         hot-reloadable via <code>PUT /api/llm-config</code> with no restart) — configure it once,
@@ -739,7 +740,7 @@
         </div>
       </div>
       <p class="rttNote">
-        Every one of these ten was built with a real, no-mock integration test — a real Polywire
+        Every one of these ten was built with a real, no-mock integration test — a real PolyWire
         subprocess, a real disposable Postgres, and a real local HTTP server standing in for the
         LLM endpoint (there's no free, deterministic, offline real LLM to point a CI run at) — the
         same discipline as everything else on this page.
@@ -747,7 +748,7 @@
 
       <h3 class="subhead" id="multi-az">Multi-AZ deployment<a class="permalink" href="#multi-az" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/deployment.svg" alt="Polywire multi-AZ cloud deployment: client applications behind a network load balancer, Polywire instances spread across three availability zones each holding a primary or backup Polycache copy, a Postgres data plane (one primary shard and its secondaries/replicas, one per zone), and a separate config-primary Postgres with a standby for automatic failover, pushing config changes to every zone via LISTEN/NOTIFY">
+        <img src="docs/deployment.svg" alt="PolyWire multi-AZ cloud deployment: client applications behind a network load balancer, PolyWire instances spread across three availability zones each holding a primary or backup PolyCache copy, a Postgres data plane (one primary shard and its secondaries/replicas, one per zone), and a separate config-primary Postgres with a standby for automatic failover, pushing config changes to every zone via LISTEN/NOTIFY">
         <figcaption>Every piece of this is real and tested today, including the cross-zone cache backup replication — a cache entry's backup copy is placed on a node in a different availability zone than its primary, proven by a live test with real cache nodes. Cluster discovery works across a static seed list or AWS/GCP/Azure storage; connections between cache nodes can be TLS-encrypted.</figcaption>
       </figure>
 
@@ -761,12 +762,12 @@
         <li><span class="uc-body"><span class="uc-title">SQL firewall</span><span class="uc-desc">Allow/deny rules matched on statement type, table (glob), and a SQL regex, stored in Postgres and pushed live to every node over LISTEN/NOTIFY — no restart to change a rule. Stacked-query injection (<code>SELECT ...; DROP TABLE ...</code>) is blocked unconditionally, independent of any rule. Rules are process-wide today, not yet per-tenant or per-role, and the only actions are allow/deny — no rate-limit or log-only action.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Connection ACL</span><span class="uc-desc">CIDR allow/deny lists, fail-closed once any rule is configured, enforced at accept time on every TCP wire protocol, every HTTP endpoint, and gRPC. PROXY protocol v2 preserves the real client IP behind a load balancer. Configure <code>POLYWIRE_ACL_TRUSTED_PROXIES</code> for HTTP endpoints — without it, the first <code>X-Forwarded-For</code> hop is trusted, which a client in front of an untrusted proxy could spoof.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">A real token-bucket limiter — rate, burst, and max-wait, configurable per workload class (query/write/ddl/txn) — plus shedding when a backend's connection pool is saturated. Today the limiter is per-workload-class and process-wide, not yet per-tenant or per-client.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and Polywire verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>POLYWIRE_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and PolyWire verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>POLYWIRE_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">TLS everywhere</span><span class="uc-desc">In-band TLS for Postgres, MySQL, and SQL Server wire protocols (standard client <code>sslmode</code>/encryption settings just work), a dedicated TCPS port for Oracle, TLS for gRPC, and mutual TLS between cluster nodes for cache traffic — all from one PKCS12 keystore. Client-certificate authentication isn't implemented yet; TLS today verifies the server to the client, not the client to the server.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>NEXAGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and Polywire logs a warning at startup saying so.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>NEXAGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and PolyWire logs a warning at startup saying so.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API accepts either of two auth paths, simultaneously — a shared bearer token (<code>POLYWIRE_ADMIN_TOKEN</code>, constant-time compare) that always grants full read+write access, the simplest option for a single operator, CI, or a quick trial; or real SSO — Okta, Entra ID, or any OIDC-compliant IdP, via the same <code>POLYWIRE_OAUTH_ISSUER</code> config as every other OIDC-backed surface on this page. With SSO, a caller's IdP group or app-role claim (<code>POLYWIRE_OAUTH_ROLES_CLAIM</code>) is checked against <code>POLYWIRE_OAUTH_ADMIN_ROLES</code>/<code>POLYWIRE_OAUTH_VIEWER_ROLES</code> to grant either read-only viewer access or full admin — an SSO caller with neither role name is denied, not silently downgraded to viewer. Every mutating call made through either path is recorded to the audit log, attributed to the real SSO identity when there is one, or plainly to <code>"shared-admin-token"</code> when there isn't. Turning SSO on doesn't retire the shared token — both stay live together, and either one alone fails closed the same way the single-token setup always did.</span></span></li>
       </ul>
-      <p class="statTeaser">Row-level security, for real — your own Postgres RLS policies do the filtering, not Polywire rewriting SQL.</p>
+      <p class="statTeaser">Row-level security, for real — your own Postgres RLS policies do the filtering, not PolyWire rewriting SQL.</p>
       <details class="methodDetails">
         <summary>See RLS detail and requirements →</summary>
       <p class="rttNote">
@@ -775,11 +776,11 @@
         <code>polywire.user_id</code> as a session GUC on the backend connection before each
         statement — filtering is enforced by your own Postgres RLS policies
         (<code>USING (owner_user = current_setting('polywire.user_id'))</code>-style), not by
-        Polywire rewriting SQL. This holds even fronted by the Oracle wire protocol: orawire's SQL
+        PolyWire rewriting SQL. This holds even fronted by the Oracle wire protocol: orawire's SQL
         translation always executes against Postgres, so the same Postgres RLS mechanism applies —
         no separate Oracle VPD/<code>SYS_CONTEXT</code> setup needed, since there's no real Oracle
         database in this path for VPD to run against. One requirement RLS makes non-negotiable:
-        Polywire's own backend role must not be a superuser or the table owner — either bypasses
+        PolyWire's own backend role must not be a superuser or the table owner — either bypasses
         every RLS policy unconditionally, no matter what the session GUC says. Grant it
         <code>SELECT</code> on <code>pg_authid</code> and on the tables it serves instead. Every
         login — success or failure, real identity or shared credential — is recorded to a
@@ -795,7 +796,7 @@
       <h3 class="subhead" id="outages">Planned and unplanned outages<a class="permalink" href="#outages" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A Postgres backend going down for a patch shouldn't take your application down with it —
-        whether you chose the timing or not. Polywire tells the two cases apart deliberately: a
+        whether you chose the timing or not. PolyWire tells the two cases apart deliberately: a
         planned switchover can afford to wait for a clean cutover; an unplanned failure can't wait
         for anything.
       </p>
@@ -816,12 +817,12 @@
 
       <h3 class="subhead" id="error-handling">Error handling: real native errors, not a generic wrapper<a class="permalink" href="#error-handling" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Underneath every protocol Polywire speaks, the real failure is a Postgres SQLSTATE — a
+        Underneath every protocol PolyWire speaks, the real failure is a Postgres SQLSTATE — a
         unique-constraint violation, a missing table, a dead connection. A driver's own retry and
         reconnect logic (Oracle drivers checking for <code>ORA-03113</code> specifically to decide
         whether to transparently reconnect, MongoDB's retryable-reads keying off a real
         <code>codeName</code>, the AWS SDK unmarshalling a real exception class) only works if
-        Polywire sends the exact native error that driver expects — not a generic
+        PolyWire sends the exact native error that driver expects — not a generic
         <code>internal error</code> that leaves that logic with nothing to act on. Every wire
         protocol translates the real Postgres SQLSTATE into that protocol's own genuine error
         shape, verified against each vendor's own documentation or a real client library actually
@@ -833,7 +834,7 @@
         <li><span class="uc-body"><span class="uc-title">DynamoDB</span><span class="uc-desc">Real AWS exception names in the real DynamoDB JSON envelope — <code>ConditionalCheckFailedException</code>, <code>ResourceNotFoundException</code>, <code>TransactionConflictException</code> — verified against a real AWS SDK v2 client.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">SQS</span><span class="uc-desc">Real AWS error codes in the real SQS JSON error envelope — <code>QueueDoesNotExist</code>, <code>AccessDenied</code> — verified against a real AWS SDK v2 client.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">OpenSearch</span><span class="uc-desc">Real <code>error.type</code>/<code>error.reason</code>/<code>error.root_cause</code> — <code>index_not_found_exception</code>, <code>version_conflict_engine_exception</code>, <code>mapper_parsing_exception</code> — verified against a real <code>opensearch-java</code> client.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Connection loss, specifically</span><span class="uc-desc">Polywire distinguishes three real Postgres SQLSTATEs that all mean "the backend is unreachable" — an already-open connection dying vs. a new connection attempt failing to establish — and maps every one of them to the native "backend gone" error each protocol's own client actually expects, confirmed against a real live outage, not assumed.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Connection loss, specifically</span><span class="uc-desc">PolyWire distinguishes three real Postgres SQLSTATEs that all mean "the backend is unreachable" — an already-open connection dying vs. a new connection attempt failing to establish — and maps every one of them to the native "backend gone" error each protocol's own client actually expects, confirmed against a real live outage, not assumed.</span></span></li>
       </ul>
       <p class="rttNote">
         Where a vendor genuinely has no dedicated code for a condition (SQL Server has no numbered

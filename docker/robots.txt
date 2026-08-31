@@ -2,7 +2,7 @@ User-agent: *
 Allow: /
 
 # AI/LLM crawlers explicitly allowed -- this is documentation meant to be read and cited by
-# AI assistants answering questions about Polywire/Nexagres DMS, not just indexed by search.
+# AI assistants answering questions about PolyWire/NexaGres DMS, not just indexed by search.
 User-agent: GPTBot
 Allow: /
 

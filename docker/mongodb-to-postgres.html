@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MongoDB → PostgreSQL, No Driver Change | Polywire</title>
-<meta name="description" content="Your mongosh session or mongodb-driver-sync client connects to Polywire over the real MongoDB wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
+<title>MongoDB → PostgreSQL, No Driver Change | PolyWire</title>
+<meta name="description" content="Your mongosh session or mongodb-driver-sync client connects to PolyWire over the real MongoDB wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
 <link rel="canonical" href="https://polygres26.github.io/mongodb-to-postgres.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -27,9 +27,9 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "MongoDB to PostgreSQL without changing the MongoDB client",
-  "description": "Polywire speaks the real MongoDB wire protocol to mongosh and mongodb-driver-sync clients, and executes every operation against a real PostgreSQL database -- no driver swap, no application rewrite.",
+  "description": "PolyWire speaks the real MongoDB wire protocol to mongosh and mongodb-driver-sync clients, and executes every operation against a real PostgreSQL database -- no driver swap, no application rewrite.",
   "url": "https://polygres26.github.io/mongodb-to-postgres.html",
-  "about": { "@type": "SoftwareApplication", "name": "Polywire", "url": "https://polygres26.github.io/polywire.html" }
+  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://polygres26.github.io/polywire.html" }
 }
 </script>
 </head>
@@ -38,8 +38,9 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="index.html">Home</a>
-      <a href="polywire.html">Polywire</a>
+      <a href="polywire.html">PolyWire</a>
       <a href="dms.html">DMS</a>
+      <a href="polycache.html">PolyCache</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#contact">Contact</a>
@@ -48,20 +49,20 @@
   <div class="wrap" id="main">
     <header class="hero">
       <div class="brandRow">
-        <img src="docs/logo.png" alt="Nexagres" class="brandMark">
-        <h1 class="eyebrow">Nexagres</h1>
+        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <h1 class="eyebrow">NexaGres</h1>
       </div>
-      <p class="lede"><a href="index.html">← Back to the Polywire overview</a></p>
+      <p class="lede"><a href="index.html">← Back to the PolyWire overview</a></p>
       <h2 class="heroTitle">MongoDB → PostgreSQL. No driver change.</h2>
       <p class="heroSub">
         Your MongoDB application thinks it's talking to MongoDB. It's actually talking to
         Postgres — and it never finds out. <code>mongosh</code> and
-        <code>mongodb-driver-sync</code> connect over the real MongoDB wire protocol; Polywire
+        <code>mongodb-driver-sync</code> connect over the real MongoDB wire protocol; PolyWire
         executes every operation against a real PostgreSQL database on the other end.
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try It Free</a>
-        <a class="btn btn-secondary" href="polywire.html">Explore Polywire</a>
+        <a class="btn btn-secondary" href="polywire.html">Explore PolyWire</a>
       </div>
     </header>
 
@@ -99,22 +100,22 @@ test&gt; db.orders.find()
 test&gt;</pre>
       </div>
       <div class="demoFlow">
-        <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>Polywire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+        <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
       </div>
       <p class="rttNote">
         <i>MongoDB client. MongoDB wire protocol. PostgreSQL database. No client rewrite.</i>
         Document contents above are illustrative — the operation and path are exactly real.
-        See <a href="polywire.html">Polywire capabilities</a> for exact client-by-client coverage.
+        See <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.
       </p>
 
       <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote"><b>1. Start Polywire</b> — point it at a Postgres you already have:</p>
+      <p class="rttNote"><b>1. Start PolyWire</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 27017:27017 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same mongosh you already use:</p>
       <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
-      <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → Polywire → PostgreSQL. No driver change.</p>
+      <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → PolyWire → PostgreSQL. No driver change.</p>
       <p class="rttNote">
         Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
         Database for PostgreSQL, or Oracle OCI? See <a href="CONNECTING.md">CONNECTING.md</a> for
@@ -141,13 +142,13 @@ test&gt;</pre>
     </section>
 
     <section class="tool" id="final-cta">
-      <h2 class="finalCtaTitle">Ready to put Polywire in front of Postgres?</h2>
+      <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
       <p class="lede">
         <b>Try it free</b> — Developer Edition, all features. <b>Taking it to production?</b>
         Bring your architecture and we'll help map the deployment.
       </p>
       <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try Polywire Free</a>
+        <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
         <a class="btn btn-secondary" href="index.html#contact">Schedule Architecture Review</a>
       </div>
     </section>

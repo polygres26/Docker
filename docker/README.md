@@ -1,17 +1,17 @@
-# Nexagres — Docker
+# NexaGres — Docker
 
-Public packaging and documentation for the Nexagres project's two tools: **Nexagres DMS**
-(migration assessment) and **Polywire** (protocol gateway). Their source repos are private; this
+Public packaging and documentation for the NexaGres project's two tools: **NexaGres DMS**
+(migration assessment) and **PolyWire** (protocol gateway). Their source repos are private; this
 repo is the public surface — prebuilt images, architecture, and how to run them.
 
 ## What's here
 
 | Tool | What it does | Image |
 |---|---|---|
-| **Nexagres DMS** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/dms` |
-| **Polywire** | A mid-tier gateway that speaks Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, and Amazon SQS wire protocols on one side and real Postgres on the other — so an existing app keeps its driver and connection code while the data lives in Postgres. | `ghcr.io/polygres26/polywire` |
+| **NexaGres DMS** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/dms` |
+| **PolyWire** | A mid-tier gateway that speaks Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, and Amazon SQS wire protocols on one side and real Postgres on the other — so an existing app keeps its driver and connection code while the data lives in Postgres. | `ghcr.io/polygres26/polywire` |
 
-## Run Nexagres DMS
+## Run NexaGres DMS
 
 ```bash
 docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/dms:latest
@@ -20,7 +20,7 @@ docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/dms:latest
 Open `http://localhost:8090`. State (saved connections, LLM config, uploaded reports) persists in
 the `polyadvisor-data` volume across restarts.
 
-## Run Polywire
+## Run PolyWire
 
 ```bash
 docker run \
@@ -42,11 +42,11 @@ needed, just open it in a browser.
 
 ## Architecture
 
-![Polywire architecture: nine client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane](docs/architecture.png)
+![PolyWire architecture: nine client protocols feed a shared eight-stage pipeline, each paired with the customer outcome it drives, backed by a Postgres control plane](docs/architecture.png)
 
 ## Multi-AZ deployment
 
-![Polywire multi-AZ cloud deployment: stateless instances per zone behind a network load balancer, primary/backup cache copies replicating across zones, a config-primary Postgres with standby failover](docs/deployment.png)
+![PolyWire multi-AZ cloud deployment: stateless instances per zone behind a network load balancer, primary/backup cache copies replicating across zones, a config-primary Postgres with standby failover](docs/deployment.png)
 
 Every piece of this diagram is real and tested today: the load balancer fan-out, per-zone
 instance scaling, config-primary failover, and the cross-zone cache backup replication — a cache
@@ -69,7 +69,7 @@ running against these published images directly, no source checkout required. Se
 `polywire/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
-`wire/` and `dms/` (formerly `advisor/`), which live in Nexagres's private source repos — they're
+`wire/` and `dms/` (formerly `advisor/`), which live in NexaGres's private source repos — they're
 included here for transparency into exactly how each image is put together, not as a
 build-it-yourself path.
 

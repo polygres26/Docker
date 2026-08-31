@@ -10,9 +10,9 @@
   <packaging>jar</packaging>
   <name>nexagres-migration</name>
   <description>Massively-parallel, low-downtime migration connectors (MongoDB change streams,
-    and future DynamoDB/MySQL/Oracle/SQL Server sources) writing into a running Polywire instance
-    over Polywire's own native gRPC driver (QueryService.Execute), never a direct JDBC backdoor
-    to the target Postgres, so every migration write goes through Polywire's real firewall/QoS/
+    and future DynamoDB/MySQL/Oracle/SQL Server sources) writing into a running PolyWire instance
+    over PolyWire's own native gRPC driver (QueryService.Execute), never a direct JDBC backdoor
+    to the target Postgres, so every migration write goes through PolyWire's real firewall/QoS/
     cache-invalidation pipeline like any other client. Independent standalone module, sibling to
     nexagres-wire and nexagres-dms in this repo; depends on nexagres-wire only to reuse its
     already-generated QueryService gRPC stub classes (com.nexagres.wire.grpc.proto.*), not any of
@@ -44,7 +44,7 @@
          driver, and slf4j-simple, all real, compile-scope dependencies of wire's own pom.xml,
          not duplicated here. Deliberately depends on the WHOLE wire jar rather than a
          hand-extracted proto-only artifact, to guarantee these stub classes can never drift from
-         what a real running Polywire instance's gRPC server actually implements: both come from
+         what a real running PolyWire instance's gRPC server actually implements: both come from
          the exact same build. -->
     <dependency>
       <groupId>com.nexagres</groupId>
@@ -65,7 +65,7 @@
     <!-- Test-scope only in wire (real client SigV4 signing/JSON parsing validates sqswire's
          emulated responses); this module needs it compile-scope, same reasoning as every other
          real SOURCE client dependency here: SqsSource connects to a genuine source SQS-API
-         endpoint (real AWS, or, since sqswire is API-compatible, a running Polywire instance's
+         endpoint (real AWS, or, since sqswire is API-compatible, a running PolyWire instance's
          own sqswire frontend, useful for this project's own tests without needing real AWS
          credentials). -->
     <dependency>

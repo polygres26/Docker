@@ -9,9 +9,9 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>Nexagres DMS</name>
+  <name>NexaGres DMS</name>
   <description>
-    Nexagres DMS (Database Migration Service) -- formerly "PolyAdvisor"/Nexagres Advisor. Two
+    NexaGres DMS (Database Migration Service) -- formerly "PolyAdvisor"/NexaGres Advisor. Two
     halves under one module: Migration Advisor (connects to a source database -- Oracle first,
     MariaDB/MySQL next -- profiles schema + workload, scores Postgres-migration difficulty) and
     Migration Service (launches and monitors real nexagres-migration runs -- see
@@ -126,7 +126,7 @@
       <version>3.0.3</version>
     </dependency>
 
-    <!-- Lets Nexagres DMS's Migration Service half actually LAUNCH a nexagres-migration run
+    <!-- Lets NexaGres DMS's Migration Service half actually LAUNCH a nexagres-migration run
          (MigrationJobRunner), not just read
          its bookkeeping tables the way MigrationStatusStore already did before this dependency
          existed. Brings in nexagres-wire, every connector's real vendor client (mongodb-driver-

@@ -1,20 +1,20 @@
-# Polywire
+# PolyWire
 
 A mid-tier database gateway. It speaks Oracle TNS/TTC, MySQL client/server protocol, SQL Server
 TDS, Postgres wire protocol v3, MongoDB wire protocol, DynamoDB's HTTP/JSON API, Amazon SQS's
 HTTP/JSON API, gRPC, and MCP to clients — translating and routing every one of them to a real
 backend. Postgres was the original, still-primary backend; Oracle, SQL Server, and MySQL/MariaDB
-are now real backend engines too, not just protocols Polywire imitates for clients — see
+are now real backend engines too, not just protocols PolyWire imitates for clients — see
 [`../docs/POLYWIRE_GUIDE.md` §4.4](../docs/POLYWIRE_GUIDE.md#44-multiple-backend-engines-top-5-by-db-engines-ranking-alongside-postgres).
 It's wire-protocol compatibility for a pre- or post-migration cutover, not a schema/data migration
 tool itself.
 
-New here? Start with [`../docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) — what Polywire does, why
+New here? Start with [`../docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) — what PolyWire does, why
 you'd use it, and how to point your app at it. [`../docs/POLYWIRE_GUIDE.md`](../docs/POLYWIRE_GUIDE.md)
 and [`../docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) are technical/internal references (pipeline
 internals, security, HA, the latency investigation) for operators and contributors.
 
-Point an existing app's connection string at Polywire instead of its original database, and it
+Point an existing app's connection string at PolyWire instead of its original database, and it
 translates and routes to real Postgres. Run it indefinitely as a permanent compatibility shim
 (e.g. legacy MongoDB driver code not worth rewriting), or as a temporary cutover bridge while a
 migration tool moves schema/data behind the scenes.
@@ -33,7 +33,7 @@ ordering, exact semi-join pushdown to cut what crosses the wire) — not the cor
 scatter-gather path's own broadcast-and-merge. See
 [`../docs/POLYWIRE_GUIDE.md` §4.3](../docs/POLYWIRE_GUIDE.md#43-cross-shard--cross-backend-join-federation).
 
-![Polywire architecture: nine client protocols (OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP) feed a shared eight-stage pipeline -- frontends, firewall, router, QoS, dialect translation, rollup, cache, stats collector -- each paired with the customer outcome it drives, backed by a Postgres control plane over LISTEN/NOTIFY and executing against horizontally-sharded Postgres backends](docs/architecture.png)
+![PolyWire architecture: nine client protocols (OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP) feed a shared eight-stage pipeline -- frontends, firewall, router, QoS, dialect translation, rollup, cache, stats collector -- each paired with the customer outcome it drives, backed by a Postgres control plane over LISTEN/NOTIFY and executing against horizontally-sharded Postgres backends](docs/architecture.png)
 
 The full architecture, security, HA, and deployment guide with more diagrams lives at
 [`polywire/index.html`](https://polygres26.github.io/polywire/) (or open it directly:
@@ -106,12 +106,12 @@ Every setting is readable from **either** an env var or the `polywire_config` Po
 Config-primary failover (`POLYWIRE_STANDBY_HOST`) with automatic failback probing. Sharding via
 `POLYWIRE_SHARD_BACKENDS` with scatter-gather query fan-out.
 
-![Polywire multi-AZ cloud deployment: client applications behind a hyperscaler Network Load Balancer, fanning out to stateless Polywire instances in three availability zones, each zone holding a primary or backup copy of cached entries with backup-copy replication across zones, a config-primary Postgres with a standby for automatic failover pushing LISTEN/NOTIFY config to every zone, and a data-plane Postgres shard/replica per zone](docs/deployment.png)
+![PolyWire multi-AZ cloud deployment: client applications behind a hyperscaler Network Load Balancer, fanning out to stateless PolyWire instances in three availability zones, each zone holding a primary or backup copy of cached entries with backup-copy replication across zones, a config-primary Postgres with a standby for automatic failover pushing LISTEN/NOTIFY config to every zone, and a data-plane Postgres shard/replica per zone](docs/deployment.png)
 
 Every piece of this diagram is real today, including the cross-zone cache backup replication:
 cloud-native cluster discovery (`POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure`), AZ-aware
 backup placement (a cache entry's backup never lands in the same AZ as its primary -- live-proven
-by `PolywireClusterAzBackupPlacementTest`, three real Ignite nodes, not a simulation), a
+by `PolyWireClusterAzBackupPlacementTest`, three real Ignite nodes, not a simulation), a
 configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1), and TLS between cache
 nodes (`POLYWIRE_TLS_KEYSTORE`) are all implemented and tested. What's genuinely still open: the
 S3/GCS/Azure discovery finders are verified against the real Ignite classes but not yet exercised

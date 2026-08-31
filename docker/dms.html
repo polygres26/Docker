@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nexagres DMS — Migration Assessment</title>
-<meta name="description" content="Nexagres DMS: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
+<title>NexaGres DMS — Migration Assessment</title>
+<meta name="description" content="NexaGres DMS: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
 <link rel="canonical" href="https://polygres26.github.io/dms.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,11 +14,11 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://polygres26.github.io/dms.html">
-<meta property="og:title" content="Nexagres DMS — Migration Assessment">
+<meta property="og:title" content="NexaGres DMS — Migration Assessment">
 <meta property="og:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
 <meta property="og:image" content="https://polygres26.github.io/docs/admin-dms.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Nexagres DMS — Migration Assessment">
+<meta name="twitter:title" content="NexaGres DMS — Migration Assessment">
 <meta name="twitter:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
 <meta name="twitter:image" content="https://polygres26.github.io/docs/admin-dms.png">
 </head>
@@ -27,8 +27,9 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="index.html">Home</a>
-      <a href="polywire.html">Polywire</a>
+      <a href="polywire.html">PolyWire</a>
       <a href="dms.html" class="active">DMS</a>
+      <a href="polycache.html">PolyCache</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#faq">FAQ</a>
@@ -38,13 +39,13 @@
   <div class="wrap" id="main">
     <header>
       <div class="brandRow">
-        <img src="docs/logo.png" alt="Nexagres" class="brandMark">
-        <h1 class="eyebrow">Nexagres</h1>
+        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <h1 class="eyebrow">NexaGres</h1>
       </div>
       <p class="lede">
-        <a href="index.html">← Back to home</a> — <b>Nexagres DMS plans the move to Postgres.
-        <a href="polywire.html">Polywire</a> runs and governs workloads on Postgres.</b>
-        Nexagres DMS tells you how hard moving to Postgres will be; Polywire keeps your
+        <a href="index.html">← Back to home</a> — <b>NexaGres DMS plans the move to Postgres.
+        <a href="polywire.html">PolyWire</a> runs and governs workloads on Postgres.</b>
+        NexaGres DMS tells you how hard moving to Postgres will be; PolyWire keeps your
         application running while you do it.
       </p>
     </header>
@@ -53,7 +54,7 @@
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/dms</span>
       </div>
-      <h2>Nexagres DMS</h2>
+      <h2>NexaGres DMS</h2>
       <p class="lede">
         Tool for moving off Oracle/MySQL/MariaDB/SQL Server onto Postgres: assess how hard the
         migration is, launch and track the real data-movement run, and bridge your existing
@@ -67,6 +68,7 @@
           <li><a href="#llm-assist">Connecting with an LLM's help</a></li>
           <li><a href="#admin-console-dms">Admin console</a></li>
           <li><a href="#migration-service">Migration Service: launch and track a migration</a></li>
+          <li><a href="#dms-sources">Sources Migration Service accepts</a></li>
         </ul>
       </details>
 
@@ -76,7 +78,7 @@
         <li><span class="uc-body"><span class="uc-title">Upload a performance report</span><span class="uc-desc">Drop in an Oracle AWR report, a MySQL performance report, or a SQL Server DMV/Query Store export, and an LLM reads it for you. A genuinely different kind of signal than a live connection — labeled as such everywhere it shows up, never presented as equivalent.</span></span></li>
       </ul>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-dms.html?page=connections&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Connections" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=connections&amp;autoEnter=1" title="Live click-through demo: NexaGres DMS Connections" loading="lazy"></iframe>
         <figcaption>
           Live and click-through, not a screenshot — try adding, favoriting, or browsing a connection yourself.
           <a class="embedOpenLink" href="demo-dms.html?page=connections&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
@@ -93,14 +95,14 @@
         <li><span class="wg-body"><span class="wg-title">PL/SQL summarization (Oracle sources)</span><span class="wg-desc">An LLM explains what a package or procedure actually does in plain English, with an optional second-opinion "judge" model for a review pass — advisory only, layered on top of the rules-based score, never replacing it.</span></span></li>
       </ul>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-dms.html?page=reports&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Reports" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=reports&amp;autoEnter=1" title="Live click-through demo: NexaGres DMS Reports" loading="lazy"></iframe>
         <figcaption>
           Uploaded-report management, live — analyzed/not-analyzed status per file, the same view either data path lands you on.
           <a class="embedOpenLink" href="demo-dms.html?page=reports&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
       <p class="rttNote">
-        <b>Where Nexagres DMS is still early:</b> saved connection credentials are stored as-is
+        <b>Where NexaGres DMS is still early:</b> saved connection credentials are stored as-is
         today — encryption at rest is planned but not yet built, so treat this like any other tool
         you'd point at a database with a password in a config file. There's a single shared admin
         account, no per-user roles or SSO yet. Worth knowing before you point it at anything you
@@ -117,19 +119,19 @@
       <h3 class="subhead" id="llm-assist">Connecting, exploring, and reviewing PL/SQL with an LLM's help<a class="permalink" href="#llm-assist" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         A connection is a JDBC URL, a schema/user, and a credential — plain password today, or a
-        reference into Vault or CyberArk if you'd rather not store the secret in Nexagres DMS at
+        reference into Vault or CyberArk if you'd rather not store the secret in NexaGres DMS at
         all. Once it's saved, Objects lists everything that user can see, grouped by type and
         (for a multi-schema connection) owner-qualified so a package in one schema is never
         confused for one in another. Selecting a routine shows its real source, pulled live from
         the database, not a cached copy.
       </p>
       <figure>
-        <img src="docs/dms-add-connection.png" alt="Nexagres DMS's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
+        <img src="docs/dms-add-connection.png" alt="NexaGres DMS's add-connection form filled in with a name, an Oracle JDBC URL, a schema/user, and a masked password, with Password/Vault/CyberArk credential-source options above the password field">
         <figcaption>Adding a connection: name, JDBC URL, schema/user, and a credential — stored as a plain password by default, or resolved from Vault/CyberArk at connect time instead of being stored at all.</figcaption>
       </figure>
       <p class="rttNote">
         <b>What the LLM step actually does, precisely:</b> select a package, procedure, or
-        function and Nexagres DMS can ask an LLM to explain it — a plain-English summary of what
+        function and NexaGres DMS can ask an LLM to explain it — a plain-English summary of what
         it does, a bullet list of the specific constructs that are non-trivial to port to
         Postgres (cursor locking, <code>DBMS_OUTPUT</code>, autonomous transactions, and the
         like), and a trivial/moderate/substantial effort estimate with its reasoning. This is a
@@ -139,17 +141,17 @@
         provider if you configure one on the LLM page.
       </p>
       <figure>
-        <img src="docs/dms-plsql-summarize.png" alt="Nexagres DMS's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
+        <img src="docs/dms-plsql-summarize.png" alt="NexaGres DMS's Objects tab showing an Oracle stored procedure's real source code (a cursor FOR UPDATE loop, DBMS_OUTPUT, an audit-log insert, exception handling) and, below it, a live LLM-generated summary: what the procedure does, a list of non-trivial-to-port constructs, and a migration-effort estimate with reasoning">
         <figcaption>A real Oracle procedure's source (left: cursor <code>FOR UPDATE</code> loop, <code>DBMS_OUTPUT</code>, exception handling) and the LLM's live output below it — a summary, the specific constructs that need manual attention when porting to Postgres, and an effort estimate. Explanation and risk-flagging, not automated translation.</figcaption>
       </figure>
 
       <h3 class="subhead" id="admin-console-dms">Admin console<a class="permalink" href="#admin-console-dms" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="docs/admin-dms.png" alt="Nexagres DMS's Findings tab for a connected MySQL database: two itemized migration findings, each with a severity badge (moderate, trivial) and a plain-English explanation of what it means for a Postgres port">
+        <img src="docs/admin-dms.png" alt="NexaGres DMS's Findings tab for a connected MySQL database: two itemized migration findings, each with a severity badge (moderate, trivial) and a plain-English explanation of what it means for a Postgres port">
         <figcaption>The Findings tab against a real MySQL connection — each item found in the schema, its severity, and a plain-English explanation of what it actually means for the port. The same connection also has Objects (schema/routine browsing), Workload (captured query summary), and Parameters (full config inspection) tabs alongside this one.</figcaption>
       </figure>
       <figure>
-        <img src="docs/dms-sizing.png" alt="Nexagres DMS's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
+        <img src="docs/dms-sizing.png" alt="NexaGres DMS's Sizing recommendation for the same connection: a SMALL tier with 2 vCPUs, 12 GB memory, 20 GB storage, 3,000 storage IOPS, and 100 max_connections, plus a caveats box and a rationale list explaining each number">
         <figcaption>Sizing recommendation for the same connection — a starting-point Postgres instance shape built from a fresh schema-size scan and workload capture, with the caveats and the line-by-line rationale behind every number shown alongside it, not hidden behind a tooltip.</figcaption>
       </figure>
       <p class="rttNote">
@@ -158,7 +160,7 @@
         console, every page explorable, nothing left as a static picture.
       </p>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-dms.html?page=sizing&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Sizing" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=sizing&amp;autoEnter=1" title="Live click-through demo: NexaGres DMS Sizing" loading="lazy"></iframe>
         <figcaption>
           Sizing, live — vCPUs, memory, storage, IOPS, and the reasoning behind each number.
           <a class="embedOpenLink" href="demo-dms.html?page=sizing&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
@@ -170,14 +172,14 @@
         move the data — real, massively-parallel <a href="https://github.com/polygres26/Docker/tree/main/docker/dms" target="_blank" rel="noopener"><code>nexagres-migration</code></a> runs
         (MongoDB change streams, MySQL binlog, SQL Server/Oracle native CDC, DynamoDB Streams,
         SQS, Neo4j snapshot, InfluxDB timestamp-cursor tail), launched from a form and tracked to
-        completion, without ever leaving Nexagres DMS. Every write lands through
-        <a href="polywire.html">Polywire</a>'s own gRPC driver — never a direct JDBC connection to
+        completion, without ever leaving NexaGres DMS. Every write lands through
+        <a href="polywire.html">PolyWire</a>'s own gRPC driver — never a direct JDBC connection to
         the target — so a migration in progress is subject to the exact same firewall, QoS, and
         cache pipeline as any other client.
       </p>
       <figure>
-        <img src="docs/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through Polywire's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
-        <figcaption>Every source connector feeds the same pipeline: parallel initial snapshot, then (where the source has one) a live change-data-capture tail owned by exactly one leader, retried and dead-lettered on failure, and written into Postgres exclusively through Polywire's own gRPC driver. Local thread-pool parallelism is free; a distributed worker fleet sharing one lease store is the Enterprise tier. A readiness checker rolls partitions, lag, dead letters, and row-level verification into one go/no-go signal before you cut over.</figcaption>
+        <img src="docs/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through PolyWire's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
+        <figcaption>Every source connector feeds the same pipeline: parallel initial snapshot, then (where the source has one) a live change-data-capture tail owned by exactly one leader, retried and dead-lettered on failure, and written into Postgres exclusively through PolyWire's own gRPC driver. Local thread-pool parallelism is free; a distributed worker fleet sharing one lease store is the Enterprise tier. A readiness checker rolls partitions, lag, dead letters, and row-level verification into one go/no-go signal before you cut over.</figcaption>
       </figure>
       <p class="rttNote">
         <b>Launch</b> picks a connector, the target Postgres connection, and the source's own
@@ -185,11 +187,40 @@
         every worker process itself checkpoints against — partitions done, events applied,
         change-feed lag, and which worker currently owns the live tail — for every source pointed
         at that target, not just the one you just launched. Parallelism above 1 needs an
-        Enterprise Polywire license; without one, a migration still runs correctly, just serially,
+        Enterprise PolyWire license; without one, a migration still runs correctly, just serially,
         one partition at a time.
       </p>
+
+      <h3 class="subhead" id="dms-sources">Sources Migration Service accepts<a class="permalink" href="#dms-sources" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Every source gets a real, parallel initial snapshot. Where the source has a genuine
+        change-tracking mechanism, Migration Service also runs a live change-data-capture (CDC)
+        tail after the snapshot — not a polling re-scan. Where it doesn't (a queue; a graph
+        database with no CDC in its free tier), that's stated plainly below, not glossed over.
+      </p>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Source</th><th>Initial snapshot</th><th>Live CDC</th><th>Mechanism</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>MongoDB</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Change streams + resume tokens</td></tr>
+            <tr><td>MySQL</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Binary log, ROW format</td></tr>
+            <tr><td>SQL Server</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Native CDC (<code>cdc.fn_cdc_get_all_changes_*</code>)</td></tr>
+            <tr><td>Oracle</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>LogMiner, SCN-checkpointed</td></tr>
+            <tr><td>DynamoDB</td><td class="yes">✓ parallel scan</td><td class="yes">✓</td><td>DynamoDB Streams, shard-polled</td></tr>
+            <tr><td>Amazon SQS</td><td class="maybe">n/a — a queue</td><td class="maybe">n/a</td><td>Drain-forward-delete, at-least-once (matches SQS's own guarantee)</td></tr>
+            <tr><td>Neo4j</td><td class="yes">✓ parallel</td><td class="no">—</td><td>Snapshot only — Neo4j has no CDC outside Enterprise edition</td></tr>
+            <tr><td>InfluxDB</td><td class="yes">✓ parallel</td><td class="yes">✓</td><td>Timestamp-cursor live tail</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        Every target schema is matched byte-for-byte to PolyWire's own wire protocol store, so a
+        real client speaking that protocol can use the migrated data immediately.
+      </p>
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-dms.html?page=datasync&amp;autoEnter=1" title="Live click-through demo: Nexagres DMS Migration Service" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html?page=datasync&amp;autoEnter=1" title="Live click-through demo: NexaGres DMS Migration Service" loading="lazy"></iframe>
         <figcaption>
           Launch and Status, live — start a mock migration and watch it show up in both tabs.
           <a class="embedOpenLink" href="demo-dms.html?page=datasync&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
@@ -197,7 +228,7 @@
       </figure>
 
       <figure class="embedFigure">
-        <iframe class="embedFrame" src="demo-dms.html" title="Live click-through demo: Nexagres DMS, full console" loading="lazy"></iframe>
+        <iframe class="embedFrame" src="demo-dms.html" title="Live click-through demo: NexaGres DMS, full console" loading="lazy"></iframe>
         <figcaption>
           The full console, starting from sign-in — every section above lives inside this one app.
           <a class="embedOpenLink" href="demo-dms.html" target="_blank" rel="noopener">Open full-screen →</a>

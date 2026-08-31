@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MySQL → PostgreSQL, No Driver Change | Polywire</title>
-<meta name="description" content="Your mysql client or JDBC driver connects to Polywire over the real MySQL wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
+<title>MySQL → PostgreSQL, No Driver Change | PolyWire</title>
+<meta name="description" content="Your mysql client or JDBC driver connects to PolyWire over the real MySQL wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
 <link rel="canonical" href="https://polygres26.github.io/mysql-to-postgres.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -27,9 +27,9 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "MySQL to PostgreSQL without changing the MySQL client",
-  "description": "Polywire speaks the real MySQL wire protocol to the mysql CLI and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
+  "description": "PolyWire speaks the real MySQL wire protocol to the mysql CLI and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
   "url": "https://polygres26.github.io/mysql-to-postgres.html",
-  "about": { "@type": "SoftwareApplication", "name": "Polywire", "url": "https://polygres26.github.io/polywire.html" }
+  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://polygres26.github.io/polywire.html" }
 }
 </script>
 </head>
@@ -38,8 +38,9 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="index.html">Home</a>
-      <a href="polywire.html">Polywire</a>
+      <a href="polywire.html">PolyWire</a>
       <a href="dms.html">DMS</a>
+      <a href="polycache.html">PolyCache</a>
       <a href="docs.html">Docs</a>
       <a href="index.html#pricing">Pricing</a>
       <a href="index.html#contact">Contact</a>
@@ -48,20 +49,20 @@
   <div class="wrap" id="main">
     <header class="hero">
       <div class="brandRow">
-        <img src="docs/logo.png" alt="Nexagres" class="brandMark">
-        <h1 class="eyebrow">Nexagres</h1>
+        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <h1 class="eyebrow">NexaGres</h1>
       </div>
-      <p class="lede"><a href="index.html">← Back to the Polywire overview</a></p>
+      <p class="lede"><a href="index.html">← Back to the PolyWire overview</a></p>
       <h2 class="heroTitle">MySQL → PostgreSQL. No driver change.</h2>
       <p class="heroSub">
         Your MySQL application thinks it's talking to MySQL. It's actually talking to Postgres —
         and it never finds out. The <code>mysql</code> CLI and JDBC connect over the real MySQL
-        wire protocol; Polywire executes every statement against a real PostgreSQL database on
+        wire protocol; PolyWire executes every statement against a real PostgreSQL database on
         the other end.
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try It Free</a>
-        <a class="btn btn-secondary" href="polywire.html">Explore Polywire</a>
+        <a class="btn btn-secondary" href="polywire.html">Explore PolyWire</a>
       </div>
     </header>
 
@@ -102,22 +103,22 @@ mysql&gt; SELECT * FROM orders;
 mysql&gt;</pre>
       </div>
       <div class="demoFlow">
-        <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>Polywire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+        <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>PolyWire</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
       </div>
       <p class="rttNote">
         <i>MySQL client. MySQL wire protocol. PostgreSQL database. No client rewrite.</i>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
-        See <a href="polywire.html">Polywire capabilities</a> for exact client-by-client coverage.
+        See <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.
       </p>
 
       <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote"><b>1. Start Polywire</b> — point it at a Postgres you already have:</p>
+      <p class="rttNote"><b>1. Start PolyWire</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 13306:13306 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same mysql CLI you already use:</p>
       <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
-      <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Polywire → PostgreSQL. No driver change.</p>
+      <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → PolyWire → PostgreSQL. No driver change.</p>
       <p class="rttNote">
         Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
         Database for PostgreSQL, or Oracle OCI? See <a href="CONNECTING.md">CONNECTING.md</a> for
@@ -131,8 +132,8 @@ mysql&gt;</pre>
         <div class="obsCard"><h4>Keep governance in one place</h4><p>The same SQL firewall, QoS, and audit path that governs every other protocol also governs this one — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote">
-        Planning the actual migration — schema, sizing? <a href="dms.html">Nexagres DMS</a>
-        scores the difficulty and sizes the target Postgres while Polywire (above) keeps your
+        Planning the actual migration — schema, sizing? <a href="dms.html">NexaGres DMS</a>
+        scores the difficulty and sizes the target Postgres while PolyWire (above) keeps your
         application running the whole time.
       </p>
 
@@ -149,13 +150,13 @@ mysql&gt;</pre>
     </section>
 
     <section class="tool" id="final-cta">
-      <h2 class="finalCtaTitle">Ready to put Polywire in front of Postgres?</h2>
+      <h2 class="finalCtaTitle">Ready to put PolyWire in front of Postgres?</h2>
       <p class="lede">
         <b>Try it free</b> — Developer Edition, all features. <b>Taking it to production?</b>
         Bring your architecture and we'll help map the deployment.
       </p>
       <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try Polywire Free</a>
+        <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
         <a class="btn btn-secondary" href="index.html#contact">Schedule Architecture Review</a>
       </div>
     </section>

@@ -1,6 +1,6 @@
-# Nexagres DMS — Developer Guide
+# NexaGres DMS — Developer Guide
 
-> **This is a technical/internal reference** for contributors working on Nexagres DMS's codebase
+> **This is a technical/internal reference** for contributors working on NexaGres DMS's codebase
 > (formerly Polyadvisor) — package layout, class responsibilities, internal API routes. If you're
 > looking to actually run an assessment, start with [`../README.md`](../README.md) instead.
 

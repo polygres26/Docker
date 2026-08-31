@@ -1,6 +1,6 @@
-# Nexagres DMS
+# NexaGres DMS
 
-Nexagres DMS (Database Migration Service) — formerly "Polyadvisor"/Nexagres Advisor — is two
+NexaGres DMS (Database Migration Service) — formerly "Polyadvisor"/NexaGres Advisor — is two
 tools in one module:
 
 - **Migration Advisor** answers "how hard is it to migrate this database to Postgres, and how much
@@ -11,7 +11,7 @@ tools in one module:
 - **Migration Service** actually moves the data: launches and monitors real, massively-parallel
   [`nexagres-migration`](../migration/) runs (the Data Sync section) — real change-data-capture
   connectors for MongoDB, MySQL, SQL Server, Oracle, DynamoDB, SQS, Neo4j, and InfluxDB, writing
-  into Postgres exclusively through [Polywire](../wire/README.md)'s own gRPC driver.
+  into Postgres exclusively through [PolyWire](../wire/README.md)'s own gRPC driver.
 
 ## Migration Advisor: two ways to get an assessment
 
@@ -70,7 +70,7 @@ plaintext on disk.
 
 ## Where to go next
 
-- Companion tool: [Polywire](../wire/README.md) — once you know what you're migrating, Polywire
+- Companion tool: [PolyWire](../wire/README.md) — once you know what you're migrating, PolyWire
   lets your existing application keep talking its native protocol (Oracle, MySQL, SQL Server,
   MongoDB, DynamoDB, Amazon SQS) while the data actually lives in Postgres, either as a permanent
   compatibility layer or a temporary bridge during the migration itself.

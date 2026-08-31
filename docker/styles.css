@@ -300,6 +300,11 @@
   .demoSelector:has(#try-mysql:checked) .demoTabs label[for="try-mysql"],
   .demoSelector:has(#try-mongodb:checked) .demoTabs label[for="try-mongodb"],
   .demoSelector:has(#try-opensearch:checked) .demoTabs label[for="try-opensearch"] { background: var(--indigo); color: #fff; border-color: var(--indigo); }
+  .stepFlow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0; }
+  .stepFlowItem { flex: 1 1 180px; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .stepFlowItem h4 { margin: 0 0 4px; font-size: 15px; color: var(--indigo); }
+  .stepFlowItem p { margin: 0; font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .stepFlowArrow { color: var(--ink-faint); font-size: 18px; flex: 0 0 auto; }
   .obsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 0 0 20px; }
   .obsCard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .obsCard h4 { margin: 0 0 6px; font-size: 14px; }
