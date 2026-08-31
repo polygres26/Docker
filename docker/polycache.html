@@ -5,46 +5,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PolyCache — Cross-Protocol Distributed Cache</title>
 <meta name="description" content="PolyCache: PolyWire's distributed, cross-protocol cache -- a result written through one wire protocol and read back through another comes back as a cache hit, zero Postgres round trips, with live terminal walkthroughs for both cache tiers.">
-<link rel="canonical" href="https://polygres26.github.io/polycache.html">
+<link rel="canonical" href="https://nexagres.com/polycache.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
-<link rel="icon" type="image/png" href="docs/logo.png">
-<link rel="apple-touch-icon" href="docs/logo.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="icon" type="image/png" href="/assets/logo.png">
+<link rel="apple-touch-icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/styles.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://polygres26.github.io/polycache.html">
+<meta property="og:url" content="https://nexagres.com/polycache.html">
 <meta property="og:title" content="PolyCache — Cross-Protocol Distributed Cache">
 <meta property="og:description" content="A result written through one wire protocol and read back through another comes back as a cache hit -- zero Postgres round trips.">
-<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta property="og:image" content="https://nexagres.com/assets/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="PolyCache — Cross-Protocol Distributed Cache">
 <meta name="twitter:description" content="A result written through one wire protocol and read back through another comes back as a cache hit -- zero Postgres round trips.">
-<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:image" content="https://nexagres.com/assets/architecture.png">
 </head>
 <body>
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
-      <a href="index.html">Home</a>
-      <a href="polywire.html">PolyWire</a>
-      <a href="dms.html">DMS</a>
-      <a href="polycache.html" class="active">PolyCache</a>
-      <a href="db-compat.html">DB Compat</a>
-      <a href="docs.html">Docs</a>
-      <a href="index.html#pricing">Pricing</a>
-      <a href="index.html#faq">FAQ</a>
-      <a href="index.html#contact">Contact</a>
+      <a href="/">Home</a>
+      <a href="/polywire/">PolyWire</a>
+      <a href="/dms/">DMS</a>
+      <a href="/polycache.html" class="active">PolyCache</a>
+      <a href="/db-compat/">DB Compat</a>
+      <a href="/postgres-gateway/">Postgres Gateway</a>
+      <a href="/mcp-postgres/">MCP</a>
+      <a href="/docs/">Docs</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#faq">FAQ</a>
+      <a href="/#contact">Contact</a>
     </div>
   </nav>
   <div class="wrap" id="main">
     <header>
       <div class="brandRow">
-        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
         <h1 class="eyebrow">NexaGres</h1>
       </div>
       <p class="lede">
-        <a href="index.html">← Back to home</a> — <b>PolyCache is PolyWire's own distributed cache,
+        <a href="/">← Back to home</a> — <b>PolyCache is PolyWire's own distributed cache,
         shared across every protocol it speaks.</b> A result written through one wire protocol and
         read back through another comes back as a cache hit — zero Postgres round trips on the
         second read, confirmed live below.
@@ -87,7 +89,7 @@
         stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, for arbitrary opted-in
         <code>SELECT</code> results. MongoDB and DynamoDB don't share entries in <i>this</i>
         cache — but a separate, narrower point-lookup cache now does bring them in, see below —
-        <a href="polywire.html#cache-vs-round-trip">exactly how the cache key works</a> for what
+        <a href="/polywire/#cache-vs-round-trip">exactly how the cache key works</a> for what
         does and doesn't share an entry.</figcaption>
       </figure>
       <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
@@ -132,7 +134,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
       </div>
       <p class="rttNote">
         Written through one protocol. Cached once. Served through another — see
-        <a href="polywire.html#cache-vs-round-trip">the real metrics behind this</a>.
+        <a href="/polywire/#cache-vs-round-trip">the real metrics behind this</a>.
       </p>
 
       <h4 class="demoSubhead" id="row-cache-dynamo-mongo">Point lookups: DynamoDB and MongoDB now share cache with SQL too<a class="permalink" href="#row-cache-dynamo-mongo" aria-label="Link to this section">#</a></h4>
@@ -225,7 +227,7 @@ DOC
         Same key, <code>"1001"</code>, in both — and no collision, because the cache key is
         namespaced by physical table (<code>dynamo_item_orders</code> vs.
         <code>"test"."orders"</code>), not by key value alone. One Oracle client reads both from
-        cache regardless — see <a href="polywire.html#cache-vs-round-trip">exactly how the
+        cache regardless — see <a href="/polywire/#cache-vs-round-trip">exactly how the
         point-lookup cache key works</a>.
       </p>
 
@@ -294,18 +296,18 @@ Ada      129.99
         federation layer, no separate query engine.
       </p>
 
-      <p class="rttNote"><a href="polywire.html#cache-vs-round-trip">Real measured cache-hit vs. Postgres-round-trip benchmarks, per protocol, with the full methodology →</a></p>
+      <p class="rttNote"><a href="/polywire/#cache-vs-round-trip">Real measured cache-hit vs. Postgres-round-trip benchmarks, per protocol, with the full methodology →</a></p>
     </section>
 
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
-      Full setup reference: <a href="README.md">README.md</a> and
-      <a href="polywire/README.md">polywire/</a> / <a href="dms/README.md">dms/</a>
+      Full setup reference: <a href="/README.md">README.md</a> and
+      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </div>
 
   <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
-  <script src="page.js"></script>
+  <script src="/page.js"></script>
 </body>
 </html>

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyWire &amp; NexaGres DMS Documentation</title>
+<meta name="description" content="Documentation index for PolyWire and NexaGres DMS: full capabilities, connecting to your Postgres (on-prem, Supabase, RDS, Cloud SQL, Azure, OCI), error translation per protocol, and migration assessment detail.">
+<link rel="canonical" href="https://nexagres.com/docs/">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#3f5b9b">
+<link rel="icon" type="image/png" href="/assets/logo.png">
+<link rel="apple-touch-icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nexagres.com/docs/">
+<meta property="og:title" content="PolyWire &amp; NexaGres DMS Documentation">
+<meta property="og:description" content="Documentation index: full capabilities, connecting to your Postgres, error translation, and migration assessment detail.">
+<meta property="og:image" content="https://nexagres.com/assets/architecture.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PolyWire &amp; NexaGres DMS Documentation">
+<meta name="twitter:description" content="Documentation index: full capabilities, connecting to your Postgres, error translation, and migration assessment detail.">
+<meta name="twitter:image" content="https://nexagres.com/assets/architecture.png">
+</head>
+<body>
+  <a href="#main" class="skipLink">Skip to content</a>
+  <nav class="siteNav" aria-label="Page sections">
+    <div class="siteNavInner">
+      <a href="/">Home</a>
+      <a href="/polywire/">PolyWire</a>
+      <a href="/dms/">DMS</a>
+      <a href="/polycache.html">PolyCache</a>
+      <a href="/db-compat/">DB Compat</a>
+      <a href="/postgres-gateway/">Postgres Gateway</a>
+      <a href="/mcp-postgres/">MCP</a>
+      <a href="/docs/" class="active">Docs</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#faq">FAQ</a>
+      <a href="/#contact">Contact</a>
+    </div>
+  </nav>
+  <div class="wrap" id="main">
+    <header>
+      <div class="brandRow">
+        <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
+        <h1 class="eyebrow">NexaGres</h1>
+      </div>
+      <p class="lede">
+        <a href="/">← Back to home</a> — everything written down about PolyWire and
+        NexaGres DMS, organized by what you're trying to do.
+      </p>
+    </header>
+
+    <section class="tool" id="getting-started" style="margin-top:0; padding-top:0; border-top:none;">
+      <div class="kicker">
+        <span class="num">01</span>
+      </div>
+      <h2>Getting started</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="/#try">Try it in a minute</a></span><span class="uc-desc">The docker run command and one-line client commands per protocol — the fastest way to see PolyWire actually working.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/CONNECTING.md">Connecting to your Postgres</a></span><span class="uc-desc">Worked examples and real, previously-hit gotchas for pointing PolyWire at an existing on-prem Postgres, Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="polywire-docs">
+      <div class="kicker">
+        <span class="num">02</span>
+        <span class="badge">ghcr.io/polygres26/polywire</span>
+      </div>
+      <h2>PolyWire</h2>
+      <p class="rttNote"><a href="/polywire/">Full capabilities →</a> — every section below, and the on-page jump list to all of them, live on one page.</p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#outcomes">Outcomes</a></span><span class="uc-desc">The concrete result PolyWire is built to produce — a simpler architecture, a smaller attack surface, elastic scale, lower cost, and real operational visibility.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#use-cases">Use cases</a></span><span class="uc-desc">Governed AI access, gateway consolidation, connection pooling, sharding, distributed transactions, caching, rollups, standardizing on one database, a permanent compatibility shim for code not worth touching, and a mid-migration bridge — migration is one use case among several, not the whole story.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/#architecture">Architecture</a></span><span class="uc-desc">The shared eight-stage pipeline every protocol feeds — firewall, router, QoS, dialect translation, rollups, cache, stats — before reaching real Postgres.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#admin-console-polywire">Admin console</a></span><span class="uc-desc">Live traffic metrics per protocol, per-tool MCP call counts, cache-hit-vs-Postgres RTT, and a sidebar covering monitoring, security, traffic, and configuration in one place.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polycache.html">PolyCache</a></span><span class="uc-desc">Live terminal walkthroughs of both cache tiers, DynamoDB/MongoDB point-lookup sharing, and JOINs across wire protocols. Real measured cache-hit vs. Postgres-round-trip <a href="/polywire/#cache-vs-round-trip">benchmarks per protocol</a> live on PolyWire's own page.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sharding">Sharding</a></span><span class="uc-desc">Routing by a real bound value decoded from each protocol's own wire format, with genuine cross-shard merge — not SQL-text pattern matching.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sqs-enqueue-dequeue">SQS</a></span><span class="uc-desc">Enqueue vs. dequeue performance and how sqswire's JSON-over-HTTP framing compares to the binary wire protocols.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#rollups">Rollups</a></span><span class="uc-desc">Pre-aggregated tables PolyWire creates and keeps fresh automatically, with transparent query rewriting.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#observability">Observability</a></span><span class="uc-desc">Exporting metrics to CloudWatch, Datadog, New Relic, Grafana, Azure Monitor, GCP Cloud Monitoring, and AppDynamics — which platforms need a Collector in between and which take a direct push.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#multi-az">Multi-AZ deployment</a></span><span class="uc-desc">Cross-zone cache backup replication, cluster discovery, and TLS between cache nodes.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#security">Security</a></span><span class="uc-desc">SQL firewall, connection ACL, QoS admission control, authentication (Postgres roles, per-user credentials, admin SSO), TLS, secrets management, and row-level security — each scoped honestly, including what's opt-in or narrower than the feature name suggests.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#outages">Planned/unplanned outages</a></span><span class="uc-desc">A scheduled drain waits for a clean cutover; unplanned failover redirects automatically — across every wire protocol.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="ERRORS.md">Error translation</a></span><span class="uc-desc">Per-protocol native error shapes (Oracle ORA-numbers, MySQL errno, SQL Server number/severity/state, MongoDB code/codeName, DynamoDB/SQS/OpenSearch native envelopes), a canonical-condition comparison table across all seven protocols, and the connection-loss SQLSTATE detail.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="dms-docs">
+      <div class="kicker">
+        <span class="num">03</span>
+        <span class="badge">ghcr.io/polygres26/dms</span>
+      </div>
+      <h2>NexaGres DMS</h2>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="/dms/#two-ways-to-assess">Migration Advisor</a></span><span class="uc-desc">Two ways to get an assessment (live connection or uploaded performance report), what you get (score, feature inventory, sizing, downloadable report), connecting and exploring with an LLM's help, and the admin console.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/dms/#migration-service">Migration Service</a></span><span class="uc-desc">Launch and track a real, massively-parallel migration run against eight supported sources — the architecture diagram, the CDC-mechanism-per-source table, and Launch/Status detail.</span></span></li>
+      </ul>
+    </section>
+
+    <section class="tool" id="reference-docs">
+      <div class="kicker">
+        <span class="num">04</span>
+      </div>
+      <h2>Setup reference</h2>
+      <p class="rttNote">
+        Source for both tools is private; the files below are the public documentation and image
+        surface published alongside this site.
+      </p>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title"><a href="/README.md">README.md</a></span><span class="uc-desc">Top-level repository reference.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/README.md">polywire/README.md</a></span><span class="uc-desc">PolyWire-specific setup reference — full port list, environment variables, and build notes.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/dms/README.md">dms/README.md</a></span><span class="uc-desc">NexaGres DMS-specific setup reference.</span></span></li>
+      </ul>
+    </section>
+
+    <footer>
+      Source for both tools is private; this is the public documentation and image surface.
+      Full setup reference: <a href="/README.md">README.md</a> and
+      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      in this repo.
+    </footer>
+  </div>
+
+  <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
+  <script src="/page.js"></script>
+</body>
+</html>

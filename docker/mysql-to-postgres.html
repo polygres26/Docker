@@ -5,22 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MySQL → PostgreSQL, No Driver Change | PolyWire</title>
 <meta name="description" content="Your mysql client or JDBC driver connects to PolyWire over the real MySQL wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
-<link rel="canonical" href="https://polygres26.github.io/mysql-to-postgres.html">
+<link rel="canonical" href="https://nexagres.com/mysql-to-postgres.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
-<link rel="icon" type="image/png" href="docs/logo.png">
-<link rel="apple-touch-icon" href="docs/logo.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="icon" type="image/png" href="/assets/logo.png">
+<link rel="apple-touch-icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/styles.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://polygres26.github.io/mysql-to-postgres.html">
+<meta property="og:url" content="https://nexagres.com/mysql-to-postgres.html">
 <meta property="og:title" content="MySQL → PostgreSQL, No Driver Change">
 <meta property="og:description" content="Your MySQL client thinks it's talking to MySQL. It's actually talking to Postgres. Real MySQL wire protocol, real PostgreSQL backend, no driver swap.">
-<meta property="og:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta property="og:image" content="https://nexagres.com/assets/architecture.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MySQL → PostgreSQL, No Driver Change">
 <meta name="twitter:description" content="Your MySQL client thinks it's talking to MySQL. It's actually talking to Postgres. Real MySQL wire protocol, real PostgreSQL backend, no driver swap.">
-<meta name="twitter:image" content="https://polygres26.github.io/docs/architecture.png">
+<meta name="twitter:image" content="https://nexagres.com/assets/architecture.png">
 
 <script type="application/ld+json">
 {
@@ -28,8 +28,8 @@
   "@type": "TechArticle",
   "headline": "MySQL to PostgreSQL without changing the MySQL client",
   "description": "PolyWire speaks the real MySQL wire protocol to the mysql CLI and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
-  "url": "https://polygres26.github.io/mysql-to-postgres.html",
-  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://polygres26.github.io/polywire.html" }
+  "url": "https://nexagres.com/mysql-to-postgres.html",
+  "about": { "@type": "SoftwareApplication", "name": "PolyWire", "url": "https://nexagres.com/polywire/" }
 }
 </script>
 </head>
@@ -37,23 +37,25 @@
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
-      <a href="index.html">Home</a>
-      <a href="polywire.html">PolyWire</a>
-      <a href="dms.html">DMS</a>
-      <a href="polycache.html">PolyCache</a>
-      <a href="db-compat.html">DB Compat</a>
-      <a href="docs.html">Docs</a>
-      <a href="index.html#pricing">Pricing</a>
-      <a href="index.html#contact">Contact</a>
+      <a href="/">Home</a>
+      <a href="/polywire/">PolyWire</a>
+      <a href="/dms/">DMS</a>
+      <a href="/polycache.html">PolyCache</a>
+      <a href="/db-compat/">DB Compat</a>
+      <a href="/postgres-gateway/">Postgres Gateway</a>
+      <a href="/mcp-postgres/">MCP</a>
+      <a href="/docs/">Docs</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#contact">Contact</a>
     </div>
   </nav>
   <div class="wrap" id="main">
     <header class="hero">
       <div class="brandRow">
-        <img src="docs/logo.png" alt="NexaGres" class="brandMark">
+        <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
         <h1 class="eyebrow">NexaGres</h1>
       </div>
-      <p class="lede"><a href="index.html">← Back to the PolyWire overview</a></p>
+      <p class="lede"><a href="/">← Back to the PolyWire overview</a></p>
       <h2 class="heroTitle">MySQL → PostgreSQL. No driver change.</h2>
       <p class="heroSub">
         Your MySQL application thinks it's talking to MySQL. It's actually talking to Postgres —
@@ -63,7 +65,7 @@
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try It Free</a>
-        <a class="btn btn-secondary" href="polywire.html">Explore PolyWire</a>
+        <a class="btn btn-secondary" href="/polywire/">Explore PolyWire</a>
       </div>
     </header>
 
@@ -109,7 +111,7 @@ mysql&gt;</pre>
       <p class="rttNote">
         <i>MySQL client. MySQL wire protocol. PostgreSQL database. No client rewrite.</i>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
-        See <a href="polywire.html">PolyWire capabilities</a> for exact client-by-client coverage.
+        See <a href="/polywire/">PolyWire capabilities</a> for exact client-by-client coverage.
       </p>
 
       <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
@@ -122,7 +124,7 @@ mysql&gt;</pre>
       <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → PolyWire → PostgreSQL. No driver change.</p>
       <p class="rttNote">
         Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
-        Database for PostgreSQL, or Oracle OCI? See <a href="CONNECTING.md">CONNECTING.md</a> for
+        Database for PostgreSQL, or Oracle OCI? See <a href="/CONNECTING.md">CONNECTING.md</a> for
         the real provider-specific setup.
       </p>
 
@@ -133,7 +135,7 @@ mysql&gt;</pre>
         <div class="obsCard"><h4>Keep governance in one place</h4><p>The same SQL firewall, QoS, and audit path that governs every other protocol also governs this one — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote">
-        Planning the actual migration — schema, sizing? <a href="dms.html">NexaGres DMS</a>
+        Planning the actual migration — schema, sizing? <a href="/dms/">NexaGres DMS</a>
         scores the difficulty and sizes the target Postgres while PolyWire (above) keeps your
         application running the whole time.
       </p>
@@ -147,7 +149,7 @@ mysql&gt;</pre>
           </tbody>
         </table>
       </div>
-      <p class="rttNote"><a href="index.html#compatibility">Full compatibility matrix, all eight verified client stacks →</a></p>
+      <p class="rttNote"><a href="/#compatibility">Full compatibility matrix, all eight verified client stacks →</a></p>
     </section>
 
     <section class="tool" id="final-cta">
@@ -158,19 +160,19 @@ mysql&gt;</pre>
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try PolyWire Free</a>
-        <a class="btn btn-secondary" href="index.html#contact">Schedule Architecture Review</a>
+        <a class="btn btn-secondary" href="/#contact">Schedule Architecture Review</a>
       </div>
     </section>
 
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
-      Full setup reference: <a href="README.md">README.md</a> and
-      <a href="polywire/README.md">polywire/</a> / <a href="dms/README.md">dms/</a>
+      Full setup reference: <a href="/README.md">README.md</a> and
+      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </div>
 
   <button id="backToTop" aria-label="Back to top" title="Back to top">↑</button>
-  <script src="page.js"></script>
+  <script src="/page.js"></script>
 </body>
 </html>
