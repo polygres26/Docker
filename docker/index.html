@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NexaGate — The Intelligent Gateway for Postgres | NexaGres</title>
-<meta name="description" content="NexaGate is the intelligent gateway for Postgres: one control point that connects, protects, controls, accelerates, and observes every application and AI agent accessing Postgres, regardless of protocol — Oracle, MySQL, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Different protocols, same policies, same Postgres. NexaDMS scores how hard your migration to Postgres will be.">
+<title>NexaGate — The Intelligent Database Gateway | NexaGres</title>
+<meta name="description" content="NexaGate is the intelligent database gateway: one control point that connects, protects, controls, accelerates, and observes every application and AI agent hitting Postgres, Oracle, MySQL, or SQL Server, regardless of protocol — MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. NexaDMS scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://nexagres.com/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -21,12 +21,12 @@
 <!-- Open Graph / Twitter Card -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/">
-<meta property="og:title" content="NexaGate — The Intelligent Gateway for Postgres">
-<meta property="og:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus NexaDMS, a rules-based migration-difficulty assessor.">
+<meta property="og:title" content="NexaGate — The Intelligent Database Gateway">
+<meta property="og:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus NexaDMS, a rules-based migration-difficulty assessor.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="NexaGate — The Intelligent Gateway for Postgres">
-<meta name="twitter:description" content="Connect, secure, control, and accelerate every application and AI agent accessing Postgres — regardless of the protocol they speak. One control point for every Postgres workload. Plus NexaDMS, a rules-based migration-difficulty assessor.">
+<meta name="twitter:title" content="NexaGate — The Intelligent Database Gateway">
+<meta name="twitter:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus NexaDMS, a rules-based migration-difficulty assessor.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 
 <!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
@@ -41,7 +41,7 @@
       "name": "NexaGate",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
-      "description": "NexaGate is the intelligent gateway for Postgres -- one control point for every Postgres workload. Different protocols, same policies, same Postgres. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), gRPC, and MCP -- to a single real Postgres database, unmodified, with live semantic execution translation (protocol to SQL/API semantics to PostgreSQL execution), not just protocol framing. Organized around five capabilities: Connect (twelve client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (NexaCache -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
+      "description": "NexaGate is the intelligent database gateway -- one control point for every workload against Postgres, Oracle, MySQL, or SQL Server. Different protocols, same policies. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), gRPC, and MCP -- to a single real backend database of your choice, unmodified, with live semantic execution translation (protocol to SQL/API semantics to that backend's own execution), not just protocol framing. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. Organized around five capabilities: Connect (twelve client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (NexaCache -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
       "url": "https://nexagres.com/polywire/",
       "image": "https://nexagres.com/assets/og-image.png",
       "offers": [
@@ -152,10 +152,10 @@
         <span class="badge">ghcr.io/polygres26/polywire</span>
       </div>
       <h2>NexaGate</h2>
-      <h3 class="toolTagline">The intelligent gateway for Postgres.</h3>
+      <h3 class="toolTagline">The Intelligent Database Gateway.</h3>
       <p class="heroSub">
-        Connect, secure, control, and accelerate every application and AI agent accessing
-        Postgres — regardless of the protocol they speak.
+        Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server —
+        in any cloud or on-prem.
       </p>
       <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
       <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · InfluxDB · GraphDB · PostgreSQL · gRPC · MCP</p>
@@ -165,14 +165,14 @@
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
         <a class="btn btn-secondary" href="/demo-polywire.html">Click-Through Demo</a>
       </div>
-      <p class="heroTagline">Everything talks to Postgres.</p>
-      <p class="heroTagline2">One control point for every Postgres workload.</p>
+      <p class="heroTagline">One intelligent infrastructure layer for the database you already run.</p>
+      <p class="heroTagline2">Postgres, Oracle, MySQL, or SQL Server — same control point.</p>
 
-      <h3 class="subhead" id="why">Put an intelligent control point in front of Postgres.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="why">Put an intelligent control point in front of your database.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Connect, protect, control, accelerate, observe — the same five things, applied identically
-        no matter which protocol the caller speaks. <b>Different protocols. Same policies. Same
-        Postgres.</b> <a href="/polywire/#outcomes">See each one broken out in detail →</a>
+        no matter which protocol the caller speaks or which database sits behind NexaGate. <b>Different
+        protocols. Same policies.</b> <a href="/polywire/#outcomes">See each one broken out in detail →</a>
       </p>
 
       <h3 class="subhead" id="architecture-simple">What is NexaGate?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
