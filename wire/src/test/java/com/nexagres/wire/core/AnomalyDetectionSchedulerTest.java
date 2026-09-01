@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * Real (no mocks) end-to-end test of {@link AnomalyDetectionScheduler} against a REAL {@link
  * SqlMetricsCollector}/{@link StatsCollectorStage} pair -- these are pure in-process computation
  * with no I/O of their own (unlike the LLM narration step, which does get a real local HTTP
- * server, same as {@code QueryRepairIntegrationTest}), so a full Polywire-subprocess integration
+ * server, same as {@code QueryRepairIntegrationTest}), so a full Warp-subprocess integration
  * test would mostly exercise unrelated networking plumbing rather than this class's own logic.
  * Uses {@link AnomalyDetectionScheduler#forTesting}/{@code runCycle()} (package-private, same
  * reasoning {@code StatisticsScheduler} gives its own {@code runCycle()}) to drive cycles

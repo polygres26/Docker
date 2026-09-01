@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves the Developer-edition connection cap ({@code License.DEVELOPER_MAX_CONNECTIONS}, 25) is
  * genuinely enforced at the TCP-accept layer, not just documented -- a real subprocess with no
- * {@code POLYWIRE_LICENSE_KEY} set (so it's running Developer tier, exactly like a real customer
+ * {@code WARP_LICENSE_KEY} set (so it's running Developer tier, exactly like a real customer
  * who hasn't bought Enterprise), real pgwire JDBC connections held open simultaneously, no mocks.
  *
  * <p>Also proves {@code ConnectionGate.release()} actually gets called on session end (wired via
@@ -30,18 +30,18 @@ class DeveloperConnectionCapIntegrationTest {
     @Test
     void the26thConcurrentConnectionIsRejectedAndClosingOneFreesASlot() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(),
                                 postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        // No POLYWIRE_LICENSE_KEY -- this subprocess is genuinely running Developer
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        // No WARP_LICENSE_KEY -- this subprocess is genuinely running Developer
                         // tier, the same as any real install that hasn't bought Enterprise.
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+            String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
             List<Connection> held = new ArrayList<>();
             try {
                 for (int i = 0; i < 25; i++) {

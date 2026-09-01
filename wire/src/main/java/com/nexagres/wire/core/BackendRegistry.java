@@ -28,7 +28,7 @@ public final class BackendRegistry {
     private volatile List<String> shardGroup;
 
     // Deliberately NOT reset by reload() -- a backend's drain/down state is an operational fact
-    // set by an admin action or a health check, independent of whatever POLYWIRE_BACKENDS config
+    // set by an admin action or a health check, independent of whatever WARP_BACKENDS config
     // happens to be current. A name that disappears from a fresh reload just leaves its state
     // entry orphaned (harmless -- resolveForRouting/stateOf only ever look it up by name, and
     // get(name) already returns null for an unknown name regardless of this map).
@@ -77,7 +77,7 @@ public final class BackendRegistry {
                 String fallbackName = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
                 if (!trustedHosts.isTrusted(url)) {
                     log.warn("backend registry: REFUSING to register backend '{}' ({}) -- its host is not in "
-                            + "POLYWIRE_TRUSTED_BACKEND_HOSTS. This entry is skipped, not fatal; every other "
+                            + "WARP_TRUSTED_BACKEND_HOSTS. This entry is skipped, not fatal; every other "
                             + "configured backend is unaffected.", name, url);
                     continue;
                 }
@@ -98,8 +98,8 @@ public final class BackendRegistry {
             }
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
-            log.info("backend registry: no POLYWIRE_BACKENDS configured -- registered the single "
-                    + "implicit POLYWIRE_* backend as '{}' so routing/translation has a fallback target",
+            log.info("backend registry: no WARP_BACKENDS configured -- registered the single "
+                    + "implicit WARP_* backend as '{}' so routing/translation has a fallback target",
                     DEFAULT_BACKEND_NAME);
         }
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()

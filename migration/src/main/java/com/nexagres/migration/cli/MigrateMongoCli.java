@@ -6,22 +6,22 @@ import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.checkpoint.DeadLetterStore;
 import com.nexagres.migration.connectors.mongo.MongoSource;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
+import com.nexagres.migration.sink.WarpGrpcSink;
 import com.nexagres.migration.sink.ResilientSink;
 
 /**
- * Standalone entry point: migrate one MongoDB collection to a running Polywire instance, over
- * Polywire's own gRPC driver -- never a direct JDBC connection to the target Postgres. Run as a
- * separate process from Polywire itself, the same way any other native-driver client would be.
+ * Standalone entry point: migrate one MongoDB collection to a running Warp instance, over
+ * Warp's own gRPC driver -- never a direct JDBC connection to the target Postgres. Run as a
+ * separate process from Warp itself, the same way any other native-driver client would be.
  *
  * <p>Required environment variables:
  * <ul>
  *   <li>{@code SOURCE_MONGO_URI} -- connection string for the legacy MongoDB deployment</li>
  *   <li>{@code SOURCE_MONGO_DB}, {@code SOURCE_MONGO_COLLECTION}</li>
- *   <li>{@code POLYWIRE_GRPC_HOST}, {@code POLYWIRE_GRPC_PORT}</li>
- *   <li>{@code POLYWIRE_GRPC_USER}, {@code POLYWIRE_GRPC_PASSWORD} -- a real Polywire identity
- *       (see {@code POLYWIRE_AUTH_CREDENTIALS}), so migration traffic is attributable in
- *       Polywire's own audit log like any other client, not an anonymous backdoor</li>
+ *   <li>{@code WARP_GRPC_HOST}, {@code WARP_GRPC_PORT}</li>
+ *   <li>{@code WARP_GRPC_USER}, {@code WARP_GRPC_PASSWORD} -- a real Warp identity
+ *       (see {@code WARP_AUTH_CREDENTIALS}), so migration traffic is attributable in
+ *       Warp's own audit log like any other client, not an anonymous backdoor</li>
  *   <li>{@code TARGET_MONGO_DB}, {@code TARGET_MONGO_COLLECTION} -- usually the same names as the
  *       source, but kept separate in case a migration deliberately renames on the way in</li>
  *   <li>{@code CHECKPOINT_JDBC_URL}/{@code _USER}/{@code _PASSWORD} -- direct Postgres connection
@@ -41,10 +41,10 @@ public final class MigrateMongoCli {
         String targetDb = System.getenv().getOrDefault("TARGET_MONGO_DB", sourceDb);
         String targetCollection = System.getenv().getOrDefault("TARGET_MONGO_COLLECTION", sourceCollection);
 
-        String grpcHost = require("POLYWIRE_GRPC_HOST");
-        int grpcPort = Integer.parseInt(require("POLYWIRE_GRPC_PORT"));
-        String grpcUser = require("POLYWIRE_GRPC_USER");
-        String grpcPassword = require("POLYWIRE_GRPC_PASSWORD");
+        String grpcHost = require("WARP_GRPC_HOST");
+        int grpcPort = Integer.parseInt(require("WARP_GRPC_PORT"));
+        String grpcUser = require("WARP_GRPC_USER");
+        String grpcPassword = require("WARP_GRPC_PASSWORD");
 
         String checkpointJdbcUrl = require("CHECKPOINT_JDBC_URL");
         String checkpointUser = require("CHECKPOINT_JDBC_USER");
@@ -67,7 +67,7 @@ public final class MigrateMongoCli {
         try (MongoClient sourceClient = MongoClients.create(sourceUri);
                 MongoSource source = new MongoSource(sourceClient, sourceDb, sourceCollection, targetDb, targetCollection,
                         partitionCount, shardKeyField);
-                PolywireGrpcSink grpcSink = new PolywireGrpcSink(grpcHost, grpcPort, grpcUser, grpcPassword)) {
+                WarpGrpcSink grpcSink = new WarpGrpcSink(grpcHost, grpcPort, grpcUser, grpcPassword)) {
             ResilientSink sink = new ResilientSink(grpcSink, deadLetters, maxRetries, retryBackoffMillis);
             new Coordinator(source, sink, checkpoints, parallelism).run();
         }

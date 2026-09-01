@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>NULL handling, a real correctness fix, not a workaround</b>: {@code
  * QueryService.Execute}'s {@code repeated string params} has no null-value marker (confirmed by
- * reading {@code wire/src/main/proto/polywire.proto} directly -- every bind param is plain text).
+ * reading {@code wire/src/main/proto/warp.proto} directly -- every bind param is plain text).
  * Rather than accept "an UPDATE that sets a column to NULL never replicates" as a scoped gap, this
  * connector builds each row's SQL text with the literal keyword {@code NULL} inlined directly for
  * any null column (never as a bind param) and a real {@code ?::type} placeholder for every other

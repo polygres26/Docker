@@ -13,7 +13,7 @@ public interface NativeRlsSessionInitializer {
      * (no RBAC/OAuth configured) -- a real, correct optimization for the RLS/VPD-context-
      * propagating initializers, since there's no per-user identity worth setting for an
      * anonymous session. Found live, via a real orawire+sqlcl connection with plain username/
-     * password auth (no POLYWIRE_AUTH_MODE): db_emulation was silently never applied at all,
+     * password auth (no WARP_AUTH_MODE): db_emulation was silently never applied at all,
      * because that anonymous-session guard sits in front of every initializer indiscriminately,
      * including ours, whose job (making pg_oracle's unqualified names resolve) has nothing to
      * do with per-user identity and must run on every orawire session regardless. Override to

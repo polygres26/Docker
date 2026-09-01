@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Real cross-shard {@code JOIN} execution, via a genuine Calcite-federated connection -- the
- * correctness gap {@link RoutingBackendExecutor#executeScatterGather} otherwise has: PolyWire's
+ * correctness gap {@link RoutingBackendExecutor#executeScatterGather} otherwise has: Warp's
  * shards are homogeneous horizontal partitions (the SAME logical table, e.g. {@code shard.orders},
  * split by row across every shard in {@code registry.shardGroup()}), not the heterogeneous
  * per-backend placement a general federation engine (Calcite's own {@code JdbcSchema}, or the
@@ -146,7 +146,7 @@ final class ShardJoinExecutor {
      * to mount tables FROM) and for {@link StatisticsStore}'s own {@code pg_class.reltuples}
      * lookup -- {@code "public"} for every real, disclosed use of this method today (a table
      * declared in a non-default physical Postgres schema isn't supported by {@code
-     * POLYWIRE_TABLE_SHARDS} yet). */
+     * WARP_TABLE_SHARDS} yet). */
     static ExecutionResult executeByTableNames(BackendRegistry registry, List<String> shardNames, Set<String> tables,
             String pgSchemaName, Statement statement, StatisticsStore statisticsStore, SqlPlanStore planStore)
             throws SQLException {
@@ -168,7 +168,7 @@ final class ShardJoinExecutor {
         String originalSql = sql;
         // Real bug, found live via the plan-history feature itself: "lex=JAVA" quotes identifiers
         // with backticks, not the double-quotes this class's own UNION-rewrite generates
-        // (`"__polywire_shardN"`) -- the Frameworks Planner above still parsed fine (its own
+        // (`"__warp_shardN"`) -- the Frameworks Planner above still parsed fine (its own
         // parserConfig defaults to double-quote regardless of this connection's lex setting), but
         // EXPLAIN PLAN FOR runs through THIS raw connection's own default parser, which choked on
         // the stray `"` under lex=JAVA. Dropping lex=JAVA (default lex already double-quotes,
@@ -192,7 +192,7 @@ final class ShardJoinExecutor {
                 if (target == null) {
                     throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
                 }
-                String mountName = "__polywire_shard" + i;
+                String mountName = "__warp_shard" + i;
                 shardMountNames.add(mountName);
                 mountToBackend.put(mountName, new LeafScanProfiler.MountedBackend(target, shardName));
                 // Real driver-class lookup -- a shard can now genuinely be a non-Postgres engine

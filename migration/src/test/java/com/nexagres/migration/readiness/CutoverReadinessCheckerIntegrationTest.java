@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Real Postgres throughout (no Polywire needed -- this class only ever reads the bookkeeping
+ * Real Postgres throughout (no Warp needed -- this class only ever reads the bookkeeping
  * tables the other stores already write, exactly as documented in its own javadoc), proving each
  * gate independently: a source starts NOT READY (no partitions recorded at all, the fail-closed
  * default), becomes ready on partitions+lag+dead-letters, then flips back to not ready the moment

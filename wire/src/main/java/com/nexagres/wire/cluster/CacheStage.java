@@ -92,7 +92,7 @@ public final class CacheStage implements PipelineStage {
         Boolean hasSortKey(String physicalTable);
     }
 
-    private final PolyWireCluster cluster;
+    private final WarpCluster cluster;
     
     private volatile List<Pattern> cachePatterns;
     private volatile long ttlMillis;
@@ -125,12 +125,12 @@ public final class CacheStage implements PipelineStage {
     private volatile RowTableLookup rowTableLookup;
     private volatile java.util.function.Predicate<String> mongoTableLookup;
 
-    public CacheStage(PolyWireCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
+    public CacheStage(WarpCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
         this.cluster = cluster;
         this.cachePatterns = compilePatterns(cacheTablePatterns);
         this.ttlMillis = ttlMillis;
         this.resultCache = cluster.getOrCreateCache(cacheName(ttlMillis), ttlMillis);
-        this.keysByTable = cluster.getOrCreateCache("polywire-query-cache-index", 0);
+        this.keysByTable = cluster.getOrCreateCache("warp-query-cache-index", 0);
     }
 
     private static List<Pattern> compilePatterns(List<String> cacheTablePatterns) {
@@ -140,10 +140,10 @@ public final class CacheStage implements PipelineStage {
     }
 
     private static String cacheName(long ttlMillis) {
-        return "polywire-query-cache-ttl" + ttlMillis;
+        return "warp-query-cache-ttl" + ttlMillis;
     }
 
-    public static CacheStage fromConfig(PolyWireCluster cluster, String cacheTablesSpec, String ttlMillisSpec) {
+    public static CacheStage fromConfig(WarpCluster cluster, String cacheTablesSpec, String ttlMillisSpec) {
         List<String> tables = new ArrayList<>();
         if (cacheTablesSpec != null && !cacheTablesSpec.isBlank()) {
             for (String entry : cacheTablesSpec.split(",")) {
@@ -157,7 +157,7 @@ public final class CacheStage implements PipelineStage {
         return new CacheStage(cluster, tables, ttl);
     }
 
-    public static CacheStage fromConfigOrNull(PolyWireCluster cluster, String cacheTablesSpec, String ttlMillisSpec) {
+    public static CacheStage fromConfigOrNull(WarpCluster cluster, String cacheTablesSpec, String ttlMillisSpec) {
         if (!cluster.enabled() || cacheTablesSpec == null || cacheTablesSpec.isBlank()) {
             return null;
         }

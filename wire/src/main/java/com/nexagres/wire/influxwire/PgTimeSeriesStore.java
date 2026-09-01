@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
  * collection, real SQL underneath, no external service required" shape as
  * {@code oswire.PostgresSearchStore}/dynamowire's {@code PgItemStore}.
  *
- * <p>One physical table per measurement, {@code polywire_influx_<measurement>}:
+ * <p>One physical table per measurement, {@code warp_influx_<measurement>}:
  * <pre>
  *   time    TIMESTAMPTZ NOT NULL,  -- indexed; the hypertable partitioning column when TimescaleDB is present
  *   tags    JSONB NOT NULL DEFAULT '{}',  -- GIN-indexed
@@ -60,7 +60,7 @@ import org.slf4j.LoggerFactory;
 public final class PgTimeSeriesStore {
 
     private static final Logger log = LoggerFactory.getLogger(PgTimeSeriesStore.class);
-    private static final String TABLE_PREFIX = "polywire_influx_";
+    private static final String TABLE_PREFIX = "warp_influx_";
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     private final BackendRegistry backendRegistry;

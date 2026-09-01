@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -32,7 +32,7 @@ class OpenSearchWireShardingIntegrationTest {
 
     private static RealPostgres shard1;
     private static RealPostgres shard2;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
@@ -43,27 +43,27 @@ class OpenSearchWireShardingIntegrationTest {
                 + ";shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                 + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password();
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                .env("POLYWIRE_BACKENDS", backends)
-                .env("POLYWIRE_SHARD_BACKENDS", "shard1,shard2")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .frontend("oswire", "WARP_OSWIRE_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_SHARD_BACKENDS", "shard1,shard2")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (shard2 != null) shard2.close();
         if (shard1 != null) shard1.close();
     }
 
     private String baseUrl() {
-        return "http://localhost:" + polywire.port("oswire");
+        return "http://localhost:" + warp.port("oswire");
     }
 
     private JsonObject send(String method, String path, String body) throws IOException {
@@ -93,7 +93,7 @@ class OpenSearchWireShardingIntegrationTest {
     }
 
     /** Real proof documents landed on different physical shards: queries each container's own
-     * {@code polywire_search_products} table directly (bypassing PolyWire entirely) and returns
+     * {@code warp_search_products} table directly (bypassing Warp entirely) and returns
      * which doc_ids matching {@code idPrefix} are actually present there. Filtered by prefix,
      * not a bare {@code SELECT *}, since this class's tests share one collection/table with no
      * per-test reset -- each test writes its own distinctly-prefixed doc_ids precisely so it can
@@ -101,7 +101,7 @@ class OpenSearchWireShardingIntegrationTest {
     private Set<String> docIdsOnShard(RealPostgres shard, String idPrefix) throws Exception {
         Set<String> ids = new HashSet<>();
         try (var conn = java.sql.DriverManager.getConnection(shard.jdbcUrl(), shard.username(), shard.password());
-                var ps = conn.prepareStatement("SELECT doc_id FROM polywire_search_products WHERE doc_id LIKE ?")) {
+                var ps = conn.prepareStatement("SELECT doc_id FROM warp_search_products WHERE doc_id LIKE ?")) {
             ps.setString(1, idPrefix + "%");
             try (var rs = ps.executeQuery()) {
                 while (rs.next()) {

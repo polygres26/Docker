@@ -8,8 +8,8 @@
  * this extension's package/catalog schemas onto search_path, so unqualified
  * references the way real Oracle client code writes them --
  * DBMS_OUTPUT.PUT_LINE(...), V$SESSION, DBA_TABLES -- resolve without the
- * caller (Polywire's orawire frontend, or a human at psql) having to know
- * or spell out oracle_catalog.* by hand. Polywire issues exactly one
+ * caller (Warp's orawire frontend, or a human at psql) having to know
+ * or spell out oracle_catalog.* by hand. Warp issues exactly one
  * `SET db_emulation = 'oracle'` per orawire session and nothing else needs
  * to change on its side.
  *
@@ -236,13 +236,13 @@ db_emulation_assign_hook(int newval, void *extra)
 	 * overwritten wholesale by code entirely outside this extension's
 	 * control between two `SET db_emulation = '<mode>'` calls on what
 	 * this GUC's own C-level state considers "the same session" --
-	 * Polywire's own LazyPooledConnection issues its own unconditional
+	 * Warp's own LazyPooledConnection issues its own unconditional
 	 * `SET search_path TO "<tenant>", public` the first time its Java
 	 * wrapper object opens a (possibly pool-reused) physical connection,
 	 * with no idea this extension's search_path append exists to
 	 * preserve. If db_emulation_mode's enum value happens to already
 	 * match on that same physical backend (a real, observed case: the
-	 * backend process persists across what Polywire's own code thinks
+	 * backend process persists across what Warp's own code thinks
 	 * are separate logical connections), the old "value didn't change,
 	 * nothing to do" assumption was simply wrong -- search_path had
 	 * already been reset out from under it by the time this hook ran
@@ -337,7 +337,7 @@ _PG_init(void)
 	DefineCustomEnumVariable(
 		"db_emulation",
 		"Which foreign database's client-visible surface this session should emulate "
-		"(V$/GV$/DBA_* views, DBMS_*/UTL_* packages). Set by Polywire's protocol "
+		"(V$/GV$/DBA_* views, DBMS_*/UTL_* packages). Set by Warp's protocol "
 		"frontends on connect; safe to set by hand at psql too.",
 		NULL,
 		&db_emulation_mode,

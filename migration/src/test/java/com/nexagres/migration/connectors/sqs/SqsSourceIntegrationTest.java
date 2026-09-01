@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.net.URI;
 import java.sql.Connection;
@@ -27,12 +27,12 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 
 /**
  * End-to-end proof, real infrastructure throughout, using this session's own suggested testing
- * approach: since sqswire is API-compatible with real AWS SQS, a real running Polywire instance
+ * approach: since sqswire is API-compatible with real AWS SQS, a real running Warp instance
  * fronting sqswire stands in as a genuine SQS-API SOURCE -- no real AWS account/credentials
  * needed, and it's the exact same client code a real migration would use against real AWS. TWO
- * separate Polywire instances are used, exactly like migrating between two real, independent
+ * separate Warp instances are used, exactly like migrating between two real, independent
  * systems: a "source" instance (sqswire only, its own backend Postgres) and a "target" instance
- * (both grpc, for {@link PolywireGrpcSink}'s real write path, AND sqswire, so the migrated queue
+ * (both grpc, for {@link WarpGrpcSink}'s real write path, AND sqswire, so the migrated queue
  * can be read back through a real SQS API round-trip -- the strongest possible proof this
  * connector actually produces a working, live-queryable queue, not just correct-looking rows).
  */
@@ -75,46 +75,46 @@ class SqsSourceIntegrationTest {
     @Test
     void backlogAndLiveMessagesReplicateAndAreRetrievableThroughARealSqsRoundTrip() throws Exception {
         try (RealPostgres sourcePostgres = RealPostgres.start();
-                // Every wire protocol Polywire supports binds its own fixed-default-port listener
+                // Every wire protocol Warp supports binds its own fixed-default-port listener
                 // regardless of which frontends are explicitly requested (confirmed live: running
-                // a second Polywire process alongside the first, without this, fails with real
+                // a second Warp process alongside the first, without this, fails with real
                 // BindException/Address-already-in-use on every OTHER protocol's shared default
-                // port) -- this test is the first in this session to run two Polywire processes
+                // port) -- this test is the first in this session to run two Warp processes
                 // at once, so every listener neither side actually needs still has to be given
                 // its own free port explicitly.
-                PolyWireProcess sourcePolywire = PolyWireProcess.builder()
+                WarpProcess sourceWarp = WarpProcess.builder()
                         .pgBackend(sourcePostgres.host(), sourcePostgres.port(), sourcePostgres.database(), sourcePostgres.username(), sourcePostgres.password())
-                        .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
-                        .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .frontend("boltwire", "POLYWIRE_BOLTWIRE_PORT")
-                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                        .frontend("influxwire", "POLYWIRE_INFLUXWIRE_PORT")
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .frontend("mywire", "WARP_MYWIRE_PORT")
+                        .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .frontend("boltwire", "WARP_BOLTWIRE_PORT")
+                        .frontend("orawire", "WARP_ORAWIRE_PORT")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .frontend("oswire", "WARP_OSWIRE_PORT")
+                        .frontend("influxwire", "WARP_INFLUXWIRE_PORT")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start();
                 RealPostgres targetPostgres = RealPostgres.start();
-                PolyWireProcess targetPolywire = PolyWireProcess.builder()
+                WarpProcess targetWarp = WarpProcess.builder()
                         .pgBackend(targetPostgres.host(), targetPostgres.port(), targetPostgres.database(), targetPostgres.username(), targetPostgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
-                        .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .frontend("boltwire", "POLYWIRE_BOLTWIRE_PORT")
-                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                        .frontend("influxwire", "POLYWIRE_INFLUXWIRE_PORT")
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .frontend("mywire", "WARP_MYWIRE_PORT")
+                        .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .frontend("boltwire", "WARP_BOLTWIRE_PORT")
+                        .frontend("orawire", "WARP_ORAWIRE_PORT")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .frontend("oswire", "WARP_OSWIRE_PORT")
+                        .frontend("influxwire", "WARP_INFLUXWIRE_PORT")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start();
-                SqsClient sourceSqs = sqsClientFor(sourcePolywire.port("sqswire"))) {
+                SqsClient sourceSqs = sqsClientFor(sourceWarp.port("sqswire"))) {
 
             String sourceQueueUrl = sourceSqs.createQueue(r -> r.queueName("orders")).queueUrl();
             List<String> backlogBodies = List.of("order-A", "order-B", "order-C", "order-D", "order-E",
@@ -127,7 +127,7 @@ class SqsSourceIntegrationTest {
             checkpoints.ensureSchema();
 
             SqsSource source = new SqsSource(sourceSqs, sourceQueueUrl, "orders");
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", targetPolywire.port("grpc"), targetPostgres.username(), targetPostgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", targetWarp.port("grpc"), targetPostgres.username(), targetPostgres.password());
             Coordinator coordinator = new Coordinator(source, sink, checkpoints, 1);
             Thread coordinatorThread = new Thread(() -> {
                 try {
@@ -183,10 +183,10 @@ class SqsSourceIntegrationTest {
                 }
 
                 // Proof #5, the strongest one: a REAL SQS client, speaking the REAL SQS API,
-                // against the TARGET Polywire instance's own sqswire frontend, can actually
+                // against the TARGET Warp instance's own sqswire frontend, can actually
                 // receive the migrated messages -- not just "the rows look right in Postgres," a
                 // genuine round-trip through both wire protocols.
-                try (SqsClient targetSqs = sqsClientFor(targetPolywire.port("sqswire"))) {
+                try (SqsClient targetSqs = sqsClientFor(targetWarp.port("sqswire"))) {
                     String targetQueueUrl = targetSqs.getQueueUrl(r -> r.queueName("orders")).queueUrl();
                     Set<String> receivedViaRealSqsApi = new java.util.HashSet<>();
                     waitUntil(Duration.ofSeconds(15), () -> {

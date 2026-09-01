@@ -29,7 +29,7 @@ public final class RollupRefreshJob implements AutoCloseable {
         this.backendRegistry = backendRegistry;
         this.store = store;
         this.executor = Executors.newScheduledThreadPool(1, r -> {
-            Thread t = new Thread(r, "polywire-rollup-refresh");
+            Thread t = new Thread(r, "warp-rollup-refresh");
             t.setDaemon(true);
             return t;
         });

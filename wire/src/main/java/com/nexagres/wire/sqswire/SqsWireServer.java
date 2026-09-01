@@ -562,7 +562,7 @@ public final class SqsWireServer {
 
     public void start() throws Exception {
         server.start();
-        log.info("polywire sqswire (Amazon SQS HTTP/JSON) listening on port {}",
+        log.info("warp sqswire (Amazon SQS HTTP/JSON) listening on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
     }
 

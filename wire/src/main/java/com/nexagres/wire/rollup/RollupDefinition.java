@@ -11,7 +11,7 @@ public record RollupDefinition(
         int refreshIntervalMinutes,
         int maxStalenessMinutes) {
 
-    private static final String TABLE_PREFIX = "polywire_rollup_";
+    private static final String TABLE_PREFIX = "warp_rollup_";
 
     public String rollupTableName() {
         return TABLE_PREFIX + name;

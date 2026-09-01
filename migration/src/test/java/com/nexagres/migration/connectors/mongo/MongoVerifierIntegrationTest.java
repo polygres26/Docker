@@ -8,8 +8,8 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealMongo;
 import com.nexagres.migration.testsupport.RealPostgres;
 import com.nexagres.migration.verify.VerificationResult;
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Phase 3 of this session's migration plan: real, not simulated, verification and lag reporting.
- * Runs a real migration end to end (real Mongo, real Polywire gRPC, real target Postgres), then
+ * Runs a real migration end to end (real Mongo, real Warp gRPC, real target Postgres), then
  * proves {@link MongoVerifier} correctly reports a clean match, correctly DETECTS a real
  * introduced mismatch (a target row hand-edited to differ from its source), and that {@link
  * CdcCheckpointStore}'s new {@code last_event_at} column is actually populated with a real,
@@ -62,10 +62,10 @@ class MongoVerifierIntegrationTest {
         try (RealMongo mongo = RealMongo.start();
                 RealPostgres postgres = RealPostgres.start();
                 MongoClient sourceClient = MongoClients.create(mongo.connectionString());
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             MongoCollection<Document> source = sourceClient.getDatabase("src").getCollection("orders");
@@ -77,7 +77,7 @@ class MongoVerifierIntegrationTest {
             checkpoints.ensureSchema();
 
             MongoSource migrationSource = new MongoSource(sourceClient, "src", "orders", "db", "orders", 3, "_id");
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator coordinator = new Coordinator(migrationSource, sink, checkpoints, 3);
             Thread coordinatorThread = new Thread(() -> {
                 try {
@@ -137,7 +137,7 @@ class MongoVerifierIntegrationTest {
     private static Long lastEventAgeSeconds(RealPostgres postgres, String sourceKey) throws Exception {
         try (Connection conn = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
                 PreparedStatement ps = conn.prepareStatement(
-                        "SELECT EXTRACT(EPOCH FROM (now() - last_event_at))::bigint FROM polywire_cdc_checkpoints WHERE source_key = ?")) {
+                        "SELECT EXTRACT(EPOCH FROM (now() - last_event_at))::bigint FROM warp_cdc_checkpoints WHERE source_key = ?")) {
             ps.setString(1, sourceKey);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next() || rs.getObject(1) == null) {

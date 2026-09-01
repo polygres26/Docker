@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Startup pass that finishes whatever a crashed coordinator left in doubt. Run once, early in
- * {@code Main.main}, right after the backend registry is built and before PolyWire starts
+ * {@code Main.main}, right after the backend registry is built and before Warp starts
  * accepting client connections -- an in-doubt branch is holding locks at its backend for however
  * long it stays unresolved, so this shouldn't wait for the first client transaction to trigger it.
  *
@@ -35,7 +35,7 @@ public final class XaRecovery {
         try {
             unresolved = recoveryLog.findUnresolved();
         } catch (SQLException e) {
-            log.warn("xa recovery: could not read polywire_xa_log -- skipping startup recovery pass "
+            log.warn("xa recovery: could not read warp_xa_log -- skipping startup recovery pass "
                     + "(any in-doubt transaction from a previous crash stays unresolved until the next "
                     + "successful startup): {}", e.getMessage());
             return;
@@ -75,7 +75,7 @@ public final class XaRecovery {
         BackendTarget target = usingCapturedIdentity ? null : registry.get(branch.backendName());
         if (!usingCapturedIdentity && target == null) {
             log.error("xa recovery: gtrid={} branch={} references unknown backend '{}' (no captured target "
-                    + "identity on this row -- it predates Phase 4b) -- POLYWIRE_BACKENDS config may have "
+                    + "identity on this row -- it predates Phase 4b) -- WARP_BACKENDS config may have "
                     + "changed since the crash; this branch cannot be auto-recovered and needs manual "
                     + "resolution against that backend's own XA recovery tooling (e.g. psql's pg_prepared_xacts).",
                     gtridHex, branch.branchIndex(), branch.backendName());

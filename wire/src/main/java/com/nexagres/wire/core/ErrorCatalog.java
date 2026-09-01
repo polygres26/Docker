@@ -10,7 +10,7 @@ import java.text.MessageFormat;
 import java.util.Properties;
 
 /**
- * Central catalog for PolyWire's own repo-authored error messages -- as opposed to messages that
+ * Central catalog for Warp's own repo-authored error messages -- as opposed to messages that
  * come back from the real Postgres JDBC driver, which are forwarded to the client verbatim (see
  * {@link SqlStateErrorMapper} for how <em>those</em> get a dialect-native error CODE assigned;
  * this class has nothing to do with that path).

@@ -9,7 +9,7 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>nexagres-wire</name>
-  <description>PolyWire: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
+  <description>Warp: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
     (com.omnigate.*) into com.nexagres.wire.*, independent standalone module, sibling to
     nexagres-dms in this repo.</description>
@@ -28,7 +28,7 @@
          no 2.18.0 artifact exists for either); ignite-azure-ext is a separate ignite-extensions
          release line, last published against ignite-core 2.13.0 (provided scope). All three still
          only depend on TcpDiscoveryIpFinderAdapter, a stable SPI surface unchanged across the 2.x
-         line — see PolyWireCluster's javadoc for the full verification trail and the version-skew
+         line — see WarpCluster's javadoc for the full verification trail and the version-skew
          caveat this pin carries. -->
     <ignite.aws.version>2.11.1</ignite.aws.version>
     <ignite.gce.version>2.11.1</ignite.gce.version>
@@ -39,7 +39,7 @@
     <mssqljdbc.version>12.8.1.jre11</mssqljdbc.version>
     <!-- Pinned to a version that still implements mysql_native_password client-side.
          Oracle removed that plugin from mysql-connector-j starting around 9.x following the
-         server-side deprecation, and PolyWire's mywire currently only implements the
+         server-side deprecation, and Warp's mywire currently only implements the
          mysql_native_password handshake (real, confirmed working; tests/python/test_mywire.py
          already covers it against PyMySQL, whose Python driver kept native-password support).
          Adding caching_sha2_password (the modern default, RSA/SHA256 challenge-response) is a
@@ -138,19 +138,19 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <!-- PolyWire's original, still-primary backend driver. PolyWire used to be Postgres-only
+      <!-- Warp's original, still-primary backend driver. Warp used to be Postgres-only
            end to end (BackendRegistry/BackendConnectionPools/BackendTarget); Oracle is now a
            real second backend driver too (see the ojdbc11 dependency below, promoted from
            test-only scope), following the sibling Omnigate project's own proven
            config-record-plus-URL-prefix-dispatch shape rather than a polymorphic per-engine
            class hierarchy. MySQL/SQL Server as real backends are a real, scoped follow-up, not
-           done yet; see docs/POLYWIRE_GUIDE.md's own federation section. -->
+           done yet; see docs/WARP_GUIDE.md's own federation section. -->
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's second real backend driver. BackendTarget/
+      <!-- Promoted from test-only scope: Warp's second real backend driver. BackendTarget/
            BackendConnectionPools/ShardJoinExecutor/SchemaFederationStage/RollupStage/
            XaBackendFactory all now recognize a jdbc:oracle: BackendTarget as a real read/write
            data-plane backend (cross-engine JOIN federation and XA/2PC included), not just
@@ -161,7 +161,7 @@
       <version>${ojdbc.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's third real backend driver, same shape and
+      <!-- Promoted from test-only scope: Warp's third real backend driver, same shape and
            reasoning as ojdbc11 above; BackendTarget/BackendConnectionPools/ShardJoinExecutor/
            SchemaFederationStage/RollupStage/XaBackendFactory all now recognize a jdbc:sqlserver:
            BackendTarget too. -->
@@ -170,7 +170,7 @@
       <version>${mssqljdbc.version}</version>
     </dependency>
     <dependency>
-      <!-- Promoted from test-only scope: PolyWire's fourth real backend driver, same shape as
+      <!-- Promoted from test-only scope: Warp's fourth real backend driver, same shape as
            ojdbc11/mssql-jdbc above, for jdbc:mysql:/jdbc:mariadb: BackendTargets. This is the real
            Oracle-published MySQL Connector/J (not MariaDB's own driver, which is what the sibling
            Omnigate project found live has no usable XADataSource); com.mysql.cj.jdbc.
@@ -196,13 +196,13 @@
     <dependency>
       <!-- Apache Ignite core (com.nexagres.wire.cluster), Apache-2.0 — embedded in-process
            (Ignition.start(), not a separate server) for CacheStage's cluster-aware cache-aside
-           result cache. Pinned to the 2.x line deliberately, not 3.x (see PolyWireCluster's javadoc). -->
+           result cache. Pinned to the 2.x line deliberately, not 3.x (see WarpCluster's javadoc). -->
       <groupId>org.apache.ignite</groupId>
       <artifactId>ignite-core</artifactId>
       <version>${ignite.version}</version>
     </dependency>
     <dependency>
-      <!-- TcpDiscoveryS3IpFinder (POLYWIRE_CLUSTER_DISCOVERY=s3) — nodes self-register their IP
+      <!-- TcpDiscoveryS3IpFinder (WARP_CLUSTER_DISCOVERY=s3) — nodes self-register their IP
            in an S3 bucket on startup instead of a static host:port list, so replaced instances
            don't break discovery. Real Maven Central coordinate verified directly (see
            ignite.aws.version's comment above): ignite-aws stopped publishing after 2.11.1, there
@@ -221,7 +221,7 @@
       </exclusions>
     </dependency>
     <dependency>
-      <!-- TcpDiscoveryGoogleStorageIpFinder (POLYWIRE_CLUSTER_DISCOVERY=gcs) — same
+      <!-- TcpDiscoveryGoogleStorageIpFinder (WARP_CLUSTER_DISCOVERY=gcs) — same
            self-registration pattern as S3, backed by Cloud Storage. Same version-skew situation
            as ignite-aws: last published at 2.11.1, no 2.18.0 artifact on Maven Central. -->
       <groupId>org.apache.ignite</groupId>
@@ -235,7 +235,7 @@
       </exclusions>
     </dependency>
     <dependency>
-      <!-- TcpDiscoveryAzureBlobStoreIpFinder (POLYWIRE_CLUSTER_DISCOVERY=azure) — ships from a
+      <!-- TcpDiscoveryAzureBlobStoreIpFinder (WARP_CLUSTER_DISCOVERY=azure) — ships from a
            *different* release line than ignite-aws/ignite-gce: it was moved out of mainline
            Apache Ignite into the separate apache/ignite-extensions repo, published under artifact
            id ignite-azure-ext (still groupId org.apache.ignite), last released as 1.0.0 against
@@ -345,7 +345,7 @@
            gRPC stub classes instead of duplicating them, so wire itself no longer needs a real
            Mongo client of its own; back to test-only here. This is the first real MongoDB client
            library any mongowire test was verified against (mongowire had no integration test at
-           all before that). MongoDB as a real PolyWire BACKEND ENGINE (via Calcite's own
+           all before that). MongoDB as a real Warp BACKEND ENGINE (via Calcite's own
            calcite-mongodb adapter, i.e. querying Mongo the way SchemaFederationStage queries a
            SQL backend) was attempted and reverted; see SchemaFederationStage's own git history/
            commit message for the full real finding: calcite-mongodb 1.42.0 is compiled against
@@ -420,7 +420,7 @@
         <configuration>
           <!-- Same add-opens set scripts/run.sh documents needing on JDK 17+ for embedded
                Ignite's reflective GridUnsafe bootstrap (module system blocks it by default) —
-               only actually exercised by PolyWireClusterAzBackupPlacementTest, which is the one
+               only actually exercised by WarpClusterAzBackupPlacementTest, which is the one
                test class that starts real embedded Ignite nodes. -->
           <argLine>
             --add-opens=java.base/jdk.internal.access=ALL-UNNAMED

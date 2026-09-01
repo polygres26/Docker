@@ -861,7 +861,7 @@ public final class O5LogonHandler {
         return HexFormat.of().withUpperCase().formatHex(bytes);
     }
 
-    /** {@code realIdentity} is true exactly when {@code POLYWIRE_AUTH_CREDENTIALS} is configured
+    /** {@code realIdentity} is true exactly when {@code WARP_AUTH_CREDENTIALS} is configured
      * (see {@link CredentialStore}), i.e. {@code username} is a real, distinguishable per-caller
      * identity worth propagating into {@link com.nexagres.wire.core.AccessContext} -- as opposed
      * to the single shared-credential default, where every caller presents the same username and

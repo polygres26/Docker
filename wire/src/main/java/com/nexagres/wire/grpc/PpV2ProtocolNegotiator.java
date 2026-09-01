@@ -90,7 +90,7 @@ final class PpV2ProtocolNegotiator implements InternalProtocolNegotiator.Protoco
             if (!ProxyProtocolV2.signatureMatches(sigCandidate)) {
                 InetAddress rawPeerForLog = channelRemoteAddress(ctx);
                 log.warn("ACL: rejecting gRPC connection from {} -- PROXY protocol v2 signature missing/invalid "
-                        + "-- this listener requires PPv2 (POLYWIRE_ACL_PPV2_ENABLED=true)", rawPeerForLog);
+                        + "-- this listener requires PPv2 (WARP_ACL_PPV2_ENABLED=true)", rawPeerForLog);
                 failAndClose(ctx);
                 return;
             }
@@ -106,7 +106,7 @@ final class PpV2ProtocolNegotiator implements InternalProtocolNegotiator.Protoco
             InetAddress rawPeer = channelRemoteAddress(ctx);
             if (!trustedProxies.isEmpty() && (rawPeer == null || !matchesAny(rawPeer, trustedProxies))) {
                 log.warn("ACL: rejecting gRPC connection from {} -- PPv2 is enabled on this listener but this "
-                        + "peer is not in POLYWIRE_ACL_TRUSTED_PROXIES", rawPeer);
+                        + "peer is not in WARP_ACL_TRUSTED_PROXIES", rawPeer);
                 failAndClose(ctx);
                 return;
             }

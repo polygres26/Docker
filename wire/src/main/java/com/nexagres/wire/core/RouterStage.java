@@ -47,7 +47,7 @@ public final class RouterStage implements PipelineStage {
     public record ShardRule(String schemaName, Pattern schemaPattern) {
     }
 
-    /** Real, declarative per-table horizontal partitioning ({@code POLYWIRE_TABLE_SHARDS}) --
+    /** Real, declarative per-table horizontal partitioning ({@code WARP_TABLE_SHARDS}) --
      * unlike {@link ShardRule} (which needs a client to type a schema-qualifier prefix like {@code
      * "public."} in every query just to opt a statement into scatter-gather), this matches the
      * table's own bare name directly (real word-boundary regex, no qualifier needed at all) and
@@ -215,7 +215,7 @@ public final class RouterStage implements PipelineStage {
     }
 
     /** As the other {@code fromConfig} overload, plus {@code tableShardSpec}
-     * ({@code POLYWIRE_TABLE_SHARDS}) -- real, declarative per-table horizontal partitioning, see
+     * ({@code WARP_TABLE_SHARDS}) -- real, declarative per-table horizontal partitioning, see
      * {@link TableShardRule}'s own javadoc. Format: {@code table:strategy:column:params}, entries
      * {@code |}-delimited (matching {@code valueShardSpec}'s own convention -- {@code strategy}'s
      * own {@code params} may itself use {@code ;}, e.g. a range/date strategy's own boundary list,
@@ -366,7 +366,7 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        // Real, declarative per-table sharding (POLYWIRE_TABLE_SHARDS) -- unlike ShardRule below,
+        // Real, declarative per-table sharding (WARP_TABLE_SHARDS) -- unlike ShardRule below,
         // needs no schema-qualifier prefix in the query at all: the table's own bare name is
         // matched directly. A literal value for the table's own declared partition column routes
         // straight to the ONE shard that owns it; anything else (no such predicate -- a full-table

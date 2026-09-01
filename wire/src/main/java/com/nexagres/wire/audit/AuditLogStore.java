@@ -15,7 +15,7 @@ import java.util.List;
 
 public final class AuditLogStore {
 
-    public static final String POOL_KEY = "polywire-audit";
+    public static final String POOL_KEY = "warp-audit";
 
     private final String jdbcUrl;
     private final String user;
@@ -29,7 +29,7 @@ public final class AuditLogStore {
         this.user = user;
         this.password = password;
         try (Connection connection = borrow(); Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE IF NOT EXISTS polywire_audit_log ("
+            statement.execute("CREATE TABLE IF NOT EXISTS warp_audit_log ("
                     + "seq_num BIGINT PRIMARY KEY, "
                     + "ts TIMESTAMP, "
                     + "event_type VARCHAR(64), "
@@ -42,7 +42,7 @@ public final class AuditLogStore {
         try (Connection connection = borrow();
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
-                        "SELECT seq_num, row_hash FROM polywire_audit_log ORDER BY seq_num DESC LIMIT 1")) {
+                        "SELECT seq_num, row_hash FROM warp_audit_log ORDER BY seq_num DESC LIMIT 1")) {
             if (rs.next()) {
                 this.nextSeq = rs.getLong(1) + 1;
                 this.lastHash = rs.getString(2);
@@ -59,7 +59,7 @@ public final class AuditLogStore {
                 event.userId(), event.summary(), detailsJson);
         try (Connection connection = borrow();
                 PreparedStatement statement = connection.prepareStatement(
-                        "INSERT INTO polywire_audit_log (seq_num, ts, event_type, user_id, summary, details, "
+                        "INSERT INTO warp_audit_log (seq_num, ts, event_type, user_id, summary, details, "
                                 + "prev_hash, row_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
             statement.setLong(1, nextSeq);
             statement.setTimestamp(2, Timestamp.from(event.timestamp()));
@@ -79,7 +79,7 @@ public final class AuditLogStore {
         List<AuditEvent> result = new ArrayList<>();
         try (Connection connection = borrow();
                 PreparedStatement statement = connection.prepareStatement(
-                        "SELECT ts, event_type, user_id, summary, details FROM polywire_audit_log "
+                        "SELECT ts, event_type, user_id, summary, details FROM warp_audit_log "
                                 + "ORDER BY seq_num DESC LIMIT ?")) {
             statement.setInt(1, limit);
             try (ResultSet rs = statement.executeQuery()) {
@@ -115,7 +115,7 @@ public final class AuditLogStore {
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
                         "SELECT seq_num, ts, event_type, user_id, summary, details, prev_hash, row_hash "
-                                + "FROM polywire_audit_log ORDER BY seq_num ASC")) {
+                                + "FROM warp_audit_log ORDER BY seq_num ASC")) {
             while (rs.next()) {
                 long seqNum = rs.getLong(1);
                 String storedPrevHash = rs.getString(7);

@@ -3,7 +3,7 @@ package com.nexagres.wire.xa;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -46,27 +46,27 @@ class XaRecoveryIntegrationTest {
                 st.execute("CREATE TABLE shopB.orders (id int)");
             }
 
-            // A spec-with-entries POLYWIRE_BACKENDS must include an explicit "default" entry --
+            // A spec-with-entries WARP_BACKENDS must include an explicit "default" entry --
             // BackendRegistry.fromConfig only auto-registers the implicit control-plane target as
-            // "default" when POLYWIRE_BACKENDS is unset entirely (see its javadoc/PgItemStore's).
+            // "default" when WARP_BACKENDS is unset entirely (see its javadoc/PgItemStore's).
             // Reuses backendA as the catalog home for anything that doesn't match a schema rule.
             String backends = "default=" + backendA.jdbcUrl() + "|" + backendA.username() + "|" + backendA.password()
                     + ";backendA=" + backendA.jdbcUrl() + "|" + backendA.username() + "|" + backendA.password()
                     + ";backendB=" + backendB.jdbcUrl() + "|" + backendB.username() + "|" + backendB.password();
 
-            try (PolyWireProcess polywire = PolyWireProcess.builder()
+            try (WarpProcess warp = WarpProcess.builder()
                     .pgBackend(controlPlane.host(), controlPlane.port(), controlPlane.database(),
                             controlPlane.username(), controlPlane.password())
-                    .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                    .env("POLYWIRE_BACKENDS", backends)
-                    .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                    .env("POLYWIRE_ROUTER_SCHEMA_RULES", "shopA:backendA,shopB:backendB")
-                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .frontend("pgwire", "WARP_PGWIRE_PORT")
+                    .env("WARP_BACKENDS", backends)
+                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                    .env("WARP_ROUTER_SCHEMA_RULES", "shopA:backendA,shopB:backendB")
+                    .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start()) {
 
-                String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+                String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
                 try (Connection conn = DriverManager.getConnection(url, backendA.username(), backendA.password())) {
                     conn.setAutoCommit(false);
                     try (Statement st = conn.createStatement()) {

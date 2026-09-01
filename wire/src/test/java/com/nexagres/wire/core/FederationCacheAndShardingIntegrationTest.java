@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -21,11 +21,11 @@ import org.junit.jupiter.api.Test;
  * <ul>
  *   <li>{@code customers} -- reference data, lives on the default backend only.
  *   <li>{@code items} -- the product catalog: small, read-heavy, rarely written -- exactly the
- *       shape {@code POLYWIRE_CACHE_TABLES} is meant for. Lives on the default backend only
+ *       shape {@code WARP_CACHE_TABLES} is meant for. Lives on the default backend only
  *       (queried unqualified, so {@link RouterStage}'s shard rule never matches it -- see that
  *       class's own {@code \bschema\.} pattern).
  *   <li>{@code orders} -- horizontally partitioned across two independent Postgres backends,
- *       queried as {@code public.orders} so {@code POLYWIRE_ROUTER_SHARD_TABLES=public} routes it
+ *       queried as {@code public.orders} so {@code WARP_ROUTER_SHARD_TABLES=public} routes it
  *       through real scatter-gather.
  * </ul>
  *
@@ -38,11 +38,11 @@ class FederationCacheAndShardingIntegrationTest {
 
     private RealPostgres shard1;
     private RealPostgres shard2;
-    private PolyWireProcess polywire;
+    private WarpProcess warp;
 
     @AfterEach
     void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (shard2 != null) shard2.close();
         if (shard1 != null) shard1.close();
     }
@@ -59,14 +59,14 @@ class FederationCacheAndShardingIntegrationTest {
             st.execute("INSERT INTO items (name, price) VALUES ('widget', 9.99), ('gadget', 19.99)");
         }
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_CACHE_TABLES", "items")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_CACHE_TABLES", "items")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
 
         String query = "SELECT name FROM items WHERE id = 1";
@@ -99,7 +99,7 @@ class FederationCacheAndShardingIntegrationTest {
             st.execute("INSERT INTO orders (customer_id, item_id, quantity) VALUES (2, 1, 5)");
         }
 
-        polywire = twoShardPolywire(shard1, shard2, null);
+        warp = twoShardWarp(shard1, shard2, null);
 
         String query = "SELECT item_id, SUM(quantity) FROM public.orders GROUP BY item_id ORDER BY item_id";
         try (Connection conn = connect(shard1.username(), shard1.password());
@@ -117,7 +117,7 @@ class FederationCacheAndShardingIntegrationTest {
     }
 
     /** A real federated JOIN across shards ({@link ShardJoinExecutor}) -- not scatter-gather's
-     * own broadcast-and-merge, which {@code docs/POLYWIRE_GUIDE.md} §4.3 documents as silently
+     * own broadcast-and-merge, which {@code docs/WARP_GUIDE.md} §4.3 documents as silently
      * WRONG the instant a JOIN's matching row pair spans two different shards (never found on
      * either shard alone, no error raised). This deliberately places each customer and their
      * matching order on OPPOSITE shards -- customer 1 lives on shard1 but customer 1's order
@@ -147,7 +147,7 @@ class FederationCacheAndShardingIntegrationTest {
             st.execute("INSERT INTO orders (customer_id, item) VALUES (1, 'widget')");
         }
 
-        polywire = twoShardPolywire(shard1, shard2, null);
+        warp = twoShardWarp(shard1, shard2, null);
 
         String query = "SELECT c.name, o.item FROM public.customers c "
                 + "JOIN public.orders o ON c.id = o.customer_id ORDER BY c.name";
@@ -189,7 +189,7 @@ class FederationCacheAndShardingIntegrationTest {
             st.execute("INSERT INTO orders (customer_id, item_id, quantity) VALUES (2, 1, 5)");
         }
 
-        polywire = twoShardPolywire(shard1, shard2, "items");
+        warp = twoShardWarp(shard1, shard2, "items");
 
         try (Connection conn = connect(shard1.username(), shard1.password())) {
             // Real scatter-gather across both live shards -- proves sharding still works with
@@ -214,28 +214,28 @@ class FederationCacheAndShardingIntegrationTest {
         }
     }
 
-    private PolyWireProcess twoShardPolywire(RealPostgres shard1, RealPostgres shard2, String cacheTables)
+    private WarpProcess twoShardWarp(RealPostgres shard1, RealPostgres shard2, String cacheTables)
             throws Exception {
         String backends = "shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                 + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password();
-        PolyWireProcess.Builder builder = PolyWireProcess.builder()
+        WarpProcess.Builder builder = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_BACKENDS", backends)
-                .env("POLYWIRE_SHARD_BACKENDS", "shard1,shard2")
-                .env("POLYWIRE_ROUTER_SHARD_TABLES", "public")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled");
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_SHARD_BACKENDS", "shard1,shard2")
+                .env("WARP_ROUTER_SHARD_TABLES", "public")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled");
         if (cacheTables != null) {
-            builder.env("POLYWIRE_CACHE_TABLES", cacheTables);
+            builder.env("WARP_CACHE_TABLES", cacheTables);
         }
         return builder.start();
     }
 
     private Connection connect(String username, String password) throws SQLException {
-        return DriverManager.getConnection("jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres",
+        return DriverManager.getConnection("jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres",
                 username, password);
     }
 
@@ -250,7 +250,7 @@ class FederationCacheAndShardingIntegrationTest {
         }
     }
 
-    /** Real, declarative {@code POLYWIRE_TABLE_SHARDS} -- no schema-qualifier prefix anywhere in
+    /** Real, declarative {@code WARP_TABLE_SHARDS} -- no schema-qualifier prefix anywhere in
      * any query, unlike every scenario above. {@code orders} is declared {@code hash:customer_id}
      * across shard1/shard2: a query that supplies a real {@code customer_id} literal routes
      * straight to the ONE shard {@link ShardingStrategy#hash} actually resolves it to (proven by
@@ -288,17 +288,17 @@ class FederationCacheAndShardingIntegrationTest {
             st.execute("INSERT INTO orders (customer_id, quantity) VALUES (" + customerOnShard2 + ", 9)");
         }
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_BACKENDS", "default=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_BACKENDS", "default=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                         + ";shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                         + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password())
-                .env("POLYWIRE_TABLE_SHARDS", "orders:hash:customer_id:shard1,shard2")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .env("WARP_TABLE_SHARDS", "orders:hash:customer_id:shard1,shard2")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
 
         try (Connection conn = connect(shard1.username(), shard1.password())) {

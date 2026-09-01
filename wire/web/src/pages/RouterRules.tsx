@@ -49,7 +49,7 @@ function serializeTableShards(rows: TableShardRow[]): string {
 }
 
 /**
- * Statement routing rules -- edits the `polywire_config.router*` fields RouterStage parses (see
+ * Statement routing rules -- edits the `warp_config.router*` fields RouterStage parses (see
  * RouterStage#reconfigure for the exact grammar). Raw spec editors for the older rule kinds, same
  * escape-hatch treatment as the SQL Firewall page's regex field: those formats are compact and
  * specific enough that reproducing Warp's own grammar directly is more honest than a leaky
@@ -103,7 +103,7 @@ export default function RouterRules() {
         routerShardTables: shardTables,
         routerTableShards: serializeTableShards(tableShardRows),
       })
-      setMessage(`Saved — polywire_config version ${saved.version}.`)
+      setMessage(`Saved — warp_config version ${saved.version}.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

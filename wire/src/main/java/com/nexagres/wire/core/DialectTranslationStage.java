@@ -11,7 +11,7 @@ public final class DialectTranslationStage implements PipelineStage {
 
     private final BackendRegistry registry;
     private final TranslationCache cache;
-    // volatile: reconfigureLlm() swaps this from the polywire_config LISTEN/NOTIFY callback on a
+    // volatile: reconfigureLlm() swaps this from the warp_config LISTEN/NOTIFY callback on a
     // different thread than the pipeline threads that read it via handle()/translateWithFallback.
     // null means "no LLM fallback configured" (provider=none, or a config-store client that
     // failed to build) -- see translateWithFallback's null-llmClient handling below.
@@ -39,7 +39,7 @@ public final class DialectTranslationStage implements PipelineStage {
     }
 
     /**
-     * Hot-reload hook for {@code polywire_config}'s LLM settings, called from the same
+     * Hot-reload hook for {@code warp_config}'s LLM settings, called from the same
      * {@code ConfigStore#listen} callback every other stage reconfigures from (see
      * {@code Main#main}) -- no restart needed to pick up a provider/apiKey/baseUrl/model change
      * made through {@code /api/llm-config}. Delegates to {@link TranslationLlmClient#fromConfig}
@@ -76,7 +76,7 @@ public final class DialectTranslationStage implements PipelineStage {
         if (fromDialect == SourceDialect.ORACLE && targetDialect == SourceDialect.POSTGRES) {
             // Detect (and cache, per backend) whether pg_oracle is actually installed before
             // deciding whether Oracle-dialect SQL can lean on oracle_catalog.to_char/to_date --
-            // Polywire can be deployed against a plain, unmodified Postgres backend with no
+            // Warp can be deployed against a plain, unmodified Postgres backend with no
             // pg_oracle extension at all, and DialectTranslations.normalizeOracle() has no
             // connection of its own to detect that with (translation is a pure string transform
             // one stage earlier than any backend connection). See PgOracleSupport's own javadoc.

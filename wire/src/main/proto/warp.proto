@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package polywire;
+package warp;
 
 option java_package = "com.nexagres.wire.grpc.proto";
 option java_multiple_files = true;
 
-// Native PolyWire wire protocol: a thin Type-3 JDBC driver talks this
+// Native Warp wire protocol: a thin Type-3 JDBC driver talks this
 // instead of emulating a foreign database's wire protocol. Stateless per
 // call — username/password travel on every request rather than a separate
 // session-establishing RPC, keeping the server side simple (no

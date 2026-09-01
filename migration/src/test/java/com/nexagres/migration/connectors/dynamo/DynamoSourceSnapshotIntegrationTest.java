@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.core.Partition;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealDynamoDb;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.net.URI;
@@ -31,7 +31,7 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient;
 
 /**
  * Real, not simulated, snapshot (parallel {@code Scan}) verification: real DynamoDB Local, real
- * Polywire gRPC subprocess, real target Postgres. Drives {@link DynamoSource}'s snapshot-related
+ * Warp gRPC subprocess, real target Postgres. Drives {@link DynamoSource}'s snapshot-related
  * methods directly (not through {@link com.nexagres.migration.coordinator.Coordinator}) --
  * deliberately, since {@code Coordinator#run} also calls {@code prepareChangeFeed}/{@code
  * streamChanges}, which need real DynamoDB Streams support DynamoDB Local does not have (see
@@ -64,10 +64,10 @@ class DynamoSourceSnapshotIntegrationTest {
         try (RealDynamoDb dynamo = RealDynamoDb.start();
                 RealPostgres postgres = RealPostgres.start();
                 DynamoDbClient sourceClient = dynamo.newClient();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             createTableWithCompositeKey(sourceClient, "Orders");
@@ -90,7 +90,7 @@ class DynamoSourceSnapshotIntegrationTest {
 
             int partitionCount = 3;
             DynamoSource source = new DynamoSource(sourceClient, unusedStreamsClient, "Orders", partitionCount);
-            try (PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password())) {
+            try (WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password())) {
                 source.ensureTargetSchema(sink);
                 long copied = 0;
                 for (Partition partition : source.listPartitions()) {

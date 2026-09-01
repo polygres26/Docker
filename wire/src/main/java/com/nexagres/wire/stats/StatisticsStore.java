@@ -1,6 +1,6 @@
 package com.nexagres.wire.stats;
 
-import com.nexagres.wire.cluster.PolyWireCluster;
+import com.nexagres.wire.cluster.WarpCluster;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -13,7 +13,7 @@ import org.apache.ignite.IgniteCache;
 
 public final class StatisticsStore {
 
-    private static final String CACHE_NAME = "polywire-table-stats";
+    private static final String CACHE_NAME = "warp-table-stats";
     private static final long DEFAULT_TTL_MILLIS = 24L * 60 * 60 * 1000;
 
     private final Map<String, TableStatistics> local;
@@ -23,11 +23,11 @@ public final class StatisticsStore {
         this(null, DEFAULT_TTL_MILLIS);
     }
 
-    public StatisticsStore(PolyWireCluster cluster) {
+    public StatisticsStore(WarpCluster cluster) {
         this(cluster, ttlFromEnvOrDefault());
     }
 
-    StatisticsStore(PolyWireCluster cluster, long ttlMillis) {
+    StatisticsStore(WarpCluster cluster, long ttlMillis) {
         if (cluster != null && cluster.enabled()) {
             this.clusterCache = cluster.getOrCreateCache(CACHE_NAME, ttlMillis);
             this.local = null;
@@ -38,7 +38,7 @@ public final class StatisticsStore {
     }
 
     private static long ttlFromEnvOrDefault() {
-        String raw = System.getenv("POLYWIRE_STATS_TTL_MS");
+        String raw = System.getenv("WARP_STATS_TTL_MS");
         if (raw == null || raw.isBlank()) {
             return DEFAULT_TTL_MILLIS;
         }

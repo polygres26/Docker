@@ -24,9 +24,9 @@ import org.slf4j.LoggerFactory;
  * Plays a captured workload back against a Postgres target in the order it was originally
  * captured across the whole fleet -- not just one instance's own order.
  *
- * <p>Every live PolyWire instance keeps its own in-memory {@link WorkloadCaptureBuffer}, stamped
+ * <p>Every live Warp instance keeps its own in-memory {@link WorkloadCaptureBuffer}, stamped
  * with the wall-clock instant each statement was captured. This tool discovers every live
- * instance via {@link NodeRegistry} (the same {@code polywire_nodes} heartbeat table the admin
+ * instance via {@link NodeRegistry} (the same {@code warp_nodes} heartbeat table the admin
  * UI's topology view reads), pulls each one's captured entries over its {@code GET /api/capture}
  * admin route, and merges all of them into one list sorted by {@code wallClock} -- reconstructing
  * a single global arrival order across every instance, not each instance's own local order.
@@ -42,12 +42,12 @@ import org.slf4j.LoggerFactory;
  * order for zero-I/O in-memory capture and ordering that reflects when each instance actually saw
  * the statement.
  *
- * <p>Because captured buffers are in-memory and bounded ({@code POLYWIRE_CAPTURE_BUFFER_SIZE}),
+ * <p>Because captured buffers are in-memory and bounded ({@code WARP_CAPTURE_BUFFER_SIZE}),
  * this tool takes one pull per node, per run -- it is not a durable log; run it before an
  * instance's buffer wraps if you need everything currently held.
  *
  * <p>Run via {@code java -cp nexagres-wire.jar com.nexagres.wire.capture.WorkloadReplayer}, using
- * the same {@code POLYWIRE_PG_*}/{@code POLYWIRE_ADMIN_TOKEN} options the server itself uses.
+ * the same {@code WARP_PG_*}/{@code WARP_ADMIN_TOKEN} options the server itself uses.
  */
 public final class WorkloadReplayer {
 
@@ -62,12 +62,12 @@ public final class WorkloadReplayer {
 
     public static void main(String[] args) throws Exception {
         ServerOptions options = ServerOptions.parse(args);
-        String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
+        String adminToken = System.getenv("WARP_ADMIN_TOKEN");
 
         List<NodeRegistry.NodeRow> nodes = NodeRegistry.listAll(options).stream()
                 .filter(n -> "up".equals(n.status()))
                 .toList();
-        log.info("workload replay: {} live node(s) discovered via polywire_nodes", nodes.size());
+        log.info("workload replay: {} live node(s) discovered via warp_nodes", nodes.size());
 
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
         List<CapturedEntry> all = new ArrayList<>();

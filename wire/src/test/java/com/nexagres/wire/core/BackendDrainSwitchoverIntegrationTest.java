@@ -3,7 +3,7 @@ package com.nexagres.wire.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -46,26 +46,26 @@ class BackendDrainSwitchoverIntegrationTest {
 
             String adminToken = "test-admin-token-" + System.nanoTime();
             // The 4th, pipe-delimited field on "primary" is its fallback backend's NAME within
-            // this same POLYWIRE_BACKENDS spec -- see BackendRegistry.fromConfig's javadoc on that
+            // this same WARP_BACKENDS spec -- see BackendRegistry.fromConfig's javadoc on that
             // field. "fallback" itself carries no fallback of its own (3 fields only).
             String backends = "default=" + primary.jdbcUrl() + "|" + primary.username() + "|" + primary.password()
                     + ";primary=" + primary.jdbcUrl() + "|" + primary.username() + "|" + primary.password() + "|fallback"
                     + ";fallback=" + fallback.jdbcUrl() + "|" + fallback.username() + "|" + fallback.password();
 
-            try (PolyWireProcess polywire = PolyWireProcess.builder()
+            try (WarpProcess warp = WarpProcess.builder()
                     .pgBackend(controlPlane.host(), controlPlane.port(), controlPlane.database(),
                             controlPlane.username(), controlPlane.password())
-                    .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                    .env("POLYWIRE_BACKENDS", backends)
-                    .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                    .env("POLYWIRE_ROUTER_SCHEMA_RULES", "shopx:primary")
-                    .env("POLYWIRE_ADMIN_TOKEN", adminToken)
-                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .frontend("pgwire", "WARP_PGWIRE_PORT")
+                    .env("WARP_BACKENDS", backends)
+                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                    .env("WARP_ROUTER_SCHEMA_RULES", "shopx:primary")
+                    .env("WARP_ADMIN_TOKEN", adminToken)
+                    .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start()) {
 
-                String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+                String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
                 try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password());
                         Statement st = conn.createStatement()) {
 
@@ -73,7 +73,7 @@ class BackendDrainSwitchoverIntegrationTest {
                     assertEquals(1, countOrders(primary), "before any drain, routing must land on primary");
                     assertEquals(0, countOrders(fallback));
 
-                    int drainStatus = adminPost(polywire.metricsPort(), adminToken, "/api/backends/primary/drain?graceMs=1000");
+                    int drainStatus = adminPost(warp.metricsPort(), adminToken, "/api/backends/primary/drain?graceMs=1000");
                     assertEquals(200, drainStatus, "drain must succeed with the correct admin token");
 
                     st.execute("INSERT INTO shopx.orders (id) VALUES (2)");
@@ -83,7 +83,7 @@ class BackendDrainSwitchoverIntegrationTest {
                             "while primary is DRAINING, resolveForRouting must redirect new statements to its "
                                     + "configured fallback instead");
 
-                    int undrainStatus = adminPost(polywire.metricsPort(), adminToken, "/api/backends/primary/undrain");
+                    int undrainStatus = adminPost(warp.metricsPort(), adminToken, "/api/backends/primary/undrain");
                     assertEquals(200, undrainStatus);
 
                     st.execute("INSERT INTO shopx.orders (id) VALUES (3)");

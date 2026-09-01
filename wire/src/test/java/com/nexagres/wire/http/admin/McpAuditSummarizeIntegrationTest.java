@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
  * com.nexagres.wire.mcp} ever touched {@code AuditLog}) and that
  * {@code POST /api/mcp-audit/summarize} turns those real events into a plain-English summary via
  * a real (local, scripted) LLM endpoint -- same discipline as the other three drafting/narration
- * features. Real Polywire subprocess, real disposable Postgres, real MCP JSON-RPC calls over
+ * features. Real Warp subprocess, real disposable Postgres, real MCP JSON-RPC calls over
  * HTTP, no mocks.
  */
 class McpAuditSummarizeIntegrationTest {
@@ -84,17 +84,17 @@ class McpAuditSummarizeIntegrationTest {
     void aRealMcpToolCallReachesTheAuditLogAndCanBeSummarized() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("The client ran a successful read and one failing query against a missing table.");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-mcp-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-mcp-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            int mcpPort = polywire.port("mcp");
+            int mcpPort = warp.port("mcp");
 
             // One real successful tool call...
             JsonObject okArgs = new JsonObject();
@@ -111,7 +111,7 @@ class McpAuditSummarizeIntegrationTest {
             // Real audit trail: GET /api/audit must show both MCP_TOOL_CALLED events now --
             // proof the gap (MCP traffic never reaching AuditLog) is actually closed.
             HttpClient http = HttpClient.newHttpClient();
-            HttpRequest auditReq = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/audit?limit=50"))
+            HttpRequest auditReq = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/audit?limit=50"))
                     .header("Authorization", "Bearer " + ADMIN_TOKEN)
                     .timeout(Duration.ofSeconds(5))
                     .GET().build();
@@ -123,7 +123,7 @@ class McpAuditSummarizeIntegrationTest {
                     "expected the failing tool call to be recorded as a failure -- got: " + auditResp.body());
 
             // Now the actual feature: summarize those real events via the real (fake) LLM.
-            HttpRequest summarizeReq = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/mcp-audit/summarize"))
+            HttpRequest summarizeReq = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/mcp-audit/summarize"))
                     .header("Authorization", "Bearer " + ADMIN_TOKEN)
                     .header("content-type", "application/json")
                     .timeout(Duration.ofSeconds(10))

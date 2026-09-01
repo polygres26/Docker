@@ -9,8 +9,8 @@ import com.mongodb.client.MongoCollection;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.connectors.mongo.MongoSource;
 import com.nexagres.migration.core.MigrationLicensingTestSupport;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealMongo;
 import com.nexagres.migration.testsupport.RealPostgres;
 import com.nexagres.wire.license.LicenseTier;
@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Proves Phase 2 of this session's migration plan: TWO SEPARATE worker "processes" (here,
- * separate {@link MongoSource}/{@link PolywireGrpcSink} instances on separate threads, each with
+ * separate {@link MongoSource}/{@link WarpGrpcSink} instances on separate threads, each with
  * its own {@link MongoClient} -- the closest a single JVM test can get to genuinely separate
  * processes without actually forking two JVMs) racing against the SAME shared {@link
  * PartitionLeaseStore} and {@link CdcCheckpointStore}, migrating the same source collection.
@@ -109,10 +109,10 @@ class DistributedCoordinatorIntegrationTest {
                 RealPostgres postgres = RealPostgres.start();
                 MongoClient client1 = MongoClients.create(mongo.connectionString());
                 MongoClient client2 = MongoClients.create(mongo.connectionString());
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             MongoCollection<Document> source = client1.getDatabase("src").getCollection("customers");
@@ -130,11 +130,11 @@ class DistributedCoordinatorIntegrationTest {
             int partitionCount = 6;
 
             MongoSource source1 = new MongoSource(client1, "src", "customers", "db", "customers", partitionCount, "customer");
-            PolywireGrpcSink sink1 = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink1 = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             DistributedCoordinator worker1 = new DistributedCoordinator(source1, sink1, checkpoints, leases, sourceKey, "worker-1", 2, 3600);
 
             MongoSource source2 = new MongoSource(client2, "src", "customers", "db", "customers", partitionCount, "customer");
-            PolywireGrpcSink sink2 = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink2 = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             DistributedCoordinator worker2 = new DistributedCoordinator(source2, sink2, checkpoints, leases, sourceKey, "worker-2", 2, 3600);
 
             Thread t1 = new Thread(() -> runQuietly(worker1), "test-worker-1");

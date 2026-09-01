@@ -4,7 +4,7 @@ package com.nexagres.dms.secrets;
  * A password field that isn't a literal password -- a pointer to where the real value lives.
  * Written inline wherever a plaintext password could go (a target connection's stored
  * credential), recognized by a scheme prefix so a plain password (no prefix) keeps working
- * exactly as before. Vault/CyberArk match the same grammar and resolver shape as PolyWire's own
+ * exactly as before. Vault/CyberArk match the same grammar and resolver shape as Warp's own
  * {@code com.nexagres.wire.secrets} package -- no shared library between the two Maven modules,
  * so this is a deliberate small duplication rather than a new inter-module dependency. The three
  * hyperscaler schemes ({@code awssm:}/{@code azurekv:}/{@code gcpsm:}) are new to this module,

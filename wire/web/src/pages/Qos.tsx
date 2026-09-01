@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
- * QoS / rate limiting -- edits the five `polywire_config.qos*` fields QosControlStage.fromConfig
+ * QoS / rate limiting -- edits the five `warp_config.qos*` fields QosControlStage.fromConfig
  * parses. Applies per session-class token buckets in front of every backend pool.
  */
 export default function Qos() {
@@ -42,7 +42,7 @@ export default function Qos() {
         qosClassLimits: classLimits || null,
         qosPoolWaitThreshold: poolWaitThreshold || null,
       })
-      setMessage(`Saved — polywire_config version ${saved.version}.`)
+      setMessage(`Saved — warp_config version ${saved.version}.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

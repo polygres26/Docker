@@ -12,8 +12,8 @@ import org.slf4j.LoggerFactory;
  * already passes through this module's own {@code NativeRlsSessionInitializer}, which is exactly
  * where {@code SET db_emulation = '...'} gets issued (see {@code OraclePgEmulationSessionInitializer}/
  * {@code MySqlPgEmulationSessionInitializer}/{@code MssqlPgEmulationSessionInitializer}). Gating
- * there is both the only enforceable point and the natural one: same {@code POLYWIRE_LICENSE_KEY}
- * as everything else PolyWire gates, one key, one thing to buy.
+ * there is both the only enforceable point and the natural one: same {@code WARP_LICENSE_KEY}
+ * as everything else Warp gates, one key, one thing to buy.
  *
  * <p>Deliberately a non-throwing boolean, not a throwing {@code requireEnterpriseForX()} --
  * skipping the {@code SET db_emulation} on the free/Developer tier isn't an error, it's the
@@ -48,7 +48,7 @@ public final class DbCompatLicensing {
     }
 
     /** Whether the caller should issue {@code SET db_emulation = '...'} for this session --
-     * {@code true} only under a valid Enterprise {@code POLYWIRE_LICENSE_KEY}. Logs a one-time
+     * {@code true} only under a valid Enterprise {@code WARP_LICENSE_KEY}. Logs a one-time
      * (per-process) informational note on the free/Developer tier so an operator who installed
      * {@code pg_oracle}/{@code pg_mysql}/{@code pg_sqlserver} and expected the compatibility
      * surface to just work has somewhere to look, without logging on every single connection. */
@@ -58,7 +58,7 @@ public final class DbCompatLicensing {
             warnedOnce = true;
             log.info("db compatibility layer (Oracle/MySQL/SQL Server V$/DBA_*/DBMS_*/sys.*/function "
                     + "compatibility via pg_oracle/pg_mysql/pg_sqlserver) is an Enterprise feature -- "
-                    + "set a valid POLYWIRE_LICENSE_KEY to enable it. Sessions on the free/Developer "
+                    + "set a valid WARP_LICENSE_KEY to enable it. Sessions on the free/Developer "
                     + "tier still connect and run ordinary SQL normally, just against plain, "
                     + "unmodified Postgres semantics, the same as if these extensions weren't "
                     + "installed at all.");

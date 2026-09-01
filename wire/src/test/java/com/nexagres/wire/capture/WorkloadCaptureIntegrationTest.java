@@ -3,7 +3,7 @@ package com.nexagres.wire.capture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof of the workload capture/replay feature: two real {@code Main} subprocesses,
- * each with {@code POLYWIRE_CAPTURE_ENABLED=true} and its own in-memory
- * {@link WorkloadCaptureBuffer}, both registered in the same {@code polywire_nodes} table (same
+ * each with {@code WARP_CAPTURE_ENABLED=true} and its own in-memory
+ * {@link WorkloadCaptureBuffer}, both registered in the same {@code warp_nodes} table (same
  * backing Postgres), and a real {@code WorkloadReplayer} subprocess that discovers both, pulls
  * both instances' {@code /api/capture}, and merges by wall-clock -- proving cross-instance
  * ordering is real, not just each instance's own local order.
@@ -34,45 +34,45 @@ class WorkloadCaptureIntegrationTest {
     private static final String ADMIN_TOKEN = "test-admin-token";
 
     private static RealPostgres postgres;
-    private static PolyWireProcess instanceA;
-    private static PolyWireProcess instanceB;
+    private static WarpProcess instanceA;
+    private static WarpProcess instanceB;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        instanceA = PolyWireProcess.builder()
+        instanceA = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_CAPTURE_ENABLED", "true")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_CAPTURE_ENABLED", "true")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
                 // Two full embedded-Ignite JVMs on one box (each defaulting to local static
                 // discovery) is unrelated overhead/contention this test doesn't need -- capture
                 // doesn't touch the KV caches that are the only reason Main starts Ignite at all.
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
-        instanceB = PolyWireProcess.builder()
+        instanceB = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_CAPTURE_ENABLED", "true")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
-                // Every other protocol's listen port defaults to a fixed value (PolyWireProcess's
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_CAPTURE_ENABLED", "true")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                // Every other protocol's listen port defaults to a fixed value (WarpProcess's
                 // .frontend() only randomizes pgwire, the one this test actually drives) -- a
                 // second Main process on the same box needs every one of them moved off instance
                 // A's, or it fails to bind at startup.
-                .env("POLYWIRE_MYWIRE_PORT", "13307")
-                .env("POLYWIRE_MSSQLWIRE_PORT", "14334")
-                .env("POLYWIRE_ORAWIRE_PORT", "11522")
-                .env("POLYWIRE_GRPC_PORT", "7071")
-                .env("POLYWIRE_MONGOWIRE_PORT", "27018")
-                .env("POLYWIRE_DYNAMOWIRE_PORT", "18001")
-                .env("POLYWIRE_SQSWIRE_PORT", "9325")
-                .env("POLYWIRE_OSWIRE_PORT", "9201")
-                .env("POLYWIRE_MCP_PORT", "18011")
+                .env("WARP_MYWIRE_PORT", "13307")
+                .env("WARP_MSSQLWIRE_PORT", "14334")
+                .env("WARP_ORAWIRE_PORT", "11522")
+                .env("WARP_GRPC_PORT", "7071")
+                .env("WARP_MONGOWIRE_PORT", "27018")
+                .env("WARP_DYNAMOWIRE_PORT", "18001")
+                .env("WARP_SQSWIRE_PORT", "9325")
+                .env("WARP_OSWIRE_PORT", "9201")
+                .env("WARP_MCP_PORT", "18011")
                 .start();
     }
 
@@ -89,7 +89,7 @@ class WorkloadCaptureIntegrationTest {
         }
     }
 
-    private Connection connectThroughPolyWire(PolyWireProcess instance) throws SQLException {
+    private Connection connectThroughWarp(WarpProcess instance) throws SQLException {
         String url = "jdbc:postgresql://localhost:" + instance.port("pgwire") + "/postgres";
         return DriverManager.getConnection(url, postgres.username(), postgres.password());
     }
@@ -100,7 +100,7 @@ class WorkloadCaptureIntegrationTest {
 
     @Test
     void capturedEntriesAreReadableFromEachInstancesOwnAdminApi() throws Exception {
-        try (Connection conn = connectThroughPolyWire(instanceA); Statement stmt = conn.createStatement()) {
+        try (Connection conn = connectThroughWarp(instanceA); Statement stmt = conn.createStatement()) {
             stmt.execute("SELECT 1");
             stmt.execute("SELECT 2");
         }
@@ -122,13 +122,13 @@ class WorkloadCaptureIntegrationTest {
         // replayer really merges by wall-clock across instances -- not by discovery order, not by
         // per-instance grouping -- the replayed sequence must come out 1..10, interleavable in
         // principle but strictly increasing here since A fully precedes B in time.
-        try (Connection conn = connectThroughPolyWire(instanceA); Statement stmt = conn.createStatement()) {
+        try (Connection conn = connectThroughWarp(instanceA); Statement stmt = conn.createStatement()) {
             for (int n = 1; n <= 5; n++) {
                 stmt.execute("INSERT INTO replay_merge_check (n) VALUES (" + n + ")");
             }
         }
         Thread.sleep(500);
-        try (Connection conn = connectThroughPolyWire(instanceB); Statement stmt = conn.createStatement()) {
+        try (Connection conn = connectThroughWarp(instanceB); Statement stmt = conn.createStatement()) {
             for (int n = 6; n <= 10; n++) {
                 stmt.execute("INSERT INTO replay_merge_check (n) VALUES (" + n + ")");
             }
@@ -171,7 +171,7 @@ class WorkloadCaptureIntegrationTest {
     }
 
     private void runReplayer() throws Exception {
-        // Same --add-opens PolyWireProcess uses for Main -- embedded Ignite (on the classpath as
+        // Same --add-opens WarpProcess uses for Main -- embedded Ignite (on the classpath as
         // a dependency, its JDBC driver auto-registered via ServiceLoader) reflectively opens
         // several java.base packages during static init, which the module system blocks by
         // default from Java 17 onward. WorkloadReplayer never touches Ignite itself, but
@@ -201,12 +201,12 @@ class WorkloadCaptureIntegrationTest {
         command.add("com.nexagres.wire.capture.WorkloadReplayer");
 
         ProcessBuilder pb = new ProcessBuilder(command);
-        pb.environment().put("POLYWIRE_HOST", postgres.host());
-        pb.environment().put("POLYWIRE_PORT", String.valueOf(postgres.port()));
-        pb.environment().put("POLYWIRE_DATABASE", postgres.database());
-        pb.environment().put("POLYWIRE_USER", postgres.username());
-        pb.environment().put("POLYWIRE_PASSWORD", postgres.password());
-        pb.environment().put("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN);
+        pb.environment().put("WARP_HOST", postgres.host());
+        pb.environment().put("WARP_PORT", String.valueOf(postgres.port()));
+        pb.environment().put("WARP_DATABASE", postgres.database());
+        pb.environment().put("WARP_USER", postgres.username());
+        pb.environment().put("WARP_PASSWORD", postgres.password());
+        pb.environment().put("WARP_ADMIN_TOKEN", ADMIN_TOKEN);
         pb.redirectErrorStream(true);
         Process process = pb.start();
         StringBuilder output = new StringBuilder();

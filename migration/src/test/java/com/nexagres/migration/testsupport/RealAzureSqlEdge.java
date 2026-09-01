@@ -44,7 +44,7 @@ public final class RealAzureSqlEdge implements AutoCloseable {
     }
 
     public static RealAzureSqlEdge start() throws IOException, InterruptedException {
-        String containerName = "polywire-test-sqledge-" + System.nanoTime();
+        String containerName = "warp-test-sqledge-" + System.nanoTime();
         int port = findFreePort();
         run("docker", "run", "-d", "--name", containerName, "-p", port + ":1433",
                 "-e", "ACCEPT_EULA=Y",

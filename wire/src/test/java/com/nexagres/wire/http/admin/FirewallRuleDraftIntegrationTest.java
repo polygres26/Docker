@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@code POST /api/firewall-rules/draft} turns plain English into a
- * firewall-rule draft WITHOUT ever writing to {@code polywire_firewall_rules} -- real Polywire
+ * firewall-rule draft WITHOUT ever writing to {@code warp_firewall_rules} -- real Warp
  * subprocess, real disposable Postgres, real admin HTTP API, and a real (local, scripted) HTTP
  * server standing in for the LLM endpoint, same discipline as {@code QueryRepairIntegrationTest}.
  *
@@ -94,27 +94,27 @@ class FirewallRuleDraftIntegrationTest {
 
         try (FakeLlmServer llm = new FakeLlmServer(llmJsonReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-firewall-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-firewall-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             // Real table for the drafted rule to plausibly apply to, and a real row in it -- the
             // draft's tablePattern targets "orders", the same table the later real-write test
             // below actually deletes from.
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     Statement st = conn.createStatement()) {
                 st.execute("CREATE TABLE orders (id int PRIMARY KEY, amount numeric)");
                 st.execute("INSERT INTO orders VALUES (1, 129.99)");
             }
 
-            HttpResponse<String> draftResp = post(polywire.metricsPort(), "/api/firewall-rules/draft",
+            HttpResponse<String> draftResp = post(warp.metricsPort(), "/api/firewall-rules/draft",
                     "{\"prompt\":\"block any DELETE against the orders table\"}");
             assertEquals(200, draftResp.statusCode(), "draft request body: " + draftResp.body());
             JsonObject draftBody = JsonParser.parseString(draftResp.body()).getAsJsonObject();
@@ -129,7 +129,7 @@ class FirewallRuleDraftIntegrationTest {
             // succeeds -- if the LLM's proposed deny rule had been silently written and activated,
             // this would fail with the firewall's own ERR_FIREWALL_RULE_MATCH instead.
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     Statement st = conn.createStatement()) {
                 int deleted = st.executeUpdate("DELETE FROM orders WHERE id = 1");
                 assertEquals(1, deleted, "DELETE must still succeed -- the draft must not have been applied");
@@ -140,7 +140,7 @@ class FirewallRuleDraftIntegrationTest {
             // POST /api/firewall-rules endpoint accepts -- submit it verbatim and confirm a real
             // rule gets created AND actually enforced on the very next DELETE.
             HttpClient http = HttpClient.newHttpClient();
-            HttpRequest createReq = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/firewall-rules"))
+            HttpRequest createReq = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/firewall-rules"))
                     .header("Authorization", "Bearer " + ADMIN_TOKEN)
                     .header("content-type", "application/json")
                     .timeout(Duration.ofSeconds(10))
@@ -154,7 +154,7 @@ class FirewallRuleDraftIntegrationTest {
             java.sql.SQLException lastDenied = null;
             while (System.currentTimeMillis() < deadline) {
                 try (Connection conn = DriverManager.getConnection(
-                        "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                        "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                         Statement st = conn.createStatement()) {
                     st.executeUpdate("DELETE FROM orders WHERE id = 1");
                     Thread.sleep(200);

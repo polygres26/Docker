@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 /**
  * What customers actually want to see on a metrics dashboard: which wire protocol is carrying
  * traffic, how many reads/writes per second, and which SQL (or, for mongowire/dynamowire, which
- * operation) is costing the most. One shared instance across every protocol PolyWire speaks --
+ * operation) is costing the most. One shared instance across every protocol Warp speaks --
  * {@link StatsCollectorStage} feeds it via {@link #record(SourceDialect, String, String, long)}
  * for the SQL wire protocols that pass through the shared pipeline (pgwire, mywire, mssqlwire,
  * orawire), and mongowire/dynamowire feed it directly via {@link #recordOperation} at their own
@@ -34,11 +34,11 @@ import java.util.regex.Pattern;
  * client socket. {@link #recordRtt}/{@link #recordOperationRtt} are a second, optional signal
  * fed separately by each session handler wrapping its own full request-read-to-response-written
  * span -- true "server-side round trip" in the sense a reverse proxy's `$request_time` is (total
- * time PolyWire itself took to service the request), not network RTT to the client, which no
+ * time Warp itself took to service the request), not network RTT to the client, which no
  * server-side vantage point can measure. Not every call site reports it: pgwire's extended query
  * protocol splits Bind (which executes the query -- no data sent yet) from Execute (a separate,
  * client-paced message that streams the already-computed result), so a span joining the two would
- * include client think-time, not just PolyWire's own service time -- Bind never gets an RTT
+ * include client think-time, not just Warp's own service time -- Bind never gets an RTT
  * sample. Execute's own span is honest on its own, though (no backend re-execution, no client
  * gap inside it), so it does get one -- same reasoning as orawire's Fetch below. Every other call
  * site (pgwire simple query, pgwire Execute, mywire, mssqlwire, orawire, gRPC, mongowire,
@@ -138,7 +138,7 @@ public final class SqlMetricsCollector {
     /**
      * @param backendName the resolved routing target (see {@code Statement#targetBackend()},
      *      set by {@code RouterStage} earlier in the pipeline) -- {@code null} or blank folds
-     *      into {@code "default"} so single-backend deployments (no {@code POLYWIRE_BACKENDS}
+     *      into {@code "default"} so single-backend deployments (no {@code WARP_BACKENDS}
      *      configured) still get a per-backend row instead of disappearing from the breakdown.
      */
     public void record(SourceDialect dialect, String backendName, String sqlText, long elapsedNanos) {
@@ -274,8 +274,8 @@ public final class SqlMetricsCollector {
             // gRPC's own native driver protocol -- was indistinguishable from MCP traffic in
             // every metrics view until SourceDialect.MCP was split out as its own value (see its
             // javadoc); this case is what actually renames the dashboard label from the old
-            // "polywire_native" to something a reader recognizes.
-            case POLYWIRE_NATIVE -> "grpc";
+            // "warp_native" to something a reader recognizes.
+            case WARP_NATIVE -> "grpc";
             case MCP -> "mcp";
             default -> dialect.name().toLowerCase(Locale.ROOT);
         };

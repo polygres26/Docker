@@ -75,8 +75,8 @@ import org.slf4j.LoggerFactory;
  * maintains.
  *
  * <p><b>Live-reloadable:</b> the shard group is re-read from {@code backendRegistry} on every
- * call, not captured once at construction, so a {@code POLYWIRE_BACKENDS}/
- * {@code POLYWIRE_SHARD_BACKENDS} change takes effect on this store's very next operation.
+ * call, not captured once at construction, so a {@code WARP_BACKENDS}/
+ * {@code WARP_SHARD_BACKENDS} change takes effect on this store's very next operation.
  *
  * <p><b>Known limitation:</b> turning sharding on (or changing the shard group) does not migrate
  * existing queues' physical tables -- a queue keeps living on whichever backend it was created on

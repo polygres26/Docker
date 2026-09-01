@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Covers the admin console's SSO-vs-shared-token role resolution introduced alongside real OIDC
- * enforcement: the static {@code POLYWIRE_ADMIN_TOKEN} always grants full {@code ADMIN} (the
+ * enforcement: the static {@code WARP_ADMIN_TOKEN} always grants full {@code ADMIN} (the
  * pre-existing, simpler path -- kept fully intact for developer testing, CI, and any customer who
  * just wants one shared secret, not replaced by SSO), while a real SSO identity's roles claim
  * (Okta group, Entra ID app role, or any OIDC-compliant IdP's own role/group claim) is checked
@@ -108,8 +108,8 @@ class MetricsServerAdminRoleTest {
 
     @Test
     void splitRolesParsesCommaSeparatedCustomNames() {
-        assertEquals(Set.of("polywire-admin", "platform-team"),
-                MetricsServer.splitRoles("polywire-admin, platform-team", "admin"));
+        assertEquals(Set.of("warp-admin", "platform-team"),
+                MetricsServer.splitRoles("warp-admin, platform-team", "admin"));
     }
 
     @Test

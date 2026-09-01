@@ -11,16 +11,16 @@ import java.util.Map;
  * newer "manifest" handshake extension this server doesn't implement) that this was originally,
  * incorrectly grounded in, and the real Bolt-4.4-session capture that corrected it.
  *
- * @param id the real, generated {@code polywire_graph_nodes.id} -- Bolt's own legacy integer id
+ * @param id the real, generated {@code warp_graph_nodes.id} -- Bolt's own legacy integer id
  *     field, still every client's own way to reference this node (e.g. for a follow-up query)
  *     since Bolt 4.4 has no elementId concept at all
- * @param elementId a PolyWire-native element id ({@code "polywire-node:" + id}), kept as an
+ * @param elementId a Warp-native element id ({@code "warp-node:" + id}), kept as an
  *     honest internal identifier and available for a possible future Bolt 5.x mode, but not
  *     currently written to the wire (see {@link PackStream.Writer#writeNode})
  */
 record GraphNode(long id, List<String> labels, Map<String, Object> properties, String elementId) {
 
     static String elementId(long id) {
-        return "polywire-node:" + id;
+        return "warp-node:" + id;
     }
 }

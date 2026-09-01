@@ -83,21 +83,21 @@ public final class Neo4jSource implements Source {
 
     @Override
     public void ensureTargetSchema(Sink sink) throws Exception {
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE TABLE IF NOT EXISTS polywire_graph_nodes ("
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE TABLE IF NOT EXISTS warp_graph_nodes ("
                 + "id bigserial PRIMARY KEY, labels text[] NOT NULL DEFAULT '{}', properties jsonb NOT NULL DEFAULT '{}')");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS polywire_graph_nodes_labels_idx "
-                + "ON polywire_graph_nodes USING GIN (labels)");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS polywire_graph_nodes_props_idx "
-                + "ON polywire_graph_nodes USING GIN (properties)");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE TABLE IF NOT EXISTS polywire_graph_edges ("
-                + "id bigserial PRIMARY KEY, type text NOT NULL, from_id bigint NOT NULL REFERENCES polywire_graph_nodes(id), "
-                + "to_id bigint NOT NULL REFERENCES polywire_graph_nodes(id), properties jsonb NOT NULL DEFAULT '{}')");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS polywire_graph_edges_from_idx "
-                + "ON polywire_graph_edges (from_id)");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS polywire_graph_edges_to_idx "
-                + "ON polywire_graph_edges (to_id)");
-        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS polywire_graph_edges_type_idx "
-                + "ON polywire_graph_edges (type)");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS warp_graph_nodes_labels_idx "
+                + "ON warp_graph_nodes USING GIN (labels)");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS warp_graph_nodes_props_idx "
+                + "ON warp_graph_nodes USING GIN (properties)");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE TABLE IF NOT EXISTS warp_graph_edges ("
+                + "id bigserial PRIMARY KEY, type text NOT NULL, from_id bigint NOT NULL REFERENCES warp_graph_nodes(id), "
+                + "to_id bigint NOT NULL REFERENCES warp_graph_nodes(id), properties jsonb NOT NULL DEFAULT '{}')");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS warp_graph_edges_from_idx "
+                + "ON warp_graph_edges (from_id)");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS warp_graph_edges_to_idx "
+                + "ON warp_graph_edges (to_id)");
+        applyTolerantOfConcurrentCreateRace(sink, "CREATE INDEX IF NOT EXISTS warp_graph_edges_type_idx "
+                + "ON warp_graph_edges (type)");
         // This connector's own bookkeeping, not part of boltwire's own physical schema -- a
         // migrated node's real properties column stays byte-identical to what boltwire itself
         // would write; the correlation lives here instead. See this class's own javadoc.
@@ -207,7 +207,7 @@ public final class Neo4jSource implements Source {
         String labelsLiteral = "{" + String.join(",", n.labels()) + "}"; // Postgres text[] literal syntax
         String propsJson = GSON.toJson(n.asMap());
         String sql = "WITH inserted AS ("
-                + "INSERT INTO polywire_graph_nodes (labels, properties) VALUES (?::text[], ?::jsonb) RETURNING id) "
+                + "INSERT INTO warp_graph_nodes (labels, properties) VALUES (?::text[], ?::jsonb) RETURNING id) "
                 + "INSERT INTO migration_neo4j_id_map (source_element_id, target_node_id) "
                 + "SELECT ?, id FROM inserted ON CONFLICT (source_element_id) DO NOTHING";
         return new ChangeEvent(sql, List.of(labelsLiteral, propsJson, n.elementId()));
@@ -221,7 +221,7 @@ public final class Neo4jSource implements Source {
         // SELECT expression list has no such context, and Postgres's own type inference guessed
         // wrong (a real "operator does not exist: text = bigint" error, confirmed live) without
         // these.
-        String sql = "INSERT INTO polywire_graph_edges (type, from_id, to_id) SELECT ?::text, "
+        String sql = "INSERT INTO warp_graph_edges (type, from_id, to_id) SELECT ?::text, "
                 + "(SELECT target_node_id FROM migration_neo4j_id_map WHERE source_element_id = ?::text), "
                 + "(SELECT target_node_id FROM migration_neo4j_id_map WHERE source_element_id = ?::text)";
         return new ChangeEvent(sql, List.of(relationshipType, from.elementId(), to.elementId()));

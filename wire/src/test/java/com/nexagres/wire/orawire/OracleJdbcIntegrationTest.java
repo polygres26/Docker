@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -25,21 +25,21 @@ import org.junit.jupiter.api.Test;
 class OracleJdbcIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+                .frontend("orawire", "WARP_ORAWIRE_PORT")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) {
-            polywire.close();
+        if (warp != null) {
+            warp.close();
         }
         if (postgres != null) {
             postgres.close();
@@ -47,7 +47,7 @@ class OracleJdbcIntegrationTest {
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+        String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
         return DriverManager.getConnection(url, postgres.username(), postgres.password());
     }
 

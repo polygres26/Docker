@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 public final class FirewallRuleStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FirewallRuleStore.class);
-    private static final String CHANNEL = "polywire_firewall_rules_changed";
+    private static final String CHANNEL = "warp_firewall_rules_changed";
 
     private final ServerOptions options;
     private final AtomicBoolean listening = new AtomicBoolean(false);
@@ -35,7 +35,7 @@ public final class FirewallRuleStore implements AutoCloseable {
 
     public void ensureSchema() {
         try (Connection conn = PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_firewall_rules ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_firewall_rules ("
                     + "id bigserial PRIMARY KEY, "
                     + "priority integer NOT NULL DEFAULT 100, "
                     + "action text NOT NULL CHECK (action IN ('allow', 'deny')), "
@@ -45,15 +45,15 @@ public final class FirewallRuleStore implements AutoCloseable {
                     + "enabled boolean NOT NULL DEFAULT true, "
                     + "description text, "
                     + "created_at timestamptz NOT NULL DEFAULT now())");
-            st.execute("CREATE OR REPLACE FUNCTION polywire_firewall_rules_notify() RETURNS trigger AS $notify$ "
+            st.execute("CREATE OR REPLACE FUNCTION warp_firewall_rules_notify() RETURNS trigger AS $notify$ "
                     + "BEGIN PERFORM pg_notify('" + CHANNEL + "', ''); RETURN NULL; END; "
                     + "$notify$ LANGUAGE plpgsql");
-            st.execute("DROP TRIGGER IF EXISTS polywire_firewall_rules_notify_trigger ON polywire_firewall_rules");
-            st.execute("CREATE TRIGGER polywire_firewall_rules_notify_trigger "
-                    + "AFTER INSERT OR UPDATE OR DELETE ON polywire_firewall_rules "
-                    + "FOR EACH STATEMENT EXECUTE FUNCTION polywire_firewall_rules_notify()");
+            st.execute("DROP TRIGGER IF EXISTS warp_firewall_rules_notify_trigger ON warp_firewall_rules");
+            st.execute("CREATE TRIGGER warp_firewall_rules_notify_trigger "
+                    + "AFTER INSERT OR UPDATE OR DELETE ON warp_firewall_rules "
+                    + "FOR EACH STATEMENT EXECUTE FUNCTION warp_firewall_rules_notify()");
         } catch (SQLException e) {
-            log.warn("FirewallRuleStore: could not ensure polywire_firewall_rules schema -- "
+            log.warn("FirewallRuleStore: could not ensure warp_firewall_rules schema -- "
                     + "the firewall stage will run with zero rules (default ALLOW) until this is fixed: {}",
                     e.getMessage());
         }
@@ -70,7 +70,7 @@ public final class FirewallRuleStore implements AutoCloseable {
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT id, priority, action, statement_type, table_pattern, sql_pattern, enabled, "
-                                + "description, created_at FROM polywire_firewall_rules ORDER BY priority, id")) {
+                                + "description, created_at FROM warp_firewall_rules ORDER BY priority, id")) {
             while (rs.next()) {
                 rows.add(new AdminRow(rs.getLong("id"), rs.getInt("priority"), rs.getString("action"),
                         rs.getString("statement_type"), rs.getString("table_pattern"), rs.getString("sql_pattern"),
@@ -85,7 +85,7 @@ public final class FirewallRuleStore implements AutoCloseable {
             boolean enabled, String description) throws SQLException {
         try (Connection conn = PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_firewall_rules (priority, action, statement_type, table_pattern, "
+                        "INSERT INTO warp_firewall_rules (priority, action, statement_type, table_pattern, "
                                 + "sql_pattern, enabled, description) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id")) {
             ps.setInt(1, priority);
             ps.setString(2, action);
@@ -105,7 +105,7 @@ public final class FirewallRuleStore implements AutoCloseable {
             String sqlPattern, boolean enabled, String description) throws SQLException {
         try (Connection conn = PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE polywire_firewall_rules SET priority = ?, action = ?, statement_type = ?, "
+                        "UPDATE warp_firewall_rules SET priority = ?, action = ?, statement_type = ?, "
                                 + "table_pattern = ?, sql_pattern = ?, enabled = ?, description = ? WHERE id = ?")) {
             ps.setInt(1, priority);
             ps.setString(2, action);
@@ -122,7 +122,7 @@ public final class FirewallRuleStore implements AutoCloseable {
     public boolean delete(long id) throws SQLException {
         try (Connection conn = PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
-                        "DELETE FROM polywire_firewall_rules WHERE id = ?")) {
+                        "DELETE FROM warp_firewall_rules WHERE id = ?")) {
             ps.setLong(1, id);
             return ps.executeUpdate() > 0;
         }
@@ -134,7 +134,7 @@ public final class FirewallRuleStore implements AutoCloseable {
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT id, priority, action, statement_type, table_pattern, sql_pattern, description "
-                                + "FROM polywire_firewall_rules WHERE enabled ORDER BY priority, id")) {
+                                + "FROM warp_firewall_rules WHERE enabled ORDER BY priority, id")) {
             while (rs.next()) {
                 long id = rs.getLong("id");
                 int priority = rs.getInt("priority");
@@ -185,7 +185,7 @@ public final class FirewallRuleStore implements AutoCloseable {
             throw new IllegalStateException("listen() already called on this FirewallRuleStore");
         }
         listenExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "polywire-firewall-rules-listen");
+            Thread t = new Thread(r, "warp-firewall-rules-listen");
             t.setDaemon(true);
             return t;
         });

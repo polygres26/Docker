@@ -26,7 +26,7 @@ public final class ClientAcl {
     }
 
     public static ClientAcl fromEnv() {
-        return parse(System.getenv("POLYWIRE_ACL_RULES"));
+        return parse(System.getenv("WARP_ACL_RULES"));
     }
 
     public static ClientAcl parse(String spec) {

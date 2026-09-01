@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
- * OAuth / OIDC token verification -- edits the four `polywire_config.oauth*` fields
+ * OAuth / OIDC token verification -- edits the four `warp_config.oauth*` fields
  * AccessContextResolver reloads. Setting an issuer turns on bearer-token auth for the HTTP-facing
  * surfaces (admin API, MCP, DynamoDB wire); leaving it blank keeps OAuth disabled.
  */
@@ -40,7 +40,7 @@ export default function OAuth() {
         oauthUserIdClaim: userIdClaim || null,
         oauthRolesClaim: rolesClaim || null,
       })
-      setMessage(`Saved — polywire_config version ${saved.version}.`)
+      setMessage(`Saved — warp_config version ${saved.version}.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

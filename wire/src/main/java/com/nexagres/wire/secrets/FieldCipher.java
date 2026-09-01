@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Encrypts individual config-field values before they hit disk (AES-256-GCM, key from
  * {@code NEXAGRES_ENCRYPTION_KEY} -- base64, 32 raw bytes). Applied narrowly, not as a whole-blob
- * wrapper: {@code polywire_config.payload} is one jsonb column holding QoS/router/ACL/OAuth
+ * wrapper: {@code warp_config.payload} is one jsonb column holding QoS/router/ACL/OAuth
  * config alongside the two fields that actually carry credentials ({@code backends}, whose
  * {@code name=url|user|password} spec embeds a literal password inline, and {@code
  * awsIamCredentials}) -- encrypting the whole payload would drag every non-secret setting through
@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Backward-compatible by design:</b> {@link #decrypt} passes through any value that doesn't
  * carry the {@code encv1:} prefix unchanged -- rows written before {@code NEXAGRES_ENCRYPTION_KEY}
- * existed (including whatever's already in {@code polywire_config} from earlier in this session)
+ * existed (including whatever's already in {@code warp_config} from earlier in this session)
  * keep working as plaintext until the next write re-encrypts them. There's no migration step;
  * the format just upgrades itself one write at a time.
  */
@@ -45,7 +45,7 @@ public final class FieldCipher {
             if (!warnedOnce) {
                 warnedOnce = true;
                 log.warn("NEXAGRES_ENCRYPTION_KEY is not set -- backend passwords and AWS IAM "
-                        + "credentials in polywire_config are being stored in PLAINTEXT. Set it "
+                        + "credentials in warp_config are being stored in PLAINTEXT. Set it "
                         + "(base64-encoded, 32 raw bytes -- e.g. `openssl rand -base64 32`) to "
                         + "encrypt them at rest.");
             }

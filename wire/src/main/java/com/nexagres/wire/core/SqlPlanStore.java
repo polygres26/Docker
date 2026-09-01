@@ -7,7 +7,7 @@ import java.util.List;
 /** Oracle {@code V$SQL_PLAN}-style in-memory history for {@link ShardJoinExecutor}/
  * {@link SchemaFederationStage}'s federated queries -- every real database Oracle/Postgres/MySQL
  * already tracks is visible via {@code EXPLAIN}/query-log tooling; a federated query spanning
- * several of PolyWire's own shards/backends previously had nowhere to show its plan at all, since
+ * several of Warp's own shards/backends previously had nowhere to show its plan at all, since
  * the plan only ever existed inside the one-shot Calcite connection each stage builds and throws
  * away per statement. Ported from the sibling Omnigate project's own class of the same name/shape
  * -- real, tested, production code there, closing the same real gap this project independently
@@ -45,14 +45,14 @@ public interface SqlPlanStore {
     List<PlanEntry> snapshot();
 
     /** {@code null} when plan history is disabled entirely ({@code capacity <= 0}) -- decided by
-     * the caller, not this method (see {@code Main}'s own {@code POLYWIRE_FEDERATION_PLAN_HISTORY}
+     * the caller, not this method (see {@code Main}'s own {@code WARP_FEDERATION_PLAN_HISTORY}
      * wiring). {@code cluster} non-null and real (a genuine multi-instance {@code
-     * POLYWIRE_CLUSTER_ENABLED=true} cluster, not just the default single-node cache-only Ignite
+     * WARP_CLUSTER_ENABLED=true} cluster, not just the default single-node cache-only Ignite
      * grid every instance already runs for {@code CacheStage}) means every instance's federated
      * queries land in the SAME plan history, via {@link ClusterSqlPlanStore} -- {@code null}/not a
      * real cluster falls back to {@link InMemorySqlPlanStore}'s own single-process ring buffer,
      * same as before this existed: nothing to unify with only one instance running. */
-    public static SqlPlanStore fromConfig(String historySizeSpec, com.nexagres.wire.cluster.PolyWireCluster cluster) {
+    public static SqlPlanStore fromConfig(String historySizeSpec, com.nexagres.wire.cluster.WarpCluster cluster) {
         int capacity = parseIntOrDefault(historySizeSpec, 200);
         if (capacity <= 0) {
             return null;

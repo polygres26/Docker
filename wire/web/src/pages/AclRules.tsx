@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
 
 /**
- * IP / CIDR access control -- edits `polywire_config.aclRules` (one `allow:<cidr>` or
+ * IP / CIDR access control -- edits `warp_config.aclRules` (one `allow:<cidr>` or
  * `reject:<cidr>` entry per line, first match wins, checked before any query reaches
- * pgwire/mysqlwire/mssqlwire/mongowire). A save appends a new polywire_config version; every
+ * pgwire/mysqlwire/mssqlwire/mongowire). A save appends a new warp_config version; every
  * running Warp process picks it up within milliseconds over LISTEN/NOTIFY, no restart.
  */
 export default function AclRules() {
@@ -40,7 +40,7 @@ export default function AclRules() {
         aclPpv2Enabled: String(ppv2Enabled),
         aclTrustedProxies: trustedProxies || null,
       })
-      setMessage(`Saved — polywire_config version ${saved.version}.`)
+      setMessage(`Saved — warp_config version ${saved.version}.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

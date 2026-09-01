@@ -45,7 +45,7 @@ public final class XaBackendFactory {
      * instead of resolving them from a {@code BackendRegistry} entry by name -- see {@code
      * XaRecoveryLog.Branch}'s javadoc for why crash recovery needs this: a backend NAME can be
      * repointed to a different physical target after a branch was prepared against it (a
-     * switchover, a credential rotation, an operator editing {@code POLYWIRE_BACKENDS}), and
+     * switchover, a credential rotation, an operator editing {@code WARP_BACKENDS}), and
      * recovery must reconnect to the exact target the branch is actually still prepared on, not
      * whatever that name currently resolves to. */
     public static XaBranch openDirect(String jdbcUrl, String user, String password) throws SQLException {

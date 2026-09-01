@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -27,21 +27,21 @@ import org.junit.jupiter.api.Test;
 class OpenSearchWireIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
+                .frontend("oswire", "WARP_OSWIRE_PORT")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) {
-            polywire.close();
+        if (warp != null) {
+            warp.close();
         }
         if (postgres != null) {
             postgres.close();
@@ -67,7 +67,7 @@ class OpenSearchWireIntegrationTest {
     }
 
     private String baseUrl() {
-        return "http://localhost:" + polywire.port("oswire");
+        return "http://localhost:" + warp.port("oswire");
     }
 
     private JsonObject send(String method, String path, String body) throws IOException {
@@ -251,7 +251,7 @@ class OpenSearchWireIntegrationTest {
     void metricsEndpointReportsOswireTraffic() throws Exception {
         search("{\"query\":{\"match_all\":{}}}");
         HttpURLConnection metricsConn = (HttpURLConnection) URI
-                .create("http://localhost:" + polywire.metricsPort() + "/metrics").toURL().openConnection();
+                .create("http://localhost:" + warp.metricsPort() + "/metrics").toURL().openConnection();
         assertEquals(200, metricsConn.getResponseCode());
         String body;
         try (var in = metricsConn.getInputStream()) {

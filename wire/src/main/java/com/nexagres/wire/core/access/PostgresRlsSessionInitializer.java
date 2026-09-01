@@ -9,9 +9,9 @@ public final class PostgresRlsSessionInitializer implements NativeRlsSessionInit
 
     @Override
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
-        setConfig(connection, "polywire.user_id", accessContext.userId());
+        setConfig(connection, "warp.user_id", accessContext.userId());
         for (var entry : accessContext.attributes().entrySet()) {
-            setConfig(connection, "polywire." + entry.getKey(), entry.getValue());
+            setConfig(connection, "warp." + entry.getKey(), entry.getValue());
         }
     }
 

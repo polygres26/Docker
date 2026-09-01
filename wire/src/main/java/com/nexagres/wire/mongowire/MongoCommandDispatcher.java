@@ -140,7 +140,7 @@ final class MongoCommandDispatcher {
 
     private BsonDocument buildInfo() {
         BsonDocument reply = ok();
-        reply.put("version", new BsonString("7.0.0-polywire-mongowire"));
+        reply.put("version", new BsonString("7.0.0-warp-mongowire"));
         reply.put("versionArray", new BsonArray(List.of(new BsonInt32(7), new BsonInt32(0), new BsonInt32(0))));
         reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
         return reply;

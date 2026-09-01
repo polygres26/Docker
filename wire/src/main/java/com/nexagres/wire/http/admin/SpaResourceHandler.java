@@ -58,7 +58,7 @@ public class SpaResourceHandler extends AbstractHandler {
     protected void doStart() throws Exception {
         super.doStart();
         delegate.start();
-        log.info("Serving polywire admin web UI from {} (embedded Jetty, no nginx needed)", delegate.getResourceBase());
+        log.info("Serving warp admin web UI from {} (embedded Jetty, no nginx needed)", delegate.getResourceBase());
     }
 
     @Override

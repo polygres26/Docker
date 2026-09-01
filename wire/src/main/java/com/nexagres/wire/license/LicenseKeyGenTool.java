@@ -8,8 +8,8 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 
 /**
- * Offline tool for minting a {@code POLYWIRE_LICENSE_KEY} -- run this on a laptop that holds the
- * Enterprise signing private key, never inside a running PolyWire process (which only ever sees
+ * Offline tool for minting a {@code WARP_LICENSE_KEY} -- run this on a laptop that holds the
+ * Enterprise signing private key, never inside a running Warp process (which only ever sees
  * the public key, in {@link License#current()}'s verification path). Not wired into {@code
  * Main}'s startup in any way; this is a standalone {@code main()} for whoever issues licenses.
  *
@@ -21,7 +21,7 @@ import java.util.Base64;
  *     --licensed-to "Acme Corp" \
  *     [--expires 2027-01-01T00:00:00Z]   # omit for a perpetual license
  * </pre>
- * Prints the {@code POLYWIRE_LICENSE_KEY} value to hand to the customer -- nothing else, so it's
+ * Prints the {@code WARP_LICENSE_KEY} value to hand to the customer -- nothing else, so it's
  * safe to pipe directly into a secrets manager or a customer email.
  */
 public final class LicenseKeyGenTool {

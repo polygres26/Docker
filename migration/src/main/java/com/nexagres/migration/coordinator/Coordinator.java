@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Paid/free line:</b> {@code parallelism > 1} is an Enterprise feature -- see {@link
  * MigrationLicensing#enforceLocalParallelism} for why and how. Without a valid {@code
- * POLYWIRE_LICENSE_KEY}, this coordinator silently runs serially (one partition at a time) rather
+ * WARP_LICENSE_KEY}, this coordinator silently runs serially (one partition at a time) rather
  * than refusing to run at all: a free/Developer-tier migration is fully correct, just not
  * parallel.
  */

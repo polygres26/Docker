@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * boltwire -- Neo4j's real Bolt wire protocol (a binary TCP protocol, not HTTP/JSON like
  * oswire/dynamowire/sqswire/influxwire), so a real Neo4j client driver (the official
  * {@code neo4j} Python/Java/JS/.NET/Go drivers, all speaking the same Bolt wire underneath) can
- * point at PolyWire directly. Shaped like {@code PgWireSessionHandler} at the accept-loop/session
+ * point at Warp directly. Shaped like {@code PgWireSessionHandler} at the accept-loop/session
  * level (one {@link Runnable} per raw {@link Socket}, no Jetty involved), but like
  * {@code MongoWireSessionHandler} at the query level: this isn't SQL passing straight through,
  * it's a different query language ({@link #translateCypher} handles Phase 1's own narrow subset)
@@ -203,9 +203,9 @@ public final class BoltWireSessionHandler implements Runnable {
      * feature-flag fields).
      *
      * <p>Real bug, found live testing the real {@code neo4j} Python driver against an earlier
-     * version of this method that reported {@code server: "PolyWire/boltwire-v1"}: the driver
+     * version of this method that reported {@code server: "Warp/boltwire-v1"}: the driver
      * parses this field and refuses to proceed at all -- {@code neo4j.exceptions.
-     * UnsupportedServerProduct: PolyWire/boltwire-v1} -- unless it matches a real
+     * UnsupportedServerProduct: Warp/boltwire-v1} -- unless it matches a real
      * {@code Neo4j/x.y.z}-shaped agent string (the official drivers hard-check this; it isn't
      * negotiable client-side config). Reporting a real-looking Neo4j version string here is the
      * same wire-protocol-impersonation-for-compatibility this codebase already does everywhere
@@ -305,11 +305,11 @@ public final class BoltWireSessionHandler implements Runnable {
 
     /**
      * Phase 3's read path: translates a parsed {@link CypherParser.MatchStatement} into one real
-     * parameterized SQL query against {@code polywire_graph_nodes}/{@code polywire_graph_edges},
+     * parameterized SQL query against {@code warp_graph_nodes}/{@code warp_graph_edges},
      * and executes it directly (bypassing {@code PgGraphStore}'s write-path helpers, which are
      * shaped around a single insert, not an arbitrary join) -- a single-node MATCH becomes a plain
-     * {@code SELECT ... FROM polywire_graph_nodes WHERE labels @> ... AND properties->>'x' = ?};
-     * a node-rel-node MATCH becomes a real join through {@code polywire_graph_edges}. Each
+     * {@code SELECT ... FROM warp_graph_nodes WHERE labels @> ... AND properties->>'x' = ?};
+     * a node-rel-node MATCH becomes a real join through {@code warp_graph_edges}. Each
      * requested variable gets its own {@code (id, labels, properties)} triple selected under a
      * distinct SQL alias, so a RETURN referencing either side of the join gets the right node back.
      */
@@ -347,7 +347,7 @@ public final class BoltWireSessionHandler implements Runnable {
         sql.append(String.join(", ", selectExprs));
 
         String firstAlias = stmt.first().variable() != null ? stmt.first().variable() : "n0";
-        sql.append(" FROM polywire_graph_nodes ").append(firstAlias);
+        sql.append(" FROM warp_graph_nodes ").append(firstAlias);
         String secondAlias = null;
         if (stmt.second() != null) {
             secondAlias = stmt.second().variable() != null ? stmt.second().variable() : "n1";
@@ -356,14 +356,14 @@ public final class BoltWireSessionHandler implements Runnable {
                 // -- this join is just "attach the two real node rows to a path we already found",
                 // the same shape the fixed-hop branch below uses for its own single-hop join.
                 sql.append(" JOIN paths p ON p.start_id = ").append(firstAlias).append(".id");
-                sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
+                sql.append(" JOIN warp_graph_nodes ").append(secondAlias)
                         .append(" ON ").append(secondAlias).append(".id = p.end_id");
             } else {
-                sql.append(" JOIN polywire_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
+                sql.append(" JOIN warp_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
                 if (stmt.rel().type() != null) {
                     sql.append(" AND e.type = ").append(sqlLiteral(stmt.rel().type()));
                 }
-                sql.append(" JOIN polywire_graph_nodes ").append(secondAlias)
+                sql.append(" JOIN warp_graph_nodes ").append(secondAlias)
                         .append(" ON ").append(secondAlias).append(".id = e.to_id");
             }
         }
@@ -464,9 +464,9 @@ public final class BoltWireSessionHandler implements Runnable {
     }
 
     /** Real variable-length-path support ({@code [*1..3]}): a Postgres {@code WITH RECURSIVE} CTE
-     * that walks {@code polywire_graph_edges} from {@code depth=1} up to {@code rel.maxHops()},
+     * that walks {@code warp_graph_edges} from {@code depth=1} up to {@code rel.maxHops()},
      * tracking each path's visited node ids in an array so a cycle stops the recursion for that
-     * branch instead of looping forever -- {@code polywire_graph_edges} has no built-in acyclic
+     * branch instead of looping forever -- {@code warp_graph_edges} has no built-in acyclic
      * guarantee (a real graph can and does have cycles), so this guard is load-bearing, not
      * defensive-only. {@code minHops} is enforced afterwards in the outer query's WHERE (see
      * {@link #runMatch}) rather than here, since the recursive step still needs every depth from 1
@@ -475,10 +475,10 @@ public final class BoltWireSessionHandler implements Runnable {
         String typeFilter = rel.type() != null ? " AND type = " + sqlLiteral(rel.type()) : "";
         sql.append("WITH RECURSIVE paths AS (")
                 .append("SELECT from_id AS start_id, to_id AS end_id, 1 AS depth, ARRAY[from_id, to_id] AS visited ")
-                .append("FROM polywire_graph_edges WHERE true").append(typeFilter)
+                .append("FROM warp_graph_edges WHERE true").append(typeFilter)
                 .append(" UNION ALL ")
                 .append("SELECT p.start_id, e.to_id, p.depth + 1, p.visited || e.to_id ")
-                .append("FROM paths p JOIN polywire_graph_edges e ON e.from_id = p.end_id")
+                .append("FROM paths p JOIN warp_graph_edges e ON e.from_id = p.end_id")
                 .append(typeFilter.isEmpty() ? "" : " AND e.type = " + sqlLiteral(rel.type()))
                 .append(" WHERE p.depth < ").append(rel.maxHops())
                 .append(" AND NOT (e.to_id = ANY(p.visited))")

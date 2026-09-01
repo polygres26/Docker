@@ -41,7 +41,7 @@ class AutomaticCutoverSchedulerIntegrationTest {
                     postgres.password());
             IllegalStateException e = assertThrows(IllegalStateException.class,
                     () -> new AutomaticCutoverScheduler(checker, SOURCE_KEY, true, 10, null, () -> { }));
-            assertTrue(e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+            assertTrue(e.getMessage().contains("WARP_LICENSE_KEY"));
         }
     }
 

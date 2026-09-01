@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.nexagres.dms.core.ConnectionStore;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealMongo;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.sql.Connection;
@@ -28,7 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
  * own connector-level integration tests already cover: that Advisor's HTTP-facing job-launching
  * glue ({@link MigrationJobRequest} -&gt; {@link MigrationSourceFactory} -&gt;
  * {@link MigrationJobRunner}) actually wires a real connector together correctly end to end, using
- * the SAME real-infrastructure test helpers (real Mongo, real Postgres, a real Polywire instance)
+ * the SAME real-infrastructure test helpers (real Mongo, real Postgres, a real Warp instance)
  * every connector's own migration-module test already relies on -- not a mock, and not a
  * hand-rolled re-verification of MongoSource's own CDC correctness (that's already proven in
  * {@code MongoSourceIntegrationTest}; this test's job is proving the wiring around it, the part
@@ -68,22 +68,22 @@ class MigrationJobRunnerIntegrationTest {
     }
 
     @Test
-    void startedJobActuallyMigratesRealMongoDataThroughRealPolywire(@TempDir java.nio.file.Path tempDir) throws Exception {
+    void startedJobActuallyMigratesRealMongoDataThroughRealWarp(@TempDir java.nio.file.Path tempDir) throws Exception {
         System.setProperty("NEXAGRES_DATA_DIR", tempDir.toString());
         try (RealMongo mongo = RealMongo.start();
                 RealPostgres postgres = RealPostgres.start();
                 MongoClient seedClient = MongoClients.create(mongo.connectionString());
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             seedClient.getDatabase("src").getCollection("customers")
                     .insertOne(new Document("_id", "cust-1").append("customer", "cust-1").append("balance", 42));
 
             // The saved connection this job's checkpoint/dead-letter bookkeeping points at --
-            // same target Postgres Polywire itself writes into, same pattern MigrationStatusRoute
+            // same target Postgres Warp itself writes into, same pattern MigrationStatusRoute
             // already uses.
             ConnectionStore connectionStore = new ConnectionStore();
             var targetConnection = connectionStore.create("test-target", postgres.jdbcUrl(), postgres.username(), postgres.password());
@@ -91,11 +91,11 @@ class MigrationJobRunnerIntegrationTest {
             MigrationJobRequest request = new MigrationJobRequest();
             request.connectorType = "MONGO";
             request.targetConnectionId = targetConnection.id;
-            request.polywireGrpcHost = "localhost";
-            request.polywireGrpcPort = polywire.port("grpc");
-            request.polywireGrpcUser = postgres.username();
-            request.polywireGrpcPassword = postgres.password();
-            request.parallelism = 4; // free tier (no POLYWIRE_LICENSE_KEY in this test env) clamps
+            request.warpGrpcHost = "localhost";
+            request.warpGrpcPort = warp.port("grpc");
+            request.warpGrpcUser = postgres.username();
+            request.warpGrpcPassword = postgres.password();
+            request.parallelism = 4; // free tier (no WARP_LICENSE_KEY in this test env) clamps
                                       // this to 1 inside Coordinator itself -- proves the real
                                       // license gate applies even when Advisor is the one launching
                                       // the job, not just a direct Migrate*Cli invocation.
@@ -122,24 +122,24 @@ class MigrationJobRunnerIntegrationTest {
 
                 assertTrue(runner.list().stream().anyMatch(j -> j.id.equals(state.id)),
                         "the started job should show up in the job list");
-                // Free tier (no POLYWIRE_LICENSE_KEY in this test env): a second job while this one
+                // Free tier (no WARP_LICENSE_KEY in this test env): a second job while this one
                 // is still RUNNING must be refused outright, not silently queued or double-run --
                 // proves MigrationLicensing.requireCapacityForAnotherConcurrentJob is actually wired
                 // into the real HTTP-facing start() path, not just unit-tested in isolation.
                 MigrationJobRequest secondRequest = new MigrationJobRequest();
                 secondRequest.connectorType = "MONGO";
                 secondRequest.targetConnectionId = targetConnection.id;
-                secondRequest.polywireGrpcHost = "localhost";
-                secondRequest.polywireGrpcPort = polywire.port("grpc");
-                secondRequest.polywireGrpcUser = postgres.username();
-                secondRequest.polywireGrpcPassword = postgres.password();
+                secondRequest.warpGrpcHost = "localhost";
+                secondRequest.warpGrpcPort = warp.port("grpc");
+                secondRequest.warpGrpcUser = postgres.username();
+                secondRequest.warpGrpcPassword = postgres.password();
                 secondRequest.sourceConfig = request.sourceConfig;
                 IllegalStateException capacity = assertThrows(IllegalStateException.class,
                         () -> runner.start(secondRequest));
-                assertTrue(capacity.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+                assertTrue(capacity.getMessage().contains("WARP_LICENSE_KEY"));
             } finally {
                 // Ask the job's live change-feed loop to stop before this test's own try-with-
-                // resources tears down the real Mongo/Postgres/Polywire containers underneath it --
+                // resources tears down the real Mongo/Postgres/Warp containers underneath it --
                 // otherwise the job's background thread would just start throwing real connection
                 // errors instead of exiting cleanly. Same reasoning as every migration-module
                 // integration test's own close()-in-finally teardown.

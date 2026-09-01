@@ -13,7 +13,7 @@ import java.util.Optional;
 
 public final class ConfigStore {
 
-    public static final String POOL_KEY = "polywire-control";
+    public static final String POOL_KEY = "warp-control";
 
     private final String jdbcUrl;
     private final String user;
@@ -24,7 +24,7 @@ public final class ConfigStore {
         this.user = user;
         this.password = password;
         try (Connection connection = borrow(); Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE IF NOT EXISTS polywire_config ("
+            statement.execute("CREATE TABLE IF NOT EXISTS warp_config ("
                     + "config_key VARCHAR(255) PRIMARY KEY, "
                     + "config_value TEXT, "
                     + "updated_at TIMESTAMP, "
@@ -35,7 +35,7 @@ public final class ConfigStore {
     public Optional<String> get(String key) throws SQLException {
         try (Connection connection = borrow();
                 PreparedStatement statement = connection.prepareStatement(
-                        "SELECT config_value FROM polywire_config WHERE config_key = ?")) {
+                        "SELECT config_value FROM warp_config WHERE config_key = ?")) {
             statement.setString(1, key);
             try (ResultSet rs = statement.executeQuery()) {
                 return rs.next() ? Optional.ofNullable(rs.getString(1)) : Optional.empty();
@@ -47,7 +47,7 @@ public final class ConfigStore {
         Map<String, String> all = new LinkedHashMap<>();
         try (Connection connection = borrow();
                 Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("SELECT config_key, config_value FROM polywire_config")) {
+                ResultSet rs = statement.executeQuery("SELECT config_key, config_value FROM warp_config")) {
             while (rs.next()) {
                 all.put(rs.getString(1), rs.getString(2));
             }
@@ -58,7 +58,7 @@ public final class ConfigStore {
     public void put(String key, String value, String updatedBy) throws SQLException {
         try (Connection connection = borrow();
                 PreparedStatement statement = connection.prepareStatement(
-                        "UPDATE polywire_config SET config_value = ?, updated_at = ?, updated_by = ? WHERE config_key = ?")) {
+                        "UPDATE warp_config SET config_value = ?, updated_at = ?, updated_by = ? WHERE config_key = ?")) {
             statement.setString(1, value);
             statement.setTimestamp(2, Timestamp.from(Instant.now()));
             statement.setString(3, updatedBy);
@@ -69,7 +69,7 @@ public final class ConfigStore {
         }
         try (Connection connection = borrow();
                 PreparedStatement statement = connection.prepareStatement(
-                        "INSERT INTO polywire_config (config_key, config_value, updated_at, updated_by) VALUES (?, ?, ?, ?)")) {
+                        "INSERT INTO warp_config (config_key, config_value, updated_at, updated_by) VALUES (?, ?, ?, ?)")) {
             statement.setString(1, key);
             statement.setString(2, value);
             statement.setTimestamp(3, Timestamp.from(Instant.now()));

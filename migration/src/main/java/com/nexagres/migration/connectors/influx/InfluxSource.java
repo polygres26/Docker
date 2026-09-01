@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Writes into the target's real influxwire physical schema (see {@code
  * com.nexagres.wire.influxwire.PgTimeSeriesStore} in the {@code wire} module: {@code
- * polywire_influx_<measurement>} with {@code time timestamptz}/{@code tags jsonb}/{@code fields
+ * warp_influx_<measurement>} with {@code time timestamptz}/{@code tags jsonb}/{@code fields
  * jsonb}) -- same "match the wire's own physical schema exactly" principle as every document/
  * key-value connector in this project. <b>Known, scoped gap</b>: that physical schema has NO
  * primary key or unique constraint at all (confirmed by reading its own DDL) -- there is no
@@ -90,7 +90,7 @@ public final class InfluxSource implements Source {
         this.baseUrl = "http://" + host + ":" + port;
         this.database = database;
         this.measurement = measurement;
-        this.targetTable = "polywire_influx_" + measurement.toLowerCase(Locale.ROOT);
+        this.targetTable = "warp_influx_" + measurement.toLowerCase(Locale.ROOT);
         this.tagKeys = tagKeys;
         this.checkpointKey = "influx:" + database + "." + measurement;
     }

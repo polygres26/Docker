@@ -64,7 +64,7 @@ class DynamoSourceStreamsTest {
 
     /** Records every {@link ChangeEvent} applied, in order -- a real {@link Sink}, just an
      * in-memory one instead of a real gRPC target, since this test is about {@link DynamoSource}'s
-     * OWN logic, not re-proving {@code PolywireGrpcSink} (already covered by the snapshot test's
+     * OWN logic, not re-proving {@code WarpGrpcSink} (already covered by the snapshot test's
      * real gRPC path and every other connector's own tests). */
     private static final class RecordingSink implements Sink {
         final List<ChangeEvent> applied = new CopyOnWriteArrayList<>();

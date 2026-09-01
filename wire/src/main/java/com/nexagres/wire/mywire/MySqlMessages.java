@@ -21,7 +21,7 @@ final class MySqlMessages {
     static byte[] handshakeV10(long connectionId, byte[] scramble, boolean tlsSupported) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         b.write(10);
-        MySqlPacket.writeNulString(b, "8.0.34-polywire");
+        MySqlPacket.writeNulString(b, "8.0.34-warp");
         MySqlPacket.writeFixedInt(b, connectionId, 4);
         b.write(scramble, 0, 8);
         b.write(0);

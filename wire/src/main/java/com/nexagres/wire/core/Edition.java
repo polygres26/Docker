@@ -44,14 +44,14 @@ public enum Edition {
     }
 
     private static Edition resolve() {
-        String markerPath = System.getenv().getOrDefault("POLYWIRE_EDITION_FILE", "/opt/polywire/EDITION");
+        String markerPath = System.getenv().getOrDefault("WARP_EDITION_FILE", "/opt/warp/EDITION");
         String markerContent = null;
         try {
             markerContent = Files.readString(Path.of(markerPath));
         } catch (IOException ignoredMissingOrUnreadable) {
             
         }
-        return resolveGiven(markerContent, System.getenv("POLYWIRE_EDITION"));
+        return resolveGiven(markerContent, System.getenv("WARP_EDITION"));
     }
 
     static Edition resolveGiven(String markerContent, String envValue) {

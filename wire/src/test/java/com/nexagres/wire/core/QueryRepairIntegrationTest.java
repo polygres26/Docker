@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@link QueryRepairStage} actually repairs a real Postgres rejection, not
- * just a unit-level check of its retry logic -- a real Polywire subprocess, a real disposable
+ * just a unit-level check of its retry logic -- a real Warp subprocess, a real disposable
  * Postgres, real pgwire/JDBC, and a real (local, scripted, not a mock object) HTTP server
  * standing in for the LLM endpoint, since {@code TranslationLlmClient} talks any OpenAI-chat-
  * completions-shaped HTTP endpoint and there is no free, deterministic, offline real LLM to point
@@ -82,9 +82,9 @@ class QueryRepairIntegrationTest {
         }
     }
 
-    private static String metricsSummary(PolyWireProcess polywire) throws Exception {
+    private static String metricsSummary(WarpProcess warp) throws Exception {
         HttpClient http = HttpClient.newHttpClient();
-        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/metrics/summary"))
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/metrics/summary"))
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .timeout(Duration.ofSeconds(5))
                 .GET().build();
@@ -96,19 +96,19 @@ class QueryRepairIntegrationTest {
     void anUndefinedFunctionErrorIsRepairedAndReExecutedSuccessfully() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("SELECT COALESCE(1, 2) AS result");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_QUERY_REPAIR_ENABLED", "true")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-repair-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_QUERY_REPAIR_ENABLED", "true")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-repair-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     PreparedStatement ps = conn.prepareStatement(
                             // NVL is a real Oracle builtin, not part of plain Postgres -- a genuine
                             // 42883 undefined_function against RealPostgres's own vanilla instance
@@ -126,7 +126,7 @@ class QueryRepairIntegrationTest {
 
             assertEquals(1, llm.requestCount(), "expected exactly one LLM call -- one repair attempt per statement");
 
-            String summary = metricsSummary(polywire);
+            String summary = metricsSummary(warp);
             assertTrue(summary.contains("\"queryRepair\":{\"attempted\":1,\"repaired\":1}"),
                     "expected the admin metrics endpoint to show exactly one attempted and one "
                             + "successful repair -- got: " + summary);
@@ -137,19 +137,19 @@ class QueryRepairIntegrationTest {
     void aGenuinelyMissingTableIsNotRetriedThroughTheLlmAtAll() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("SELECT 1");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_QUERY_REPAIR_ENABLED", "true")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-repair-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_QUERY_REPAIR_ENABLED", "true")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-repair-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     Statement st = conn.createStatement()) {
                 // 42P01 undefined_table -- deliberately excluded from QueryRepairStage's
                 // REPAIRABLE_SQLSTATES, since no LLM rewrite can make a genuinely nonexistent table
@@ -163,7 +163,7 @@ class QueryRepairIntegrationTest {
             assertEquals(0, llm.requestCount(),
                     "a genuinely missing table must never trigger an LLM repair attempt");
 
-            String summary = metricsSummary(polywire);
+            String summary = metricsSummary(warp);
             assertFalse(summary.contains("\"queryRepair\":{\"attempted\":1"),
                     "expected zero repair attempts recorded -- got: " + summary);
         }

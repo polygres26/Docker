@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -28,21 +28,21 @@ import org.junit.jupiter.api.Test;
 class MySqlJdbcIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
+                .frontend("mywire", "WARP_MYWIRE_PORT")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) {
-            polywire.close();
+        if (warp != null) {
+            warp.close();
         }
         if (postgres != null) {
             postgres.close();
@@ -50,7 +50,7 @@ class MySqlJdbcIntegrationTest {
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:mysql://localhost:" + polywire.port("mywire") + "/postgres"
+        String url = "jdbc:mysql://localhost:" + warp.port("mywire") + "/postgres"
                 + "?useSSL=false&allowPublicKeyRetrieval=true&useServerPrepStmts=true";
         return DriverManager.getConnection(url, postgres.username(), postgres.password());
     }

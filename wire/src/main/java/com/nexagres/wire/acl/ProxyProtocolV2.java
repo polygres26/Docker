@@ -35,7 +35,7 @@ public final class ProxyProtocolV2 {
         in.readFully(sig);
         if (!java.util.Arrays.equals(sig, SIGNATURE)) {
             throw new IOException("PROXY protocol v2 signature missing/invalid -- this listener requires PPv2 "
-                    + "(POLYWIRE_ACL_PPV2_ENABLED=true); either the upstream isn't sending it, or a client is "
+                    + "(WARP_ACL_PPV2_ENABLED=true); either the upstream isn't sending it, or a client is "
                     + "connecting directly, bypassing the expected load balancer");
         }
         int verCmd = in.readUnsignedByte();

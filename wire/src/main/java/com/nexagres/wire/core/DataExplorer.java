@@ -13,14 +13,14 @@ import java.util.Map;
 
 /**
  * Object browser + ad-hoc query console for a single {@link BackendTarget} -- lists
- * schemas/tables/columns via {@code information_schema} (every backend PolyWire fronts today is
+ * schemas/tables/columns via {@code information_schema} (every backend Warp fronts today is
  * Postgres-wire-compatible on the target side, so one query set covers all of them) and runs
  * whatever SQL the caller sends, capped and time-boxed.
  *
  * <p><b>Deliberately bypasses the wire pipeline</b> -- this borrows a connection straight from
  * {@link BackendTarget}, not through pgwire/mywire/etc, so SQL Firewall rules and ACL don't apply
  * here. That's intentional (it's how an admin actually inspects data), but it's why this is
- * reached only through the same bearer-token-guarded admin API surface as the rest of PolyWire's
+ * reached only through the same bearer-token-guarded admin API surface as the rest of Warp's
  * config endpoints, never from a client-facing wire protocol.
  */
 public final class DataExplorer {

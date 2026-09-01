@@ -4,7 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.nexagres.wire.config.ConfigStore;
 import com.nexagres.wire.config.FirewallRuleStore;
-import com.nexagres.wire.config.PolyWireConfig;
+import com.nexagres.wire.config.WarpConfig;
 import com.nexagres.wire.core.AccessContext;
 import com.nexagres.wire.core.QosControlStage;
 import com.nexagres.wire.core.StatsCollectorStage;
@@ -29,21 +29,21 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Auth:</b> every route is gated one of two ways, and both work simultaneously -- neither
  * disables the other. The simple path, unchanged from before role support existed: a shared
- * bearer token ({@code POLYWIRE_ADMIN_TOKEN}) grants full read+write access. This stays fully
+ * bearer token ({@code WARP_ADMIN_TOKEN}) grants full read+write access. This stays fully
  * supported for developer testing, CI, and any customer who just wants one token -- no OIDC setup
- * required. The SSO path, opt-in via {@code POLYWIRE_OAUTH_ISSUER} (see
+ * required. The SSO path, opt-in via {@code WARP_OAUTH_ISSUER} (see
  * {@link com.nexagres.wire.http.auth.AccessContextResolver}, works against Okta, Entra ID, or any
  * OIDC-compliant IdP): a caller presents a real JWT instead, and its roles claim (name configured
- * via {@code POLYWIRE_OAUTH_ROLES_CLAIM}, e.g. an Okta group or an Entra ID app role) is checked
- * against {@code POLYWIRE_OAUTH_ADMIN_ROLES}/{@code POLYWIRE_OAUTH_VIEWER_ROLES} (comma-separated
+ * via {@code WARP_OAUTH_ROLES_CLAIM}, e.g. an Okta group or an Entra ID app role) is checked
+ * against {@code WARP_OAUTH_ADMIN_ROLES}/{@code WARP_OAUTH_VIEWER_ROLES} (comma-separated
  * role names, defaulting to {@code admin}/{@code viewer}) to grant read-only access (GET routes
  * only) or full read+write, respectively -- see {@link #resolveAdminRole}. When a customer wants
  * "read vs. change" access split by real identity instead of one shared secret, this is how.
  *
  * <p>When a {@link ConfigStore} is also supplied, {@code /api/config}
- * exposes every field of {@link PolyWireConfig} (backends, router rules, QoS limits, ACL rules,
+ * exposes every field of {@link WarpConfig} (backends, router rules, QoS limits, ACL rules,
  * OAuth settings, ...) as one GET/PUT(-partial) resource -- a PUT merges the given fields onto the
- * latest version and appends a new {@code polywire_config} row, the same LISTEN/NOTIFY path every
+ * latest version and appends a new {@code warp_config} row, the same LISTEN/NOTIFY path every
  * config field already reloads through. Callers only send the fields they're changing; everything
  * else carries forward from the current version untouched. When a {@link com.nexagres.wire.core.BackendRegistry}
  * is also supplied, {@code /api/backends} lists every configured backend and {@code /api/backends/{name}/tables},
@@ -145,8 +145,8 @@ public final class MetricsServer {
 
     /**
      * Full constructor -- adds the {@link DialectTranslationStage} reference {@code /api/llm-config}
-     * needs to hot-apply a PUT without waiting for the next {@code polywire_config} LISTEN/NOTIFY
-     * round-trip, and {@code adminWebDir} (see {@code POLYWIRE_ADMIN_WEB_DIR} in {@code Main}), the
+     * needs to hot-apply a PUT without waiting for the next {@code warp_config} LISTEN/NOTIFY
+     * round-trip, and {@code adminWebDir} (see {@code WARP_ADMIN_WEB_DIR} in {@code Main}), the
      * built {@code wire/web} SPA's {@code dist/} directory. When set, static assets are served by
      * {@link SpaResourceHandler} for anything this handler doesn't claim -- same "embedded Jetty
      * does both jobs" approach as dms's {@code DmsHttpServer}/{@code SpaResourceHandler}.
@@ -177,7 +177,7 @@ public final class MetricsServer {
     /**
      * As the full constructor above, plus {@code mcpMetrics} -- the shared
      * {@link com.nexagres.wire.mcp.McpMetricsCollector} instance {@code Main} also passes to
-     * {@code PolyWireMcpServer}, so both read/write the same per-tool call counts. {@code null}
+     * {@code WarpMcpServer}, so both read/write the same per-tool call counts. {@code null}
      * (every other constructor's default) means MCP metrics are omitted from both
      * {@code /api/metrics/summary} and {@code /metrics} -- harmless, not an error, for any caller
      * that genuinely has no MCP server running.
@@ -214,7 +214,7 @@ public final class MetricsServer {
     /**
      * As the full constructor above, plus {@code auditLog} -- when non-null, enables
      * {@code GET /api/audit} (this process's recent {@link com.nexagres.wire.audit.AuditEvent}s,
-     * most-recent-first; the durable, hash-chained store when {@code POLYWIRE_AUDIT_LOG_DB} is
+     * most-recent-first; the durable, hash-chained store when {@code WARP_AUDIT_LOG_DB} is
      * configured, the in-memory ring buffer otherwise). {@code null} (every other constructor's
      * default) means the route is absent, same "omitted, not an error" convention as every other
      * optional dependency here.
@@ -238,7 +238,7 @@ public final class MetricsServer {
      * {@code EXPLAIN PLAN FOR} plan text, timing, row count, and success/failure -- the same
      * {@code V$SQL_PLAN}-style history the sibling Omnigate project's own admin API already
      * exposes. {@code null} (every other constructor's default): the route doesn't exist at all,
-     * matching {@code POLYWIRE_FEDERATION_PLAN_HISTORY} being unset. */
+     * matching {@code WARP_FEDERATION_PLAN_HISTORY} being unset. */
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage,
             Supplier<ConfigStore.Version> currentVersionSupplier, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.http.auth.AccessContextResolver oauth, FirewallRuleStore firewallRuleStore,
@@ -259,7 +259,7 @@ public final class MetricsServer {
      * POST /api/backends/{name}/drain} refuses (409) to drain a backend with any unresolved
      * in-doubt XA branch against it (see {@link com.nexagres.wire.xa.XaRecoveryLog#hasUnresolvedFor}'s
      * javadoc for why), and the drain/undrain routes fan out to every other live node in {@code
-     * polywire_nodes} (see {@link com.nexagres.wire.config.NodeRegistry}) instead of only mutating
+     * warp_nodes} (see {@link com.nexagres.wire.config.NodeRegistry}) instead of only mutating
      * this process's own in-memory {@code BackendRegistry} state -- drain/undrain state is
      * deliberately NOT propagated via {@code ConfigStore}/LISTEN-NOTIFY like routing config is
      * (it's an operational, not a config, fact), so without this fan-out a drain call would only
@@ -275,15 +275,15 @@ public final class MetricsServer {
             com.nexagres.wire.server.ServerOptions options, com.nexagres.wire.mcp.McpMetricsCollector mcpMetrics,
             com.nexagres.wire.capture.WorkloadCaptureBuffer captureBuffer,
             com.nexagres.wire.audit.AuditLog auditLog, com.nexagres.wire.xa.XaRecoveryLog xaRecoveryLog) {
-        String adminToken = System.getenv("POLYWIRE_ADMIN_TOKEN");
-        // Real per-user SSO on top of the token above, not instead of it -- POLYWIRE_ADMIN_TOKEN
+        String adminToken = System.getenv("WARP_ADMIN_TOKEN");
+        // Real per-user SSO on top of the token above, not instead of it -- WARP_ADMIN_TOKEN
         // stays fully supported for developer testing, CI, and any customer who just wants a
         // single shared secret; it always resolves to full ADMIN access, unchanged. When
-        // POLYWIRE_OAUTH_ISSUER is also configured (Okta, Entra ID, or any OIDC-compliant IdP),
+        // WARP_OAUTH_ISSUER is also configured (Okta, Entra ID, or any OIDC-compliant IdP),
         // a caller can instead present a real JWT whose configured roles claim determines VIEWER
         // (read-only) vs ADMIN (read+write) access -- see resolveAdminRole/authorized below.
-        Set<String> adminRoleNames = splitRoles(System.getenv("POLYWIRE_OAUTH_ADMIN_ROLES"), "admin");
-        Set<String> viewerRoleNames = splitRoles(System.getenv("POLYWIRE_OAUTH_VIEWER_ROLES"), "viewer");
+        Set<String> adminRoleNames = splitRoles(System.getenv("WARP_OAUTH_ADMIN_ROLES"), "admin");
+        Set<String> viewerRoleNames = splitRoles(System.getenv("WARP_OAUTH_VIEWER_ROLES"), "viewer");
         this.auditLog = auditLog;
         // Reuses the same live backendRegistry sqswire itself routes through -- a separate
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
@@ -293,7 +293,7 @@ public final class MetricsServer {
         boolean servesSpa = adminWebDir != null && !adminWebDir.isBlank()
                 && java.nio.file.Files.isDirectory(java.nio.file.Path.of(adminWebDir));
         if (adminWebDir != null && !adminWebDir.isBlank() && !servesSpa) {
-            log.warn("POLYWIRE_ADMIN_WEB_DIR={} is not a directory -- serving API only", adminWebDir);
+            log.warn("WARP_ADMIN_WEB_DIR={} is not a directory -- serving API only", adminWebDir);
         }
         AbstractHandler api = new AbstractHandler() {
             @Override
@@ -305,7 +305,7 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
-                // The shared POLYWIRE_ADMIN_TOKEN path is checked and, on a match, taken FIRST --
+                // The shared WARP_ADMIN_TOKEN path is checked and, on a match, taken FIRST --
                 // before oauth.enforce() ever runs -- so it keeps working unchanged even when SSO
                 // is also configured. oauth.enforce() rejects any Authorization header that isn't
                 // a parseable JWT once an issuer is set; without this ordering, presenting the
@@ -329,7 +329,7 @@ public final class MetricsServer {
                 // Attributes mutating admin calls to a real person when the caller authenticated
                 // via SSO (accessContext.userId(), e.g. an Okta/Entra email or sub claim) instead
                 // of collapsing every action to "someone with the shared token." A caller using
-                // the shared POLYWIRE_ADMIN_TOKEN has no per-user identity to attribute to -- that
+                // the shared WARP_ADMIN_TOKEN has no per-user identity to attribute to -- that
                 // limitation is recorded plainly as "shared-admin-token" rather than hidden. Reads
                 // (GET/HEAD) aren't recorded here -- audit is for changes, not every poll.
                 if (auditLog != null && role == AdminRole.ADMIN && target.startsWith("/api/")
@@ -632,7 +632,7 @@ public final class MetricsServer {
 
     /**
      * A caller's resolved admin-console access level for this request. {@code NONE} means neither
-     * the shared {@code POLYWIRE_ADMIN_TOKEN} nor a real SSO identity with a recognized role was
+     * the shared {@code WARP_ADMIN_TOKEN} nor a real SSO identity with a recognized role was
      * presented. {@code VIEWER} is read-only (GET routes only); {@code ADMIN} is full read+write,
      * exactly like every admin request before role support existed.
      */
@@ -642,14 +642,14 @@ public final class MetricsServer {
 
     /**
      * Resolves the caller's {@link AdminRole} for this request. The static {@code
-     * POLYWIRE_ADMIN_TOKEN} bearer token (see {@link #bearerTokenValid}) always resolves to {@code
+     * WARP_ADMIN_TOKEN} bearer token (see {@link #bearerTokenValid}) always resolves to {@code
      * ADMIN} when present and valid -- this is deliberate, not a fallback to remove: developer
      * testing, CI, single-node/dev deployments, and any customer who simply wants one shared
      * secret keep working exactly as before, with no OIDC setup required. When no admin token is
      * presented (or none is configured), a real SSO identity from {@code accessContext} -- resolved
      * by {@link com.nexagres.wire.http.auth.AccessContextResolver} against Okta, Entra ID, or any
      * OIDC-compliant IdP -- is checked against the configured admin/viewer role-name sets (drawn
-     * from the JWT's {@code POLYWIRE_OAUTH_ROLES_CLAIM} claim, e.g. an Okta group or an Entra ID
+     * from the JWT's {@code WARP_OAUTH_ROLES_CLAIM} claim, e.g. an Okta group or an Entra ID
      * app role) to grant {@code ADMIN} or {@code VIEWER} instead. A caller authenticated via SSO
      * but carrying neither role name gets {@code NONE} -- default-deny, not silently treated as a
      * viewer.
@@ -675,7 +675,7 @@ public final class MetricsServer {
      * delete, LLM config PUT) needs full {@code ADMIN}. */
     /** Records one mutating admin call to {@code auditLog}, attributed to the real SSO identity
      * when one resolved this request, or to the literal {@code "shared-admin-token"} placeholder
-     * when the caller used {@code POLYWIRE_ADMIN_TOKEN} instead (which carries no per-user
+     * when the caller used {@code WARP_ADMIN_TOKEN} instead (which carries no per-user
      * identity to attribute to). */
     static void recordAdminAction(com.nexagres.wire.audit.AuditLog auditLog, AccessContext accessContext,
             String httpMethod, String target) {
@@ -784,7 +784,7 @@ public final class MetricsServer {
      * anything. The response is a proposed {@code /api/firewall-rules} POST body an admin reviews
      * (and can edit) before submitting it through that existing, already-authorized endpoint; the
      * LLM only ever gets to propose structured data here, never touch the request path, and never
-     * write to {@code polywire_firewall_rules} directly. Shares dialect translation's own LLM
+     * write to {@code warp_firewall_rules} directly. Shares dialect translation's own LLM
      * provider config ({@link DialectTranslationStage#llmClient()}) rather than a second one.
      */
     private static void handleFirewallRuleDraft(HttpServletRequest request, HttpServletResponse response,
@@ -794,7 +794,7 @@ public final class MetricsServer {
         if (llmClient == null) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
-                    + "or the POLYWIRE_LLM_* env vars before drafting rules from plain English\"}");
+                    + "or the WARP_LLM_* env vars before drafting rules from plain English\"}");
             return;
         }
         JsonObject body;
@@ -881,7 +881,7 @@ public final class MetricsServer {
 
     /**
      * Proposes ONE targeted QoS rate-limit change via the LLM -- never writes to {@code
-     * polywire_config}. The response's {@code qosClassLimitsIfApplied}/{@code
+     * warp_config}. The response's {@code qosClassLimitsIfApplied}/{@code
      * qosRatePerSecIfApplied} etc. fields are exactly what an admin would paste into a
      * {@code PUT /api/config} body to actually apply it -- that existing, already-authorized
      * endpoint is the only write path, same "LLM proposes structured data, a human applies it
@@ -902,13 +902,13 @@ public final class MetricsServer {
         if (llmClient == null) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
-                    + "or the POLYWIRE_LLM_* env vars before requesting QoS tuning suggestions\"}");
+                    + "or the WARP_LLM_* env vars before requesting QoS tuning suggestions\"}");
             return;
         }
 
-        PolyWireConfig current;
+        WarpConfig current;
         try {
-            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(WarpConfig::fromEnvDefaults);
         } catch (java.sql.SQLException e) {
             log.warn("qos-suggestion draft: could not read current config", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -997,7 +997,7 @@ public final class MetricsServer {
 
     /**
      * Proposes ONE new {@code RollupStage} pre-aggregation definition via the LLM -- never writes
-     * to {@code polywire_config}. Validated by literally running the candidate through {@code
+     * to {@code warp_config}. Validated by literally running the candidate through {@code
      * RollupConfig.parse} (the real parser {@code Main}'s own config-reload path uses, not a
      * second copy of its grammar), merged into the rest of the current definitions unchanged via
      * {@code RollupConfig.toYaml}, and returned as {@code rollupDefinitionsYamlIfApplied} -- exactly
@@ -1014,14 +1014,14 @@ public final class MetricsServer {
         if (llmClient == null) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
-                    + "or the POLYWIRE_LLM_* env vars before requesting rollup suggestions\"}");
+                    + "or the WARP_LLM_* env vars before requesting rollup suggestions\"}");
             return;
         }
 
-        PolyWireConfig current;
+        WarpConfig current;
         java.util.List<com.nexagres.wire.rollup.RollupDefinition> existingRollups;
         try {
-            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(WarpConfig::fromEnvDefaults);
             existingRollups = com.nexagres.wire.rollup.RollupConfig.parse(current.rollupDefinitionsYaml());
         } catch (java.sql.SQLException e) {
             log.warn("rollup-suggestion draft: could not read current config", e);
@@ -1130,7 +1130,7 @@ public final class MetricsServer {
 
     /**
      * Proposes ONE new per-table hash-sharding rule via the LLM -- never writes to {@code
-     * polywire_config}. Never proposes a backend that isn't real: the LLM is given exactly the
+     * warp_config}. Never proposes a backend that isn't real: the LLM is given exactly the
      * currently-configured backend names as context, and the draft is rejected outright if it
      * names anything else -- an LLM can hallucinate a plausible-sounding backend name even when
      * told the real list, so this is checked in code, not trusted from the prompt alone. The
@@ -1147,13 +1147,13 @@ public final class MetricsServer {
         if (llmClient == null) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
-                    + "or the POLYWIRE_LLM_* env vars before requesting router/sharding suggestions\"}");
+                    + "or the WARP_LLM_* env vars before requesting router/sharding suggestions\"}");
             return;
         }
 
-        PolyWireConfig current;
+        WarpConfig current;
         try {
-            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(PolyWireConfig::fromEnvDefaults);
+            current = configStore.readLatest().map(ConfigStore.Version::payload).orElseGet(WarpConfig::fromEnvDefaults);
         } catch (java.sql.SQLException e) {
             log.warn("router-suggestion draft: could not read current config", e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -1277,17 +1277,17 @@ public final class MetricsServer {
         response.setContentType("application/json; charset=utf-8");
         try {
             if ("GET".equals(request.getMethod())) {
-                PolyWireConfig current = configStore.readLatest()
+                WarpConfig current = configStore.readLatest()
                         .map(ConfigStore.Version::payload)
-                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                        .orElseGet(WarpConfig::fromEnvDefaults);
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write(current.toJson());
             } else if ("PUT".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
-                PolyWireConfig current = configStore.readLatest()
+                WarpConfig current = configStore.readLatest()
                         .map(ConfigStore.Version::payload)
-                        .orElseGet(PolyWireConfig::fromEnvDefaults);
-                PolyWireConfig updated = new PolyWireConfig(
+                        .orElseGet(WarpConfig::fromEnvDefaults);
+                WarpConfig updated = new WarpConfig(
                         field(body, "qosRatePerSec", current.qosRatePerSec()),
                         field(body, "qosBurst", current.qosBurst()),
                         field(body, "qosMaxWaitMs", current.qosMaxWaitMs()),
@@ -1338,7 +1338,7 @@ public final class MetricsServer {
     /**
      * {@code GET}/{@code PUT /api/llm-config} -- the dialect-translation LLM fallback's runtime
      * settings (provider/apiKey/baseUrl/model), stored as four more fields on the same
-     * {@code polywire_config} row {@code /api/config} manages (see {@link PolyWireConfig}). Kept
+     * {@code warp_config} row {@code /api/config} manages (see {@link WarpConfig}). Kept
      * as its own route rather than folded into {@code /api/config} because the response shape is
      * deliberately different: {@code GET} never echoes the decrypted {@code apiKey} back (only
      * {@code apiKeySet: boolean}), mirroring Nexagres DMS's {@code LlmSettingsStore}/{@code
@@ -1348,7 +1348,7 @@ public final class MetricsServer {
      *
      * <p>On a successful PUT, also calls {@code dialectTranslationStage.reconfigureLlm(...)}
      * directly so the change is live immediately for this process, rather than only after the
-     * next {@code polywire_config} LISTEN/NOTIFY round-trip lands (every other process listening
+     * next {@code warp_config} LISTEN/NOTIFY round-trip lands (every other process listening
      * on the same config still picks it up that way).
      */
     private static void handleLlmConfig(HttpServletRequest request, HttpServletResponse response,
@@ -1357,9 +1357,9 @@ public final class MetricsServer {
         response.setContentType("application/json; charset=utf-8");
         try {
             if ("GET".equals(request.getMethod())) {
-                PolyWireConfig current = configStore.readLatest()
+                WarpConfig current = configStore.readLatest()
                         .map(ConfigStore.Version::payload)
-                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                        .orElseGet(WarpConfig::fromEnvDefaults);
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write("{\"provider\":" + jsonString(current.llmProvider())
                         + ",\"baseUrl\":" + jsonString(current.llmBaseUrl())
@@ -1368,9 +1368,9 @@ public final class MetricsServer {
                         + "}");
             } else if ("PUT".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
-                PolyWireConfig current = configStore.readLatest()
+                WarpConfig current = configStore.readLatest()
                         .map(ConfigStore.Version::payload)
-                        .orElseGet(PolyWireConfig::fromEnvDefaults);
+                        .orElseGet(WarpConfig::fromEnvDefaults);
                 String newProvider = field(body, "provider", current.llmProvider());
                 if (newProvider != null && !newProvider.isBlank()
                         && !newProvider.equalsIgnoreCase("openai")
@@ -1386,7 +1386,7 @@ public final class MetricsServer {
                         : current.llmApiKey();
                 String newBaseUrl = field(body, "baseUrl", current.llmBaseUrl());
                 String newModel = field(body, "model", current.llmModel());
-                PolyWireConfig updated = new PolyWireConfig(
+                WarpConfig updated = new WarpConfig(
                         current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
                         current.qosClassLimits(), current.qosPoolWaitThreshold(),
                         current.cacheTables(), current.cacheTtlMs(),
@@ -1437,7 +1437,7 @@ public final class MetricsServer {
 
             if ("/api/backends/test".equals(target) && "POST".equals(request.getMethod())) {
                 // Test-before-add: params the caller is considering, not anything already in
-                // polywire_config -- this never touches BackendRegistry or writes anything.
+                // warp_config -- this never touches BackendRegistry or writes anything.
                 JsonObject body = readJsonBody(request);
                 if (!body.has("jdbcUrl") || body.get("jdbcUrl").getAsString().isBlank()) {
                     throw new IllegalArgumentException("jdbcUrl is required");
@@ -1497,7 +1497,7 @@ public final class MetricsServer {
                     response.getWriter().write("{\"error\":\"backend '" + t.name() + "' has an unresolved "
                             + "in-doubt XA branch -- draining now would make it unrecoverable by name. Wait "
                             + "for it to resolve (see GET /api/backends -- XA state isn't exposed there yet, "
-                            + "check polywire_xa_log) and retry.\"}");
+                            + "check warp_xa_log) and retry.\"}");
                     return;
                 }
                 long graceMs = parseLongParam(request.getParameter("graceMs"), 30_000);
@@ -1509,9 +1509,9 @@ public final class MetricsServer {
                                 "/api/backends/" + t.name() + "/drain?local=true&graceMs=" + graceMs);
                 // "Wait for zero data loss" -- checked ONCE here (never on a local=true forwarded
                 // call: replication lag is a property of the Postgres primary/replica pair, not of
-                // any one PolyWire node, so N nodes each checking it would be redundant) and only
+                // any one Warp node, so N nodes each checking it would be redundant) and only
                 // after every node has already stopped routing new statements here and drained its
-                // in-flight ones -- by this point nothing is writing to `t` through PolyWire
+                // in-flight ones -- by this point nothing is writing to `t` through Warp
                 // anymore, so waiting for its fallback's lag to reach zero here is waiting for a
                 // real, achievable full catch-up, not chasing a moving target. Unlike Phase
                 // 3's failover lag check (advisory, never blocks -- see BackendHealthChecker's
@@ -1655,12 +1655,12 @@ public final class MetricsServer {
      * {@code ConfigStore}/LISTEN-NOTIFY -- see the constructor javadoc above), so an operator's
      * drain call landing on one node behind a load balancer must be re-issued against every OTHER
      * live node too, or routing on those nodes would keep sending traffic to a backend that's
-     * supposedly under maintenance. Reads live node addresses from {@code polywire_nodes} via
+     * supposedly under maintenance. Reads live node addresses from {@code warp_nodes} via
      * {@link com.nexagres.wire.config.NodeRegistry#listAll} (the same table the {@code /api/nodes}
      * admin page already reads), skips the row matching this process's own {@code
      * NodeRegistry.resolveHost()}/{@code selfAdminPort} (that node already applied the call
      * directly, not through HTTP), and forwards the caller's own {@code Authorization} header
-     * on to each peer -- every node in a cluster shares the same {@code POLYWIRE_ADMIN_TOKEN}, so
+     * on to each peer -- every node in a cluster shares the same {@code WARP_ADMIN_TOKEN}, so
      * this doesn't need its own separate credential.
      *
      * <p>Best-effort, not a two-phase commit: a peer that's unreachable or errors is reported in
@@ -1815,7 +1815,7 @@ public final class MetricsServer {
     }
 
     /** {@code GET /api/audit?limit=N} (default 100) -- most-recent-first, from the durable
-     * hash-chained DB sink when {@code POLYWIRE_AUDIT_LOG_DB} is configured, the in-memory ring
+     * hash-chained DB sink when {@code WARP_AUDIT_LOG_DB} is configured, the in-memory ring
      * buffer otherwise (see {@link com.nexagres.wire.audit.AuditLog#recent}). */
     private static void handleAudit(HttpServletRequest request, HttpServletResponse response,
             com.nexagres.wire.audit.AuditLog auditLog) throws java.io.IOException {
@@ -1857,7 +1857,7 @@ public final class MetricsServer {
         if (llmClient == null) {
             response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
             response.getWriter().write("{\"error\":\"no LLM provider configured -- set it via PUT /api/llm-config "
-                    + "or the POLYWIRE_LLM_* env vars before summarizing MCP activity\"}");
+                    + "or the WARP_LLM_* env vars before summarizing MCP activity\"}");
             return;
         }
         JsonObject body;
@@ -1943,8 +1943,8 @@ public final class MetricsServer {
     }
 
     /**
-     * {@code GET /api/nodes} -- one row per live-or-recently-live polywire instance, from
-     * {@code polywire_nodes} (see {@link com.nexagres.wire.config.NodeRegistry}). Sorted by zone
+     * {@code GET /api/nodes} -- one row per live-or-recently-live warp instance, from
+     * {@code warp_nodes} (see {@link com.nexagres.wire.config.NodeRegistry}). Sorted by zone
      * then host for a stable, readable order; {@code status} is {@code "up"} if the row's
      * heartbeat is within the last 30s, else {@code "stale"}.
      */
@@ -2175,7 +2175,7 @@ public final class MetricsServer {
 
     public void start() throws Exception {
         server.start();
-        log.info("polywire /metrics endpoint listening on port {}", ((org.eclipse.jetty.server.ServerConnector)
+        log.info("warp /metrics endpoint listening on port {}", ((org.eclipse.jetty.server.ServerConnector)
                 server.getConnectors()[0]).getPort());
     }
 

@@ -1,6 +1,6 @@
 package com.nexagres.wire.core;
 
-import com.nexagres.wire.telemetry.PolyWireTelemetry;
+import com.nexagres.wire.telemetry.WarpTelemetry;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
@@ -22,18 +22,18 @@ public final class QosControlStage implements PipelineStage {
     private volatile ClassLimit defaultLimit;
     private volatile Map<String, ClassLimit> classLimits;
     private volatile long poolWaitThreshold;
-    private final PolyWireTelemetry telemetry;
+    private final WarpTelemetry telemetry;
     private final IntSupplier clusterSizeSupplier;
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counters> countersByKey = new ConcurrentHashMap<>();
 
     public QosControlStage(ClassLimit defaultLimit, Map<String, ClassLimit> classLimits, long poolWaitThreshold,
-            PolyWireTelemetry telemetry) {
+            WarpTelemetry telemetry) {
         this(defaultLimit, classLimits, poolWaitThreshold, telemetry, () -> 1);
     }
 
     public QosControlStage(ClassLimit defaultLimit, Map<String, ClassLimit> classLimits, long poolWaitThreshold,
-            PolyWireTelemetry telemetry, IntSupplier clusterSizeSupplier) {
+            WarpTelemetry telemetry, IntSupplier clusterSizeSupplier) {
         this.defaultLimit = defaultLimit;
         this.classLimits = Map.copyOf(classLimits);
         this.poolWaitThreshold = poolWaitThreshold;
@@ -42,12 +42,12 @@ public final class QosControlStage implements PipelineStage {
     }
 
     public static QosControlStage fromConfig(String rateEnv, String burstEnv, String maxWaitEnv,
-            String classLimitsSpec, String poolWaitThresholdEnv, PolyWireTelemetry telemetry) {
+            String classLimitsSpec, String poolWaitThresholdEnv, WarpTelemetry telemetry) {
         return fromConfig(rateEnv, burstEnv, maxWaitEnv, classLimitsSpec, poolWaitThresholdEnv, telemetry, () -> 1);
     }
 
     public static QosControlStage fromConfig(String rateEnv, String burstEnv, String maxWaitEnv,
-            String classLimitsSpec, String poolWaitThresholdEnv, PolyWireTelemetry telemetry,
+            String classLimitsSpec, String poolWaitThresholdEnv, WarpTelemetry telemetry,
             IntSupplier clusterSizeSupplier) {
         double rate = rateEnv == null || rateEnv.isBlank() ? 200.0 : Double.parseDouble(rateEnv);
         double burst = burstEnv == null || burstEnv.isBlank() ? rate * 2 : Double.parseDouble(burstEnv);
@@ -63,7 +63,7 @@ public final class QosControlStage implements PipelineStage {
     }
 
     /** {@code "class:rate:burst[:maxWait]"} entries, comma-separated -- the same grammar {@code
-     * POLYWIRE_QOS_CLASS_LIMITS}/{@code polywire_config.qos_class_limits} has always used.
+     * WARP_QOS_CLASS_LIMITS}/{@code warp_config.qos_class_limits} has always used.
      * Exposed (not just inlined into {@link #fromConfig}) so other admin-surface code that needs
      * to read or rebuild this exact string -- e.g. {@code MetricsServer}'s QoS-tuning-suggestion
      * draft endpoint, which merges one proposed class change into the rest of the current spec

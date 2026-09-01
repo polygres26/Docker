@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
  * target column type, a transient network blip, a momentary firewall/QoS rejection) throws all the
  * way up through {@code Source#readPartition}/{@code streamChanges} and kills that partition's
  * worker thread or the entire live change feed -- one bad row taking down an otherwise-healthy
- * migration. This wraps the real sink (always {@link PolywireGrpcSink} in production) so a
+ * migration. This wraps the real sink (always {@link WarpGrpcSink} in production) so a
  * connector never has to implement its own retry logic.
  *
  * <p>{@link #apply} retries the single event up to {@code maxAttempts} times with a fixed short

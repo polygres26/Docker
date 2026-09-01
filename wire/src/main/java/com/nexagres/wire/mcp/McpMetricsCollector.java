@@ -9,16 +9,16 @@ import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Per-tool call counts, cumulative server-side time, and error counts for every MCP tool
- * PolyWire exposes -- {@code execute_sql}, {@code list_tables}, {@code describe_table}, and any
- * {@code POLYWIRE_MCP_TOOLS}-registered Postgres function/procedure. One shared instance per
- * process, fed from {@link PolyWireMcpServer}'s single {@code tools/call} dispatch point
+ * Warp exposes -- {@code execute_sql}, {@code list_tables}, {@code describe_table}, and any
+ * {@code WARP_MCP_TOOLS}-registered Postgres function/procedure. One shared instance per
+ * process, fed from {@link WarpMcpServer}'s single {@code tools/call} dispatch point
  * ({@code handleToolsCall}) -- every tool invocation goes through there, so that's the only place
  * that needs to call {@link #record}.
  *
  * <p><b>What "server-side time" means here</b>: wall-clock time from the moment
  * {@code handleToolsCall} starts dispatching the call to the moment it finishes writing the
  * JSON-RPC response -- includes opening the backend connection, running the (possibly
- * dialect-translated) SQL, and serializing the result. It's the same "how long did PolyWire
+ * dialect-translated) SQL, and serializing the result. It's the same "how long did Warp
  * itself take" framing {@link com.nexagres.wire.core.SqlMetricsCollector}'s RTT numbers use for
  * the SQL wire protocols, not network time to the MCP client.
  *

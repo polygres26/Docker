@@ -15,7 +15,7 @@ import java.util.Optional;
  * {@code GET /api/migration/status?connectionId=<id>} -- the "Web Progress Report" for a running
  * or finished {@code nexagres-migration} run, reusing Advisor's existing saved-connection registry
  * ({@link ConnectionStore}) rather than inventing a second place to store a jdbcUrl/user/password.
- * The connection here is expected to point at the migration's TARGET Postgres (where Polywire
+ * The connection here is expected to point at the migration's TARGET Postgres (where Warp
  * itself writes) -- deliberately does NOT go through {@link ConnectionsRoute#requireTarget}, which
  * exists specifically to reject a Postgres-dialect connection as an invalid Advisor *assessment*
  * source; that restriction doesn't apply here since this route's whole job is reading Postgres.

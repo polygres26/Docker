@@ -13,17 +13,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * PolyWire's commercial-tier gate. Every enforcement point ({@code ConnectionGate}'s
+ * Warp's commercial-tier gate. Every enforcement point ({@code ConnectionGate}'s
  * per-instance connection cap, {@code NodeRegistry}'s cluster-wide instance-count check at
  * startup, {@code BackendRegistry}'s registered-backend cap) reads its limit from {@link
  * #current()} rather than hardcoding a number, so raising a customer to Enterprise is exactly
  * "give them a valid key," never a rebuild or a different image.
  *
- * <p><b>Deliberately offline, no phone-home.</b> {@code POLYWIRE_LICENSE_KEY} is a self-contained,
+ * <p><b>Deliberately offline, no phone-home.</b> {@code WARP_LICENSE_KEY} is a self-contained,
  * Ed25519-signed token: {@code base64url(payload-json) + "." + base64url(signature)}. The public
  * key that verifies it is hardcoded below (safe to ship -- it can only verify, never sign); the
  * matching private key is held offline by whoever mints license keys (see {@link
- * LicenseKeyGenTool}) and never touches this codebase or any running PolyWire process. No
+ * LicenseKeyGenTool}) and never touches this codebase or any running Warp process. No
  * license server, no network call, no telemetry -- verification is a signature check against
  * static bytes, same trust model as a software update's GPG signature. This was a deliberate
  * design choice (see the pricing plan this implements): connections/instances/backends were
@@ -103,7 +103,7 @@ public final class License {
     }
 
     static License fromEnv() {
-        return fromKey(System.getenv("POLYWIRE_LICENSE_KEY"));
+        return fromKey(System.getenv("WARP_LICENSE_KEY"));
     }
 
     /** The actual verify-and-apply-expiry logic {@link #fromEnv()} runs, taking the key as a
@@ -113,7 +113,7 @@ public final class License {
      * control an environment variable. */
     static License fromKey(String key) {
         if (key == null || key.isBlank()) {
-            log.info("license: no POLYWIRE_LICENSE_KEY set -- running as Developer edition "
+            log.info("license: no WARP_LICENSE_KEY set -- running as Developer edition "
                     + "(free forever, all features, capped at {} connections/instance, {} "
                     + "instances, {} backends). See the Pricing section of the docs for Enterprise.",
                     DEVELOPER_MAX_CONNECTIONS, DEVELOPER_MAX_INSTANCES, DEVELOPER_MAX_BACKENDS);
@@ -122,7 +122,7 @@ public final class License {
         try {
             License parsed = verify(key);
             if (parsed.expiresAt != null && parsed.expiresAt.isBefore(Instant.now())) {
-                log.warn("license: POLYWIRE_LICENSE_KEY for '{}' expired at {} -- falling back "
+                log.warn("license: WARP_LICENSE_KEY for '{}' expired at {} -- falling back "
                         + "to Developer edition until it's renewed", parsed.licensedTo, parsed.expiresAt);
                 return DEVELOPER;
             }
@@ -130,7 +130,7 @@ public final class License {
                     parsed.licensedTo, parsed.expiresAt == null ? " (perpetual)" : " (expires " + parsed.expiresAt + ")");
             return parsed;
         } catch (RuntimeException e) {
-            log.error("license: POLYWIRE_LICENSE_KEY is set but failed verification ({}) -- "
+            log.error("license: WARP_LICENSE_KEY is set but failed verification ({}) -- "
                     + "falling back to Developer edition. Check the key was copied in full and "
                     + "hasn't been altered.", e.getMessage());
             return DEVELOPER;
@@ -147,7 +147,7 @@ public final class License {
 
         if (!verifySignature(payloadBytes, signatureBytes)) {
             throw new IllegalArgumentException("signature does not match -- key was altered or not "
-                    + "signed by a genuine PolyWire Enterprise private key");
+                    + "signed by a genuine Warp Enterprise private key");
         }
 
         JsonObject payload = JsonParser.parseString(new String(payloadBytes, StandardCharsets.UTF_8)).getAsJsonObject();

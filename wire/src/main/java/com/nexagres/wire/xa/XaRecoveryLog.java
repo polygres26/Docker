@@ -14,12 +14,12 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Durable record of in-flight two-phase commits, persisted in the control-plane Postgres (same
- * home as {@code polywire_config}/{@code polywire_failed_statements} -- this project's existing
+ * home as {@code warp_config}/{@code warp_failed_statements} -- this project's existing
  * pattern for "small operational table, opened fresh per call so a rotated backend never needs a
  * restart to pick up"). Closes the gap flagged by a competitive comparison against ShardingSphere:
  * {@link XaTransaction#commit()} used to log-and-rethrow when a branch failed to commit after a
  * successful prepare vote, leaving that branch prepared (holding locks) at its backend forever,
- * with nothing in PolyWire recording that it needed resolving. See {@link XaRecovery} for the
+ * with nothing in Warp recording that it needed resolving. See {@link XaRecovery} for the
  * startup pass that reads this log and finishes what a crashed coordinator left in doubt.
  *
  * <p>Only the commit-decision window is logged -- once every branch has voted to prepare, the
@@ -63,7 +63,7 @@ public final class XaRecoveryLog {
 
     public void ensureSchema() {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_xa_log ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_xa_log ("
                     + "gtrid_hex text NOT NULL, "
                     + "branch_index integer NOT NULL, "
                     + "backend_name text NOT NULL, "
@@ -71,15 +71,15 @@ public final class XaRecoveryLog {
                     + "resolved_at timestamptz, "
                     + "PRIMARY KEY (gtrid_hex, branch_index))");
             // Added for Phase 4b (see Branch's javadoc) -- ADD COLUMN IF NOT EXISTS so an
-            // already-deployed polywire_xa_log table (from before this existed) picks these up on
+            // already-deployed warp_xa_log table (from before this existed) picks these up on
             // the next restart without a separate migration step. All three stay nullable: an
             // existing unresolved row from before this migration simply has none of them, and
             // XaRecovery already falls back to name-based resolution in exactly that case.
-            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_jdbc_url text");
-            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_user text");
-            st.execute("ALTER TABLE polywire_xa_log ADD COLUMN IF NOT EXISTS backend_password text");
+            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_jdbc_url text");
+            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_user text");
+            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_password text");
         } catch (SQLException e) {
-            log.warn("xa recovery log: could not ensure polywire_xa_log schema exists -- in-doubt "
+            log.warn("xa recovery log: could not ensure warp_xa_log schema exists -- in-doubt "
                     + "transactions from a coordinator crash will NOT be recoverable until this is fixed", e);
         }
     }
@@ -89,7 +89,7 @@ public final class XaRecoveryLog {
     public void logDecided(String gtridHex, List<Branch> branches) {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_xa_log (gtrid_hex, branch_index, backend_name, "
+                        "INSERT INTO warp_xa_log (gtrid_hex, branch_index, backend_name, "
                                 + "backend_jdbc_url, backend_user, backend_password) VALUES (?, ?, ?, ?, ?, ?) "
                                 + "ON CONFLICT (gtrid_hex, branch_index) DO NOTHING")) {
             for (Branch b : branches) {
@@ -98,7 +98,7 @@ public final class XaRecoveryLog {
                 ps.setString(3, b.backendName());
                 ps.setString(4, b.backendJdbcUrl());
                 ps.setString(5, b.backendUser());
-                // Same at-rest protection as polywire_config's own backend passwords -- see
+                // Same at-rest protection as warp_config's own backend passwords -- see
                 // FieldCipher's class doc. Backward-compatible/no-op (stores plaintext) when
                 // NEXAGRES_ENCRYPTION_KEY isn't set, same as everywhere else that calls this.
                 ps.setString(6, b.backendPassword() == null ? null : com.nexagres.wire.secrets.FieldCipher.encrypt(b.backendPassword()));
@@ -122,7 +122,7 @@ public final class XaRecoveryLog {
     public void markBranchResolved(String gtridHex, int branchIndex) {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE polywire_xa_log SET resolved_at = now() "
+                        "UPDATE warp_xa_log SET resolved_at = now() "
                                 + "WHERE gtrid_hex = ? AND branch_index = ? AND resolved_at IS NULL")) {
             ps.setString(1, gtridHex);
             ps.setInt(2, branchIndex);
@@ -142,7 +142,7 @@ public final class XaRecoveryLog {
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT gtrid_hex, branch_index, backend_name, backend_jdbc_url, backend_user, "
-                                + "backend_password FROM polywire_xa_log "
+                                + "backend_password FROM warp_xa_log "
                                 + "WHERE resolved_at IS NULL ORDER BY gtrid_hex, branch_index")) {
             while (rs.next()) {
                 String gtridHex = rs.getString(1);

@@ -35,7 +35,7 @@ public final class PgConnections {
 
     /**
      * For read-only statements a caller has already decided are safe to serve from a replica
-     * (see {@code POLYWIRE_READ_ROUTING_ENABLED} in {@code RoutingBackendExecutor}): tries the
+     * (see {@code WARP_READ_ROUTING_ENABLED} in {@code RoutingBackendExecutor}): tries the
      * standby first, falls back to the primary if the standby is unreachable or none is
      * configured. Deliberately independent of {@link #onStandby}/the failback-probe machinery
      * above -- that state means "the primary is down, we're degraded"; this method's standby
@@ -85,7 +85,7 @@ public final class PgConnections {
         if (failbackProbe != null) {
             return;
         }
-        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("POLYWIRE_FAILBACK_CHECK_SECONDS", "10"));
+        int intervalSeconds = Integer.parseInt(System.getenv().getOrDefault("WARP_FAILBACK_CHECK_SECONDS", "10"));
         failbackProbe = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "pg-failback-probe");
             t.setDaemon(true);
@@ -126,7 +126,7 @@ public final class PgConnections {
     }
 
     /** {@code jdbc:postgresql://host:port/database}, plus {@code ?sslmode=...} (and {@code
-     * &sslrootcert=...}) when {@code POLYWIRE_PG_SSLMODE}/{@code POLYWIRE_PG_SSLROOTCERT} are
+     * &sslrootcert=...}) when {@code WARP_PG_SSLMODE}/{@code WARP_PG_SSLROOTCERT} are
      * set -- see {@code ServerOptions.parse}'s javadoc on those fields for why this exists
      * (required for Supabase/Azure Database for PostgreSQL, which reject a plaintext connection
      * outright). Both {@link #connect} and {@link #connectRaw} share this so a switch to the

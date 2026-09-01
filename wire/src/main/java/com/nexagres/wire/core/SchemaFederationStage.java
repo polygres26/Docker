@@ -30,7 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Real cross-backend {@code JOIN} execution for PolyWire's OWN vertical/functional sharding --
+ * Real cross-backend {@code JOIN} execution for Warp's OWN vertical/functional sharding --
  * {@link RouterStage.SchemaRule}/{@link RouterStage.PredicateRule} already route a whole table's
  * worth of traffic to a single named backend by schema prefix (e.g. every {@code orders_db.orders}
  * query goes to backend {@code "orders"}, every {@code customers_db.customers} query goes to
@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
  * references) to that one backend alone, failing outright once it tried to resolve a table that
  * backend doesn't have.
  *
- * <p>This is PolyWire's own analog of the sibling Omnigate project's {@code FederationStage} --
+ * <p>This is Warp's own analog of the sibling Omnigate project's {@code FederationStage} --
  * genuinely the SAME problem shape (heterogeneous placement: each backend holds a different,
  * complete table, not a row-partitioned slice of the same one), unlike {@link ShardJoinExecutor}'s
  * homogeneous-shard UNION-per-table problem, which needs no such reconciliation: each backend named

@@ -6,7 +6,7 @@ import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.checkpoint.DeadLetterStore;
 import com.nexagres.migration.coordinator.Coordinator;
 import com.nexagres.migration.core.MigrationLicensing;
-import com.nexagres.migration.sink.PolywireGrpcSink;
+import com.nexagres.migration.sink.WarpGrpcSink;
 import com.nexagres.migration.sink.ResilientSink;
 import com.nexagres.migration.sink.ThrottledSink;
 import com.nexagres.migration.core.Sink;
@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * MigrationLicensing}'s own javadoc in nexagres-migration) -- a free-tier Advisor container
  * launching migrations through this class gets exactly the free-tier behavior for free: {@link
  * Coordinator} itself already clamps {@code parallelism} to {@code 1} without a valid
- * {@code POLYWIRE_LICENSE_KEY}, with zero special-casing needed here.
+ * {@code WARP_LICENSE_KEY}, with zero special-casing needed here.
  *
  * <p>In-memory job registry, not persisted -- an Advisor restart loses the run history (though
  * not the migration's own progress: that lives in the target Postgres's own bookkeeping tables,
@@ -95,11 +95,11 @@ public final class MigrationJobRunner {
             throw new IllegalArgumentException("targetConnectionId does not match a saved connection: "
                     + request.targetConnectionId);
         }
-        requireNonBlank(request.polywireGrpcHost, "polywireGrpcHost");
-        requireNonBlank(request.polywireGrpcUser, "polywireGrpcUser");
-        requireNonBlank(request.polywireGrpcPassword, "polywireGrpcPassword");
-        if (request.polywireGrpcPort <= 0) {
-            throw new IllegalArgumentException("polywireGrpcPort must be a positive port number");
+        requireNonBlank(request.warpGrpcHost, "warpGrpcHost");
+        requireNonBlank(request.warpGrpcUser, "warpGrpcUser");
+        requireNonBlank(request.warpGrpcPassword, "warpGrpcPassword");
+        if (request.warpGrpcPort <= 0) {
+            throw new IllegalArgumentException("warpGrpcPort must be a positive port number");
         }
         if (request.maxEventsPerSecond != null) {
             MigrationLicensing.requireEnterpriseForCustomThrottle();
@@ -161,8 +161,8 @@ public final class MigrationJobRunner {
                     targetConnection.password);
             deadLetters.ensureSchema();
 
-            try (PolywireGrpcSink grpcSink = new PolywireGrpcSink(request.polywireGrpcHost, request.polywireGrpcPort,
-                    request.polywireGrpcUser, request.polywireGrpcPassword)) {
+            try (WarpGrpcSink grpcSink = new WarpGrpcSink(request.warpGrpcHost, request.warpGrpcPort,
+                    request.warpGrpcUser, request.warpGrpcPassword)) {
                 // Free/Developer tier: write straight to gRPC, no retry/dead-letter wrapper -- a
                 // failed write is immediately fatal to the run (see MigrationLicensing's own
                 // javadoc on why this is honest, not degraded: the pre-ResilientSink behavior

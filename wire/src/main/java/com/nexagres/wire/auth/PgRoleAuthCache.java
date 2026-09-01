@@ -20,7 +20,7 @@ public final class PgRoleAuthCache {
     private final ServerOptions options;
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "polywire-auth-role-refresh");
+                Thread t = new Thread(r, "warp-auth-role-refresh");
                 t.setDaemon(true);
                 return t;
             });
@@ -30,7 +30,7 @@ public final class PgRoleAuthCache {
         this.options = options;
         refresh();
                    
-        int refreshSeconds = parseIntEnv("POLYWIRE_AUTH_REFRESH_SECONDS", 30);
+        int refreshSeconds = parseIntEnv("WARP_AUTH_REFRESH_SECONDS", 30);
         scheduler.scheduleWithFixedDelay(this::refreshSafely, refreshSeconds, refreshSeconds, TimeUnit.SECONDS);
     }
 
@@ -61,7 +61,7 @@ public final class PgRoleAuthCache {
             }
         } catch (Exception e) {
             throw new RuntimeException("PgRoleAuthCache: failed to query pg_authid "
-                    + "(the POLYWIRE_* admin connection must be a real superuser -- pg_authid.rolpassword "
+                    + "(the WARP_* admin connection must be a real superuser -- pg_authid.rolpassword "
                     + "is superuser-only)", e);
         }
         verifiersByRole = fresh;

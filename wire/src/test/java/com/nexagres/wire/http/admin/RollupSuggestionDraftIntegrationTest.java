@@ -8,7 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.nexagres.wire.rollup.RollupConfig;
 import com.nexagres.wire.rollup.RollupDefinition;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@code POST /api/rollup-suggestions/draft} proposes a real, valid rollup
- * definition WITHOUT ever writing to {@code polywire_config} -- real Polywire subprocess, real
+ * definition WITHOUT ever writing to {@code warp_config} -- real Warp subprocess, real
  * disposable Postgres, real admin HTTP API, real (local, scripted) LLM endpoint. Same discipline
  * as {@code QosSuggestionDraftIntegrationTest}, whose two proofs this mirrors: (1) config is
  * genuinely unchanged right after drafting, and (2) the draft's own
@@ -89,20 +89,20 @@ class RollupSuggestionDraftIntegrationTest {
 
         try (FakeLlmServer llm = new FakeLlmServer(llmJsonReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-rollup-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-rollup-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            HttpResponse<String> configBefore = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configBefore = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(200, configBefore.statusCode());
 
-            HttpResponse<String> draftResp = call("POST", polywire.metricsPort(), "/api/rollup-suggestions/draft", "{}");
+            HttpResponse<String> draftResp = call("POST", warp.metricsPort(), "/api/rollup-suggestions/draft", "{}");
             assertEquals(200, draftResp.statusCode(), "draft request body: " + draftResp.body());
             JsonObject draftBody = JsonParser.parseString(draftResp.body()).getAsJsonObject();
             assertFalse(draftBody.get("applied").getAsBoolean(), "a draft must never report itself as applied");
@@ -110,9 +110,9 @@ class RollupSuggestionDraftIntegrationTest {
             assertTrue(yamlIfApplied.contains("orders_by_day"), "expected the drafted rollup name in the candidate YAML");
 
             // Proof #1: config genuinely unchanged right after drafting.
-            HttpResponse<String> configAfterDraft = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterDraft = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(configBefore.body(), configAfterDraft.body(),
-                    "drafting a rollup suggestion must not have touched polywire_config at all");
+                    "drafting a rollup suggestion must not have touched warp_config at all");
 
             // Proof #2: the candidate YAML is really a valid, complete rollup definition -- checked
             // directly with the real parser, not just "the string looks plausible".
@@ -128,10 +128,10 @@ class RollupSuggestionDraftIntegrationTest {
             // Proof #3: applying it via the real PUT /api/config reads back exactly as applied.
             JsonObject putBody = new JsonObject();
             putBody.addProperty("rollupDefinitionsYaml", yamlIfApplied);
-            HttpResponse<String> putResp = call("PUT", polywire.metricsPort(), "/api/config", putBody.toString());
+            HttpResponse<String> putResp = call("PUT", warp.metricsPort(), "/api/config", putBody.toString());
             assertEquals(200, putResp.statusCode(), "applying the draft's own field via PUT /api/config must succeed: " + putResp.body());
 
-            HttpResponse<String> configAfterApply = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterApply = call("GET", warp.metricsPort(), "/api/config", null);
             JsonObject finalConfig = JsonParser.parseString(configAfterApply.body()).getAsJsonObject();
             assertEquals(yamlIfApplied, finalConfig.get("rollupDefinitionsYaml").getAsString(),
                     "the applied config must read back exactly the YAML the draft proposed");

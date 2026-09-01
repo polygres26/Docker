@@ -1,6 +1,6 @@
 package com.nexagres.wire.core;
 
-import com.nexagres.wire.cluster.PolyWireCluster;
+import com.nexagres.wire.cluster.WarpCluster;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -15,24 +15,24 @@ import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.query.ScanQuery;
 
 /** {@link SqlPlanStore} backed by its own, separate Ignite cache -- {@code
- * "polywire-federation-plan-cache"} -- so every PolyWire instance in a real cluster
- * ({@code POLYWIRE_CLUSTER_ENABLED=true}, not just the default single-node cache-only Ignite grid
+ * "warp-federation-plan-cache"} -- so every Warp instance in a real cluster
+ * ({@code WARP_CLUSTER_ENABLED=true}, not just the default single-node cache-only Ignite grid
  * every instance already runs for {@code CacheStage}'s own sake) sees the SAME federated-query
  * plan history, regardless of which instance actually ran each query -- see {@link
  * StatisticsStore}'s own matching javadoc for the identical reasoning applied to row-count
  * statistics. Ported directly from the sibling Omnigate project's own class of the same name/shape
- * (real, tested, production code there) -- {@link PolyWireCluster#nextSequence} gives every
+ * (real, tested, production code there) -- {@link WarpCluster#nextSequence} gives every
  * instance a globally-unique, monotonically-increasing plan ID the same way {@link
- * PolyWireCluster#getOrCreateCache} gives every instance the same backing cache. */
+ * WarpCluster#getOrCreateCache} gives every instance the same backing cache. */
 final class ClusterSqlPlanStore implements SqlPlanStore {
 
-    private final PolyWireCluster cluster;
+    private final WarpCluster cluster;
     private final int capacity;
     private final IgniteCache<String, byte[]> cache;
-    private static final String SEQUENCE_NAME = "polywire-federation-plan-id";
-    private static final String CACHE_NAME = "polywire-federation-plan-cache";
+    private static final String SEQUENCE_NAME = "warp-federation-plan-id";
+    private static final String CACHE_NAME = "warp-federation-plan-cache";
 
-    ClusterSqlPlanStore(PolyWireCluster cluster, int capacity, long ttlMillis) {
+    ClusterSqlPlanStore(WarpCluster cluster, int capacity, long ttlMillis) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("ClusterSqlPlanStore capacity must be positive, got " + capacity);
         }

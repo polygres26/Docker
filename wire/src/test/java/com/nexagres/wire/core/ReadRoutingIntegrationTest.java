@@ -2,7 +2,7 @@ package com.nexagres.wire.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -14,13 +14,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof of read-write splitting (POLYWIRE_READ_ROUTING_ENABLED): a real pgwire client
+ * End-to-end proof of read-write splitting (WARP_READ_ROUTING_ENABLED): a real pgwire client
  * against a real Main subprocess, with two independent real Postgres containers standing in for
  * primary and standby (no actual streaming replication between them -- each is seeded with its
  * own distinguishing marker row, so which one served a query is unambiguous from the result).
  *
- * <p>This is the gap identified when comparing PolyWire against PgBouncer/OJP/ShardingSphere:
- * PolyWire already had primary/standby failover wiring (PgConnections) but no way to
+ * <p>This is the gap identified when comparing Warp against PgBouncer/OJP/ShardingSphere:
+ * Warp already had primary/standby failover wiring (PgConnections) but no way to
  * deliberately route a read-only, non-transactional statement to the standby to offload the
  * primary -- a core ShardingSphere feature. See RoutingBackendExecutor#executeOnFreshConnection
  * and PgConnections#openForRead for the implementation this test verifies.
@@ -29,7 +29,7 @@ class ReadRoutingIntegrationTest {
 
     private static RealPostgres primary;
     private static RealPostgres standby;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
@@ -46,27 +46,27 @@ class ReadRoutingIntegrationTest {
             st.execute("CREATE TABLE which_host AS SELECT 'STANDBY' AS host");
         }
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_STANDBY_HOST", standby.host())
-                .env("POLYWIRE_STANDBY_PORT", String.valueOf(standby.port()))
-                .env("POLYWIRE_READ_ROUTING_ENABLED", "true")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_STANDBY_HOST", standby.host())
+                .env("WARP_STANDBY_PORT", String.valueOf(standby.port()))
+                .env("WARP_READ_ROUTING_ENABLED", "true")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (standby != null) standby.close();
         if (primary != null) primary.close();
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+        String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
         return DriverManager.getConnection(url, primary.username(), primary.password());
     }
 

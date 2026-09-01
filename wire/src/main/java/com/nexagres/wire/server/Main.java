@@ -2,9 +2,9 @@ package com.nexagres.wire.server;
 
 import com.nexagres.wire.capture.WorkloadCaptureStage;
 import com.nexagres.wire.cluster.CacheStage;
-import com.nexagres.wire.cluster.PolyWireCluster;
+import com.nexagres.wire.cluster.WarpCluster;
 import com.nexagres.wire.config.ConfigStore;
-import com.nexagres.wire.config.PolyWireConfig;
+import com.nexagres.wire.config.WarpConfig;
 import com.nexagres.wire.config.TranslationCacheStore;
 import com.nexagres.wire.core.BackendRegistry;
 import com.nexagres.wire.core.BackendTarget;
@@ -17,7 +17,7 @@ import com.nexagres.wire.core.RouterStage;
 import com.nexagres.wire.core.SchemaFederationStage;
 import com.nexagres.wire.core.StatsCollectorStage;
 import com.nexagres.wire.dynamowire.DynamoWireServer;
-import com.nexagres.wire.grpc.PolyWireGrpcServer;
+import com.nexagres.wire.grpc.WarpGrpcServer;
 import com.nexagres.wire.http.admin.MetricsServer;
 import com.nexagres.wire.mongowire.MongoWireSessionHandler;
 import com.nexagres.wire.mssqlwire.session.MssqlWireSessionHandler;
@@ -29,7 +29,7 @@ import com.nexagres.wire.rollup.RollupConfig;
 import com.nexagres.wire.rollup.RollupDefinition;
 import com.nexagres.wire.rollup.RollupRefreshJob;
 import com.nexagres.wire.rollup.RollupStore;
-import com.nexagres.wire.telemetry.PolyWireTelemetry;
+import com.nexagres.wire.telemetry.WarpTelemetry;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -60,7 +60,7 @@ public final class Main {
         // License-tier instance cap -- checked here, before ANYTHING else starts (no config
         // bootstrap, no backend registry, no accept loop), since a Developer-tier install already
         // at its instance cap should refuse to come up at all, not partially start and then reject
-        // connections. Counts every OTHER currently-live instance via the same polywire_nodes
+        // connections. Counts every OTHER currently-live instance via the same warp_nodes
         // table NodeRegistry.start() will begin heartbeating into further down -- this instance's
         // own row doesn't exist yet, so +1 for itself is exact, not an estimate.
         com.nexagres.wire.license.License license = com.nexagres.wire.license.License.current();
@@ -68,9 +68,9 @@ public final class Main {
             int liveElsewhere = com.nexagres.wire.config.NodeRegistry.countLive(options);
             int max = license.maxInstances();
             if (liveElsewhere + 1 > max) {
-                log.error("license: refusing to start -- Developer edition is capped at {} PolyWire "
+                log.error("license: refusing to start -- Developer edition is capped at {} Warp "
                         + "instance(s), and {} are already live (this would be number {}). Stop one of "
-                        + "the running instances, or set POLYWIRE_LICENSE_KEY to an Enterprise license, "
+                        + "the running instances, or set WARP_LICENSE_KEY to an Enterprise license, "
                         + "which has no instance limit. See the Pricing section of the docs.",
                         max, liveElsewhere, liveElsewhere + 1);
                 System.exit(1);
@@ -87,17 +87,17 @@ public final class Main {
         ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
         if (initialVersion == null) {
             
-            PolyWireConfig bootstrapDefault = PolyWireConfig.fromEnvDefaults();
+            WarpConfig bootstrapDefault = WarpConfig.fromEnvDefaults();
             long version = configStore.write(bootstrapDefault);
             initialVersion = new ConfigStore.Version(version, bootstrapDefault, java.time.Instant.now());
-            log.info("config: polywire_config was empty -- published version {} from today's env-var defaults", version);
+            log.info("config: warp_config was empty -- published version {} from today's env-var defaults", version);
         } else {
-            log.info("config: starting from polywire_config version {} (created {})",
+            log.info("config: starting from warp_config version {} (created {})",
                     initialVersion.version(), initialVersion.createdAt());
         }
         java.util.concurrent.atomic.AtomicReference<ConfigStore.Version> currentConfigVersion =
                 new java.util.concurrent.atomic.AtomicReference<>(initialVersion);
-        PolyWireConfig config = initialVersion.payload();
+        WarpConfig config = initialVersion.payload();
 
         BackendTarget defaultBackendTarget = new BackendTarget(BackendRegistry.DEFAULT_BACKEND_NAME,
                 "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase(),
@@ -115,22 +115,22 @@ public final class Main {
         com.nexagres.wire.xa.XaRecovery.recover(xaRecoveryLog, backendRegistry);
 
         // Unplanned-failure half of the switchover design (see BackendHealthChecker's javadoc);
-        // POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS=0 (or a negative value) opts out entirely --
+        // WARP_BACKEND_HEALTH_CHECK_SECONDS=0 (or a negative value) opts out entirely --
         // there's no forced-on default for something that adds a background connection attempt
         // against every configured backend on a timer.
-        long healthCheckSeconds = parseLongEnv("POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS", 15);
+        long healthCheckSeconds = parseLongEnv("WARP_BACKEND_HEALTH_CHECK_SECONDS", 15);
         if (healthCheckSeconds > 0 && !backendRegistry.isEmpty()) {
             // "Acceptable data loss" for an unplanned failover -- see BackendHealthChecker's
             // javadoc on maxAcceptableFailoverLagSeconds. Unset (null) means no lag check at all,
             // same behavior as before this existed.
-            String maxLagRaw = System.getenv("POLYWIRE_FAILOVER_MAX_LAG_SECONDS");
+            String maxLagRaw = System.getenv("WARP_FAILOVER_MAX_LAG_SECONDS");
             Double maxLagSeconds = (maxLagRaw == null || maxLagRaw.isBlank()) ? null : Double.valueOf(maxLagRaw);
             new com.nexagres.wire.core.BackendHealthChecker(backendRegistry, healthCheckSeconds, maxLagSeconds).start();
         }
 
-        PolyWireTelemetry telemetry = PolyWireTelemetry.fromEnv();
+        WarpTelemetry telemetry = WarpTelemetry.fromEnv();
         if (telemetry != null) {
-            log.info("OTel export enabled (POLYWIRE_OTEL_ENDPOINT); set POLYWIRE_OTEL_ENDPOINT=disabled to turn off");
+            log.info("OTel export enabled (WARP_OTEL_ENDPOINT); set WARP_OTEL_ENDPOINT=disabled to turn off");
         }
 
         String qosRate = config.qosRatePerSec();
@@ -140,31 +140,31 @@ public final class Main {
         String qosPoolWaitThreshold = config.qosPoolWaitThreshold();
         QosControlStage qosStage = QosControlStage.fromConfig(
                 qosRate, qosBurst, qosMaxWait, qosClassLimits, qosPoolWaitThreshold, telemetry);
-        log.info("QoS admission control: rate={}/s burst={} maxWaitMs={} (from polywire_config version {}; "
+        log.info("QoS admission control: rate={}/s burst={} maxWaitMs={} (from warp_config version {}; "
                         + "production-shaped starting point: rate=200 burst=400)",
                 qosRate, qosBurst, qosMaxWait == null ? "0" : qosMaxWait, initialVersion.version());
 
-        PolyWireCluster cluster = PolyWireCluster.fromEnv();
+        WarpCluster cluster = WarpCluster.fromEnv();
         String cacheTables = config.cacheTables();
         String cacheTtlMs = config.cacheTtlMs();
 
         boolean dynamoCacheEnabled = !"false".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "true"));
-        String dynamoCacheTtlMs = System.getenv("POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS");
+                System.getenv().getOrDefault("WARP_DYNAMOWIRE_CACHE_ENABLED", "true"));
+        String dynamoCacheTtlMs = System.getenv("WARP_DYNAMOWIRE_CACHE_TTL_MS");
         boolean mongoCacheEnabled = !"false".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "true"));
-        String mongoCacheTtlMs = System.getenv("POLYWIRE_MONGOWIRE_CACHE_TTL_MS");
+                System.getenv().getOrDefault("WARP_MONGOWIRE_CACHE_ENABLED", "true"));
+        String mongoCacheTtlMs = System.getenv("WARP_MONGOWIRE_CACHE_TTL_MS");
 
         boolean needsLocalIgniteForKvCache = dynamoCacheEnabled || mongoCacheEnabled
                 || (cacheTables != null && !cacheTables.isBlank());
-        PolyWireCluster cacheCluster = cluster.enabled() ? cluster
+        WarpCluster cacheCluster = cluster.enabled() ? cluster
                 : (needsLocalIgniteForKvCache ? startLocalCacheCluster() : cluster);
         CacheStage cacheStage = CacheStage.fromConfigOrNull(cacheCluster, cacheTables, cacheTtlMs);
         if (cacheStage != null) {
             log.info("result cache enabled: tables=[{}] ttlMs={}", cacheTables,
                     cacheTtlMs == null ? "30000" : cacheTtlMs);
         } else {
-            log.info("result cache disabled (set POLYWIRE_CACHE_TABLES to enable)");
+            log.info("result cache disabled (set WARP_CACHE_TABLES to enable)");
         }
 
         // One shared, cross-protocol RowCache (see its own javadoc) for BOTH dynamowire's GetItem
@@ -174,22 +174,22 @@ public final class Main {
         // row-cache fast path (wired below, once each protocol's own table-lookup exists) all
         // read/write the exact same entries for the same underlying row.
         //
-        // Only one TTL now, not two: POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS wins when set (falling back
-        // to POLYWIRE_MONGOWIRE_CACHE_TTL_MS if only that one is), since they'd otherwise disagree
+        // Only one TTL now, not two: WARP_DYNAMOWIRE_CACHE_TTL_MS wins when set (falling back
+        // to WARP_MONGOWIRE_CACHE_TTL_MS if only that one is), since they'd otherwise disagree
         // about the TTL of entries in the one cache region they share -- a real, disclosed
         // narrowing versus the old two-independent-TTLs behavior, not a silent one.
         com.nexagres.wire.cluster.RowCache rowCache = (dynamoCacheEnabled || mongoCacheEnabled)
                 ? com.nexagres.wire.cluster.RowCache.create(cacheCluster,
                         dynamoCacheTtlMs != null ? dynamoCacheTtlMs : mongoCacheTtlMs)
                 : null;
-        log.info("dynamowire GetItem cache: {} (POLYWIRE_DYNAMOWIRE_CACHE_ENABLED, default on; "
+        log.info("dynamowire GetItem cache: {} (WARP_DYNAMOWIRE_CACHE_ENABLED, default on; "
                         + "exact-key GetItem only, not Query/Scan; shared with a matching SQL "
                         + "SELECT-by-primary-key via pgwire/mywire/mssqlwire/orawire, and with "
                         + "mongowire's own exact-_id find on the same underlying table) ttlMs={}",
                 dynamoCacheEnabled ? "enabled" : "disabled", dynamoCacheTtlMs == null ? "30000" : dynamoCacheTtlMs);
         com.nexagres.wire.cluster.RowCache dynamoCache = dynamoCacheEnabled ? rowCache : null;
 
-        log.info("mongowire find cache: {} (POLYWIRE_MONGOWIRE_CACHE_ENABLED, default on; "
+        log.info("mongowire find cache: {} (WARP_MONGOWIRE_CACHE_ENABLED, default on; "
                         + "exact-_id find only, not filtered find; shared with a matching SQL "
                         + "SELECT-by-id via pgwire/mywire/mssqlwire/orawire, and with dynamowire's "
                         + "own GetItem on the same underlying table) ttlMs={}",
@@ -198,7 +198,7 @@ public final class Main {
 
         String rollupYaml = config.rollupDefinitionsYaml();
         if (rollupYaml == null || rollupYaml.isBlank()) {
-            String rollupDefinitionsFile = System.getenv("POLYWIRE_ROLLUP_DEFINITIONS_FILE");
+            String rollupDefinitionsFile = System.getenv("WARP_ROLLUP_DEFINITIONS_FILE");
             if (rollupDefinitionsFile != null && !rollupDefinitionsFile.isBlank()) {
                 rollupYaml = Files.readString(Path.of(rollupDefinitionsFile));
             }
@@ -218,7 +218,7 @@ public final class Main {
         }
         rollupRefreshJob.scheduleAll();
         RollupStage rollupStage = new RollupStage(rollupStore, backendRegistry);
-        log.info("rollup acceleration: {} definition(s) from polywire_config version {}",
+        log.info("rollup acceleration: {} definition(s) from warp_config version {}",
                 initialRollupDefinitions.size(), initialVersion.version());
 
         // One SqlMetricsCollector for the whole process -- shared with DynamoWireServer and the
@@ -243,25 +243,25 @@ public final class Main {
         try {
             initialFirewallRules = firewallRuleStore.readRules();
         } catch (Exception e) {
-            log.warn("firewall: failed to read initial rules from polywire_firewall_rules, starting with zero "
+            log.warn("firewall: failed to read initial rules from warp_firewall_rules, starting with zero "
                     + "rules (default ALLOW) until the next successful read: {}", e.getMessage());
             initialFirewallRules = List.of();
         }
         FirewallStage firewallStage = new FirewallStage(initialFirewallRules);
         firewallRuleStore.listen(firewallStage::reloadRules);
-        log.info("firewall: {} rule(s) loaded from polywire_firewall_rules", initialFirewallRules.size());
+        log.info("firewall: {} rule(s) loaded from warp_firewall_rules", initialFirewallRules.size());
         stages.add(firewallStage);
 
         boolean captureEnabled = "true".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_CAPTURE_ENABLED", "false"));
-        int captureBufferSize = parseIntEnv("POLYWIRE_CAPTURE_BUFFER_SIZE", 20_000);
+                System.getenv().getOrDefault("WARP_CAPTURE_ENABLED", "false"));
+        int captureBufferSize = parseIntEnv("WARP_CAPTURE_BUFFER_SIZE", 20_000);
         com.nexagres.wire.capture.WorkloadCaptureBuffer captureBuffer = captureEnabled
                 ? new com.nexagres.wire.capture.WorkloadCaptureBuffer(java.util.UUID.randomUUID().toString(), captureBufferSize)
                 : null;
         if (captureBuffer != null) {
             stages.add(new WorkloadCaptureStage(captureBuffer));
         }
-        log.info("workload capture: {} (set POLYWIRE_CAPTURE_ENABLED=true to record every statement, in "
+        log.info("workload capture: {} (set WARP_CAPTURE_ENABLED=true to record every statement, in "
                 + "arrival order, to an in-memory ring buffer of {} entries, readable via GET /api/capture "
                 + "and merged across every live instance by WorkloadReplayer)",
                 captureEnabled ? "enabled" : "disabled", captureBufferSize);
@@ -286,25 +286,25 @@ public final class Main {
         // (always present) so RouterStage.statisticsStoreIn/planStoreIn can hand the same instances
         // to every protocol's own RoutingBackendExecutor. See StatisticsStore/SqlPlanStore/
         // StatisticsScheduler's own javadoc for why each is scoped the way it is.
-        // `cluster` (real multi-instance clustering only, POLYWIRE_CLUSTER_ENABLED=true) -- not
+        // `cluster` (real multi-instance clustering only, WARP_CLUSTER_ENABLED=true) -- not
         // `cacheCluster`, which also activates for the default single-node cache-only Ignite grid:
         // a "unified view across instances" only has meaning with genuine cross-instance clustering.
         long federationStatsTtlMillis = com.nexagres.wire.core.StatisticsStore.ttlFromEnvOrDefaultPublic();
         com.nexagres.wire.core.StatisticsStore federationStatisticsStore =
                 new com.nexagres.wire.core.StatisticsStore(cluster, federationStatsTtlMillis);
         com.nexagres.wire.core.SqlPlanStore federationPlanStore =
-                com.nexagres.wire.core.SqlPlanStore.fromConfig(System.getenv("POLYWIRE_FEDERATION_PLAN_HISTORY"), cluster);
+                com.nexagres.wire.core.SqlPlanStore.fromConfig(System.getenv("WARP_FEDERATION_PLAN_HISTORY"), cluster);
         routerStage.setFederationSupport(federationStatisticsStore, federationPlanStore);
         com.nexagres.wire.core.StatisticsScheduler statisticsScheduler = com.nexagres.wire.core.StatisticsScheduler
                 .startIfConfigured(backendRegistry, routerStage.shardRules(), routerStage.schemaRules(), federationStatisticsStore);
-        log.info("federation plan history: {} (set POLYWIRE_FEDERATION_PLAN_HISTORY=<capacity> to enable, "
+        log.info("federation plan history: {} (set WARP_FEDERATION_PLAN_HISTORY=<capacity> to enable, "
                 + "0/unset disables; statistics collection: {})",
                 federationPlanStore == null ? "disabled" : "enabled",
-                statisticsScheduler == null ? "on-demand only (set POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES for a background refresh)"
+                statisticsScheduler == null ? "on-demand only (set WARP_STATS_REFRESH_INTERVAL_MINUTES for a background refresh)"
                         : "background refresh enabled");
 
         // Before routerStage, not after -- see SchemaFederationStage's own javadoc: a statement
-        // that references two different POLYWIRE_ROUTER_SCHEMA_RULES-routed backends has to be
+        // that references two different WARP_ROUTER_SCHEMA_RULES-routed backends has to be
         // federated BEFORE RouterStage.resolveBackend ever narrows it down to just one of them.
         SchemaFederationStage schemaFederationStage = SchemaFederationStage.fromConfigOrNull(
                 routerStage, backendRegistry, federationStatisticsStore, federationPlanStore);
@@ -348,7 +348,7 @@ public final class Main {
         // PUT /api/llm-config change is picked up without restarting this scheduler too.
         com.nexagres.wire.core.AnomalyDetectionScheduler anomalyScheduler = com.nexagres.wire.core.AnomalyDetectionScheduler
                 .startIfConfigured(statsStage, dialectTranslationStage::llmClient);
-        log.info("anomaly detection: {} (set POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES=<minutes> to enable; "
+        log.info("anomaly detection: {} (set WARP_ANOMALY_SCAN_INTERVAL_MINUTES=<minutes> to enable; "
                 + "LLM narration is optional on top of that and uses the same LLM provider config)",
                 anomalyScheduler == null ? "disabled" : "enabled");
 
@@ -362,20 +362,20 @@ public final class Main {
         com.nexagres.wire.http.auth.AccessContextResolver oauth = com.nexagres.wire.http.auth.AccessContextResolver.create(
                 config.oauthIssuer(), config.oauthAudience(), config.oauthUserIdClaim(), config.oauthRolesClaim());
 
-        int metricsPort = parseIntEnv("POLYWIRE_METRICS_PORT", 19090);
-        // POLYWIRE_ADMIN_WEB_DIR: path to the built wire/web SPA (its `dist/`). Opt-in, same
+        int metricsPort = parseIntEnv("WARP_METRICS_PORT", 19090);
+        // WARP_ADMIN_WEB_DIR: path to the built wire/web SPA (its `dist/`). Opt-in, same
         // pattern as advisor's NEXAGRES_DMS_WEB_DIR -- unset means API-only.
-        String adminWebDir = System.getenv("POLYWIRE_ADMIN_WEB_DIR");
+        String adminWebDir = System.getenv("WARP_ADMIN_WEB_DIR");
         // Constructed here (before both MetricsServer and the MCP server below, whichever order
         // they end up in) so both share the exact same instance -- MetricsServer reads it,
-        // PolyWireMcpServer writes to it, from its single tools/call dispatch point.
+        // WarpMcpServer writes to it, from its single tools/call dispatch point.
         com.nexagres.wire.mcp.McpMetricsCollector mcpMetrics = new com.nexagres.wire.mcp.McpMetricsCollector();
 
         // Constructed here (before MetricsServer, which reads it for GET /api/audit) so the same
         // instance is shared with every session handler that records into it below -- pgwire/
         // mssqlwire's DB_LOGIN_SUCCEEDED/DB_LOGIN_FAILED events, and (indirectly, via
         // AccessControlStage if that's ever wired in) row-filter/column-mask decisions. Without
-        // POLYWIRE_AUDIT_LOG_FILE/POLYWIRE_AUDIT_LOG_DB configured, events still land in the
+        // WARP_AUDIT_LOG_FILE/WARP_AUDIT_LOG_DB configured, events still land in the
         // in-memory ring (readable via /api/audit) but aren't durable across a restart.
         com.nexagres.wire.audit.AuditLog auditLog = com.nexagres.wire.audit.AuditLog.fromEnv();
 
@@ -388,7 +388,7 @@ public final class Main {
 
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
         // read back via GET /api/nodes -- see NodeRegistry's javadoc. "dev" is a placeholder;
-        // there's no existing polywire release-version constant anywhere else in the codebase to
+        // there's no existing warp release-version constant anywhere else in the codebase to
         // reuse (mongowire/MCP each stamp their own unrelated protocol-version strings).
         com.nexagres.wire.config.NodeRegistry nodeRegistry =
                 new com.nexagres.wire.config.NodeRegistry(options, metricsPort, "dev");
@@ -397,32 +397,32 @@ public final class Main {
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
         ExecutorService listenerExecutor = Executors.newCachedThreadPool();
 
-        PolyWireGrpcServer grpcServer = new PolyWireGrpcServer(options, pipelineStages, backendRegistry, connectionGate);
+        WarpGrpcServer grpcServer = new WarpGrpcServer(options, pipelineStages, backendRegistry, connectionGate);
         grpcServer.start();
-        log.info("polywire listening for gRPC on port {}", options.grpcPort());
+        log.info("warp listening for gRPC on port {}", options.grpcPort());
 
         if (options.tlsEnabled()) {
             
             SSLSocketFactory tlsSocketFactory = TlsSupport.buildTlsContext(options).getSocketFactory();
-            log.info("TLS enabled (POLYWIRE_TLS_KEYSTORE={}): orawire TCPS on {}, pgwire+mywire negotiate TLS "
+            log.info("TLS enabled (WARP_TLS_KEYSTORE={}): orawire TCPS on {}, pgwire+mywire negotiate TLS "
                             + "in-band on their existing plain ports ({}, {})",
                     options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
 
             listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
 
             grpcServer.startTls();
-            log.info("polywire listening for gRPC TLS on port {}", options.grpcTlsPort());
+            log.info("warp listening for gRPC TLS on port {}", options.grpcTlsPort());
         } else {
-            log.info("TLS disabled (set POLYWIRE_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
+            log.info("TLS disabled (set WARP_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
         }
 
         final com.nexagres.wire.auth.PgRoleAuthCache roleAuthCache =
-                "postgres_roles".equals(System.getenv("POLYWIRE_AUTH_MODE"))
+                "postgres_roles".equals(System.getenv("WARP_AUTH_MODE"))
                         ? new com.nexagres.wire.auth.PgRoleAuthCache(options) : null;
         if (roleAuthCache != null) {
-            log.info("auth: POLYWIRE_AUTH_MODE=postgres_roles -- pgwire/mssqlwire logins verified against "
+            log.info("auth: WARP_AUTH_MODE=postgres_roles -- pgwire/mssqlwire logins verified against "
                     + "real pg_authid role passwords (refreshed every {}s), not CredentialStore's shared secret",
-                    parseIntEnv("POLYWIRE_AUTH_REFRESH_SECONDS", 30));
+                    parseIntEnv("WARP_AUTH_REFRESH_SECONDS", 30));
         }
 
         // auditLog (constructed earlier, shared with MetricsServer's /api/audit) is wired into
@@ -443,14 +443,14 @@ public final class Main {
             cacheStage.setMongoRowTableLookup(com.nexagres.wire.mongowire.MongoWireSessionHandler::isKnownMongoTable);
             log.info("cross-protocol row cache: SQL SELECT-by-id against a mongowire collection now shares its cache entry");
         }
-        int boltWirePort = parseIntEnv("POLYWIRE_BOLTWIRE_PORT", 7687);
+        int boltWirePort = parseIntEnv("WARP_BOLTWIRE_PORT", 7687);
         listenerExecutor.submit(() -> acceptBoltWireLoop(boltWirePort, backendRegistry, sessionExecutor, connectionGate));
 
-        int dynamoWirePort = parseIntEnv("POLYWIRE_DYNAMOWIRE_PORT", 18000);
+        int dynamoWirePort = parseIntEnv("WARP_DYNAMOWIRE_PORT", 18000);
 
         com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore awsIamCredentials =
                 com.nexagres.wire.dynamowire.auth.AwsIamCredentialStore.create(config.awsIamCredentials());
-        // Sharded when POLYWIRE_SHARD_BACKENDS is configured (the same shard group SQL's
+        // Sharded when WARP_SHARD_BACKENDS is configured (the same shard group SQL's
         // value-shard rules already use) -- item storage splits across it by partition-key hash,
         // same as real DynamoDB's own partition model. Falls back to the single implicit
         // backend automatically when no shard group is configured -- see PgItemStore's javadoc.
@@ -461,7 +461,7 @@ public final class Main {
             DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, backendRegistry, dynamoCache,
                     connectionGate, oauth, awsIamCredentials, sqlMetrics);
             dynamoWireServer.start();
-            log.info("polywire listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+            log.info("warp listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
             // Cross-protocol row-cache sharing: CacheStage was built before dynamowire existed
             // (both need constructing before either can be wired to the other), so this closes
             // the loop -- a SELECT-by-primary-key against a dynamowire-backed table via
@@ -481,7 +481,7 @@ public final class Main {
                     dynamoWirePort, e);
         }
 
-        int sqsWirePort = parseIntEnv("POLYWIRE_SQSWIRE_PORT", 9324);
+        int sqsWirePort = parseIntEnv("WARP_SQSWIRE_PORT", 9324);
         // Sharded by queue name across backendRegistry.shardGroup(), same mechanism as
         // dynamowire/mongowire -- see PgQueueStore's javadoc. Wrapped the same way dynamowire is:
         // a sqswire-only misconfiguration logs loudly and leaves sqswire off, without affecting
@@ -490,14 +490,14 @@ public final class Main {
             com.nexagres.wire.sqswire.SqsWireServer sqsWireServer = new com.nexagres.wire.sqswire.SqsWireServer(
                     sqsWirePort, backendRegistry, connectionGate, sqlMetrics);
             sqsWireServer.start();
-            log.info("polywire listening for Amazon SQS HTTP/JSON (sqswire) on port {}", sqsWirePort);
+            log.info("warp listening for Amazon SQS HTTP/JSON (sqswire) on port {}", sqsWirePort);
         } catch (Exception e) {
             log.error("sqswire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring sqswire back.",
                     sqsWirePort, e);
         }
 
-        int osWirePort = parseIntEnv("POLYWIRE_OSWIRE_PORT", 9200);
+        int osWirePort = parseIntEnv("WARP_OSWIRE_PORT", 9200);
         // V1: OpenSearch-compatible _search/documents/_bulk backed by plain Postgres -- see
         // OpenSearchWireServer's javadoc for exactly what's covered and the internal Search IR
         // (SearchRequest) this is staged to let a future Qdrant adapter reuse. Wrapped the same
@@ -507,14 +507,14 @@ public final class Main {
             com.nexagres.wire.oswire.OpenSearchWireServer osWireServer = new com.nexagres.wire.oswire.OpenSearchWireServer(
                     osWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
             osWireServer.start();
-            log.info("polywire listening for OpenSearch HTTP/JSON (oswire) on port {}", osWirePort);
+            log.info("warp listening for OpenSearch HTTP/JSON (oswire) on port {}", osWirePort);
         } catch (Exception e) {
             log.error("oswire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring oswire back.",
                     osWirePort, e);
         }
 
-        int influxWirePort = parseIntEnv("POLYWIRE_INFLUXWIRE_PORT", 8086);
+        int influxWirePort = parseIntEnv("WARP_INFLUXWIRE_PORT", 8086);
         // V1: InfluxDB line-protocol writes plus a narrow SHOW MEASUREMENTS / SELECT * FROM
         // <measurement> read path, backed by plain Postgres (or a real TimescaleDB hypertable when
         // detected on the backend -- see PgTimeSeriesStore's javadoc for that dual code path).
@@ -525,24 +525,24 @@ public final class Main {
                     new com.nexagres.wire.influxwire.InfluxWireServer(
                             influxWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
             influxWireServer.start();
-            log.info("polywire listening for InfluxDB HTTP/JSON (influxwire) on port {}", influxWirePort);
+            log.info("warp listening for InfluxDB HTTP/JSON (influxwire) on port {}", influxWirePort);
         } catch (Exception e) {
             log.error("influxwire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring influxwire back.",
                     influxWirePort, e);
         }
 
-        int mcpPort = parseIntEnv("POLYWIRE_MCP_PORT", 18010);
-        com.nexagres.wire.mcp.PolyWireMcpServer mcpServer = new com.nexagres.wire.mcp.PolyWireMcpServer(
-                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("POLYWIRE_MCP_TOOLS"),
+        int mcpPort = parseIntEnv("WARP_MCP_PORT", 18010);
+        com.nexagres.wire.mcp.WarpMcpServer mcpServer = new com.nexagres.wire.mcp.WarpMcpServer(
+                mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("WARP_MCP_TOOLS"),
                 oauth, mcpMetrics, auditLog, dialectTranslationStage::llmClient);
         mcpServer.start();
-        log.info("polywire listening for MCP (Model Context Protocol) on port {}", mcpPort);
+        log.info("warp listening for MCP (Model Context Protocol) on port {}", mcpPort);
 
         configStore.listen(newVersion -> {
             currentConfigVersion.set(newVersion);
-            PolyWireConfig c = newVersion.payload();
-            log.info("config: applying polywire_config version {} in place", newVersion.version());
+            WarpConfig c = newVersion.payload();
+            log.info("config: applying warp_config version {} in place", newVersion.version());
             QosControlStage parsedQos = QosControlStage.fromConfig(c.qosRatePerSec(), c.qosBurst(),
                     c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
             qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
@@ -585,8 +585,8 @@ public final class Main {
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog);
     }
 
-    private static PolyWireCluster startLocalCacheCluster() {
-        return PolyWireCluster.startSingleNodeForCacheOnly();
+    private static WarpCluster startLocalCacheCluster() {
+        return WarpCluster.startSingleNodeForCacheOnly();
     }
 
     private static int parseIntEnv(String name, int defaultValue) {
@@ -621,7 +621,7 @@ public final class Main {
             com.nexagres.wire.auth.PgRoleAuthCache roleAuthCache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
-            log.info("polywire listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
+            log.info("warp listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -637,7 +637,7 @@ public final class Main {
     }
 
     // V1: real Bolt (binary TCP, PackStream-framed) so a genuine Neo4j client driver can point at
-    // PolyWire directly -- see com.nexagres.wire.boltwire.BoltWireSessionHandler's own javadoc for
+    // Warp directly -- see com.nexagres.wire.boltwire.BoltWireSessionHandler's own javadoc for
     // exactly what's covered (Phase 1: handshake/HELLO/RUN/PULL/RECORD/SUCCESS/GOODBYE against a
     // narrow "RETURN <literal>" Cypher subset, proven against a real captured Neo4j session) and
     // what's still Phase 2+ (real MATCH/pattern-matching Cypher-to-SQL translation). Same
@@ -646,7 +646,7 @@ public final class Main {
     private static void acceptBoltWireLoop(int port, BackendRegistry backendRegistry,
             ExecutorService sessionExecutor, com.nexagres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            log.info("polywire listening for Bolt (Neo4j wire) on port {}", port);
+            log.info("warp listening for Bolt (Neo4j wire) on port {}", port);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 clientSocket.setTcpNoDelay(true);
@@ -666,7 +666,7 @@ public final class Main {
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
             com.nexagres.wire.acl.ConnectionGate connectionGate) {
         try (ServerSocket serverSocket = new ServerSocket(options.myWireListenPort())) {
-            log.info("polywire listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
+            log.info("warp listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -686,7 +686,7 @@ public final class Main {
             com.nexagres.wire.auth.PgRoleAuthCache roleAuthCache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
-            log.info("polywire listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
+            log.info("warp listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -704,9 +704,9 @@ public final class Main {
     private static void acceptMongoWireLoop(ServerOptions options, ExecutorService sessionExecutor,
             com.nexagres.wire.cluster.RowCache mongoCache, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.core.SqlMetricsCollector sqlMetrics, BackendRegistry backendRegistry) {
-        int mongoPort = parseIntEnv("POLYWIRE_MONGOWIRE_PORT", 27017);
+        int mongoPort = parseIntEnv("WARP_MONGOWIRE_PORT", 27017);
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
-            log.info("polywire listening for TCP (MongoDB wire) on port {} "
+            log.info("warp listening for TCP (MongoDB wire) on port {} "
                     + "(find/insert/update/delete only -- no aggregation pipeline, see MongoWireSessionHandler)",
                     mongoPort);
             while (true) {
@@ -726,7 +726,7 @@ public final class Main {
             List<PipelineStage> pipelineStages, BackendRegistry backendRegistry, ExecutorService sessionExecutor,
             com.nexagres.wire.acl.ConnectionGate connectionGate, com.nexagres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
-            log.info("polywire listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
+            log.info("warp listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -746,7 +746,7 @@ public final class Main {
             ExecutorService sessionExecutor, com.nexagres.wire.acl.ConnectionGate connectionGate,
             com.nexagres.wire.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
-            log.info("polywire listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
+            log.info("warp listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
             while (true) {
                 Socket plainSocket = serverSocket.accept();

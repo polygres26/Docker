@@ -3,7 +3,7 @@ package com.nexagres.wire.dynamowire;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.sql.Connection;
@@ -62,15 +62,15 @@ class DynamoDbErrorMappingIntegrationTest {
     @Test
     void aTableDroppedUnderneathDynamowireReturnsARealResourceNotFoundException() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = client(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("orphaned_table")
                         .attributeDefinitions(AttributeDefinition.builder()
@@ -108,15 +108,15 @@ class DynamoDbErrorMappingIntegrationTest {
     @Test
     void aGenuinelyDeadBackendConnectionReturnsARealInternalServerError() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = client(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("t")
                         .attributeDefinitions(AttributeDefinition.builder()

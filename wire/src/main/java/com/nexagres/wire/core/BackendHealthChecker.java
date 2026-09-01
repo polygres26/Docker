@@ -35,7 +35,7 @@ public final class BackendHealthChecker {
     private final long periodSeconds;
     // "Acceptable data loss" for an UNPLANNED failover -- the RPO an operator is willing to accept
     // when a primary just dies with no warning and nothing about the timing was chosen. Null (the
-    // POLYWIRE_FAILOVER_MAX_LAG_SECONDS default) means no check is made at all: every failover is
+    // WARP_FAILOVER_MAX_LAG_SECONDS default) means no check is made at all: every failover is
     // logged as a plain ACTIVE->DOWN transition, same as before this existed. When set, exceeding
     // it does NOT block the failover -- the primary is already unreachable, so refusing to route
     // to its fallback would only turn a bounded-loss failover into a total outage. It only changes
@@ -56,12 +56,12 @@ public final class BackendHealthChecker {
 
     public void start() {
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-backend-health");
+            Thread t = new Thread(r, "warp-backend-health");
             t.setDaemon(true);
             return t;
         });
         // Skips an immediate first run (initialDelay = periodSeconds, not 0) -- every backend was
-        // just resolved from POLYWIRE_BACKENDS/polywire_config moments ago at startup; giving the
+        // just resolved from WARP_BACKENDS/warp_config moments ago at startup; giving the
         // rest of Main's own startup connections a chance to land first avoids this loop's probes
         // being what a cold-start operator sees complaining in the logs before anything else has
         // even had a chance to try connecting normally.
@@ -117,7 +117,7 @@ public final class BackendHealthChecker {
         }
         if (lag.lagSeconds() > maxAcceptableFailoverLagSeconds) {
             log.warn("backend health: failing over '{}' to '{}' EXCEEDS the accepted data-loss window -- "
-                    + "fallback lag {}s > POLYWIRE_FAILOVER_MAX_LAG_SECONDS={}s; some committed writes on "
+                    + "fallback lag {}s > WARP_FAILOVER_MAX_LAG_SECONDS={}s; some committed writes on "
                     + "'{}' may not be present on '{}' yet",
                     target.name(), target.fallbackName(), String.format("%.1f", lag.lagSeconds()),
                     maxAcceptableFailoverLagSeconds, target.name(), target.fallbackName());

@@ -12,7 +12,7 @@ import CredentialField from '../components/CredentialField'
 // https://github.com/versity/versitygw/wiki/WebGUI#buckets). Scoped to localStorage (not
 // sessionStorage, unlike the connection token) since "which backends I care about" is a per-user
 // preference worth keeping across tabs and restarts, not sensitive like the admin token.
-const FAVORITES_KEY = 'polywire.favoriteBackends'
+const FAVORITES_KEY = 'warp.favoriteBackends'
 
 function loadFavorites(): Set<string> {
   try {
@@ -157,10 +157,10 @@ function ConfiguredBackendRow({ backend, favorite, onToggleFavorite }: {
 }
 
 /**
- * Multi-backend routing targets -- edits `polywire_config.backends` (name=jdbcUrl|user|password,
+ * Multi-backend routing targets -- edits `warp_config.backends` (name=jdbcUrl|user|password,
  * one per line here, `;`-joined on the wire) and `.shardBackends` (the ordered shard group, one
  * name per line here, `,`-joined on the wire). See BackendRegistry.fromConfig for the exact
- * grammar and the POLYWIRE_TRUSTED_BACKEND_HOSTS allowlist check every entry has to clear.
+ * grammar and the WARP_TRUSTED_BACKEND_HOSTS allowlist check every entry has to clear.
  */
 export default function Backends() {
   const [backends, setBackends] = useState('')
@@ -207,7 +207,7 @@ export default function Backends() {
         backends: backends.split('\n').map((r) => r.trim()).filter(Boolean).join(';'),
         shardBackends: shardBackends.split('\n').map((r) => r.trim()).filter(Boolean).join(','),
       })
-      setMessage(`Saved — polywire_config version ${saved.version}.`)
+      setMessage(`Saved — warp_config version ${saved.version}.`)
       reloadConfigured()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -221,7 +221,7 @@ export default function Backends() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Backends</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
         Named Postgres targets the router can send statements to. Each entry's host must already
-        be in <code>POLYWIRE_TRUSTED_BACKEND_HOSTS</code> on the Warp process, or it's
+        be in <code>WARP_TRUSTED_BACKEND_HOSTS</code> on the Warp process, or it's
         silently skipped.
       </p>
 

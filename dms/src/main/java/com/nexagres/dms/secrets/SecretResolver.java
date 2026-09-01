@@ -11,7 +11,7 @@ import java.util.Base64;
 
 /**
  * Resolves a {@link SecretRef} to its actual value at connect time. Vault/CyberArk match
- * PolyWire's own {@code com.nexagres.wire.secrets.SecretResolver} (same behavior: opt-in via env
+ * Warp's own {@code com.nexagres.wire.secrets.SecretResolver} (same behavior: opt-in via env
  * vars, fails loud rather than silently trying an empty password); AWS Secrets Manager/Azure Key
  * Vault/GCP Secret Manager are new to this module, added so a connection's credential can live in
  * whichever hyperscaler secret store an operator already uses instead of only HashiCorp Vault or

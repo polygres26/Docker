@@ -27,7 +27,7 @@ public final class TrustedBackendHosts {
     }
 
     public static TrustedBackendHosts fromEnv() {
-        return parse(System.getenv("POLYWIRE_TRUSTED_BACKEND_HOSTS"));
+        return parse(System.getenv("WARP_TRUSTED_BACKEND_HOSTS"));
     }
 
     public static TrustedBackendHosts parse(String spec) {
@@ -42,7 +42,7 @@ public final class TrustedBackendHosts {
             }
             parsed.add(parseEntry(entry));
         }
-        log.info("TrustedBackendHosts: {} entr(y/ies) allowlisted from POLYWIRE_TRUSTED_BACKEND_HOSTS", parsed.size());
+        log.info("TrustedBackendHosts: {} entr(y/ies) allowlisted from WARP_TRUSTED_BACKEND_HOSTS", parsed.size());
         return new TrustedBackendHosts(parsed);
     }
 
@@ -104,7 +104,7 @@ public final class TrustedBackendHosts {
     private static final Pattern JDBC_POSTGRESQL = Pattern.compile("(?i)^jdbc:postgresql://([^/?]+)");
     // Real bug, found live building the Oracle/SQL Server/MySQL/Mongo backend engine work: this
     // used to recognize ONLY jdbc:postgresql: -- extractHostPort returned null (never trusted,
-    // full refusal) for every other real engine's own URL shape the moment POLYWIRE_TRUSTED_
+    // full refusal) for every other real engine's own URL shape the moment WARP_TRUSTED_
     // BACKEND_HOSTS was actually enabled, silently defeating the whole feature for anyone using it
     // with a non-Postgres backend, not just declining to allowlist it. Oracle's own real
     // "thin:@//host:port/service" shape needs its own separate pattern (the "thin:@" prefix isn't

@@ -68,7 +68,7 @@ public class MigrationJobsRoute implements RouteHandler {
         } catch (IllegalArgumentException e) {
             // A malformed connectorType/sourceConfig/target -- a real client error (400), not a
             // server failure. Real construction failures (a source that can't actually be
-            // reached, a Polywire gRPC endpoint that's down) surface later as the job's own FAILED
+            // reached, a Warp gRPC endpoint that's down) surface later as the job's own FAILED
             // status via GET, not synchronously here -- see MigrationJobRunner's own javadoc for
             // why sourceConfig validation happens eagerly on the calling thread while everything
             // else runs in the background.

@@ -46,7 +46,7 @@ final class StatisticsAwareSchema extends AbstractSchema implements Wrapper {
      *     actual federated query itself.
      * @param pgSchemaName the real Postgres schema name to look statistics up under (may differ
      *     from whatever name this Calcite schema is mounted as -- see {@link ShardJoinExecutor}'s
-     *     own internal {@code __polywire_shardN} mount names, which are never the real Postgres
+     *     own internal {@code __warp_shardN} mount names, which are never the real Postgres
      *     schema).
      * @param cacheKeyPrefix a caller-chosen prefix (e.g. a shard/backend name) so the SAME table
      *     name on two DIFFERENT backends caches two separate row counts, not one shared (wrong) one. */

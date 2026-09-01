@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
 /**
  * oswire -- OpenSearch-compatible HTTP/JSON, the same "speak the real client's wire protocol,
  * translate to plain SQL underneath" shape as dynamowire/sqswire, so a real OpenSearch client
- * (the {@code opensearch-py} SDK, curl, Kibana's dev tools) can point at PolyWire directly.
+ * (the {@code opensearch-py} SDK, curl, Kibana's dev tools) can point at Warp directly.
  *
  * <p>V1 surface, per this feature's staged plan (see {@link SearchRequest}'s and
  * {@link OpenSearchAdapter}'s javadoc for the query-DSL coverage and the Qdrant-adapter plan this
@@ -411,7 +411,7 @@ public final class OpenSearchWireServer {
 
     public void start() throws Exception {
         server.start();
-        log.info("polywire listening for OpenSearch HTTP/JSON (oswire) on port {}",
+        log.info("warp listening for OpenSearch HTTP/JSON (oswire) on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
     }
 

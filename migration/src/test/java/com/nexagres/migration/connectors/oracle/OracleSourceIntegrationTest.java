@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealOracle;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.math.BigDecimal;
@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end proof, real infrastructure throughout: real Oracle Database Free (LogMiner works
  * natively on this host, unlike SQL Server CDC -- see {@code RealOracle}'s own javadoc), real
- * Polywire gRPC subprocess, real target Postgres. Unlike {@code SqlServerSourceSnapshotIntegrationTest}
+ * Warp gRPC subprocess, real target Postgres. Unlike {@code SqlServerSourceSnapshotIntegrationTest}
  * (which could only cover the snapshot path), this covers the ENTIRE connector -- schema
  * translation, parallel {@code ORA_HASH}-partitioned snapshot, AND live LogMiner-based CDC
  * (insert/update/delete, including a NULL-valued column) -- against real infrastructure, no
@@ -73,10 +73,10 @@ class OracleSourceIntegrationTest {
     void snapshotAndLogMinerChangesReplicateThroughTheRealGrpcPath() throws Exception {
         try (RealOracle oracle = RealOracle.start();
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             oracle.createSchema("migtest", "MigPass123");
@@ -103,7 +103,7 @@ class OracleSourceIntegrationTest {
 
             OracleSource source = new OracleSource(oracle.host(), oracle.port(), oracle.serviceName(),
                     "migtest", "MigPass123", "migtest", "orders", 3);
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator coordinator = new Coordinator(source, sink, checkpoints, 3);
             Thread coordinatorThread = new Thread(() -> {
                 try {

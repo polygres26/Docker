@@ -68,7 +68,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * -- lets {@link #executeScatterGather} resolve THIS statement's own real shard set from its
      * matched table's own {@link RouterStage.TableShardRule} (via {@link
      * ShardingStrategy#allBackends}) instead of unconditionally using {@code registry.shardGroup()},
-     * which is the one, project-wide shard list {@code POLYWIRE_SHARD_BACKENDS} configures -- a
+     * which is the one, project-wide shard list {@code WARP_SHARD_BACKENDS} configures -- a
      * real, declaratively-sharded table's own shard set can be a different subset (or even a
      * disjoint list) of backends. Empty means "no declaratively-sharded tables configured", the
      * same "absent means the feature doesn't exist" shape {@code shardRules} already has. */
@@ -148,7 +148,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         }
         
         if (targetName == null || registry.isEmpty() || BackendRegistry.DEFAULT_BACKEND_NAME.equals(targetName)) {
-            // The common case -- no POLYWIRE_ROUTER_* rule matched -- normally always uses
+            // The common case -- no WARP_ROUTER_* rule matched -- normally always uses
             // defaultExecutor, a connection borrowed once for the whole client session. That's
             // correct and cheapest for the vast majority of statements, but it structurally can't
             // read-route: the same connection serves every statement in the session regardless of
@@ -208,7 +208,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
         }
 
-        // Real, declarative per-table sharding (POLYWIRE_TABLE_SHARDS) takes priority when it
+        // Real, declarative per-table sharding (WARP_TABLE_SHARDS) takes priority when it
         // matches: this table's own declared shard set (from its own ShardingStrategy) is what
         // gets scattered/joined across, NOT necessarily the same registry.shardGroup() every OTHER
         // table shares -- a table declared with its own backend list can be a disjoint subset.
@@ -334,11 +334,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     // Opt-in (default off): reading from a standby means reading data that may be behind the
     // primary by however long replication lag currently is -- a real correctness tradeoff, not
     // a free win, so this must never be silently on. Off by default matches every other
-    // behavior-changing toggle in this codebase (e.g. POLYWIRE_DYNAMOWIRE_CACHE_ENABLED's
+    // behavior-changing toggle in this codebase (e.g. WARP_DYNAMOWIRE_CACHE_ENABLED's
     // sibling pattern), except inverted: here the safer default (always read the primary) is
     // the one that ships without an explicit opt-in.
     private static final boolean READ_ROUTING_ENABLED =
-            "true".equalsIgnoreCase(System.getenv("POLYWIRE_READ_ROUTING_ENABLED"));
+            "true".equalsIgnoreCase(System.getenv("WARP_READ_ROUTING_ENABLED"));
 
     private ExecutionResult executeOnFreshConnection(BackendTarget target, Statement statement) throws SQLException {
         // Only single, autocommit, read-classified statements are eligible -- this method is

@@ -39,7 +39,7 @@ public final class AuditLog {
 
     public static AuditLog fromEnv() {
         BufferedWriter fileSink = null;
-        String path = System.getenv("POLYWIRE_AUDIT_LOG_FILE");
+        String path = System.getenv("WARP_AUDIT_LOG_FILE");
         if (path != null && !path.isBlank()) {
             try {
                 fileSink = Files.newBufferedWriter(Path.of(path),
@@ -51,7 +51,7 @@ public final class AuditLog {
         }
 
         AuditLogStore dbStore = null;
-        String dbSpec = System.getenv("POLYWIRE_AUDIT_LOG_DB");
+        String dbSpec = System.getenv("WARP_AUDIT_LOG_DB");
         if (dbSpec != null && !dbSpec.isBlank()) {
             String[] parts = dbSpec.split("\\|", -1);
             String jdbcUrl = parts.length > 0 ? parts[0] : "";
@@ -61,7 +61,7 @@ public final class AuditLog {
                 dbStore = new AuditLogStore(jdbcUrl, user, password);
                 log.info("audit log: durable, hash-chained sink at {}", jdbcUrl);
             } catch (SQLException e) {
-                log.warn("POLYWIRE_AUDIT_LOG_DB configured but could not be reached at startup — "
+                log.warn("WARP_AUDIT_LOG_DB configured but could not be reached at startup — "
                         + "falling back to ring-buffer/file sink only for this process: {}", e.toString());
             }
         }

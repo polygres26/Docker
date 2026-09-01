@@ -15,7 +15,7 @@ final class ConnectionLimitInterceptor implements ServerInterceptor {
             ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
         if (!ConnectionLimiter.tryAcquire()) {
             call.close(Status.RESOURCE_EXHAUSTED.withDescription(
-                    "polywire edition connection limit reached"), headers);
+                    "warp edition connection limit reached"), headers);
             return new ServerCall.Listener<>() {
             };
         }

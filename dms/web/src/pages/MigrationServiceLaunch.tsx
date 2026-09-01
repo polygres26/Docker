@@ -44,10 +44,10 @@ function StartMigrationForm({ connections, onStarted }: { connections: Connectio
     const req: MigrationJobRequest = {
       connectorType,
       targetConnectionId,
-      polywireGrpcHost: grpcHost,
-      polywireGrpcPort: Number(grpcPort),
-      polywireGrpcUser: grpcUser,
-      polywireGrpcPassword: grpcPassword,
+      warpGrpcHost: grpcHost,
+      warpGrpcPort: Number(grpcPort),
+      warpGrpcUser: grpcUser,
+      warpGrpcPassword: grpcPassword,
       parallelism: Number(parallelism) || 1,
       sourceConfig,
     }
@@ -84,19 +84,19 @@ function StartMigrationForm({ connections, onStarted }: { connections: Connectio
           </select>
         </div>
         <div>
-          <label style={labelStyle}>Polywire gRPC host</label>
+          <label style={labelStyle}>Warp gRPC host</label>
           <input value={grpcHost} onChange={(e) => setGrpcHost(e.target.value)} style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Polywire gRPC port</label>
+          <label style={labelStyle}>Warp gRPC port</label>
           <input value={grpcPort} onChange={(e) => setGrpcPort(e.target.value)} style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Polywire user</label>
+          <label style={labelStyle}>Warp user</label>
           <input value={grpcUser} onChange={(e) => setGrpcUser(e.target.value)} style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Polywire password</label>
+          <label style={labelStyle}>Warp password</label>
           <input type="password" value={grpcPassword} onChange={(e) => setGrpcPassword(e.target.value)} style={inputStyle} />
         </div>
         <div>
@@ -229,9 +229,9 @@ export default function MigrationServiceLaunch() {
     <div style={{ maxWidth: 1080 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Migration Service</h1>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 16 }}>
-        Launch massively-parallel migration runs (nexagres-migration) writing into Polywire over
+        Launch massively-parallel migration runs (nexagres-migration) writing into Warp over
         its own gRPC driver. Massively parallel throughput (parallelism &gt; 1, and multi-process
-        distributed coordination) requires an Enterprise Polywire license — without one, migrations
+        distributed coordination) requires an Enterprise Warp license — without one, migrations
         run correctly but serially, one partition at a time.
       </p>
       <DmsTabs tabs={MIGRATION_SERVICE_TABS} />

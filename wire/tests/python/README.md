@@ -1,6 +1,6 @@
-# Polywire integration tests (Python)
+# Warp integration tests (Python)
 
-Real driver, real Postgres, real Polywire subprocess -- no mocks, matching this project's own
+Real driver, real Postgres, real Warp subprocess -- no mocks, matching this project's own
 live-verification style. Covers the three frontends where a real Python driver was faster to get
 working than a Java one: orawire (`python-oracledb`), mssqlwire (`pymssql`), mywire (`PyMySQL`).
 pgwire has its own JDBC-based suite instead: `../../src/test/java/.../pgwire/PgWireIntegrationTest.java`.
@@ -40,7 +40,7 @@ rollback, and the `/metrics` admin endpoint reporting the statements just run.
 ## Bugs this test suite found and fixed along the way
 
 - **`RoutingBackendExecutor` silently bypassed session transactions** for the common
-  single-backend deployment (no `POLYWIRE_BACKENDS` configured) -- `RouterStage` explicitly
+  single-backend deployment (no `WARP_BACKENDS` configured) -- `RouterStage` explicitly
   assigns the synthetic `"default"` backend as every statement's routing target, which routed
   execution through a brand-new pooled connection (`autoCommit=true`) instead of the session's own
   connection, silently discarding every real client's explicit `COMMIT`/`ROLLBACK`. Fixed in

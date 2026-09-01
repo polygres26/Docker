@@ -159,7 +159,7 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
-    <!-- migration's own testsupport helpers (RealMongo, RealPostgres, PolyWireProcess); see
+    <!-- migration's own testsupport helpers (RealMongo, RealPostgres, WarpProcess); see
          migration/pom.xml's test-jar execution; so MigrationJobRunnerIntegrationTest proves the
          new job-launching glue against real infrastructure using the SAME helpers every
          connector's own integration test already relies on. -->

@@ -22,10 +22,10 @@ class DmsLicensingTest {
         assertEquals(false, DmsLicensing.auditLoggingEnabled());
 
         IllegalStateException rbac = assertThrows(IllegalStateException.class, DmsLicensing::requireEnterpriseForRbac);
-        assertEquals(true, rbac.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, rbac.getMessage().contains("WARP_LICENSE_KEY"));
 
         IllegalStateException sso = assertThrows(IllegalStateException.class, DmsLicensing::requireEnterpriseForSso);
-        assertEquals(true, sso.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, sso.getMessage().contains("WARP_LICENSE_KEY"));
     }
 
     @Test

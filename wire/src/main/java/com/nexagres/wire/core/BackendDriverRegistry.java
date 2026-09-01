@@ -49,7 +49,7 @@ final class BackendDriverRegistry {
      *     "Object 'customers' not found within 'customers_db'" from Calcite, since it never found
      *     a schema literally named lowercase {@code customers_db} to look inside. Postgres is a
      *     no-op here (already lowercase, matching the config convention every existing
-     *     {@code POLYWIRE_ROUTER_SCHEMA_RULES}/{@code POLYWIRE_SHARD_BACKENDS} entry already
+     *     {@code WARP_ROUTER_SCHEMA_RULES}/{@code WARP_SHARD_BACKENDS} entry already
      *     uses). */
     static String realCatalogSchemaName(String jdbcUrl, String schemaName) {
         String url = jdbcUrl == null ? "" : jdbcUrl.toLowerCase(java.util.Locale.ROOT);

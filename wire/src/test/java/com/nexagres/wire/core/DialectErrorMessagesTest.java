@@ -210,7 +210,7 @@ class DialectErrorMessagesTest {
 
     @Test
     void nonEmulatingDialectsThrowRatherThanSilentlyReturningAWrongVocabulary() {
-        // POLYWIRE_NATIVE/POSTGRES/MCP clients already expect real Postgres wording -- calling
+        // WARP_NATIVE/POSTGRES/MCP clients already expect real Postgres wording -- calling
         // render() for one of those would be a caller bug, not a case to silently paper over.
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> DialectErrorMessages.render(SourceDialect.POSTGRES, "42P01", "relation \"t\" does not exist"));

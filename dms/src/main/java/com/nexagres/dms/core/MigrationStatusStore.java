@@ -12,8 +12,8 @@ import java.util.Map;
 
 /**
  * Read-only reporting over the {@code nexagres-migration} module's own bookkeeping tables --
- * {@code polywire_cdc_checkpoints} and {@code migration_partition_leases} -- both plain tables in
- * whichever Postgres a running migration was pointed at as its TARGET (the same Postgres Polywire
+ * {@code warp_cdc_checkpoints} and {@code migration_partition_leases} -- both plain tables in
+ * whichever Postgres a running migration was pointed at as its TARGET (the same Postgres Warp
  * itself writes into, per {@code CdcCheckpointStore}/{@code PartitionLeaseStore}'s own design).
  *
  * <p>This is the "Web Progress Report" box from Dsync's own architecture (see this session's own
@@ -69,7 +69,7 @@ public final class MigrationStatusStore {
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT source_key, events_applied, updated_at, "
                             + "EXTRACT(EPOCH FROM (now() - last_event_at))::bigint AS lag_seconds "
-                            + "FROM polywire_cdc_checkpoints WHERE source_key NOT LIKE '%#p%' ORDER BY source_key");
+                            + "FROM warp_cdc_checkpoints WHERE source_key NOT LIKE '%#p%' ORDER BY source_key");
                     ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String key = rs.getString("source_key");

@@ -64,7 +64,7 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
                             .withFederationSupport(com.nexagres.wire.core.RouterStage.statisticsStoreIn(sharedStages),
                                     com.nexagres.wire.core.RouterStage.planStoreIn(sharedStages)));
             List<Object> binds = new ArrayList<>(request.getParamsList());
-            Statement statement = Statement.of(SourceDialect.POLYWIRE_NATIVE, request.getSql(), binds);
+            Statement statement = Statement.of(SourceDialect.WARP_NATIVE, request.getSql(), binds);
             ExecutionResult result = pipeline.execute(statement);
             responseObserver.onNext(toResponse(result));
         } catch (SQLException e) {
@@ -76,7 +76,7 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
                     .build());
         }
         if (sqlMetrics != null) {
-            sqlMetrics.recordRtt(SourceDialect.POLYWIRE_NATIVE, request.getSql(), System.nanoTime() - rttStart);
+            sqlMetrics.recordRtt(SourceDialect.WARP_NATIVE, request.getSql(), System.nanoTime() - rttStart);
         }
         responseObserver.onCompleted();
     }

@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -29,21 +29,21 @@ import org.junit.jupiter.api.Test;
 class MssqlJdbcIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
+                .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) {
-            polywire.close();
+        if (warp != null) {
+            warp.close();
         }
         if (postgres != null) {
             postgres.close();
@@ -51,7 +51,7 @@ class MssqlJdbcIntegrationTest {
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:sqlserver://localhost:" + polywire.port("mssqlwire") + ";encrypt=false;"
+        String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire") + ";encrypt=false;"
                 + "user=" + postgres.username() + ";password=" + postgres.password() + ";";
         return DriverManager.getConnection(url);
     }

@@ -157,7 +157,7 @@ public final class XaTransaction {
 
                 log.error("xa: branch {} failed to commit after a successful prepare vote — in-doubt transaction"
                         + (recoveryLog != null
-                                ? " logged for recovery on the next PolyWire restart (gtrid=" + gtridHex + ")"
+                                ? " logged for recovery on the next Warp restart (gtrid=" + gtridHex + ")"
                                 : " -- NOT recoverable, this XaTransaction was created without a recovery log")
                         + ": {}", i, e.getMessage());
                 rearmOrReset();

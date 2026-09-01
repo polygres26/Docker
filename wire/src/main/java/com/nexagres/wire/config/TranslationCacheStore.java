@@ -40,7 +40,7 @@ public final class TranslationCacheStore {
 
     public void ensureSchema() {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_translation_cache ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_translation_cache ("
                     + "id bigserial PRIMARY KEY, "
                     + "source_dialect text NOT NULL, "
                     + "target_dialect text NOT NULL, "
@@ -50,10 +50,10 @@ public final class TranslationCacheStore {
                     + "first_cached_at timestamptz NOT NULL DEFAULT now(), "
                     + "hit_count bigint NOT NULL DEFAULT 1, "
                     + "last_hit_at timestamptz NOT NULL DEFAULT now())");
-            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS polywire_translation_cache_key "
-                    + "ON polywire_translation_cache (source_dialect, target_dialect, original_sql_hash)");
+            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS warp_translation_cache_key "
+                    + "ON warp_translation_cache (source_dialect, target_dialect, original_sql_hash)");
         } catch (SQLException e) {
-            log.warn("translation cache store: could not ensure polywire_translation_cache schema exists"
+            log.warn("translation cache store: could not ensure warp_translation_cache schema exists"
                     + " -- write-through recording will keep failing best-effort until this is fixed", e);
         }
     }
@@ -76,11 +76,11 @@ public final class TranslationCacheStore {
             String originalSql, String translatedSql) {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_translation_cache "
+                        "INSERT INTO warp_translation_cache "
                                 + "(source_dialect, target_dialect, original_sql, original_sql_hash, translated_sql) "
                                 + "VALUES (?, ?, ?, md5(?), ?) "
                                 + "ON CONFLICT (source_dialect, target_dialect, original_sql_hash) "
-                                + "DO UPDATE SET hit_count = polywire_translation_cache.hit_count + 1, "
+                                + "DO UPDATE SET hit_count = warp_translation_cache.hit_count + 1, "
                                 + "last_hit_at = now()")) {
             ps.setString(1, sourceDialect == null ? null : sourceDialect.name());
             ps.setString(2, targetDialect == null ? null : targetDialect.name());

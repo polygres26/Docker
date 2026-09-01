@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Detects whether the {@code pg_oracle} extension (db/pg_oracle) is installed on a given backend
  * Postgres database, so orawire can degrade gracefully instead of failing every single statement
- * when it isn't -- Polywire can be deployed against a plain, unmodified Postgres with no pg_oracle
+ * when it isn't -- Warp can be deployed against a plain, unmodified Postgres with no pg_oracle
  * extension at all, and previously that meant every orawire request died on the very first
  * statement (see {@code OraclePgEmulationSessionInitializer}'s old unconditional
  * {@code SET db_emulation = 'oracle'}, and {@code DialectTranslations}'s old unconditional

@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,9 +25,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof, real infrastructure throughout, using this session's own established
- * approach: a real running Polywire instance fronting influxwire stands in as a genuine InfluxDB
+ * approach: a real running Warp instance fronting influxwire stands in as a genuine InfluxDB
  * v1 HTTP-API source, using plain HTTP writes (the real line protocol) -- no external InfluxDB
- * needed. Two separate Polywire instances: a source (influxwire only) and a target (grpc).
+ * needed. Two separate Warp instances: a source (influxwire only) and a target (grpc).
  *
  * <p>Proves: (1) a pre-existing backlog of points replicates with tags/fields correctly split
  * per this connector's explicit tag-key declaration; (2) a LIVE point, written after the
@@ -59,7 +59,7 @@ class InfluxSourceIntegrationTest {
 
     private static Long targetRowCount(RealPostgres postgres) throws Exception {
         try (Connection conn = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
-                PreparedStatement ps = conn.prepareStatement("SELECT count(*) FROM \"polywire_influx_readings\"");
+                PreparedStatement ps = conn.prepareStatement("SELECT count(*) FROM \"warp_influx_readings\"");
                 ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getLong(1);
@@ -74,30 +74,30 @@ class InfluxSourceIntegrationTest {
     @Test
     void backlogAndLivePointsReplicateWithTagsAndFieldsCorrectlySplit() throws Exception {
         try (RealPostgres sourcePostgres = RealPostgres.start();
-                PolyWireProcess sourcePolywire = PolyWireProcess.builder()
+                WarpProcess sourceWarp = WarpProcess.builder()
                         .pgBackend(sourcePostgres.host(), sourcePostgres.port(), sourcePostgres.database(), sourcePostgres.username(), sourcePostgres.password())
-                        .frontend("influxwire", "POLYWIRE_INFLUXWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
-                        .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .frontend("boltwire", "POLYWIRE_BOLTWIRE_PORT")
-                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                        .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("influxwire", "WARP_INFLUXWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .frontend("mywire", "WARP_MYWIRE_PORT")
+                        .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .frontend("boltwire", "WARP_BOLTWIRE_PORT")
+                        .frontend("orawire", "WARP_ORAWIRE_PORT")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                        .frontend("oswire", "WARP_OSWIRE_PORT")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start();
                 RealPostgres targetPostgres = RealPostgres.start();
-                PolyWireProcess targetPolywire = PolyWireProcess.builder()
+                WarpProcess targetWarp = WarpProcess.builder()
                         .pgBackend(targetPostgres.host(), targetPostgres.port(), targetPostgres.database(), targetPostgres.username(), targetPostgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             HttpClient http = HttpClient.newHttpClient();
-            int sourcePort = sourcePolywire.port("influxwire");
+            int sourcePort = sourceWarp.port("influxwire");
             // Real InfluxDB line protocol: measurement,tag=val field=val timestamp (nanoseconds).
             long baseNanos = System.currentTimeMillis() * 1_000_000L;
             for (int i = 0; i < 5; i++) {
@@ -108,7 +108,7 @@ class InfluxSourceIntegrationTest {
             checkpoints.ensureSchema();
 
             InfluxSource source = new InfluxSource("localhost", sourcePort, "mydb", "readings", Set.of("sensor"));
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", targetPolywire.port("grpc"), targetPostgres.username(), targetPostgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", targetWarp.port("grpc"), targetPostgres.username(), targetPostgres.password());
             Coordinator coordinator = new Coordinator(source, sink, checkpoints, 1);
             Thread coordinatorThread = new Thread(() -> {
                 try {
@@ -128,7 +128,7 @@ class InfluxSourceIntegrationTest {
                 });
                 try (Connection conn = DriverManager.getConnection(targetPostgres.jdbcUrl(), targetPostgres.username(), targetPostgres.password());
                         PreparedStatement ps = conn.prepareStatement(
-                                "SELECT tags, fields FROM \"polywire_influx_readings\" WHERE tags->>'sensor' = 'temp-2'");
+                                "SELECT tags, fields FROM \"warp_influx_readings\" WHERE tags->>'sensor' = 'temp-2'");
                         ResultSet rs = ps.executeQuery()) {
                     assertTrue(rs.next());
                     assertEquals("temp-2", com.google.gson.JsonParser.parseString(rs.getString("tags")).getAsJsonObject().get("sensor").getAsString());

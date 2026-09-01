@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -54,14 +54,14 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 /**
- * The project's "short regression suite" -- one real PolyWire instance, real Postgres backends,
+ * The project's "short regression suite" -- one real Warp instance, real Postgres backends,
  * real client drivers per protocol, meant to run in well under 10 minutes and catch the class of
  * regression this project has actually hit live: a protocol silently breaking (the orawire
  * Execute-request regression), a real perf regression in the hot read/write path (the
  * PreparedStatement-reuse fix), or federation/caching breaking outright. NOT a substitute for the
  * project's own exhaustive integration suite (`mvn test`) -- this is the fast, always-run subset.
  *
- * <p>One shared {@link PolyWireProcess} + two real Postgres backends for every test in this class
+ * <p>One shared {@link WarpProcess} + two real Postgres backends for every test in this class
  * (started once in {@link #startInfra}), not one per test -- container/process startup is the
  * dominant real cost here, and every test in this suite is cheap once the real infra is up.
  */
@@ -69,7 +69,7 @@ class ShortRegressionSuiteTest {
 
     private static RealPostgres shard1;
     private static RealPostgres shard2;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
     private static final String ADMIN_TOKEN = "short-regression-suite-token";
 
     @BeforeAll
@@ -97,34 +97,34 @@ class ShortRegressionSuiteTest {
                 + ";shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                 + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password();
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
-                .frontend("mssqlwire", "POLYWIRE_MSSQLWIRE_PORT")
-                .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                .frontend("influxwire", "POLYWIRE_INFLUXWIRE_PORT")
-                .frontend("boltwire", "POLYWIRE_BOLTWIRE_PORT")
-                .env("POLYWIRE_BACKENDS", backends)
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .frontend("mywire", "WARP_MYWIRE_PORT")
+                .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
+                .frontend("orawire", "WARP_ORAWIRE_PORT")
+                .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                .frontend("influxwire", "WARP_INFLUXWIRE_PORT")
+                .frontend("boltwire", "WARP_BOLTWIRE_PORT")
+                .env("WARP_BACKENDS", backends)
                 // Real, declarative table sharding (no schema-qualifier prefix needed anywhere)
                 // for the federated-query test below -- dogfoods the same mechanism the Router
                 // rules UI edits.
-                .env("POLYWIRE_TABLE_SHARDS", "orders:hash:region:shard1,shard2")
-                .env("POLYWIRE_CACHE_TABLES", "rtt_cached")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .env("WARP_TABLE_SHARDS", "orders:hash:region:shard1,shard2")
+                .env("WARP_CACHE_TABLES", "rtt_cached")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (shard2 != null) shard2.close();
         if (shard1 != null) shard1.close();
     }
@@ -134,7 +134,7 @@ class ShortRegressionSuiteTest {
     @Test
     void pgwireBasicReadWrite() throws SQLException {
         try (Connection conn = DriverManager.getConnection(
-                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+                "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
             assertProtocolReadWriteWorks(conn, "pgwire");
         }
     }
@@ -142,7 +142,7 @@ class ShortRegressionSuiteTest {
     @Test
     void mywireBasicReadWrite() throws Exception {
         // Real, pre-existing startup race (predates this suite -- the same flake this project's
-        // own MySqlJdbcIntegrationTest hits under load): PolyWireProcess.waitForTcpReady only
+        // own MySqlJdbcIntegrationTest hits under load): WarpProcess.waitForTcpReady only
         // confirms the mywire port itself accepts TCP connections, not that every internal
         // component (CredentialStore auth wiring included) is fully warm the instant after -- an
         // immediate first connection attempt can occasionally see a reset mid-handshake or a
@@ -150,7 +150,7 @@ class ShortRegressionSuiteTest {
         // to mywire itself: this is a real client behavior (a driver/app retrying a failed
         // connect), not masking an actual bug.
         try (Connection conn = connectWithRetry(() -> DriverManager.getConnection(
-                "jdbc:mysql://localhost:" + polywire.port("mywire") + "/postgres", shard1.username(), shard1.password()), 3)) {
+                "jdbc:mysql://localhost:" + warp.port("mywire") + "/postgres", shard1.username(), shard1.password()), 3)) {
             assertProtocolReadWriteWorks(conn, "mywire");
         }
     }
@@ -174,7 +174,7 @@ class ShortRegressionSuiteTest {
 
     @Test
     void mssqlwireBasicReadWrite() throws SQLException {
-        String url = "jdbc:sqlserver://localhost:" + polywire.port("mssqlwire") + ";encrypt=false;"
+        String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire") + ";encrypt=false;"
                 + "user=" + shard1.username() + ";password=" + shard1.password() + ";";
         try (Connection conn = DriverManager.getConnection(url)) {
             assertProtocolReadWriteWorks(conn, "mssqlwire");
@@ -183,7 +183,7 @@ class ShortRegressionSuiteTest {
 
     @Test
     void orawireBasicReadWrite() throws SQLException {
-        String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+        String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
         try (Connection conn = DriverManager.getConnection(url, shard1.username(), shard1.password())) {
             assertProtocolReadWriteWorks(conn, "orawire");
         }
@@ -207,7 +207,7 @@ class ShortRegressionSuiteTest {
     @Test
     void mongowireBasicReadWrite() {
         try (MongoClient client = MongoClients.create(
-                "mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+                "mongodb://localhost:" + warp.port("mongowire") + "/?directConnection=true")) {
             MongoCollection<Document> coll = client.getDatabase("test").getCollection("regression_smoke");
             coll.insertOne(new Document("_id", "mongowire-1").append("val", "hello-from-mongowire"));
             Document found = coll.find(new Document("_id", "mongowire-1")).first();
@@ -219,7 +219,7 @@ class ShortRegressionSuiteTest {
     @Test
     void dynamowireBasicReadWrite() {
         DynamoDbClient client = DynamoDbClient.builder()
-                .endpointOverride(URI.create("http://localhost:" + polywire.port("dynamowire")))
+                .endpointOverride(URI.create("http://localhost:" + warp.port("dynamowire")))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create("test-access-key", "test-secret-key")))
@@ -247,7 +247,7 @@ class ShortRegressionSuiteTest {
     @Test
     void sqswireBasicReadWrite() {
         SqsClient client = SqsClient.builder()
-                .endpointOverride(URI.create("http://localhost:" + polywire.port("sqswire")))
+                .endpointOverride(URI.create("http://localhost:" + warp.port("sqswire")))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create("test-access-key", "test-secret-key")))
@@ -263,7 +263,7 @@ class ShortRegressionSuiteTest {
 
     @Test
     void influxwireBasicReadWrite() {
-        try (InfluxDB client = InfluxDBFactory.connect("http://localhost:" + polywire.port("influxwire"))) {
+        try (InfluxDB client = InfluxDBFactory.connect("http://localhost:" + warp.port("influxwire"))) {
             String db = "regression_smoke";
             client.write(db, "autogen", Point.measurement("smoke")
                     .addField("val", 1L)
@@ -283,7 +283,7 @@ class ShortRegressionSuiteTest {
     @Test
     void boltwireBasicQuery() {
         try (Driver driver = GraphDatabase.driver(
-                "bolt://localhost:" + polywire.port("boltwire"), AuthTokens.basic(shard1.username(), shard1.password()));
+                "bolt://localhost:" + warp.port("boltwire"), AuthTokens.basic(shard1.username(), shard1.password()));
                 Session session = driver.session()) {
             var result = session.run("RETURN 'hello-from-boltwire' AS val");
             assertTrue(result.hasNext(), "boltwire: expected a row back from a real RUN/PULL round trip");
@@ -296,7 +296,7 @@ class ShortRegressionSuiteTest {
     @Test
     void rttCachedReadPlainReadAndWrite50Executions() throws SQLException {
         try (Connection conn = DriverManager.getConnection(
-                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+                "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
             // Warm the cache for rtt_cached -- one throwaway call, same methodology as
             // docs/PERFORMANCE.md's own §5.
             try (PreparedStatement ps = conn.prepareStatement("SELECT val FROM rtt_cached WHERE id = 1");
@@ -359,10 +359,10 @@ class ShortRegressionSuiteTest {
     @Test
     void federatedQueryOverTwoBackends() throws SQLException {
         try (Connection conn = DriverManager.getConnection(
-                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password());
+                "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", shard1.username(), shard1.password());
                 Statement st = conn.createStatement();
                 // No schema-qualifier prefix needed -- "orders" is declaratively sharded via
-                // POLYWIRE_TABLE_SHARDS, matched by its own bare name.
+                // WARP_TABLE_SHARDS, matched by its own bare name.
                 ResultSet rs = st.executeQuery("SELECT SUM(total) FROM orders")) {
             assertTrue(rs.next());
             assertEquals(60.0, rs.getDouble(1), 0.0001,
@@ -370,12 +370,12 @@ class ShortRegressionSuiteTest {
         }
     }
 
-    // --- 4. Memory cache (PolyCache) -- functional correctness of a real cache hit --------------
+    // --- 4. Memory cache (Mach) -- functional correctness of a real cache hit --------------
 
     @Test
     void memoryCacheServesACorrectRealHit() throws Exception {
         try (Connection conn = DriverManager.getConnection(
-                "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
+                "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", shard1.username(), shard1.password())) {
             String sql = "SELECT val FROM rtt_cached WHERE id = 1";
             String firstRead;
             try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
@@ -395,7 +395,7 @@ class ShortRegressionSuiteTest {
         // match" -- /api/metrics/summary's rttByOutcome breaks out real cache_hit calls
         // separately (see CacheStage#handleCacheableSelect).
         HttpClient http = HttpClient.newHttpClient();
-        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/metrics/summary"))
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/metrics/summary"))
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .timeout(Duration.ofSeconds(5))
                 .GET().build();

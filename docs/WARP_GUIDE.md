@@ -1,10 +1,10 @@
-# Polywire — Use Case & Deployment Guide
+# Warp — Use Case & Deployment Guide
 
 > **This is a technical/internal reference** for operators and contributors — pipeline internals,
-> security, HA, deployment. If you're an application team looking to connect to Polywire, start
+> security, HA, deployment. If you're an application team looking to connect to Warp, start
 > with [`USER_GUIDE.md`](USER_GUIDE.md) instead.
 
-Polywire is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
+Warp is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
 client/server protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol,
 DynamoDB's HTTP/JSON API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and
 routing every one of them to real Postgres backend(s). It's wire-protocol compatibility for a
@@ -14,7 +14,7 @@ pre- or post-migration cutover, not a schema/data migration tool itself.
 > backed by a live before/after benchmark against a real client library, documented in
 > [`PERFORMANCE.md`](PERFORMANCE.md) — not estimated.
 
-> **On screenshots**: Polywire is a headless gateway process — there's no UI to screenshot.
+> **On screenshots**: Warp is a headless gateway process — there's no UI to screenshot.
 > Its "surface" is protocol traffic and the admin/metrics HTTP endpoint (`:19090`); once you
 > have it running (see §4), I can capture the metrics endpoint's live output or a packet-level
 > trace if that's useful.
@@ -24,8 +24,8 @@ pre- or post-migration cutover, not a schema/data migration tool itself.
 ## 1. What question it answers
 
 **"Can my existing app, written against an Oracle/MySQL/SQL Server/MongoDB/DynamoDB driver,
-talk to Postgres without a rewrite?"** — yes: point the app's connection string at Polywire
-instead of its original database, and Polywire translates and routes to real Postgres.
+talk to Postgres without a rewrite?"** — yes: point the app's connection string at Warp
+instead of its original database, and Warp translates and routes to real Postgres.
 
 Run it indefinitely as a permanent compatibility shim (e.g. legacy MongoDB driver code that's
 not worth rewriting), or as a temporary cutover bridge while a migration tool moves schema/data
@@ -50,7 +50,7 @@ flowchart TB
         McpCli["MCP client\n(AI agent tools)"]
     end
 
-    subgraph Polywire["Polywire process — one shared pipeline"]
+    subgraph Warp["Warp process — one shared pipeline"]
         direction TB
         FE["Frontends\norawire:1521/2484 · mywire:3306\nmssqlwire:1433 · pgwire:5432\nmongowire:27017 · dynamowire:18000\nsqswire:9324 · gRPC:7070/17071 · MCP:18010"]
         FW["FirewallStage\n(policy from Postgres)"]
@@ -64,7 +64,7 @@ flowchart TB
     end
 
     Ign[("Embedded Ignite\ndistributed cache\nSQL result / GetItem / find")]
-    Cfg[("polywire_config /\npolywire_firewall_rules\n(control-plane Postgres)")]
+    Cfg[("warp_config /\nwarp_firewall_rules\n(control-plane Postgres)")]
     PG1[("Postgres shard 1")]
     PG2[("Postgres shard 2 / N")]
 
@@ -82,12 +82,12 @@ flowchart TB
   a SQL `Statement` (there's no dialect to translate), so they feed the shared metrics collector
   directly at their own single dispatch choke point instead — same dashboard, same `/api/metrics/
   summary`, different entry point. See §9 for the caching layer and §10 for what gets measured.
-- **Config lives in Postgres, not just env vars**: `polywire_config` (versioned, insert-only)
-  and `polywire_firewall_rules` (mutable, DBA-managed) are real tables in a designated
-  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running Polywire process
+- **Config lives in Postgres, not just env vars**: `warp_config` (versioned, insert-only)
+  and `warp_firewall_rules` (mutable, DBA-managed) are real tables in a designated
+  "config-primary" Postgres. `LISTEN/NOTIFY` pushes changes to every running Warp process
   within milliseconds — no restart to change a firewall rule or add a backend.
-- **Config-primary vs. data plane**: the `POLYWIRE_*` env vars point at the single Postgres
-  that holds control-plane tables. `POLYWIRE_BACKENDS` / `POLYWIRE_SHARD_BACKENDS` are the
+- **Config-primary vs. data plane**: the `WARP_*` env vars point at the single Postgres
+  that holds control-plane tables. `WARP_BACKENDS` / `WARP_SHARD_BACKENDS` are the
   separate, explicitly-registered data-plane shard targets actual queries are routed to — the
   config-primary is never automatically one of the shards.
 
@@ -116,46 +116,46 @@ MCP, admin/metrics HTTP):
 - Rule grammar: `allow <ip-or-cidr>` / `deny <ip-or-cidr>`, one per line/`;`-separated entry —
   e.g. `allow 10.0.0.0/8; allow 192.168.1.50; deny 0.0.0.0/0` (allow the private ranges you
   name, deny everything else).
-- Sourced from **either** the env var (`POLYWIRE_ACL_RULES`) **or** `polywire_config.aclRules`
+- Sourced from **either** the env var (`WARP_ACL_RULES`) **or** `warp_config.aclRules`
   — same dual-source convention as every other setting; the DB-stored version hot-reloads via
   `LISTEN/NOTIFY` with zero restart.
 - Default (unset) is fully open — no behavior change until you opt in.
 - A rejected connection is dropped immediately, before it reaches the firewall/router stages,
-  and logged with the offending IP — visible in Polywire's own logs for audit.
+  and logged with the offending IP — visible in Warp's own logs for audit.
 
 **PPv2 (PROXY protocol v2) / `X-Forwarded-For`** — solves the problem that, once you put a
-load balancer or connection pooler in front of Polywire, every connection's raw TCP peer IP
+load balancer or connection pooler in front of Warp, every connection's raw TCP peer IP
 *is the load balancer*, not the real client — so a naive ACL would only ever see one IP.
 
-- `POLYWIRE_ACL_PPV2_ENABLED` (or `polywire_config.aclPpv2Enabled`) turns on parsing of the
+- `WARP_ACL_PPV2_ENABLED` (or `warp_config.aclPpv2Enabled`) turns on parsing of the
   PPv2 header (binary, used by TCP-level proxies — HAProxy, many cloud NLBs) or the
   `X-Forwarded-For` HTTP header (for the HTTP-based frontends) to recover the real client IP.
-- **Trust is opt-in per proxy, not global**: `POLYWIRE_ACL_TRUSTED_PROXIES` (or
-  `polywire_config.aclTrustedProxies`) is a separate IP/CIDR list — the forwarded-IP header is
+- **Trust is opt-in per proxy, not global**: `WARP_ACL_TRUSTED_PROXIES` (or
+  `warp_config.aclTrustedProxies`) is a separate IP/CIDR list — the forwarded-IP header is
   only honored when the *direct* TCP peer is itself in this list. Without this check, any
   client could simply forge its own `X-Forwarded-For` header and impersonate an allowlisted IP
   — this is the exact spoofing vector the trusted-proxy check exists to close.
-- Typical setup: `POLYWIRE_ACL_TRUSTED_PROXIES=10.0.0.0/24` (your load balancer's subnet),
-  `POLYWIRE_ACL_RULES=allow 203.0.113.0/24` (the actual office/VPN range you want to allow) —
-  Polywire then correctly evaluates the ACL against the client's real IP even though every
+- Typical setup: `WARP_ACL_TRUSTED_PROXIES=10.0.0.0/24` (your load balancer's subnet),
+  `WARP_ACL_RULES=allow 203.0.113.0/24` (the actual office/VPN range you want to allow) —
+  Warp then correctly evaluates the ACL against the client's real IP even though every
   packet physically arrives from the load balancer.
 
 ### 3.2 Backend-poisoning protection
 
-Because `POLYWIRE_BACKENDS` can be set via the DB-writable `polywire_config` table, anyone
+Because `WARP_BACKENDS` can be set via the DB-writable `warp_config` table, anyone
 with write access to that table could otherwise register an arbitrary host and have real
 client traffic silently routed to it (a config-driven SSRF). `TrustedBackendHosts`
-(`POLYWIRE_TRUSTED_BACKEND_HOSTS`) closes this:
+(`WARP_TRUSTED_BACKEND_HOSTS`) closes this:
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 flowchart TB
-    Cfg["polywire_config.backends\n(DB-writable)"] --> Check{"Host in\nPOLYWIRE_TRUSTED_BACKEND_HOSTS?\n(env var only)"}
+    Cfg["warp_config.backends\n(DB-writable)"] --> Check{"Host in\nWARP_TRUSTED_BACKEND_HOSTS?\n(env var only)"}
     Check -->|yes| Register["Registered — routable"]
     Check -->|no| Reject["Refused, logged,\nrest of config unaffected"]
 ```
 
-Deliberately **env-var only, never itself in `polywire_config`** — if the allowlist lived in
+Deliberately **env-var only, never itself in `warp_config`** — if the allowlist lived in
 the same DB-writable surface it gates, the protection would be circular. Entries accept IPs,
 CIDR blocks, or literal hostnames (docker-compose service names, internal DNS).
 
@@ -164,7 +164,7 @@ CIDR blocks, or literal hostnames (docker-compose service names, internal DNS).
 Runs as its own pipeline stage (`FirewallStage`), first in line — every statement on every
 frontend is checked before routing, translation, or execution. Rules live in a real,
 DBA-managed Postgres table, **not** an env var or app config file, so a DBA can change policy
-with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no Polywire redeploy.
+with an `UPDATE`/`INSERT` statement and see it apply in milliseconds, no Warp redeploy.
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -173,10 +173,10 @@ flowchart LR
     Match -->|first ALLOW match| Pass["Forwarded to\nRouterStage"]
     Match -->|first DENY match| Block["Rejected —\nprotocol-native error\nreturned to client"]
     Match -->|no rule matches| Default["Fail open or closed\n(deployment choice)"]
-    DBA["DBA: INSERT/UPDATE\npolywire_firewall_rules"] -.LISTEN/NOTIFY,\nno restart.-> Match
+    DBA["DBA: INSERT/UPDATE\nwarp_firewall_rules"] -.LISTEN/NOTIFY,\nno restart.-> Match
 ```
 
-**Table schema** (`polywire_firewall_rules`, auto-created, own `LISTEN/NOTIFY` trigger):
+**Table schema** (`warp_firewall_rules`, auto-created, own `LISTEN/NOTIFY` trigger):
 
 | column | meaning |
 |---|---|
@@ -200,13 +200,13 @@ flowchart LR
 
 **Config surface** — configured, like every other feature, from **either**:
 
-- a plain SQL `INSERT INTO polywire_firewall_rules (...)` (the intended day-to-day DBA path —
+- a plain SQL `INSERT INTO warp_firewall_rules (...)` (the intended day-to-day DBA path —
   no application deploy involved at all), or
-- the equivalent Postgres stored procedure Polywire ships (wraps the same insert/update with
+- the equivalent Postgres stored procedure Warp ships (wraps the same insert/update with
   validation), for teams that prefer calling a procedure over hand-writing DML.
 
-Changes are pushed to every running Polywire process instantly via the table's `NOTIFY`
-trigger — matches the same hot-reload mechanism used by `polywire_config`, `ClientAcl`, and
+Changes are pushed to every running Warp process instantly via the table's `NOTIFY`
+trigger — matches the same hot-reload mechanism used by `warp_config`, `ClientAcl`, and
 `TrustedBackendHosts`.
 
 ### 3.4 Authentication
@@ -230,7 +230,7 @@ flowchart LR
 
 - OAuth2/OIDC bearer-token validation for every HTTP-based frontend (gRPC, MCP, admin API),
   with configurable claim mapping (`sub` → user id, custom claim → roles).
-- AWS Signature v4 verification for `dynamowire`, opt-in via `POLYWIRE_AWS_IAM_CREDENTIALS`.
+- AWS Signature v4 verification for `dynamowire`, opt-in via `WARP_AWS_IAM_CREDENTIALS`.
 - TCP wire-protocol frontends (Oracle/MySQL/SQL Server/Postgres) authenticate with the
   client driver's own native password exchange, passed through to the real Postgres backend.
 
@@ -249,7 +249,7 @@ flowchart LR
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 sequenceDiagram
-    participant PW as Polywire process
+    participant PW as Warp process
     participant P as Primary Postgres
     participant S as Standby Postgres
 
@@ -260,7 +260,7 @@ sequenceDiagram
     P--xPW: connection refused
     PW->>S: failover — retry on standby
     S-->>PW: result
-    Note over PW: onStandby=true, background probe\nchecks primary every POLYWIRE_FAILBACK_CHECK_SECONDS
+    Note over PW: onStandby=true, background probe\nchecks primary every WARP_FAILBACK_CHECK_SECONDS
     loop every N seconds
         PW->>P: probe
     end
@@ -269,18 +269,18 @@ sequenceDiagram
     Note over PW: onStandby=false — failback,\nnew queries go to primary again
 ```
 
-- Configured via `POLYWIRE_STANDBY_HOST`/`POLYWIRE_STANDBY_PORT`. Applies to both the
-  control-plane connection (`polywire_config`/firewall rules) and, via `BackendTarget`'s
+- Configured via `WARP_STANDBY_HOST`/`WARP_STANDBY_PORT`. Applies to both the
+  control-plane connection (`warp_config`/firewall rules) and, via `BackendTarget`'s
   `failoverOptions`, the actual query-execution path for the synthetic default backend.
-- Explicitly-named shard backends (`POLYWIRE_BACKENDS`) do **not** get automatic failover — a
+- Explicitly-named shard backends (`WARP_BACKENDS`) do **not** get automatic failover — a
   named shard isn't presumed to be a replica pair of another named shard; pair them yourself
   at the infrastructure layer (e.g. a PgBouncer/HAProxy VIP per shard) if needed.
-- Failback is automatic, probed in the background (`POLYWIRE_FAILBACK_CHECK_SECONDS`, default
+- Failback is automatic, probed in the background (`WARP_FAILBACK_CHECK_SECONDS`, default
   10s) — no manual intervention once the primary recovers.
 
 ### 4.2 Sharding / scatter-gather
 
-`POLYWIRE_SHARD_BACKENDS` names a subset of the registered backends as a shard group;
+`WARP_SHARD_BACKENDS` names a subset of the registered backends as a shard group;
 `RoutingBackendExecutor` fans a matching query out to all of them and merges results — useful
 for read-side aggregate queries across horizontally-partitioned Postgres backends.
 
@@ -292,12 +292,12 @@ spans two different shards (never found on either shard alone, and no error rais
 federation engines close this gap by actually planning and executing the `JOIN`, not
 broadcast-and-merge:
 
-- **`ShardJoinExecutor`** — Polywire's own homogeneous horizontal sharding (the SAME logical
-  table split by row across every shard in a `POLYWIRE_SHARD_BACKENDS` group). Mounts each
+- **`ShardJoinExecutor`** — Warp's own homogeneous horizontal sharding (the SAME logical
+  table split by row across every shard in a `WARP_SHARD_BACKENDS` group). Mounts each
   distinct `schema.table` reference in the query as a real `UNION ALL` across every shard's own
   copy, then hands the rewritten query to a real Calcite planner.
-- **`SchemaFederationStage`** — Polywire's own heterogeneous vertical/functional sharding
-  (`POLYWIRE_ROUTER_SCHEMA_RULES` routing a whole table's traffic to one named backend, e.g. every
+- **`SchemaFederationStage`** — Warp's own heterogeneous vertical/functional sharding
+  (`WARP_ROUTER_SCHEMA_RULES` routing a whole table's traffic to one named backend, e.g. every
   `orders_db.orders` query to backend `orders`). Runs *before* `RouterStage` in the pipeline —
   federating across backends has to happen before routing narrows a statement to one target. Each
   matching backend is mounted directly as its own Calcite schema.
@@ -310,9 +310,9 @@ mounted table is wrapped so Calcite's own join-order cost model sees a real row-
 (Postgres's own `pg_class.reltuples`, the same number the Postgres planner itself already uses —
 a single fast catalog lookup, not a `COUNT(*)` scan) instead of `Statistics.UNKNOWN`.
 `StatisticsScheduler` proactively refreshes it in the background
-(`POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES`); a cold cache still gets a real number via an
+(`WARP_STATS_REFRESH_INTERVAL_MINUTES`); a cold cache still gets a real number via an
 on-demand probe on the first federated query after startup. TTL-bounded
-(`POLYWIRE_STATS_TTL_MS`, default 24h) — a stale statistic degrades the cost estimate, never the
+(`WARP_STATS_TTL_MS`, default 24h) — a stale statistic degrades the cost estimate, never the
 correctness of the result.
 
 **Real semi-join pushdown.** Checked first whether Calcite already does this given real
@@ -322,7 +322,7 @@ semi-join rules can't apply to a federated join either (`JdbcJoinRule` only push
 when both sides already share one `JdbcConvention` — never true across two different mounted
 backends). `SemiJoinPushdown` closes the gap with a real, exact filter instead: when a query is a
 single, unambiguous equi-join between exactly two known table references, it collects the
-smaller (build) side's real distinct join-key values (capped, `POLYWIRE_SEMIJOIN_MAX_KEYS`,
+smaller (build) side's real distinct join-key values (capped, `WARP_SEMIJOIN_MAX_KEYS`,
 default 20,000) and pushes them down as a real `col IN (...)` predicate on the larger (probe)
 side, before that side's own leaf query ever runs. Live-verified against two real Postgres
 backends (10-row `customers`, 200,000-row `orders`, ~19,000 actually matching): the larger side's
@@ -332,7 +332,7 @@ conservative: no confident stats for both sides, an ambiguous `ON` clause, or ei
 reference appearing more than once in the statement (rules out self-joins) all just skip the
 optimization — the real join still runs, only without the extra filter, never a wrong answer.
 
-**Real SQL plan cache/history** (`SqlPlanStore`, `POLYWIRE_FEDERATION_PLAN_HISTORY=<capacity>` to
+**Real SQL plan cache/history** (`SqlPlanStore`, `WARP_FEDERATION_PLAN_HISTORY=<capacity>` to
 enable) — a `V$SQL_PLAN`-style record of every federated query's own real `EXPLAIN PLAN FOR` text,
 timing, row count, and success/failure, visible in the admin UI (§11). Per-leaf-scan profiling
 (`LeafScanProfiler`) goes further than `EXPLAIN PLAN FOR` (which only ever reports the planner's
@@ -340,8 +340,8 @@ own pre-execution ESTIMATE): it re-executes each leaf's own pushed-down SQL sepa
 wall-clock timing and a real row count from actually iterating the result — the same honest
 tradeoff a DBA manually running `EXPLAIN ANALYZE` on a suspect subquery makes.
 
-**Cluster-shared, not just per-instance.** When Polywire's embedded Ignite cluster is genuinely
-multi-instance (`POLYWIRE_CLUSTER_ENABLED=true`, not just the default single-node cache-only
+**Cluster-shared, not just per-instance.** When Warp's embedded Ignite cluster is genuinely
+multi-instance (`WARP_CLUSTER_ENABLED=true`, not just the default single-node cache-only
 grid), both `StatisticsStore` and `SqlPlanStore` switch to an Ignite-backed shared cache instead
 of a local `ConcurrentHashMap` — every instance sees the SAME row-count statistics and the SAME
 federated-query plan history, regardless of which instance actually ran each query. Live-verified
@@ -354,15 +354,15 @@ own row-filter/column-mask SQL rewriting, run earlier in the pipeline, is the on
 and a statement referencing more than 2 federated backends in one query falls straight through to
 scatter-gather's own broadcast-and-merge behavior, unfiltered.
 
-**Real, declarative per-table sharding (`POLYWIRE_TABLE_SHARDS`).** Everything above (`ShardRule`)
+**Real, declarative per-table sharding (`WARP_TABLE_SHARDS`).** Everything above (`ShardRule`)
 needs a client to type a schema-qualifier prefix like `public.` in every query just to opt a
 statement into scatter-gather — a real footgun (a client that queries `orders` unqualified, which
 is completely normal, silently misses sharding and only ever sees one shard's own data) and not
 how a table's own partitioning should actually work: it should be transparent, keyed by the
 table's own bare name, with the query planner picking the fastest real path on its own.
-`POLYWIRE_TABLE_SHARDS` is that: one declaration per table, `table:strategy:column:params`
+`WARP_TABLE_SHARDS` is that: one declaration per table, `table:strategy:column:params`
 (`|`-delimited between tables), reusing `ShardingStrategy` (hash/consistent/list/range/date, the
-same real strategies `POLYWIRE_ROUTER_VALUE_SHARD_RULES` already has) —
+same real strategies `WARP_ROUTER_VALUE_SHARD_RULES` already has) —
 `orders:hash:customer_id:shard1,shard2,shard3`. The table's own bare name is matched directly (no
 qualifier needed anywhere), and the router picks the real fastest path per statement:
 
@@ -378,18 +378,18 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   be a different subset of backends than any OTHER declaratively-sharded table uses, unlike
   `ShardRule`'s one shared `registry.shardGroup()`.
 
-`POLYWIRE_ROUTER_SHARD_TABLES`/`POLYWIRE_ROUTER_VALUE_SHARD_RULES` keep working unchanged for
+`WARP_ROUTER_SHARD_TABLES`/`WARP_ROUTER_VALUE_SHARD_RULES` keep working unchanged for
 anyone not migrating — this is additive, not a replacement. Real vertical/functional sharding
 (a whole table routed to one specific backend, no partitioning) is unaffected too; that's still
-`POLYWIRE_ROUTER_SCHEMA_RULES` (§4.3's own `SchemaFederationStage`), a real, already-correctly-
+`WARP_ROUTER_SCHEMA_RULES` (§4.3's own `SchemaFederationStage`), a real, already-correctly-
 scoped mechanism this doesn't duplicate.
 
 ### 4.4 Multiple backend engines (top-5-by-DB-Engines-ranking, alongside Postgres)
 
-Polywire used to be Postgres-only end to end, by explicit design (`BackendRegistry`/
+Warp used to be Postgres-only end to end, by explicit design (`BackendRegistry`/
 `BackendConnectionPools`/`BackendTarget` all assumed it). **Oracle, SQL Server, and MySQL/MariaDB
 are now real second/third/fourth backend engines** — not just something orawire's/mssqlwire's/
-mywire's own wire-protocol frontends decode against, but real `POLYWIRE_BACKENDS` targets Polywire
+mywire's own wire-protocol frontends decode against, but real `WARP_BACKENDS` targets Warp
 connects to, routes plain SQL to (read AND write), federates `JOIN`s against (§4.3), and
 coordinates real `XAResource`-based 2PC transactions with (Oracle and SQL Server; MySQL's own
 driver has no support for the 2PC path specifically — see below).
@@ -429,12 +429,12 @@ along the way — this project's own established discipline, not a claim taken o
      `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` the same way the existing `renderOracle` handles
      `LIMIT n` → `FETCH FIRST n ROWS ONLY`.
   5. A JDBC URL containing a literal `;` (SQL Server's own property separator, e.g.
-     `;databaseName=x;encrypt=false`) collided with `POLYWIRE_BACKENDS`' own `;`-delimited entry
+     `;databaseName=x;encrypt=false`) collided with `WARP_BACKENDS`' own `;`-delimited entry
      separator — silently truncated the URL. The existing `%3B` escape (already documented for
      this exact reason) fixes it; a real, easy-to-hit config trap for any semicolon-bearing JDBC
      URL, not SQL-Server-specific.
   6. `TrustedBackendHosts.isTrusted()` only ever recognized `jdbc:postgresql:` URLs — with
-     `POLYWIRE_TRUSTED_BACKEND_HOSTS` enabled, every other real engine's own URL shape returned
+     `WARP_TRUSTED_BACKEND_HOSTS` enabled, every other real engine's own URL shape returned
      "not trusted" (silent, full refusal), defeating the whole feature for a non-Postgres backend.
      Extended to recognize Oracle's `thin:@//host:port` shape and the plain `host:port`-style URLs
      SQL Server/MySQL/MariaDB use.
@@ -455,7 +455,7 @@ along the way — this project's own established discipline, not a claim taken o
   reduced-feature SQL Server variant on Linux, with no native MSDTC service — may not support at
   all; a real, disclosed gap, not assumed away.
 - Real, standard operational prerequisites had to be met before Postgres/Oracle 2PC worked at all
-  (neither is a Polywire bug): Postgres's own `max_prepared_transactions` defaults to 0 (2PC is
+  (neither is a Warp bug): Postgres's own `max_prepared_transactions` defaults to 0 (2PC is
   off until an operator raises it), and Oracle requires an operator grant on
   `DBA_2PC_PENDING`/`PENDING_TRANS$`/`DBMS_SYSTEM` before any schema can participate in a
   distributed transaction at all — undocumented anywhere in this project until now, worth calling
@@ -498,12 +498,12 @@ dispatch (`DdlTemplates.engineDirFor`) picks the right file from a `BackendTarge
 the same real dispatch shape §4.4's `BackendDriverRegistry` already uses for driver classes.
 
 **Only two of the four can even reach a non-default backend today.** `PgItemStore` (dynamowire)
-and `PgQueueStore` (sqswire) both support real shard routing (`POLYWIRE_SHARD_BACKENDS` — hashing
+and `PgQueueStore` (sqswire) both support real shard routing (`WARP_SHARD_BACKENDS` — hashing
 by DynamoDB partition key / SQS queue name, same as real DynamoDB/SQS partitioning), so a shard
 group member CAN be an Oracle/SQL Server/MySQL backend. `PgTimeSeriesStore` (influxwire) and
 `PgGraphStore` (boltwire) only ever call `backendRegistry.resolveForRouting(DEFAULT_BACKEND_NAME)`
-— no sharding at all — and the default backend doubles as Polywire's own control-plane connection
-(`polywire_config`, `polywire_firewall_rules`, `LISTEN/NOTIFY`), which has to stay Postgres. Adding
+— no sharding at all — and the default backend doubles as Warp's own control-plane connection
+(`warp_config`, `warp_firewall_rules`, `LISTEN/NOTIFY`), which has to stay Postgres. Adding
 real shard routing to these two is a real, scoped, not-yet-started follow-up — until then, their
 own storage is Postgres-only regardless of what other backends are configured.
 
@@ -513,9 +513,9 @@ solves what it's actually solved, not by engine-level vibes:
 
 | Store | Protocol | Can target a non-default backend | Table DDL | Query logic (INSERT/SELECT/UPDATE) |
 |---|---|---|---|---|
-| `PgItemStore` | dynamowire | Yes (`POLYWIRE_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified (`CreateTable` actually succeeds against real Oracle/SQL Server/MySQL instances) | Postgres-only (`ON CONFLICT`, `::jsonb` casts — a real, live-confirmed failure on MySQL: `PutItem` still fails past `CreateTable`) |
+| `PgItemStore` | dynamowire | Yes (`WARP_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified (`CreateTable` actually succeeds against real Oracle/SQL Server/MySQL instances) | Postgres-only (`ON CONFLICT`, `::jsonb` casts — a real, live-confirmed failure on MySQL: `PutItem` still fails past `CreateTable`) |
 | `PgTimeSeriesStore` | influxwire | No (default-backend only) | Real DDL exists for all 4 engines (each engine's own `CREATE TABLE ddl/<engine>/influxwire_measurement_table.sql`, live-verified directly against real Oracle/SQL Server/MySQL) but unreachable in practice until shard routing is added | Postgres-only (`->`/`->>` jsonb operators, `date_bin()`) |
-| `PgQueueStore` | sqswire | Yes (`POLYWIRE_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified | **Real query support for all 4 engines**, live-verified end to end — CreateQueue, SendMessage, ReceiveMessage (including FIFO group-exclusion and dedup), DeleteMessage, ChangeMessageVisibility, GetQueueAttributes, DeleteQueue, against real Oracle/SQL Server/MySQL instances |
+| `PgQueueStore` | sqswire | Yes (`WARP_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified | **Real query support for all 4 engines**, live-verified end to end — CreateQueue, SendMessage, ReceiveMessage (including FIFO group-exclusion and dedup), DeleteMessage, ChangeMessageVisibility, GetQueueAttributes, DeleteQueue, against real Oracle/SQL Server/MySQL instances |
 | `PgGraphStore` | Bolt/Cypher graph frontend | No (default-backend only) | Postgres-only — the `labels TEXT[]` array column has no cross-engine equivalent at all; a real port needs a schema redesign (JSON array column or a normalized join table), not a syntax swap | Postgres-only |
 
 **Real bug found and fixed along the way**: `PgItemStore.createTable()` used to write its own
@@ -590,13 +590,13 @@ Postgres itself gets without the extension.
 
 ### 4.6 Multi-AZ distributed cache
 
-The distributed cache (Ignite, `com.nexagres.wire.cluster.PolywireCluster`) is cloud-native and
-AZ-aware: cluster discovery via `POLYWIRE_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
-static IP list), a configurable backup count (`POLYWIRE_CLUSTER_CACHE_BACKUPS`, default 1) whose
+The distributed cache (Ignite, `com.nexagres.wire.cluster.WarpCluster`) is cloud-native and
+AZ-aware: cluster discovery via `WARP_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
+static IP list), a configurable backup count (`WARP_CLUSTER_CACHE_BACKUPS`, default 1) whose
 placement is AZ-aware — a cache entry's backup never lands on a node in the same
-`POLYWIRE_AVAILABILITY_ZONE` as its primary, live-proven by
-`PolywireClusterAzBackupPlacementTest` (three real Ignite nodes, not a simulation) — and TLS
-between cache nodes via `POLYWIRE_TLS_KEYSTORE`, live-verified both positive (two nodes on the
+`WARP_AVAILABILITY_ZONE` as its primary, live-proven by
+`WarpClusterAzBackupPlacementTest` (three real Ignite nodes, not a simulation) — and TLS
+between cache nodes via `WARP_TLS_KEYSTORE`, live-verified both positive (two nodes on the
 same keystore form one cluster) and negative (a third node on a different keystore fails the
 handshake and never joins).
 
@@ -617,7 +617,7 @@ docker compose -f docker/polywire/docker-compose.yml up --build
 
 Run from the **repo root** — the build context is the repo root even though the Dockerfile
 lives under `docker/polywire/` (see `docker/polywire/README.md` for why). Bring your own
-Postgres, or point `POLYWIRE_*` at one running elsewhere — no cloud account, no Kubernetes
+Postgres, or point `WARP_*` at one running elsewhere — no cloud account, no Kubernetes
 required for a full local smoke test.
 
 For iterative Java development without Docker:
@@ -637,10 +637,10 @@ flowchart TB
         L1["TCP LB\n(orawire/mywire/mssqlwire/pgwire/mongowire\nports — protocol-aware health checks)"]
         L2["HTTP(S) LB\n(dynamowire / gRPC / MCP / admin)"]
     end
-    subgraph Cluster["Polywire replica set\n(stateless — safe to scale horizontally)"]
-        N1["Polywire pod 1"]
-        N2["Polywire pod 2"]
-        N3["Polywire pod N"]
+    subgraph Cluster["Warp replica set\n(stateless — safe to scale horizontally)"]
+        N1["Warp pod 1"]
+        N2["Warp pod 2"]
+        N3["Warp pod N"]
     end
     subgraph DataPlane["Data plane"]
         Primary[("Config-primary Postgres\n+ standby")]
@@ -658,20 +658,20 @@ flowchart TB
     N1 & N2 & N3 -.sig verify.-> IAM
 ```
 
-- **Polywire itself is stateless** — every pod reads its live config from the same
+- **Warp itself is stateless** — every pod reads its live config from the same
   config-primary Postgres via `LISTEN/NOTIFY`, so horizontal scaling is just "add more pods
-  pointed at the same `POLYWIRE_*`." No sticky sessions needed at the LB beyond normal TCP
+  pointed at the same `WARP_*`." No sticky sessions needed at the LB beyond normal TCP
   connection affinity for the life of one client session.
-- **`POLYWIRE_TRUSTED_BACKEND_HOSTS`** must be set at deploy time (env var / secret /
+- **`WARP_TRUSTED_BACKEND_HOSTS`** must be set at deploy time (env var / secret /
   Kubernetes `NetworkPolicy`-equivalent) — this is infrastructure config, not something to put
   in application config management that developers can edit.
 - **Container image**: build with `docker/polywire/Dockerfile`, push to a registry (e.g.
   `ghcr.io` — see the repo root `.env.example` for the token fields needed), deploy via your
   platform's normal rolling update mechanism (ECS service, GKE/EKS Deployment, etc.).
-- **Secrets**: `POLYWIRE_PASSWORD`, `POLYWIRE_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
+- **Secrets**: `WARP_PASSWORD`, `WARP_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
   the registry token belong in your cloud's secret manager (Secrets Manager, Secret Manager,
   Key Vault) or a Kubernetes `Secret`, injected as env vars — never baked into the image.
-- **What's still cloud-*agnostic* by design**: Polywire has no hard dependency on any one
+- **What's still cloud-*agnostic* by design**: Warp has no hard dependency on any one
   cloud's networking primitives — it only needs TCP reachability to its Postgres backends and,
   optionally, an OIDC issuer and/or AWS IAM for auth. Cross-AZ cache placement (§4.3) is
   implemented and tested for all three; only live end-to-end verification against real cloud
@@ -727,19 +727,19 @@ Every frontend above feeds the same shared pipeline, in this order:
 | `QosControlStage` | Admission control — caps in-flight work per backend to protect it from overload |
 | `DialectTranslationStage` | Rewrites source-dialect SQL (Oracle/MySQL/T-SQL) into Postgres SQL |
 | `RollupStage` | Aggregates/merges results for scatter-gather (shard-group) queries |
-| `CacheStage` | Translation-result and read caching (`polywire_translation_cache`) |
+| `CacheStage` | Translation-result and read caching (`warp_translation_cache`) |
 | `StatsCollectorStage` | Per-statement metrics feeding the admin/metrics HTTP endpoint |
 
 ### 8.3 Security features
 
 | Feature | Config knob | Detail |
 |---|---|---|
-| ACL (IP/CIDR allow-deny) | `POLYWIRE_ACL_RULES` / `polywire_config.aclRules` | §3.1 |
-| PPv2 / X-Forwarded-For trusted-proxy resolution | `POLYWIRE_ACL_PPV2_ENABLED`, `POLYWIRE_ACL_TRUSTED_PROXIES` | §3.1 |
-| SQL Firewall | `polywire_firewall_rules` table | §3.3 |
-| Backend-poisoning allowlist | `POLYWIRE_TRUSTED_BACKEND_HOSTS` (env var only) | §3.2 |
-| OAuth2 / OIDC bearer auth | `POLYWIRE_OAUTH_ISSUER`, `POLYWIRE_OAUTH_AUDIENCE`, claim-mapping vars | §3.4 — Okta, EntraID, any standard OIDC issuer |
-| AWS SigV4 request verification | `POLYWIRE_AWS_IAM_CREDENTIALS` | §3.4 — for `dynamowire` |
+| ACL (IP/CIDR allow-deny) | `WARP_ACL_RULES` / `warp_config.aclRules` | §3.1 |
+| PPv2 / X-Forwarded-For trusted-proxy resolution | `WARP_ACL_PPV2_ENABLED`, `WARP_ACL_TRUSTED_PROXIES` | §3.1 |
+| SQL Firewall | `warp_firewall_rules` table | §3.3 |
+| Backend-poisoning allowlist | `WARP_TRUSTED_BACKEND_HOSTS` (env var only) | §3.2 |
+| OAuth2 / OIDC bearer auth | `WARP_OAUTH_ISSUER`, `WARP_OAUTH_AUDIENCE`, claim-mapping vars | §3.4 — Okta, EntraID, any standard OIDC issuer |
+| AWS SigV4 request verification | `WARP_AWS_IAM_CREDENTIALS` | §3.4 — for `dynamowire` |
 | Native driver password auth | n/a, always on | TCP frontends (Oracle/MySQL/SQL Server/Postgres) |
 | TLS listeners | shared keystore config | §3.5 — orawire TCPS, gRPC TLS |
 
@@ -747,26 +747,26 @@ Every frontend above feeds the same shared pipeline, in this order:
 
 | Feature | Detail |
 |---|---|
-| Dual config source | Every setting readable from an env var **or** `polywire_config` — pick per-deployment |
-| Hot reload | `LISTEN/NOTIFY` on `polywire_config_changed` and the firewall table's own trigger — no restart for any config change |
-| Config-primary designation | `POLYWIRE_*` names the one Postgres holding control-plane tables, separate from data-plane shard backends (§2) |
-| Config-primary HA failover | `POLYWIRE_STANDBY_HOST`/`_PORT`, automatic failover + failback probe (§4.1) |
-| Postgres stored-procedure config API | Wraps `polywire_config`/firewall inserts with validation, for teams that prefer calling a procedure over hand-writing DML |
-| Backend registry | `POLYWIRE_BACKENDS` — named additional Postgres targets beyond the implicit default |
-| Sharding / scatter-gather | `POLYWIRE_SHARD_BACKENDS` — fan a query to a named group, merge via `RollupStage` (§4.2) |
-| Cross-shard/cross-backend `JOIN` federation | Real Calcite planning + execution for a `JOIN` spanning shards or `POLYWIRE_ROUTER_SCHEMA_RULES` backends (§4.3) |
-| Federated-query statistics | `POLYWIRE_STATS_TTL_MS`, `POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES` — real row-count-driven cost-based join planning (§4.3) |
-| Semi-join pushdown | `POLYWIRE_SEMIJOIN_MAX_KEYS` — exact build-side-key filter pushed onto the larger side of a federated equi-join (§4.3) |
-| SQL plan cache/history | `POLYWIRE_FEDERATION_PLAN_HISTORY` — real `EXPLAIN PLAN FOR` + measured per-leaf timing/rows for every federated query (§4.3) |
-| Translation cache | `polywire_translation_cache` — avoids re-translating identical statements |
-| Failed-statement log | `polywire_failed_statements` — durable record of statements the pipeline rejected or errored on, for audit/debugging |
+| Dual config source | Every setting readable from an env var **or** `warp_config` — pick per-deployment |
+| Hot reload | `LISTEN/NOTIFY` on `warp_config_changed` and the firewall table's own trigger — no restart for any config change |
+| Config-primary designation | `WARP_*` names the one Postgres holding control-plane tables, separate from data-plane shard backends (§2) |
+| Config-primary HA failover | `WARP_STANDBY_HOST`/`_PORT`, automatic failover + failback probe (§4.1) |
+| Postgres stored-procedure config API | Wraps `warp_config`/firewall inserts with validation, for teams that prefer calling a procedure over hand-writing DML |
+| Backend registry | `WARP_BACKENDS` — named additional Postgres targets beyond the implicit default |
+| Sharding / scatter-gather | `WARP_SHARD_BACKENDS` — fan a query to a named group, merge via `RollupStage` (§4.2) |
+| Cross-shard/cross-backend `JOIN` federation | Real Calcite planning + execution for a `JOIN` spanning shards or `WARP_ROUTER_SCHEMA_RULES` backends (§4.3) |
+| Federated-query statistics | `WARP_STATS_TTL_MS`, `WARP_STATS_REFRESH_INTERVAL_MINUTES` — real row-count-driven cost-based join planning (§4.3) |
+| Semi-join pushdown | `WARP_SEMIJOIN_MAX_KEYS` — exact build-side-key filter pushed onto the larger side of a federated equi-join (§4.3) |
+| SQL plan cache/history | `WARP_FEDERATION_PLAN_HISTORY` — real `EXPLAIN PLAN FOR` + measured per-leaf timing/rows for every federated query (§4.3) |
+| Translation cache | `warp_translation_cache` — avoids re-translating identical statements |
+| Failed-statement log | `warp_failed_statements` — durable record of statements the pipeline rejected or errored on, for audit/debugging |
 
 ### 8.5 MCP (AI agent tool access)
 
 | Feature | Detail |
 |---|---|
 | Generic SQL tools | `execute_sql`, `list_tables`, `describe_table` exposed as MCP tools out of the box |
-| Registered stored-procedure tools | `POLYWIRE_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL |
+| Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL |
 | Automatic input-schema generation | Introspects each registered function's real Postgres parameter types and builds the matching JSON Schema (`PgFunctionIntrospector`, `PgTypeToJsonSchema`) |
 | OUT-parameter handling | OUT parameters are correctly excluded from the callable input schema |
 | JSON Streamable HTTP transport | Standard MCP transport, so any MCP-compatible AI client can connect without custom glue |
@@ -780,20 +780,20 @@ multi-AZ caveat) backs three independent caches, one per data shape:
 
 | Cache | Backs | Key | What it stores | Invalidated by |
 |---|---|---|---|---|
-| `CacheStage`'s result cache | SQL frontends (pgwire/mywire/mssqlwire/orawire/gRPC) | tenant + backend + normalized SQL + binds | full `ExecutionResult` (rows), via `ObjectOutputStream` | write statements matching `POLYWIRE_CACHE_TABLES` |
+| `CacheStage`'s result cache | SQL frontends (pgwire/mywire/mssqlwire/orawire/gRPC) | tenant + backend + normalized SQL + binds | full `ExecutionResult` (rows), via `ObjectOutputStream` | write statements matching `WARP_CACHE_TABLES` |
 | `DynamoCache` | dynamowire | table + partition/sort key | the item's JSON | `PutItem`/`DeleteItem`/`UpdateItem` on that key |
 | `MongoCache` | mongowire | db + collection + `_id` | the `Document` object directly | `updateMany`/`deleteMany` on that `_id` |
 
-- **Opt-in, not automatic**: `POLYWIRE_CACHE_TABLES` (SQL) is a table allowlist — nothing is
-  cached until named. `POLYWIRE_DYNAMOWIRE_CACHE_ENABLED`/`POLYWIRE_MONGOWIRE_CACHE_ENABLED`
+- **Opt-in, not automatic**: `WARP_CACHE_TABLES` (SQL) is a table allowlist — nothing is
+  cached until named. `WARP_DYNAMOWIRE_CACHE_ENABLED`/`WARP_MONGOWIRE_CACHE_ENABLED`
   default **on**, but only for exact-key lookups (`GetItem`, `find({_id: ...})`) — never a
   `Scan`/`Query`/filtered `find`, since those have no single cache key to invalidate correctly.
 - **`CacheStage` deliberately does *not* use a typed Ignite value** — tried it (to skip the
   manual `ObjectOutputStream` serialization below), and it crashed real requests: Ignite's
   reflective marshaller doesn't support Java `record` types (`ExecutionResult` is one). Reverted;
   see [`PERFORMANCE.md`](PERFORMANCE.md) §4 for the full story.
-- **TTL, not size-bounded**: each cache has a configurable TTL (`POLYWIRE_CACHE_TTL_MS` /
-  `POLYWIRE_DYNAMOWIRE_CACHE_TTL_MS` / `POLYWIRE_MONGOWIRE_CACHE_TTL_MS`, default 30s) rather
+- **TTL, not size-bounded**: each cache has a configurable TTL (`WARP_CACHE_TTL_MS` /
+  `WARP_DYNAMOWIRE_CACHE_TTL_MS` / `WARP_MONGOWIRE_CACHE_TTL_MS`, default 30s) rather
   than an LRU eviction policy.
 - **A cache hit bypasses `StatsCollectorStage`** for the SQL result cache specifically —
   `CacheStage` sits earlier in the pipeline and returns immediately on a hit, so SQL cache hits
@@ -829,27 +829,27 @@ instrumentation found (each with a live before/after benchmark) are in
 
 ## 11. Admin UI
 
-A React/TS/Vite app (`wire/web`) gives Polywire a real operator UI on top of the HTTP endpoints in
-§4.3/§8.3/§9/§10 — built with `npm run build` and served directly by Polywire's own admin HTTP
-server (`POLYWIRE_ADMIN_WEB_DIR` pointing at the built `dist/`, no separate process). An operator
-opens the admin URL, enters the `POLYWIRE_ADMIN_TOKEN` bearer token once, and the browser talks to
-Polywire's admin API directly — the token is kept only in that tab's own session storage, never
+A React/TS/Vite app (`wire/web`) gives Warp a real operator UI on top of the HTTP endpoints in
+§4.3/§8.3/§9/§10 — built with `npm run build` and served directly by Warp's own admin HTTP
+server (`WARP_ADMIN_WEB_DIR` pointing at the built `dist/`, no separate process). An operator
+opens the admin URL, enters the `WARP_ADMIN_TOKEN` bearer token once, and the browser talks to
+Warp's admin API directly — the token is kept only in that tab's own session storage, never
 sent anywhere else.
 
 | Page | Backs onto |
 |---|---|
 | Metrics | `/api/metrics/summary` — live traffic dashboard, top-SQL-by-cost, per-backend breakdown, Avg RTT (§10) |
 | Federation Plans | `/api/federation/plans` — real `EXPLAIN PLAN FOR` plus MEASURED per-leaf-scan timing/rows for every cross-shard/cross-backend `JOIN` (§4.3) |
-| SQL Firewall | `polywire_firewall_rules` CRUD (§3.3) |
-| ACL | `polywire_config.aclRules`/PPv2 settings (§3.1) |
+| SQL Firewall | `warp_firewall_rules` CRUD (§3.3) |
+| ACL | `warp_config.aclRules`/PPv2 settings (§3.1) |
 | OAuth | OIDC issuer/audience/claim-mapping config (§3.4) |
-| Backends | `POLYWIRE_BACKENDS`/shard-group config, plus a connectivity-test API (probe a candidate `jdbcUrl` before saving it, or re-check an already-configured one) |
+| Backends | `WARP_BACKENDS`/shard-group config, plus a connectivity-test API (probe a candidate `jdbcUrl` before saving it, or re-check an already-configured one) |
 | Queues | sqswire's queues — live depth (visible/in-flight), FIFO/DLQ attributes, resolved shard backend, delete action; polls every 5s |
 | Data Explorer | object browser + ad-hoc SQL console against any configured backend, bypassing the wire pipeline (firewall/ACL don't apply — gated the same way as every other admin route instead) |
 | Router rules | `RouterStage` schema/predicate/value-shard rules |
 | QoS | admission-control rate/burst/per-class limits |
 
-Every admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check.
+Every admin route is gated by the same `WARP_ADMIN_TOKEN` bearer check.
 
 ---
 
@@ -858,13 +858,13 @@ Every admin route is gated by the same `POLYWIRE_ADMIN_TOKEN` bearer check.
 | Scenario | Feature | Notes |
 |---|---|---|
 | Keep a legacy Oracle-driver app running against Postgres, permanently | orawire | No app rewrite; TNS/TTC + TCPS supported |
-| Join or 2PC-coordinate a transaction across Postgres AND a real Oracle/SQL Server/MySQL database | `POLYWIRE_BACKENDS` (non-Postgres target) + `SchemaFederationStage`/`XaBackendFactory` | Real Calcite `JOIN` federation for all three; real `XAResource`-based 2PC for Postgres+Oracle and Postgres+MySQL (SQL Server real but not live-verified — see §4.4) |
+| Join or 2PC-coordinate a transaction across Postgres AND a real Oracle/SQL Server/MySQL database | `WARP_BACKENDS` (non-Postgres target) + `SchemaFederationStage`/`XaBackendFactory` | Real Calcite `JOIN` federation for all three; real `XAResource`-based 2PC for Postgres+Oracle and Postgres+MySQL (SQL Server real but not live-verified — see §4.4) |
 | Cut over a MySQL-protocol app during a migration window | mywire | Temporary bridge, decommission after cutover |
-| Let an AI agent call vetted stored procedures as tools | MCP frontend | Only `POLYWIRE_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |
+| Let an AI agent call vetted stored procedures as tools | MCP frontend | Only `WARP_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |
 | Enforce "no bulk deletes from `orders`" org-wide, DBA-editable, no redeploy | SQL Firewall | Rule lives in Postgres, hot-reloaded |
 | Multi-region app needing Okta-based access control on a DynamoDB-protocol endpoint | dynamowire + OAuth | SigV4 or OIDC bearer, per deployment choice |
-| Horizontally shard reads across N Postgres backends | shard group + RouterStage | Scatter-gather via `POLYWIRE_SHARD_BACKENDS` |
+| Horizontally shard reads across N Postgres backends | shard group + RouterStage | Scatter-gather via `WARP_SHARD_BACKENDS` |
 | Run a correct `JOIN` across shards or functionally-separated backends | `ShardJoinExecutor` / `SchemaFederationStage` | Real Calcite planning, cost-based ordering, semi-join pushdown — not scatter-gather's own broadcast-and-merge (§4.3) |
 | Restrict which IPs/subnets can even open a connection | ACL + PPv2 | Trusted-proxy-aware, works behind a load balancer |
-| Stop config-table write access from becoming a routing-hijack vector | `POLYWIRE_TRUSTED_BACKEND_HOSTS` | Env-var-only allowlist, not itself DB-writable |
-| Try Polywire locally before committing to infrastructure | Docker Compose | See §5 |
+| Stop config-table write access from becoming a routing-hijack vector | `WARP_TRUSTED_BACKEND_HOSTS` | Env-var-only allowlist, not itself DB-writable |
+| Try Warp locally before committing to infrastructure | Docker Compose | See §5 |

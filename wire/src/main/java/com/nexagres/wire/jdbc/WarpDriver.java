@@ -13,13 +13,13 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class PolyWireDriver implements Driver {
+public final class WarpDriver implements Driver {
 
-    private static final Pattern URL_PATTERN = Pattern.compile("jdbc:polywire://([^:/]+):(\\d+)/([^?]*)(?:\\?(.*))?");
+    private static final Pattern URL_PATTERN = Pattern.compile("jdbc:warp://([^:/]+):(\\d+)/([^?]*)(?:\\?(.*))?");
 
     static {
         try {
-            DriverManager.registerDriver(new PolyWireDriver());
+            DriverManager.registerDriver(new WarpDriver());
         } catch (SQLException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -38,7 +38,7 @@ public final class PolyWireDriver implements Driver {
         String password = params.getProperty("password", "");
 
         ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
-        return PolyWireConnection.create(channel, username, password);
+        return WarpConnection.create(channel, username, password);
     }
 
     private static Properties mergeQueryParams(Properties info, String query) {
@@ -57,7 +57,7 @@ public final class PolyWireDriver implements Driver {
 
     @Override
     public boolean acceptsURL(String url) {
-        return url != null && url.startsWith("jdbc:polywire://");
+        return url != null && url.startsWith("jdbc:warp://");
     }
 
     @Override

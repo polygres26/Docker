@@ -3,7 +3,7 @@ package com.nexagres.wire.config;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public record PolyWireConfig(
+public record WarpConfig(
         String qosRatePerSec,
         String qosBurst,
         String qosMaxWaitMs,
@@ -32,35 +32,35 @@ public record PolyWireConfig(
         String llmBaseUrl,
         String llmModel) {
 
-    public static PolyWireConfig fromEnvDefaults() {
-        return new PolyWireConfig(
-                System.getenv().getOrDefault("POLYWIRE_QOS_RATE_PER_SEC", "5"),
-                System.getenv().getOrDefault("POLYWIRE_QOS_BURST", "5"),
-                System.getenv("POLYWIRE_QOS_MAX_WAIT_MS"),
-                System.getenv("POLYWIRE_QOS_CLASS_LIMITS"),
-                System.getenv("POLYWIRE_QOS_POOL_WAIT_THRESHOLD"),
-                System.getenv("POLYWIRE_CACHE_TABLES"),
-                System.getenv("POLYWIRE_CACHE_TTL_MS"),
-                System.getenv("POLYWIRE_BACKENDS"),
-                System.getenv("POLYWIRE_SHARD_BACKENDS"),
-                System.getenv("POLYWIRE_ROUTER_SCHEMA_RULES"),
-                System.getenv("POLYWIRE_ROUTER_PREDICATE_RULES"),
-                System.getenv("POLYWIRE_ROUTER_VALUE_SHARD_RULES"),
-                System.getenv("POLYWIRE_ROUTER_SHARD_TABLES"),
-                System.getenv("POLYWIRE_TABLE_SHARDS"),
+    public static WarpConfig fromEnvDefaults() {
+        return new WarpConfig(
+                System.getenv().getOrDefault("WARP_QOS_RATE_PER_SEC", "5"),
+                System.getenv().getOrDefault("WARP_QOS_BURST", "5"),
+                System.getenv("WARP_QOS_MAX_WAIT_MS"),
+                System.getenv("WARP_QOS_CLASS_LIMITS"),
+                System.getenv("WARP_QOS_POOL_WAIT_THRESHOLD"),
+                System.getenv("WARP_CACHE_TABLES"),
+                System.getenv("WARP_CACHE_TTL_MS"),
+                System.getenv("WARP_BACKENDS"),
+                System.getenv("WARP_SHARD_BACKENDS"),
+                System.getenv("WARP_ROUTER_SCHEMA_RULES"),
+                System.getenv("WARP_ROUTER_PREDICATE_RULES"),
+                System.getenv("WARP_ROUTER_VALUE_SHARD_RULES"),
+                System.getenv("WARP_ROUTER_SHARD_TABLES"),
+                System.getenv("WARP_TABLE_SHARDS"),
                 null,
-                System.getenv("POLYWIRE_ACL_RULES"),
-                System.getenv("POLYWIRE_ACL_PPV2_ENABLED"),
-                System.getenv("POLYWIRE_ACL_TRUSTED_PROXIES"),
-                System.getenv("POLYWIRE_OAUTH_ISSUER"),
-                System.getenv("POLYWIRE_OAUTH_AUDIENCE"),
-                System.getenv("POLYWIRE_OAUTH_USERID_CLAIM"),
-                System.getenv("POLYWIRE_OAUTH_ROLES_CLAIM"),
-                System.getenv("POLYWIRE_AWS_IAM_CREDENTIALS"),
-                System.getenv("POLYWIRE_LLM_PROVIDER"),
-                System.getenv("POLYWIRE_LLM_API_KEY"),
-                System.getenv("POLYWIRE_LLM_BASE_URL"),
-                System.getenv("POLYWIRE_LLM_MODEL"));
+                System.getenv("WARP_ACL_RULES"),
+                System.getenv("WARP_ACL_PPV2_ENABLED"),
+                System.getenv("WARP_ACL_TRUSTED_PROXIES"),
+                System.getenv("WARP_OAUTH_ISSUER"),
+                System.getenv("WARP_OAUTH_AUDIENCE"),
+                System.getenv("WARP_OAUTH_USERID_CLAIM"),
+                System.getenv("WARP_OAUTH_ROLES_CLAIM"),
+                System.getenv("WARP_AWS_IAM_CREDENTIALS"),
+                System.getenv("WARP_LLM_PROVIDER"),
+                System.getenv("WARP_LLM_API_KEY"),
+                System.getenv("WARP_LLM_BASE_URL"),
+                System.getenv("WARP_LLM_MODEL"));
     }
 
     public String toJson() {
@@ -106,9 +106,9 @@ public record PolyWireConfig(
         return json.append('}').toString();
     }
 
-    public static PolyWireConfig fromJson(String json) {
+    public static WarpConfig fromJson(String json) {
         Map<String, String> fields = parseFlatObject(json);
-        return new PolyWireConfig(
+        return new WarpConfig(
                 fields.get("qosRatePerSec"),
                 fields.get("qosBurst"),
                 fields.get("qosMaxWaitMs"),
@@ -166,7 +166,7 @@ public record PolyWireConfig(
         int i = json.indexOf('{');
         int end = json.lastIndexOf('}');
         if (i < 0 || end < 0) {
-            throw new IllegalArgumentException("polywire_config payload: not a JSON object: " + json);
+            throw new IllegalArgumentException("warp_config payload: not a JSON object: " + json);
         }
         i++;
         while (i < end) {
@@ -178,7 +178,7 @@ public record PolyWireConfig(
                 continue;
             }
             if (json.charAt(i) != '"') {
-                throw new IllegalArgumentException("polywire_config payload: expected a key at index " + i);
+                throw new IllegalArgumentException("warp_config payload: expected a key at index " + i);
             }
             int[] keyEnd = new int[1];
             String key = parseString(json, i, keyEnd);
@@ -195,7 +195,7 @@ public record PolyWireConfig(
                 value = parseString(json, i, valueEnd);
                 i = valueEnd[0];
             } else {
-                throw new IllegalArgumentException("polywire_config payload: expected a string or null value at index " + i);
+                throw new IllegalArgumentException("warp_config payload: expected a string or null value at index " + i);
             }
             result.put(key, value);
             while (i < end && Character.isWhitespace(json.charAt(i))) {

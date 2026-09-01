@@ -8,12 +8,12 @@ package com.nexagres.wire.secrets;
  * <pre>
  *   vault:secret/data/prod/postgres#password          -- HashiCorp Vault KV v2
  *   vault:secret/data/prod/postgres?field=db_password  -- same, explicit field name
- *   cyberark:AppID=PolyWire&Safe=DB-Secrets&Object=prod-postgres  -- CyberArk Central Credential Provider
+ *   cyberark:AppID=Warp&Safe=DB-Secrets&Object=prod-postgres  -- CyberArk Central Credential Provider
  * </pre>
  *
  * Resolved on every connection attempt (not cached across the process lifetime) so a rotated
  * secret in Vault/CyberArk takes effect on the next connect, not just on restart -- the same
- * reasoning as every other live-reloadable piece of PolyWire's config.
+ * reasoning as every other live-reloadable piece of Warp's config.
  */
 public sealed interface SecretRef {
 

@@ -10,7 +10,7 @@ import java.util.Properties;
 
 /**
  * "Does this actually connect" -- a one-shot, non-pooled probe used before a backend is ever
- * added to {@code polywire_config}, and to re-check ones already configured. Exists because
+ * added to {@code warp_config}, and to re-check ones already configured. Exists because
  * finding out a backend's host/port/credential is wrong only when a real client statement fails
  * to route is a bad way to find out -- see the back-and-forth it took to onboard a Supabase
  * project by hand (wrong host resolved to nothing, direct connection was IPv6-only and

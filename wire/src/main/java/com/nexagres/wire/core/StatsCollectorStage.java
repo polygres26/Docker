@@ -1,6 +1,6 @@
 package com.nexagres.wire.core;
 
-import com.nexagres.wire.telemetry.PolyWireTelemetry;
+import com.nexagres.wire.telemetry.WarpTelemetry;
 import java.sql.SQLException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
@@ -18,14 +18,14 @@ public final class StatsCollectorStage implements PipelineStage {
     }
 
     private final ConcurrentHashMap<String, Counters> byTenant = new ConcurrentHashMap<>();
-    private final PolyWireTelemetry telemetry;
+    private final WarpTelemetry telemetry;
     private final SqlMetricsCollector sqlMetrics;
 
     public StatsCollectorStage() {
         this(null);
     }
 
-    public StatsCollectorStage(PolyWireTelemetry telemetry) {
+    public StatsCollectorStage(WarpTelemetry telemetry) {
         this(telemetry, new SqlMetricsCollector());
     }
 
@@ -34,7 +34,7 @@ public final class StatsCollectorStage implements PipelineStage {
      *      feeds the same collector -- see that class's javadoc for why they can't go through
      *      this stage's own {@link #handle} the way the SQL protocols do.
      */
-    public StatsCollectorStage(PolyWireTelemetry telemetry, SqlMetricsCollector sqlMetrics) {
+    public StatsCollectorStage(WarpTelemetry telemetry, SqlMetricsCollector sqlMetrics) {
         this.telemetry = telemetry;
         this.sqlMetrics = sqlMetrics;
     }

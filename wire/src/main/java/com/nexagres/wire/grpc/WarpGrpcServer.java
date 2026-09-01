@@ -13,7 +13,7 @@ import java.security.GeneralSecurityException;
 import java.util.List;
 import javax.net.ssl.KeyManagerFactory;
 
-public final class PolyWireGrpcServer {
+public final class WarpGrpcServer {
 
     private final ServerOptions options;
     private final List<PipelineStage> sharedStages;
@@ -22,12 +22,12 @@ public final class PolyWireGrpcServer {
     private final Server server;
     private Server tlsServer;
 
-    public PolyWireGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
             com.nexagres.wire.core.BackendRegistry backendRegistry) {
         this(options, sharedStages, backendRegistry, com.nexagres.wire.acl.ConnectionGate.DISABLED);
     }
 
-    public PolyWireGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpGrpcServer(ServerOptions options, List<PipelineStage> sharedStages,
             com.nexagres.wire.core.BackendRegistry backendRegistry,
             com.nexagres.wire.acl.ConnectionGate connectionGate) {
         this.options = options;

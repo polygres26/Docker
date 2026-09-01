@@ -5,15 +5,15 @@ import io.grpc.ManagedChannel;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 
-final class PolyWireConnection {
+final class WarpConnection {
 
     static Connection create(ManagedChannel channel, String username, String password) {
         QueryServiceGrpc.QueryServiceBlockingStub stub = QueryServiceGrpc.newBlockingStub(channel);
         boolean[] autoCommit = {true};
 
         UnsupportedInvocationHandler handler = new UnsupportedInvocationHandler("Connection");
-        handler.on("prepareStatement", args -> PolyWireStatement.create(stub, username, password, (String) args[0]));
-        handler.on("createStatement", args -> PolyWireStatement.create(stub, username, password, null));
+        handler.on("prepareStatement", args -> WarpStatement.create(stub, username, password, (String) args[0]));
+        handler.on("createStatement", args -> WarpStatement.create(stub, username, password, null));
         handler.on("close", args -> {
             channel.shutdown();
             return null;
@@ -28,9 +28,9 @@ final class PolyWireConnection {
         handler.on("rollback", args -> null);
 
         return (Connection) Proxy.newProxyInstance(
-                PolyWireConnection.class.getClassLoader(), new Class<?>[] {Connection.class}, handler);
+                WarpConnection.class.getClassLoader(), new Class<?>[] {Connection.class}, handler);
     }
 
-    private PolyWireConnection() {
+    private WarpConnection() {
     }
 }

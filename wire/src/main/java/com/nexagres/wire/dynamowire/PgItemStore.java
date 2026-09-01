@@ -44,12 +44,12 @@ import java.util.regex.Pattern;
  * exactly one catalog row, always on {@code DEFAULT_BACKEND_NAME} regardless of shard group
  * membership (that name has to stay fixed and stable -- see {@link #currentCatalogBackendName}'s
  * javadoc for why using a shard-group member here broke DescribeTable the first time this was
- * tried). A deployment that shards needs {@code POLYWIRE_BACKENDS} to include a
+ * tried). A deployment that shards needs {@code WARP_BACKENDS} to include a
  * {@code default=...} entry alongside the shard backends for exactly this reason.
  *
  * <p><b>Live-reloadable:</b> the shard group is re-read from {@code backendRegistry} on every
- * call, not captured once at construction -- a {@code POLYWIRE_BACKENDS}/
- * {@code POLYWIRE_SHARD_BACKENDS} config change takes effect on this store's very next
+ * call, not captured once at construction -- a {@code WARP_BACKENDS}/
+ * {@code WARP_SHARD_BACKENDS} config change takes effect on this store's very next
  * operation, same as {@code RouterStage}'s SQL sharding. What it does NOT do is migrate data:
  * turning sharding on after a table already has rows leaves those rows on whatever backend they
  * were written to (the old single default, most likely) -- reads for those specific keys will
@@ -115,9 +115,9 @@ public final class PgItemStore {
      * The shard group is read fresh from {@code backendRegistry} on every call (see {@link
      * #currentShardGroup()}), not captured once here -- {@code backendRegistry} is the same
      * mutable, hot-reloaded instance {@code RouterStage} already reads live, so a
-     * POLYWIRE_BACKENDS/POLYWIRE_SHARD_BACKENDS config change takes effect on this store's very
+     * WARP_BACKENDS/WARP_SHARD_BACKENDS config change takes effect on this store's very
      * next operation, no process restart needed, matching how every other router-backed feature
-     * in PolyWire already reloads.
+     * in Warp already reloads.
      */
     public PgItemStore(BackendRegistry backendRegistry) {
         this.legacyDs = null;
@@ -149,11 +149,11 @@ public final class PgItemStore {
      * reconfigured. (Earlier this was {@code shardGroup.get(0)}, which broke DescribeTable for
      * every table created before sharding was turned on: the catalog "moved" to a shard backend
      * that had never seen that table's row.) A deployment that shards needs {@code
-     * POLYWIRE_BACKENDS} to keep a {@code default=...} entry alongside the shard backends for
+     * WARP_BACKENDS} to keep a {@code default=...} entry alongside the shard backends for
      * exactly this reason -- but if an operator forgets that and {@code default} isn't
      * registered, falling back to the first shard-group member (the old behavior) and logging a
      * warning is far better than what this did the first time: an unhandled
-     * {@code IllegalStateException} out of the constructor that took the entire PolyWire process
+     * {@code IllegalStateException} out of the constructor that took the entire Warp process
      * down at startup, every wire protocol included, over a dynamowire-only config detail.
      */
     private String currentCatalogBackendName() {
@@ -164,7 +164,7 @@ public final class PgItemStore {
         if (!group.isEmpty()) {
             log.warn("dynamowire: \"{}\" is not a configured backend -- falling back to \"{}\" (the first "
                     + "shard-group member) for the _dynamo_tables catalog. Add a \"default=...\" entry to "
-                    + "POLYWIRE_BACKENDS to give the catalog a stable home that survives shard-group changes.",
+                    + "WARP_BACKENDS to give the catalog a stable home that survives shard-group changes.",
                     BackendRegistry.DEFAULT_BACKEND_NAME, group.get(0));
             return group.get(0);
         }

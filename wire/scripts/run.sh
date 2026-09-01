@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs nexagres-wire's Main. Needs the --add-opens flags below on JDK 17+ (confirmed required on
 # JDK 25 during live testing, 2026-08-17) because embedded Apache Ignite -- used by CacheStage,
-# only actually started when POLYWIRE_CACHE_TABLES is set -- reflectively opens java.lang.reflect.Field
+# only actually started when WARP_CACHE_TABLES is set -- reflectively opens java.lang.reflect.Field
 # on classes across several java.base packages via BinaryClassDescriptor, which the JVM's module
 # system blocks by default from Java 17 onward. Without these flags the process throws
 # InaccessibleObjectException during Ignite startup, but only when caching is actually enabled --
@@ -10,7 +10,7 @@
 #
 # Usage: ./scripts/run.sh
 # Config: all via env vars, see Main.java's javadoc and its startup log lines for the full list
-# (POLYWIRE_PG_*/POLYWIRE_AUTH_*, POLYWIRE_*_PORT, POLYWIRE_QOS_*, POLYWIRE_CACHE_*, POLYWIRE_OTEL_ENDPOINT).
+# (WARP_PG_*/WARP_AUTH_*, WARP_*_PORT, WARP_QOS_*, WARP_CACHE_*, WARP_OTEL_ENDPOINT).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

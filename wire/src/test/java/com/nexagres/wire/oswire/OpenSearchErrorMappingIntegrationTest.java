@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -35,7 +35,7 @@ class OpenSearchErrorMappingIntegrationTest {
         return new OpenSearchClient(transport);
     }
 
-    /** The index's real backing Postgres table ({@code polywire_search_<index>}, see
+    /** The index's real backing Postgres table ({@code warp_search_<index>}, see
      * {@code PostgresSearchStore.pgTableName}) was dropped directly against Postgres, bypassing
      * oswire entirely -- oswire has no separate catalog to pre-validate against (unlike dynamowire/
      * sqswire's own catalogs), so a search against it reaches a genuine, unexpected {@code 42P01
@@ -43,15 +43,15 @@ class OpenSearchErrorMappingIntegrationTest {
     @Test
     void anIndexWhoseTableWasDroppedUnderneathOswireReturnsARealIndexNotFoundException() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("oswire", "WARP_OSWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            OpenSearchClient os = client(polywire.port("oswire"));
+            OpenSearchClient os = client(warp.port("oswire"));
             os.index(IndexRequest.of(b -> b.index("orphaned_index").id("1")
                     .document(java.util.Map.of("field", "value"))));
 
@@ -59,7 +59,7 @@ class OpenSearchErrorMappingIntegrationTest {
             // metadata that would notice.
             try (Connection admin = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
                     Statement st = admin.createStatement()) {
-                st.execute("DROP TABLE polywire_search_orphaned_index");
+                st.execute("DROP TABLE warp_search_orphaned_index");
             }
 
             OpenSearchException thrown = assertThrows(OpenSearchException.class,
@@ -82,15 +82,15 @@ class OpenSearchErrorMappingIntegrationTest {
     @Test
     void aGenuinelyDeadBackendConnectionReturnsARealNoShardAvailableException() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("oswire", "POLYWIRE_OSWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("oswire", "WARP_OSWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            OpenSearchClient os = client(polywire.port("oswire"));
+            OpenSearchClient os = client(warp.port("oswire"));
             os.index(IndexRequest.of(b -> b.index("t").id("1").document(java.util.Map.of("field", "warmup"))));
 
             primary.stop();

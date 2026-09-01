@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -20,13 +20,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof that {@code POLYWIRE_AUTH_MODE=postgres_roles} genuinely wires an
+ * End-to-end proof that {@code WARP_AUTH_MODE=postgres_roles} genuinely wires an
  * authenticated identity into native Postgres row-level security -- real subprocess, real
  * Postgres container, no mocks. Two real Postgres roles ({@code alice}, {@code bob}) each connect
  * through pgwire with their own real password; a real RLS policy on the backend, keyed off
- * {@code current_setting('polywire.user_id')} (set by {@code PostgresRlsSessionInitializer} --
+ * {@code current_setting('warp.user_id')} (set by {@code PostgresRlsSessionInitializer} --
  * see {@code JdbcBackendExecutor}), determines what each one can see. This is the exact gap the
- * PolyWire docs site used to flag as "built, correct, and not yet load-bearing" -- this test is
+ * Warp docs site used to flag as "built, correct, and not yet load-bearing" -- this test is
  * what makes that no longer true, for the identity-propagation half of that claim.
  *
  * <p>Also proves the second half: a real login is recorded to the audit log and readable back via
@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
 class PostgresRolesRlsIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
     private static final String ADMIN_TOKEN = "test-admin-token-" + System.nanoTime();
 
     @BeforeAll
@@ -43,58 +43,58 @@ class PostgresRolesRlsIntegrationTest {
         postgres = RealPostgres.start();
 
         // The container's default `postgres` role is a real superuser -- used here ONLY to set up
-        // the fixture, never as PolyWire's own backend credential. That distinction matters: a
+        // the fixture, never as Warp's own backend credential. That distinction matters: a
         // superuser (or a table's owner, by default) unconditionally BYPASSES every RLS policy in
-        // Postgres, regardless of what current_setting('polywire.user_id') is set to -- confirmed
-        // live, this test's first draft used postgres/postgres as PolyWire's backend credential
-        // and every row leaked through unfiltered. PolyWire's own backend connection here is a
+        // Postgres, regardless of what current_setting('warp.user_id') is set to -- confirmed
+        // live, this test's first draft used postgres/postgres as Warp's backend credential
+        // and every row leaked through unfiltered. Warp's own backend connection here is a
         // dedicated, ordinary (non-superuser, non-table-owner) role instead, exactly as a real
         // deployment needs to be configured for RLS to actually do anything: it needs an explicit
         // GRANT to read pg_authid (normally superuser-only) and an explicit GRANT on the
         // RLS-protected table -- neither comes from ambient superuser privilege.
         try (Connection admin = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
                 Statement st = admin.createStatement()) {
-            st.execute("CREATE ROLE polywire_admin LOGIN PASSWORD 'polywire-admin-pw'");
-            st.execute("GRANT SELECT ON pg_authid TO polywire_admin");
-            // Needed for PolyWire's own control-plane tables (polywire_config, etc), which it
+            st.execute("CREATE ROLE warp_admin LOGIN PASSWORD 'warp-admin-pw'");
+            st.execute("GRANT SELECT ON pg_authid TO warp_admin");
+            // Needed for Warp's own control-plane tables (warp_config, etc), which it
             // creates itself on startup -- ownership of ITS OWN tables doesn't grant RLS bypass on
             // orders below, since RLS bypass is per-table-owned, not schema-wide.
-            st.execute("GRANT ALL ON SCHEMA public TO polywire_admin");
+            st.execute("GRANT ALL ON SCHEMA public TO warp_admin");
             st.execute("CREATE ROLE alice LOGIN PASSWORD 'alice-pw'");
             st.execute("CREATE ROLE bob LOGIN PASSWORD 'bob-pw'");
             st.execute("CREATE TABLE orders (id serial PRIMARY KEY, owner_user text, item text)");
             st.execute("INSERT INTO orders (owner_user, item) VALUES "
                     + "('alice', 'alice-order-1'), ('alice', 'alice-order-2'), ('bob', 'bob-order-1')");
-            // PolyWire never opens its own Postgres connection AS alice/bob -- every statement
-            // actually runs on polywire_admin's one connection, with polywire_admin's own SELECT
+            // Warp never opens its own Postgres connection AS alice/bob -- every statement
+            // actually runs on warp_admin's one connection, with warp_admin's own SELECT
             // grant, filtered only by the RLS policy's USING clause against the session GUC. alice/
             // bob are LOGIN roles purely so PgRoleAuthCache has a real password hash to verify their
             // pgwire-frontend login against; they need no table grants of their own.
-            st.execute("GRANT SELECT ON orders TO polywire_admin");
+            st.execute("GRANT SELECT ON orders TO warp_admin");
             st.execute("ALTER TABLE orders ENABLE ROW LEVEL SECURITY");
             st.execute("CREATE POLICY orders_isolation ON orders "
-                    + "USING (owner_user = current_setting('polywire.user_id', true))");
+                    + "USING (owner_user = current_setting('warp.user_id', true))");
         }
 
-        polywire = PolyWireProcess.builder()
-                .pgBackend(postgres.host(), postgres.port(), postgres.database(), "polywire_admin", "polywire-admin-pw")
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_AUTH_MODE", "postgres_roles")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+        warp = WarpProcess.builder()
+                .pgBackend(postgres.host(), postgres.port(), postgres.database(), "warp_admin", "warp-admin-pw")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_AUTH_MODE", "postgres_roles")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (postgres != null) postgres.close();
     }
 
     private Connection connectAs(String username, String password) throws SQLException {
-        String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+        String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
         return DriverManager.getConnection(url, username, password);
     }
 
@@ -107,7 +107,7 @@ class PostgresRolesRlsIntegrationTest {
                 items.add(rs.getString(1));
             }
             assertEquals(java.util.List.of("alice-order-1", "alice-order-2"), items,
-                    "alice must see only her own rows -- polywire.user_id must have been set to "
+                    "alice must see only her own rows -- warp.user_id must have been set to "
                             + "'alice' on this connection for Postgres's own RLS policy to filter correctly");
         }
     }
@@ -149,7 +149,7 @@ class PostgresRolesRlsIntegrationTest {
 
     private String fetchAudit() throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(
-                        "http://localhost:" + polywire.metricsPort() + "/api/audit?limit=50")
+                        "http://localhost:" + warp.metricsPort() + "/api/audit?limit=50")
                 .toURL().openConnection();
         conn.setRequestProperty("Authorization", "Bearer " + ADMIN_TOKEN);
         int status = conn.getResponseCode();

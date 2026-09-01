@@ -26,7 +26,7 @@ class DbCompatLicensingTest {
 
     @Test
     void withNoOverrideThisTestEnvironmentIsRealFreeTier() {
-        // No POLYWIRE_LICENSE_KEY is set anywhere in this test run -- proves the default,
+        // No WARP_LICENSE_KEY is set anywhere in this test run -- proves the default,
         // real (non-overridden) resolution path is genuinely free-tier, not just the override
         // path, the same assumption every other license-gated test in this project relies on.
         assertEquals(false, DbCompatLicensing.dbEmulationAllowed());

@@ -8,8 +8,8 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealMongo;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.sql.Connection;
@@ -23,9 +23,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@link MongoSource}, run by a real {@link Coordinator} through a real
- * {@link PolywireGrpcSink}, actually migrates a MongoDB collection into a REAL, running Polywire
- * instance -- not a direct JDBC backdoor to Polywire's own backend Postgres. Real source MongoDB
- * (a genuine replica set), real Polywire subprocess (its own real gRPC listener, real firewall/
+ * {@link WarpGrpcSink}, actually migrates a MongoDB collection into a REAL, running Warp
+ * instance -- not a direct JDBC backdoor to Warp's own backend Postgres. Real source MongoDB
+ * (a genuine replica set), real Warp subprocess (its own real gRPC listener, real firewall/
  * QoS/cache pipeline in front of the write), real target Postgres. No mocks.
  *
  * <p>Proves the same three things the previous (now superseded, JDBC-backdoor) version of this
@@ -72,10 +72,10 @@ class MongoSourceIntegrationTest {
         try (RealMongo mongo = RealMongo.start();
                 RealPostgres postgres = RealPostgres.start();
                 MongoClient sourceClient = MongoClients.create(mongo.connectionString());
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             MongoCollection<Document> source = sourceClient.getDatabase("src").getCollection("orders");
@@ -86,7 +86,7 @@ class MongoSourceIntegrationTest {
             checkpoints.ensureSchema();
 
             MongoSource migrationSource = new MongoSource(sourceClient, "src", "orders", "db", "orders");
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator coordinator = new Coordinator(migrationSource, sink, checkpoints, 2);
             Thread coordinatorThread = new Thread(() -> {
                 try {
@@ -135,7 +135,7 @@ class MongoSourceIntegrationTest {
             // from the saved token (no second snapshot) and still picks up the write that
             // happened while stopped.
             MongoSource resumedSource = new MongoSource(sourceClient, "src", "orders", "db", "orders");
-            PolywireGrpcSink resumedSink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink resumedSink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator resumedCoordinator = new Coordinator(resumedSource, resumedSink, checkpoints, 2);
             Thread resumedThread = new Thread(() -> {
                 try {
@@ -169,10 +169,10 @@ class MongoSourceIntegrationTest {
         try (RealMongo mongo = RealMongo.start();
                 RealPostgres postgres = RealPostgres.start();
                 MongoClient sourceClient = MongoClients.create(mongo.connectionString());
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             MongoCollection<Document> source = sourceClient.getDatabase("src").getCollection("customers");
@@ -186,7 +186,7 @@ class MongoSourceIntegrationTest {
 
             int partitionCount = 4;
             MongoSource migrationSource = new MongoSource(sourceClient, "src", "customers", "db", "customers", partitionCount, "customer");
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator coordinator = new Coordinator(migrationSource, sink, checkpoints, partitionCount);
             Thread coordinatorThread = new Thread(() -> {
                 try {

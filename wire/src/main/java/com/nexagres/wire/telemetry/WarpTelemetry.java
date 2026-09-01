@@ -15,9 +15,9 @@ import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public final class PolyWireTelemetry {
+public final class WarpTelemetry {
 
-    private static final Logger log = LoggerFactory.getLogger(PolyWireTelemetry.class);
+    private static final Logger log = LoggerFactory.getLogger(WarpTelemetry.class);
     private static final AttributeKey<String> TENANT = AttributeKey.stringKey("tenant");
     private static final AttributeKey<String> POOL = AttributeKey.stringKey("pool");
     private static final AttributeKey<String> STATE = AttributeKey.stringKey("state");
@@ -34,10 +34,10 @@ public final class PolyWireTelemetry {
     private static final AttributeKey<String> BACKEND = AttributeKey.stringKey("backend");
     private static final AttributeKey<String> KIND = AttributeKey.stringKey("kind");
 
-    private PolyWireTelemetry(String protocol, String otlpEndpoint, long exportIntervalMs,
+    private WarpTelemetry(String protocol, String otlpEndpoint, long exportIntervalMs,
             java.util.Map<String, String> headers) {
         if (!"http".equalsIgnoreCase(protocol) && !"grpc".equalsIgnoreCase(protocol)) {
-            log.warn("POLYWIRE_OTEL_PROTOCOL={} not recognized (expected 'grpc' or 'http'); defaulting to grpc", protocol);
+            log.warn("WARP_OTEL_PROTOCOL={} not recognized (expected 'grpc' or 'http'); defaulting to grpc", protocol);
             protocol = "grpc";
         }
         MetricExporter exporter = buildExporter(protocol, otlpEndpoint, headers);
@@ -48,18 +48,18 @@ public final class PolyWireTelemetry {
                 .build();
         Meter meter = meterProvider.meterBuilder("com.nexagres.wire").setInstrumentationVersion("0.1.0").build();
 
-        this.statementCounter = meter.counterBuilder("polywire.statements")
+        this.statementCounter = meter.counterBuilder("warp.statements")
                 .setDescription("Total statements executed.").build();
-        this.errorCounter = meter.counterBuilder("polywire.statement.errors")
+        this.errorCounter = meter.counterBuilder("warp.statement.errors")
                 .setDescription("Total statements that raised a SQLException.").build();
-        this.latencyHistogram = meter.histogramBuilder("polywire.statement.duration")
+        this.latencyHistogram = meter.histogramBuilder("warp.statement.duration")
                 .setDescription("Per-statement execution time.").setUnit("s").build();
-        this.qosAdmittedCounter = meter.counterBuilder("polywire.qos.admitted")
+        this.qosAdmittedCounter = meter.counterBuilder("warp.qos.admitted")
                 .setDescription("Statements admitted by QosControlStage.").build();
-        this.qosRejectedCounter = meter.counterBuilder("polywire.qos.rejected")
+        this.qosRejectedCounter = meter.counterBuilder("warp.qos.rejected")
                 .setDescription("Statements rejected by QosControlStage (rate limit or pool saturation).").build();
 
-        meter.gaugeBuilder("polywire.pool.connections").ofLongs()
+        meter.gaugeBuilder("warp.pool.connections").ofLongs()
                 .setDescription("Physical backend connections per pool, by state.")
                 .buildWithCallback(measurement -> {
                     for (BackendConnectionPools.PoolStats pool : BackendConnectionPools.snapshot()) {
@@ -67,14 +67,14 @@ public final class PolyWireTelemetry {
                         measurement.record(pool.idleConnections(), Attributes.of(POOL, pool.poolKey(), STATE, "idle"));
                     }
                 });
-        meter.gaugeBuilder("polywire.pool.waiting").ofLongs()
+        meter.gaugeBuilder("warp.pool.waiting").ofLongs()
                 .setDescription("Frontend sessions currently blocked waiting for a pooled backend connection.")
                 .buildWithCallback(measurement -> {
                     for (BackendConnectionPools.PoolStats pool : BackendConnectionPools.snapshot()) {
                         measurement.record(pool.threadsAwaitingConnection(), Attributes.of(POOL, pool.poolKey()));
                     }
                 });
-        meter.gaugeBuilder("polywire.pool.max_size").ofLongs()
+        meter.gaugeBuilder("warp.pool.max_size").ofLongs()
                 .setDescription("Configured maximum physical connections for this pool.")
                 .buildWithCallback(measurement -> {
                     for (BackendConnectionPools.PoolStats pool : BackendConnectionPools.snapshot()) {
@@ -88,7 +88,7 @@ public final class PolyWireTelemetry {
     }
 
     /**
-     * gRPC is the default -- it's what {@code POLYWIRE_OTEL_ENDPOINT}'s historical default
+     * gRPC is the default -- it's what {@code WARP_OTEL_ENDPOINT}'s historical default
      * ({@code http://localhost:4317}) pointed at, and it's the lower-overhead choice when nothing
      * forces the alternative. HTTP is the fallback for the environments gRPC doesn't reach:
      * corporate proxies and L7 load balancers that only forward plain HTTP/HTTPS, and some
@@ -122,13 +122,13 @@ public final class PolyWireTelemetry {
      * call site that already has direct access to the collector.
      */
     public void attachSqlMetrics(java.util.function.Supplier<com.nexagres.wire.core.SqlMetricsCollector.Snapshot> snapshotSupplier) {
-        meter.gaugeBuilder("polywire.protocol.statements").ofLongs()
+        meter.gaugeBuilder("warp.protocol.statements").ofLongs()
                 .setDescription("Statements handled per wire protocol since process start.")
                 .buildWithCallback(measurement -> {
                     var snap = snapshotSupplier.get();
                     snap.protocolCounts().forEach((protocol, count) -> measurement.record(count, Attributes.of(PROTOCOL, protocol)));
                 });
-        meter.gaugeBuilder("polywire.statements.by_kind").ofLongs()
+        meter.gaugeBuilder("warp.statements.by_kind").ofLongs()
                 .setDescription("Statements by read/write/other classification since process start.")
                 .buildWithCallback(measurement -> {
                     var snap = snapshotSupplier.get();
@@ -136,7 +136,7 @@ public final class PolyWireTelemetry {
                     measurement.record(snap.totalWrites(), Attributes.of(KIND, "write"));
                     measurement.record(snap.totalOther(), Attributes.of(KIND, "other"));
                 });
-        meter.gaugeBuilder("polywire.statements.rate")
+        meter.gaugeBuilder("warp.statements.rate")
                 .setDescription("Reads/writes per second, computed since the previous export tick.")
                 .setUnit("1/s")
                 .buildWithCallback(measurement -> {
@@ -144,7 +144,7 @@ public final class PolyWireTelemetry {
                     measurement.record(snap.readsPerSec(), Attributes.of(KIND, "read"));
                     measurement.record(snap.writesPerSec(), Attributes.of(KIND, "write"));
                 });
-        meter.gaugeBuilder("polywire.backend.statements").ofLongs()
+        meter.gaugeBuilder("warp.backend.statements").ofLongs()
                 .setDescription("Statements routed to each backend since process start.")
                 .buildWithCallback(measurement -> {
                     var snap = snapshotSupplier.get();
@@ -152,7 +152,7 @@ public final class PolyWireTelemetry {
                         measurement.record(b.calls(), Attributes.of(BACKEND, b.backend()));
                     }
                 });
-        meter.gaugeBuilder("polywire.backend.statement_duration_total")
+        meter.gaugeBuilder("warp.backend.statement_duration_total")
                 .setDescription("Cumulative execution time of statements routed to each backend.")
                 .setUnit("s")
                 .buildWithCallback(measurement -> {
@@ -177,18 +177,18 @@ public final class PolyWireTelemetry {
         (admitted ? qosAdmittedCounter : qosRejectedCounter).add(1, attrs);
     }
 
-    public static PolyWireTelemetry fromEnv() {
-        String protocol = System.getenv().getOrDefault("POLYWIRE_OTEL_PROTOCOL", "grpc").toLowerCase(java.util.Locale.ROOT);
+    public static WarpTelemetry fromEnv() {
+        String protocol = System.getenv().getOrDefault("WARP_OTEL_PROTOCOL", "grpc").toLowerCase(java.util.Locale.ROOT);
         // The default endpoint's port depends on which protocol is in play -- 4317 is gRPC's
         // OTLP convention, 4318 is HTTP's -- so this can't be one shared default computed before
         // the protocol is known.
         String defaultEndpoint = "http".equals(protocol) ? "http://localhost:4318" : "http://localhost:4317";
-        String endpoint = System.getenv().getOrDefault("POLYWIRE_OTEL_ENDPOINT", defaultEndpoint);
+        String endpoint = System.getenv().getOrDefault("WARP_OTEL_ENDPOINT", defaultEndpoint);
         if ("disabled".equalsIgnoreCase(endpoint)) {
             return null;
         }
-        long intervalMs = parseLongEnv("POLYWIRE_OTEL_EXPORT_INTERVAL_MS", 5_000);
-        return new PolyWireTelemetry(protocol, endpoint, intervalMs, parseHeaders(System.getenv("POLYWIRE_OTEL_HEADERS")));
+        long intervalMs = parseLongEnv("WARP_OTEL_EXPORT_INTERVAL_MS", 5_000);
+        return new WarpTelemetry(protocol, endpoint, intervalMs, parseHeaders(System.getenv("WARP_OTEL_HEADERS")));
     }
 
     private static long parseLongEnv(String name, long defaultValue) {
@@ -197,11 +197,11 @@ public final class PolyWireTelemetry {
     }
 
     /**
-     * {@code POLYWIRE_OTEL_HEADERS="api-key=NRAK-xxx,x-other=value"} -- comma-separated
+     * {@code WARP_OTEL_HEADERS="api-key=NRAK-xxx,x-other=value"} -- comma-separated
      * {@code key=value} pairs sent as gRPC metadata on every export request. This is how a SaaS
      * OTLP endpoint that skips a local collector authenticates the export (New Relic's
      * {@code api-key} header, for instance); unset means no headers, appropriate when
-     * POLYWIRE_OTEL_ENDPOINT points at a local collector/agent that needs none.
+     * WARP_OTEL_ENDPOINT points at a local collector/agent that needs none.
      */
     private static java.util.Map<String, String> parseHeaders(String spec) {
         if (spec == null || spec.isBlank()) {
@@ -211,7 +211,7 @@ public final class PolyWireTelemetry {
         for (String pair : spec.split(",")) {
             int eq = pair.indexOf('=');
             if (eq <= 0) {
-                log.warn("POLYWIRE_OTEL_HEADERS: skipping malformed entry (expected key=value): {}", pair);
+                log.warn("WARP_OTEL_HEADERS: skipping malformed entry (expected key=value): {}", pair);
                 continue;
             }
             headers.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());

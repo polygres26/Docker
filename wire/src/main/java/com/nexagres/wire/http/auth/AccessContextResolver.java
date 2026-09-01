@@ -59,13 +59,13 @@ public final class AccessContextResolver {
     }
 
     public static AccessContextResolver fromEnv() {
-        String issuer = System.getenv("POLYWIRE_OAUTH_ISSUER");
+        String issuer = System.getenv("WARP_OAUTH_ISSUER");
         if (issuer == null || issuer.isBlank()) {
             return DISABLED;
         }
         AccessContextResolver resolver = new AccessContextResolver(null, null, null, null);
-        resolver.reload(issuer, System.getenv("POLYWIRE_OAUTH_AUDIENCE"),
-                System.getenv("POLYWIRE_OAUTH_USERID_CLAIM"), System.getenv("POLYWIRE_OAUTH_ROLES_CLAIM"));
+        resolver.reload(issuer, System.getenv("WARP_OAUTH_AUDIENCE"),
+                System.getenv("WARP_OAUTH_USERID_CLAIM"), System.getenv("WARP_OAUTH_ROLES_CLAIM"));
         return resolver;
     }
 
@@ -94,9 +94,9 @@ public final class AccessContextResolver {
     }
 
     private void startJwksRefreshLoop() {
-        int refreshSeconds = parseIntEnv("POLYWIRE_OAUTH_JWKS_REFRESH_SECONDS", 300);
+        int refreshSeconds = parseIntEnv("WARP_OAUTH_JWKS_REFRESH_SECONDS", 300);
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-oauth-jwks-refresh");
+            Thread t = new Thread(r, "warp-oauth-jwks-refresh");
             t.setDaemon(true);
             return t;
         });
@@ -109,7 +109,7 @@ public final class AccessContextResolver {
             return;
         }
         try {
-            String jwksUriOverride = System.getenv("POLYWIRE_OAUTH_JWKS_URI");
+            String jwksUriOverride = System.getenv("WARP_OAUTH_JWKS_URI");
             String jwksUri = jwksUriOverride != null && !jwksUriOverride.isBlank()
                     ? jwksUriOverride : discoverJwksUri(currentIssuer);
             jwkSet = fetchJwkSet(jwksUri);
@@ -155,7 +155,7 @@ public final class AccessContextResolver {
         String reason = result instanceof Result.Invalid invalid ? invalid.reason() : "missing Authorization: Bearer token";
         log.warn("OAuth: rejecting request -- {}", reason);
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setHeader("WWW-Authenticate", "Bearer realm=\"polywire\", error=\"invalid_token\"");
+        response.setHeader("WWW-Authenticate", "Bearer realm=\"warp\", error=\"invalid_token\"");
         response.getWriter().write("unauthorized: " + reason);
         return null;
     }

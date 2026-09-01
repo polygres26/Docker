@@ -22,7 +22,7 @@ const MIGRATION_ADVISOR_TABS: DmsTab[] = [
  * pass `tabs` explicitly for a different section (e.g. Migration Service's Launch/Status).
  *
  * LLM configuration used to be a fourth Migration Advisor tab here, but it isn't
- * assessment-specific -- the same Primary/Judge model config also drives Polywire's SQL
+ * assessment-specific -- the same Primary/Judge model config also drives Warp's SQL
  * translation and any other feature that calls the LLM, so it moved out to its own top-level
  * "Shared" sidebar entry (see Layout).
  */

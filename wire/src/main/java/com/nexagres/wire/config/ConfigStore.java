@@ -17,9 +17,9 @@ import org.slf4j.LoggerFactory;
 public final class ConfigStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ConfigStore.class);
-    private static final String CHANNEL = "polywire_config_changed";
+    private static final String CHANNEL = "warp_config_changed";
 
-    public record Version(long version, PolyWireConfig payload, java.time.Instant createdAt) {
+    public record Version(long version, WarpConfig payload, java.time.Instant createdAt) {
     }
 
     private final com.nexagres.wire.server.ServerOptions options;
@@ -33,23 +33,23 @@ public final class ConfigStore implements AutoCloseable {
 
     public void ensureSchema() throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_config ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_config ("
                     + "version bigserial PRIMARY KEY, "
                     + "payload jsonb NOT NULL, "
                     + "created_at timestamptz NOT NULL DEFAULT now())");
-            st.execute("CREATE OR REPLACE FUNCTION polywire_config_notify() RETURNS trigger AS $$ "
+            st.execute("CREATE OR REPLACE FUNCTION warp_config_notify() RETURNS trigger AS $$ "
                     + "BEGIN PERFORM pg_notify('" + CHANNEL + "', NEW.version::text); RETURN NEW; END; "
                     + "$$ LANGUAGE plpgsql");
-            st.execute("DROP TRIGGER IF EXISTS polywire_config_notify_trigger ON polywire_config");
-            st.execute("CREATE TRIGGER polywire_config_notify_trigger AFTER INSERT ON polywire_config "
-                    + "FOR EACH ROW EXECUTE FUNCTION polywire_config_notify()");
+            st.execute("DROP TRIGGER IF EXISTS warp_config_notify_trigger ON warp_config");
+            st.execute("CREATE TRIGGER warp_config_notify_trigger AFTER INSERT ON warp_config "
+                    + "FOR EACH ROW EXECUTE FUNCTION warp_config_notify()");
         }
     }
 
-    public long write(PolyWireConfig config) throws SQLException {
+    public long write(WarpConfig config) throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options);
                 java.sql.PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_config (payload) VALUES (?::jsonb) RETURNING version")) {
+                        "INSERT INTO warp_config (payload) VALUES (?::jsonb) RETURNING version")) {
             ps.setString(1, encryptSecretFields(config).toJson());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
@@ -61,13 +61,13 @@ public final class ConfigStore implements AutoCloseable {
     public Optional<Version> readLatest() throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
-                        "SELECT version, payload::text, created_at FROM polywire_config "
+                        "SELECT version, payload::text, created_at FROM warp_config "
                                 + "ORDER BY version DESC LIMIT 1")) {
             if (!rs.next()) {
                 return Optional.empty();
             }
             long version = rs.getLong(1);
-            PolyWireConfig payload = decryptSecretFields(PolyWireConfig.fromJson(rs.getString(2)));
+            WarpConfig payload = decryptSecretFields(WarpConfig.fromJson(rs.getString(2)));
             java.time.Instant createdAt = rs.getTimestamp(3).toInstant();
             return Optional.of(new Version(version, payload, createdAt));
         }
@@ -76,12 +76,12 @@ public final class ConfigStore implements AutoCloseable {
     // Only these three fields ever carry a credential -- backends' "name=url|user|password" spec
     // embeds a literal password inline, awsIamCredentials is exactly what it sounds like, and
     // llmApiKey is the dialect-translation LLM fallback's API key. Everything else in
-    // PolyWireConfig (QoS, router rules, ACL, OAuth issuer/audience/claims, llmProvider/llmBaseUrl/
+    // WarpConfig (QoS, router rules, ACL, OAuth issuer/audience/claims, llmProvider/llmBaseUrl/
     // llmModel) is config, not secret, and stays as plain JSON so the column's still a real jsonb
     // document a human can read by eye. See com.nexagres.wire.secrets.FieldCipher's javadoc for the
     // encv1:-prefix / plaintext-passthrough scheme that makes this a no-op migration.
-    private static PolyWireConfig encryptSecretFields(PolyWireConfig c) {
-        return new PolyWireConfig(
+    private static WarpConfig encryptSecretFields(WarpConfig c) {
+        return new WarpConfig(
                 c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
                 c.cacheTables(), c.cacheTtlMs(),
                 com.nexagres.wire.secrets.FieldCipher.encrypt(c.backends()), c.shardBackends(),
@@ -94,8 +94,8 @@ public final class ConfigStore implements AutoCloseable {
                 c.llmBaseUrl(), c.llmModel());
     }
 
-    private static PolyWireConfig decryptSecretFields(PolyWireConfig c) {
-        return new PolyWireConfig(
+    private static WarpConfig decryptSecretFields(WarpConfig c) {
+        return new WarpConfig(
                 c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
                 c.cacheTables(), c.cacheTtlMs(),
                 com.nexagres.wire.secrets.FieldCipher.decrypt(c.backends()), c.shardBackends(),
@@ -113,7 +113,7 @@ public final class ConfigStore implements AutoCloseable {
             throw new IllegalStateException("listen() already called on this ConfigStore");
         }
         listenExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "polywire-config-listen");
+            Thread t = new Thread(r, "warp-config-listen");
             t.setDaemon(true);
             return t;
         });

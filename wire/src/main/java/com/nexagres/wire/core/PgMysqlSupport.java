@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Detects whether the {@code pg_mysql} extension (db/pg_mysql) is installed on a given backend
- * Postgres database -- the mywire equivalent of {@link PgOracleSupport}, same reason: Polywire can
+ * Postgres database -- the mywire equivalent of {@link PgOracleSupport}, same reason: Warp can
  * be deployed against a plain, unmodified Postgres with no pg_mysql extension at all, and without
  * detecting that up front, {@code MySqlPgEmulationSessionInitializer}'s {@code SET db_emulation =
  * 'mysql'} would fail every single statement outright (either because db_emulation itself has no

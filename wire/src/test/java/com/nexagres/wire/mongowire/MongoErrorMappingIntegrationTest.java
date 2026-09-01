@@ -7,7 +7,7 @@ import com.mongodb.MongoWriteException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -32,15 +32,15 @@ class MongoErrorMappingIntegrationTest {
     @Test
     void aDuplicateIdInsertReturnsARealDuplicateKeyWriteError() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (MongoClient client = MongoClients.create("mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+            try (MongoClient client = MongoClients.create("mongodb://localhost:" + warp.port("mongowire") + "/?directConnection=true")) {
                 MongoCollection<Document> coll = client.getDatabase("test").getCollection("dupe_it");
                 coll.insertOne(new Document("_id", "x").append("field", "first"));
 
@@ -62,15 +62,15 @@ class MongoErrorMappingIntegrationTest {
     @Test
     void aGenuinelyDeadBackendConnectionReturnsARealShutdownInProgressError() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (MongoClient client = MongoClients.create("mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+            try (MongoClient client = MongoClients.create("mongodb://localhost:" + warp.port("mongowire") + "/?directConnection=true")) {
                 MongoCollection<Document> coll = client.getDatabase("test").getCollection("t");
                 coll.insertOne(new Document("_id", "warmup").append("field", "x"));
 

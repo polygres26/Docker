@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * influxwire -- InfluxDB-compatible HTTP/JSON, the same "speak the real client's wire protocol,
  * translate to plain SQL underneath" shape as oswire/dynamowire/sqswire, so a real InfluxDB v1
  * client (line-protocol writers, {@code influxdb-client}/{@code influxdb} SDKs, {@code curl},
- * Telegraf's InfluxDB output plugin) can point at PolyWire directly.
+ * Telegraf's InfluxDB output plugin) can point at Warp directly.
  *
  * <p>V1 surface, scoped deliberately narrow and honest rather than silently approximating InfluxDB
  * v2's query language:
@@ -98,7 +98,7 @@ public final class InfluxWireServer {
             // Real InfluxDB's own liveness endpoint -- no body, a version header, 204. Client SDKs
             // (confirmed against the real influxdb-client Python/Java SDKs' own connection-check
             // calls) call this before anything else; refusing it with a 404 breaks first contact.
-            response.setHeader("X-Influxdb-Version", "polywire-influxwire-v1");
+            response.setHeader("X-Influxdb-Version", "warp-influxwire-v1");
             response.setStatus(204);
             return;
         }
@@ -303,7 +303,7 @@ public final class InfluxWireServer {
 
     public void start() throws Exception {
         server.start();
-        log.info("polywire listening for InfluxDB HTTP/JSON (influxwire) on port {}",
+        log.info("warp listening for InfluxDB HTTP/JSON (influxwire) on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
     }
 

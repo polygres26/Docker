@@ -109,20 +109,20 @@ public final class BackendConnectionPools {
         // lifetime (not just per-query), so a Hikari pool sized below the license's own connection
         // cap would starve before a Developer-tier install ever reaches that cap -- the license
         // limit would be unreachable in practice, not just unenforced. 30 leaves headroom above 25
-        // for polywire's own internal connections (the config-primary LISTEN connection, schema
+        // for warp's own internal connections (the config-primary LISTEN connection, schema
         // checks like FailedStatementLog/NodeRegistry) that also borrow from this same pool. An
         // Enterprise deployment with no connection ceiling should size this explicitly via the env
         // var for its real backend capacity, not rely on this default.
-        config.setMaximumPoolSize(intEnv("POLYWIRE_POOL_MAX_SIZE", 30));
+        config.setMaximumPoolSize(intEnv("WARP_POOL_MAX_SIZE", 30));
 
-        config.setConnectionTimeout(longEnv("POLYWIRE_POOL_CONNECT_TIMEOUT_MS", 5_000));
-        config.setIdleTimeout(longEnv("POLYWIRE_POOL_IDLE_TIMEOUT_MS", 60_000));
+        config.setConnectionTimeout(longEnv("WARP_POOL_CONNECT_TIMEOUT_MS", 5_000));
+        config.setIdleTimeout(longEnv("WARP_POOL_IDLE_TIMEOUT_MS", 60_000));
         applyStatementCacheProperties(config, jdbcUrl);
         return new HikariDataSource(config);
     }
 
     private static void applyStatementCacheProperties(HikariConfig config, String jdbcUrl) {
-        int cacheSize = intEnv("POLYWIRE_STMT_CACHE_SIZE", 250);
+        int cacheSize = intEnv("WARP_STMT_CACHE_SIZE", 250);
         if (cacheSize <= 0) {
             return;
         }

@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * Phase 5 of this session's migration plan. Reads the SAME target-Postgres bookkeeping tables
  * {@code CdcCheckpointStore}, {@code PartitionLeaseStore}, and {@code DeadLetterStore} already
- * write ({@code polywire_cdc_checkpoints}, {@code migration_partition_leases},
+ * write ({@code warp_cdc_checkpoints}, {@code migration_partition_leases},
  * {@code migration_dead_letters}) -- exactly the pattern Advisor's own {@code MigrationStatusStore}
  * uses for its progress report -- and turns them into a small set of pass/fail gates an operator
  * (or an automated cutover script, via {@link CutoverReadinessReport#ready()} as an exit code)
@@ -123,7 +123,7 @@ public final class CutoverReadinessChecker {
         }
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT last_event_at, EXTRACT(EPOCH FROM (now() - last_event_at))::bigint AS lag_seconds "
-                        + "FROM polywire_cdc_checkpoints WHERE source_key = ?")) {
+                        + "FROM warp_cdc_checkpoints WHERE source_key = ?")) {
             ps.setString(1, sourceKey);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -146,7 +146,7 @@ public final class CutoverReadinessChecker {
         } catch (SQLException e) {
             if (isUndefinedTable(e)) {
                 return new ReadinessCheck("change-feed lag", false,
-                        "polywire_cdc_checkpoints table does not exist on this target -- no migration has run");
+                        "warp_cdc_checkpoints table does not exist on this target -- no migration has run");
             }
             throw e;
         }

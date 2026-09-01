@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Encrypts individual credential columns before they hit disk (AES-256-GCM, key from
  * {@code NEXAGRES_ENCRYPTION_KEY} -- base64, 32 raw bytes; same env var name and format as
- * PolyWire's twin {@code com.nexagres.wire.secrets.FieldCipher}, so one key covers both modules).
+ * Warp's twin {@code com.nexagres.wire.secrets.FieldCipher}, so one key covers both modules).
  * Applied to {@code connections.password} and {@code wire_connection.admin_token} -- the two
  * columns in Advisor's own HSQLDB store that hold a real credential.
  *
@@ -39,7 +39,7 @@ public final class FieldCipher {
             if (!warnedOnce) {
                 warnedOnce = true;
                 log.warn("NEXAGRES_ENCRYPTION_KEY is not set -- connection passwords and the "
-                        + "PolyWire admin token are being stored in PLAINTEXT. Set it "
+                        + "Warp admin token are being stored in PLAINTEXT. Set it "
                         + "(base64-encoded, 32 raw bytes -- e.g. `openssl rand -base64 32`) to "
                         + "encrypt them at rest.");
             }

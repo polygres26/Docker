@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * In-memory, per-process ring buffer of captured statements -- no database, no disk. Each entry
  * is stamped with the wall-clock instant it was captured ({@link Instant#now()}), which is what
  * lets a multi-instance deployment's captured workload be merged back into one global arrival
- * order later (see {@code WorkloadReplayer}): every PolyWire instance keeps its own buffer, and
+ * order later (see {@code WorkloadReplayer}): every Warp instance keeps its own buffer, and
  * a replayer that pulls from all of them and sorts by that timestamp reconstructs the order
  * statements actually arrived across the whole fleet, not just within one process.
  *

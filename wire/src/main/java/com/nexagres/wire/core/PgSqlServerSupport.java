@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Detects whether the {@code pg_sqlserver} extension (db/pg_sqlserver) is installed on a given
  * backend Postgres database -- the mssqlwire equivalent of {@link PgOracleSupport}/{@link
- * PgMysqlSupport}, same reason: Polywire can be deployed against a plain, unmodified Postgres with
+ * PgMysqlSupport}, same reason: Warp can be deployed against a plain, unmodified Postgres with
  * no pg_sqlserver extension at all, and without detecting that up front, a {@code SET db_emulation
  * = 'sqlserver'} would fail every single statement outright (either because db_emulation itself
  * has no 'sqlserver' enum value on an older/absent pg_oracle -- see pg_sqlserver's own control

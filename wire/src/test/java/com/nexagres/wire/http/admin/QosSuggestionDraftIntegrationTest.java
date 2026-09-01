@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@code POST /api/qos-suggestions/draft} proposes a QoS rate-limit change
- * WITHOUT ever writing to {@code polywire_config} -- real Polywire subprocess, real disposable
+ * WITHOUT ever writing to {@code warp_config} -- real Warp subprocess, real disposable
  * Postgres, real admin HTTP API, real (local, scripted) LLM endpoint, same discipline as
  * {@code FirewallRuleDraftIntegrationTest}.
  *
@@ -86,28 +86,28 @@ class QosSuggestionDraftIntegrationTest {
 
         try (FakeLlmServer llm = new FakeLlmServer(llmJsonReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-qos-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-qos-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             // Some real backend load for the draft's context to describe.
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     Statement st = conn.createStatement()) {
                 st.execute("SELECT 1");
                 st.execute("SELECT 1");
             }
 
-            HttpResponse<String> configBefore = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configBefore = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(200, configBefore.statusCode());
 
-            HttpResponse<String> draftResp = call("POST", polywire.metricsPort(), "/api/qos-suggestions/draft", "{}");
+            HttpResponse<String> draftResp = call("POST", warp.metricsPort(), "/api/qos-suggestions/draft", "{}");
             assertEquals(200, draftResp.statusCode(), "draft request body: " + draftResp.body());
             JsonObject draftBody = JsonParser.parseString(draftResp.body()).getAsJsonObject();
             assertFalse(draftBody.get("applied").getAsBoolean(), "a draft must never report itself as applied");
@@ -118,17 +118,17 @@ class QosSuggestionDraftIntegrationTest {
             assertEquals("write:80.0:160.0:250", qosClassLimitsIfApplied);
 
             // Proof #1: config genuinely unchanged right after drafting.
-            HttpResponse<String> configAfterDraft = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterDraft = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(configBefore.body(), configAfterDraft.body(),
-                    "drafting a QoS suggestion must not have touched polywire_config at all");
+                    "drafting a QoS suggestion must not have touched warp_config at all");
 
             // Proof #2: the draft's own field really is what PUT /api/config's qosClassLimits accepts.
             JsonObject putBody = new JsonObject();
             putBody.addProperty("qosClassLimits", qosClassLimitsIfApplied);
-            HttpResponse<String> putResp = call("PUT", polywire.metricsPort(), "/api/config", putBody.toString());
+            HttpResponse<String> putResp = call("PUT", warp.metricsPort(), "/api/config", putBody.toString());
             assertEquals(200, putResp.statusCode(), "applying the draft's own field via PUT /api/config must succeed: " + putResp.body());
 
-            HttpResponse<String> configAfterApply = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterApply = call("GET", warp.metricsPort(), "/api/config", null);
             JsonObject finalConfig = JsonParser.parseString(configAfterApply.body()).getAsJsonObject();
             assertEquals(qosClassLimitsIfApplied, finalConfig.get("qosClassLimits").getAsString(),
                     "the applied config must read back exactly the string the draft proposed");

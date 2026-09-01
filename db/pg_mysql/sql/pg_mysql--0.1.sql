@@ -3,7 +3,7 @@
 -- way: `SET db_emulation = 'mysql'` appends mysql_catalog onto
 -- search_path so unqualified MySQL-shaped function calls (LAST_INSERT_ID(),
 -- GROUP_CONCAT(...), DATE_FORMAT(...), ...) resolve without a caller
--- (Polywire's mywire frontend, or a human at psql) spelling out
+-- (Warp's mywire frontend, or a human at psql) spelling out
 -- mysql_catalog.* by hand -- see db/pg_oracle/src/pg_oracle.c's own
 -- header comment for the full mechanism (this extension doesn't
 -- reimplement it, just reuses the same GUC and search_path-append logic;
@@ -335,8 +335,8 @@ COMMENT ON FUNCTION mysql_catalog.show_index(text) IS 'Backs MySQL SHOW INDEX FR
 CREATE FUNCTION mysql_catalog.show_variables() RETURNS TABLE("Variable_name" text, "Value" text)
 LANGUAGE sql STABLE AS $$
   SELECT * FROM (VALUES
-    ('version', current_setting('server_version') || '-polywire'),
-    ('version_comment', 'Polywire mywire (Postgres compatibility)'),
+    ('version', current_setting('server_version') || '-warp'),
+    ('version_comment', 'Warp mywire (Postgres compatibility)'),
     ('character_set_client', 'utf8mb4'),
     ('character_set_connection', 'utf8mb4'),
     ('character_set_results', 'utf8mb4'),

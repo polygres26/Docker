@@ -3,7 +3,7 @@ package com.nexagres.wire.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -40,20 +40,20 @@ class BackendDrainZeroDataLossIntegrationTest {
                     + ";primary=" + primary.jdbcUrl() + "|" + primary.username() + "|" + primary.password() + "|fallback"
                     + ";fallback=" + fallback.jdbcUrl() + "|" + fallback.username() + "|" + fallback.password();
 
-            try (PolyWireProcess polywire = PolyWireProcess.builder()
+            try (WarpProcess warp = WarpProcess.builder()
                     .pgBackend(controlPlane.host(), controlPlane.port(), controlPlane.database(),
                             controlPlane.username(), controlPlane.password())
-                    .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                    .env("POLYWIRE_BACKENDS", backends)
-                    .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                    .env("POLYWIRE_ADMIN_TOKEN", adminToken)
-                    .env("POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS", "0")
-                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .frontend("pgwire", "WARP_PGWIRE_PORT")
+                    .env("WARP_BACKENDS", backends)
+                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                    .env("WARP_ADMIN_TOKEN", adminToken)
+                    .env("WARP_BACKEND_HEALTH_CHECK_SECONDS", "0")
+                    .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start()) {
 
-                String stillLaggingBody = adminPost(polywire.metricsPort(), adminToken,
+                String stillLaggingBody = adminPost(warp.metricsPort(), adminToken,
                         "/api/backends/primary/drain?graceMs=800");
                 assertTrue(stillLaggingBody.contains("\"zeroDataLoss\":\"TIMED OUT"),
                         "drain must report the wait timed out while the fallback is still lagging: " + stillLaggingBody);
@@ -61,10 +61,10 @@ class BackendDrainZeroDataLossIntegrationTest {
                 // Undrain so the second drain call below re-exercises the full path (drain is
                 // otherwise idempotent on an already-DRAINING backend, which would be fine too,
                 // but this is closer to what an operator's real retry looks like).
-                adminPost(polywire.metricsPort(), adminToken, "/api/backends/primary/undrain");
+                adminPost(warp.metricsPort(), adminToken, "/api/backends/primary/undrain");
 
                 installShadowLagFunctions(fallback, 0);
-                String caughtUpBody = adminPost(polywire.metricsPort(), adminToken,
+                String caughtUpBody = adminPost(warp.metricsPort(), adminToken,
                         "/api/backends/primary/drain?graceMs=5000");
                 assertTrue(caughtUpBody.contains("\"zeroDataLoss\":\"confirmed zero lag\""),
                         "drain must confirm zero data loss once the fallback has genuinely caught up: " + caughtUpBody);

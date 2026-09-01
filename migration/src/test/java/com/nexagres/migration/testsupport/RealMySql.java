@@ -32,7 +32,7 @@ public final class RealMySql implements AutoCloseable {
     }
 
     public static RealMySql start() throws IOException, InterruptedException {
-        String containerName = "polywire-test-mysql-" + System.nanoTime();
+        String containerName = "warp-test-mysql-" + System.nanoTime();
         int port = findFreePort();
         run("docker", "run", "-d", "--name", containerName, "-p", port + ":3306",
                 "-e", "MYSQL_ROOT_PASSWORD=root",

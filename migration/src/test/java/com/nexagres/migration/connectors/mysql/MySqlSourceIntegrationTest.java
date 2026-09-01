@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.coordinator.Coordinator;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealMySql;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.math.BigDecimal;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof, real infrastructure throughout: real MySQL with binlog (ROW format) enabled,
- * real Polywire gRPC subprocess, real target Postgres. Unlike DynamoDB Streams (see {@code
+ * real Warp gRPC subprocess, real target Postgres. Unlike DynamoDB Streams (see {@code
  * DynamoSourceStreamsTest}'s own javadoc for why that path needs a fake client), MySQL's binlog
  * works out of the box in a real {@code mysql:8} container, so this test covers the ENTIRE
  * connector -- schema translation, parallel partitioned snapshot, and live binlog CDC -- against
@@ -74,10 +74,10 @@ class MySqlSourceIntegrationTest {
     void snapshotAndBinlogChangesReplicateThroughTheRealGrpcPathIncludingNullHandlingAndSurviveARestart() throws Exception {
         try (RealMySql mysql = RealMySql.start();
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection conn = DriverManager.getConnection(mysql.jdbcUrl(), mysql.username(), mysql.password());
@@ -93,7 +93,7 @@ class MySqlSourceIntegrationTest {
 
             MySqlSource source = new MySqlSource(mysql.host(), mysql.port(), mysql.username(), mysql.password(),
                     "src", "orders", 3, 6001);
-            PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator coordinator = new Coordinator(source, sink, checkpoints, 3);
             Thread coordinatorThread = new Thread(() -> {
                 try {
@@ -173,7 +173,7 @@ class MySqlSourceIntegrationTest {
 
             MySqlSource resumedSource = new MySqlSource(mysql.host(), mysql.port(), mysql.username(), mysql.password(),
                     "src", "orders", 3, 6002);
-            PolywireGrpcSink resumedSink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password());
+            WarpGrpcSink resumedSink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password());
             Coordinator resumedCoordinator = new Coordinator(resumedSource, resumedSink, checkpoints, 3);
             Thread resumedThread = new Thread(() -> {
                 try {

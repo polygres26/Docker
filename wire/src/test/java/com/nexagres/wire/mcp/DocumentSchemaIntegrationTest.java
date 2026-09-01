@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -20,7 +20,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof of the MCP {@code document_schema} tool -- real Polywire subprocess, real
+ * End-to-end proof of the MCP {@code document_schema} tool -- real Warp subprocess, real
  * disposable Postgres with a genuine foreign-key relationship, real MCP JSON-RPC calls, and a
  * real (local, scripted) LLM endpoint. No mocks. Proves (1) the real table/column listing is
  * always returned, and (2) with an LLM configured, its narrative comes back alongside it -- (3)
@@ -90,19 +90,19 @@ class DocumentSchemaIntegrationTest {
     void theRealSchemaAndAnLlmNarrativeAreBothReturned() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("Customers place orders; each order references exactly one customer.");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-schema-doc-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-schema-doc-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             createSchemaWithForeignKey(postgres);
 
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"));
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"));
             assertEquals(200, resp.statusCode());
             assertTrue(resp.body().contains("customers") && resp.body().contains("orders"),
                     "expected the real table listing -- got: " + resp.body());
@@ -116,16 +116,16 @@ class DocumentSchemaIntegrationTest {
     @Test
     void withNoLlmConfiguredTheRawListingStillComesBack() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             createSchemaWithForeignKey(postgres);
 
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"));
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"));
             assertEquals(200, resp.statusCode());
             assertTrue(resp.body().contains("customers") && resp.body().contains("orders"),
                     "the raw table listing must still work with no LLM configured -- got: " + resp.body());

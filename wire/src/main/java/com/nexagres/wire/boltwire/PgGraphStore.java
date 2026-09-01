@@ -25,11 +25,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code edges} table are the natural relational shape, not N per-label tables that would need
  * cross-table joins for the common case of an untyped/mixed-label traversal:
  * <pre>
- *   polywire_graph_nodes(id bigserial pk, labels text[] not null default '{}',
+ *   warp_graph_nodes(id bigserial pk, labels text[] not null default '{}',
  *                         properties jsonb not null default '{}')
- *   polywire_graph_edges(id bigserial pk, type text not null,
- *                         from_id bigint not null references polywire_graph_nodes(id),
- *                         to_id bigint not null references polywire_graph_nodes(id),
+ *   warp_graph_edges(id bigserial pk, type text not null,
+ *                         from_id bigint not null references warp_graph_nodes(id),
+ *                         to_id bigint not null references warp_graph_nodes(id),
  *                         properties jsonb not null default '{}')
  * </pre>
  * GIN indexes on {@code labels} and both {@code properties} columns, btree on {@code from_id}/
@@ -86,7 +86,7 @@ final class PgGraphStore {
                 // array literal ("{a,b}") -- "column \"labels\" is of type text[] but expression
                 // is of type character varying". An explicit cast on the parameter itself (not
                 // just relying on the column's own declared type) is required.
-                "INSERT INTO polywire_graph_nodes (labels, properties) VALUES (?::text[], ?::jsonb) RETURNING id")) {
+                "INSERT INTO warp_graph_nodes (labels, properties) VALUES (?::text[], ?::jsonb) RETURNING id")) {
             ps.setString(1, labelsArray);
             ps.setString(2, toJson(properties));
             try (ResultSet rs = ps.executeQuery()) {
@@ -100,7 +100,7 @@ final class PgGraphStore {
     void createEdge(Connection c, long fromId, long toId, String type, Map<String, Object> properties)
             throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO polywire_graph_edges (type, from_id, to_id, properties) VALUES (?, ?, ?, ?::jsonb)")) {
+                "INSERT INTO warp_graph_edges (type, from_id, to_id, properties) VALUES (?, ?, ?, ?::jsonb)")) {
             ps.setString(1, type == null ? "RELATED_TO" : type);
             ps.setLong(2, fromId);
             ps.setLong(3, toId);

@@ -11,7 +11,7 @@ see test_transaction_rollback_discards_uncommitted_writes below.
 import pymysql
 import pytest
 
-from polywire_support import PolyWireProcess, RealPostgres
+from warp_support import WarpProcess, RealPostgres
 
 
 @pytest.fixture(scope="module")
@@ -22,21 +22,21 @@ def postgres():
 
 
 @pytest.fixture(scope="module")
-def polywire(postgres):
-    proc = PolyWireProcess(postgres, "POLYWIRE_MYWIRE_PORT", frontend_name="mywire")
+def warp(postgres):
+    proc = WarpProcess(postgres, "WARP_MYWIRE_PORT", frontend_name="mywire")
     yield proc
     proc.close()
 
 
-def connect(polywire):
+def connect(warp):
     return pymysql.connect(
-        host="localhost", port=polywire.frontend_port,
+        host="localhost", port=warp.frontend_port,
         user="postgres", password="postgres", database="postgres",
     )
 
 
-def test_simple_select(polywire):
-    conn = connect(polywire)
+def test_simple_select(warp):
+    conn = connect(warp)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT 21 * 2 AS answer")
@@ -46,8 +46,8 @@ def test_simple_select(polywire):
         conn.close()
 
 
-def test_create_insert_select_round_trip(polywire):
-    conn = connect(polywire)
+def test_create_insert_select_round_trip(warp):
+    conn = connect(warp)
     try:
         with conn.cursor() as cur:
             cur.execute("CREATE TABLE mywire_it (id INT PRIMARY KEY, name VARCHAR(50))")
@@ -71,8 +71,8 @@ def test_create_insert_select_round_trip(polywire):
            "cross-statement transaction state for ROLLBACK to undo.",
     strict=True,
 )
-def test_transaction_rollback_discards_uncommitted_writes(polywire):
-    conn = connect(polywire)
+def test_transaction_rollback_discards_uncommitted_writes(warp):
+    conn = connect(warp)
     try:
         with conn.cursor() as cur:
             cur.execute("CREATE TABLE mywire_it_txn (id INT PRIMARY KEY)")
@@ -93,13 +93,13 @@ def test_transaction_rollback_discards_uncommitted_writes(polywire):
         conn.close()
 
 
-def test_metrics_endpoint_reports_statements(polywire):
-    conn = connect(polywire)
+def test_metrics_endpoint_reports_statements(warp):
+    conn = connect(warp)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             cur.fetchone()
     finally:
         conn.close()
-    body = polywire.metrics_text()
-    assert "polywire_statements_total" in body
+    body = warp.metrics_text()
+    assert "warp_statements_total" in body

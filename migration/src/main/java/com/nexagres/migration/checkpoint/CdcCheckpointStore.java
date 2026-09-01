@@ -17,10 +17,10 @@ import java.time.Instant;
  * source from scratch or silently skipping whatever changed while it was down.
  *
  * <p>Deliberately connects to the target Postgres DIRECTLY (not through {@link
- * com.nexagres.migration.sink.PolywireGrpcSink}) -- a checkpoint is migration-infrastructure
- * bookkeeping, not customer data, and doesn't need Polywire's firewall/cache/QoS semantics
+ * com.nexagres.migration.sink.WarpGrpcSink}) -- a checkpoint is migration-infrastructure
+ * bookkeeping, not customer data, and doesn't need Warp's firewall/cache/QoS semantics
  * applied to it; going through the full pipeline for this would only add latency and risk
- * (a firewall rule that happens to match {@code polywire_cdc_checkpoints} would break resumability
+ * (a firewall rule that happens to match {@code warp_cdc_checkpoints} would break resumability
  * itself) for no real benefit.
  */
 public final class CdcCheckpointStore implements StateStore {
@@ -41,7 +41,7 @@ public final class CdcCheckpointStore implements StateStore {
 
     public void ensureSchema() throws SQLException {
         try (Connection conn = open(); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_cdc_checkpoints ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_cdc_checkpoints ("
                     + "source_key text PRIMARY KEY, "
                     + "resume_token jsonb NOT NULL, "
                     + "events_applied bigint NOT NULL DEFAULT 0, "
@@ -49,7 +49,7 @@ public final class CdcCheckpointStore implements StateStore {
                     + "last_event_at timestamptz)");
             // Added after the table already shipped in earlier runs -- IF NOT EXISTS makes this
             // safe to run against a pre-existing table from before this column existed.
-            st.execute("ALTER TABLE polywire_cdc_checkpoints ADD COLUMN IF NOT EXISTS last_event_at timestamptz");
+            st.execute("ALTER TABLE warp_cdc_checkpoints ADD COLUMN IF NOT EXISTS last_event_at timestamptz");
         }
     }
 
@@ -57,7 +57,7 @@ public final class CdcCheckpointStore implements StateStore {
     public String load(String sourceKey) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
-                        "SELECT resume_token FROM polywire_cdc_checkpoints WHERE source_key = ?")) {
+                        "SELECT resume_token FROM warp_cdc_checkpoints WHERE source_key = ?")) {
             ps.setString(1, sourceKey);
             try (var rs = ps.executeQuery()) {
                 return rs.next() ? rs.getString(1) : null;
@@ -75,10 +75,10 @@ public final class CdcCheckpointStore implements StateStore {
     public void save(String sourceKey, String resumeTokenJson) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_cdc_checkpoints (source_key, resume_token, events_applied, updated_at) "
+                        "INSERT INTO warp_cdc_checkpoints (source_key, resume_token, events_applied, updated_at) "
                                 + "VALUES (?, ?::jsonb, 1, now()) "
                                 + "ON CONFLICT (source_key) DO UPDATE SET resume_token = EXCLUDED.resume_token, "
-                                + "events_applied = polywire_cdc_checkpoints.events_applied + 1, updated_at = now()")) {
+                                + "events_applied = warp_cdc_checkpoints.events_applied + 1, updated_at = now()")) {
             ps.setString(1, sourceKey);
             ps.setString(2, resumeTokenJson);
             ps.executeUpdate();
@@ -94,10 +94,10 @@ public final class CdcCheckpointStore implements StateStore {
     public void save(String sourceKey, String resumeTokenJson, Instant eventTimestamp) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_cdc_checkpoints (source_key, resume_token, events_applied, updated_at, last_event_at) "
+                        "INSERT INTO warp_cdc_checkpoints (source_key, resume_token, events_applied, updated_at, last_event_at) "
                                 + "VALUES (?, ?::jsonb, 1, now(), ?) "
                                 + "ON CONFLICT (source_key) DO UPDATE SET resume_token = EXCLUDED.resume_token, "
-                                + "events_applied = polywire_cdc_checkpoints.events_applied + 1, updated_at = now(), "
+                                + "events_applied = warp_cdc_checkpoints.events_applied + 1, updated_at = now(), "
                                 + "last_event_at = EXCLUDED.last_event_at")) {
             ps.setString(1, sourceKey);
             ps.setString(2, resumeTokenJson);
@@ -110,7 +110,7 @@ public final class CdcCheckpointStore implements StateStore {
     public Long eventsApplied(String sourceKey) throws SQLException {
         try (Connection conn = open();
                 PreparedStatement ps = conn.prepareStatement(
-                        "SELECT events_applied FROM polywire_cdc_checkpoints WHERE source_key = ?")) {
+                        "SELECT events_applied FROM warp_cdc_checkpoints WHERE source_key = ?")) {
             ps.setString(1, sourceKey);
             try (var rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : null;

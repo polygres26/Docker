@@ -31,7 +31,7 @@ public final class RealOracle implements AutoCloseable {
     }
 
     public static RealOracle start() throws IOException, InterruptedException {
-        String containerName = "polywire-test-oracle-" + System.nanoTime();
+        String containerName = "warp-test-oracle-" + System.nanoTime();
         int port = findFreePort();
         run("docker", "run", "-d", "--name", containerName, "-p", port + ":1521",
                 "-e", "ORACLE_PASSWORD=OraclePass123",

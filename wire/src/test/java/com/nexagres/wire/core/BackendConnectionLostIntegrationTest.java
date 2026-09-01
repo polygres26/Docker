@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * A real driver expects a specific "the connection is dead, reconnect" error, not a generic
  * failure -- Oracle's ORA-03113 ("end-of-file on communication channel") is the canonical example
  * every Oracle driver checks for to decide whether to reconnect rather than surface the error to
- * the application. This proves PolyWire delivers that signal correctly for the three dialects that
+ * the application. This proves Warp delivers that signal correctly for the three dialects that
  * have a real numbered code for it, using a GENUINE backend outage ({@link RealPostgres#stop()},
  * not a mock or a config flag) while a client session is already open and mid-use -- the exact
  * scenario a driver's reconnect logic exists for.
@@ -35,15 +35,15 @@ class BackendConnectionLostIntegrationTest {
     @Test
     void oracleClientSeesTheRealOra03113WhenTheBackendConnectionIsGenuinelyLost() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("orawire", "WARP_ORAWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+            String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
             try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
                 try (Statement warmup = conn.createStatement()) {
                     warmup.execute("SELECT 1 FROM DUAL");
@@ -72,15 +72,15 @@ class BackendConnectionLostIntegrationTest {
     @Test
     void mySqlClientSeesTheRealLostConnectionCodeWhenTheBackendConnectionIsGenuinelyLost() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("mywire", "POLYWIRE_MYWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mywire", "WARP_MYWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            String url = "jdbc:mysql://localhost:" + polywire.port("mywire") + "/postgres"
+            String url = "jdbc:mysql://localhost:" + warp.port("mywire") + "/postgres"
                     + "?useSSL=false&allowPublicKeyRetrieval=true&useServerPrepStmts=true";
             try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
                 try (Statement warmup = conn.createStatement()) {
@@ -116,15 +116,15 @@ class BackendConnectionLostIntegrationTest {
     @Test
     void postgresClientSeesTheRealPostgresSqlstateWhenTheBackendConnectionIsGenuinelyLost() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+            String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
             try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
                 try (Statement warmup = conn.createStatement()) {
                     warmup.execute("SELECT 1");
@@ -148,8 +148,8 @@ class BackendConnectionLostIntegrationTest {
         }
     }
 
-    /** The OTHER direction: what does a real client see if PolyWire ITSELF dies mid-session, not
-     * the backend Postgres? There's nothing running server-side once {@link PolyWireProcess#kill}
+    /** The OTHER direction: what does a real client see if Warp ITSELF dies mid-session, not
+     * the backend Postgres? There's nothing running server-side once {@link WarpProcess#kill}
      * returns to send a graceful in-protocol error frame the way the other tests in this class
      * prove for a backend outage -- so this deliberately does NOT assert a specific SQLSTATE/error
      * code the way those do. A real client's own transport-level disconnect detection is what
@@ -158,23 +158,23 @@ class BackendConnectionLostIntegrationTest {
      * genuinely fires -- the statement fails, the client doesn't hang forever waiting on a
      * response that's never coming. */
     @Test
-    void oracleClientDetectsPolyWireItselfDyingMidSession() throws Exception {
+    void oracleClientDetectsWarpItselfDyingMidSession() throws Exception {
         try (RealPostgres primary = RealPostgres.start()) {
-            PolyWireProcess polywire = PolyWireProcess.builder()
+            WarpProcess warp = WarpProcess.builder()
                     .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                    .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .frontend("orawire", "WARP_ORAWIRE_PORT")
+                    .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start();
 
-            String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+            String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
             try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
                 try (Statement warmup = conn.createStatement()) {
                     warmup.execute("SELECT 1 FROM DUAL");
                 }
 
-                polywire.kill();
+                warp.kill();
 
                 assertThrows(SQLException.class,
                         () -> {
@@ -182,7 +182,7 @@ class BackendConnectionLostIntegrationTest {
                                 st.execute("SELECT 1 FROM DUAL");
                             }
                         },
-                        "a statement against a genuinely dead PolyWire process must fail, not hang -- "
+                        "a statement against a genuinely dead Warp process must fail, not hang -- "
                                 + "the client's own transport-level disconnect detection, since there's "
                                 + "no server left running to send a graceful error frame");
             }
@@ -199,15 +199,15 @@ class BackendConnectionLostIntegrationTest {
     @Test
     void anInFlightQueryGetsTheSameOra03113WhenPostgresDiesMidExecution() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("orawire", "WARP_ORAWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+            String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
             try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password())) {
                 try (Statement warmup = conn.createStatement()) {
                     warmup.execute("SELECT 1 FROM DUAL");
@@ -224,7 +224,7 @@ class BackendConnectionLostIntegrationTest {
 
                 // Confirm the query is genuinely running server-side (not just "sent") before
                 // pulling the rug out -- via a SEPARATE admin connection straight to Postgres, not
-                // through PolyWire, so this check can't itself be affected by what we're about to
+                // through Warp, so this check can't itself be affected by what we're about to
                 // do to the backend.
                 try (Connection admin = DriverManager.getConnection(primary.jdbcUrl(), primary.username(), primary.password())) {
                     long deadline = System.currentTimeMillis() + 10_000;

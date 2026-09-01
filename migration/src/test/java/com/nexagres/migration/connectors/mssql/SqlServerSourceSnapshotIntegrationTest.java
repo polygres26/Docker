@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexagres.migration.checkpoint.CdcCheckpointStore;
 import com.nexagres.migration.core.Partition;
-import com.nexagres.migration.sink.PolywireGrpcSink;
-import com.nexagres.migration.testsupport.PolyWireProcess;
+import com.nexagres.migration.sink.WarpGrpcSink;
+import com.nexagres.migration.testsupport.WarpProcess;
 import com.nexagres.migration.testsupport.RealAzureSqlEdge;
 import com.nexagres.migration.testsupport.RealPostgres;
 import java.math.BigDecimal;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * Real, not simulated, snapshot (schema translation + parallel {@code CHECKSUM}-partitioned reads)
  * verification: real Azure SQL Edge (a genuine SQL-Server-compatible engine, ARM64-native -- see
  * {@link RealAzureSqlEdge}'s own javadoc for why real SQL Server images can't be used at all on
- * this host), real Polywire gRPC subprocess, real target Postgres.
+ * this host), real Warp gRPC subprocess, real target Postgres.
  *
  * <p>Drives {@link SqlServerSource}'s snapshot-related methods directly (not through {@link
  * com.nexagres.migration.coordinator.Coordinator}), same reasoning as {@code
@@ -39,10 +39,10 @@ class SqlServerSourceSnapshotIntegrationTest {
     void snapshotTranslatesSchemaAndCopiesEveryRowAcrossParallelPartitions() throws Exception {
         try (RealAzureSqlEdge sqlServer = RealAzureSqlEdge.start();
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("grpc", "POLYWIRE_GRPC_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("grpc", "WARP_GRPC_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             sqlServer.createDatabase("src");
@@ -62,7 +62,7 @@ class SqlServerSourceSnapshotIntegrationTest {
 
             SqlServerSource source = new SqlServerSource(sqlServer.host(), sqlServer.port(),
                     sqlServer.username(), sqlServer.password(), "src", "dbo", "orders", 3);
-            try (PolywireGrpcSink sink = new PolywireGrpcSink("localhost", polywire.port("grpc"), postgres.username(), postgres.password())) {
+            try (WarpGrpcSink sink = new WarpGrpcSink("localhost", warp.port("grpc"), postgres.username(), postgres.password())) {
                 source.ensureTargetSchema(sink);
                 for (Partition partition : source.listPartitions()) {
                     source.readPartition(partition, sink, checkpoints);

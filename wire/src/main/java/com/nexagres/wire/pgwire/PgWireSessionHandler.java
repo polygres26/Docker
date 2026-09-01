@@ -109,7 +109,7 @@ public final class PgWireSessionHandler implements Runnable {
         // role (roleAuthCache != null) -- propagated into every Statement this session executes,
         // and from there into JdbcBackendExecutor's native-RLS session-context call (see
         // terminalExecutor below), so a real Postgres RLS policy on the backend can key off
-        // current_setting('polywire.user_id'). Stays AccessContext.ANONYMOUS for the
+        // current_setting('warp.user_id'). Stays AccessContext.ANONYMOUS for the
         // shared-credential fallback -- that path has no real distinguishable identity to assert.
         this.terminalExecutor = new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.PostgresRlsSessionInitializer());
         this.routingExecutor = new com.nexagres.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
@@ -258,7 +258,7 @@ public final class PgWireSessionHandler implements Runnable {
         }
 
         PgMessages.writeAuthOk(out);
-        PgMessages.writeParameterStatus(out, "server_version", "14.0 (polywire)");
+        PgMessages.writeParameterStatus(out, "server_version", "14.0 (warp)");
         PgMessages.writeParameterStatus(out, "client_encoding", "UTF8");
         PgMessages.writeBackendKeyData(out);
         PgMessages.writeReadyForQuery(out, 'I');

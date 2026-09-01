@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -20,9 +20,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end proof that {@code POST /api/router-suggestions/draft} proposes a real table-sharding
- * rule WITHOUT ever writing to {@code polywire_config}, and -- the safety property specific to
+ * rule WITHOUT ever writing to {@code warp_config}, and -- the safety property specific to
  * this draft endpoint -- REFUSES a proposal that names a backend that doesn't actually exist, even
- * though the LLM was given the real list. Real Polywire subprocess (with a genuine second backend,
+ * though the LLM was given the real list. Real Warp subprocess (with a genuine second backend,
  * "shard1", registered alongside "default"), real disposable Postgres, real admin HTTP calls, real
  * (local, scripted) LLM endpoint. No mocks.
  */
@@ -69,25 +69,25 @@ class RouterSuggestionDraftIntegrationTest {
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private static PolyWireProcess.Builder baseBuilder(RealPostgres postgres, FakeLlmServer llm) {
+    private static WarpProcess.Builder baseBuilder(RealPostgres postgres, FakeLlmServer llm) {
         String jdbcUrl = "jdbc:postgresql://" + postgres.host() + ":" + postgres.port() + "/" + postgres.database();
         String backendEntry = jdbcUrl + "|" + postgres.username() + "|" + postgres.password();
-        return PolyWireProcess.builder()
+        return WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                // BackendRegistry.fromConfig only auto-registers the implicit POLYWIRE_* target as
-                // "default" when POLYWIRE_BACKENDS is UNSET entirely -- setting it at all (to add
+                // BackendRegistry.fromConfig only auto-registers the implicit WARP_* target as
+                // "default" when WARP_BACKENDS is UNSET entirely -- setting it at all (to add
                 // "shard1") means "default" must be listed explicitly too, or nothing routes to it
                 // (confirmed live: sqswire's own catalog connection threw "no default backend
                 // registered" and the whole process never became ready, before this was added).
                 // Both point at the same real Postgres instance here -- fine for proving the
                 // registry has two real, distinct, resolvable names; the sharding math doesn't
                 // care that they happen to share a database.
-                .env("POLYWIRE_BACKENDS", "default=" + backendEntry + ";shard1=" + backendEntry)
-                .env("POLYWIRE_LLM_PROVIDER", "custom")
-                .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                .env("POLYWIRE_LLM_MODEL", "test-router-model")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled");
+                .env("WARP_BACKENDS", "default=" + backendEntry + ";shard1=" + backendEntry)
+                .env("WARP_LLM_PROVIDER", "custom")
+                .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                .env("WARP_LLM_MODEL", "test-router-model")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("WARP_OTEL_ENDPOINT", "disabled");
     }
 
     @Test
@@ -101,12 +101,12 @@ class RouterSuggestionDraftIntegrationTest {
 
         try (FakeLlmServer llm = new FakeLlmServer(llmJsonReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = baseBuilder(postgres, llm).start()) {
+                WarpProcess warp = baseBuilder(postgres, llm).start()) {
 
-            HttpResponse<String> configBefore = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configBefore = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(200, configBefore.statusCode());
 
-            HttpResponse<String> draftResp = call("POST", polywire.metricsPort(), "/api/router-suggestions/draft", "{}");
+            HttpResponse<String> draftResp = call("POST", warp.metricsPort(), "/api/router-suggestions/draft", "{}");
             assertEquals(200, draftResp.statusCode(), "draft request body: " + draftResp.body());
             JsonObject draftBody = JsonParser.parseString(draftResp.body()).getAsJsonObject();
             assertFalse(draftBody.get("applied").getAsBoolean(), "a draft must never report itself as applied");
@@ -114,17 +114,17 @@ class RouterSuggestionDraftIntegrationTest {
             assertEquals("orders:hash:customer_id:default,shard1", candidate);
 
             // Proof #1: config genuinely unchanged right after drafting.
-            HttpResponse<String> configAfterDraft = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterDraft = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(configBefore.body(), configAfterDraft.body(),
-                    "drafting a router suggestion must not have touched polywire_config at all");
+                    "drafting a router suggestion must not have touched warp_config at all");
 
             // Proof #2: applying it via the real PUT /api/config reads back exactly as applied.
             JsonObject putBody = new JsonObject();
             putBody.addProperty("routerTableShards", candidate);
-            HttpResponse<String> putResp = call("PUT", polywire.metricsPort(), "/api/config", putBody.toString());
+            HttpResponse<String> putResp = call("PUT", warp.metricsPort(), "/api/config", putBody.toString());
             assertEquals(200, putResp.statusCode(), "applying the draft's own field via PUT /api/config must succeed: " + putResp.body());
 
-            HttpResponse<String> configAfterApply = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfterApply = call("GET", warp.metricsPort(), "/api/config", null);
             JsonObject finalConfig = JsonParser.parseString(configAfterApply.body()).getAsJsonObject();
             assertEquals(candidate, finalConfig.get("routerTableShards").getAsString(),
                     "the applied config must read back exactly what the draft proposed");
@@ -142,17 +142,17 @@ class RouterSuggestionDraftIntegrationTest {
 
         try (FakeLlmServer llm = new FakeLlmServer(llmJsonReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = baseBuilder(postgres, llm).start()) {
+                WarpProcess warp = baseBuilder(postgres, llm).start()) {
 
-            HttpResponse<String> configBefore = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configBefore = call("GET", warp.metricsPort(), "/api/config", null);
 
-            HttpResponse<String> draftResp = call("POST", polywire.metricsPort(), "/api/router-suggestions/draft", "{}");
+            HttpResponse<String> draftResp = call("POST", warp.metricsPort(), "/api/router-suggestions/draft", "{}");
             assertEquals(502, draftResp.statusCode(),
                     "a proposal naming a backend that doesn't exist must be rejected, not silently accepted");
             assertTrue(draftResp.body().contains("ghost_shard_that_does_not_exist") || draftResp.body().contains("real configured list"),
                     "expected a clear error naming the problem -- got: " + draftResp.body());
 
-            HttpResponse<String> configAfter = call("GET", polywire.metricsPort(), "/api/config", null);
+            HttpResponse<String> configAfter = call("GET", warp.metricsPort(), "/api/config", null);
             assertEquals(configBefore.body(), configAfter.body(), "a rejected draft must not have touched config either");
         }
     }

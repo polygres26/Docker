@@ -13,12 +13,12 @@ import java.sql.Statement;
  * DATE_FORMAT(...), ...) resolve at all.
  *
  * <p>Unlike {@link OraclePgEmulationSessionInitializer}, mywire has no existing
- * {@code PostgresRlsSessionInitializer}-based polywire.* GUC propagation to delegate to -- this
+ * {@code PostgresRlsSessionInitializer}-based warp.* GUC propagation to delegate to -- this
  * class is the first {@link NativeRlsSessionInitializer} mywire has ever needed, so it's a plain
  * standalone implementation rather than a wrapper adding one thing on top of something else.
  *
  * <p>Best-effort by design, same as the Oracle side: if db/pg_mysql isn't installed on the target
- * database at all -- Polywire can be deployed against a plain, unmodified Postgres backend, or an
+ * database at all -- Warp can be deployed against a plain, unmodified Postgres backend, or an
  * older pg_oracle predating the 'mysql' enum value -- {@code SET db_emulation = 'mysql'} would
  * fail loudly on every single statement (an unrecognized GUC name, or an invalid enum value)
  * exactly the way orawire's own {@code SET db_emulation = 'oracle'} once did before {@code
@@ -34,7 +34,7 @@ public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessio
         // OraclePgEmulationSessionInitializer's identical override -- db_emulation is a
         // protocol-level requirement of every mywire session, not a per-user RBAC/VPD concern, so
         // it must not be skipped just because the connection has no real authenticated identity
-        // (a plain username/password mywire login with no POLYWIRE_AUTH_MODE configured produces
+        // (a plain username/password mywire login with no WARP_AUTH_MODE configured produces
         // AccessContext.ANONYMOUS, exactly the case orawire's own history already found this
         // matters for).
         return true;

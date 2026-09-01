@@ -47,7 +47,7 @@ public final class RealPostgres implements AutoCloseable {
      * different test mechanisms. */
     public static RealPostgres start(String image, java.util.List<String> postgresConfOverrides)
             throws IOException, InterruptedException {
-        String containerName = "polywire-test-pg-" + System.nanoTime();
+        String containerName = "warp-test-pg-" + System.nanoTime();
         int port = findFreePort();
         List<String> args = new java.util.ArrayList<>(List.of("docker", "run", "-d", "--name", containerName,
                 "-p", port + ":5432",

@@ -53,7 +53,7 @@ final class LeafScanProfiler {
     }
 
     /** @param mountNameToBackend maps the internal Calcite convention name each leaf's {@code
-     *     JdbcConvention} was mounted under (see {@link ShardJoinExecutor}'s {@code __polywire_shardN}
+     *     JdbcConvention} was mounted under (see {@link ShardJoinExecutor}'s {@code __warp_shardN}
      *     names, or {@link SchemaFederationStage}'s real schema names) back to a
      *     {@link BackendTarget} to actually connect to and a human-readable label for the result. */
     static List<SqlPlanStore.LeafScanMetric> measure(RelNode optimized, SqlDialect dialect,

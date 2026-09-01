@@ -20,9 +20,9 @@ public final class TranslationLlmClient {
     private final Gson gson = new Gson();
 
     public TranslationLlmClient() {
-        this(System.getenv("POLYWIRE_LLM_API_KEY"),
-                System.getenv().getOrDefault("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:8080/v1"),
-                System.getenv().getOrDefault("POLYWIRE_LLM_MODEL", "qwen2.5-1.5b-instruct"));
+        this(System.getenv("WARP_LLM_API_KEY"),
+                System.getenv().getOrDefault("WARP_LLM_BASE_URL", "http://127.0.0.1:8080/v1"),
+                System.getenv().getOrDefault("WARP_LLM_MODEL", "qwen2.5-1.5b-instruct"));
     }
 
     public TranslationLlmClient(String apiKey, String baseUrl, String model) {
@@ -32,10 +32,10 @@ public final class TranslationLlmClient {
     }
 
     /**
-     * Builds a client from {@code polywire_config}'s dynamic LLM settings (see
-     * {@link com.nexagres.wire.config.PolyWireConfig#llmProvider()} et al.), falling back to the
-     * {@code POLYWIRE_LLM_*} env vars for any field the config store hasn't been given a value
-     * for yet -- so a bare env-var deployment (no admin UI, no {@code polywire_config} row for
+     * Builds a client from {@code warp_config}'s dynamic LLM settings (see
+     * {@link com.nexagres.wire.config.WarpConfig#llmProvider()} et al.), falling back to the
+     * {@code WARP_LLM_*} env vars for any field the config store hasn't been given a value
+     * for yet -- so a bare env-var deployment (no admin UI, no {@code warp_config} row for
      * these fields) keeps working exactly as before, while any field actually set through
      * {@code /api/llm-config} takes precedence over its env-var equivalent.
      *
@@ -47,9 +47,9 @@ public final class TranslationLlmClient {
         if ("none".equalsIgnoreCase(provider)) {
             return null;
         }
-        String resolvedApiKey = firstNonBlank(apiKey, System.getenv("POLYWIRE_LLM_API_KEY"));
-        String resolvedBaseUrl = firstNonBlank(baseUrl, System.getenv("POLYWIRE_LLM_BASE_URL"));
-        String resolvedModel = firstNonBlank(model, System.getenv("POLYWIRE_LLM_MODEL"));
+        String resolvedApiKey = firstNonBlank(apiKey, System.getenv("WARP_LLM_API_KEY"));
+        String resolvedBaseUrl = firstNonBlank(baseUrl, System.getenv("WARP_LLM_BASE_URL"));
+        String resolvedModel = firstNonBlank(model, System.getenv("WARP_LLM_MODEL"));
         if ("openai".equalsIgnoreCase(provider) && (resolvedBaseUrl == null || resolvedBaseUrl.isBlank())) {
             resolvedBaseUrl = "https://api.openai.com/v1";
         }
@@ -122,7 +122,7 @@ public final class TranslationLlmClient {
     /**
      * Drafts a read-only Postgres SELECT from a plain-English question and a schema summary --
      * the first of the two LLM calls {@code query_natural_language} (see {@code
-     * PolyWireMcpServer#runNaturalLanguageQuery}) makes; the second, independent one is {@link
+     * WarpMcpServer#runNaturalLanguageQuery}) makes; the second, independent one is {@link
      * #judgeSql}. Deliberately two separate calls rather than one -- the same reason a code
      * review is a different pass than writing the code: a model judging a draft against the
      * original question afresh catches mistakes a single pass asked to "get it right the first
@@ -142,7 +142,7 @@ public final class TranslationLlmClient {
      * Judges (and, if needed, corrects) a drafted SELECT against the schema and the original
      * question -- see {@link #draftSqlFromNaturalLanguage}'s own javadoc for why this is a
      * separate call rather than folded into drafting. This method only phrases/decides what the
-     * caller asked it to decide for THIS one draft; {@code PolyWireMcpServer} still runs its own
+     * caller asked it to decide for THIS one draft; {@code WarpMcpServer} still runs its own
      * deterministic read-only check on whatever SQL comes back before ever executing it -- this
      * judge is a quality/safety improvement layered on top of that check, not a replacement for
      * it.
@@ -232,7 +232,7 @@ public final class TranslationLlmClient {
      * Turns a real Postgres {@code EXPLAIN} plan into a short plain-English explanation -- the
      * safest category of LLM-backed feature in this series: pure narration of a fact Postgres
      * itself already computed, no decision of any kind, nothing to validate or gate afterward
-     * (see {@code PolyWireMcpServer}'s {@code explain_query} tool, which always returns the real
+     * (see {@code WarpMcpServer}'s {@code explain_query} tool, which always returns the real
      * plan JSON alongside this narrative, never the narrative alone).
      */
     public String narrateExplainPlan(String sql, String planJson) throws Exception {
@@ -248,7 +248,7 @@ public final class TranslationLlmClient {
     /**
      * Turns a real table/column/foreign-key listing into a short plain-English data dictionary --
      * pure narration of the actual schema, like {@link #narrateExplainPlan}: the caller ({@code
-     * PolyWireMcpServer}'s {@code document_schema} tool) always returns the real structured
+     * WarpMcpServer}'s {@code document_schema} tool) always returns the real structured
      * listing alongside this, and this method is told explicitly not to invent business meaning
      * beyond what the names/types/foreign keys actually show.
      */

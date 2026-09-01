@@ -52,7 +52,7 @@ public final class TdsTokens {
         body.write(1);
         
         body.write(0x74); body.write(0x00); body.write(0x00); body.write(0x04);
-        writeBVarChar(body, "PolyWire mssqlwire");
+        writeBVarChar(body, "Warp mssqlwire");
         body.write(15); body.write(0); body.write(0x07); body.write(0x00);
 
         out.write(TOKEN_LOGINACK);
@@ -80,7 +80,7 @@ public final class TdsTokens {
 
     // Without this, a real client (mssql-jdbc confirmed live) has no server collation to encode
     // string RPC parameters with and throws a NullPointerException client-side before a single
-    // byte reaches PolyWire -- not a decode bug in RpcRequestReader, a missing piece of the LOGIN7
+    // byte reaches Warp -- not a decode bug in RpcRequestReader, a missing piece of the LOGIN7
     // response every client needs regardless of RPC support at all. Found via
     // MssqlJdbcIntegrationTest, a real client -- exactly the kind of gap a hand-constructed test
     // payload can't surface, since nothing about RpcRequestReader's own decoding was wrong.
@@ -104,7 +104,7 @@ public final class TdsTokens {
         body.write(16);
         
         writeUsVarChar(body, message == null ? "backend error" : message);
-        writeBVarChar(body, "polywire-mssqlwire");
+        writeBVarChar(body, "warp-mssqlwire");
         writeBVarChar(body, "");
         writeU32LE(body, 0);
 

@@ -26,8 +26,8 @@ import org.slf4j.LoggerFactory;
  * MongoDB connector: real change streams for live sync, a real {@code find()} cursor for the
  * initial bulk read, writing through the target's real mongowire physical schema
  * (<code>"db"."collection"</code>, {@code id text}/{@code doc jsonb}) via whatever {@link Sink} is
- * given -- always {@code PolywireGrpcSink} in production, so every write actually lands through
- * Polywire's own pipeline, not a direct backdoor to the target Postgres.
+ * given -- always {@code WarpGrpcSink} in production, so every write actually lands through
+ * Warp's own pipeline, not a direct backdoor to the target Postgres.
  *
  * <p><b>Partitioning</b>: {@link #listPartitions} splits the collection into {@code
  * partitionCount} hash buckets of a configurable {@code shardKeyField} (server-side, via {@code
@@ -35,11 +35,11 @@ import org.slf4j.LoggerFactory;
  * client-side post-filter), so the initial snapshot's {@code partitionCount} parallel workers each
  * read a genuinely disjoint slice. Defaults to {@code partitionCount = 1} / {@code shardKeyField =
  * "_id"} (a single whole-collection partition), matching v1's original behavior exactly when a
- * caller doesn't ask for more. Deliberately keyed off the SAME field Polywire's own
+ * caller doesn't ask for more. Deliberately keyed off the SAME field Warp's own
  * {@code TableShardRule} would shard the target table on when one is configured (see this
  * session's own migration-plan discussion): partitioning the source read by the target's shard key
  * means each parallel worker's writes concentrate on the shard {@link
- * com.nexagres.migration.sink.PolywireGrpcSink}'s underlying {@code RouterStage} would route them
+ * com.nexagres.migration.sink.WarpGrpcSink}'s underlying {@code RouterStage} would route them
  * to anyway, instead of every worker round-robining writes across every shard's connections.
  *
  * <p>Each partition's own progress is checkpointed independently (key {@code
@@ -99,7 +99,7 @@ public final class MongoSource implements Source {
     /** @param partitionCount how many hash buckets to split the initial snapshot into for
      *     parallel reads -- 1 keeps the original single-partition behavior.
      * @param shardKeyField the field hashed to assign a document to a bucket -- ideally the same
-     *     column the TARGET table is (or will be) sharded on in Polywire's own {@code
+     *     column the TARGET table is (or will be) sharded on in Warp's own {@code
      *     TableShardRule} config, so each partition's writes land on one shard rather than
      *     scattering across all of them; {@code "_id"} is a safe, always-present default when the
      *     target isn't sharded at all. */
@@ -226,7 +226,7 @@ public final class MongoSource implements Source {
 
     /** {@code null} for the (default, backward-compatible) single-partition case -- no filter at
      * all beats a trivially-true one. For {@code partitionCount > 1}, a real server-side filter:
-     * hash {@code shardKeyField} via the same {@code $toHashedIndexKey} operator Polywire's own
+     * hash {@code shardKeyField} via the same {@code $toHashedIndexKey} operator Warp's own
      * hash {@code ShardingStrategy} is conceptually equivalent to, then bucket it mod {@code
      * partitionCount} -- {@code $abs} first since {@code $mod} preserves the dividend's sign and a
      * hash can be negative. */

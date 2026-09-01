@@ -45,7 +45,7 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient;
  * with {@code pk_value text}/{@code sk_value text}/{@code sk_num numeric}/{@code item jsonb},
  * {@code PRIMARY KEY (pk_value, sk_value)}, plus a row in the shared {@code _dynamo_tables} catalog
  * table so a live dynamowire client can discover and query this table afterward) via whatever
- * {@link Sink} is given -- always {@code PolywireGrpcSink} in production.
+ * {@link Sink} is given -- always {@code WarpGrpcSink} in production.
  *
  * <p><b>Partitioning</b>: {@link #listPartitions} maps directly onto DynamoDB's own native
  * parallel {@code Scan} support ({@code Segment}/{@code TotalSegments}) -- the database itself

@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
 public final class QueryRepairStage implements PipelineStage {
 
     private static final Logger log = LoggerFactory.getLogger(QueryRepairStage.class);
-    public static final String ENABLED_ENV = "POLYWIRE_QUERY_REPAIR_ENABLED";
+    public static final String ENABLED_ENV = "WARP_QUERY_REPAIR_ENABLED";
 
     // SQLSTATEs worth one LLM repair attempt -- all "this SQL text itself is the problem" cases,
     // deliberately never "this table/role/permission genuinely doesn't exist" ones (42P01
@@ -49,7 +49,7 @@ public final class QueryRepairStage implements PipelineStage {
     );
 
     private final boolean enabled;
-    // volatile: reconfigureLlm() swaps this from the same polywire_config LISTEN/NOTIFY callback
+    // volatile: reconfigureLlm() swaps this from the same warp_config LISTEN/NOTIFY callback
     // DialectTranslationStage#reconfigureLlm reacts to, on a different thread than the pipeline
     // threads that read it via handle() -- same pattern, same one LLM config surface for both
     // LLM-backed features, not a second one to keep in sync.

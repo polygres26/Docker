@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Unlike pgwire, O5LOGON needs the real plaintext password server-side to verify the client's
  * encrypted challenge response, so it can never be satisfied from Postgres's own hashed {@code
- * pg_authid} verifiers the way {@code PgRoleAuthCache} is -- {@code POLYWIRE_AUTH_CREDENTIALS}
+ * pg_authid} verifiers the way {@code PgRoleAuthCache} is -- {@code WARP_AUTH_CREDENTIALS}
  * (a real, distinguishable per-user credential list, structurally mirroring {@code
  * AwsIamCredentialStore}) is what makes orawire logins into real identities instead of one shared
  * username everyone presents.
@@ -43,22 +43,22 @@ import org.junit.jupiter.api.Test;
 class OracleRolesRlsIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
     private static final String ADMIN_TOKEN = "test-admin-token-" + System.nanoTime();
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
 
-        // postgres (the container default superuser) sets up the fixture only -- never PolyWire's
+        // postgres (the container default superuser) sets up the fixture only -- never Warp's
         // own backend credential, since a Postgres superuser (or a table's owner, by default)
-        // unconditionally bypasses every RLS policy regardless of any session GUC. polywire_admin
-        // is what PolyWire actually connects to Postgres as: an ordinary role with just the grants
+        // unconditionally bypasses every RLS policy regardless of any session GUC. warp_admin
+        // is what Warp actually connects to Postgres as: an ordinary role with just the grants
         // it needs.
         try (Connection admin = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
                 Statement st = admin.createStatement()) {
-            st.execute("CREATE ROLE polywire_admin LOGIN PASSWORD 'polywire-admin-pw'");
-            st.execute("GRANT ALL ON SCHEMA public TO polywire_admin");
+            st.execute("CREATE ROLE warp_admin LOGIN PASSWORD 'warp-admin-pw'");
+            st.execute("GRANT ALL ON SCHEMA public TO warp_admin");
             st.execute("CREATE TABLE orders (id serial PRIMARY KEY, owner_user text, item text)");
             // owner_user is uppercase because a real Oracle client (ojdbc here) uppercases an
             // unquoted username before O5LOGON ever puts it on the wire -- CredentialStore's
@@ -68,34 +68,34 @@ class OracleRolesRlsIntegrationTest {
             // for a real deployment.
             st.execute("INSERT INTO orders (owner_user, item) VALUES "
                     + "('ALICE', 'alice-order-1'), ('ALICE', 'alice-order-2'), ('BOB', 'bob-order-1')");
-            st.execute("GRANT SELECT ON orders TO polywire_admin");
+            st.execute("GRANT SELECT ON orders TO warp_admin");
             st.execute("ALTER TABLE orders ENABLE ROW LEVEL SECURITY");
             st.execute("CREATE POLICY orders_isolation ON orders "
-                    + "USING (owner_user = current_setting('polywire.user_id', true))");
+                    + "USING (owner_user = current_setting('warp.user_id', true))");
         }
 
-        polywire = PolyWireProcess.builder()
-                .pgBackend(postgres.host(), postgres.port(), postgres.database(), "polywire_admin", "polywire-admin-pw")
-                .frontend("orawire", "POLYWIRE_ORAWIRE_PORT")
+        warp = WarpProcess.builder()
+                .pgBackend(postgres.host(), postgres.port(), postgres.database(), "warp_admin", "warp-admin-pw")
+                .frontend("orawire", "WARP_ORAWIRE_PORT")
                 // orawire's O5LOGON needs the real plaintext password server-side (not a Postgres
                 // role hash), so alice/bob's credentials are configured here directly, unrelated to
                 // any Postgres role of the same name.
-                .env("POLYWIRE_AUTH_CREDENTIALS", "alice=alice-pw;bob=bob-pw")
-                .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .env("WARP_AUTH_CREDENTIALS", "alice=alice-pw;bob=bob-pw")
+                .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (postgres != null) postgres.close();
     }
 
     private Connection connectAs(String username, String password) throws SQLException {
-        String url = "jdbc:oracle:thin:@//localhost:" + polywire.port("orawire") + "/anything";
+        String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
         return DriverManager.getConnection(url, username, password);
     }
 
@@ -108,7 +108,7 @@ class OracleRolesRlsIntegrationTest {
                 items.add(rs.getString(1));
             }
             assertEquals(java.util.List.of("alice-order-1", "alice-order-2"), items,
-                    "alice must see only her own rows -- polywire.user_id must have been set to "
+                    "alice must see only her own rows -- warp.user_id must have been set to "
                             + "'alice' on this connection for Postgres's own RLS policy to filter correctly");
         }
     }
@@ -149,7 +149,7 @@ class OracleRolesRlsIntegrationTest {
         String events = fetchAudit();
         assertTrue(events.contains("\"DB_LOGIN_SUCCEEDED\"") && events.contains("\"BOB\"")
                         && events.contains("real per-user credential"),
-                "a successful orawire login under POLYWIRE_AUTH_CREDENTIALS must be recorded "
+                "a successful orawire login under WARP_AUTH_CREDENTIALS must be recorded "
                         + "with the real identity: " + events);
     }
 
@@ -177,7 +177,7 @@ class OracleRolesRlsIntegrationTest {
 
     private String fetchAudit() throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(
-                        "http://localhost:" + polywire.metricsPort() + "/api/audit?limit=50")
+                        "http://localhost:" + warp.metricsPort() + "/api/audit?limit=50")
                 .toURL().openConnection();
         conn.setRequestProperty("Authorization", "Bearer " + ADMIN_TOKEN);
         int status = conn.getResponseCode();

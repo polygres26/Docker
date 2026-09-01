@@ -5,7 +5,7 @@ Postgres backend -- real subprocess, real Postgres container, no mocks.
 import oracledb
 import pytest
 
-from polywire_support import PolyWireProcess, RealPostgres
+from warp_support import WarpProcess, RealPostgres
 
 
 @pytest.fixture(scope="module")
@@ -16,21 +16,21 @@ def postgres():
 
 
 @pytest.fixture(scope="module")
-def polywire(postgres):
-    proc = PolyWireProcess(postgres, "POLYWIRE_ORAWIRE_PORT", frontend_name="orawire")
+def warp(postgres):
+    proc = WarpProcess(postgres, "WARP_ORAWIRE_PORT", frontend_name="orawire")
     yield proc
     proc.close()
 
 
-def connect(polywire):
+def connect(warp):
     return oracledb.connect(
         user="postgres", password="postgres",
-        dsn=f"localhost:{polywire.frontend_port}/anything", disable_oob=True,
+        dsn=f"localhost:{warp.frontend_port}/anything", disable_oob=True,
     )
 
 
-def test_simple_select_from_dual(polywire):
-    conn = connect(polywire)
+def test_simple_select_from_dual(warp):
+    conn = connect(warp)
     try:
         cur = conn.cursor()
         cur.execute("SELECT 21 * 2 FROM DUAL")
@@ -40,8 +40,8 @@ def test_simple_select_from_dual(polywire):
         conn.close()
 
 
-def test_create_insert_select_round_trip(polywire):
-    conn = connect(polywire)
+def test_create_insert_select_round_trip(warp):
+    conn = connect(warp)
     try:
         cur = conn.cursor()
         cur.execute("CREATE TABLE orawire_it (id INTEGER PRIMARY KEY, name VARCHAR(50))")
@@ -60,8 +60,8 @@ def test_create_insert_select_round_trip(polywire):
         conn.close()
 
 
-def test_transaction_rollback_discards_uncommitted_writes(polywire):
-    conn = connect(polywire)
+def test_transaction_rollback_discards_uncommitted_writes(warp):
+    conn = connect(warp)
     try:
         cur = conn.cursor()
         cur.execute("CREATE TABLE orawire_it_txn (id INTEGER PRIMARY KEY)")
@@ -79,13 +79,13 @@ def test_transaction_rollback_discards_uncommitted_writes(polywire):
         conn.close()
 
 
-def test_metrics_endpoint_reports_statements(polywire):
-    conn = connect(polywire)
+def test_metrics_endpoint_reports_statements(warp):
+    conn = connect(warp)
     try:
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM DUAL")
         cur.fetchone()
     finally:
         conn.close()
-    body = polywire.metrics_text()
-    assert "polywire_statements_total" in body
+    body = warp.metrics_text()
+    assert "warp_statements_total" in body

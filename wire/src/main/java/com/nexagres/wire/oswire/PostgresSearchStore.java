@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
  * Qdrant) needs to actually be running, this table shape simulates the storage a search engine
  * would own.
  *
- * <p>One physical table per collection, {@code polywire_search_<collection>}:
+ * <p>One physical table per collection, {@code warp_search_<collection>}:
  * <pre>
  *   doc_id     TEXT PRIMARY KEY,
  *   source     JSONB NOT NULL,   -- the document body, returned verbatim as _source
@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>k-NN without pgvector, on purpose:</b> this deployment's Postgres has no {@code vector}
  * extension installed (checked live: {@code SELECT * FROM pg_available_extensions WHERE
- * name='vector'} returns zero rows on the stock {@code postgres:16} image PolyWire ships against),
+ * name='vector'} returns zero rows on the stock {@code postgres:16} image Warp ships against),
  * and requiring one would contradict every other store in this codebase's "no extension, no
  * external service required" design (dynamowire/mongowire/sqswire all reimplement their target
  * system's semantics in plain SQL for the same reason). So vector distance is computed in Java,
@@ -90,7 +90,7 @@ import org.slf4j.LoggerFactory;
 public final class PostgresSearchStore {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresSearchStore.class);
-    private static final String TABLE_PREFIX = "polywire_search_";
+    private static final String TABLE_PREFIX = "warp_search_";
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     /** Each hybrid sub-query pulls this many top candidates before score fusion -- real OpenSearch
      * hybrid search likewise fuses each sub-retriever's own top-N, not its full result set. Fixed

@@ -158,7 +158,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                         || requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED);
         if (!options.tlsEnabled() && requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED) {
             
-            log.warn("mssqlwire: client requires encryption but TLS isn't configured (set POLYWIRE_TLS_KEYSTORE)");
+            log.warn("mssqlwire: client requires encryption but TLS isn't configured (set WARP_TLS_KEYSTORE)");
             return null;
         }
         byte negotiatedEncryption = willUpgrade

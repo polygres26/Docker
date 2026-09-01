@@ -17,7 +17,7 @@ import org.apache.calcite.sql.SqlNode;
 /** A thin delegating {@link TranslatableTable} wrapping a real Calcite {@code JdbcTable} to
  * override only {@link #getStatistic()} -- see {@link StatisticsAwareSchema}'s own javadoc for why
  * this exists at all. Ported from the sibling Omnigate project's own class of the same name/shape;
- * PolyWire's own version doesn't carry column NDV/distinct-count statistics the way Omnigate's does
+ * Warp's own version doesn't carry column NDV/distinct-count statistics the way Omnigate's does
  * (that only ever fed Omnigate's opt-in embedded-planner path, which isn't ported here -- see
  * {@link ShardJoinExecutor}/{@link SchemaFederationStage}'s own scope notes) -- real row counts,
  * via {@link FederationStatistics}, are already a real improvement over Calcite's default

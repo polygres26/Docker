@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,21 +24,21 @@ import org.junit.jupiter.api.Test;
 class PgWireIntegrationTest {
 
     private static RealPostgres postgres;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
         postgres = RealPostgres.start();
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) {
-            polywire.close();
+        if (warp != null) {
+            warp.close();
         }
         if (postgres != null) {
             postgres.close();
@@ -46,7 +46,7 @@ class PgWireIntegrationTest {
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+        String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
         return DriverManager.getConnection(url, postgres.username(), postgres.password());
     }
 
@@ -109,13 +109,13 @@ class PgWireIntegrationTest {
             stmt.execute("SELECT 1");
         }
         java.net.HttpURLConnection metricsConn = (java.net.HttpURLConnection) java.net.URI
-                .create("http://localhost:" + polywire.metricsPort() + "/metrics").toURL().openConnection();
+                .create("http://localhost:" + warp.metricsPort() + "/metrics").toURL().openConnection();
         assertEquals(200, metricsConn.getResponseCode());
         String body;
         try (var in = metricsConn.getInputStream()) {
             body = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
-        assertTrue(body.contains("polywire_statements_total"),
-                "expected /metrics to report polywire_statements_total, got:\n" + body);
+        assertTrue(body.contains("warp_statements_total"),
+                "expected /metrics to report warp_statements_total, got:\n" + body);
     }
 }

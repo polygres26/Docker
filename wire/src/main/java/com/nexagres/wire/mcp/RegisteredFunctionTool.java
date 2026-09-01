@@ -13,7 +13,7 @@ record RegisteredFunctionTool(String toolName, String description, PgFunctionInt
         int eq = entry.indexOf('=');
         if (eq <= 0) {
             throw new IllegalArgumentException(
-                    "malformed POLYWIRE_MCP_TOOLS entry (expected toolName=schema.function|description): " + entry);
+                    "malformed WARP_MCP_TOOLS entry (expected toolName=schema.function|description): " + entry);
         }
         String toolName = entry.substring(0, eq).trim();
         String rest = entry.substring(eq + 1);

@@ -11,7 +11,7 @@ public final class TranslationCache {
     private final Map<CacheKey, String> cache;
 
     public TranslationCache() {
-        this(intEnv("POLYWIRE_TRANSLATION_CACHE_SIZE", DEFAULT_MAX_ENTRIES));
+        this(intEnv("WARP_TRANSLATION_CACHE_SIZE", DEFAULT_MAX_ENTRIES));
     }
 
     public TranslationCache(int maxEntries) {

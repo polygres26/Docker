@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
  */
 class LicenseIntegrationTest {
 
-    // A second, unrelated Ed25519 private key -- stands in for "not signed by the real PolyWire
+    // A second, unrelated Ed25519 private key -- stands in for "not signed by the real Warp
     // private key" (a forged or tampered key), distinct from a merely-corrupted string.
     private static final String WRONG_SIGNER_PRIVATE_KEY_B64 =
             "MC4CAQAwBQYDK2VwBCIEIOzC7QaVBPkQ4gVjrM8FvbAFyOxOc07Vw5AR8vWLTt3o";

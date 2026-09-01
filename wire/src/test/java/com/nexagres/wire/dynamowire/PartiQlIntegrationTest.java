@@ -3,7 +3,7 @@ package com.nexagres.wire.dynamowire;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.util.Map;
@@ -48,14 +48,14 @@ class PartiQlIntegrationTest {
     @Test
     void insertSelectUpdateDeleteAllRoundTripThroughPartiQl() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = client(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("partiql_orders")
                         .attributeDefinitions(AttributeDefinition.builder()
@@ -121,14 +121,14 @@ class PartiQlIntegrationTest {
     @Test
     void batchExecuteStatementRunsEachStatementIndependentlyAndReportsPerStatementErrors() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = client(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("partiql_batch")
                         .attributeDefinitions(AttributeDefinition.builder()
@@ -167,13 +167,13 @@ class PartiQlIntegrationTest {
     @Test
     void executeTransactionIsADisclosedGapNotASilentOne() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = client(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 DynamoDbException thrown = assertThrows(DynamoDbException.class, () ->
                         dynamo.executeTransaction(b -> b.transactStatements(
                                 software.amazon.awssdk.services.dynamodb.model.ParameterizedStatement.builder()

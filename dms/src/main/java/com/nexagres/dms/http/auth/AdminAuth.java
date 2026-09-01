@@ -85,7 +85,7 @@ public class AdminAuth {
         if (viewerConfigured && !DmsLicensing.rbacAllowed()) {
             log.warn("NEXAGRES_VIEWER_USER/NEXAGRES_VIEWER_PASSWORD are set, but role-based access "
                     + "control (a second admin-console account) is an Enterprise feature -- set a "
-                    + "valid POLYWIRE_LICENSE_KEY to activate the viewer account. Ignoring it for now; "
+                    + "valid WARP_LICENSE_KEY to activate the viewer account. Ignoring it for now; "
                     + "only the single admin account is usable.");
             this.viewerUser = null;
             this.viewerPassword = null;

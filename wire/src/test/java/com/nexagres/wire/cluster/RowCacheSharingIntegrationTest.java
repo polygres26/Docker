@@ -3,7 +3,7 @@ package com.nexagres.wire.cluster;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -33,13 +33,13 @@ import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 /**
  * End-to-end proof that {@link RowCache} is actually SHARED across dynamowire and the SQL
  * frontends, not just present in both -- a real AWS SDK v2 {@code DynamoDbClient} and a real
- * pgwire JDBC connection, against the same Polywire subprocess and the same real Postgres backend,
+ * pgwire JDBC connection, against the same Warp subprocess and the same real Postgres backend,
  * same discipline as {@code DynamoDbErrorMappingIntegrationTest} and
  * {@code ShortRegressionSuiteTest}. No mocks: this either proves the exact cache entry crossed
  * protocols, via the real admin metrics endpoint's per-protocol {@code cache_hit} breakdown, or it
  * doesn't -- there's no way to fake this assertion passing.
  *
- * <p>Deliberately does NOT set {@code POLYWIRE_DYNAMOWIRE_CACHE_ENABLED=false} the way the other
+ * <p>Deliberately does NOT set {@code WARP_DYNAMOWIRE_CACHE_ENABLED=false} the way the other
  * dynamowire integration tests do (they're testing error paths that don't want the cache in the
  * way) -- this test's whole point needs the row cache on, which is the default.
  */
@@ -58,9 +58,9 @@ class RowCacheSharingIntegrationTest {
                 .build();
     }
 
-    private static String metricsSummary(PolyWireProcess polywire) throws Exception {
+    private static String metricsSummary(WarpProcess warp) throws Exception {
         HttpClient http = HttpClient.newHttpClient();
-        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/metrics/summary"))
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/metrics/summary"))
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .timeout(Duration.ofSeconds(5))
                 .GET().build();
@@ -80,16 +80,16 @@ class RowCacheSharingIntegrationTest {
     @Test
     void aDynamoDbPutItemIsVisibleAsASqlCacheHitOnTheExactSameRow() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_CACHE_TABLES", PHYSICAL_TABLE)
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_CACHE_TABLES", PHYSICAL_TABLE)
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = dynamoClient(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = dynamoClient(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("orders")
                         .attributeDefinitions(AttributeDefinition.builder()
@@ -114,7 +114,7 @@ class RowCacheSharingIntegrationTest {
             // row cache for -- CacheStage's own SQL-side fast path (tryRowCacheLookup) must find
             // that exact entry and never touch Postgres for this read at all.
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     PreparedStatement ps = conn.prepareStatement(
                             "SELECT item FROM " + PHYSICAL_TABLE + " WHERE pk_value = ?")) {
                 ps.setString(1, "item-42");
@@ -131,7 +131,7 @@ class RowCacheSharingIntegrationTest {
             // Not "it returned the right data" (Postgres would also return the right data on a
             // real, uncached round trip) -- specifically that it came from the shared row cache,
             // under the pgwire protocol label, proving CacheStage's fast path is what served it.
-            String summary = metricsSummary(polywire);
+            String summary = metricsSummary(warp);
             assertTrue(summary.contains("\"protocol\":\"pgwire\"") && summary.contains("\"outcome\":\"cache_hit\""),
                     "expected a pgwire cache_hit in rttByOutcome (the SQL side hitting dynamowire's "
                             + "own populated row-cache entry) -- got: " + summary);
@@ -141,16 +141,16 @@ class RowCacheSharingIntegrationTest {
     @Test
     void aSqlUpdateByPrimaryKeyInvalidatesTheRowDynamoDbSeesNext() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("dynamowire", "POLYWIRE_DYNAMOWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_CACHE_TABLES", PHYSICAL_TABLE)
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("dynamowire", "WARP_DYNAMOWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_CACHE_TABLES", PHYSICAL_TABLE)
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (DynamoDbClient dynamo = dynamoClient(polywire.port("dynamowire"))) {
+            try (DynamoDbClient dynamo = dynamoClient(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
                         .tableName("orders")
                         .attributeDefinitions(AttributeDefinition.builder()
@@ -173,7 +173,7 @@ class RowCacheSharingIntegrationTest {
                 // one) only recognizes the `?`-placeholder shape a real prepared statement sends,
                 // matching how CacheStage sees sqlText/bindParams as separate fields throughout.
                 try (Connection conn = DriverManager.getConnection(
-                        "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                        "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                         PreparedStatement ps = conn.prepareStatement(
                                 "UPDATE " + PHYSICAL_TABLE + " SET item = ?::jsonb WHERE pk_value = ?")) {
                     ps.setString(1, "{\"id\":{\"S\":\"77\"},\"status\":{\"S\":\"shipped\"}}");

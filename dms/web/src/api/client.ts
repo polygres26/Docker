@@ -334,10 +334,10 @@ export type MigrationConnectorType =
 export interface MigrationJobRequest {
   connectorType: MigrationConnectorType
   targetConnectionId: string
-  polywireGrpcHost: string
-  polywireGrpcPort: number
-  polywireGrpcUser: string
-  polywireGrpcPassword: string
+  warpGrpcHost: string
+  warpGrpcPort: number
+  warpGrpcUser: string
+  warpGrpcPassword: string
   parallelism: number
   sourceConfig: Record<string, string>
 }

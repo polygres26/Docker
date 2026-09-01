@@ -1,6 +1,6 @@
 package com.nexagres.wire.core;
 
-import com.nexagres.wire.cluster.PolyWireCluster;
+import com.nexagres.wire.cluster.WarpCluster;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -42,15 +42,15 @@ import org.slf4j.LoggerFactory;
  * scheduler's first pass, or if it's not configured at all -- still gets a real number instead of
  * {@code Statistics.UNKNOWN} for its whole session.
  *
- * <p><b>TTL-bounded (default 24h, {@code POLYWIRE_STATS_TTL_MS}), not versioned/invalidated on
+ * <p><b>TTL-bounded (default 24h, {@code WARP_STATS_TTL_MS}), not versioned/invalidated on
  * write</b> -- a stale statistic (source data changed since last collection) degrades to a worse
  * cost estimate, not a wrong query result; row counts only ever inform planning, never execution.
  *
  * <p><b>Cluster-shared mode</b>: when constructed with a real, genuinely-clustered {@link
- * PolyWireCluster} ({@code POLYWIRE_CLUSTER_ENABLED=true}, not just the default single-node
+ * WarpCluster} ({@code WARP_CLUSTER_ENABLED=true}, not just the default single-node
  * cache-only Ignite grid every instance already runs for {@code CacheStage}'s own sake), entries
  * live in a shared {@code IgniteCache} instead of a local {@code ConcurrentHashMap} -- every
- * PolyWire instance in the cluster sees the SAME row-count statistics, regardless of which
+ * Warp instance in the cluster sees the SAME row-count statistics, regardless of which
  * instance's {@link StatisticsScheduler} (or on-demand probe) actually collected them. Mirrors
  * {@link ClusterSqlPlanStore}'s own identical local/cluster split for plan history -- see that
  * class's javadoc for the matching reasoning.
@@ -59,7 +59,7 @@ public final class StatisticsStore {
 
     private static final Logger log = LoggerFactory.getLogger(StatisticsStore.class);
     private static final long DEFAULT_TTL_MILLIS = 24L * 60 * 60 * 1000;
-    private static final String CLUSTER_CACHE_NAME = "polywire-federation-stats-cache";
+    private static final String CLUSTER_CACHE_NAME = "warp-federation-stats-cache";
 
     private record Entry(long rowCount, long collectedAtMillis) implements Serializable {
     }
@@ -79,7 +79,7 @@ public final class StatisticsStore {
     /** @param cluster {@code null}, or not genuinely clustered, means plain local caching (same
      *     behavior as before this constructor existed); a real cluster means every instance shares
      *     the same statistics via Ignite instead. */
-    public StatisticsStore(PolyWireCluster cluster, long ttlMillis) {
+    public StatisticsStore(WarpCluster cluster, long ttlMillis) {
         this.ttlMillis = ttlMillis;
         if (cluster != null && cluster.enabled()) {
             this.local = null;
@@ -95,14 +95,14 @@ public final class StatisticsStore {
     }
 
     /** Public wrapper so callers (e.g. {@code Main}) that need to pass an explicit {@link
-     * PolyWireCluster} into the constructor can still get the same env-configured TTL the
+     * WarpCluster} into the constructor can still get the same env-configured TTL the
      * no-cluster constructor uses by default. */
     public static long ttlFromEnvOrDefaultPublic() {
         return ttlFromEnvOrDefault();
     }
 
     private static long ttlFromEnvOrDefault() {
-        String raw = System.getenv("POLYWIRE_STATS_TTL_MS");
+        String raw = System.getenv("WARP_STATS_TTL_MS");
         if (raw == null || raw.isBlank()) {
             return DEFAULT_TTL_MILLIS;
         }

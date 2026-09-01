@@ -18,7 +18,7 @@ public final class AwsIamCredentialStore {
     }
 
     public static AwsIamCredentialStore fromEnv() {
-        return parse(System.getenv("POLYWIRE_AWS_IAM_CREDENTIALS"));
+        return parse(System.getenv("WARP_AWS_IAM_CREDENTIALS"));
     }
 
     public static AwsIamCredentialStore parse(String spec) {

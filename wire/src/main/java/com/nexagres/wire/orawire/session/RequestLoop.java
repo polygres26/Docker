@@ -139,17 +139,17 @@ public final class RequestLoop {
     // intercepted earlier, in SessionHandler.run(), by a raw TNS byte relay
     // (NativeSessionRelay) that never constructs a RequestLoop or JdbcBackendExecutor at all.
     // So the JDBC connection this executor's initializer calls land on genuinely is Postgres --
-    // OracleVpdSessionInitializer's polywire_ctx_pkg.set_attribute(...) calls target a real
+    // OracleVpdSessionInitializer's warp_ctx_pkg.set_attribute(...) calls target a real
     // Oracle-shaped stored package that doesn't exist here and would simply fail; it stays
     // reserved for a future NativeOracleExecutor RLS path, its own separate wiring at a
     // completely different layer. OraclePgEmulationSessionInitializer is the actual fix for
     // this Postgres path: `SET db_emulation = 'oracle'` once per session (without it, none of
     // db/pg_oracle's unqualified V$/DBA_*/DBMS_*/UTL_* names resolve at all -- confirmed live
-    // while building that extension), delegating everything else (polywire.* GUC propagation)
+    // while building that extension), delegating everything else (warp.* GUC propagation)
     // to the same PostgresRlsSessionInitializer every other protocol already uses, plus a
-    // best-effort SYS_CONTEXT('polywire_ctx', ...) forward so an Oracle-migrated app's existing
+    // best-effort SYS_CONTEXT('warp_ctx', ...) forward so an Oracle-migrated app's existing
     // VPD policies keep working unmodified once fronted by orawire -- see that class's own
-    // comment for exactly what's forwarded and why a missing 'polywire_ctx' namespace is
+    // comment for exactly what's forwarded and why a missing 'warp_ctx' namespace is
     // swallowed rather than failing the connection.
     private final JdbcBackendExecutor terminalExecutor =
             new JdbcBackendExecutor(null, new com.nexagres.wire.core.access.OraclePgEmulationSessionInitializer());
@@ -329,7 +329,7 @@ public final class RequestLoop {
                     // retcode, trailing 0x1d) already established and confirmed live for this same
                     // client's own LOGOFF above -- not writeSuccessEnd's own ERROR-tagged (tag 4)
                     // shape. Sending the wrong shape here was confirmed live to be exactly why a
-                    // real SQL*Plus client went silent after PolyWire's own COMMIT response instead
+                    // real SQL*Plus client went silent after Warp's own COMMIT response instead
                     // of proceeding to its final close marker. A dblink native OCI client's own
                     // standalone COMMIT (never part of this bundle) is unaffected -- it keeps using
                     // the writeSuccessEnd shape below, already confirmed correct for it.
@@ -627,7 +627,7 @@ public final class RequestLoop {
     // it regressed the startup-probe query (this same code path, nativeOciExecuteCount==1), which
     // worked fine with this template's original fixed zeros -- a real client that previously got
     // past this response now breaks on it instead. Reverted rather than left half-verified. See
-    // [[polywire-orawire-sqlplus-gap]] for why: getting this field-by-field, rather than by more
+    // [[warp-orawire-sqlplus-gap]] for why: getting this field-by-field, rather than by more
     // guess-and-check byte patching, needs a real Oracle-Net-aware capture tool (a proper TNS
     // dissector) to pin down this vector's true field boundaries and semantics with confidence.
     // Real bug, found live for a genuine SQL*Plus (non-dblink) client via a careful, verified byte
@@ -637,12 +637,12 @@ public final class RequestLoop {
     // -block/row lengths), landing on offset 32 -- independently matching the byte this template
     // already puts there (0x08, TTIRPA) exactly, confirming the accounting itself is trustworthy.
     // Extended that same accounting past the row to real content indices 222/226/247 in a live
-    // capture of PolyWire's own response and diffed those specific bytes against real Oracle's
+    // capture of Warp's own response and diffed those specific bytes against real Oracle's
     // response to the identical query: template offsets 43/47/68 (0x07/0x05/0x03) are wrong --
     // real Oracle sends 0x01/0x00/0x01 there instead. Confirmed these three offsets sit inside a
     // span already proven, separately, to be session-invariant (byte-for-byte identical across two
     // real, sequential queries in the same real session -- see
-    // [[polywire-orawire-sqlplus-gap]]'s own update #10/#11), so this is a fixed content
+    // [[warp-orawire-sqlplus-gap]]'s own update #10/#11), so this is a fixed content
     // correction, not a per-session/per-cursor value needing to be computed at request time -- the
     // same kind of fixed patch already applied to this same template at offset 35-37
     // (NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH) above. Scoped to non-dblink clients only: a dblink
@@ -651,7 +651,7 @@ public final class RequestLoop {
     // diffed at these specific offsets and may need different (or no) correction there.
     // Extended the same way, same live-vs-real diff at the same session-invariant offsets: found
     // two more wrong bytes past the first three, at offsets 85 and 92 (0x07/0x08 in this template,
-    // real Oracle sends 0x01/0x00) -- also inside the span [[polywire-orawire-sqlplus-gap]]'s
+    // real Oracle sends 0x01/0x00) -- also inside the span [[warp-orawire-sqlplus-gap]]'s
     // update #10 proved session-invariant.
     // Two more single-byte flags found the same way, at offsets 119 and 203 (both 0x00 in this
     // template, real Oracle sends 0x01) -- NOT yet independently confirmed session-invariant the
@@ -1056,7 +1056,7 @@ public final class RequestLoop {
      * ({@code NetworkChannelImpl.handleMarkerPacket}, case {@code NIQRMARK}/reset) only ever echoes
      * a reset back when {@code acknowledgeReset} was already set -- which only happens when
      * <i>that same side</i> sent the initiating break itself and is now waiting on the peer's
-     * acknowledgment. PolyWire never initiates a break, so it should never be the one echoing a
+     * acknowledgment. Warp never initiates a break, so it should never be the one echoing a
      * reset either; simply consuming and ignoring the marker (matching the "silent skip" behavior
      * confirmed correct at login time) is the correct response here.
      */

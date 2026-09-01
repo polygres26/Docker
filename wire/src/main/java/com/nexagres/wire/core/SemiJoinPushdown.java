@@ -124,7 +124,7 @@ final class SemiJoinPushdown {
      *     rows, so the caller can short-circuit the probe side with a guaranteed-empty filter. */
     static List<Object> collectDistinctKeys(Connection calciteConnection, String buildSourceSql,
             String buildKeyColumn, int maxKeys) throws SQLException {
-        String sql = "SELECT DISTINCT " + buildKeyColumn + " FROM (" + buildSourceSql + ") __polywire_semijoin_build "
+        String sql = "SELECT DISTINCT " + buildKeyColumn + " FROM (" + buildSourceSql + ") __warp_semijoin_build "
                 + "FETCH NEXT " + (maxKeys + 1) + " ROWS ONLY";
         List<Object> keys = new ArrayList<>();
         try (Statement st = calciteConnection.createStatement(); ResultSet rs = st.executeQuery(sql)) {
@@ -149,11 +149,11 @@ final class SemiJoinPushdown {
      * match anything, so there's no need to touch the probe backend's real data at all). */
     static String buildFilteredSource(String probeSourceSql, String probeKeyColumn, List<Object> keys) {
         String filter = keys.isEmpty() ? "1=0" : probeKeyColumn + " IN (" + literalList(keys) + ")";
-        return "(SELECT * FROM (" + probeSourceSql + ") __polywire_semijoin_probe WHERE " + filter + ")";
+        return "(SELECT * FROM (" + probeSourceSql + ") __warp_semijoin_probe WHERE " + filter + ")";
     }
 
     static int maxKeysFromEnvOrDefault() {
-        String raw = System.getenv("POLYWIRE_SEMIJOIN_MAX_KEYS");
+        String raw = System.getenv("WARP_SEMIJOIN_MAX_KEYS");
         if (raw == null || raw.isBlank()) {
             return DEFAULT_MAX_KEYS;
         }

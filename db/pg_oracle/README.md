@@ -20,10 +20,10 @@ SELECT * FROM dba_tables WHERE owner = 'X';  -- DBA_TABLES
 SELECT dbms_output.put_line('hi');           -- DBMS_OUTPUT.PUT_LINE
 ```
 
-Polywire's orawire frontend issues that one `SET` per session on connect;
+Warp's orawire frontend issues that one `SET` per session on connect;
 nothing else on its side needs to change. Plain `psql` against a Postgres
 instance with `pg_oracle` installed gets the identical behavior -- this
-extension has no dependency on Polywire and doesn't know it exists.
+extension has no dependency on Warp and doesn't know it exists.
 
 ## Scope (v1)
 
@@ -219,7 +219,7 @@ rewritten to `DO $$ ... $$;` (plus syntax deltas like bare procedure
 calls needing `PERFORM`) *before* it reaches Postgres at all.
 
 That rewrite is a text-transformation step that can only live in front
-of Postgres -- i.e. in Polywire's orawire dialect-translation stage
+of Postgres -- i.e. in Warp's orawire dialect-translation stage
 (which already exists for exactly this kind of protocol/dialect
 adaptation), not inside this extension. `pg_oracle`'s job is making sure
 the *rewritten* block actually runs correctly once it gets there, and
@@ -600,7 +600,7 @@ a replacement for a real streaming cursor over a huge result set.
 `UTL_RAW`, `UTL_ENCODE` -- planned to build on
 [orafce](https://pgxn.org/dist/orafce/) (PostgreSQL-licensed) where it
 already covers one, rather than reimplement from scratch; `GV$*` across
-more than one instance (needs Polywire's own sharding fan-out, not just
+more than one instance (needs Warp's own sharding fan-out, not just
 this extension); full privilege-accurate `ALL_*` views (today:
 owned-by-you or on-search_path, not real grant-checking).
 
@@ -650,7 +650,7 @@ CREATE EXTENSION pg_oracle CASCADE;
 The first working version created every schema/view/function owned by
 whoever ran `CREATE EXTENSION` (normally a superuser or admin role) with
 no grants to anyone else. Since `db_emulation` is `PGC_USERSET` --
-any role can `SET` it, by design, since Polywire needs to set it for
+any role can `SET` it, by design, since Warp needs to set it for
 whatever role a client authenticates as -- a plain application role could
 successfully `SET db_emulation = 'oracle'` and then hit `permission
 denied for schema oracle_catalog` on its very first query. Found live
@@ -883,7 +883,7 @@ every package schema still present after it.
 ## Real orawire + sqlcl integration test
 
 `test/orawire-integration/` -- the first real end-to-end run through the actual gateway, not
-`psql`: real `sqlcl` (Oracle's own client) over the real Oracle wire protocol, through Polywire's
+`psql`: real `sqlcl` (Oracle's own client) over the real Oracle wire protocol, through Warp's
 orawire, to Postgres with `pg_oracle` installed. Found and fixed three real bugs this way that no
 amount of direct-`psql` testing could have caught, all in `wire/`, not this extension:
 
@@ -892,7 +892,7 @@ amount of direct-`psql` testing could have caught, all in `wire/`, not this exte
    for RLS/VPD-context propagation but wrong for `db_emulation`, a protocol-level requirement of
    every orawire session).
 2. Even after fixing #1, a *second* separate connection could still fail intermittently: a
-   Postgres backend process can outlive what Polywire's own code thinks is one logical
+   Postgres backend process can outlive what Warp's own code thinks is one logical
    connection, and `LazyPooledConnection`'s own `SET search_path` (issued with no idea this
    extension's own search_path append exists) could reset it out from under a `db_emulation`
    GUC whose enum value hadn't changed -- fixed by making `db_emulation_assign_hook` (this

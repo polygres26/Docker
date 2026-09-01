@@ -1,4 +1,4 @@
-"""Shared test harness: a real disposable Postgres container plus a real PolyWire subprocess,
+"""Shared test harness: a real disposable Postgres container plus a real Warp subprocess,
 driven via plain `docker` CLI and `java -jar` -- no mocks, matching this project's own
 live-verification style. Used by test_orawire.py, test_mssqlwire.py, test_mywire.py.
 """
@@ -45,7 +45,7 @@ class RealPostgres:
     abstraction, so it needs nothing beyond Docker itself being installed."""
 
     def __init__(self):
-        self.name = f"polywire-pytest-pg-{uuid.uuid4().hex[:12]}"
+        self.name = f"warp-pytest-pg-{uuid.uuid4().hex[:12]}"
         self.port = free_port()
         subprocess.run(
             [
@@ -76,8 +76,8 @@ class RealPostgres:
         subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
 
 
-class PolyWireProcess:
-    """A real PolyWire process (the shaded jar), pointed at a real Postgres backend."""
+class WarpProcess:
+    """A real Warp process (the shaded jar), pointed at a real Postgres backend."""
 
     def __init__(self, postgres: RealPostgres, frontend_env_var: str, frontend_name="frontend"):
         if not os.path.exists(JAR_PATH):
@@ -90,19 +90,19 @@ class PolyWireProcess:
 
         env = dict(os.environ)
         env.update({
-            "POLYWIRE_PG_HOST": "localhost",
-            "POLYWIRE_PG_PORT": str(postgres.port),
-            "POLYWIRE_PG_DATABASE": "postgres",
-            "POLYWIRE_PG_USER": "postgres",
-            "POLYWIRE_PG_PASSWORD": "postgres",
-            "POLYWIRE_AUTH_USER": "postgres",
-            "POLYWIRE_AUTH_PASSWORD": "postgres",
-            "POLYWIRE_METRICS_PORT": str(self.metrics_port),
+            "WARP_PG_HOST": "localhost",
+            "WARP_PG_PORT": str(postgres.port),
+            "WARP_PG_DATABASE": "postgres",
+            "WARP_PG_USER": "postgres",
+            "WARP_PG_PASSWORD": "postgres",
+            "WARP_AUTH_USER": "postgres",
+            "WARP_AUTH_PASSWORD": "postgres",
+            "WARP_METRICS_PORT": str(self.metrics_port),
             # Default QoS admission control (rate=5/s burst=5, maxWaitMs=0 -- no queueing) is tuned
             # for production traffic shaping, not a test client's rapid connection-setup handshake;
             # without this a driver's own setup queries alone can trip "rate limit exceeded".
-            "POLYWIRE_QOS_RATE_PER_SEC": "1000",
-            "POLYWIRE_QOS_BURST": "1000",
+            "WARP_QOS_RATE_PER_SEC": "1000",
+            "WARP_QOS_BURST": "1000",
             frontend_env_var: str(self.frontend_port),
         })
 
@@ -117,7 +117,7 @@ class PolyWireProcess:
         # thread that hadn't started yet never does), not a clean crash. Found live: every
         # mssqlwire test failed with "connection refused" even though /metrics (which happens to
         # start earlier) was already up. Drain continuously on a daemon thread instead of only in
-        # close(), matching PolyWireProcess.java's own working pattern.
+        # close(), matching WarpProcess.java's own working pattern.
         self._output_lines = []
         self._drain_thread = threading.Thread(target=self._drain_output, daemon=True)
         self._drain_thread.start()
@@ -151,12 +151,12 @@ class PolyWireProcess:
                 last_error = e
             if self.process.poll() is not None:
                 output = "".join(self._output_lines)
-                raise RuntimeError(f"PolyWire ({self._frontend_name}) process exited early "
+                raise RuntimeError(f"Warp ({self._frontend_name}) process exited early "
                                     f"(code {self.process.returncode})\noutput:\n{output}")
             time.sleep(0.3)
         output = "".join(self._output_lines[-40:])
         raise TimeoutError(
-            f"PolyWire ({self._frontend_name}) did not become ready in {timeout}s: {last_error}\n"
+            f"Warp ({self._frontend_name}) did not become ready in {timeout}s: {last_error}\n"
             f"last output:\n{output}")
 
     def metrics_text(self):

@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>{@code BackendHealthChecker} (unplanned failover): checked once a primary is found
  *       unreachable, purely to log whether the automatic redirect to its fallback stayed within
- *       {@code POLYWIRE_FAILOVER_MAX_LAG_SECONDS} -- the "acceptable data loss" window for an
+ *       {@code WARP_FAILOVER_MAX_LAG_SECONDS} -- the "acceptable data loss" window for an
  *       outage nobody chose the timing of. This is advisory, not a gate: the primary is already
  *       down, so refusing to redirect would only turn a bounded-data-loss failover into a total
  *       outage, which is never the better trade.

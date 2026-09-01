@@ -15,7 +15,7 @@ import java.sql.Statement;
  * so one bad row doesn't stall a whole partition"). Same "own Postgres table on the target" pattern
  * as {@link CdcCheckpointStore}: a dead letter is migration-infrastructure bookkeeping (evidence
  * of a write that never landed), not customer data, so this connects directly, not through {@link
- * com.nexagres.migration.sink.PolywireGrpcSink} -- the same reasoning {@link CdcCheckpointStore}'s
+ * com.nexagres.migration.sink.WarpGrpcSink} -- the same reasoning {@link CdcCheckpointStore}'s
  * own javadoc gives for why IT bypasses the gRPC sink too.
  *
  * <p>Deliberately just a durable record, not a retry queue of its own -- replaying a dead-lettered

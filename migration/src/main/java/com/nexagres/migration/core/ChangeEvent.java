@@ -9,7 +9,7 @@ import java.util.List;
  * DynamoDB connector's <code>pk_value</code>/<code>sk_value</code>/<code>item</code> table, a
  * future relational connector's real translated columns) far better than any single generic
  * "document" shape could capture across all of them. A {@link Sink}'s job is only ever "execute
- * this," the same generic contract Polywire's own gRPC {@code QueryService} already exposes --
+ * this," the same generic contract Warp's own gRPC {@code QueryService} already exposes --
  * there is nothing to gain from inventing a fake unified data model on top of genuinely
  * heterogeneous sources this early.
  */

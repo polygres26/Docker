@@ -1,8 +1,8 @@
 # orawire + pg_oracle live integration test
 
-The first real end-to-end run: `sqlcl` (Oracle's actual client) -> Polywire's orawire (TNS/TTC)
+The first real end-to-end run: `sqlcl` (Oracle's actual client) -> Warp's orawire (TNS/TTC)
 -> Postgres 17 with `pg_oracle` installed. Not simulated -- a real `sqlcl` process connected
-over the real Oracle wire protocol port (11521) to a real running Polywire instance.
+over the real Oracle wire protocol port (11521) to a real running Warp instance.
 
 `test.sql` is the original battery run; `ddl-test.sql` is the follow-up that specifically
 exercises Oracle DDL types; `output-after-fix.log` is `sqlcl`'s real output from the first pass,
@@ -12,7 +12,7 @@ captured after the first (of two) real bugs below was found and fixed.
 
 **`db_emulation` was never actually being set on a plain username/password orawire connection at
 all.** `JdbcBackendExecutor` skips its session initializer entirely for an
-`AccessContext.ANONYMOUS` connection (no `POLYWIRE_AUTH_MODE`/OAuth/RBAC configured) -- a real,
+`AccessContext.ANONYMOUS` connection (no `WARP_AUTH_MODE`/OAuth/RBAC configured) -- a real,
 correct optimization for RLS/VPD-context propagation, but wrong for `db_emulation`, which is a
 protocol-level requirement of every orawire session, not a per-user concern. Confirmed live: with
 the bug present, `V$VERSION`/`V$INSTANCE`/`V$SESSION` and the new one-argument `to_char()`
@@ -31,7 +31,7 @@ would sometimes still fail with the exact same `ORA-00942`/`ORA-00904` errors, e
 `current_setting('db_emulation')` correctly reported `'oracle'`. Root cause (found by adding
 temporary debug logging around the `SET db_emulation = 'oracle'` call, not by further guessing):
 `db_emulation_mode` is a C-level static tied to the *physical Postgres backend process*, which
-can outlive what Polywire's own code thinks is one logical connection. `LazyPooledConnection`
+can outlive what Warp's own code thinks is one logical connection. `LazyPooledConnection`
 issues its own unconditional `SET search_path TO "<tenant>", public` the first time its Java
 wrapper opens a connection -- with no idea `pg_oracle`'s own search_path append exists -- and if
 that physical backend was reused, `db_emulation_mode`'s enum value was *already* `oracle` from a
@@ -116,7 +116,7 @@ and reads back the full timestamp, `2026-06-15 09:45:30`, not midnight.
 
 ```bash
 # 1. Postgres with pg_oracle installed (see db/pg_oracle/README.md's Building section)
-# 2. Build and run Polywire pointed at it (see wire/scripts/run.sh)
+# 2. Build and run Warp pointed at it (see wire/scripts/run.sh)
 # 3. Real Oracle client against orawire's port (11521 by default):
 sql -S "postgres/postgres@127.0.0.1:11521/postgres" @test.sql
 sql -S "postgres/postgres@127.0.0.1:11521/postgres" @ddl-test.sql

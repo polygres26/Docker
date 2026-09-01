@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -21,7 +21,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof of the MCP {@code query_natural_language} tool -- real Polywire subprocess,
+ * End-to-end proof of the MCP {@code query_natural_language} tool -- real Warp subprocess,
  * real disposable Postgres, real MCP JSON-RPC calls, and a real (local, scripted) LLM endpoint
  * that plays BOTH roles the tool calls (drafter, then judge), routed by which system prompt each
  * request actually carries. No mocks.
@@ -99,14 +99,14 @@ class Nl2SqlIntegrationTest {
                 + "\"reasoning\":\"the drafted table name was misspelled\"}";
         try (FakeLlmServer llm = new FakeLlmServer("SELECT count(*) FROM ordrs", judgeReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-nl2sql-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-nl2sql-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             // No pgwire frontend registered in this test (only "mcp") -- set up the schema via a
@@ -121,7 +121,7 @@ class Nl2SqlIntegrationTest {
 
             JsonObject args = new JsonObject();
             args.addProperty("question", "how many orders are there?");
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"), args);
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"), args);
             assertEquals(200, resp.statusCode());
             assertTrue(resp.body().contains("\"2\"") || resp.body().contains("2"),
                     "expected the real count (2) from the judge-corrected query -- got: " + resp.body());
@@ -129,7 +129,7 @@ class Nl2SqlIntegrationTest {
                     "expected the correction to be visible in the tool response -- got: " + resp.body());
 
             HttpClient http = HttpClient.newHttpClient();
-            HttpRequest auditReq = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/audit?limit=50"))
+            HttpRequest auditReq = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/audit?limit=50"))
                     .header("Authorization", "Bearer " + ADMIN_TOKEN)
                     .timeout(Duration.ofSeconds(5))
                     .GET().build();
@@ -148,14 +148,14 @@ class Nl2SqlIntegrationTest {
         String judgeReply = "{\"corrected\":true,\"sql\":\"DELETE FROM orders\",\"reasoning\":\"cleaning up\"}";
         try (FakeLlmServer llm = new FakeLlmServer("SELECT count(*) FROM orders", judgeReply);
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-nl2sql-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-nl2sql-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection direct = DriverManager.getConnection(
@@ -168,7 +168,7 @@ class Nl2SqlIntegrationTest {
 
             JsonObject args = new JsonObject();
             args.addProperty("question", "delete all the orders");
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"), args);
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"), args);
             assertEquals(200, resp.statusCode());
             assertTrue(resp.body().contains("never executes writes") || resp.body().contains("not a read-only SELECT"),
                     "expected the deterministic read-only refusal, not the judge's proposed DELETE -- got: " + resp.body());

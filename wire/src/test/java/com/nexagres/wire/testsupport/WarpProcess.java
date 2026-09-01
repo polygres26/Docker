@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>Runs the same JVM/classpath the test itself runs under (via {@code java.class.path}), so no
  * separate build step or shaded jar is required before {@code mvn test}.
  */
-public final class PolyWireProcess implements AutoCloseable {
+public final class WarpProcess implements AutoCloseable {
 
     private static final AtomicInteger PORT_HINT = new AtomicInteger(28000);
 
@@ -52,7 +52,7 @@ public final class PolyWireProcess implements AutoCloseable {
     private final int metricsPort;
     private final Map<String, Integer> ports;
 
-    private PolyWireProcess(Process process, int metricsPort, Map<String, Integer> ports) {
+    private WarpProcess(Process process, int metricsPort, Map<String, Integer> ports) {
         this.process = process;
         this.metricsPort = metricsPort;
         this.ports = ports;
@@ -79,21 +79,21 @@ public final class PolyWireProcess implements AutoCloseable {
         private final Map<String, Integer> ports = new LinkedHashMap<>();
 
         public Builder pgBackend(String host, int port, String database, String user, String password) {
-            env.put("POLYWIRE_HOST", host);
-            env.put("POLYWIRE_PORT", String.valueOf(port));
-            env.put("POLYWIRE_DATABASE", database);
-            env.put("POLYWIRE_USER", user);
-            env.put("POLYWIRE_PASSWORD", password);
-            env.put("POLYWIRE_AUTH_USER", user);
-            env.put("POLYWIRE_AUTH_PASSWORD", password);
+            env.put("WARP_HOST", host);
+            env.put("WARP_PORT", String.valueOf(port));
+            env.put("WARP_DATABASE", database);
+            env.put("WARP_USER", user);
+            env.put("WARP_PASSWORD", password);
+            env.put("WARP_AUTH_USER", user);
+            env.put("WARP_AUTH_PASSWORD", password);
             // Default QoS (rate=5/s burst=5, maxWaitMs=0) is tuned for production traffic shaping,
             // not a test client's rapid connection-setup handshake.
-            env.put("POLYWIRE_QOS_RATE_PER_SEC", "1000");
-            env.put("POLYWIRE_QOS_BURST", "1000");
+            env.put("WARP_QOS_RATE_PER_SEC", "1000");
+            env.put("WARP_QOS_BURST", "1000");
             return this;
         }
 
-        /** Allocates a free port for {@code envVar} (e.g. {@code POLYWIRE_PGWIRE_PORT}), registered under {@code name}. */
+        /** Allocates a free port for {@code envVar} (e.g. {@code WARP_PGWIRE_PORT}), registered under {@code name}. */
         public Builder frontend(String name, String envVar) {
             int port = findFreePort();
             env.put(envVar, String.valueOf(port));
@@ -106,9 +106,9 @@ public final class PolyWireProcess implements AutoCloseable {
             return this;
         }
 
-        public PolyWireProcess start() throws IOException, InterruptedException {
+        public WarpProcess start() throws IOException, InterruptedException {
             int metricsPort = findFreePort();
-            env.put("POLYWIRE_METRICS_PORT", String.valueOf(metricsPort));
+            env.put("WARP_METRICS_PORT", String.valueOf(metricsPort));
 
             String javaBin = System.getProperty("java.home") + "/bin/java";
             java.util.List<String> command = new java.util.ArrayList<>(java.util.List.of(javaBin));
@@ -125,12 +125,12 @@ public final class PolyWireProcess implements AutoCloseable {
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = r.readLine()) != null) {
-                        System.out.println("[polywire] " + line);
+                        System.out.println("[warp] " + line);
                     }
                 } catch (IOException ignored) {
                     // process ended
                 }
-            }, "polywire-process-output");
+            }, "warp-process-output");
             drain.setDaemon(true);
             drain.start();
 
@@ -143,7 +143,7 @@ public final class PolyWireProcess implements AutoCloseable {
             for (int port : ports.values()) {
                 waitForTcpReady(port, Duration.ofSeconds(30));
             }
-            return new PolyWireProcess(process, metricsPort, Map.copyOf(ports));
+            return new WarpProcess(process, metricsPort, Map.copyOf(ports));
         }
 
         private static void waitForHttpReady(int metricsPort, Duration timeout) throws InterruptedException {
@@ -162,7 +162,7 @@ public final class PolyWireProcess implements AutoCloseable {
                 }
                 Thread.sleep(200);
             }
-            throw new IllegalStateException("PolyWire did not become ready within " + timeout);
+            throw new IllegalStateException("Warp did not become ready within " + timeout);
         }
 
         private static void waitForTcpReady(int port, Duration timeout) throws InterruptedException {
@@ -176,7 +176,7 @@ public final class PolyWireProcess implements AutoCloseable {
                 }
                 Thread.sleep(200);
             }
-            throw new IllegalStateException("PolyWire frontend on port " + port + " did not become ready within " + timeout);
+            throw new IllegalStateException("Warp frontend on port " + port + " did not become ready within " + timeout);
         }
     }
 
@@ -195,15 +195,15 @@ public final class PolyWireProcess implements AutoCloseable {
         throw new IllegalStateException("could not find a free port after 20 attempts");
     }
 
-    /** Forcibly (SIGKILL, not a graceful shutdown) kills the PolyWire process itself while it may
+    /** Forcibly (SIGKILL, not a graceful shutdown) kills the Warp process itself while it may
      * still have live client sessions -- for tests proving what a real client sees when the
      * SERVER dies out from under it, as opposed to {@link #close}'s graceful teardown (which no
      * real client would ever observe mid-session) or {@code RealPostgres#stop}'s simulated
-     * BACKEND outage (a live PolyWire process still running to translate/forward the error).
+     * BACKEND outage (a live Warp process still running to translate/forward the error).
      * There is nothing left running to send a graceful in-protocol error frame once this returns
      * -- a real client's own transport-level disconnect detection is what's actually being
      * tested, the same detection a real Oracle/MySQL/SQL Server client already relies on for its
-     * own server dying, not something PolyWire can hand-craft after the fact. */
+     * own server dying, not something Warp can hand-craft after the fact. */
     public void kill() throws InterruptedException {
         if (process != null && process.isAlive()) {
             process.destroyForcibly();

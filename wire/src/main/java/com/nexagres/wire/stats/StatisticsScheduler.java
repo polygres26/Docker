@@ -29,7 +29,7 @@ public final class StatisticsScheduler implements AutoCloseable {
         this.backendRegistry = backendRegistry;
         this.store = store;
         this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-stats-scheduler");
+            Thread t = new Thread(r, "warp-stats-scheduler");
             t.setDaemon(true);
             return t;
         });
@@ -40,7 +40,7 @@ public final class StatisticsScheduler implements AutoCloseable {
     }
 
     public static StatisticsScheduler startIfConfigured(BackendRegistry backendRegistry, StatisticsStore store) {
-        int intervalMinutes = intEnv("POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES", 0);
+        int intervalMinutes = intEnv("WARP_STATS_REFRESH_INTERVAL_MINUTES", 0);
         if (intervalMinutes <= 0) {
             return null;
         }

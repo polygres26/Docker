@@ -8,8 +8,8 @@ import com.nexagres.wire.license.LicenseTier;
  * the "Suggested NexaGres DMS packaging" table, as distinct from {@code
  * com.nexagres.migration.core.MigrationLicensing} (which gates the actual data-movement
  * mechanics: parallelism, retry/DLQ, cutover). Both classes are thin wrappers around the SAME
- * underlying {@link License}/{@link LicenseTier} -- one {@code POLYWIRE_LICENSE_KEY} still unlocks
- * everything across PolyWire, nexagres-migration, and NexaGres DMS -- kept as a separate class
+ * underlying {@link License}/{@link LicenseTier} -- one {@code WARP_LICENSE_KEY} still unlocks
+ * everything across Warp, nexagres-migration, and NexaGres DMS -- kept as a separate class
  * only because these are genuinely different capabilities gated for different reasons (admin
  * console access control, not migration throughput), living in a different module.
  *
@@ -60,7 +60,7 @@ public final class DmsLicensing {
             return;
         }
         throw new IllegalStateException("A second (viewer) admin-console account is an Enterprise "
-                + "feature -- set a valid POLYWIRE_LICENSE_KEY to enable role-based access control. "
+                + "feature -- set a valid WARP_LICENSE_KEY to enable role-based access control. "
                 + "The free/Developer tier has a single shared admin account, always full access.");
     }
 
@@ -78,7 +78,7 @@ public final class DmsLicensing {
             return;
         }
         throw new IllegalStateException("SSO (bearer-token) login is an Enterprise feature -- set a "
-                + "valid POLYWIRE_LICENSE_KEY to enable SsoAuth. The free/Developer tier logs in with "
+                + "valid WARP_LICENSE_KEY to enable SsoAuth. The free/Developer tier logs in with "
                 + "the NEXAGRES_ADMIN_USER/NEXAGRES_ADMIN_PASSWORD username/password pair only.");
     }
 }

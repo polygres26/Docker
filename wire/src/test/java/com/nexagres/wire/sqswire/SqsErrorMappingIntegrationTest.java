@@ -3,7 +3,7 @@ package com.nexagres.wire.sqswire;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.sql.Connection;
@@ -50,15 +50,15 @@ class SqsErrorMappingIntegrationTest {
     @Test
     void aQueueWhoseTableWasDroppedUnderneathSqswireReturnsARealQueueDoesNotExistException() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (SqsClient sqs = client(polywire.port("sqswire"))) {
+            try (SqsClient sqs = client(warp.port("sqswire"))) {
                 String queueUrl = sqs.createQueue(CreateQueueRequest.builder().queueName("orphaned_queue").build())
                         .queueUrl();
 
@@ -88,15 +88,15 @@ class SqsErrorMappingIntegrationTest {
     @Test
     void aGenuinelyDeadBackendConnectionReturnsACleanInternalError() throws Exception {
         try (RealPostgres primary = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(primary.host(), primary.port(), primary.database(), primary.username(), primary.password())
-                        .frontend("sqswire", "POLYWIRE_SQSWIRE_PORT")
-                        .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("sqswire", "WARP_SQSWIRE_PORT")
+                        .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (SqsClient sqs = client(polywire.port("sqswire"))) {
+            try (SqsClient sqs = client(warp.port("sqswire"))) {
                 String queueUrl = sqs.createQueue(CreateQueueRequest.builder().queueName("q").build()).queueUrl();
                 sqs.sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody("warmup").build());
 

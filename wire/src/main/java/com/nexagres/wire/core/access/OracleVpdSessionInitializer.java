@@ -10,7 +10,7 @@ public final class OracleVpdSessionInitializer implements NativeRlsSessionInitia
     private final String setAttributeProcedure;
 
     public OracleVpdSessionInitializer() {
-        this("polywire_ctx_pkg.set_attribute");
+        this("warp_ctx_pkg.set_attribute");
     }
 
     public OracleVpdSessionInitializer(String setAttributeProcedure) {

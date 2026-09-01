@@ -71,14 +71,14 @@ public final class AnomalyDetectionScheduler implements AutoCloseable {
         this.ratioThreshold = ratioThreshold;
         this.minRatePerSec = minRatePerSec;
         this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-anomaly-scheduler");
+            Thread t = new Thread(r, "warp-anomaly-scheduler");
             t.setDaemon(true);
             return t;
         });
     }
 
     /** {@code null} (no scheduler constructed, no background thread) unless {@code
-     * POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES} is set to a positive integer -- same default-off
+     * WARP_ANOMALY_SCAN_INTERVAL_MINUTES} is set to a positive integer -- same default-off
      * convention {@link StatisticsScheduler#startIfConfigured} uses. The LLM narration step is
      * independently optional: this still runs (and still records purely numeric anomalies) with
      * no LLM configured at all, since {@code llmClientSupplier} is consulted fresh every cycle,
@@ -86,12 +86,12 @@ public final class AnomalyDetectionScheduler implements AutoCloseable {
      * QueryRepairStage} uses. */
     public static AnomalyDetectionScheduler startIfConfigured(StatsCollectorStage statsStage,
             Supplier<TranslationLlmClient> llmClientSupplier) {
-        int intervalMinutes = intEnv("POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES", 0);
+        int intervalMinutes = intEnv("WARP_ANOMALY_SCAN_INTERVAL_MINUTES", 0);
         if (intervalMinutes <= 0) {
             return null;
         }
-        double ratioThreshold = doubleEnv("POLYWIRE_ANOMALY_RATIO_THRESHOLD", 3.0);
-        double minRatePerSec = doubleEnv("POLYWIRE_ANOMALY_MIN_RATE_PER_SEC", 0.5);
+        double ratioThreshold = doubleEnv("WARP_ANOMALY_RATIO_THRESHOLD", 3.0);
+        double minRatePerSec = doubleEnv("WARP_ANOMALY_MIN_RATE_PER_SEC", 0.5);
         AnomalyDetectionScheduler scheduler =
                 new AnomalyDetectionScheduler(statsStage, llmClientSupplier, ratioThreshold, minRatePerSec);
         scheduler.executor.scheduleWithFixedDelay(scheduler::runCycleSafely, intervalMinutes, intervalMinutes, TimeUnit.MINUTES);

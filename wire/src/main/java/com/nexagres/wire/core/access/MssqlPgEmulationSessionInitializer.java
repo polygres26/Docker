@@ -12,7 +12,7 @@ import java.sql.Statement;
  * SQL-Server-shaped names (sys.tables, OBJECT_ID(...), SCOPE_IDENTITY(), ...) resolve at all.
  *
  * <p>Unlike mywire's own initializer (which had no prior {@link NativeRlsSessionInitializer} to
- * build on), mssqlwire already used {@link PostgresRlsSessionInitializer} for its polywire.* GUC
+ * build on), mssqlwire already used {@link PostgresRlsSessionInitializer} for its warp.* GUC
  * propagation -- this class delegates to it rather than duplicating it, the same "adds exactly
  * one thing on top" shape as {@link OraclePgEmulationSessionInitializer}.
  *

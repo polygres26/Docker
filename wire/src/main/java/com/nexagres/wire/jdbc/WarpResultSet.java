@@ -6,7 +6,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Types;
 
-final class PolyWireResultSet {
+final class WarpResultSet {
 
     static ResultSet create(ExecuteResponse response) {
         int[] rowIndex = {-1};
@@ -25,7 +25,7 @@ final class PolyWireResultSet {
         handler.on("getMetaData", args -> createMetaData(response));
 
         return (ResultSet) Proxy.newProxyInstance(
-                PolyWireResultSet.class.getClassLoader(), new Class<?>[] {ResultSet.class}, handler);
+                WarpResultSet.class.getClassLoader(), new Class<?>[] {ResultSet.class}, handler);
     }
 
     private static int columnIndex(ExecuteResponse response, Object arg) {
@@ -48,9 +48,9 @@ final class PolyWireResultSet {
         handler.on("getColumnName", args -> response.getColumnNames((Integer) args[0] - 1));
         handler.on("getColumnType", args -> Types.VARCHAR);
         return (ResultSetMetaData) Proxy.newProxyInstance(
-                PolyWireResultSet.class.getClassLoader(), new Class<?>[] {ResultSetMetaData.class}, handler);
+                WarpResultSet.class.getClassLoader(), new Class<?>[] {ResultSetMetaData.class}, handler);
     }
 
-    private PolyWireResultSet() {
+    private WarpResultSet() {
     }
 }

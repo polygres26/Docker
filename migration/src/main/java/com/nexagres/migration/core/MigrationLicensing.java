@@ -9,10 +9,10 @@ import org.slf4j.LoggerFactory;
  * The paid/free line for {@code nexagres-migration}, per this session's own instruction: "for
  * difference between paid vs free, lets make the parallelism the paid option -- for developers
  * lets give serial way to move data, for a real massively parallel way to move data [that's the
- * paid tier]." Deliberately reuses Polywire's OWN {@link License}/{@link LicenseTier} machinery
+ * paid tier]." Deliberately reuses Warp's OWN {@link License}/{@link LicenseTier} machinery
  * (already a compile-scope dependency of this module -- see {@code migration/pom.xml}'s own
  * comment on reusing {@code nexagres-wire}) rather than inventing a second, separate licensing
- * system for this module: one {@code POLYWIRE_LICENSE_KEY} unlocks both Polywire's own
+ * system for this module: one {@code WARP_LICENSE_KEY} unlocks both Warp's own
  * Enterprise-tier caps AND massively-parallel migration, one key, one offline Ed25519-signature
  * trust model, one thing for a customer to buy. See {@link License}'s own javadoc for the full
  * "deliberately offline, fails closed" design this class inherits by simply delegating to it.
@@ -86,7 +86,7 @@ public final class MigrationLicensing {
     // to reach a package-private static setter -- can ever set it; the only caller is
     // MigrationLicensingTestSupport, which lives in src/test/java (this module's own test
     // sources), never in the shipped jar. This exists because a genuine Enterprise
-    // POLYWIRE_LICENSE_KEY can only be produced by LicenseKeyGenTool using the real signing
+    // WARP_LICENSE_KEY can only be produced by LicenseKeyGenTool using the real signing
     // private key, which is deliberately held offline (see License's own javadoc) and not
     // available to this module's tests -- there is no way to test the Enterprise-unlocked path
     // through the real signature-verification path from outside wire's own test suite.
@@ -105,7 +105,7 @@ public final class MigrationLicensing {
     }
 
     /** Clamps {@code requestedParallelism} to {@code 1} unless a valid Enterprise
-     * {@code POLYWIRE_LICENSE_KEY} is present -- never throws, since a serial migration is a
+     * {@code WARP_LICENSE_KEY} is present -- never throws, since a serial migration is a
      * completely correct (if slower) way to move the same data, not a broken one. */
     public static int enforceLocalParallelism(int requestedParallelism) {
         int requested = Math.max(1, requestedParallelism);
@@ -115,11 +115,11 @@ public final class MigrationLicensing {
         if (currentTier() == LicenseTier.ENTERPRISE) {
             return requested;
         }
-        log.warn("migration: parallelism={} was requested, but no Enterprise POLYWIRE_LICENSE_KEY is "
+        log.warn("migration: parallelism={} was requested, but no Enterprise WARP_LICENSE_KEY is "
                 + "set -- massively parallel migration is a paid feature. Running serial instead "
                 + "(parallelism=1, one partition at a time): this still completes correctly, just "
                 + "without the throughput of reading multiple partitions concurrently. Set a valid "
-                + "POLYWIRE_LICENSE_KEY to unlock full parallelism.", requestedParallelism);
+                + "WARP_LICENSE_KEY to unlock full parallelism.", requestedParallelism);
         return 1;
     }
 
@@ -132,7 +132,7 @@ public final class MigrationLicensing {
         }
         throw new IllegalStateException("Distributed migration coordination (multiple worker "
                 + "processes/containers claiming partitions off a shared PartitionLeaseStore) is an "
-                + "Enterprise feature -- set a valid POLYWIRE_LICENSE_KEY to run DistributedCoordinator. "
+                + "Enterprise feature -- set a valid WARP_LICENSE_KEY to run DistributedCoordinator. "
                 + "On the free/Developer tier, use Coordinator instead: a single process that migrates "
                 + "the same data correctly, serially (one partition at a time) without a license key.");
     }
@@ -158,7 +158,7 @@ public final class MigrationLicensing {
         }
         if (currentlyRunningJobs >= 1) {
             throw new IllegalStateException("The free/Developer tier runs one migration job at a time "
-                    + "(" + currentlyRunningJobs + " already running) -- set a valid POLYWIRE_LICENSE_KEY "
+                    + "(" + currentlyRunningJobs + " already running) -- set a valid WARP_LICENSE_KEY "
                     + "to run multiple migrations concurrently. Wait for the current job to finish, or "
                     + "stop it, before starting another.");
         }
@@ -176,7 +176,7 @@ public final class MigrationLicensing {
         }
         throw new IllegalStateException("Cutover-readiness checking (the packaged ready/not-ready "
                 + "signal CutoverReadinessChecker produces) is an Enterprise feature -- set a valid "
-                + "POLYWIRE_LICENSE_KEY to use it. The underlying signals it rolls up (checkpoint lag, "
+                + "WARP_LICENSE_KEY to use it. The underlying signals it rolls up (checkpoint lag, "
                 + "dead-letter count, partition completion) are still freely readable via "
                 + "MigrationStatusStore on the free/Developer tier -- you can assess cutover readiness "
                 + "manually from those, just not via this single packaged verdict.");
@@ -192,7 +192,7 @@ public final class MigrationLicensing {
         }
         throw new IllegalStateException("A custom throughput cap (anything other than the default "
                 + DEFAULT_SOURCE_PROTECTION_EVENTS_PER_SECOND + " events/sec) is an Enterprise feature "
-                + "-- set a valid POLYWIRE_LICENSE_KEY to configure maxEventsPerSecond. The "
+                + "-- set a valid WARP_LICENSE_KEY to configure maxEventsPerSecond. The "
                 + "free/Developer tier always runs at the default cap, which protects the source "
                 + "without needing to be tuned.");
     }
@@ -208,7 +208,7 @@ public final class MigrationLicensing {
         }
         throw new IllegalStateException("Automatic cutover (continuously polling readiness and firing "
                 + "the cutover action the moment every gate turns green, unattended) is an Enterprise "
-                + "feature -- set a valid POLYWIRE_LICENSE_KEY to use AutomaticCutoverScheduler. On the "
+                + "feature -- set a valid WARP_LICENSE_KEY to use AutomaticCutoverScheduler. On the "
                 + "free/Developer tier, run CutoverReadinessCli yourself (or poll "
                 + "CutoverReadinessChecker from your own script) and decide when to cut over by hand.");
     }

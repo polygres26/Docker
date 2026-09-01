@@ -3,7 +3,7 @@ package com.nexagres.wire.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -40,22 +40,22 @@ class BackendHealthCheckerIntegrationTest {
                     + ";primary=" + primary.jdbcUrl() + "|" + primary.username() + "|" + primary.password() + "|fallback"
                     + ";fallback=" + fallback.jdbcUrl() + "|" + fallback.username() + "|" + fallback.password();
 
-            try (PolyWireProcess polywire = PolyWireProcess.builder()
+            try (WarpProcess warp = WarpProcess.builder()
                     .pgBackend(controlPlane.host(), controlPlane.port(), controlPlane.database(),
                             controlPlane.username(), controlPlane.password())
-                    .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                    .env("POLYWIRE_BACKENDS", backends)
-                    .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                    .env("POLYWIRE_ROUTER_SCHEMA_RULES", "shopx:primary")
+                    .frontend("pgwire", "WARP_PGWIRE_PORT")
+                    .env("WARP_BACKENDS", backends)
+                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                    .env("WARP_ROUTER_SCHEMA_RULES", "shopx:primary")
                     // Fast enough for a test to wait out without dragging real-time out of it too
                     // far -- production would use something like 15-30s (see Main's default).
-                    .env("POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS", "1")
-                    .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                    .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                    .env("WARP_BACKEND_HEALTH_CHECK_SECONDS", "1")
+                    .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start()) {
 
-                String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+                String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
                 try (Connection conn = DriverManager.getConnection(url, primary.username(), primary.password());
                         Statement st = conn.createStatement()) {
 

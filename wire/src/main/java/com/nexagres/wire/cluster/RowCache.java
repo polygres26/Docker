@@ -27,7 +27,7 @@ public final class RowCache {
 
     private static final Logger log = LoggerFactory.getLogger(RowCache.class);
 
-    private static final String CACHE_NAME = "polywire-row-cache";
+    private static final String CACHE_NAME = "warp-row-cache";
 
     private final IgniteCache<String, String> cache;
 
@@ -35,7 +35,7 @@ public final class RowCache {
         this.cache = cache;
     }
 
-    public static RowCache create(PolyWireCluster cluster, String ttlMillisSpec) {
+    public static RowCache create(WarpCluster cluster, String ttlMillisSpec) {
         long ttl = ttlMillisSpec == null || ttlMillisSpec.isBlank() ? 30_000 : Long.parseLong(ttlMillisSpec);
         return new RowCache(cluster.getOrCreateCache(CACHE_NAME, ttl));
     }

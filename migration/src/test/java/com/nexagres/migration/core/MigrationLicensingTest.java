@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The paid/free gate itself, in isolation from any real migration mechanics -- no Postgres, no
  * Docker, pure logic. Covers both directions: the real, default (no {@code
- * POLYWIRE_LICENSE_KEY} set anywhere in this test environment) free/Developer-tier path every
+ * WARP_LICENSE_KEY} set anywhere in this test environment) free/Developer-tier path every
  * OTHER test in this module also runs under, plus the forced-Enterprise path via {@link
  * MigrationLicensingTestSupport} (see its own javadoc for why a genuine key can't be minted here).
  */
@@ -38,7 +38,7 @@ class MigrationLicensingTest {
                 MigrationLicensing::requireEnterpriseForDistributedCoordination);
         // The message is a real operator-facing instruction, not just "forbidden" -- assert it
         // actually names both halves of the fix (get a key, or use Coordinator instead).
-        assertEquals(true, e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, e.getMessage().contains("WARP_LICENSE_KEY"));
         assertEquals(true, e.getMessage().contains("Coordinator"));
     }
 
@@ -57,11 +57,11 @@ class MigrationLicensingTest {
         assertDoesNotThrow(() -> MigrationLicensing.requireCapacityForAnotherConcurrentJob(0));
         IllegalStateException capacity = assertThrows(IllegalStateException.class,
                 () -> MigrationLicensing.requireCapacityForAnotherConcurrentJob(1));
-        assertEquals(true, capacity.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, capacity.getMessage().contains("WARP_LICENSE_KEY"));
 
         IllegalStateException cutover = assertThrows(IllegalStateException.class,
                 MigrationLicensing::requireEnterpriseForCutoverReadiness);
-        assertEquals(true, cutover.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, cutover.getMessage().contains("WARP_LICENSE_KEY"));
     }
 
     @Test
@@ -77,7 +77,7 @@ class MigrationLicensingTest {
         MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 MigrationLicensing::requireEnterpriseForCustomThrottle);
-        assertEquals(true, e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, e.getMessage().contains("WARP_LICENSE_KEY"));
 
         MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
         assertDoesNotThrow(MigrationLicensing::requireEnterpriseForCustomThrottle);
@@ -88,7 +88,7 @@ class MigrationLicensingTest {
         MigrationLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 MigrationLicensing::requireEnterpriseForAutomaticCutover);
-        assertEquals(true, e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertEquals(true, e.getMessage().contains("WARP_LICENSE_KEY"));
         assertEquals(true, e.getMessage().contains("AutomaticCutoverScheduler"));
 
         MigrationLicensingTestSupport.forceTier(LicenseTier.ENTERPRISE);
@@ -104,7 +104,7 @@ class MigrationLicensingTest {
 
     @Test
     void withNoOverrideThisTestEnvironmentIsRealFreeTier() {
-        // No POLYWIRE_LICENSE_KEY is set anywhere in this test run (see every other connector
+        // No WARP_LICENSE_KEY is set anywhere in this test run (see every other connector
         // integration test in this module, which all rely on exactly this) -- proves the default,
         // real (non-overridden) resolution path is genuinely free-tier, not just the override path.
         assertEquals(1, MigrationLicensing.enforceLocalParallelism(4));

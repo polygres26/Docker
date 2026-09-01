@@ -18,10 +18,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Lightweight deployment-topology visibility: every polywire instance writes a heartbeat row to
- * {@code polywire_nodes} on the config-primary Postgres it already connects to (the same one
+ * Lightweight deployment-topology visibility: every warp instance writes a heartbeat row to
+ * {@code warp_nodes} on the config-primary Postgres it already connects to (the same one
  * {@link ConfigStore} uses), every ~10s. This is intentionally simpler than Ignite cluster
- * membership ({@code CacheStage}/{@code PolyWireCluster}) -- it doesn't cross-reference actual
+ * membership ({@code CacheStage}/{@code WarpCluster}) -- it doesn't cross-reference actual
  * cache-cluster state, it's just "which processes are alive and where", for a multi-AZ /
  * behind-a-load-balancer deployment to have basic topology visibility in the admin UI. See
  * {@code MetricsServer#handleNodes} for the read side ({@code GET /api/nodes}).
@@ -53,7 +53,7 @@ public final class NodeRegistry {
         this.version = version;
     }
 
-    // POLYWIRE_ZONE is how an operator names a real availability zone/region ("us-east-1a",
+    // WARP_ZONE is how an operator names a real availability zone/region ("us-east-1a",
     // "zone-b", whatever their cloud or scheme calls it) -- there's no portable way to detect
     // that automatically across AWS/GCP/Azure/on-prem/a laptop, so it's opt-in. When it's not
     // set (the common case for local dev and single-machine runs), fall back to this node's own
@@ -61,7 +61,7 @@ public final class NodeRegistry {
     // cloud-sounding placeholder like "us-east-1" that would be actively misleading on a laptop.
     // One real machine not in a zoned deployment is its own honest group of one.
     private static String resolveZone(String host) {
-        String zone = System.getenv("POLYWIRE_ZONE");
+        String zone = System.getenv("WARP_ZONE");
         return (zone != null && !zone.isBlank()) ? zone : host;
     }
 
@@ -70,7 +70,7 @@ public final class NodeRegistry {
      * #listAll} and skip forwarding a drain call to itself -- it already applied that call
      * locally. */
     public static String resolveHost() {
-        String advertised = System.getenv("POLYWIRE_ADVERTISED_HOST");
+        String advertised = System.getenv("WARP_ADVERTISED_HOST");
         if (advertised != null && !advertised.isBlank()) {
             return advertised;
         }
@@ -84,7 +84,7 @@ public final class NodeRegistry {
 
     public static void ensureSchema(com.nexagres.wire.server.ServerOptions options) throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_nodes ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_nodes ("
                     + "node_id uuid PRIMARY KEY, "
                     + "host text NOT NULL, "
                     + "admin_port int NOT NULL, "
@@ -100,7 +100,7 @@ public final class NodeRegistry {
      * beyond the JVM exiting -- same pattern as {@link ConfigStore}'s listen executor. */
     public void start() {
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-node-heartbeat");
+            Thread t = new Thread(r, "warp-node-heartbeat");
             t.setDaemon(true);
             return t;
         });
@@ -120,7 +120,7 @@ public final class NodeRegistry {
     private void heartbeatOnce() throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options)) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO polywire_nodes (node_id, host, admin_port, zone, version, started_at, last_heartbeat) "
+                    "INSERT INTO warp_nodes (node_id, host, admin_port, zone, version, started_at, last_heartbeat) "
                             + "VALUES (?, ?, ?, ?, ?, ?, now()) "
                             + "ON CONFLICT (node_id) DO UPDATE SET "
                             + "host = EXCLUDED.host, admin_port = EXCLUDED.admin_port, zone = EXCLUDED.zone, "
@@ -134,7 +134,7 @@ public final class NodeRegistry {
                 ps.executeUpdate();
             }
             try (PreparedStatement ps = conn.prepareStatement(
-                    "DELETE FROM polywire_nodes WHERE last_heartbeat < now() - (? || ' seconds')::interval")) {
+                    "DELETE FROM warp_nodes WHERE last_heartbeat < now() - (? || ' seconds')::interval")) {
                 ps.setLong(1, STALE_ROW_MAX_AGE_SECONDS);
                 ps.executeUpdate();
             }
@@ -153,7 +153,7 @@ public final class NodeRegistry {
     public static int countLive(com.nexagres.wire.server.ServerOptions options) throws SQLException {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
-                        "SELECT count(*) FROM polywire_nodes WHERE last_heartbeat > now() - interval '30 seconds'")) {
+                        "SELECT count(*) FROM warp_nodes WHERE last_heartbeat > now() - interval '30 seconds'")) {
             return rs.next() ? rs.getInt(1) : 0;
         }
     }
@@ -164,7 +164,7 @@ public final class NodeRegistry {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT node_id, host, admin_port, zone, version, started_at, last_heartbeat "
-                                + "FROM polywire_nodes ORDER BY zone NULLS LAST, host")) {
+                                + "FROM warp_nodes ORDER BY zone NULLS LAST, host")) {
             while (rs.next()) {
                 UUID id = (UUID) rs.getObject(1);
                 String host = rs.getString(2);

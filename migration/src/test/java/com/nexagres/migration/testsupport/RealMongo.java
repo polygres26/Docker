@@ -31,7 +31,7 @@ public final class RealMongo implements AutoCloseable {
     }
 
     public static RealMongo start() throws IOException, InterruptedException {
-        String containerName = "polywire-test-mongo-" + System.nanoTime();
+        String containerName = "warp-test-mongo-" + System.nanoTime();
         int port = findFreePort();
         // mongod itself listens on `port` (via --port), not the image's usual 27017, mapped
         // host:port -> container:port with the SAME number on both sides -- required for

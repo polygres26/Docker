@@ -71,11 +71,11 @@ public final class ConnectionGate {
 
     public static ConnectionGate fromEnv() {
         ClientAcl acl = ClientAcl.fromEnv();
-        boolean ppv2Enabled = "true".equalsIgnoreCase(System.getenv("POLYWIRE_ACL_PPV2_ENABLED"));
+        boolean ppv2Enabled = "true".equalsIgnoreCase(System.getenv("WARP_ACL_PPV2_ENABLED"));
         if (!acl.hasRules() && !ppv2Enabled) {
             return DISABLED;
         }
-        List<Cidr> trustedProxies = parseTrustedProxies(System.getenv("POLYWIRE_ACL_TRUSTED_PROXIES"));
+        List<Cidr> trustedProxies = parseTrustedProxies(System.getenv("WARP_ACL_TRUSTED_PROXIES"));
         log.info("ConnectionGate: acl={}, ppv2Enabled={}, trustedProxies={} entries",
                 acl.hasRules() ? "enabled" : "disabled", ppv2Enabled, trustedProxies.size());
         return new ConnectionGate(acl, ppv2Enabled, trustedProxies);
@@ -117,7 +117,7 @@ public final class ConnectionGate {
             if (currentPpv2Enabled) {
                 if (!currentTrustedProxies.isEmpty() && !matchesAny(rawPeer, currentTrustedProxies)) {
                     log.warn("ACL: rejecting connection from {} -- PPv2 is enabled on this listener but this peer "
-                            + "is not in POLYWIRE_ACL_TRUSTED_PROXIES", rawPeer);
+                            + "is not in WARP_ACL_TRUSTED_PROXIES", rawPeer);
                     return rejectTcp(socket);
                 }
                 ProxyProtocolV2.Result header = ProxyProtocolV2.readHeader(socket.getInputStream());

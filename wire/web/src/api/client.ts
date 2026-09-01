@@ -8,10 +8,10 @@
 // cleared automatically when the tab closes, rather than lingering on disk. A 401 clears the
 // stored token and sends the user back to /connect.
 
-const BASE_URL_KEY = 'polywire.adminUrl'
-const TOKEN_KEY = 'polywire.adminToken'
-const REMEMBER_KEY = 'polywire.remember'
-const TIMEOUT_KEY = 'polywire.requestTimeoutMs'
+const BASE_URL_KEY = 'warp.adminUrl'
+const TOKEN_KEY = 'warp.adminToken'
+const REMEMBER_KEY = 'warp.remember'
+const TIMEOUT_KEY = 'warp.requestTimeoutMs'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
@@ -171,10 +171,10 @@ export async function deleteFirewallRule(id: number): Promise<void> {
 }
 
 // --- Full config: /api/config ---
-// One GET/PUT(-partial) resource over every field of PolyWireConfig -- see
-// com.nexagres.wire.config.PolyWireConfig and MetricsServer#handleConfig. A PUT only needs to
+// One GET/PUT(-partial) resource over every field of WarpConfig -- see
+// com.nexagres.wire.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
 // carry the fields a page actually edits; everything else is carried forward from the latest
-// polywire_config version untouched.
+// warp_config version untouched.
 
 export interface WireConfig {
   qosRatePerSec: string | null
@@ -328,7 +328,7 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 
 // --- Federation plan history: /api/federation/plans (ShardJoinExecutor/SchemaFederationStage's
 // own real, captured Calcite EXPLAIN PLAN FOR history -- see MetricsServer's own javadoc on the
-// route). 404s (not an error to surface as one) when POLYWIRE_FEDERATION_PLAN_HISTORY isn't set --
+// route). 404s (not an error to surface as one) when WARP_FEDERATION_PLAN_HISTORY isn't set --
 // the page itself renders the "not enabled" explanation for that case, same as Queues does for
 // sqswire not being configured. ---
 
@@ -368,7 +368,7 @@ export async function listFederationPlans(): Promise<FederationPlanEntry[]> {
     // api() surfaces a non-2xx response as Error(body.error) when the server sent a JSON error
     // body (see api()'s own implementation below) -- MetricsServer's own 404 for this route
     // always carries exactly this message (its own literal string, matched here verbatim) when
-    // POLYWIRE_FEDERATION_PLAN_HISTORY isn't set, which means "the route doesn't exist because
+    // WARP_FEDERATION_PLAN_HISTORY isn't set, which means "the route doesn't exist because
     // this feature isn't configured," not a real failure.
     if (e instanceof Error && e.message.includes('federation plan history is not enabled')) {
       throw new FederationPlansNotEnabledError(e.message)

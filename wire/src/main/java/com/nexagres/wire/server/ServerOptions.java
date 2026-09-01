@@ -97,67 +97,67 @@ public final class ServerOptions {
 
     public static ServerOptions parse(String[] args) {
         
-        String keystorePath = System.getenv("POLYWIRE_TLS_KEYSTORE");
+        String keystorePath = System.getenv("WARP_TLS_KEYSTORE");
         boolean tlsEnabled = keystorePath != null && !keystorePath.isBlank();
-        int tlsPort = parseIntEnv("POLYWIRE_TLS_PORT", 2484);
-        int grpcTlsPort = parseIntEnv("POLYWIRE_GRPC_TLS_PORT", 17071);
-        String keystorePassword = System.getenv("POLYWIRE_TLS_KEYSTORE_PASSWORD");
+        int tlsPort = parseIntEnv("WARP_TLS_PORT", 2484);
+        int grpcTlsPort = parseIntEnv("WARP_GRPC_TLS_PORT", 17071);
+        String keystorePassword = System.getenv("WARP_TLS_KEYSTORE_PASSWORD");
 
-        boolean dualExecEnabled = parseBoolEnv("POLYWIRE_DUAL_EXEC_ENABLED", false);
+        boolean dualExecEnabled = parseBoolEnv("WARP_DUAL_EXEC_ENABLED", false);
         DualExecAuthority dualExecAuthority = "oracle".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_DUAL_EXEC_AUTHORITY", "postgres"))
+                System.getenv().getOrDefault("WARP_DUAL_EXEC_AUTHORITY", "postgres"))
                 ? DualExecAuthority.ORACLE : DualExecAuthority.POSTGRES;
-        boolean dualExecRequireBoth = parseBoolEnv("POLYWIRE_DUAL_EXEC_REQUIRE_BOTH", false);
-        boolean dualExecXaEnabled = parseBoolEnv("POLYWIRE_DUAL_EXEC_XA_ENABLED", false);
+        boolean dualExecRequireBoth = parseBoolEnv("WARP_DUAL_EXEC_REQUIRE_BOTH", false);
+        boolean dualExecXaEnabled = parseBoolEnv("WARP_DUAL_EXEC_XA_ENABLED", false);
         
-        boolean dualExecShadowEnabled = parseBoolEnv("POLYWIRE_DUAL_EXEC_SHADOW_ENABLED", true);
-        String oracleHost = System.getenv().getOrDefault("POLYWIRE_ORACLE_HOST", "localhost");
-        int oraclePort = parseIntEnv("POLYWIRE_ORACLE_PORT", 1521);
-        String oracleServiceName = System.getenv().getOrDefault("POLYWIRE_ORACLE_SERVICE", "orcl");
+        boolean dualExecShadowEnabled = parseBoolEnv("WARP_DUAL_EXEC_SHADOW_ENABLED", true);
+        String oracleHost = System.getenv().getOrDefault("WARP_ORACLE_HOST", "localhost");
+        int oraclePort = parseIntEnv("WARP_ORACLE_PORT", 1521);
+        String oracleServiceName = System.getenv().getOrDefault("WARP_ORACLE_SERVICE", "orcl");
         OracleBackendMode oracleBackendMode = "native".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_ORACLE_BACKEND_MODE", "jdbc"))
+                System.getenv().getOrDefault("WARP_ORACLE_BACKEND_MODE", "jdbc"))
                 ? OracleBackendMode.NATIVE : OracleBackendMode.JDBC;
 
         boolean mywireNativeBackend = "mysql".equalsIgnoreCase(
-                System.getenv().getOrDefault("POLYWIRE_MYWIRE_BACKEND", "postgres"));
-        String mysqlHost = System.getenv().getOrDefault("POLYWIRE_MYSQL_HOST", "localhost");
-        int mysqlPort = parseIntEnv("POLYWIRE_MYSQL_PORT", 3306);
-        String mysqlDatabase = System.getenv().getOrDefault("POLYWIRE_MYSQL_DATABASE", "mysql");
-        String mysqlUser = System.getenv("POLYWIRE_MYSQL_USER");
-        String mysqlPassword = System.getenv("POLYWIRE_MYSQL_PASSWORD");
+                System.getenv().getOrDefault("WARP_MYWIRE_BACKEND", "postgres"));
+        String mysqlHost = System.getenv().getOrDefault("WARP_MYSQL_HOST", "localhost");
+        int mysqlPort = parseIntEnv("WARP_MYSQL_PORT", 3306);
+        String mysqlDatabase = System.getenv().getOrDefault("WARP_MYSQL_DATABASE", "mysql");
+        String mysqlUser = System.getenv("WARP_MYSQL_USER");
+        String mysqlPassword = System.getenv("WARP_MYSQL_PASSWORD");
 
-        int pgWireListenPort = parseIntEnv("POLYWIRE_PGWIRE_PORT", 15432);
-        int myWireListenPort = parseIntEnv("POLYWIRE_MYWIRE_PORT", 13306);
-        int orawireListenPort = parseIntEnv("POLYWIRE_ORAWIRE_PORT", 11521);
+        int pgWireListenPort = parseIntEnv("WARP_PGWIRE_PORT", 15432);
+        int myWireListenPort = parseIntEnv("WARP_MYWIRE_PORT", 13306);
+        int orawireListenPort = parseIntEnv("WARP_ORAWIRE_PORT", 11521);
         
-        int mssqlWireListenPort = parseIntEnv("POLYWIRE_MSSQLWIRE_PORT", 14333);
-        int grpcPort = parseIntEnv("POLYWIRE_GRPC_PORT", 7070);
-        int httpPort = parseIntEnv("POLYWIRE_HTTP_PORT", 8080);
+        int mssqlWireListenPort = parseIntEnv("WARP_MSSQLWIRE_PORT", 14333);
+        int grpcPort = parseIntEnv("WARP_GRPC_PORT", 7070);
+        int httpPort = parseIntEnv("WARP_HTTP_PORT", 8080);
         
-        int httpsPort = parseIntEnv("POLYWIRE_HTTPS_PORT", 8443);
+        int httpsPort = parseIntEnv("WARP_HTTPS_PORT", 8443);
 
-        String pgHost = System.getenv().getOrDefault("POLYWIRE_HOST", "localhost");
-        int pgPort = parseIntEnv("POLYWIRE_PORT", 5432);
-        String pgDatabase = System.getenv().getOrDefault("POLYWIRE_DATABASE", "postgres");
-        String pgUser = System.getenv("POLYWIRE_USER");
-        String pgPassword = System.getenv("POLYWIRE_PASSWORD");
+        String pgHost = System.getenv().getOrDefault("WARP_HOST", "localhost");
+        int pgPort = parseIntEnv("WARP_PORT", 5432);
+        String pgDatabase = System.getenv().getOrDefault("WARP_DATABASE", "postgres");
+        String pgUser = System.getenv("WARP_USER");
+        String pgPassword = System.getenv("WARP_PASSWORD");
         // libpq-style sslmode values (disable/allow/prefer/require/verify-ca/verify-full), passed
         // straight through to pgjdbc's own "sslmode" connection property -- unset means pgjdbc's
         // own default ("prefer"), same as before this existed. Needed for any backend that
         // requires SSL outright (Supabase, Azure Database for PostgreSQL both reject a plaintext
         // connection) -- previously the only way to reach one of those was the multi-backend
-        // POLYWIRE_BACKENDS var, which accepts a full literal JDBC URL string (so sslmode could be
+        // WARP_BACKENDS var, which accepts a full literal JDBC URL string (so sslmode could be
         // smuggled into the URL's own query string) but isn't the "simple" single-backend path
         // every other quickstart uses.
-        String pgSslMode = System.getenv("POLYWIRE_PG_SSLMODE");
+        String pgSslMode = System.getenv("WARP_PG_SSLMODE");
         // A PEM CA bundle path readable from inside the container -- e.g. RDS's/Azure's own
         // downloadable root cert, mounted in via a docker-compose volume. Optional even with
         // sslmode=verify-full set; pgjdbc falls back to the JVM's own trust store if omitted,
         // which already trusts most major clouds' default certs.
-        String pgSslRootCert = System.getenv("POLYWIRE_PG_SSLROOTCERT");
+        String pgSslRootCert = System.getenv("WARP_PG_SSLROOTCERT");
 
-        String pgStandbyHost = System.getenv("POLYWIRE_STANDBY_HOST");
-        int pgStandbyPort = parseIntEnv("POLYWIRE_STANDBY_PORT", pgPort);
+        String pgStandbyHost = System.getenv("WARP_STANDBY_HOST");
+        int pgStandbyPort = parseIntEnv("WARP_STANDBY_PORT", pgPort);
 
         return new ServerOptions(orawireListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
                 pgSslMode, pgSslRootCert,
@@ -178,9 +178,9 @@ public final class ServerOptions {
      * without touching real process environment variables -- for in-process tests of a
      * ServerOptions-consuming class (e.g. {@code XaRecoveryLog}, {@code PgConnections}) that need
      * a real {@code ServerOptions} but don't start any listener and shouldn't risk colliding with
-     * whatever POLYWIRE_* vars happen to be set in the actual test JVM's environment. Every
+     * whatever WARP_* vars happen to be set in the actual test JVM's environment. Every
      * non-Postgres field gets an inert placeholder; callers that also need those should use a full
-     * {@code PolyWireProcess} subprocess instead, matching this project's existing pattern for
+     * {@code WarpProcess} subprocess instead, matching this project's existing pattern for
      * anything that exercises a real listener. */
     public static ServerOptions forTesting(String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword) {
         return new ServerOptions(0, 0, 0, 0, 0, 0, pgHost, pgPort, pgDatabase, pgUser, pgPassword,

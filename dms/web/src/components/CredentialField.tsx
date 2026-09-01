@@ -30,7 +30,7 @@ export default function CredentialField({
   const [plaintext, setPlaintext] = useState(initialSource === 'plaintext' ? value : '')
   const [vaultPath, setVaultPath] = useState(initialSource === 'vault' ? value.replace(/^vault:/, '').split('#')[0] : 'secret/data/prod/postgres')
   const [vaultField, setVaultField] = useState(initialSource === 'vault' && value.includes('#') ? value.split('#')[1] : 'password')
-  const [cyberarkQuery, setCyberarkQuery] = useState(initialSource === 'cyberark' ? value.replace(/^cyberark:/, '') : 'AppID=Polywire&Safe=DB-Secrets&Object=prod-postgres')
+  const [cyberarkQuery, setCyberarkQuery] = useState(initialSource === 'cyberark' ? value.replace(/^cyberark:/, '') : 'AppID=Warp&Safe=DB-Secrets&Object=prod-postgres')
   const [awsSecretId, setAwsSecretId] = useState(initialSource === 'awssm' ? value.replace(/^awssm:/, '').split('?')[0] : 'prod/postgres-password')
   const [awsRegion, setAwsRegion] = useState(initialSource === 'awssm' ? paramFrom(value, 'region') : '')
   const [azurePath, setAzurePath] = useState(initialSource === 'azurekv' ? value.replace(/^azurekv:/, '').split('?')[0] : 'my-vault/postgres-password')
@@ -123,7 +123,7 @@ export default function CredentialField({
         <input
           value={cyberarkQuery}
           onChange={(e) => { setCyberarkQuery(e.target.value); emit({ cyberarkQuery: e.target.value }) }}
-          placeholder="AppID=Polywire&Safe=DB-Secrets&Object=prod-postgres"
+          placeholder="AppID=Warp&Safe=DB-Secrets&Object=prod-postgres"
           style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
         />
       )}

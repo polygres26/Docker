@@ -15,22 +15,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * The ONE write path every migration connector in this project uses: Polywire's own native gRPC
- * driver (<code>QueryService.Execute</code>, {@code wire/src/main/proto/polywire.proto}) -- the
+ * The ONE write path every migration connector in this project uses: Warp's own native gRPC
+ * driver (<code>QueryService.Execute</code>, {@code wire/src/main/proto/warp.proto}) -- the
  * exact same protocol a real Type-3 JDBC client speaks, not a JDBC backdoor straight to the
- * target Postgres. Every migration write goes through Polywire's real pipeline this way:
+ * target Postgres. Every migration write goes through Warp's real pipeline this way:
  * firewall, QoS admission control, dialect translation, and -- the concrete correctness reason
  * this matters, not just an architectural purity argument -- cache invalidation. A CDC-applied
- * write that bypassed Polywire's own {@code RowCache}/result cache would leave a stale entry a
+ * write that bypassed Warp's own {@code RowCache}/result cache would leave a stale entry a
  * live mongowire/pgwire client could read right afterward, since nothing would ever tell that
  * cache the row changed. See {@code QueryServiceImpl#execute} on the server side: the request is
  * run through the exact same {@code StatementPipeline} every other protocol uses, not a shortcut.
  *
- * <p>Plaintext gRPC for now (no TLS) -- Polywire's gRPC listener does support TLS from one PKCS12
+ * <p>Plaintext gRPC for now (no TLS) -- Warp's gRPC listener does support TLS from one PKCS12
  * keystore (see the security page), wiring this sink to use it is a real, scoped follow-up, not
  * done yet.
  */
-public final class PolywireGrpcSink implements Sink, AutoCloseable {
+public final class WarpGrpcSink implements Sink, AutoCloseable {
 
     private final ManagedChannel channel;
     private final QueryServiceGrpc.QueryServiceBlockingStub stub;
@@ -38,7 +38,7 @@ public final class PolywireGrpcSink implements Sink, AutoCloseable {
     private final String username;
     private final String password;
 
-    public PolywireGrpcSink(String host, int port, String username, String password) {
+    public WarpGrpcSink(String host, int port, String username, String password) {
         this.channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
         this.stub = QueryServiceGrpc.newBlockingStub(channel);
         this.asyncStub = QueryServiceGrpc.newStub(channel);
@@ -54,7 +54,7 @@ public final class PolywireGrpcSink implements Sink, AutoCloseable {
 
     /** Pipelines the whole batch over gRPC's async stub instead of one blocking round trip per
      * row -- QueryService.Execute has no multi-statement batch RPC of its own (each call still
-     * runs exactly one statement through Polywire's real StatementPipeline, firewall/QoS/cache
+     * runs exactly one statement through Warp's real StatementPipeline, firewall/QoS/cache
      * invalidation included, same as {@link #apply}), so "batching" here means overlapping the
      * NETWORK round trips rather than waiting for each one before sending the next. This is the
      * throughput lever the initial bulk-sync phase actually needs: a naive one-row-per-blocking-

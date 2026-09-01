@@ -38,7 +38,7 @@ public final class RealDynamoDb implements AutoCloseable {
     }
 
     public static RealDynamoDb start() throws IOException, InterruptedException {
-        String containerName = "polywire-test-dynamodb-" + System.nanoTime();
+        String containerName = "warp-test-dynamodb-" + System.nanoTime();
         int port = findFreePort();
         run("docker", "run", "-d", "--name", containerName, "-p", port + ":8000", DEFAULT_IMAGE,
                 "-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb");

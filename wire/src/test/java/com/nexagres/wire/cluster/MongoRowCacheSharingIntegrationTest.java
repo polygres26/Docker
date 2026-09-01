@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -24,10 +24,10 @@ import org.junit.jupiter.api.Test;
  * End-to-end proof that {@link RowCache} is actually SHARED across mongowire and the SQL
  * frontends, not just present in both -- the same real, no-mock discipline as {@code
  * RowCacheSharingIntegrationTest} (dynamowire's own version of this test), but for mongowire: a
- * real MongoDB Java driver client and a real pgwire JDBC connection, against the same Polywire
+ * real MongoDB Java driver client and a real pgwire JDBC connection, against the same Warp
  * subprocess and the same real Postgres backend.
  *
- * <p>Deliberately does NOT set {@code POLYWIRE_MONGOWIRE_CACHE_ENABLED=false} the way the
+ * <p>Deliberately does NOT set {@code WARP_MONGOWIRE_CACHE_ENABLED=false} the way the
  * mongowire error-mapping tests do (they're testing error paths that don't want the cache in the
  * way) -- this test's whole point needs the row cache on, which is the default.
  */
@@ -43,9 +43,9 @@ class MongoRowCacheSharingIntegrationTest {
      * convention, not an implementation detail this test reaches into. */
     private static final String PHYSICAL_TABLE = "\"test\".\"orders\"";
 
-    private static String metricsSummary(PolyWireProcess polywire) throws Exception {
+    private static String metricsSummary(WarpProcess warp) throws Exception {
         HttpClient http = HttpClient.newHttpClient();
-        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + polywire.metricsPort() + "/api/metrics/summary"))
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + warp.metricsPort() + "/api/metrics/summary"))
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .timeout(Duration.ofSeconds(5))
                 .GET().build();
@@ -56,16 +56,16 @@ class MongoRowCacheSharingIntegrationTest {
     @Test
     void aMongoInsertAndFindIsVisibleAsASqlCacheHitOnTheExactSameRow() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_CACHE_TABLES", PHYSICAL_TABLE)
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_CACHE_TABLES", PHYSICAL_TABLE)
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (MongoClient client = MongoClients.create("mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+            try (MongoClient client = MongoClients.create("mongodb://localhost:" + warp.port("mongowire") + "/?directConnection=true")) {
                 MongoCollection<Document> coll = client.getDatabase("test").getCollection("orders");
                 coll.insertOne(new Document("_id", "item-42").append("amount", 129.99));
 
@@ -80,7 +80,7 @@ class MongoRowCacheSharingIntegrationTest {
             // for -- CacheStage's own SQL-side fast path (tryRowCacheLookup) must find that exact
             // entry and never touch Postgres for this read at all.
             try (Connection conn = DriverManager.getConnection(
-                    "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                    "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                     PreparedStatement ps = conn.prepareStatement(
                             "SELECT doc FROM " + PHYSICAL_TABLE + " WHERE id = ?")) {
                 ps.setString(1, "\"item-42\"");
@@ -97,7 +97,7 @@ class MongoRowCacheSharingIntegrationTest {
             // Not "it returned the right data" (Postgres would also return the right data on a
             // real, uncached round trip) -- specifically that it came from the shared row cache,
             // under the pgwire protocol label, proving CacheStage's fast path is what served it.
-            String summary = metricsSummary(polywire);
+            String summary = metricsSummary(warp);
             assertTrue(summary.contains("\"protocol\":\"pgwire\"") && summary.contains("\"outcome\":\"cache_hit\""),
                     "expected a pgwire cache_hit in rttByOutcome (the SQL side hitting mongowire's "
                             + "own populated row-cache entry) -- got: " + summary);
@@ -107,16 +107,16 @@ class MongoRowCacheSharingIntegrationTest {
     @Test
     void aSqlUpdateByIdInvalidatesTheRowMongoDbSeesNext() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mongowire", "POLYWIRE_MONGOWIRE_PORT")
-                        .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                        .env("POLYWIRE_CACHE_TABLES", PHYSICAL_TABLE)
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mongowire", "WARP_MONGOWIRE_PORT")
+                        .frontend("pgwire", "WARP_PGWIRE_PORT")
+                        .env("WARP_CACHE_TABLES", PHYSICAL_TABLE)
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
-            try (MongoClient client = MongoClients.create("mongodb://localhost:" + polywire.port("mongowire") + "/?directConnection=true")) {
+            try (MongoClient client = MongoClients.create("mongodb://localhost:" + warp.port("mongowire") + "/?directConnection=true")) {
                 MongoCollection<Document> coll = client.getDatabase("test").getCollection("orders");
                 coll.insertOne(new Document("_id", "item-77").append("status", "pending"));
                 // Warm the row cache the same way the other test does.
@@ -128,7 +128,7 @@ class MongoRowCacheSharingIntegrationTest {
                 // parameter, not an inlined literal: the invalidation regex (like the lookup one)
                 // only recognizes the `?`-placeholder shape a real prepared statement sends.
                 try (Connection conn = DriverManager.getConnection(
-                        "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres", postgres.username(), postgres.password());
+                        "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres", postgres.username(), postgres.password());
                         PreparedStatement ps = conn.prepareStatement(
                                 "UPDATE " + PHYSICAL_TABLE + " SET doc = ?::jsonb WHERE id = ?")) {
                     ps.setString(1, "{\"_id\":\"item-77\",\"status\":\"shipped\"}");

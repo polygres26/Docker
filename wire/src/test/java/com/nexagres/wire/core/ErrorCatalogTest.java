@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves the error catalog itself works correctly -- in particular the MessageFormat quoting
  * behavior that motivated escaping every literal apostrophe ({@code isn't}, {@code doesn't},
- * {@code can't}, {@code PolyWire's}) as {@code ''} in errors/en.properties: an unescaped
+ * {@code can't}, {@code Warp's}) as {@code ''} in errors/en.properties: an unescaped
  * apostrophe in a template that also has a placeholder causes MessageFormat to silently stop
  * substituting from that point on, which would ship a client-visible error message with a raw
  * {@code {0}} in it instead of the real value. This is exactly the kind of bug that's invisible
@@ -39,7 +39,7 @@ class ErrorCatalogTest {
         // it -- covered by the next test.
         String message = ErrorCatalog.format("ERR_ROLLUP_UNKNOWN_BACKEND", "daily_totals", "primary");
         assertEquals("rollup \"daily_totals\" references backend \"primary\", "
-                + "which isn't a configured POLYWIRE_BACKENDS entry", message);
+                + "which isn't a configured WARP_BACKENDS entry", message);
     }
 
     @Test

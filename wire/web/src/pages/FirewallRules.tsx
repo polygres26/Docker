@@ -9,7 +9,7 @@ import {
 } from '../api/client'
 
 /**
- * SQL Firewall rule management -- create/edit/delete against `polywire_firewall_rules`, straight
+ * SQL Firewall rule management -- create/edit/delete against `warp_firewall_rules`, straight
  * against Warp's own admin API. Changes take effect on every running Warp process within
  * milliseconds (LISTEN/NOTIFY), no restart.
  */

@@ -80,7 +80,7 @@ public final class SqlStateErrorMapper {
             // lock_not_available (e.g. SELECT ... FOR UPDATE NOWAIT hitting a held lock). MySQL's
             // dedicated NOWAIT error (ER_LOCK_NOWAIT) only exists on MySQL 8.0.22+; older MySQL
             // just blocks and eventually times out as 1205 instead -- 3572 is the correct code for
-            // any MySQL version PolyWire's own compatibility target actually supports.
+            // any MySQL version Warp's own compatibility target actually supports.
             Map.entry("55P03", new NativeErrors(54, 3572, 1222)),
 
             // query_canceled (e.g. statement_timeout exceeded). SQL Server has no real numbered

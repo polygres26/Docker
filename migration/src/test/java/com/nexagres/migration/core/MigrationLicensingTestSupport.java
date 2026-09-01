@@ -6,7 +6,7 @@ import com.nexagres.wire.license.LicenseTier;
  * Test-only seam into {@link MigrationLicensing}'s package-private override -- lives in this
  * module's own {@code src/test/java}, never shipped in the built jar, so it's reachable only from
  * this module's own test suite, never from a real deployment. Exists because a genuine Enterprise
- * {@code POLYWIRE_LICENSE_KEY} requires wire's real, deliberately-offline signing private key
+ * {@code WARP_LICENSE_KEY} requires wire's real, deliberately-offline signing private key
  * (see {@code License}'s own javadoc), which is not, and should not be, available to this
  * module's tests -- this lets {@link com.nexagres.migration.coordinator.DistributedCoordinator}'s
  * own real distributed-coordination mechanics still get full end-to-end test coverage without

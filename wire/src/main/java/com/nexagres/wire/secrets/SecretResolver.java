@@ -41,7 +41,7 @@ public final class SecretResolver {
         String token = System.getenv("VAULT_TOKEN");
         if (addr == null || addr.isBlank() || token == null || token.isBlank()) {
             throw new IllegalStateException("secret ref \"vault:" + ref.path() + "\" needs VAULT_ADDR and "
-                    + "VAULT_TOKEN set on the PolyWire process -- neither is optional once any backend uses a "
+                    + "VAULT_TOKEN set on the Warp process -- neither is optional once any backend uses a "
                     + "vault: password reference");
         }
         String url = addr.replaceAll("/$", "") + "/v1/" + ref.path();
@@ -77,7 +77,7 @@ public final class SecretResolver {
         String baseUrl = System.getenv("CYBERARK_CCP_URL");
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException("secret ref \"cyberark:" + ref.query() + "\" needs CYBERARK_CCP_URL "
-                    + "set on the PolyWire process (base URL of the Central Credential Provider's "
+                    + "set on the Warp process (base URL of the Central Credential Provider's "
                     + "AIMWebService) -- not optional once any backend uses a cyberark: password reference");
         }
         String url = baseUrl.replaceAll("/$", "") + "/AIMWebService/api/Accounts?" + ref.query();

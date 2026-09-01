@@ -27,7 +27,7 @@ class SsoAuthTest {
     void freeTierRefusesToConstruct() {
         DmsLicensingTestSupport.forceTier(LicenseTier.DEVELOPER);
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> new SsoAuth(SECRET, null));
-        assertTrue(e.getMessage().contains("POLYWIRE_LICENSE_KEY"));
+        assertTrue(e.getMessage().contains("WARP_LICENSE_KEY"));
     }
 
     @Test

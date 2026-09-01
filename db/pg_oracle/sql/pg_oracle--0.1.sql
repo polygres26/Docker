@@ -17,7 +17,7 @@
 -- Oracle's column names and rough semantics -- not Oracle's actual
 -- internal structures (there's no redo log, no SGA in Postgres's sense,
 -- etc.). GV$x = V$x plus a leading INST_ID column pinned to 1: this
--- Postgres instance is "instance 1"; a real multi-instance GV$ (Polywire
+-- Postgres instance is "instance 1"; a real multi-instance GV$ (Warp
 -- sharding fan-out) is future work, not this file's problem to solve.
 -- ================================================================
 
@@ -285,7 +285,7 @@ CREATE FUNCTION dbms_output.get_line(OUT line text, OUT status int) RETURNS reco
   AS 'MODULE_PATHNAME', 'dbms_output_get_line' LANGUAGE C VOLATILE;
 
 -- ================================================================
--- db_emulation support function -- lets SQL/plpgsql code (and Polywire's
+-- db_emulation support function -- lets SQL/plpgsql code (and Warp's
 -- own admin checks) ask "is Oracle emulation active in this session"
 -- without parsing current_setting('db_emulation') itself.
 -- ================================================================
@@ -492,7 +492,7 @@ COMMENT ON FUNCTION oracle_catalog.sys_context(text, text) IS 'Oracle SYS_CONTEX
 -- Postgres's grammar has no ALTER SESSION statement at all, and there's
 -- no extension hook to add one without patching the parser -- the same
 -- class of gap as anonymous PL/SQL blocks and CREATE CONTEXT. A real
--- rewrite (ALTER SESSION SET X = Y -> a Polywire orawire-side text
+-- rewrite (ALTER SESSION SET X = Y -> a Warp orawire-side text
 -- transform) belongs in front of Postgres, not in this extension. What
 -- this extension DOES provide: oracle_catalog.alter_session_set() below,
 -- a function-call substitute usable directly today (and a natural

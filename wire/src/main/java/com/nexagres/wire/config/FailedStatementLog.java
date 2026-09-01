@@ -27,7 +27,7 @@ public final class FailedStatementLog {
 
     public void ensureSchema() {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS polywire_failed_statements ("
+            st.execute("CREATE TABLE IF NOT EXISTS warp_failed_statements ("
                     + "id bigserial PRIMARY KEY, "
                     + "occurred_at timestamptz NOT NULL DEFAULT now(), "
                     + "dialect text NOT NULL, "
@@ -37,7 +37,7 @@ public final class FailedStatementLog {
                     + "native_error_returned integer, "
                     + "message text)");
         } catch (SQLException e) {
-            log.warn("failed-statement log: could not ensure polywire_failed_statements schema exists"
+            log.warn("failed-statement log: could not ensure warp_failed_statements schema exists"
                     + " -- failure recording will keep failing best-effort until this is fixed", e);
         }
     }
@@ -46,7 +46,7 @@ public final class FailedStatementLog {
             String sqlState, Integer nativeErrorReturned, String message) {
         try (Connection conn = com.nexagres.wire.pgwire.PgConnections.open(options);
                 PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO polywire_failed_statements "
+                        "INSERT INTO warp_failed_statements "
                                 + "(dialect, sql_text, failure_type, sql_state, native_error_returned, message) "
                                 + "VALUES (?, ?, ?, ?, ?, ?)")) {
             ps.setString(1, dialect == null ? null : dialect.name());

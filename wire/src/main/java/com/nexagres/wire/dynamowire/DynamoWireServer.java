@@ -230,7 +230,7 @@ public final class DynamoWireServer {
 
     public void start() throws Exception {
         server.start();
-        log.info("polywire dynamowire (DynamoDB HTTP/JSON) listening on port {}",
+        log.info("warp dynamowire (DynamoDB HTTP/JSON) listening on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
     }
 

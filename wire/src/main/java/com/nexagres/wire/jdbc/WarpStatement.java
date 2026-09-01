@@ -10,7 +10,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-final class PolyWireStatement {
+final class WarpStatement {
 
     static PreparedStatement create(QueryServiceGrpc.QueryServiceBlockingStub stub, String username, String password,
             String sql) {
@@ -50,20 +50,20 @@ final class PolyWireStatement {
         handler.on("executeQuery", args -> {
             String text = args.length > 0 ? (String) args[0] : sql;
             lastResponse[0] = runExecuteUnchecked(stub, username, password, text, binds);
-            return PolyWireResultSet.create(lastResponse[0]);
+            return WarpResultSet.create(lastResponse[0]);
         });
         handler.on("executeUpdate", args -> {
             String text = args.length > 0 ? (String) args[0] : sql;
             lastResponse[0] = runExecuteUnchecked(stub, username, password, text, binds);
             return (int) lastResponse[0].getUpdateCount();
         });
-        handler.on("getResultSet", args -> PolyWireResultSet.create(lastResponse[0]));
+        handler.on("getResultSet", args -> WarpResultSet.create(lastResponse[0]));
         handler.on("getUpdateCount", args -> (int) lastResponse[0].getUpdateCount());
         handler.on("close", args -> null);
         handler.on("isClosed", args -> false);
 
         return (PreparedStatement) Proxy.newProxyInstance(
-                PolyWireStatement.class.getClassLoader(), new Class<?>[] {PreparedStatement.class}, handler);
+                WarpStatement.class.getClassLoader(), new Class<?>[] {PreparedStatement.class}, handler);
     }
 
     private static void setBind(List<String> binds, int oneBasedIndex, String value) {
@@ -90,6 +90,6 @@ final class PolyWireStatement {
         return response;
     }
 
-    private PolyWireStatement() {
+    private WarpStatement() {
     }
 }

@@ -90,7 +90,7 @@ public final class SessionHandler implements Runnable {
                         "orawire login succeeded for user \"" + auth.username() + "\""
                                 + (auth.realIdentity() ? " (real per-user credential)" : " (shared credential)")));
             }
-            // Only a real, distinguishable per-user credential (POLYWIRE_AUTH_CREDENTIALS
+            // Only a real, distinguishable per-user credential (WARP_AUTH_CREDENTIALS
             // configured -- see CredentialStore) is worth carrying into AccessContext: under the
             // single shared-credential default every caller presents the identical username, so
             // there's no real identity for PostgresRlsSessionInitializer's session GUC or an RLS
@@ -99,7 +99,7 @@ public final class SessionHandler implements Runnable {
                     ? new com.nexagres.wire.core.AccessContext(auth.username(), java.util.Set.of(), java.util.Map.of())
                     : com.nexagres.wire.core.AccessContext.ANONYMOUS;
 
-            String replicationBackends = System.getenv("POLYWIRE_REPLICATION_BACKENDS");
+            String replicationBackends = System.getenv("WARP_REPLICATION_BACKENDS");
             if (replicationBackends != null && !replicationBackends.isBlank()) {
                 runReplicated(reader, out, descriptor, auth, replicationBackends, accessContext);
             } else {
@@ -144,7 +144,7 @@ public final class SessionHandler implements Runnable {
     private com.nexagres.wire.core.BackendTarget requireBackend(String name) throws java.sql.SQLException {
         com.nexagres.wire.core.BackendTarget target = backendRegistry.get(name);
         if (target == null) {
-            throw new java.sql.SQLException("POLYWIRE_REPLICATION_BACKENDS references unknown backend \"" + name + "\"");
+            throw new java.sql.SQLException("WARP_REPLICATION_BACKENDS references unknown backend \"" + name + "\"");
         }
         return target;
     }

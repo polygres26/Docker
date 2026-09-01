@@ -16,7 +16,7 @@ export default function LlmSettings() {
   return (
     <div style={{ maxWidth: 640 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
-      {/* Not migration-only -- this same Primary/Judge model config also drives Polywire's SQL
+      {/* Not migration-only -- this same Primary/Judge model config also drives Warp's SQL
           translation and any other feature that calls the LLM, which is why it's a standalone
           "Shared" sidebar entry rather than a tab under Migration. */}
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>

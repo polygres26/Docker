@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -20,7 +20,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof of the MCP {@code explain_query} tool -- real Polywire subprocess, real
+ * End-to-end proof of the MCP {@code explain_query} tool -- real Warp subprocess, real
  * disposable Postgres, real MCP JSON-RPC calls, and a real (local, scripted) LLM endpoint. No
  * mocks. The safest of this series' MCP tools (pure narration of a fact Postgres itself computed),
  * so the two things proved are correspondingly simple: (1) a real SELECT gets a real EXPLAIN plan
@@ -82,14 +82,14 @@ class ExplainQueryIntegrationTest {
     void aRealSelectGetsARealPlanNarratedByTheLlm() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("This scans the orders table sequentially since there is no matching index.");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-explain-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-explain-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection direct = DriverManager.getConnection(
@@ -102,7 +102,7 @@ class ExplainQueryIntegrationTest {
 
             JsonObject args = new JsonObject();
             args.addProperty("sql", "SELECT * FROM orders");
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"), args, "explain_query");
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"), args, "explain_query");
             assertEquals(200, resp.statusCode());
             // A real Postgres EXPLAIN (FORMAT JSON) plan always names a "Plan" node.
             assertTrue(resp.body().contains("\\\"Plan\\\"") || resp.body().contains("Plan"),
@@ -116,14 +116,14 @@ class ExplainQueryIntegrationTest {
     void aWriteStatementIsRefusedBeforeAnythingRuns() throws Exception {
         try (FakeLlmServer llm = new FakeLlmServer("irrelevant");
                 RealPostgres postgres = RealPostgres.start();
-                PolyWireProcess polywire = PolyWireProcess.builder()
+                WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                        .frontend("mcp", "POLYWIRE_MCP_PORT")
-                        .env("POLYWIRE_LLM_PROVIDER", "custom")
-                        .env("POLYWIRE_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
-                        .env("POLYWIRE_LLM_MODEL", "test-explain-model")
-                        .env("POLYWIRE_ADMIN_TOKEN", ADMIN_TOKEN)
-                        .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                        .frontend("mcp", "WARP_MCP_PORT")
+                        .env("WARP_LLM_PROVIDER", "custom")
+                        .env("WARP_LLM_BASE_URL", "http://127.0.0.1:" + llm.port() + "/v1")
+                        .env("WARP_LLM_MODEL", "test-explain-model")
+                        .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
+                        .env("WARP_OTEL_ENDPOINT", "disabled")
                         .start()) {
 
             try (Connection direct = DriverManager.getConnection(
@@ -137,7 +137,7 @@ class ExplainQueryIntegrationTest {
             JsonObject args = new JsonObject();
             args.addProperty("sql", "DELETE FROM orders");
             args.addProperty("analyze", "true");
-            HttpResponse<String> resp = mcpCall(polywire.port("mcp"), args, "explain_query");
+            HttpResponse<String> resp = mcpCall(warp.port("mcp"), args, "explain_query");
             assertEquals(200, resp.statusCode());
             assertTrue(resp.body().contains("only accepts a read-only SELECT"),
                     "expected the deterministic refusal -- got: " + resp.body());

@@ -20,13 +20,13 @@ import org.slf4j.LoggerFactory;
  * side of what their Calcite planner integration consumes. Ported from the sibling Omnigate
  * project's own {@code StatisticsScheduler} (real, tested, production code there), adapted for a
  * real difference in this codebase: Omnigate's own convention is "a backend's registry name doubles
- * as its real database schema name," which doesn't hold here -- PolyWire's own {@link
+ * as its real database schema name," which doesn't hold here -- Warp's own {@link
  * RouterStage.ShardRule}/{@link RouterStage.SchemaRule} name the schema and the backend
  * independently (e.g. schema {@code "orders_db"} routes to backend {@code "orders"}), so this class
  * takes the configured rule lists directly instead of guessing a schema name from a backend name.
  *
  * <p>Same "runs once at startup, then on a fixed interval" shape, same "unset means the feature
- * doesn't exist" default ({@code POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES}, 0/unset -- no scheduler
+ * doesn't exist" default ({@code WARP_STATS_REFRESH_INTERVAL_MINUTES}, 0/unset -- no scheduler
  * constructed, no background thread).
  */
 public final class StatisticsScheduler implements AutoCloseable {
@@ -46,14 +46,14 @@ public final class StatisticsScheduler implements AutoCloseable {
         this.schemaRules = schemaRules;
         this.store = store;
         this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "polywire-stats-scheduler");
+            Thread t = new Thread(r, "warp-stats-scheduler");
             t.setDaemon(true);
             return t;
         });
     }
 
     /** {@code null} (no scheduler constructed, no background thread) unless {@code
-     * POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES} is set to a positive integer, or there's nothing
+     * WARP_STATS_REFRESH_INTERVAL_MINUTES} is set to a positive integer, or there's nothing
      * configured for it to ever collect (fewer than 2 shard/schema rules total -- same "the
      * feature this feeds is itself a no-op" reasoning {@link ShardJoinExecutor}/{@link
      * SchemaFederationStage}'s own {@code fromConfigOrNull}-style gates use). An initial collection
@@ -61,7 +61,7 @@ public final class StatisticsScheduler implements AutoCloseable {
      * plan its first federated queries against a completely cold {@link StatisticsStore}. */
     public static StatisticsScheduler startIfConfigured(BackendRegistry backendRegistry,
             List<RouterStage.ShardRule> shardRules, List<RouterStage.SchemaRule> schemaRules, StatisticsStore store) {
-        int intervalMinutes = intEnv("POLYWIRE_STATS_REFRESH_INTERVAL_MINUTES", 0);
+        int intervalMinutes = intEnv("WARP_STATS_REFRESH_INTERVAL_MINUTES", 0);
         if (intervalMinutes <= 0 || (shardRules.isEmpty() && schemaRules.size() < 2)) {
             return null;
         }

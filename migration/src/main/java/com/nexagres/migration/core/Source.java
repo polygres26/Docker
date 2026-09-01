@@ -17,7 +17,7 @@ public interface Source extends AutoCloseable {
     /** Creates whatever target table(s) this source writes into if they don't already exist --
      * called once by the {@link com.nexagres.migration.coordinator.Coordinator} before any
      * partition is read. A no-op default since not every connector needs this (a target already
-     * managed by a running Polywire instance, e.g. mongowire's own tables, may already exist from
+     * managed by a running Warp instance, e.g. mongowire's own tables, may already exist from
      * prior live traffic -- {@code IF NOT EXISTS} makes this safe to call unconditionally either
      * way). */
     default void ensureTargetSchema(Sink sink) throws Exception {

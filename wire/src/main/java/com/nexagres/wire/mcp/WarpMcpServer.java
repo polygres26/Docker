@@ -27,9 +27,9 @@ import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public final class PolyWireMcpServer {
+public final class WarpMcpServer {
 
-    private static final Logger log = LoggerFactory.getLogger(PolyWireMcpServer.class);
+    private static final Logger log = LoggerFactory.getLogger(WarpMcpServer.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final Gson GSON = new Gson();
 
@@ -44,25 +44,25 @@ public final class PolyWireMcpServer {
     private final com.nexagres.wire.audit.AuditLog auditLog;
     private final java.util.function.Supplier<com.nexagres.wire.core.TranslationLlmClient> llmClientSupplier;
 
-    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
         this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec,
                 com.nexagres.wire.http.auth.AccessContextResolver.DISABLED);
     }
 
-    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.nexagres.wire.http.auth.AccessContextResolver oauth) {
         this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, new McpMetricsCollector());
     }
 
-    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics) {
         this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, metrics, null);
     }
 
-    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
             com.nexagres.wire.audit.AuditLog auditLog) {
@@ -72,7 +72,7 @@ public final class PolyWireMcpServer {
     /**
      * Full constructor -- adds {@code metrics}, the shared {@link McpMetricsCollector} instance
      * {@code MetricsServer} reads from to render {@code /api/metrics/summary}'s {@code mcpTools}
-     * field and {@code /metrics}' {@code polywire_mcp_tool_*} series. Passed in (not constructed
+     * field and {@code /metrics}' {@code warp_mcp_tool_*} series. Passed in (not constructed
      * internally and exposed via a getter) so both this class and {@code MetricsServer} share the
      * exact same instance regardless of which one {@code Main} happens to construct first.
      *
@@ -88,7 +88,7 @@ public final class PolyWireMcpServer {
      * #runNaturalLanguageQuery}. {@code () -> null} on every other constructor overload disables
      * just that tool (it errors clearly, "no LLM provider configured"), not the whole server.
      */
-    public PolyWireMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
             com.nexagres.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
             com.nexagres.wire.audit.AuditLog auditLog,
@@ -147,7 +147,7 @@ public final class PolyWireMcpServer {
                 }
             }
         } catch (Exception e) {
-            log.warn("MCP: could not open a connection to introspect POLYWIRE_MCP_TOOLS -- no registered "
+            log.warn("MCP: could not open a connection to introspect WARP_MCP_TOOLS -- no registered "
                     + "function tools will be available this run: {}", e.getMessage());
         }
         log.info("MCP: {} registered function tool(s) available", tools.size());
@@ -196,7 +196,7 @@ public final class PolyWireMcpServer {
         capabilities.add("tools", new JsonObject());
         result.add("capabilities", capabilities);
         JsonObject serverInfo = new JsonObject();
-        serverInfo.addProperty("name", "polywire");
+        serverInfo.addProperty("name", "warp");
         serverInfo.addProperty("version", "1.0");
         result.add("serverInfo", serverInfo);
         return result;
@@ -235,7 +235,7 @@ public final class PolyWireMcpServer {
                         + "executes the judged SQL through the same firewall/QoS/cache pipeline every other tool "
                         + "uses and returns the result along with the SQL that actually ran. Never executes "
                         + "writes -- use execute_sql directly if a write is really intended. Requires an LLM "
-                        + "provider configured (PUT /api/llm-config or POLYWIRE_LLM_*).",
+                        + "provider configured (PUT /api/llm-config or WARP_LLM_*).",
                 objectSchema(Map.of("question", stringSchema("The question to answer, in plain English")),
                         List.of("question"))));
         for (RegisteredFunctionTool tool : functionTools) {
@@ -383,7 +383,7 @@ public final class PolyWireMcpServer {
         com.nexagres.wire.core.TranslationLlmClient llmClient = llmClientSupplier == null ? null : llmClientSupplier.get();
         if (llmClient == null) {
             return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "58000",
-                    "no LLM provider configured -- set it via PUT /api/llm-config or the POLYWIRE_LLM_* env vars "
+                    "no LLM provider configured -- set it via PUT /api/llm-config or the WARP_LLM_* env vars "
                             + "before using query_natural_language"), null);
         }
 

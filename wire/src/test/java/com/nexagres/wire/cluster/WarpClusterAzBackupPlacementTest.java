@@ -25,15 +25,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Real, live proof of gap #2 from the multi-AZ hardening pass (see {@link PolyWireCluster}'s
+ * Real, live proof of gap #2 from the multi-AZ hardening pass (see {@link WarpCluster}'s
  * class javadoc): starts three real embedded Ignite nodes in this JVM (same mechanism {@link
- * PolyWireCluster#start} uses, replicated inline here rather than spawning OS processes so a plain
+ * WarpCluster#start} uses, replicated inline here rather than spawning OS processes so a plain
  * {@code mvn test} run proves it, no shell orchestration needed) tagged az-a/az-b/az-a — two
  * nodes sharing an AZ, one different, exactly the shape the task called for — populates real cache
  * entries, then uses Ignite's own {@link Affinity#mapKeyToPrimaryAndBackups} to show that no key's
- * backup ever lands on a node sharing {@link PolyWireCluster#AZ_ATTRIBUTE} with its primary.
+ * backup ever lands on a node sharing {@link WarpCluster#AZ_ATTRIBUTE} with its primary.
  */
-class PolyWireClusterAzBackupPlacementTest {
+class WarpClusterAzBackupPlacementTest {
 
     private Ignite nodeA1;
     private Ignite nodeB;
@@ -56,9 +56,9 @@ class PolyWireClusterAzBackupPlacementTest {
     void backupNeverSharesAzWithPrimary() throws Exception {
         List<String> seeds = List.of("127.0.0.1:47510", "127.0.0.1:47511", "127.0.0.1:47512");
 
-        nodeA1 = startNode("polywire-test-node-a1", 47510, seeds, "az-a");
-        nodeB = startNode("polywire-test-node-b", 47511, seeds, "az-b");
-        nodeA2 = startNode("polywire-test-node-a2", 47512, seeds, "az-a");
+        nodeA1 = startNode("warp-test-node-a1", 47510, seeds, "az-a");
+        nodeB = startNode("warp-test-node-b", 47511, seeds, "az-b");
+        nodeA2 = startNode("warp-test-node-a2", 47512, seeds, "az-a");
 
         assertEquals(3, nodeA1.cluster().nodes().size(), "all three test nodes must have joined one cluster");
 
@@ -66,7 +66,7 @@ class PolyWireClusterAzBackupPlacementTest {
         cacheCfg.setCacheMode(CacheMode.PARTITIONED);
         cacheCfg.setBackups(1);
         RendezvousAffinityFunction affinity = new RendezvousAffinityFunction();
-        affinity.setAffinityBackupFilter(new ClusterNodeAttributeAffinityBackupFilter(PolyWireCluster.AZ_ATTRIBUTE));
+        affinity.setAffinityBackupFilter(new ClusterNodeAttributeAffinityBackupFilter(WarpCluster.AZ_ATTRIBUTE));
         cacheCfg.setAffinity(affinity);
 
         IgniteCache<String, String> cache = nodeA1.getOrCreateCache(cacheCfg);
@@ -86,8 +86,8 @@ class PolyWireClusterAzBackupPlacementTest {
             assertEquals(2, mapping.size(), "expected 1 primary + 1 backup for key " + key);
             ClusterNode primary = mapping.get(0);
             ClusterNode backup = mapping.get(1);
-            String primaryAz = (String) primary.attribute(PolyWireCluster.AZ_ATTRIBUTE);
-            String backupAz = (String) backup.attribute(PolyWireCluster.AZ_ATTRIBUTE);
+            String primaryAz = (String) primary.attribute(WarpCluster.AZ_ATTRIBUTE);
+            String backupAz = (String) backup.attribute(WarpCluster.AZ_ATTRIBUTE);
             assertNotEquals(primary.id(), backup.id(), "primary and backup must be different nodes for key " + key);
             assertNotEquals(primaryAz, backupAz,
                     "key " + key + ": backup (" + backupAz + ") must never share an AZ with primary (" + primaryAz + ")");
@@ -109,7 +109,7 @@ class PolyWireClusterAzBackupPlacementTest {
         cfg.setDiscoverySpi(discoverySpi);
         cfg.setClientMode(false);
         Map<String, String> attrs = new HashMap<>();
-        attrs.put(PolyWireCluster.AZ_ATTRIBUTE, az);
+        attrs.put(WarpCluster.AZ_ATTRIBUTE, az);
         cfg.setUserAttributes(attrs);
 
         return Ignition.start(cfg);

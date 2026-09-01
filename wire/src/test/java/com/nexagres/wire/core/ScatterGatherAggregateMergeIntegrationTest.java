@@ -2,7 +2,7 @@ package com.nexagres.wire.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.nexagres.wire.testsupport.PolyWireProcess;
+import com.nexagres.wire.testsupport.WarpProcess;
 import com.nexagres.wire.testsupport.RealPostgres;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end proof of the highest-risk gap fixed against ShardingSphere: a real pgwire client,
  * a real Main subprocess sharded across two independent real Postgres containers (no actual
- * hash/range/consistent-hash routing needed here -- POLYWIRE_ROUTER_SHARD_TABLES sends every
+ * hash/range/consistent-hash routing needed here -- WARP_ROUTER_SHARD_TABLES sends every
  * statement against the "orders" table through scatter-gather across both), each seeded with its
  * own slice of data so the merged result can only be correct if real cross-shard aggregation ran,
  * not a naive per-shard row concatenation. See ScatterGatherAggregateMerge and
@@ -27,7 +27,7 @@ class ScatterGatherAggregateMergeIntegrationTest {
 
     private static RealPostgres shard1;
     private static RealPostgres shard2;
-    private static PolyWireProcess polywire;
+    private static WarpProcess warp;
 
     @BeforeAll
     static void startInfra() throws Exception {
@@ -48,28 +48,28 @@ class ScatterGatherAggregateMergeIntegrationTest {
         String backends = "shard1=" + shard1.jdbcUrl() + "|" + shard1.username() + "|" + shard1.password()
                 + ";shard2=" + shard2.jdbcUrl() + "|" + shard2.username() + "|" + shard2.password();
 
-        polywire = PolyWireProcess.builder()
+        warp = WarpProcess.builder()
                 .pgBackend(shard1.host(), shard1.port(), shard1.database(), shard1.username(), shard1.password())
-                .frontend("pgwire", "POLYWIRE_PGWIRE_PORT")
-                .env("POLYWIRE_BACKENDS", backends)
-                .env("POLYWIRE_SHARD_BACKENDS", "shard1,shard2")
-                .env("POLYWIRE_ROUTER_SHARD_TABLES", "public")
-                .env("POLYWIRE_TRUSTED_BACKEND_HOSTS", "localhost")
-                .env("POLYWIRE_DYNAMOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_MONGOWIRE_CACHE_ENABLED", "false")
-                .env("POLYWIRE_OTEL_ENDPOINT", "disabled")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_SHARD_BACKENDS", "shard1,shard2")
+                .env("WARP_ROUTER_SHARD_TABLES", "public")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
                 .start();
     }
 
     @AfterAll
     static void stopInfra() {
-        if (polywire != null) polywire.close();
+        if (warp != null) warp.close();
         if (shard2 != null) shard2.close();
         if (shard1 != null) shard1.close();
     }
 
     private Connection connect() throws SQLException {
-        String url = "jdbc:postgresql://localhost:" + polywire.port("pgwire") + "/postgres";
+        String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
         return DriverManager.getConnection(url, shard1.username(), shard1.password());
     }
 

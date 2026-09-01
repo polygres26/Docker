@@ -198,7 +198,7 @@ export default function FederationPlans() {
 
       {notEnabled && (
         <div style={{ color: 'var(--muted)', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 8, padding: 16 }}>
-          Federation plan history isn't enabled. Set <code>POLYWIRE_FEDERATION_PLAN_HISTORY=&lt;capacity&gt;</code> (e.g.{' '}
+          Federation plan history isn't enabled. Set <code>WARP_FEDERATION_PLAN_HISTORY=&lt;capacity&gt;</code> (e.g.{' '}
           <code>200</code>) to start capturing every federated query's real plan here.
         </div>
       )}

@@ -18,7 +18,7 @@ import org.postgresql.xa.PGXADataSource;
  * Phase 4b of the switchover design: proves recovery reconnects to the EXACT backend a branch was
  * prepared against, not whatever its name currently resolves to. Simulates the scenario the plan
  * called out as unsafe without this -- a backend gets repointed (a switchover, a credential
- * rotation, an operator editing {@code POLYWIRE_BACKENDS}) to a different physical target between
+ * rotation, an operator editing {@code WARP_BACKENDS}) to a different physical target between
  * when a branch went in-doubt and when startup recovery runs.
  *
  * <p>Real infra throughout: two real Postgres containers standing in for the branch's original
@@ -85,7 +85,7 @@ class XaRecoveryTargetGenerationIntegrationTest {
                     originalBackend.jdbcUrl(), originalBackend.username(), originalBackend.password())));
 
             // The registry, as it exists AT RECOVERY TIME, has "primary" repointed to
-            // repointedBackend -- simulating an operator having edited POLYWIRE_BACKENDS (or run a
+            // repointedBackend -- simulating an operator having edited WARP_BACKENDS (or run a
             // switchover) between the crash and this restart. If recovery resolved by name instead
             // of using the captured identity, it would reconnect here, not to originalBackend.
             com.nexagres.wire.core.BackendRegistry registry = com.nexagres.wire.core.BackendRegistry.fromConfig(
