@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NexaGate — The Intelligent Database Gateway | NexaGres</title>
-<meta name="description" content="NexaGate is the intelligent database gateway: one control point that connects, protects, controls, accelerates, and observes every application and AI agent hitting Postgres, Oracle, MySQL, or SQL Server, regardless of protocol — MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. NexaDMS scores how hard your migration to Postgres will be.">
+<title>Warp — The Intelligent Database Gateway | NexaGres</title>
+<meta name="description" content="Warp is the intelligent database gateway: one control point that connects, protects, controls, accelerates, and observes every application and AI agent hitting Postgres, Oracle, MySQL, or SQL Server, regardless of protocol — MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), PostgreSQL, gRPC, and MCP. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. Ferry scores how hard your migration to Postgres will be.">
 <link rel="canonical" href="https://nexagres.com/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -21,12 +21,12 @@
 <!-- Open Graph / Twitter Card -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/">
-<meta property="og:title" content="NexaGate — The Intelligent Database Gateway">
-<meta property="og:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus NexaDMS, a rules-based migration-difficulty assessor.">
+<meta property="og:title" content="Warp — The Intelligent Database Gateway">
+<meta property="og:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus Ferry, a rules-based migration-difficulty assessor.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="NexaGate — The Intelligent Database Gateway">
-<meta name="twitter:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus NexaDMS, a rules-based migration-difficulty assessor.">
+<meta name="twitter:title" content="Warp — The Intelligent Database Gateway">
+<meta name="twitter:description" content="Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server — regardless of the protocol a client speaks. One control point, any database, any cloud. Plus Ferry, a rules-based migration-difficulty assessor.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 
 <!-- Structured data: helps search/AI systems parse what these tools are without re-deriving it
@@ -38,10 +38,10 @@
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "NexaGate",
+      "name": "Warp",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
-      "description": "NexaGate is the intelligent database gateway -- one control point for every workload against Postgres, Oracle, MySQL, or SQL Server. Different protocols, same policies. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), gRPC, and MCP -- to a single real backend database of your choice, unmodified, with live semantic execution translation (protocol to SQL/API semantics to that backend's own execution), not just protocol framing. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. Organized around five capabilities: Connect (twelve client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (NexaCache -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
+      "description": "Warp is the intelligent database gateway -- one control point for every workload against Postgres, Oracle, MySQL, or SQL Server. Different protocols, same policies. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), gRPC, and MCP -- to a single real backend database of your choice, unmodified, with live semantic execution translation (protocol to SQL/API semantics to that backend's own execution), not just protocol framing. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. Organized around five capabilities: Connect (twelve client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (Mach -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
       "url": "https://nexagres.com/polywire/",
       "image": "https://nexagres.com/assets/og-image.png",
       "offers": [
@@ -66,7 +66,7 @@
     },
     {
       "@type": "SoftwareApplication",
-      "name": "NexaDMS",
+      "name": "Ferry",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "A rules-based (not LLM-generated) migration-difficulty assessor for moving an Oracle, MySQL, MariaDB, or SQL Server database to Postgres -- scores difficulty, breaks down what drives the score, and recommends Postgres sizing. Reproducible: running it twice against the same database gives the same answer.",
@@ -85,7 +85,7 @@
     },
     {
       "@type": "SoftwareApplication",
-      "name": "NexaCompat",
+      "name": "Shim",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "Postgres extensions (pg_oracle/pg_mysql/pg_sqlserver) that resolve real Oracle/SQL Server/MySQL catalog objects and built-in functions -- V$SESSION, DBMS_OUTPUT, sys.objects, GROUP_CONCAT -- natively inside stock Postgres.",
@@ -124,11 +124,11 @@
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
-      <a href="#polywire">NexaGate</a>
-      <a href="#dms">NexaDMS</a>
+      <a href="#polywire">Warp</a>
+      <a href="#dms">Ferry</a>
       <a href="#pricing">Pricing</a>
-      <a href="/polycache.html">NexaCache</a>
-      <a href="/db-compat/">NexaCompat</a>
+      <a href="/polycache.html">Mach</a>
+      <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="#faq">FAQ</a>
@@ -151,7 +151,7 @@
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/polywire</span>
       </div>
-      <h2>NexaGate</h2>
+      <h2>Warp</h2>
       <h3 class="toolTagline">The Intelligent Database Gateway.</h3>
       <p class="heroSub">
         Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server —
@@ -161,16 +161,16 @@
       <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · InfluxDB · GraphDB · PostgreSQL · gRPC · MCP</p>
       <p class="toolTagline" style="margin:8px 0 14px">12 protocols. One execution pipeline.</p>
       <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try NexaGate Free</a>
+        <a class="btn btn-primary" href="#try">Try Warp Free</a>
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
         <a class="btn btn-secondary" href="/demo-polywire.html">Click-Through Demo</a>
       </div>
       <p class="heroTagline">One intelligent infrastructure layer for the database you already run.</p>
       <p class="heroTagline2">Postgres, Oracle, MySQL, or SQL Server — same control point.</p>
 
-      <h3 class="subhead" id="why-nexagate">Why NexaGate?<a class="permalink" href="#why-nexagate" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="why-warp">Why Warp?<a class="permalink" href="#why-warp" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
-        <div class="obsCard"><h4>⚡ Go faster</h4><p>Distributed caching and automatic rollups cut repeated database work and query latency, shared across every protocol that hits NexaGate.</p></div>
+        <div class="obsCard"><h4>⚡ Go faster</h4><p>Distributed caching and automatic rollups cut repeated database work and query latency, shared across every protocol that hits Warp.</p></div>
         <div class="obsCard"><h4>↗ Scale further</h4><p>Shard and intelligently route workloads without embedding database topology into applications.</p></div>
         <div class="obsCard"><h4>◉ See every query</h4><p>Monitor SQL, latency, errors, workload behavior, and resource consumption from one control point instead of each database's own tooling.</p></div>
         <div class="obsCard"><h4>🛡 Protect the database</h4><p>SQL firewall, QoS, admission control, and workload isolation before traffic ever reaches the database.</p></div>
@@ -181,11 +181,11 @@
       <h3 class="subhead" id="why">Put an intelligent control point in front of your database.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Connect, protect, control, accelerate, observe — the same five things, applied identically
-        no matter which protocol the caller speaks or which database sits behind NexaGate. <b>Different
+        no matter which protocol the caller speaks or which database sits behind Warp. <b>Different
         protocols. Same policies.</b> <a href="/polywire/#outcomes">See each one broken out in detail →</a>
       </p>
 
-      <h3 class="subhead" id="architecture-simple">What is NexaGate?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="architecture-simple">What is Warp?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
       <div class="simpleArch">
         <div class="archTier archTierApps">
           <span class="archTierLabel">Applications &amp; AI agents</span>
@@ -193,7 +193,7 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
-          <span class="archTierLabel archHubLabel">NEXAGATE</span>
+          <span class="archTierLabel archHubLabel">WARP</span>
           <span class="archTierDetail archHubFlow">Connect · Protect · Control · Accelerate · Observe</span>
         </div>
         <div class="archArrow">↓</div>
@@ -203,45 +203,45 @@
         </div>
       </div>
       <p class="rttNote">
-        <a href="/polywire/#outcomes">See how NexaGate works, stage by stage →</a> — the
+        <a href="/polywire/#outcomes">See how Warp works, stage by stage →</a> — the
         detailed eight-stage pipeline behind this diagram.
       </p>
 
-      <h3 class="subhead" id="two-ways">Two ways to use NexaGate<a class="permalink" href="#two-ways" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="two-ways">Two ways to use Warp<a class="permalink" href="#two-ways" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Keep the database you have</h4><p>Oracle app → NexaGate → Oracle. MySQL app → NexaGate → MySQL. SQL Server app → NexaGate → SQL Server. Postgres app → NexaGate → Postgres. Add caching, sharding, monitoring, rollups, QoS, and a SQL firewall in front of the database you already run — no migration required.</p></div>
-        <div class="obsCard"><h4>Or modernize onto Postgres</h4><p>Oracle, MySQL, or SQL Server app → NexaGate → Postgres. Protocol and dialect translation keep the application's existing client working unmodified while the backend becomes Postgres — pair with NexaDMS and NexaCompat for a gradual, no-big-bang migration.</p></div>
+        <div class="obsCard"><h4>Keep the database you have</h4><p>Oracle app → Warp → Oracle. MySQL app → Warp → MySQL. SQL Server app → Warp → SQL Server. Postgres app → Warp → Postgres. Add caching, sharding, monitoring, rollups, QoS, and a SQL firewall in front of the database you already run — no migration required.</p></div>
+        <div class="obsCard"><h4>Or modernize onto Postgres</h4><p>Oracle, MySQL, or SQL Server app → Warp → Postgres. Protocol and dialect translation keep the application's existing client working unmodified while the backend becomes Postgres — pair with Ferry and Shim for a gradual, no-big-bang migration.</p></div>
       </div>
       <p class="rttNote"><a href="/polywire/#outcomes">See each outcome broken out in detail →</a></p>
 
-      <h3 class="subhead" id="pillars">Four ways teams put NexaGate to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="pillars">Four ways teams put Warp to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
         <div class="obsCard"><h4>Accelerate &amp; scale in place</h4><p>Distributed caching, automatic rollups, and shard routing in front of Postgres, Oracle, MySQL, or SQL Server — without embedding database topology into applications.</p></div>
         <div class="obsCard"><h4>Build a database control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of each database's own tooling, run indefinitely, not just during a migration.</p></div>
         <div class="obsCard"><h4>Modernize onto Postgres</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
         <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
       </div>
-      <p class="rttNote"><a href="/polywire/">Explore all NexaGate capabilities →</a></p>
+      <p class="rttNote"><a href="/polywire/">Explore all Warp capabilities →</a></p>
 
       <h3 class="subhead" id="three-products">Three products, two ways to use them<a class="permalink" href="#three-products" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Use NexaGate on its own to run the database you already have better, or bring in NexaDMS
-        and NexaCompat alongside it when you're ready to modernize onto Postgres.
+        Use Warp on its own to run the database you already have better, or bring in Ferry
+        and Shim alongside it when you're ready to modernize onto Postgres.
       </p>
       <div class="obsGrid">
-        <div class="obsCard"><h4>NexaGate — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#polywire">See NexaGate →</a></p></div>
-        <div class="obsCard"><h4>NexaDMS — move better</h4><p>Assess → Size → Migrate → Validate → Cut over. Scores how hard your Oracle, MySQL, or SQL Server migration to Postgres will really be, before you commit to it. <a href="#dms">See NexaDMS →</a></p></div>
-        <div class="obsCard"><h4>NexaCompat — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/db-compat/">See NexaCompat →</a></p></div>
+        <div class="obsCard"><h4>Warp — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#polywire">See Warp →</a></p></div>
+        <div class="obsCard"><h4>Ferry — move better</h4><p>Assess → Size → Migrate → Validate → Cut over. Scores how hard your Oracle, MySQL, or SQL Server migration to Postgres will really be, before you commit to it. <a href="#dms">See Ferry →</a></p></div>
+        <div class="obsCard"><h4>Shim — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/db-compat/">See Shim →</a></p></div>
       </div>
       <p class="rttNote">
-        Together: NexaDMS moves the data, NexaCompat reduces the SQL and application changes, and
-        NexaGate keeps existing clients and protocols working — all landing on the same Postgres.
+        Together: Ferry moves the data, Shim reduces the SQL and application changes, and
+        Warp keeps existing clients and protocols working — all landing on the same Postgres.
       </p>
 
       <h3 class="subhead" id="deploy-anywhere">Deploy anywhere<a class="permalink" href="#deploy-anywhere" aria-label="Link to this section">#</a></h3>
       <p class="pillarStrip">Docker · Kubernetes · AWS · Azure · GCP · OCI · On-prem</p>
       <p class="rttNote">
-        Run NexaGate next to the applications and databases you already operate — no managed
+        Run Warp next to the applications and databases you already operate — no managed
         control plane required.
       </p>
 
@@ -278,7 +278,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
 SQL&gt;</pre>
           </div>
           <div class="demoFlow">
-            <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>NexaGate</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+            <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
           </div>
           <p class="rttNote"><a href="/oracle-to-postgres/">Full Oracle → Postgres guide →</a></p>
         </div>
@@ -301,7 +301,7 @@ mysql&gt; SELECT * FROM orders;
 mysql&gt;</pre>
           </div>
           <div class="demoFlow">
-            <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>NexaGate</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+            <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
           </div>
           <p class="rttNote"><a href="/mysql-to-postgres.html">Full MySQL → Postgres guide →</a></p>
         </div>
@@ -321,7 +321,7 @@ test&gt; db.orders.find()
 test&gt;</pre>
           </div>
           <div class="demoFlow">
-            <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>NexaGate</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+            <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
           </div>
           <p class="rttNote"><a href="/mongodb-to-postgres.html">Full MongoDB → Postgres guide →</a></p>
         </div>
@@ -342,7 +342,7 @@ test&gt;</pre>
 }</pre>
           </div>
           <div class="demoFlow">
-            <span>REST client</span><span class="rewireArrow">→</span><span>OSWire</span><span class="rewireArrow">→</span><span>NexaGate</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+            <span>REST client</span><span class="rewireArrow">→</span><span>OSWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
           </div>
           <p class="rttNote"><a href="/opensearch-to-postgres.html">Full OpenSearch → Postgres guide →</a></p>
         </div>
@@ -351,10 +351,10 @@ test&gt;</pre>
         <i>Real client. Real wire protocol. PostgreSQL database. No client rewrite.</i>
         Table/document contents above are illustrative — the protocol and path are exactly real.
         (SQLcl, JDBC, and psql are what's most thoroughly verified today; see
-        <a href="/polywire/">NexaGate capabilities</a> for exact client-by-client coverage.)
+        <a href="/polywire/">Warp capabilities</a> for exact client-by-client coverage.)
       </p>
 
-      <h3 class="subhead" id="try">Try NexaGate in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="try">Try Warp in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">What do you use? Point it at a Postgres you already have:</p>
       <div class="demoSelector">
         <input type="radio" name="tryProto" id="try-postgres" class="demoRadio" checked>
@@ -371,53 +371,53 @@ test&gt;</pre>
         </div>
 
         <div class="demoPanel" id="trypanel-postgres">
-          <p class="rttNote"><b>1. Start NexaGate</b></p>
+          <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 15432:15432 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>psql -h localhost -p 15432 -U postgres</code></div>
-          <p class="rttNote"><b>3. Done</b> — your client → NexaGate → PostgreSQL. No rewrite.</p>
+          <p class="rttNote"><b>3. Done</b> — your client → Warp → PostgreSQL. No rewrite.</p>
         </div>
 
         <div class="demoPanel" id="trypanel-oracle">
-          <p class="rttNote"><b>1. Start NexaGate</b></p>
+          <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 11521:11521 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
-          <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → NexaGate → PostgreSQL. No driver change.</p>
+          <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → Warp → PostgreSQL. No driver change.</p>
         </div>
 
         <div class="demoPanel" id="trypanel-mysql">
-          <p class="rttNote"><b>1. Start NexaGate</b></p>
+          <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 13306:13306 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
-          <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → NexaGate → PostgreSQL. No driver change.</p>
+          <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Warp → PostgreSQL. No driver change.</p>
         </div>
 
         <div class="demoPanel" id="trypanel-mongodb">
-          <p class="rttNote"><b>1. Start NexaGate</b></p>
+          <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 27017:27017 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
-          <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → NexaGate → PostgreSQL. No driver change.</p>
+          <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → Warp → PostgreSQL. No driver change.</p>
         </div>
 
         <div class="demoPanel" id="trypanel-opensearch">
-          <p class="rttNote"><b>1. Start NexaGate</b></p>
+          <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 9200:9200 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
-          <p class="rttNote"><b>3. Done</b> — REST client → OSWire → NexaGate → PostgreSQL. No driver change.</p>
+          <p class="rttNote"><b>3. Done</b> — REST client → OSWire → Warp → PostgreSQL. No driver change.</p>
         </div>
       </div>
       <details class="methodDetails">
@@ -469,8 +469,8 @@ aws sqs receive-message \                          # SQS wire
 
       <h3 class="subhead" id="distributed-cache">Cache once. Access across protocols.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        A result cached through one NexaGate protocol can be served through another — across
-        NexaGate instances — without another Postgres round trip. <b>One distributed cache,
+        A result cached through one Warp protocol can be served through another — across
+        Warp instances — without another Postgres round trip. <b>One distributed cache,
         not a per-protocol silo.</b> Confirmed live: a row read via a Postgres client, then asked
         for again through a MySQL client, comes back as a cache hit — zero Postgres round trips
         on the second read.
@@ -480,7 +480,7 @@ aws sqs receive-message \                          # SQS wire
           <div class="cacheFlowRow">
             <span class="cacheChip">MySQL client</span>
             <span class="cacheArrow">→</span>
-            <span class="cacheHub">NexaGate<br><span class="cacheHubSub">NexaCache</span></span>
+            <span class="cacheHub">Warp<br><span class="cacheHubSub">Mach</span></span>
             <span class="cacheArrow">←</span>
             <span class="cacheChip">Oracle client</span>
           </div>
@@ -489,20 +489,20 @@ aws sqs receive-message \                          # SQS wire
         </div>
       </figure>
       <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
-      <p class="rttNote"><a href="/polycache.html">Explore NexaCache — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
+      <p class="rttNote"><a href="/polycache.html">Explore Mach — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
 
       <details class="exploreMore">
-        <summary class="exploreSummary">Explore NexaGate in depth — detailed architecture, comparison →</summary>
+        <summary class="exploreSummary">Explore Warp in depth — detailed architecture, comparison →</summary>
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="/assets/architecture.svg" alt="NexaGate architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (NexaCache — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, NexaCache, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is NexaGate's own native driver protocol, not an emulated foreign database — see <a href="/polywire/">full capabilities</a> for what that means.)</figcaption>
+        <img src="/assets/architecture.svg" alt="Warp architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (Mach — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/polywire/">full capabilities</a> for what that means.)</figcaption>
       </figure>
 
-      <h3 class="subhead" id="without-polywire">Without NexaGate vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="without-polywire">Without Warp vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
       <div class="withoutWithGrid">
         <div class="withoutCol">
-          <h4>Without NexaGate</h4>
+          <h4>Without Warp</h4>
           <ul>
             <li>Different database infrastructure per protocol</li>
             <li>A separate connection proxy</li>
@@ -513,7 +513,7 @@ aws sqs receive-message \                          # SQS wire
           </ul>
         </div>
         <div class="withCol">
-          <h4>With NexaGate</h4>
+          <h4>With Warp</h4>
           <p class="withStatement">One gateway → Postgres.</p>
           <ul>
             <li><b>Fewer systems to operate</b> — one gateway instead of five databases' own tooling.</li>
@@ -523,11 +523,11 @@ aws sqs receive-message \                          # SQS wire
         </div>
       </div>
 
-      <h3 class="subhead" id="comparison">NexaGate vs. alternatives<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="comparison">Warp vs. alternatives<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
       <div class="rttTableWrap">
         <table class="rttTable compareTable">
           <thead>
-            <tr><th>Capability</th><th>Direct to Postgres</th><th>Traditional proxy</th><th>NexaGate</th></tr>
+            <tr><th>Capability</th><th>Direct to Postgres</th><th>Traditional proxy</th><th>Warp</th></tr>
           </thead>
           <tbody>
             <tr><td>Postgres wire protocol</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -588,14 +588,14 @@ aws sqs receive-message \                          # SQS wire
 
       <h3 class="subhead" id="production">Built for production<a class="permalink" href="#production" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">HA &amp; Failover</span><span class="uc-desc">Multi-AZ NexaGate deployment, planned drain/switchover and automatic unplanned failover, both tested across every wire protocol. See <a href="/polywire/#multi-az">Multi-AZ deployment</a> and <a href="/polywire/#outages">Planned and unplanned outages</a>.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">HA &amp; Failover</span><span class="uc-desc">Multi-AZ Warp deployment, planned drain/switchover and automatic unplanned failover, both tested across every wire protocol. See <a href="/polywire/#multi-az">Multi-AZ deployment</a> and <a href="/polywire/#outages">Planned and unplanned outages</a>.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Security</span><span class="uc-desc">SQL firewall, connection ACL, authentication, TLS, row-level security identity propagation, Vault/CyberArk secrets, admin SSO. See <a href="/polywire/#security">Security</a> for the exact, honestly-scoped detail.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Workload protection</span><span class="uc-desc">QoS admission control, connection pooling, and load shedding before a backend saturates — see "Stop one workload from taking down Postgres" above.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Observability</span><span class="uc-desc">Prometheus <code>/metrics</code> and OTLP export, reaching Grafana, Datadog, New Relic, CloudWatch, Azure Monitor, and GCP Cloud Monitoring. See <a href="/polywire/#observability">Observability</a>.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Deployment</span><span class="uc-desc">Docker, Kubernetes, AWS, Azure, GCP, OCI, or on-prem — your infrastructure, your network, your Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Support</span><span class="uc-desc">Community support on Developer; enterprise support on Enterprise — see Pricing below.</span></span></li>
       </ul>
-      <p class="rttNote"><a href="#contact">Schedule a NexaGate Architecture Review →</a></p>
+      <p class="rttNote"><a href="#contact">Schedule a Warp Architecture Review →</a></p>
 
     </section>
 
@@ -605,7 +605,7 @@ aws sqs receive-message \                          # SQS wire
         <span class="badge">ghcr.io/polygres26/dms</span>
       </div>
       <p class="bridgeKicker">Also from NexaGres</p>
-      <h2>NexaDMS</h2>
+      <h2>Ferry</h2>
       <h3 class="toolTagline">Know before you migrate. Then move for real.</h3>
       <div class="stepFlow">
         <div class="stepFlowItem"><h4>Assess</h4><p>Understand migration difficulty.</p></div>
@@ -614,9 +614,9 @@ aws sqs receive-message \                          # SQS wire
         <span class="stepFlowArrow">→</span>
         <div class="stepFlowItem"><h4>Migrate</h4><p>Massively parallel snapshot + CDC.</p></div>
         <span class="stepFlowArrow">→</span>
-        <div class="stepFlowItem"><h4>Run</h4><p>NexaGate keeps applications connected and governed.</p></div>
+        <div class="stepFlowItem"><h4>Run</h4><p>Warp keeps applications connected and governed.</p></div>
       </div>
-      <p class="rttNote"><a href="/dms/">Explore NexaDMS →</a></p>
+      <p class="rttNote"><a href="/dms/">Explore Ferry →</a></p>
     </section>
 
     <section class="tool" id="pricing">
@@ -625,8 +625,8 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <h2>Pricing</h2>
       <p class="lede">
-        Same NexaGate, same protocols, same capabilities — Developer and Enterprise differ on
-        scale and commercial rights, not features. Nothing that makes NexaGate what it is —
+        Same Warp, same protocols, same capabilities — Developer and Enterprise differ on
+        scale and commercial rights, not features. Nothing that makes Warp what it is —
         SQL translation, the firewall, sharding, QoS, caching, HA/failover — is held back for a
         paid tier: an evaluation on Developer proves the exact architecture you'd run in
         production.
@@ -638,22 +638,22 @@ aws sqs receive-message \                          # SQS wire
             <tr><th>Product</th><th>Developer</th><th>Enterprise starting price</th><th>Pricing metric</th></tr>
           </thead>
           <tbody>
-            <tr><td>NexaGate</td><td>Free</td><td>$15,000/year</td><td>per production deployment/cluster</td></tr>
-            <tr><td>NexaDMS</td><td>Free</td><td>$7,500/year</td><td>per migration environment</td></tr>
-            <tr><td>NexaCompat</td><td>Free / Basic</td><td>$5,000/year</td><td>per production deployment</td></tr>
+            <tr><td>Warp</td><td>Free</td><td>$15,000/year</td><td>per production deployment/cluster</td></tr>
+            <tr><td>Ferry</td><td>Free</td><td>$7,500/year</td><td>per migration environment</td></tr>
+            <tr><td>Shim</td><td>Free / Basic</td><td>$5,000/year</td><td>per production deployment</td></tr>
             <tr><td>NexaGres Platform</td><td>Free (dev)</td><td>$20,000/year</td><td>bundle of all three</td></tr>
             <tr><td>Enterprise Unlimited</td><td>—</td><td>Custom, ~$75,000+</td><td>company/business-unit agreement</td></tr>
           </tbody>
         </table>
       </div>
       <p class="pricingNote">
-        <b>NexaGres Platform</b> bundles NexaGate, NexaDMS, and the NexaCompat
+        <b>NexaGres Platform</b> bundles Warp, Ferry, and Shim
         under one license at a discount to buying all three separately.
         <b>Enterprise Unlimited</b> is a company- or business-unit-wide agreement — unlimited
         deployments and migration environments across every product, negotiated directly. Starting
         prices above are exactly that — a starting point for the smallest real production
         footprint each product is sold against; talk to us for a quote on yours.
-        <a href="#contact">Schedule a NexaGate Architecture Review →</a>
+        <a href="#contact">Schedule a Warp Architecture Review →</a>
       </p>
 
       <div class="pricingGrid">
@@ -667,7 +667,7 @@ aws sqs receive-message \                          # SQS wire
             <li>SQL firewall, connection ACL, and every policy engine</li>
             <li>Routing and sharding, all strategies</li>
             <li>QoS admission control</li>
-            <li>Query result caching (NexaCache)</li>
+            <li>Query result caching (Mach)</li>
             <li>Prometheus <code style="display:inline;padding:1px 6px;">/metrics</code> and OTEL export</li>
             <li>HA, config propagation, and planned/unplanned failover — up to 3 instances</li>
             <li class="limit">Up to 25 concurrent client connections per instance</li>
@@ -686,13 +686,13 @@ aws sqs receive-message \                          # SQS wire
           <ul>
             <li>Everything in Developer, unrestricted</li>
             <li>Unlimited concurrent client connections</li>
-            <li>Unlimited NexaGate instances</li>
+            <li>Unlimited Warp instances</li>
             <li>Unlimited Postgres backends</li>
             <li>Full throughput, no admission-control ceiling beyond what you configure</li>
             <li>Licensed for commercial production use</li>
             <li>Enterprise support</li>
           </ul>
-          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a NexaGate Architecture Review →</a></p>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a Warp Architecture Review →</a></p>
         </div>
       </div>
       <p class="pricingNote">
@@ -702,12 +702,12 @@ aws sqs receive-message \                          # SQS wire
         meaningful production deployment will reach them quickly by design.
       </p>
 
-      <h3 class="subhead" id="dms-pricing">NexaDMS<a class="permalink" href="#dms-pricing" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="dms-pricing">Ferry<a class="permalink" href="#dms-pricing" aria-label="Link to this section">#</a></h3>
       <p class="lede">
         Assessment — connect, score, size, browse, report — is unrestricted on every tier. What's
         paid is the parts of actually moving the data that scale past a single-process,
         single-migration setup: real parallelism, unattended cutover, and multi-tenant capacity.
-        Same <code>POLYWIRE_LICENSE_KEY</code> as NexaGate — one key, one thing to buy.
+        Same <code>POLYWIRE_LICENSE_KEY</code> as Warp — one key, one thing to buy.
       </p>
       <div class="pricingGrid">
         <div class="priceCard">
@@ -743,20 +743,20 @@ aws sqs receive-message \                          # SQS wire
             <li>Audit log, a second read-only account, SSO bearer-token login</li>
             <li>Enterprise support</li>
           </ul>
-          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a NexaGate Architecture Review →</a></p>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a Warp Architecture Review →</a></p>
         </div>
       </div>
       <p class="pricingNote">
         Full row-by-row capability breakdown, including exactly which real license check backs
-        each row: <a href="/dms/#dms-packaging">NexaDMS capability table →</a>
+        each row: <a href="/dms/#dms-packaging">Ferry capability table →</a>
       </p>
 
-      <h3 class="subhead" id="db-compat-pricing">NexaCompat<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="db-compat-pricing">Shim<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
       <p class="lede">
         Oracle/SQL Server/MySQL catalog and built-in-function compatibility inside Postgres
         itself — <code>V$SESSION</code>, <code>DBMS_OUTPUT.PUT_LINE</code>, <code>sys.objects</code>,
         <code>GROUP_CONCAT</code> — is what the Enterprise tier below unlocks. The same
-        <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks NexaGate and NexaGres
+        <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks Warp and NexaGres
         DMS's own Enterprise tiers.
       </p>
       <div class="pricingGrid">
@@ -780,11 +780,11 @@ aws sqs receive-message \                          # SQS wire
             <li>SQL Server: sys.* catalog views, OBJECT_ID, SCOPE_IDENTITY, and more T-SQL functions</li>
             <li>Enterprise support</li>
           </ul>
-          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a NexaGate Architecture Review →</a></p>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a Warp Architecture Review →</a></p>
         </div>
       </div>
       <p class="pricingNote">
-        Full per-engine compatibility tables: <a href="/db-compat/">NexaCompat →</a>
+        Full per-engine compatibility tables: <a href="/db-compat/">Shim →</a>
       </p>
     </section>
 
@@ -794,16 +794,16 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <h2>Common questions</h2>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">Does my application need to change to use NexaGate?</span><span class="uc-desc">No — your existing driver connects exactly as it always has, unaware NexaGate is on the other end. <a href="/polywire/">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Is NexaGate's sharding real, or just SQL text matching?</span><span class="uc-desc">Real — it decodes each protocol's own native bound values and merges cross-shard results centrally. <a href="/polywire/#sharding">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does NexaGate support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, and Oracle — a real per-caller identity feeds your own Postgres RLS policies. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet. <a href="/polywire/#security">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does my application need to change to use Warp?</span><span class="uc-desc">No — your existing driver connects exactly as it always has, unaware Warp is on the other end. <a href="/polywire/">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is Warp's sharding real, or just SQL text matching?</span><span class="uc-desc">Real — it decodes each protocol's own native bound values and merges cross-shard results centrally. <a href="/polywire/#sharding">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, and Oracle — a real per-caller identity feeds your own Postgres RLS policies. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet. <a href="/polywire/#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API redirects traffic and waits for a real zero-replication-lag cutover before confirming. <a href="/polywire/#outages">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Can NexaGate connect to Supabase, RDS, Cloud SQL, Azure, or OCI?</span><span class="uc-desc">Yes — each has a worked example and its real provider-specific gotchas. <a href="/CONNECTING.md">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does NexaGate cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="/polywire/#cache-vs-round-trip">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does NexaGate use AI for anything beyond MCP?</span><span class="uc-desc">Yes — ten features where NexaGate itself calls an LLM at a specific pipeline point: self-healing query repair on a real backend SQL error, natural-language firewall-rule drafting, traffic anomaly detection with plain-English narration, QoS tuning suggestions, MCP activity summarization, natural-language querying with a second LLM pass judging (and correcting) the drafted SQL, rollup pre-aggregation suggestions, table-sharding suggestions, EXPLAIN plan narration, and auto-generated schema documentation. Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. <a href="/polywire/#ai-features">See all ten →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">What security features does NexaGate actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="/polywire/#security">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Is NexaGate free to use?</span><span class="uc-desc">Yes — Developer is free forever with every protocol and feature enabled, capped on scale. See Pricing above.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Is NexaDMS's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Can Warp connect to Supabase, RDS, Cloud SQL, Azure, or OCI?</span><span class="uc-desc">Yes — each has a worked example and its real provider-specific gotchas. <a href="/CONNECTING.md">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="/polywire/#cache-vs-round-trip">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp use AI for anything beyond MCP?</span><span class="uc-desc">Yes — ten features where Warp itself calls an LLM at a specific pipeline point: self-healing query repair on a real backend SQL error, natural-language firewall-rule drafting, traffic anomaly detection with plain-English narration, QoS tuning suggestions, MCP activity summarization, natural-language querying with a second LLM pass judging (and correcting) the drafted SQL, rollup pre-aggregation suggestions, table-sharding suggestions, EXPLAIN plan narration, and auto-generated schema documentation. Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. <a href="/polywire/#ai-features">See all ten →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">What security features does Warp actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="/polywire/#security">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is Warp free to use?</span><span class="uc-desc">Yes — Developer is free forever with every protocol and feature enabled, capped on scale. See Pricing above.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is Ferry's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
       </ul>
     </section>
 
@@ -813,11 +813,11 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <h2>Contact</h2>
       <p class="lede">
-        <b>Considering NexaGate for production?</b> Bring your architecture — we'll help map
-        where NexaGate fits. Pick "Architecture Review" below.
+        <b>Considering Warp for production?</b> Bring your architecture — we'll help map
+        where Warp fits. Pick "Architecture Review" below.
       </p>
       <p class="lede" style="margin-bottom: 18px;">
-        <b>Report an issue or ask a question</b> — for either NexaGate or NexaDMS. Include
+        <b>Report an issue or ask a question</b> — for either Warp or Ferry. Include
         what you were trying to do and, for a bug, what you expected vs. what happened. Goes
         straight to the team, no email address to copy or scrape.
       </p>
@@ -834,7 +834,7 @@ aws sqs receive-message \                          # SQS wire
           <label for="contactSubject">What's this about</label>
           <select id="contactSubject" name="subject">
             <option>Architecture Review</option>
-            <option>NexaGate question</option>
+            <option>Warp question</option>
             <option>DMS question</option>
             <option>Bug report</option>
             <option>Feature request</option>
@@ -865,17 +865,17 @@ aws sqs receive-message \                          # SQS wire
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Does my application need to change to use NexaGate?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No -- each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware NexaGate (not the database it thinks it's talking to) is on the other end." }
+          "name": "Does my application need to change to use Warp?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No -- each client protocol (Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, SQS, OpenSearch, InfluxDB, GraphDB) is spoken for real on the wire; your existing driver connects exactly as it always has, unaware Warp (not the database it thinks it's talking to) is on the other end." }
         },
         {
           "@type": "Question",
-          "name": "Is NexaGate's sharding real, or just SQL text matching?",
+          "name": "Is Warp's sharding real, or just SQL text matching?",
           "acceptedAnswer": { "@type": "Answer", "text": "Real: it decodes each protocol's own native binary bind-parameter encoding (not just SQL text) to route by an actual bound value, and merges cross-shard aggregates/sorted results centrally rather than concatenating per-shard results." }
         },
         {
           "@type": "Question",
-          "name": "Does NexaGate support row-level security?",
+          "name": "Does Warp support row-level security?",
           "acceptedAnswer": { "@type": "Answer", "text": "Yes, for the Postgres, SQL Server, and Oracle wire protocols -- a real per-caller identity is propagated into a Postgres session GUC, and your own Postgres RLS policies do the filtering. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet." }
         },
         {
@@ -885,32 +885,32 @@ aws sqs receive-message \                          # SQS wire
         },
         {
           "@type": "Question",
-          "name": "Can NexaGate connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?",
+          "name": "Can Warp connect to Supabase, Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Oracle OCI?",
           "acceptedAnswer": { "@type": "Answer", "text": "Yes -- each has a worked example and its real provider-specific gotchas documented (Supabase's pooler, mandatory TLS on Azure/OCI, network allowlisting on RDS/Cloud SQL/OCI)." }
         },
         {
           "@type": "Question",
-          "name": "Does NexaGate cache query results?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- two shared cache tiers, neither a per-protocol silo. NexaCache's original tier, opt-in per table, serves repeat arbitrary SELECT reads without a round trip to Postgres, shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP -- a result cached via one protocol (e.g. MySQL) is served to another (e.g. Oracle) without recomputing it. A second, newer tier caches exact primary-key point lookups only (DynamoDB GetItem, MongoDB find by _id, or SQL WHERE pk = ?), keyed by the physical Postgres table and key value -- this one does bring DynamoDB and MongoDB in, each sharing its entries with any SQL client reading the same physical table (though not directly with each other, since they store data in different physical tables even under the same logical name). Invalidation is automatic and table-level in both tiers: any write evicts the affected cached entries, whether the write binds parameters or sends literal SQL values." }
+          "name": "Does Warp cache query results?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- two shared cache tiers, neither a per-protocol silo. Mach's original tier, opt-in per table, serves repeat arbitrary SELECT reads without a round trip to Postgres, shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP -- a result cached via one protocol (e.g. MySQL) is served to another (e.g. Oracle) without recomputing it. A second, newer tier caches exact primary-key point lookups only (DynamoDB GetItem, MongoDB find by _id, or SQL WHERE pk = ?), keyed by the physical Postgres table and key value -- this one does bring DynamoDB and MongoDB in, each sharing its entries with any SQL client reading the same physical table (though not directly with each other, since they store data in different physical tables even under the same logical name). Invalidation is automatic and table-level in both tiers: any write evicts the affected cached entries, whether the write binds parameters or sends literal SQL values." }
         },
         {
           "@type": "Question",
-          "name": "Does NexaGate use AI for anything beyond MCP?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- ten features where NexaGate itself calls an LLM at a specific pipeline point, not just a protocol AI agents happen to speak. Five in the shared admin/pipeline surface: self-healing query repair on a real backend SQL error (a narrow, deliberately-chosen set of SQLSTATEs, retried exactly once), natural-language firewall-rule drafting (POST /api/firewall-rules/draft), traffic anomaly detection (a deterministic threshold on a real per-protocol rate baseline, with optional LLM narration), QoS tuning suggestions (POST /api/qos-suggestions/draft), and MCP activity summarization from a real per-call audit trail (POST /api/mcp-audit/summarize). Five as their own MCP tools: natural-language querying with a second, independent LLM pass judging and correcting the drafted SQL before a deterministic read-only check runs it (query_natural_language), rollup pre-aggregation suggestions validated against the real config parser (POST /api/rollup-suggestions/draft), table-sharding suggestions with every proposed backend checked against the real configured registry (POST /api/router-suggestions/draft), EXPLAIN plan narration (explain_query), and auto-generated schema documentation from real tables and foreign keys (document_schema). Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. All ten share one LLM provider config, hot-reloadable via PUT /api/llm-config." }
+          "name": "Does Warp use AI for anything beyond MCP?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes -- ten features where Warp itself calls an LLM at a specific pipeline point, not just a protocol AI agents happen to speak. Five in the shared admin/pipeline surface: self-healing query repair on a real backend SQL error (a narrow, deliberately-chosen set of SQLSTATEs, retried exactly once), natural-language firewall-rule drafting (POST /api/firewall-rules/draft), traffic anomaly detection (a deterministic threshold on a real per-protocol rate baseline, with optional LLM narration), QoS tuning suggestions (POST /api/qos-suggestions/draft), and MCP activity summarization from a real per-call audit trail (POST /api/mcp-audit/summarize). Five as their own MCP tools: natural-language querying with a second, independent LLM pass judging and correcting the drafted SQL before a deterministic read-only check runs it (query_natural_language), rollup pre-aggregation suggestions validated against the real config parser (POST /api/rollup-suggestions/draft), table-sharding suggestions with every proposed backend checked against the real configured registry (POST /api/router-suggestions/draft), EXPLAIN plan narration (explain_query), and auto-generated schema documentation from real tables and foreign keys (document_schema). Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. All ten share one LLM provider config, hot-reloadable via PUT /api/llm-config." }
         },
         {
           "@type": "Question",
-          "name": "What security features does NexaGate actually have wired in, not just documented?",
+          "name": "What security features does Warp actually have wired in, not just documented?",
           "acceptedAnswer": { "@type": "Answer", "text": "A SQL firewall (stacked-query injection blocked unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control, real Postgres-role or per-user authentication, TLS everywhere, Vault/CyberArk secrets management, and bearer-token admin API auth -- each scoped honestly, including what's opt-in or narrower than the feature name might suggest." }
         },
         {
           "@type": "Question",
-          "name": "Is NexaGate free to use?",
+          "name": "Is Warp free to use?",
           "acceptedAnswer": { "@type": "Answer", "text": "Yes -- the Developer edition is free forever with every protocol and every feature enabled, capped at 25 concurrent connections per instance, 3 instances, and 3 Postgres backends, for evaluation and development use." }
         },
         {
           "@type": "Question",
-          "name": "Is NexaDMS's migration score generated by an LLM?",
+          "name": "Is Ferry's migration score generated by an LLM?",
           "acceptedAnswer": { "@type": "Answer", "text": "No -- it's rules-based and reproducible: running it twice against the same database gives the same score, with a line-by-line, plain-English breakdown of exactly what's driving it." }
         }
       ]

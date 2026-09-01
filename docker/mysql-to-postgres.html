@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MySQL → PostgreSQL, No Driver Change | NexaGate</title>
-<meta name="description" content="Your mysql client or JDBC driver connects to NexaGate over the real MySQL wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
+<title>MySQL → PostgreSQL, No Driver Change | Warp</title>
+<meta name="description" content="Your mysql client or JDBC driver connects to Warp over the real MySQL wire protocol — and executes against real PostgreSQL on the other end. No driver swap, no application rewrite. See the commands and try it in 60 seconds.">
 <link rel="canonical" href="https://nexagres.com/mysql-to-postgres.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -27,9 +27,9 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "MySQL to PostgreSQL without changing the MySQL client",
-  "description": "NexaGate speaks the real MySQL wire protocol to the mysql CLI and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
+  "description": "Warp speaks the real MySQL wire protocol to the mysql CLI and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
   "url": "https://nexagres.com/mysql-to-postgres.html",
-  "about": { "@type": "SoftwareApplication", "name": "NexaGate", "url": "https://nexagres.com/polywire/" }
+  "about": { "@type": "SoftwareApplication", "name": "Warp", "url": "https://nexagres.com/polywire/" }
 }
 </script>
 </head>
@@ -38,10 +38,10 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">NexaGate</a>
-      <a href="/dms/">NexaDMS</a>
-      <a href="/polycache.html">NexaCache</a>
-      <a href="/db-compat/">NexaCompat</a>
+      <a href="/polywire/">Warp</a>
+      <a href="/dms/">Ferry</a>
+      <a href="/polycache.html">Mach</a>
+      <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="/docs/">Docs</a>
@@ -55,17 +55,17 @@
         <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
         <h1 class="eyebrow">NexaGres</h1>
       </div>
-      <p class="lede"><a href="/">← Back to the NexaGate overview</a></p>
+      <p class="lede"><a href="/">← Back to the Warp overview</a></p>
       <h2 class="heroTitle">MySQL → PostgreSQL. No driver change.</h2>
       <p class="heroSub">
         Your MySQL application thinks it's talking to MySQL. It's actually talking to Postgres —
         and it never finds out. The <code>mysql</code> CLI and JDBC connect over the real MySQL
-        wire protocol; NexaGate executes every statement against a real PostgreSQL database on
+        wire protocol; Warp executes every statement against a real PostgreSQL database on
         the other end.
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try It Free</a>
-        <a class="btn btn-secondary" href="/polywire/">Explore NexaGate</a>
+        <a class="btn btn-secondary" href="/polywire/">Explore Warp</a>
       </div>
     </header>
 
@@ -78,7 +78,7 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
-          <span class="archTierLabel archHubLabel">NEXAGATE</span>
+          <span class="archTierLabel archHubLabel">WARP</span>
           <span class="archTierDetail archHubFlow">MyWire (real MySQL wire protocol) → Connect · Protect · Control · Accelerate · Observe</span>
         </div>
         <div class="archArrow">↓</div>
@@ -106,22 +106,22 @@ mysql&gt; SELECT * FROM orders;
 mysql&gt;</pre>
       </div>
       <div class="demoFlow">
-        <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>NexaGate</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+        <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
       </div>
       <p class="rttNote">
         <i>MySQL client. MySQL wire protocol. PostgreSQL database. No client rewrite.</i>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
-        See <a href="/polywire/">NexaGate capabilities</a> for exact client-by-client coverage.
+        See <a href="/polywire/">Warp capabilities</a> for exact client-by-client coverage.
       </p>
 
       <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
-      <p class="rttNote"><b>1. Start NexaGate</b> — point it at a Postgres you already have:</p>
+      <p class="rttNote"><b>1. Start Warp</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 13306:13306 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/polywire:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same mysql CLI you already use:</p>
       <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
-      <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → NexaGate → PostgreSQL. No driver change.</p>
+      <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Warp → PostgreSQL. No driver change.</p>
       <p class="rttNote">
         Pointing at a specific managed Postgres instead — Amazon RDS, Google Cloud SQL, Azure
         Database for PostgreSQL, or Oracle OCI? See <a href="/CONNECTING.md">CONNECTING.md</a> for
@@ -135,8 +135,8 @@ mysql&gt;</pre>
         <div class="obsCard"><h4>Keep governance in one place</h4><p>The same SQL firewall, QoS, and audit path that governs every other protocol also governs this one — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote">
-        Planning the actual migration — schema, sizing? <a href="/dms/">NexaDMS</a>
-        scores the difficulty and sizes the target Postgres while NexaGate (above) keeps your
+        Planning the actual migration — schema, sizing? <a href="/dms/">Ferry</a>
+        scores the difficulty and sizes the target Postgres while Warp (above) keeps your
         application running the whole time.
       </p>
 
@@ -153,13 +153,13 @@ mysql&gt;</pre>
     </section>
 
     <section class="tool" id="final-cta">
-      <h2 class="finalCtaTitle">Ready to put NexaGate in front of Postgres?</h2>
+      <h2 class="finalCtaTitle">Ready to put Warp in front of Postgres?</h2>
       <p class="lede">
         <b>Try it free</b> — Developer Edition, all features. <b>Taking it to production?</b>
         Bring your architecture and we'll help map the deployment.
       </p>
       <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try NexaGate Free</a>
+        <a class="btn btn-primary" href="#try">Try Warp Free</a>
         <a class="btn btn-secondary" href="/#contact">Schedule Architecture Review</a>
       </div>
     </section>

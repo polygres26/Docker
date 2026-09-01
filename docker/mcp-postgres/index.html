@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MCP for Postgres — Govern AI Agent Access</title>
-<meta name="description" content="NexaGate's MCP frontend gives AI agents real Postgres access -- execute_sql, query_natural_language, explain_query, document_schema -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client.">
+<meta name="description" content="Warp's MCP frontend gives AI agents real Postgres access -- execute_sql, query_natural_language, explain_query, document_schema -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client.">
 <link rel="canonical" href="https://nexagres.com/mcp-postgres/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -27,10 +27,10 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">NexaGate</a>
-      <a href="/dms/">NexaDMS</a>
-      <a href="/polycache.html">NexaCache</a>
-      <a href="/db-compat/">NexaCompat</a>
+      <a href="/polywire/">Warp</a>
+      <a href="/dms/">Ferry</a>
+      <a href="/polycache.html">Mach</a>
+      <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/" class="active">MCP</a>
       <a href="/docs/">Docs</a>
@@ -46,7 +46,7 @@
         <h1 class="eyebrow">NexaGres</h1>
       </div>
       <p class="lede">
-        <a href="/">← Back to home</a> — <b>MCP is one more protocol NexaGate speaks, not a
+        <a href="/">← Back to home</a> — <b>MCP is one more protocol Warp speaks, not a
         separate, unguarded door into Postgres.</b> An AI agent connecting over MCP goes through
         the exact same SQL firewall, connection ACL, QoS admission control, and audit path as a
         plain <code>psql</code> client.
@@ -56,28 +56,28 @@
     <section class="tool" id="mcp-postgres-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
-        <span class="badge">Part of NexaGate</span>
+        <span class="badge">Part of Warp</span>
       </div>
       <h2>MCP for Postgres</h2>
       <p class="lede">
-        The Model Context Protocol (MCP) is how an AI agent calls tools — and NexaGate's MCP
-        frontend is a real wire protocol NexaGate terminates, the same way it terminates Postgres,
+        The Model Context Protocol (MCP) is how an AI agent calls tools — and Warp's MCP
+        frontend is a real wire protocol Warp terminates, the same way it terminates Postgres,
         MySQL, or Oracle wire protocol. An agent doesn't get a side channel around policy; it gets
         the same gateway everything else goes through.
       </p>
 
       <h3 class="subhead" id="mcp-tools">What the MCP frontend exposes<a class="permalink" href="#mcp-tools" aria-label="Link to this section">#</a></h3>
       <ul class="whatyouget">
-        <li><span class="wg-body"><span class="wg-title"><code>execute_sql</code></span><span class="wg-desc">Runs a real SQL statement through NexaGate's own pipeline — dialect translation, the SQL firewall, ACL, QoS, and caching all apply exactly as they would for pgwire/mywire/orawire traffic.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>execute_sql</code></span><span class="wg-desc">Runs a real SQL statement through Warp's own pipeline — dialect translation, the SQL firewall, ACL, QoS, and caching all apply exactly as they would for pgwire/mywire/orawire traffic.</span></span></li>
         <li><span class="wg-body"><span class="wg-title"><code>query_natural_language</code></span><span class="wg-desc">Drafts a read-only SQL <code>SELECT</code> from a plain-English question, with a second, independent LLM pass judging (and correcting) the drafted SQL before a deterministic read-only check runs it — the LLM drafts and judges, it never gets to execute unchecked.</span></span></li>
         <li><span class="wg-body"><span class="wg-title"><code>explain_query</code></span><span class="wg-desc">Runs a real Postgres <code>EXPLAIN</code> (optionally <code>ANALYZE</code>) and has an LLM narrate the plan in plain English — the same read-only gate <code>query_natural_language</code> uses gates this tool too.</span></span></li>
         <li><span class="wg-body"><span class="wg-title"><code>document_schema</code></span><span class="wg-desc">Lists every real table/column and foreign-key relationship and has an LLM generate plain-English schema documentation from it — read from the live catalog, not a stale cache.</span></span></li>
       </ul>
       <p class="rttNote">
-        Every one of these keeps the same split every NexaGate AI feature does: a deterministic
+        Every one of these keeps the same split every Warp AI feature does: a deterministic
         decision stays deterministic (the read-only check, the firewall rule, the ACL match), the
         LLM only drafts, phrases, or judges — see
-        <a href="/polywire/#ai-features">all ten AI features NexaGate has, beyond MCP →</a>.
+        <a href="/polywire/#ai-features">all ten AI features Warp has, beyond MCP →</a>.
       </p>
 
       <h3 class="subhead" id="mcp-governance">Same policy, same audit trail<a class="permalink" href="#mcp-governance" aria-label="Link to this section">#</a></h3>
@@ -88,7 +88,7 @@
         <li><span class="uc-body"><span class="uc-title">OIDC/JWT bearer auth</span><span class="uc-desc">The MCP endpoint supports OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured — the same auth model the admin API uses.</span></span></li>
       </ul>
 
-      <p class="rttNote"><a href="/polywire/">Explore NexaGate in depth — detailed architecture, comparison →</a></p>
+      <p class="rttNote"><a href="/polywire/">Explore Warp in depth — detailed architecture, comparison →</a></p>
     </section>
 
     <footer>

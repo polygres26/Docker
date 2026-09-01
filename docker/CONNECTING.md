@@ -1,6 +1,6 @@
-# Connecting NexaGate to your Postgres
+# Connecting Warp to your Postgres
 
-NexaGate needs exactly one thing to run: a Postgres it can reach. Everything below points the
+Warp needs exactly one thing to run: a Postgres it can reach. Everything below points the
 same image at a different kind of Postgres — an existing on-prem instance, Supabase, Amazon RDS,
 Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
 PostgreSQL — using the same five env vars every time:
@@ -29,14 +29,14 @@ Once it's up, point any client at whichever wire protocol you want — `psql -h 
 for plain Postgres wire, or MySQL/Oracle/SQL Server/MongoDB/DynamoDB/SQS/OpenSearch clients against
 their own ports (see the [main README](polywire/README.md) for the full port list). Every guide
 below verifies with plain `psql` since it's the most universal check, but the backend Postgres
-you've pointed NexaGate at is available through all of them identically.
+you've pointed Warp at is available through all of them identically.
 
 **A note on verification depth**: the on-prem example below is directly, repeatably tested against
 a real Postgres container as part of this repo's own test suite. The five cloud examples are
 written and checked against each provider's own current documented connection format, but — unlike
 everything else in this repo — haven't been run against a live account of each service. If you hit
 something that doesn't match what's below, it's more likely a provider detail that's shifted than a
-NexaGate bug; please open an issue either way so the doc can be corrected.
+Warp bug; please open an issue either way so the doc can be corrected.
 
 ---
 
@@ -60,14 +60,14 @@ psql -h localhost -p 15432 -U postgres -d postgres
 ```
 
 **Gotchas:**
-- If NexaGate is running in Docker and your Postgres is on the Docker host itself (not another
+- If Warp is running in Docker and your Postgres is on the Docker host itself (not another
   container), `POLYWIRE_HOST=host.docker.internal` reaches it on Mac/Windows; on Linux, either add
   `--add-host=host.docker.internal:host-gateway` to the `docker run` command, or use the host's
   real LAN/bridge IP directly.
 - If your Postgres already requires TLS (a common hardening step even on-prem), add
   `POLYWIRE_PG_SSLMODE=require` — see the top of this doc.
 - `pg_hba.conf` on your Postgres needs a rule that actually allows the connection from wherever
-  NexaGate's container lands — the most common first failure isn't NexaGate at all, it's
+  Warp's container lands — the most common first failure isn't Warp at all, it's
   `FATAL: no pg_hba.conf entry for host ...`.
 
 ---
@@ -79,7 +79,7 @@ Supabase is the one with real, previously-hit friction worth reading before you 
 - **The direct connection (`db.<project-ref>.supabase.co:5432`) is IPv6-only in most regions.**
   A Docker host without IPv6 egress (the common case) gets `Network is unreachable`, not a
   helpful auth error. Use the **pooler** instead — reachable over IPv4, and what you want for a
-  gateway like NexaGate anyway (it already pools connections on its own side; stacking NexaGate's
+  gateway like Warp anyway (it already pools connections on its own side; stacking Warp's
   pool on top of Supabase's own pooler, rather than Supabase's single-connection-per-client direct
   path, is the standard shape).
 - **The pooler needs a different username shape**: not `postgres`, but `postgres.<project-ref>`.
@@ -87,10 +87,10 @@ Supabase is the one with real, previously-hit friction worth reading before you 
 - The pooler has two modes on two different ports — **6543 (transaction mode)** is what most
   gateways/poolers in front of it should use; 5432 (session mode) exists for clients that need
   session-level features (advisory locks, `LISTEN`/`NOTIFY`, prepared statements outside a single
-  transaction) the transaction pooler can't support. NexaGate's own control-plane tables use
+  transaction) the transaction pooler can't support. Warp's own control-plane tables use
   `LISTEN`/`NOTIFY` (`polywire_config`, `polywire_firewall_rules`) — **use session mode (5432) if
-  you plan to rely on NexaGate's live config reload**; transaction mode (6543) is fine if you'll
-  restart NexaGate to pick up config changes instead.
+  you plan to rely on Warp's live config reload**; transaction mode (6543) is fine if you'll
+  restart Warp to pick up config changes instead.
 
 Find the exact pooler host, project ref, and both ports on your project's **Database → Connection
 pooling** settings page in the Supabase dashboard — they're project-specific, not something to
@@ -133,7 +133,7 @@ psql -h localhost -p 15432 -U your_master_user -d postgres
 ```
 
 **Gotchas:**
-- RDS's **security group** has to allow inbound traffic on 5432 from wherever NexaGate actually
+- RDS's **security group** has to allow inbound traffic on 5432 from wherever Warp actually
   runs — its own IP if it's outside AWS, or the right security group/CIDR if it's inside the same
   VPC. This is the single most common first failure — a connection that just hangs until timeout,
   not a clean rejection.
@@ -143,7 +143,7 @@ psql -h localhost -p 15432 -U your_master_user -d postgres
   (mounted into the container) if you also need to verify RDS's certificate identity, not just
   encrypt the wire.
 - IAM database authentication (short-lived tokens instead of a static password) isn't something
-  NexaGate's simple env-var path supports today — it needs a static, standing credential.
+  Warp's simple env-var path supports today — it needs a static, standing credential.
 
 ---
 
@@ -165,7 +165,7 @@ docker run \
   ghcr.io/polygres26/polywire:latest
 ```
 
-Add the machine NexaGate runs on to the instance's **Authorized networks** (Cloud SQL console →
+Add the machine Warp runs on to the instance's **Authorized networks** (Cloud SQL console →
 your instance → Connections → Networking) first, or every connection attempt is refused before it
 ever reaches Postgres.
 
@@ -193,7 +193,7 @@ services:
       POLYWIRE_USER: postgres
       POLYWIRE_PASSWORD: your-password
       # No POLYWIRE_PG_SSLMODE needed here -- the proxy itself terminates a real, separately
-      # authenticated TLS tunnel to Cloud SQL; the hop from NexaGate to the proxy is local/trusted.
+      # authenticated TLS tunnel to Cloud SQL; the hop from Warp to the proxy is local/trusted.
     ports:
       - "19090:19090"
       - "15432:15432"
@@ -229,8 +229,8 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
 - **Plain username, not `user@servername`.** That `@servername` suffix was required on the older,
   now-deprecated Single Server tier; Flexible Server dropped it. Using the old shape against a
   Flexible Server instance fails auth with a confusing error, not a clear "wrong format" message.
-- Add the machine NexaGate runs on under **Networking → Firewall rules** on the server (or enable
-  "Allow public access from any Azure service" if NexaGate itself runs inside Azure) — same
+- Add the machine Warp runs on under **Networking → Firewall rules** on the server (or enable
+  "Allow public access from any Azure service" if Warp itself runs inside Azure) — same
   allowlist-before-anything-else requirement as RDS's security group and Cloud SQL's authorized
   networks.
 
@@ -242,12 +242,12 @@ The one target here with no public-endpoint option at all: OCI's managed Postgre
 deployed into a **private VCN subnet only** — there's no equivalent of RDS's "publicly accessible"
 toggle or Cloud SQL's authorized-networks list. Reaching it needs one of:
 
-- NexaGate already running on a compute instance inside the same VCN (simplest if that's where
+- Warp already running on a compute instance inside the same VCN (simplest if that's where
   it's going to live in production anyway), or
 - an **OCI Bastion port-forwarding session** — no jump-box compute instance needed, just a
   short-lived tunnel from the OCI console/CLI mapping a local port to the DB system's 5432 inside
   the VCN, or
-- a site-to-site VPN (or FastConnect) between wherever NexaGate runs and the VCN.
+- a site-to-site VPN (or FastConnect) between wherever Warp runs and the VCN.
 
 The examples below assume a bastion session already forwards `localhost:5432` on the machine
 running `docker run` to the DB system — adjust `POLYWIRE_HOST`/`POLYWIRE_PORT` to wherever your
@@ -286,13 +286,13 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
 - A DB system exposes both a **primary (floating) endpoint** — always the current read-write
   node, safe default for `POLYWIRE_HOST` — and separate per-node endpoints for directing read
   traffic at specific replicas. Use the primary endpoint here unless you specifically want to
-  point NexaGate's standby-aware read routing (`POLYWIRE_STANDBY_HOST`, see the main README) at a
+  point Warp's standby-aware read routing (`POLYWIRE_STANDBY_HOST`, see the main README) at a
   particular replica instead.
 
 ## Optional: Oracle built-in function compatibility (DECODE, XS_SYS_CONTEXT, ...)
 
 SQL*Plus's own connection banner sends `DECODE(USER, 'XS$NULL', XS_SYS_CONTEXT('XS$SESSION',
-'USERNAME'), USER) FROM SYS.DUAL` right after login — NexaGate already recognizes and rewrites
+'USERNAME'), USER) FROM SYS.DUAL` right after login — Warp already recognizes and rewrites
 that *exact* query internally, so a stock SQL*Plus session works with zero setup on your Postgres.
 
 If your own application code also calls Oracle built-in functions like `DECODE` or
@@ -303,7 +303,7 @@ If your own application code also calls Oracle built-in functions like `DECODE` 
 psql -h <host> -p <port> -U <user> -d <database> -f oracle_compat_functions.sql
 ```
 
-Nothing in it is created automatically — NexaGate never modifies your backend's schema on its
+Nothing in it is created automatically — Warp never modifies your backend's schema on its
 own. This is entirely optional: skip it unless your own queries call these functions by name.
 That file is also the running reference for every Oracle built-in this project has needed to
 shim so far; it grows the same way each time (DECODE and XS_SYS_CONTEXT today).

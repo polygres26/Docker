@@ -1,4 +1,4 @@
-# NexaDMS — Docker
+# Ferry — Docker
 
 One image, one container: `DmsHttpServer` runs on embedded Jetty (already a dependency of
 this module) and serves the built `dms/web` SPA directly via `SpaResourceHandler`, alongside
@@ -43,7 +43,7 @@ backend container so it only serves the API.
 
 ## Data persistence
 
-NexaDMS's own state (saved connections, LLM provider config, uploaded performance reports)
+Ferry's own state (saved connections, LLM provider config, uploaded performance reports)
 lives in an embedded HSQLDB file store at `NEXAGRES_DATA_DIR` (default `/data` in this image,
 `~/.nexagres` outside a container — see `ConnectionStore`/`LlmSettingsStore`/`ReportStore`'s
 javadoc). `docker-compose.yml` mounts this as a named volume (`polyadvisor-data`) so it survives

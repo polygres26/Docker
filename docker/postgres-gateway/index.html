@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Postgres Gateway — NexaGate vs. PgBouncer</title>
-<meta name="description" content="What a Postgres gateway is, and how NexaGate compares to connection poolers like PgBouncer: pooling plus multi-protocol access, a SQL firewall, QoS admission control, cross-protocol caching, and MCP for AI agents.">
+<title>Postgres Gateway — Warp vs. PgBouncer</title>
+<meta name="description" content="What a Postgres gateway is, and how Warp compares to connection poolers like PgBouncer: pooling plus multi-protocol access, a SQL firewall, QoS admission control, cross-protocol caching, and MCP for AI agents.">
 <link rel="canonical" href="https://nexagres.com/postgres-gateway/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,11 +14,11 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/postgres-gateway/">
-<meta property="og:title" content="Postgres Gateway — NexaGate vs. PgBouncer">
+<meta property="og:title" content="Postgres Gateway — Warp vs. PgBouncer">
 <meta property="og:description" content="A connection pooler plus multi-protocol access, a SQL firewall, QoS, cross-protocol caching, and MCP for AI agents.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Postgres Gateway — NexaGate vs. PgBouncer">
+<meta name="twitter:title" content="Postgres Gateway — Warp vs. PgBouncer">
 <meta name="twitter:description" content="A connection pooler plus multi-protocol access, a SQL firewall, QoS, cross-protocol caching, and MCP for AI agents.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 </head>
@@ -27,10 +27,10 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">NexaGate</a>
-      <a href="/dms/">NexaDMS</a>
-      <a href="/polycache.html">NexaCache</a>
-      <a href="/db-compat/">NexaCompat</a>
+      <a href="/polywire/">Warp</a>
+      <a href="/dms/">Ferry</a>
+      <a href="/polycache.html">Mach</a>
+      <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/" class="active">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="/docs/">Docs</a>
@@ -55,14 +55,14 @@
     <section class="tool" id="postgres-gateway-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
-        <span class="badge">Part of NexaGate</span>
+        <span class="badge">Part of Warp</span>
       </div>
       <h2>What "Postgres gateway" means</h2>
       <p class="lede">
         A connection pooler like <b>PgBouncer</b> solves one problem well: too many client
         connections for Postgres's own per-connection process model to hold open cheaply. It sits
         in front of Postgres, holds a small pool of real backend connections, and multiplexes many
-        client connections onto them. <b>NexaGate</b> sits in that exact same position — in front
+        client connections onto them. <b>Warp</b> sits in that exact same position — in front
         of Postgres, terminating client connections — but is built to do more than pool: enforce a
         SQL firewall and connection ACL, admission-control traffic under load (QoS), cache results
         across every client, and — the part a pooler has no concept of — accept OTHER wire
@@ -70,7 +70,7 @@
         their real traffic into Postgres, alongside plain Postgres wire protocol clients.
       </p>
 
-      <h3 class="subhead" id="pgbouncer-comparison">NexaGate vs. PgBouncer<a class="permalink" href="#pgbouncer-comparison" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="pgbouncer-comparison">Warp vs. PgBouncer<a class="permalink" href="#pgbouncer-comparison" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Not a replacement claim for every PgBouncer deployment — PgBouncer is a smaller, simpler
         tool doing one job. The comparison is about scope: what's actually available at the one
@@ -79,7 +79,7 @@
       <div class="rttTableWrap">
         <table class="rttTable compareTable">
           <thead>
-            <tr><th>Capability</th><th>PgBouncer</th><th>NexaGate</th></tr>
+            <tr><th>Capability</th><th>PgBouncer</th><th>Warp</th></tr>
           </thead>
           <tbody>
             <tr><td>Postgres connection pooling</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -94,7 +94,7 @@
         </table>
       </div>
       <p class="rttNote">
-        NexaGate speaks twelve client protocols in total, not just the four rows above — see
+        Warp speaks twelve client protocols in total, not just the four rows above — see
         <a href="/#compatibility">the full per-protocol compatibility table</a>. Pooling
         itself works the same way for a plain Postgres client either way; what's different is
         everything a gateway can do once it's already the one thing every client connects through.
@@ -104,11 +104,11 @@
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">One firewall, not five</span><span class="uc-desc">A SQL firewall enforced at the gateway covers every protocol's traffic identically — an Oracle client and a MySQL client hit the same rule set, not two separately configured tools. <a href="/polywire/#security">Security detail →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Protect Postgres under load</span><span class="uc-desc">QoS admission control at the gateway prioritizes, throttles, and sheds load before Postgres itself saturates — not after. <a href="/#qos">QoS detail →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Modernize without a rewrite</span><span class="uc-desc">An Oracle or MySQL application keeps speaking its own protocol while the database underneath becomes Postgres. <a href="/polywire/">NexaGate capabilities →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Modernize without a rewrite</span><span class="uc-desc">An Oracle or MySQL application keeps speaking its own protocol while the database underneath becomes Postgres. <a href="/polywire/">Warp capabilities →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Govern AI access the same way</span><span class="uc-desc">An MCP frontend for AI agents goes through the identical firewall/ACL/QoS path as every other client — not a separate, unguarded route to your data. <a href="/mcp-postgres/">MCP + Postgres →</a></span></span></li>
       </ul>
 
-      <p class="rttNote"><a href="/polywire/">Explore NexaGate in depth — detailed architecture, comparison →</a></p>
+      <p class="rttNote"><a href="/polywire/">Explore Warp in depth — detailed architecture, comparison →</a></p>
     </section>
 
     <footer>
