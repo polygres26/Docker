@@ -188,8 +188,8 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
-          <span class="archTierLabel">Postgres, anywhere</span>
-          <span class="archTierDetail">RDS · Aurora · Cloud SQL · Azure · OCI · Supabase · On-prem</span>
+          <span class="archTierLabel">Your database, anywhere</span>
+          <span class="archTierDetail">Postgres · Oracle · MySQL · SQL Server — RDS · Aurora · Cloud SQL · Azure · OCI · On-prem</span>
         </div>
       </div>
       <p class="rttNote">
@@ -197,11 +197,18 @@
         detailed eight-stage pipeline behind this diagram.
       </p>
 
+      <h3 class="subhead" id="two-ways">Two ways to use NexaGate<a class="permalink" href="#two-ways" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Keep the database you have</h4><p>Oracle app → NexaGate → Oracle. MySQL app → NexaGate → MySQL. SQL Server app → NexaGate → SQL Server. Postgres app → NexaGate → Postgres. Add caching, sharding, monitoring, rollups, QoS, and a SQL firewall in front of the database you already run — no migration required.</p></div>
+        <div class="obsCard"><h4>Or modernize onto Postgres</h4><p>Oracle, MySQL, or SQL Server app → NexaGate → Postgres. Protocol and dialect translation keep the application's existing client working unmodified while the backend becomes Postgres — pair with NexaDMS and NexaCompat for a gradual, no-big-bang migration.</p></div>
+      </div>
+      <p class="rttNote"><a href="/polywire/#outcomes">See each outcome broken out in detail →</a></p>
+
       <h3 class="subhead" id="pillars">Four ways teams put NexaGate to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Modernize databases</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
-        <div class="obsCard"><h4>Build a Postgres control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of five databases' own tooling, run indefinitely, not just during a migration.</p></div>
-        <div class="obsCard"><h4>Scale Postgres horizontally</h4><p>Route tenants, customers, or predicates across shards and merge results centrally — without the application knowing sharding exists.</p></div>
+        <div class="obsCard"><h4>Accelerate &amp; scale in place</h4><p>Distributed caching, automatic rollups, and shard routing in front of Postgres, Oracle, MySQL, or SQL Server — without embedding database topology into applications.</p></div>
+        <div class="obsCard"><h4>Build a database control point</h4><p>Firewall, QoS, routing, pooling, and failover in one admin surface — instead of each database's own tooling, run indefinitely, not just during a migration.</p></div>
+        <div class="obsCard"><h4>Modernize onto Postgres</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
         <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote"><a href="/polywire/">Explore all NexaGate capabilities →</a></p>
