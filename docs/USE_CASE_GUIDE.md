@@ -417,7 +417,7 @@ Build standalone (no compose):
 
 ```bash
 # from repo root
-docker build -f docker/polywire/Dockerfile -t polywire:latest .
+docker build -f docker/polywire/Dockerfile -t warp:latest .
 docker build -f docker/dms/Dockerfile -t nexagres-dms:latest .
 ```
 

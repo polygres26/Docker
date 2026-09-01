@@ -1,7 +1,7 @@
 # Polywire smoke tests
 
 Real client libraries, real protocols, one basic smoke test per wire protocol frontend —
-verifying `ghcr.io/polygres26/polywire` actually works, with **no source checkout required**.
+verifying `ghcr.io/polygres26/warp` actually works, with **no source checkout required**.
 Both a Python (pytest) and a Java (JUnit 5) suite cover the same seven protocols, so pick
 whichever fits your stack — they're not duplicates of each other, just two independent proofs.
 

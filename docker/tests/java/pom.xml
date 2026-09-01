@@ -12,7 +12,7 @@
   <name>Polywire smoke tests (Java)</name>
   <description>
     Real client, real driver, one basic smoke test per wire protocol frontend -- for anyone who
-    pulled ghcr.io/polygres26/polywire (and optionally ran ../docker-compose.test.yml) and wants
+    pulled ghcr.io/polygres26/warp (and optionally ran ../docker-compose.test.yml) and wants
     to verify it actually works, no source checkout required. Same coverage as ../python/, in
     Java: connect, a simple query, and a create/insert/select round trip per protocol (plus a
     rollback where the frontend supports session-scoped transactions).

@@ -149,7 +149,7 @@
     <section class="tool" id="polywire">
       <div class="kicker">
         <span class="num">01</span>
-        <span class="badge">ghcr.io/polygres26/polywire</span>
+        <span class="badge">ghcr.io/polygres26/warp</span>
       </div>
       <h2>Warp</h2>
       <h3 class="toolTagline">The Intelligent Database Gateway.</h3>
@@ -374,7 +374,7 @@ test&gt;</pre>
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 15432:15432 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>psql -h localhost -p 15432 -U postgres</code></div>
           <p class="rttNote"><b>3. Done</b> — your client → Warp → PostgreSQL. No rewrite.</p>
@@ -384,7 +384,7 @@ test&gt;</pre>
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 11521:11521 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
           <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → Warp → PostgreSQL. No driver change.</p>
@@ -394,7 +394,7 @@ test&gt;</pre>
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 13306:13306 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
           <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Warp → PostgreSQL. No driver change.</p>
@@ -404,7 +404,7 @@ test&gt;</pre>
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 27017:27017 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
           <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → Warp → PostgreSQL. No driver change.</p>
@@ -414,7 +414,7 @@ test&gt;</pre>
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 9200:9200 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
           <p class="rttNote"><b>3. Done</b> — REST client → OSWire → Warp → PostgreSQL. No driver change.</p>
@@ -428,7 +428,7 @@ test&gt;</pre>
   -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
   -e POLYWIRE_HOST=&lt;host&gt; \
   -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code>
+  ghcr.io/polygres26/warp:latest</code>
         </div>
         <div class="runblock">
           <code>psql -h localhost -p 15432 -U postgres           # Postgres wire

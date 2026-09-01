@@ -52,7 +52,7 @@ docker run \
   -e POLYWIRE_DATABASE=postgres \
   -e POLYWIRE_USER=postgres \
   -e POLYWIRE_PASSWORD=your-password \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 ```bash
@@ -105,7 +105,7 @@ docker run \
   -e POLYWIRE_USER=postgres.<project-ref> \
   -e POLYWIRE_PASSWORD=your-database-password \
   -e POLYWIRE_PG_SSLMODE=require \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 ```bash
@@ -125,7 +125,7 @@ docker run \
   -e POLYWIRE_USER=your_master_user \
   -e POLYWIRE_PASSWORD=your-password \
   -e POLYWIRE_PG_SSLMODE=require \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 ```bash
@@ -162,7 +162,7 @@ docker run \
   -e POLYWIRE_USER=postgres \
   -e POLYWIRE_PASSWORD=your-password \
   -e POLYWIRE_PG_SSLMODE=require \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 Add the machine Warp runs on to the instance's **Authorized networks** (Cloud SQL console →
@@ -183,7 +183,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /config/key.json
 
   polywire:
-    image: ghcr.io/polygres26/polywire:latest
+    image: ghcr.io/polygres26/warp:latest
     depends_on:
       - cloud-sql-proxy
     environment:
@@ -216,7 +216,7 @@ docker run \
   -e POLYWIRE_USER=your_admin_user \
   -e POLYWIRE_PASSWORD=your-password \
   -e POLYWIRE_PG_SSLMODE=require \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 ```bash
@@ -264,7 +264,7 @@ docker run \
   -e POLYWIRE_PG_SSLMODE=verify-full \
   -e POLYWIRE_PG_SSLROOTCERT=/certs/dbsystem.pub \
   -v /local/path/to/dbsystem.pub:/certs/dbsystem.pub:ro \
-  ghcr.io/polygres26/polywire:latest
+  ghcr.io/polygres26/warp:latest
 ```
 
 ```bash

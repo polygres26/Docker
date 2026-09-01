@@ -693,7 +693,7 @@ flowchart TB
 Build standalone (no compose), from the repo root:
 
 ```bash
-docker build -f docker/polywire/Dockerfile -t polywire:latest .
+docker build -f docker/polywire/Dockerfile -t warp:latest .
 ```
 
 ---

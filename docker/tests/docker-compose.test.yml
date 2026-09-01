@@ -22,7 +22,7 @@ services:
       retries: 20
 
   polywire:
-    image: ghcr.io/polygres26/polywire:latest
+    image: ghcr.io/polygres26/warp:latest
     depends_on:
       postgres:
         condition: service_healthy

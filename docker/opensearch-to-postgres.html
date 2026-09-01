@@ -116,7 +116,7 @@
       <p class="rttNote"><b>1. Start Warp</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 9200:9200 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same REST calls you already make:</p>
       <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
       <p class="rttNote"><b>3. Done</b> — REST client → OSWire → Warp → PostgreSQL. No client change.</p>

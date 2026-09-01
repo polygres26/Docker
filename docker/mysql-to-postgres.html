@@ -118,7 +118,7 @@ mysql&gt;</pre>
       <p class="rttNote"><b>1. Start Warp</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 13306:13306 \
   -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
-  ghcr.io/polygres26/polywire:latest</code></div>
+  ghcr.io/polygres26/warp:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same mysql CLI you already use:</p>
       <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
       <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Warp → PostgreSQL. No driver change.</p>
