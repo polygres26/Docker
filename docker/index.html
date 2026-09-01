@@ -168,6 +168,16 @@
       <p class="heroTagline">One intelligent infrastructure layer for the database you already run.</p>
       <p class="heroTagline2">Postgres, Oracle, MySQL, or SQL Server — same control point.</p>
 
+      <h3 class="subhead" id="why-nexagate">Why NexaGate?<a class="permalink" href="#why-nexagate" aria-label="Link to this section">#</a></h3>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>⚡ Go faster</h4><p>Distributed caching and automatic rollups cut repeated database work and query latency, shared across every protocol that hits NexaGate.</p></div>
+        <div class="obsCard"><h4>↗ Scale further</h4><p>Shard and intelligently route workloads without embedding database topology into applications.</p></div>
+        <div class="obsCard"><h4>◉ See every query</h4><p>Monitor SQL, latency, errors, workload behavior, and resource consumption from one control point instead of each database's own tooling.</p></div>
+        <div class="obsCard"><h4>🛡 Protect the database</h4><p>SQL firewall, QoS, admission control, and workload isolation before traffic ever reaches the database.</p></div>
+        <div class="obsCard"><h4>⇄ Connect anything</h4><p>Twelve client protocols and application interfaces through one gateway — Postgres, Oracle, MySQL, SQL Server, MongoDB, and more.</p></div>
+        <div class="obsCard"><h4>🌐 Run anywhere</h4><p>AWS, Azure, GCP, OCI, Kubernetes, or on-prem. Keep the database and infrastructure you already have.</p></div>
+      </div>
+
       <h3 class="subhead" id="why">Put an intelligent control point in front of your database.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Connect, protect, control, accelerate, observe — the same five things, applied identically
@@ -212,6 +222,21 @@
         <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
       </div>
       <p class="rttNote"><a href="/polywire/">Explore all NexaGate capabilities →</a></p>
+
+      <h3 class="subhead" id="three-products">Three products, two ways to use them<a class="permalink" href="#three-products" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Use NexaGate on its own to run the database you already have better, or bring in NexaDMS
+        and NexaCompat alongside it when you're ready to modernize onto Postgres.
+      </p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>NexaGate — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#polywire">See NexaGate →</a></p></div>
+        <div class="obsCard"><h4>NexaDMS — move better</h4><p>Assess → Size → Migrate → Validate → Cut over. Scores how hard your Oracle, MySQL, or SQL Server migration to Postgres will really be, before you commit to it. <a href="#dms">See NexaDMS →</a></p></div>
+        <div class="obsCard"><h4>NexaCompat — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/db-compat/">See NexaCompat →</a></p></div>
+      </div>
+      <p class="rttNote">
+        Together: NexaDMS moves the data, NexaCompat reduces the SQL and application changes, and
+        NexaGate keeps existing clients and protocols working — all landing on the same Postgres.
+      </p>
 
       <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">Pick a protocol — same demo, different client, same PostgreSQL on the other end.</p>
@@ -491,7 +516,7 @@ aws sqs receive-message \                          # SQS wire
         </div>
       </div>
 
-      <h3 class="subhead" id="comparison">Why NexaGate?<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="comparison">NexaGate vs. alternatives<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
       <div class="rttTableWrap">
         <table class="rttTable compareTable">
           <thead>
