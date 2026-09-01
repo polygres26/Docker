@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Warp — Full Capabilities of the Intelligent Postgres Gateway</title>
+<title>Warp — Full Capabilities of the Intelligent Database Gateway</title>
 <meta name="description" content="Warp's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, Mach benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
 <link rel="canonical" href="https://nexagres.com/polywire/">
 <meta name="robots" content="index, follow">
@@ -14,11 +14,11 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/polywire/">
-<meta property="og:title" content="Warp — Full Capabilities of the Intelligent Postgres Gateway">
+<meta property="og:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
 <meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Warp — Full Capabilities of the Intelligent Postgres Gateway">
+<meta name="twitter:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
 <meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 </head>
@@ -29,7 +29,7 @@
       <a href="/">Home</a>
       <a href="/polywire/" class="active">Warp</a>
       <a href="/dms/">Ferry</a>
-      <a href="/polycache.html">Mach</a>
+      <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
@@ -160,7 +160,7 @@
         sharing its cache entries with any SQL client reading the same physical Postgres table
         (though not directly with each other, since they store data under different physical
         tables even when the logical table/collection name matches). See
-        <a href="/polycache.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
+        <a href="/mach.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
         that looks like.
       </p>
       <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
@@ -378,7 +378,7 @@
         <code>jsonb</code>. Like oswire and sqswire, influxwire has no result cache of its own
         (a time-series write is a new point, not a repeatable read to serve from cache) and sits
         outside the shared pipeline Mach's other six protocols share -- see
-        <a href="/polycache.html">Mach</a> for that scope.
+        <a href="/mach.html">Mach</a> for that scope.
       </p>
       <p class="rttNote">
         <b>TimescaleDB, detected not required.</b> influxwire checks whether the target Postgres
@@ -448,7 +448,7 @@
         <code>WITH RECURSIVE</code> query with cycle detection) -- an unbounded <code>[*]</code> path is
         rejected at parse time rather than accepted and left to run away against a large graph.
         Like influxwire, boltwire has no result cache of its own and sits outside Mach's shared
-        pipeline -- see <a href="/polycache.html">Mach</a> for
+        pipeline -- see <a href="/mach.html">Mach</a> for
         that scope.
       </p>
       <div class="rttTableWrap">

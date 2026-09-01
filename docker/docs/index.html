@@ -29,7 +29,7 @@
       <a href="/">Home</a>
       <a href="/polywire/">Warp</a>
       <a href="/dms/">Ferry</a>
-      <a href="/polycache.html">Mach</a>
+      <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
@@ -74,7 +74,7 @@
         <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#use-cases">Use cases</a></span><span class="uc-desc">Governed AI access, gateway consolidation, connection pooling, sharding, distributed transactions, caching, rollups, standardizing on one database, a permanent compatibility shim for code not worth touching, and a mid-migration bridge — migration is one use case among several, not the whole story.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/#architecture">Architecture</a></span><span class="uc-desc">The shared eight-stage pipeline every protocol feeds — firewall, router, QoS, dialect translation, rollups, cache, stats — before reaching real Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#admin-console-polywire">Admin console</a></span><span class="uc-desc">Live traffic metrics per protocol, per-tool MCP call counts, cache-hit-vs-Postgres RTT, and a sidebar covering monitoring, security, traffic, and configuration in one place.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polycache.html">Mach</a></span><span class="uc-desc">Live terminal walkthroughs of both cache tiers, DynamoDB/MongoDB point-lookup sharing, and JOINs across wire protocols. Real measured cache-hit vs. Postgres-round-trip <a href="/polywire/#cache-vs-round-trip">benchmarks per protocol</a> live on Warp's own page.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/mach.html">Mach</a></span><span class="uc-desc">Live terminal walkthroughs of both cache tiers, DynamoDB/MongoDB point-lookup sharing, and JOINs across wire protocols. Real measured cache-hit vs. Postgres-round-trip <a href="/polywire/#cache-vs-round-trip">benchmarks per protocol</a> live on Warp's own page.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sharding">Sharding</a></span><span class="uc-desc">Routing by a real bound value decoded from each protocol's own wire format, with genuine cross-shard merge — not SQL-text pattern matching.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sqs-enqueue-dequeue">SQS</a></span><span class="uc-desc">Enqueue vs. dequeue performance and how sqswire's JSON-over-HTTP framing compares to the binary wire protocols.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#rollups">Rollups</a></span><span class="uc-desc">Pre-aggregated tables Warp creates and keeps fresh automatically, with transparent query rewriting.</span></span></li>
