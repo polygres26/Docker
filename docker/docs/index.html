@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -62,26 +62,26 @@
       </ul>
     </section>
 
-    <section class="tool" id="polywire-docs">
+    <section class="tool" id="warp-docs">
       <div class="kicker">
         <span class="num">02</span>
         <span class="badge">ghcr.io/polygres26/warp</span>
       </div>
       <h2>Warp</h2>
-      <p class="rttNote"><a href="/polywire/">Full capabilities →</a> — every section below, and the on-page jump list to all of them, live on one page.</p>
+      <p class="rttNote"><a href="/warp/">Full capabilities →</a> — every section below, and the on-page jump list to all of them, live on one page.</p>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#outcomes">Outcomes</a></span><span class="uc-desc">The concrete result Warp is built to produce — a simpler architecture, a smaller attack surface, elastic scale, lower cost, and real operational visibility.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#use-cases">Use cases</a></span><span class="uc-desc">Governed AI access, gateway consolidation, connection pooling, sharding, distributed transactions, caching, rollups, standardizing on one database, a permanent compatibility shim for code not worth touching, and a mid-migration bridge — migration is one use case among several, not the whole story.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#outcomes">Outcomes</a></span><span class="uc-desc">The concrete result Warp is built to produce — a simpler architecture, a smaller attack surface, elastic scale, lower cost, and real operational visibility.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#use-cases">Use cases</a></span><span class="uc-desc">Governed AI access, gateway consolidation, connection pooling, sharding, distributed transactions, caching, rollups, standardizing on one database, a permanent compatibility shim for code not worth touching, and a mid-migration bridge — migration is one use case among several, not the whole story.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/#architecture">Architecture</a></span><span class="uc-desc">The shared eight-stage pipeline every protocol feeds — firewall, router, QoS, dialect translation, rollups, cache, stats — before reaching real Postgres.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#admin-console-polywire">Admin console</a></span><span class="uc-desc">Live traffic metrics per protocol, per-tool MCP call counts, cache-hit-vs-Postgres RTT, and a sidebar covering monitoring, security, traffic, and configuration in one place.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/mach.html">Mach</a></span><span class="uc-desc">Live terminal walkthroughs of both cache tiers, DynamoDB/MongoDB point-lookup sharing, and JOINs across wire protocols. Real measured cache-hit vs. Postgres-round-trip <a href="/polywire/#cache-vs-round-trip">benchmarks per protocol</a> live on Warp's own page.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sharding">Sharding</a></span><span class="uc-desc">Routing by a real bound value decoded from each protocol's own wire format, with genuine cross-shard merge — not SQL-text pattern matching.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#sqs-enqueue-dequeue">SQS</a></span><span class="uc-desc">Enqueue vs. dequeue performance and how sqswire's JSON-over-HTTP framing compares to the binary wire protocols.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#rollups">Rollups</a></span><span class="uc-desc">Pre-aggregated tables Warp creates and keeps fresh automatically, with transparent query rewriting.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#observability">Observability</a></span><span class="uc-desc">Exporting metrics to CloudWatch, Datadog, New Relic, Grafana, Azure Monitor, GCP Cloud Monitoring, and AppDynamics — which platforms need a Collector in between and which take a direct push.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#multi-az">Multi-AZ deployment</a></span><span class="uc-desc">Cross-zone cache backup replication, cluster discovery, and TLS between cache nodes.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#security">Security</a></span><span class="uc-desc">SQL firewall, connection ACL, QoS admission control, authentication (Postgres roles, per-user credentials, admin SSO), TLS, secrets management, and row-level security — each scoped honestly, including what's opt-in or narrower than the feature name suggests.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/#outages">Planned/unplanned outages</a></span><span class="uc-desc">A scheduled drain waits for a clean cutover; unplanned failover redirects automatically — across every wire protocol.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#admin-console-warp">Admin console</a></span><span class="uc-desc">Live traffic metrics per protocol, per-tool MCP call counts, cache-hit-vs-Postgres RTT, and a sidebar covering monitoring, security, traffic, and configuration in one place.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/mach.html">Mach</a></span><span class="uc-desc">Live terminal walkthroughs of both cache tiers, DynamoDB/MongoDB point-lookup sharing, and JOINs across wire protocols. Real measured cache-hit vs. Postgres-round-trip <a href="/warp/#cache-vs-round-trip">benchmarks per protocol</a> live on Warp's own page.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#sharding">Sharding</a></span><span class="uc-desc">Routing by a real bound value decoded from each protocol's own wire format, with genuine cross-shard merge — not SQL-text pattern matching.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#sqs-enqueue-dequeue">SQS</a></span><span class="uc-desc">Enqueue vs. dequeue performance and how sqswire's JSON-over-HTTP framing compares to the binary wire protocols.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#rollups">Rollups</a></span><span class="uc-desc">Pre-aggregated tables Warp creates and keeps fresh automatically, with transparent query rewriting.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#observability">Observability</a></span><span class="uc-desc">Exporting metrics to CloudWatch, Datadog, New Relic, Grafana, Azure Monitor, GCP Cloud Monitoring, and AppDynamics — which platforms need a Collector in between and which take a direct push.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#multi-az">Multi-AZ deployment</a></span><span class="uc-desc">Cross-zone cache backup replication, cluster discovery, and TLS between cache nodes.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#security">Security</a></span><span class="uc-desc">SQL firewall, connection ACL, QoS admission control, authentication (Postgres roles, per-user credentials, admin SSO), TLS, secrets management, and row-level security — each scoped honestly, including what's opt-in or narrower than the feature name suggests.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/#outages">Planned/unplanned outages</a></span><span class="uc-desc">A scheduled drain waits for a clean cutover; unplanned failover redirects automatically — across every wire protocol.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="ERRORS.md">Error translation</a></span><span class="uc-desc">Per-protocol native error shapes (Oracle ORA-numbers, MySQL errno, SQL Server number/severity/state, MongoDB code/codeName, DynamoDB/SQS/OpenSearch native envelopes), a canonical-condition comparison table across all seven protocols, and the connection-loss SQLSTATE detail.</span></span></li>
       </ul>
     </section>
@@ -109,7 +109,7 @@
       </p>
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title"><a href="/README.md">README.md</a></span><span class="uc-desc">Top-level repository reference.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title"><a href="/polywire/README.md">polywire/README.md</a></span><span class="uc-desc">Warp-specific setup reference — full port list, environment variables, and build notes.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title"><a href="/warp/README.md">warp/README.md</a></span><span class="uc-desc">Warp-specific setup reference — full port list, environment variables, and build notes.</span></span></li>
         <li><span class="uc-body"><span class="uc-title"><a href="/dms/README.md">dms/README.md</a></span><span class="uc-desc">Ferry-specific setup reference.</span></span></li>
       </ul>
     </section>
@@ -117,7 +117,7 @@
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

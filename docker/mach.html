@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html" class="active">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -52,7 +52,7 @@
         second read, confirmed live below.
       </p>
     </header>
-    <section class="tool" id="polycache-detail" style="margin-top:0; padding-top:0; border-top:none;">
+    <section class="tool" id="mach-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">Part of Warp</span>
@@ -89,7 +89,7 @@
         stage: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, for arbitrary opted-in
         <code>SELECT</code> results. MongoDB and DynamoDB don't share entries in <i>this</i>
         cache — but a separate, narrower point-lookup cache now does bring them in, see below —
-        <a href="/polywire/#cache-vs-round-trip">exactly how the cache key works</a> for what
+        <a href="/warp/#cache-vs-round-trip">exactly how the cache key works</a> for what
         does and doesn't share an entry.</figcaption>
       </figure>
       <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
@@ -134,7 +134,7 @@ ORDER_ID  CUSTOMER_ID  AMOUNT
       </div>
       <p class="rttNote">
         Written through one protocol. Cached once. Served through another — see
-        <a href="/polywire/#cache-vs-round-trip">the real metrics behind this</a>.
+        <a href="/warp/#cache-vs-round-trip">the real metrics behind this</a>.
       </p>
 
       <h4 class="demoSubhead" id="row-cache-dynamo-mongo">Point lookups: DynamoDB and MongoDB now share cache with SQL too<a class="permalink" href="#row-cache-dynamo-mongo" aria-label="Link to this section">#</a></h4>
@@ -227,7 +227,7 @@ DOC
         Same key, <code>"1001"</code>, in both — and no collision, because the cache key is
         namespaced by physical table (<code>dynamo_item_orders</code> vs.
         <code>"test"."orders"</code>), not by key value alone. One Oracle client reads both from
-        cache regardless — see <a href="/polywire/#cache-vs-round-trip">exactly how the
+        cache regardless — see <a href="/warp/#cache-vs-round-trip">exactly how the
         point-lookup cache key works</a>.
       </p>
 
@@ -296,13 +296,13 @@ Ada      129.99
         federation layer, no separate query engine.
       </p>
 
-      <p class="rttNote"><a href="/polywire/#cache-vs-round-trip">Real measured cache-hit vs. Postgres-round-trip benchmarks, per protocol, with the full methodology →</a></p>
+      <p class="rttNote"><a href="/warp/#cache-vs-round-trip">Real measured cache-hit vs. Postgres-round-trip benchmarks, per protocol, with the full methodology →</a></p>
     </section>
 
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

@@ -1,4 +1,4 @@
-# PolyWire -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
+# Warp -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
 # dynamowire/sqswire/gRPC/MCP) plus its own admin app (wire/web). Build context is the repo root
 # (see docker-compose.yml / the `docker build` command in README.md) since this Dockerfile COPYs
 # both wire/ and wire/web in explicitly -- wire/ is a standalone Maven module (no parent pom, no
@@ -31,40 +31,40 @@ RUN mvn -q -B -DskipTests package
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
-RUN groupadd --system polywire && useradd --system --gid polywire --home-dir /app polywire
+RUN groupadd --system warp && useradd --system --gid warp --home-dir /app warp
 
-# /app itself (the directory WORKDIR created, owned by root) needs to be writable by polywire at
-# RUNTIME too, not just its contents readable -- PolyWireCluster creates ignite/work under here on
-# startup whenever caching is enabled (POLYWIRE_CACHE_TABLES), and that mkdir fails without it
+# /app itself (the directory WORKDIR created, owned by root) needs to be writable by warp at
+# RUNTIME too, not just its contents readable -- WarpCluster creates ignite/work under here on
+# startup whenever caching is enabled (WARP_CACHE_TABLES), and that mkdir fails without it
 # (found live: "Work directory does not exist and cannot be created" -- a real regression the
 # --chown-only version below introduced, since --chown on a COPY only touches the files it copies
 # in, never the pre-existing parent directory). This chown is cheap (an empty directory inode, not
 # a large file) so it doesn't reintroduce the layer-duplication cost this whole change is about
 # avoiding.
-RUN chown polywire:polywire /app
+RUN chown warp:warp /app
 
 # --chown here, not a separate `RUN chown -R /app` after -- that used to write a whole SECOND
 # ~111MB layer (Docker's layer model can't patch ownership in place; changing it after the fact
 # means a full new copy of everything under /app), doubling this jar's real footprint in the
 # image for zero benefit. --chown sets ownership as part of the same COPY layer instead -- same
 # final files, same owner, same permissions, just without paying for them twice.
-COPY --from=build --chown=polywire:polywire /build/target/nexagres-wire.jar /app/nexagres-wire.jar
-COPY --from=web-build --chown=polywire:polywire /build/dist /app/web
+COPY --from=build --chown=warp:warp /build/target/nexagres-wire.jar /app/nexagres-wire.jar
+COPY --from=web-build --chown=warp:warp /build/dist /app/web
 
-# POLYWIRE_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
+# WARP_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
 # its own embedded Jetty (SpaResourceHandler) on the admin/metrics port -- unset this env var to
 # run API-only (the JSON admin API still works either way; this only controls whether the browser
 # UI is also served on the same port).
-ENV POLYWIRE_ADMIN_WEB_DIR=/app/web
-USER polywire
+ENV WARP_ADMIN_WEB_DIR=/app/web
+USER warp
 
-# Every TCP/HTTP frontend PolyWire can start -- see ServerOptions.java/Main.java for the full,
+# Every TCP/HTTP frontend Warp can start -- see ServerOptions.java/Main.java for the full,
 # authoritative list and each one's real default. Not all are reachable unless published (see
 # docker-compose.yml's own port list for which ones this compose setup actually exposes).
 EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090
 
 # --add-opens flags: required by embedded Apache Ignite (CacheStage, only actually started when
-# POLYWIRE_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base
+# WARP_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base
 # packages -- blocked by the JPMS module system from Java 17 onward without these. Harmless no-ops
 # when caching is off (the default); see scripts/run.sh's own javadoc-style comment for the exact
 # same flag set and how this was actually found (InaccessibleObjectException during live testing,

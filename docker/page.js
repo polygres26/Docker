@@ -45,7 +45,7 @@
   });
 
   // Active-section highlight in the sticky nav -- only meaningful for same-page hash links
-  // (index.html's #pricing/#faq/#contact); PolyWire/PolyAdvisor/Docs are real page links now and
+  // (index.html's #pricing/#faq/#contact); Warp/PolyAdvisor/Docs are real page links now and
   // simply don't match any on-page section, so they're left alone rather than guessed at.
   var navLinks = document.querySelectorAll('.siteNav a[href^="#"]');
   var sections = Array.prototype.map.call(navLinks, function (a) {
@@ -90,7 +90,7 @@
     });
   }
 
-  // Legacy-anchor redirect: PolyWire's deep technical-detail sections used to live on this page
+  // Legacy-anchor redirect: Warp's deep technical-detail sections used to live on this page
   // at #outcomes, #sharding, etc. -- now they live on warp.html, and #two-ways-to-assess/
   // #what-you-get/#llm-assist/#admin-console-polyadvisor moved to dms.html (variable/string names
   // below keep their original "polyadvisor" spelling deliberately -- they're the OLD anchor names
@@ -99,7 +99,7 @@
   // exists for). A bookmarked or shared link to one of the old anchors would otherwise land on
   // this page with nothing to scroll to; this forwards it to the new page's matching anchor
   // instead, once, on load.
-  var MOVED_TO_POLYWIRE = ['outcomes', 'use-cases', 'admin-console-polywire', 'cache-vs-round-trip',
+  var MOVED_TO_WARP = ['outcomes', 'use-cases', 'admin-console-warp', 'cache-vs-round-trip',
     'sharding', 'sqs-enqueue-dequeue', 'rollups', 'observability', 'multi-az', 'security',
     'outages', 'error-handling'];
   var MOVED_TO_POLYADVISOR = ['two-ways-to-assess', 'what-you-get', 'llm-assist', 'admin-console-polyadvisor'];
@@ -108,18 +108,18 @@
   // every page was a flat file (/something.html), where it happened to only match "/" and
   // "/index.html". Once warp.html/dms.html/etc. moved to clean dir/index.html URLs (every
   // real page now ends in "/"), that same regex started matching EVERY page, not just the real
-  // index -- confirmed live: visiting /polywire/#outcomes fired this redirect a second time,
-  // producing a request for the nonexistent /polywire/warp.html (a real 404, caught live).
+  // index -- confirmed live: visiting /warp/#outcomes fired this redirect a second time,
+  // producing a request for the nonexistent /warp/warp.html (a real 404, caught live).
   // Only "/" and "/index.html" are ever the actual index page; nothing else should match.
   var onIndexPage = window.location.pathname === '/' || window.location.pathname === '/index.html';
   if (onIndexPage && hash) {
-    if (MOVED_TO_POLYWIRE.indexOf(hash) !== -1) {
+    if (MOVED_TO_WARP.indexOf(hash) !== -1) {
       // Absolute path, not "warp.html" -- a relative target resolves against whatever
       // directory the CURRENT page lives in, which is fine from "/" but was exactly what broke
-      // when this whole check could also (wrongly) fire from inside /polywire/ itself. Absolute
+      // when this whole check could also (wrongly) fire from inside /warp/ itself. Absolute
       // is correct regardless of where this ever runs from, and matches the real clean-URL path
       // besides (the flat warp.html now only exists as a redirect stub to this same target).
-      window.location.replace('/polywire/#' + hash);
+      window.location.replace('/warp/#' + hash);
     } else if (MOVED_TO_POLYADVISOR.indexOf(hash) !== -1) {
       window.location.replace('/dms/#' + hash);
     } else if (hash === 'polyadvisor') {

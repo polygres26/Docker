@@ -26,11 +26,11 @@ class MongoWireTest {
         try (MongoClient c = client()) {
             MongoDatabase db = c.getDatabase("smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
             MongoCollection<Document> coll = db.getCollection("widgets");
-            Document doc = new Document("name", "polywire");
+            Document doc = new Document("name", "warp");
             coll.insertOne(doc);
             ObjectId id = doc.getObjectId("_id");
             Document found = coll.find(new Document("_id", id)).first();
-            assertEquals("polywire", found.getString("name"));
+            assertEquals("warp", found.getString("name"));
         }
     }
 

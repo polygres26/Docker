@@ -274,7 +274,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
             </div>
             <div class="field">
               <label>Admin token</label>
-              <input type="password" placeholder="POLYWIRE_ADMIN_TOKEN value" value="••••••••••••">
+              <input type="password" placeholder="WARP_ADMIN_TOKEN value" value="••••••••••••">
             </div>
             <button type="button" class="advToggle" data-adv-toggle="wire">
               <span class="ico">${chevronRight}</span> Advanced options
@@ -351,7 +351,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         </nav>
 
         <div class="main">
-          <div class="topbar"><div class="crumb">polywire admin</div></div>
+          <div class="topbar"><div class="crumb">warp admin</div></div>
           <div class="content" id="wire-content"></div>
         </div>
       </div>
@@ -488,7 +488,7 @@ const firewallRules = [
 
 const oauthConfig = {
   issuer: 'https://auth.nexagres.internal/realms/prod',
-  audience: 'polywire-admin',
+  audience: 'warp-admin',
   userIdClaim: 'sub',
   rolesClaim: 'realm_access.roles',
 };
@@ -563,15 +563,15 @@ const federationPlans = [
 '    EnumerableUnion(all=[true])\n' +
 '      JdbcToEnumerableConverter\n' +
 '        JdbcProject(customer_id=[$1])\n' +
-'          JdbcTableScan(table=[[__polywire_shard0, orders]])\n' +
+'          JdbcTableScan(table=[[__warp_shard0, orders]])\n' +
 '      JdbcToEnumerableConverter\n' +
 '        JdbcProject(customer_id=[$1])\n' +
-'          JdbcTableScan(table=[[__polywire_shard1, orders]])\n' +
+'          JdbcTableScan(table=[[__warp_shard1, orders]])\n' +
 '    EnumerableUnion(all=[true])\n' +
 '      JdbcToEnumerableConverter\n' +
-'        JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'        JdbcTableScan(table=[[__warp_shard0, customers]])\n' +
 '      JdbcToEnumerableConverter\n' +
-'        JdbcTableScan(table=[[__polywire_shard1, customers]])',
+'        JdbcTableScan(table=[[__warp_shard1, customers]])',
     leafScans: [
       { backend: 'shard1', elapsedMillis: 9, rowCount: 2, errorMessage: null },
       { backend: 'shard2', elapsedMillis: 11, rowCount: 2, errorMessage: null },
@@ -583,10 +583,10 @@ const federationPlans = [
     planText:
 'EnumerableHashJoin(condition=[=($0, $2)], joinType=[inner])\n' +
 '  JdbcToEnumerableConverter\n' +
-'    JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'    JdbcTableScan(table=[[__warp_shard0, customers]])\n' +
 '  JdbcToEnumerableConverter\n' +
 '    JdbcFilter(condition=[=($2, $1)])\n' +
-'      JdbcTableScan(table=[[__polywire_shard1, orders]])',
+'      JdbcTableScan(table=[[__warp_shard1, orders]])',
     leafScans: [
       { backend: 'shard1', elapsedMillis: 6, rowCount: 2, errorMessage: null },
       { backend: 'shard2', elapsedMillis: 8, rowCount: 2, errorMessage: null },
@@ -598,10 +598,10 @@ const federationPlans = [
     planText:
 'EnumerableHashJoin(condition=[=($0, $2)], joinType=[inner])\n' +
 '  JdbcToEnumerableConverter\n' +
-'    JdbcTableScan(table=[[__polywire_shard0, customers]])\n' +
+'    JdbcTableScan(table=[[__warp_shard0, customers]])\n' +
 '  JdbcToEnumerableConverter\n' +
 '    JdbcFilter(condition=[=($2, $1)])\n' +
-'      JdbcTableScan(table=[[__polywire_shard1, orders]])',
+'      JdbcTableScan(table=[[__warp_shard1, orders]])',
     leafScans: [
       { backend: 'shard1', elapsedMillis: 7, rowCount: 2, errorMessage: null },
       { backend: 'shard2', elapsedMillis: 9, rowCount: 2, errorMessage: null },
@@ -613,9 +613,9 @@ const federationPlans = [
     planText:
 'EnumerableHashJoin(condition=[=($0, $3)], joinType=[inner])\n' +
 '  JdbcToEnumerableConverter\n' +
-'    JdbcTableScan(table=[[__polywire_analytics, daily_rollup]])\n' +
+'    JdbcTableScan(table=[[__warp_analytics, daily_rollup]])\n' +
 '  JdbcToEnumerableConverter\n' +
-'    JdbcTableScan(table=[[__polywire_shard0, orders]])',
+'    JdbcTableScan(table=[[__warp_shard0, orders]])',
     leafScans: [
       { backend: 'analytics', elapsedMillis: 41, rowCount: 220, errorMessage: null },
       { backend: 'shard0', elapsedMillis: 44, rowCount: 0, errorMessage: 'relation "orders" does not have column "rollup_id"' },

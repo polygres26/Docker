@@ -29,7 +29,7 @@
   "headline": "Oracle to PostgreSQL without changing the Oracle client",
   "description": "Warp speaks the real Oracle wire protocol (TNS/TTC) to SQLcl and JDBC clients, and executes every statement against a real PostgreSQL database -- no driver swap, no application rewrite.",
   "url": "https://nexagres.com/oracle-to-postgres/",
-  "about": { "@type": "SoftwareApplication", "name": "Warp", "url": "https://nexagres.com/polywire/" }
+  "about": { "@type": "SoftwareApplication", "name": "Warp", "url": "https://nexagres.com/warp/" }
 }
 </script>
 </head>
@@ -38,7 +38,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -64,7 +64,7 @@
       </p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try It Free</a>
-        <a class="btn btn-secondary" href="/polywire/">Explore Warp</a>
+        <a class="btn btn-secondary" href="/warp/">Explore Warp</a>
       </div>
     </header>
 
@@ -112,13 +112,13 @@ SQL&gt;</pre>
         <i>Oracle client. Oracle wire protocol. PostgreSQL database. No client rewrite.</i>
         Table contents above are illustrative — the query, protocol, and path are exactly real.
         (SQLcl and JDBC clients are what's most thoroughly verified today; see
-        <a href="/polywire/">Warp capabilities</a> for exact client-by-client coverage.)
+        <a href="/warp/">Warp capabilities</a> for exact client-by-client coverage.)
       </p>
 
       <h3 class="subhead" id="try">Try it in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
       <p class="rttNote"><b>1. Start Warp</b> — point it at a Postgres you already have:</p>
       <div class="runblock"><code>docker run -p 11521:11521 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
       <p class="rttNote"><b>2. Connect</b> — same SQLcl/JDBC connection string shape you already use:</p>
       <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
@@ -168,7 +168,7 @@ SQL&gt;</pre>
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

@@ -34,10 +34,10 @@ def test_create_insert_select_roundtrip():
         table = f"mssqlwire_smoke_{uuid.uuid4().hex[:8]}"
         cur = conn.cursor()
         cur.execute(f"CREATE TABLE {table} (id INT PRIMARY KEY, name TEXT)")
-        cur.execute(f"INSERT INTO {table} (id, name) VALUES (1, 'polywire')")
+        cur.execute(f"INSERT INTO {table} (id, name) VALUES (1, 'warp')")
         cur.execute(f"SELECT name FROM {table} WHERE id = 1")
         (name,) = cur.fetchone()
-        assert name == "polywire"
+        assert name == "warp"
         cur.execute(f"DROP TABLE {table}")
     finally:
         conn.close()

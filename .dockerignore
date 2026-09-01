@@ -1,4 +1,4 @@
-# Applies to every docker build run from the repo root (docker/polywire and docker/dms's
+# Applies to every docker build run from the repo root (docker/warp and docker/dms's
 # docker-compose.yml files both set `context: ../..`) -- classic Docker behavior only honors a
 # .dockerignore at the build context root, not next to the Dockerfile, so this is the one place it
 # needs to live for both modules. Mirrors .gitignore's own exclusions.

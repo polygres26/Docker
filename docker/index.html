@@ -42,7 +42,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "Warp is the intelligent database gateway -- one control point for every workload against Postgres, Oracle, MySQL, or SQL Server. Different protocols, same policies. It connects any client protocol -- Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j), gRPC, and MCP -- to a single real backend database of your choice, unmodified, with live semantic execution translation (protocol to SQL/API semantics to that backend's own execution), not just protocol framing. Use it in front of the database you already run, or as the on-ramp to modernizing onto Postgres. Organized around five capabilities: Connect (twelve client protocols, one backend), Protect (SQL firewall, connection ACL, authentication, row-level security), Control (QoS admission control, routing, sharding, planned/unplanned failover), Accelerate (Mach -- one distributed cache shared across PostgreSQL/MySQL/Oracle/SQL Server/gRPC/MCP -- and rollups), and Observe (native per-protocol error translation, Prometheus/OTEL export, audit log). Admin SSO (Okta/Entra ID) with read-vs-write roles is included.",
-      "url": "https://nexagres.com/polywire/",
+      "url": "https://nexagres.com/warp/",
       "image": "https://nexagres.com/assets/og-image.png",
       "offers": [
         {
@@ -124,7 +124,7 @@
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
-      <a href="#polywire">Warp</a>
+      <a href="#warp">Warp</a>
       <a href="#dms">Ferry</a>
       <a href="#pricing">Pricing</a>
       <a href="/mach.html">Mach</a>
@@ -146,7 +146,7 @@
       <h2 class="heroTitle">Postgres infrastructure for the agentic era.</h2>
     </header>
 
-    <section class="tool" id="polywire">
+    <section class="tool" id="warp">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/warp</span>
@@ -163,7 +163,7 @@
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try Warp Free</a>
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
-        <a class="btn btn-secondary" href="/demo-polywire.html">Click-Through Demo</a>
+        <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
       </div>
       <p class="heroTagline">One intelligent infrastructure layer for the database you already run.</p>
       <p class="heroTagline2">Postgres, Oracle, MySQL, or SQL Server — same control point.</p>
@@ -182,7 +182,7 @@
       <p class="rttNote">
         Connect, protect, control, accelerate, observe — the same five things, applied identically
         no matter which protocol the caller speaks or which database sits behind Warp. <b>Different
-        protocols. Same policies.</b> <a href="/polywire/#outcomes">See each one broken out in detail →</a>
+        protocols. Same policies.</b> <a href="/warp/#outcomes">See each one broken out in detail →</a>
       </p>
 
       <h3 class="subhead" id="architecture-simple">What is Warp?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
@@ -203,7 +203,7 @@
         </div>
       </div>
       <p class="rttNote">
-        <a href="/polywire/#outcomes">See how Warp works, stage by stage →</a> — the
+        <a href="/warp/#outcomes">See how Warp works, stage by stage →</a> — the
         detailed eight-stage pipeline behind this diagram.
       </p>
 
@@ -212,7 +212,7 @@
         <div class="obsCard"><h4>Keep the database you have</h4><p>Oracle app → Warp → Oracle. MySQL app → Warp → MySQL. SQL Server app → Warp → SQL Server. Postgres app → Warp → Postgres. Add caching, sharding, monitoring, rollups, QoS, and a SQL firewall in front of the database you already run — no migration required.</p></div>
         <div class="obsCard"><h4>Or modernize onto Postgres</h4><p>Oracle, MySQL, or SQL Server app → Warp → Postgres. Protocol and dialect translation keep the application's existing client working unmodified while the backend becomes Postgres — pair with Ferry and Shim for a gradual, no-big-bang migration.</p></div>
       </div>
-      <p class="rttNote"><a href="/polywire/#outcomes">See each outcome broken out in detail →</a></p>
+      <p class="rttNote"><a href="/warp/#outcomes">See each outcome broken out in detail →</a></p>
 
       <h3 class="subhead" id="pillars">Four ways teams put Warp to work<a class="permalink" href="#pillars" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
@@ -221,7 +221,7 @@
         <div class="obsCard"><h4>Modernize onto Postgres</h4><p>Move Oracle, MySQL, SQL Server, or MongoDB applications onto Postgres without an immediate client rewrite — every protocol keeps working exactly as it always has.</p></div>
         <div class="obsCard"><h4>Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
       </div>
-      <p class="rttNote"><a href="/polywire/">Explore all Warp capabilities →</a></p>
+      <p class="rttNote"><a href="/warp/">Explore all Warp capabilities →</a></p>
 
       <h3 class="subhead" id="three-products">Three products, two ways to use them<a class="permalink" href="#three-products" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
@@ -229,7 +229,7 @@
         and Shim alongside it when you're ready to modernize onto Postgres.
       </p>
       <div class="obsGrid">
-        <div class="obsCard"><h4>Warp — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#polywire">See Warp →</a></p></div>
+        <div class="obsCard"><h4>Warp — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#warp">See Warp →</a></p></div>
         <div class="obsCard"><h4>Ferry — move better</h4><p>Assess → Size → Migrate → Validate → Cut over. Scores how hard your Oracle, MySQL, or SQL Server migration to Postgres will really be, before you commit to it. <a href="#dms">See Ferry →</a></p></div>
         <div class="obsCard"><h4>Shim — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/db-compat/">See Shim →</a></p></div>
       </div>
@@ -351,7 +351,7 @@ test&gt;</pre>
         <i>Real client. Real wire protocol. PostgreSQL database. No client rewrite.</i>
         Table/document contents above are illustrative — the protocol and path are exactly real.
         (SQLcl, JDBC, and psql are what's most thoroughly verified today; see
-        <a href="/polywire/">Warp capabilities</a> for exact client-by-client coverage.)
+        <a href="/warp/">Warp capabilities</a> for exact client-by-client coverage.)
       </p>
 
       <h3 class="subhead" id="try">Try Warp in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
@@ -373,7 +373,7 @@ test&gt;</pre>
         <div class="demoPanel" id="trypanel-postgres">
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 15432:15432 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>psql -h localhost -p 15432 -U postgres</code></div>
@@ -383,7 +383,7 @@ test&gt;</pre>
         <div class="demoPanel" id="trypanel-oracle">
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 11521:11521 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
@@ -393,7 +393,7 @@ test&gt;</pre>
         <div class="demoPanel" id="trypanel-mysql">
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 13306:13306 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
@@ -403,7 +403,7 @@ test&gt;</pre>
         <div class="demoPanel" id="trypanel-mongodb">
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 27017:27017 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
@@ -413,7 +413,7 @@ test&gt;</pre>
         <div class="demoPanel" id="trypanel-opensearch">
           <p class="rttNote"><b>1. Start Warp</b></p>
           <div class="runblock"><code>docker run -p 9200:9200 \
-  -e POLYWIRE_HOST=&lt;host&gt; -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code></div>
           <p class="rttNote"><b>2. Connect</b></p>
           <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
@@ -426,8 +426,8 @@ test&gt;</pre>
           <code>docker run \
   -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
   -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
-  -e POLYWIRE_HOST=&lt;host&gt; \
-  -e POLYWIRE_PASSWORD=&lt;password&gt; \
+  -e WARP_HOST=&lt;host&gt; \
+  -e WARP_PASSWORD=&lt;password&gt; \
   ghcr.io/polygres26/warp:latest</code>
         </div>
         <div class="runblock">
@@ -457,14 +457,14 @@ aws sqs receive-message \                          # SQS wire
         <b>Security follows the request, not the protocol.</b>
       </p>
       <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
-      <p class="rttNote"><a href="/polywire/#security">Full, honestly-scoped security detail →</a></p>
+      <p class="rttNote"><a href="/warp/#security">Full, honestly-scoped security detail →</a></p>
 
       <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         <b>QoS for Postgres, at the gateway.</b> Prioritize, throttle, bound concurrency, and
         shed load — before Postgres saturates, not after it falls over. A real token-bucket
         admission controller, per workload class (query/write/ddl/txn). See
-        <a href="/polywire/#security">Security</a> for the full scope.
+        <a href="/warp/#security">Security</a> for the full scope.
       </p>
 
       <h3 class="subhead" id="distributed-cache">Cache once. Access across protocols.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
@@ -495,11 +495,11 @@ aws sqs receive-message \                          # SQS wire
         <summary class="exploreSummary">Explore Warp in depth — detailed architecture, comparison →</summary>
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
-        <img src="/assets/architecture.svg" alt="Warp architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (Mach — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (polywire_config/polywire_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
-        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/polywire/">full capabilities</a> for what that means.)</figcaption>
+        <img src="/assets/architecture.svg" alt="Warp architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (Mach — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (warp_config/warp_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/warp/">full capabilities</a> for what that means.)</figcaption>
       </figure>
 
-      <h3 class="subhead" id="without-polywire">Without Warp vs. with it<a class="permalink" href="#without-polywire" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="without-warp">Without Warp vs. with it<a class="permalink" href="#without-warp" aria-label="Link to this section">#</a></h3>
       <div class="withoutWithGrid">
         <div class="withoutCol">
           <h4>Without Warp</h4>
@@ -543,7 +543,7 @@ aws sqs receive-message \                          # SQS wire
           </tbody>
         </table>
       </div>
-      <p class="rttNote"><a href="/polywire/">Comparison methodology →</a></p>
+      <p class="rttNote"><a href="/warp/">Comparison methodology →</a></p>
 
       </details>
 
@@ -579,8 +579,8 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <p class="rttNote">
         "—" means not yet implemented for that protocol, stated plainly rather than omitted — see
-        <a href="/polywire/#security">Security</a> for exactly which protocols propagate a
-        real per-caller identity today, and <a href="/polywire/">full capabilities</a> /
+        <a href="/warp/#security">Security</a> for exactly which protocols propagate a
+        real per-caller identity today, and <a href="/warp/">full capabilities</a> /
         <a href="ERRORS.md">ERRORS.md</a> for the complete per-protocol detail including known
         limitations.
       </p>
@@ -588,10 +588,10 @@ aws sqs receive-message \                          # SQS wire
 
       <h3 class="subhead" id="production">Built for production<a class="permalink" href="#production" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">HA &amp; Failover</span><span class="uc-desc">Multi-AZ Warp deployment, planned drain/switchover and automatic unplanned failover, both tested across every wire protocol. See <a href="/polywire/#multi-az">Multi-AZ deployment</a> and <a href="/polywire/#outages">Planned and unplanned outages</a>.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Security</span><span class="uc-desc">SQL firewall, connection ACL, authentication, TLS, row-level security identity propagation, Vault/CyberArk secrets, admin SSO. See <a href="/polywire/#security">Security</a> for the exact, honestly-scoped detail.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">HA &amp; Failover</span><span class="uc-desc">Multi-AZ Warp deployment, planned drain/switchover and automatic unplanned failover, both tested across every wire protocol. See <a href="/warp/#multi-az">Multi-AZ deployment</a> and <a href="/warp/#outages">Planned and unplanned outages</a>.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Security</span><span class="uc-desc">SQL firewall, connection ACL, authentication, TLS, row-level security identity propagation, Vault/CyberArk secrets, admin SSO. See <a href="/warp/#security">Security</a> for the exact, honestly-scoped detail.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Workload protection</span><span class="uc-desc">QoS admission control, connection pooling, and load shedding before a backend saturates — see "Stop one workload from taking down Postgres" above.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Observability</span><span class="uc-desc">Prometheus <code>/metrics</code> and OTLP export, reaching Grafana, Datadog, New Relic, CloudWatch, Azure Monitor, and GCP Cloud Monitoring. See <a href="/polywire/#observability">Observability</a>.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Observability</span><span class="uc-desc">Prometheus <code>/metrics</code> and OTLP export, reaching Grafana, Datadog, New Relic, CloudWatch, Azure Monitor, and GCP Cloud Monitoring. See <a href="/warp/#observability">Observability</a>.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Deployment</span><span class="uc-desc">Docker, Kubernetes, AWS, Azure, GCP, OCI, or on-prem — your infrastructure, your network, your Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Support</span><span class="uc-desc">Community support on Developer; enterprise support on Enterprise — see Pricing below.</span></span></li>
       </ul>
@@ -707,7 +707,7 @@ aws sqs receive-message \                          # SQS wire
         Assessment — connect, score, size, browse, report — is unrestricted on every tier. What's
         paid is the parts of actually moving the data that scale past a single-process,
         single-migration setup: real parallelism, unattended cutover, and multi-tenant capacity.
-        Same <code>POLYWIRE_LICENSE_KEY</code> as Warp — one key, one thing to buy.
+        Same <code>WARP_LICENSE_KEY</code> as Warp — one key, one thing to buy.
       </p>
       <div class="pricingGrid">
         <div class="priceCard">
@@ -756,7 +756,7 @@ aws sqs receive-message \                          # SQS wire
         Oracle/SQL Server/MySQL catalog and built-in-function compatibility inside Postgres
         itself — <code>V$SESSION</code>, <code>DBMS_OUTPUT.PUT_LINE</code>, <code>sys.objects</code>,
         <code>GROUP_CONCAT</code> — is what the Enterprise tier below unlocks. The same
-        <code>POLYWIRE_LICENSE_KEY</code> that unlocks it also unlocks Warp and NexaGres
+        <code>WARP_LICENSE_KEY</code> that unlocks it also unlocks Warp and NexaGres
         DMS's own Enterprise tiers.
       </p>
       <div class="pricingGrid">
@@ -794,14 +794,14 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <h2>Common questions</h2>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">Does my application need to change to use Warp?</span><span class="uc-desc">No — your existing driver connects exactly as it always has, unaware Warp is on the other end. <a href="/polywire/">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Is Warp's sharding real, or just SQL text matching?</span><span class="uc-desc">Real — it decodes each protocol's own native bound values and merges cross-shard results centrally. <a href="/polywire/#sharding">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does Warp support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, and Oracle — a real per-caller identity feeds your own Postgres RLS policies. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet. <a href="/polywire/#security">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API redirects traffic and waits for a real zero-replication-lag cutover before confirming. <a href="/polywire/#outages">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does my application need to change to use Warp?</span><span class="uc-desc">No — your existing driver connects exactly as it always has, unaware Warp is on the other end. <a href="/warp/">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Is Warp's sharding real, or just SQL text matching?</span><span class="uc-desc">Real — it decodes each protocol's own native bound values and merges cross-shard results centrally. <a href="/warp/#sharding">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp support row-level security?</span><span class="uc-desc">Yes, for Postgres, SQL Server, and Oracle — a real per-caller identity feeds your own Postgres RLS policies. MySQL and the DynamoDB/MongoDB/SQS/OpenSearch wire protocols don't propagate identity into RLS yet. <a href="/warp/#security">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">What happens if the backend Postgres needs planned maintenance?</span><span class="uc-desc">A drain API redirects traffic and waits for a real zero-replication-lag cutover before confirming. <a href="/warp/#outages">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Can Warp connect to Supabase, RDS, Cloud SQL, Azure, or OCI?</span><span class="uc-desc">Yes — each has a worked example and its real provider-specific gotchas. <a href="/CONNECTING.md">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does Warp cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="/polywire/#cache-vs-round-trip">Learn more →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Does Warp use AI for anything beyond MCP?</span><span class="uc-desc">Yes — ten features where Warp itself calls an LLM at a specific pipeline point: self-healing query repair on a real backend SQL error, natural-language firewall-rule drafting, traffic anomaly detection with plain-English narration, QoS tuning suggestions, MCP activity summarization, natural-language querying with a second LLM pass judging (and correcting) the drafted SQL, rollup pre-aggregation suggestions, table-sharding suggestions, EXPLAIN plan narration, and auto-generated schema documentation. Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. <a href="/polywire/#ai-features">See all ten →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">What security features does Warp actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="/polywire/#security">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp cache query results?</span><span class="uc-desc">Yes — two tiers, both shared, neither a per-protocol silo. Arbitrary opted-in <code>SELECT</code> results: PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read the same cache. Exact primary-key point lookups (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL <code>WHERE pk = ?</code>): DynamoDB and MongoDB each share that entry with any SQL client reading the same physical table too — see the demo above. Invalidation is automatic in both tiers. <a href="/warp/#cache-vs-round-trip">Learn more →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Does Warp use AI for anything beyond MCP?</span><span class="uc-desc">Yes — ten features where Warp itself calls an LLM at a specific pipeline point: self-healing query repair on a real backend SQL error, natural-language firewall-rule drafting, traffic anomaly detection with plain-English narration, QoS tuning suggestions, MCP activity summarization, natural-language querying with a second LLM pass judging (and correcting) the drafted SQL, rollup pre-aggregation suggestions, table-sharding suggestions, EXPLAIN plan narration, and auto-generated schema documentation. Every one keeps the same split: a deterministic decision stays deterministic, the LLM only phrases, drafts, or judges, and nothing it produces is ever applied or executed without a check. <a href="/warp/#ai-features">See all ten →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">What security features does Warp actually have wired in?</span><span class="uc-desc">SQL firewall, connection ACL, QoS, authentication, TLS, secrets management, and admin auth — each scoped honestly. <a href="/warp/#security">Learn more →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Warp free to use?</span><span class="uc-desc">Yes — Developer is free forever with every protocol and feature enabled, capped on scale. See Pricing above.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Is Ferry's migration score generated by an LLM?</span><span class="uc-desc">No — it's rules-based and reproducible: the same database gives the same score every time.</span></span></li>
       </ul>
@@ -854,7 +854,7 @@ aws sqs receive-message \                          # SQS wire
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
 

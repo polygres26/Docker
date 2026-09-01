@@ -133,7 +133,7 @@ class BoltWireTest {
                     + "/postgres?binaryTransfer=false";
             try (Connection c = DriverManager.getConnection(url, "postgres", "postgres");
                     PreparedStatement ps = c.prepareStatement(
-                            "INSERT INTO polywire_graph_edges (type, from_id, to_id) VALUES (?, ?, ?)")) {
+                            "INSERT INTO warp_graph_edges (type, from_id, to_id) VALUES (?, ?, ?)")) {
                 ps.setString(1, "KNOWS");
                 ps.setLong(2, bobPk);
                 ps.setLong(3, carolPk);

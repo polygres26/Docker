@@ -64,7 +64,7 @@
   .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
   .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo); }
   /* A product section's own descriptive line (e.g. "The intelligent gateway for Postgres." right
-     under the "Polywire" h2) -- distinct from .heroTitle, which is reserved for the page's one
+     under the "Warp" h2) -- distinct from .heroTitle, which is reserved for the page's one
      true hero. Sits between the section h2 (28px) and its .lede/.heroSub body copy (18px). */
   .toolTagline { font-size: 21px; line-height: 1.35; letter-spacing: -0.005em; margin: 0 0 14px; color: var(--ink); font-weight: 600; }
   .heroTagline { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
@@ -80,7 +80,7 @@
 
   /* "Don't rewrite. Rewire." before/after -- plain HTML/CSS, no image asset, so it stays crisp
      and theme-aware at any size. Before: four separate app-to-own-database rows. After: the same
-     four apps fan into one PolyWire box, then one arrow to Postgres -- the whole point rendered
+     four apps fan into one Warp box, then one arrow to Postgres -- the whole point rendered
      as a shape, not just asserted in prose. */
   .rewireArrow { color: var(--ink-faint); font-size: 13px; }
   .postgres { color: var(--teal); font-weight: 700; }
@@ -88,7 +88,7 @@
   /* Before/after fan-in diagram -- real inline SVG so the "many protocols funnel into one
      gateway" claim is a shape, not just a stacked list next to an arrow. Boxes/lines/panel
      backgrounds use currentColor or explicit tokens so it holds in both themes; the only fixed
-     colors are the PolyWire hub (indigo) and the Postgres label (teal) -- the one thing this
+     colors are the Warp hub (indigo) and the Postgres label (teal) -- the one thing this
      diagram is actually arguing for gets the only saturated color in it. */
   .rewireFigure { margin: 20px 0 8px; }
   .rewireSvg { width: 100%; height: auto; display: block; }
@@ -212,7 +212,7 @@
   figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); }
   figcaption { font-size: 13.5px; color: var(--ink-dim); margin-top: 12px;  }
 
-  /* Live click-through embeds (demo-polywire.html / demo-dms.html in an iframe) -- same
+  /* Live click-through embeds (demo-warp.html / demo-dms.html in an iframe) -- same
      figure/figcaption rhythm as a screenshot above, but the frame itself is interactive. */
   .embedFigure { margin: 24px 0 32px; }
   .embedFrame { display: block; width: 100%; height: 560px; border-radius: 12px; border: 1px solid var(--line); }
@@ -234,7 +234,7 @@
   table.compareTable th, table.compareTable td { text-align: left; white-space: normal; }
   table.compareTable td:first-child { font-weight: 600; }
 
-  /* "Without PolyWire" vs. "With PolyWire" -- the executive-summary version of the comparison
+  /* "Without Warp" vs. "With Warp" -- the executive-summary version of the comparison
      table, translating feature scope into operational consequence. */
   .withoutWithGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 20px; }
   @media (max-width: 640px) { .withoutWithGrid { grid-template-columns: 1fr; } }
@@ -299,7 +299,7 @@
   #demo-mongodb:checked ~ #panel-mongodb,
   #demo-opensearch:checked ~ #panel-opensearch { display: block; }
 
-  /* Second tab selector (the "Try PolyWire in 60 seconds" quickstart) -- uses :has() instead of
+  /* Second tab selector (the "Try Warp in 60 seconds" quickstart) -- uses :has() instead of
      the general-sibling chain above so adding/removing a protocol tab doesn't need a matching
      id-specific CSS rule added by hand. */
   .demoSelector:has(#try-postgres:checked) #trypanel-postgres,

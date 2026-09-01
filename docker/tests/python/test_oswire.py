@@ -20,23 +20,23 @@ def client():
 def test_index_and_search_by_term():
     c = client()
     index = f"smoke_{uuid.uuid4().hex[:8]}"
-    c.index(index=index, id="1", body={"name": "polywire", "category": "gateway"}, refresh=True)
+    c.index(index=index, id="1", body={"name": "warp", "category": "gateway"}, refresh=True)
     c.index(index=index, id="2", body={"name": "polyadvisor", "category": "assessment"}, refresh=True)
 
     result = c.search(index=index, body={"query": {"term": {"category": "gateway"}}})
     hits = result["hits"]["hits"]
     assert len(hits) == 1
     assert hits[0]["_id"] == "1"
-    assert hits[0]["_source"]["name"] == "polywire"
+    assert hits[0]["_source"]["name"] == "warp"
 
 
 def test_get_update_delete_document():
     c = client()
     index = f"smoke_{uuid.uuid4().hex[:8]}"
-    c.index(index=index, id="1", body={"name": "polywire"}, refresh=True)
+    c.index(index=index, id="1", body={"name": "warp"}, refresh=True)
 
     doc = c.get(index=index, id="1")
-    assert doc["_source"]["name"] == "polywire"
+    assert doc["_source"]["name"] == "warp"
 
     c.delete(index=index, id="1")
     # Real OpenSearch's GET returns HTTP 200 with found=false for a missing document, not a 404 --
@@ -69,11 +69,11 @@ def test_terms_aggregation_with_nested_avg_metric():
 def test_hybrid_query_fuses_text_and_vector_scores():
     c = client()
     index = f"smoke_{uuid.uuid4().hex[:8]}"
-    c.index(index=index, id="1", body={"description": "a polywire gateway", "vector": [0.1, 0.2, 0.3, 0.4]}, refresh=True)
+    c.index(index=index, id="1", body={"description": "a warp gateway", "vector": [0.1, 0.2, 0.3, 0.4]}, refresh=True)
     c.index(index=index, id="2", body={"description": "unrelated text", "vector": [0.9, 0.8, 0.1, 0.05]}, refresh=True)
 
     result = c.search(index=index, body={"query": {"hybrid": {"queries": [
-        {"match": {"description": "polywire"}},
+        {"match": {"description": "warp"}},
         {"knn": {"vector": {"vector": [0.1, 0.2, 0.3, 0.4], "k": 2}}},
     ]}}})
     hits = result["hits"]["hits"]

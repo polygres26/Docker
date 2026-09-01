@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/" class="active">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -47,7 +47,7 @@
       </div>
       <p class="lede">
         <a href="/">← Back to home</a> — <b>Ferry plans the move to Postgres.
-        <a href="/polywire/">Warp</a> runs and governs workloads on Postgres.</b>
+        <a href="/warp/">Warp</a> runs and governs workloads on Postgres.</b>
         Ferry tells you how hard moving to Postgres will be; Warp keeps your
         application running while you do it.
       </p>
@@ -182,12 +182,12 @@
         (MongoDB change streams, MySQL binlog, SQL Server/Oracle native CDC, DynamoDB Streams,
         SQS, Neo4j snapshot, InfluxDB timestamp-cursor tail), launched from a form and tracked to
         completion, without ever leaving Ferry. Every write lands through
-        <a href="/polywire/">Warp</a>'s own gRPC driver — never a direct JDBC connection to
+        <a href="/warp/">Warp</a>'s own gRPC driver — never a direct JDBC connection to
         the target — so a migration in progress is subject to the exact same firewall, QoS, and
         cache pipeline as any other client.
       </p>
       <figure>
-        <img src="/assets/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into PolywireGrpcSink, which writes exclusively through Warp's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
+        <img src="/assets/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into WarpGrpcSink, which writes exclusively through Warp's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
         <figcaption>Every source connector feeds the same pipeline: parallel initial snapshot, then (where the source has one) a live change-data-capture tail owned by exactly one leader, retried and dead-lettered on failure, and written into Postgres exclusively through Warp's own gRPC driver. Local thread-pool parallelism is free; a distributed worker fleet sharing one lease store is the Enterprise tier. A readiness checker rolls partitions, lag, dead letters, and row-level verification into one go/no-go signal before you cut over.</figcaption>
       </figure>
       <p class="rttNote">
@@ -241,7 +241,7 @@
         Assessment (the whole first half of this page — connect, score, size, browse, report) is
         unrestricted on every tier. What's paid is the parts of actually MOVING the data that scale
         past a single-process, single-migration setup: real parallelism, unattended operation, and
-        multi-tenant capacity. Reuses the same <code>POLYWIRE_LICENSE_KEY</code> as Warp itself
+        multi-tenant capacity. Reuses the same <code>WARP_LICENSE_KEY</code> as Warp itself
         — one key, one thing to buy.
       </p>
       <div class="rttTableWrap">
@@ -291,7 +291,7 @@
         login are genuinely new capabilities, Enterprise-only, and inert (not merely hidden) on the
         free/Developer tier. Everything else runs identically regardless of license — CDC,
         validation, progress monitoring, and resumable checkpointing all work the same way whether
-        or not a <code>POLYWIRE_LICENSE_KEY</code> is set.
+        or not a <code>WARP_LICENSE_KEY</code> is set.
       </p>
 
       <figure class="embedFigure">
@@ -306,7 +306,7 @@
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

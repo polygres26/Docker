@@ -6,28 +6,28 @@ Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Datab
 PostgreSQL — using the same five env vars every time:
 
 ```
-POLYWIRE_HOST=<host>
-POLYWIRE_PORT=<port>            # default 5432
-POLYWIRE_DATABASE=<database>    # default postgres
-POLYWIRE_USER=<user>
-POLYWIRE_PASSWORD=<password>
+WARP_HOST=<host>
+WARP_PORT=<port>            # default 5432
+WARP_DATABASE=<database>    # default postgres
+WARP_USER=<user>
+WARP_PASSWORD=<password>
 ```
 
 Two more control TLS:
 
 ```
-POLYWIRE_PG_SSLMODE=<disable|allow|prefer|require|verify-ca|verify-full>
-POLYWIRE_PG_SSLROOTCERT=<path to a PEM CA bundle, inside the container>   # optional
+WARP_PG_SSLMODE=<disable|allow|prefer|require|verify-ca|verify-full>
+WARP_PG_SSLROOTCERT=<path to a PEM CA bundle, inside the container>   # optional
 ```
 
-`POLYWIRE_PG_SSLMODE` is unset by default (pgjdbc's own default, `prefer`) — **Supabase and Azure
+`WARP_PG_SSLMODE` is unset by default (pgjdbc's own default, `prefer`) — **Supabase and Azure
 both require it set to `require` or stronger**, since they reject a plaintext connection outright.
-`POLYWIRE_PG_SSLROOTCERT` is optional even with `verify-full` — pgjdbc falls back to the JVM's own
+`WARP_PG_SSLROOTCERT` is optional even with `verify-full` — pgjdbc falls back to the JVM's own
 trust store, which already trusts every provider below's default certificate.
 
 Once it's up, point any client at whichever wire protocol you want — `psql -h localhost -p 15432`
 for plain Postgres wire, or MySQL/Oracle/SQL Server/MongoDB/DynamoDB/SQS/OpenSearch clients against
-their own ports (see the [main README](polywire/README.md) for the full port list). Every guide
+their own ports (see the [main README](warp/README.md) for the full port list). Every guide
 below verifies with plain `psql` since it's the most universal check, but the backend Postgres
 you've pointed Warp at is available through all of them identically.
 
@@ -47,11 +47,11 @@ The simple case — nothing above the five basic env vars is usually needed.
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=your-postgres-host \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=postgres \
-  -e POLYWIRE_PASSWORD=your-password \
+  -e WARP_HOST=your-postgres-host \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=postgres \
+  -e WARP_PASSWORD=your-password \
   ghcr.io/polygres26/warp:latest
 ```
 
@@ -61,11 +61,11 @@ psql -h localhost -p 15432 -U postgres -d postgres
 
 **Gotchas:**
 - If Warp is running in Docker and your Postgres is on the Docker host itself (not another
-  container), `POLYWIRE_HOST=host.docker.internal` reaches it on Mac/Windows; on Linux, either add
+  container), `WARP_HOST=host.docker.internal` reaches it on Mac/Windows; on Linux, either add
   `--add-host=host.docker.internal:host-gateway` to the `docker run` command, or use the host's
   real LAN/bridge IP directly.
 - If your Postgres already requires TLS (a common hardening step even on-prem), add
-  `POLYWIRE_PG_SSLMODE=require` — see the top of this doc.
+  `WARP_PG_SSLMODE=require` — see the top of this doc.
 - `pg_hba.conf` on your Postgres needs a rule that actually allows the connection from wherever
   Warp's container lands — the most common first failure isn't Warp at all, it's
   `FATAL: no pg_hba.conf entry for host ...`.
@@ -88,7 +88,7 @@ Supabase is the one with real, previously-hit friction worth reading before you 
   gateways/poolers in front of it should use; 5432 (session mode) exists for clients that need
   session-level features (advisory locks, `LISTEN`/`NOTIFY`, prepared statements outside a single
   transaction) the transaction pooler can't support. Warp's own control-plane tables use
-  `LISTEN`/`NOTIFY` (`polywire_config`, `polywire_firewall_rules`) — **use session mode (5432) if
+  `LISTEN`/`NOTIFY` (`warp_config`, `warp_firewall_rules`) — **use session mode (5432) if
   you plan to rely on Warp's live config reload**; transaction mode (6543) is fine if you'll
   restart Warp to pick up config changes instead.
 
@@ -99,12 +99,12 @@ guess at.
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=aws-0-<region>.pooler.supabase.com \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=postgres.<project-ref> \
-  -e POLYWIRE_PASSWORD=your-database-password \
-  -e POLYWIRE_PG_SSLMODE=require \
+  -e WARP_HOST=aws-0-<region>.pooler.supabase.com \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=postgres.<project-ref> \
+  -e WARP_PASSWORD=your-database-password \
+  -e WARP_PG_SSLMODE=require \
   ghcr.io/polygres26/warp:latest
 ```
 
@@ -119,12 +119,12 @@ psql -h localhost -p 15432 -U postgres -d postgres
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=your-instance.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=your_master_user \
-  -e POLYWIRE_PASSWORD=your-password \
-  -e POLYWIRE_PG_SSLMODE=require \
+  -e WARP_HOST=your-instance.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=your_master_user \
+  -e WARP_PASSWORD=your-password \
+  -e WARP_PG_SSLMODE=require \
   ghcr.io/polygres26/warp:latest
 ```
 
@@ -137,8 +137,8 @@ psql -h localhost -p 15432 -U your_master_user -d postgres
   runs — its own IP if it's outside AWS, or the right security group/CIDR if it's inside the same
   VPC. This is the single most common first failure — a connection that just hangs until timeout,
   not a clean rejection.
-- `POLYWIRE_PG_SSLMODE=require` is enough for encryption in transit; go to `verify-full` plus
-  `POLYWIRE_PG_SSLROOTCERT` pointed at
+- `WARP_PG_SSLMODE=require` is enough for encryption in transit; go to `verify-full` plus
+  `WARP_PG_SSLROOTCERT` pointed at
   [RDS's own downloadable CA bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html)
   (mounted into the container) if you also need to verify RDS's certificate identity, not just
   encrypt the wire.
@@ -156,12 +156,12 @@ Two real ways to reach Cloud SQL; pick based on what you're already running:
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=<the instance's public IP> \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=postgres \
-  -e POLYWIRE_PASSWORD=your-password \
-  -e POLYWIRE_PG_SSLMODE=require \
+  -e WARP_HOST=<the instance's public IP> \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=postgres \
+  -e WARP_PASSWORD=your-password \
+  -e WARP_PG_SSLMODE=require \
   ghcr.io/polygres26/warp:latest
 ```
 
@@ -182,17 +182,17 @@ services:
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /config/key.json
 
-  polywire:
+  warp:
     image: ghcr.io/polygres26/warp:latest
     depends_on:
       - cloud-sql-proxy
     environment:
-      POLYWIRE_HOST: cloud-sql-proxy
-      POLYWIRE_PORT: "5432"
-      POLYWIRE_DATABASE: postgres
-      POLYWIRE_USER: postgres
-      POLYWIRE_PASSWORD: your-password
-      # No POLYWIRE_PG_SSLMODE needed here -- the proxy itself terminates a real, separately
+      WARP_HOST: cloud-sql-proxy
+      WARP_PORT: "5432"
+      WARP_DATABASE: postgres
+      WARP_USER: postgres
+      WARP_PASSWORD: your-password
+      # No WARP_PG_SSLMODE needed here -- the proxy itself terminates a real, separately
       # authenticated TLS tunnel to Cloud SQL; the hop from Warp to the proxy is local/trusted.
     ports:
       - "19090:19090"
@@ -210,12 +210,12 @@ psql -h localhost -p 15432 -U postgres -d postgres
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=your-server.postgres.database.azure.com \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=your_admin_user \
-  -e POLYWIRE_PASSWORD=your-password \
-  -e POLYWIRE_PG_SSLMODE=require \
+  -e WARP_HOST=your-server.postgres.database.azure.com \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=your_admin_user \
+  -e WARP_PASSWORD=your-password \
+  -e WARP_PG_SSLMODE=require \
   ghcr.io/polygres26/warp:latest
 ```
 
@@ -224,7 +224,7 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
 ```
 
 **Gotchas:**
-- `POLYWIRE_PG_SSLMODE=require` (or stronger) is **not optional** — Flexible Server rejects a
+- `WARP_PG_SSLMODE=require` (or stronger) is **not optional** — Flexible Server rejects a
   plaintext connection unconditionally by default.
 - **Plain username, not `user@servername`.** That `@servername` suffix was required on the older,
   now-deprecated Single Server tier; Flexible Server dropped it. Using the old shape against a
@@ -250,19 +250,19 @@ toggle or Cloud SQL's authorized-networks list. Reaching it needs one of:
 - a site-to-site VPN (or FastConnect) between wherever Warp runs and the VCN.
 
 The examples below assume a bastion session already forwards `localhost:5432` on the machine
-running `docker run` to the DB system — adjust `POLYWIRE_HOST`/`POLYWIRE_PORT` to wherever your
+running `docker run` to the DB system — adjust `WARP_HOST`/`WARP_PORT` to wherever your
 own tunnel actually lands.
 
 ```bash
 docker run \
   -p 19090:19090 -p 15432:15432 \
-  -e POLYWIRE_HOST=host.docker.internal \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=your_admin_user \
-  -e POLYWIRE_PASSWORD=your-password \
-  -e POLYWIRE_PG_SSLMODE=verify-full \
-  -e POLYWIRE_PG_SSLROOTCERT=/certs/dbsystem.pub \
+  -e WARP_HOST=host.docker.internal \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=your_admin_user \
+  -e WARP_PASSWORD=your-password \
+  -e WARP_PG_SSLMODE=verify-full \
+  -e WARP_PG_SSLROOTCERT=/certs/dbsystem.pub \
   -v /local/path/to/dbsystem.pub:/certs/dbsystem.pub:ro \
   ghcr.io/polygres26/warp:latest
 ```
@@ -284,9 +284,9 @@ psql -h localhost -p 15432 -U your_admin_user -d postgres
   doesn't publish a template hostname pattern. Get the exact FQDN from the DB system's own
   **Connection details** page in the console, not by guessing at a shape.
 - A DB system exposes both a **primary (floating) endpoint** — always the current read-write
-  node, safe default for `POLYWIRE_HOST` — and separate per-node endpoints for directing read
+  node, safe default for `WARP_HOST` — and separate per-node endpoints for directing read
   traffic at specific replicas. Use the primary endpoint here unless you specifically want to
-  point Warp's standby-aware read routing (`POLYWIRE_STANDBY_HOST`, see the main README) at a
+  point Warp's standby-aware read routing (`WARP_STANDBY_HOST`, see the main README) at a
   particular replica instead.
 
 ## Optional: Oracle built-in function compatibility (DECODE, XS_SYS_CONTEXT, ...)

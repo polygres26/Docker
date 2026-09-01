@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -102,18 +102,18 @@
 
       <h3 class="subhead" id="why-a-gateway">Why put a gateway in front of Postgres at all<a class="permalink" href="#why-a-gateway" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">One firewall, not five</span><span class="uc-desc">A SQL firewall enforced at the gateway covers every protocol's traffic identically — an Oracle client and a MySQL client hit the same rule set, not two separately configured tools. <a href="/polywire/#security">Security detail →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">One firewall, not five</span><span class="uc-desc">A SQL firewall enforced at the gateway covers every protocol's traffic identically — an Oracle client and a MySQL client hit the same rule set, not two separately configured tools. <a href="/warp/#security">Security detail →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Protect Postgres under load</span><span class="uc-desc">QoS admission control at the gateway prioritizes, throttles, and sheds load before Postgres itself saturates — not after. <a href="/#qos">QoS detail →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Modernize without a rewrite</span><span class="uc-desc">An Oracle or MySQL application keeps speaking its own protocol while the database underneath becomes Postgres. <a href="/polywire/">Warp capabilities →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Modernize without a rewrite</span><span class="uc-desc">An Oracle or MySQL application keeps speaking its own protocol while the database underneath becomes Postgres. <a href="/warp/">Warp capabilities →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Govern AI access the same way</span><span class="uc-desc">An MCP frontend for AI agents goes through the identical firewall/ACL/QoS path as every other client — not a separate, unguarded route to your data. <a href="/mcp-postgres/">MCP + Postgres →</a></span></span></li>
       </ul>
 
-      <p class="rttNote"><a href="/polywire/">Explore Warp in depth — detailed architecture, comparison →</a></p>
+      <p class="rttNote"><a href="/warp/">Explore Warp in depth — detailed architecture, comparison →</a></p>
     </section>
 
     <footer>
       Source for all tools is private; this is the public documentation and image surface.
-      Full setup reference: <a href="/README.md">README.md</a>, <a href="/polywire/README.md">polywire/</a>,
+      Full setup reference: <a href="/README.md">README.md</a>, <a href="/warp/README.md">warp/</a>,
       <a href="/dms/README.md">dms/</a> in this repo; the DB compatibility layer's own source and README live in a separate repo, github.com/polygres26/DB.
     </footer>
   </main>

@@ -56,11 +56,11 @@ class OraWireTest {
             try (Statement st = conn.createStatement()) {
                 st.execute("CREATE TABLE " + table + " (id INTEGER PRIMARY KEY, name VARCHAR(50))");
                 conn.commit();
-                st.execute("INSERT INTO " + table + " (id, name) VALUES (1, 'polywire')");
+                st.execute("INSERT INTO " + table + " (id, name) VALUES (1, 'warp')");
                 conn.commit();
                 try (ResultSet rs = st.executeQuery("SELECT name FROM " + table + " WHERE id = 1")) {
                     rs.next();
-                    assertEquals("polywire", rs.getString(1));
+                    assertEquals("warp", rs.getString(1));
                 }
                 st.execute("DROP TABLE " + table);
                 conn.commit();

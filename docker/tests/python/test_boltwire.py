@@ -96,7 +96,7 @@ def test_variable_length_path_returns_every_reachable_node_once():
         try:
             with conn, conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO polywire_graph_edges (type, from_id, to_id) VALUES (%s, %s, %s)",
+                    "INSERT INTO warp_graph_edges (type, from_id, to_id) VALUES (%s, %s, %s)",
                     ("KNOWS", bob_pk, carol_pk))
         finally:
             conn.close()

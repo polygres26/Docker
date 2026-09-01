@@ -24,7 +24,7 @@ import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
 /** dynamowire: real DynamoDB HTTP/JSON API, real AWS SDK v2 client, translated to Postgres
  * underneath. Dummy static credentials are enough since AWS SigV4 request verification is
- * opt-in (POLYWIRE_AWS_IAM_CREDENTIALS, unset in the test compose file). */
+ * opt-in (WARP_AWS_IAM_CREDENTIALS, unset in the test compose file). */
 class DynamoWireTest {
 
     private static DynamoDbClient client() {
@@ -49,14 +49,14 @@ class DynamoWireTest {
         try {
             Map<String, AttributeValue> item = new HashMap<>();
             item.put("id", AttributeValue.builder().s("1").build());
-            item.put("name", AttributeValue.builder().s("polywire").build());
+            item.put("name", AttributeValue.builder().s("warp").build());
             c.putItem(PutItemRequest.builder().tableName(table).item(item).build());
 
             Map<String, AttributeValue> key = new HashMap<>();
             key.put("id", AttributeValue.builder().s("1").build());
             Map<String, AttributeValue> found = c.getItem(
                     GetItemRequest.builder().tableName(table).key(key).build()).item();
-            assertEquals("polywire", found.get("name").s());
+            assertEquals("warp", found.get("name").s());
         } finally {
             c.deleteTable(DeleteTableRequest.builder().tableName(table).build());
         }

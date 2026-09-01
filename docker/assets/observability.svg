@@ -1,5 +1,5 @@
 <svg viewBox="0 0 1536 1024" xmlns="http://www.w3.org/2000/svg" role="img"
-     aria-label="NexaGate observability integration diagram: NexaGate exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics.">
+     aria-label="Warp observability integration diagram: Warp exposes /metrics :19090, OTLP/gRPC :4317, and OTLP/HTTP :4318. A teal Prometheus-scrape path runs through a scrape agent to Self-hosted Grafana, Grafana Cloud, and Datadog's Prometheus check. An indigo direct-OTLP-push path runs straight to New Relic, Datadog's native OTLP ingest, and Grafana Cloud's OTLP gateway. An amber dashed via-Collector path runs through an OpenTelemetry Collector to AWS CloudWatch, Azure Monitor, GCP Cloud Monitoring, and AppDynamics.">
   <defs>
     <marker id="arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#227465"/>
@@ -25,10 +25,10 @@
     <text x="1266" y="131" fill="#1b2430">OTLP push, via OTel Collector</text>
   </g>
 
-  <!-- ...... NexaGate source box ...... -->
+  <!-- ...... Warp source box ...... -->
   <g>
     <rect x="72" y="372" width="200" height="280" rx="12" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
-    <text x="172" y="418" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="19" fill="#1b2430">NexaGate</text>
+    <text x="172" y="418" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="19" fill="#1b2430">Warp</text>
     <text x="172" y="444" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#57626f">one process</text>
 
     <rect x="94" y="472" width="156" height="34" rx="7" fill="#e2f3ef"/>

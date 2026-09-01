@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Warp — Full Capabilities of the Intelligent Database Gateway</title>
 <meta name="description" content="Warp's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, Mach benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
-<link rel="canonical" href="https://nexagres.com/polywire/">
+<link rel="canonical" href="https://nexagres.com/warp/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
 <link rel="icon" type="image/png" href="/assets/logo.png">
@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="/styles.min.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://nexagres.com/polywire/">
+<meta property="og:url" content="https://nexagres.com/warp/">
 <meta property="og:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
 <meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/" class="active">Warp</a>
+      <a href="/warp/" class="active">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -52,7 +52,7 @@
         Protect, Control, Accelerate, Observe.
       </p>
     </header>
-    <section class="tool" id="polywire-detail" style="margin-top:0; padding-top:0; border-top:none;">
+    <section class="tool" id="warp-detail" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/warp</span>
@@ -63,7 +63,7 @@
         <ul class="otpList">
           <li><a href="#outcomes">Outcomes</a></li>
           <li><a href="#use-cases">Use cases</a></li>
-          <li><a href="#admin-console-polywire">Admin console</a></li>
+          <li><a href="#admin-console-warp">Admin console</a></li>
           <li><a href="#cache-vs-round-trip">Mach vs. round trip</a></li>
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
@@ -132,7 +132,7 @@
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Warp while Ferry (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
       </ul>
 
-      <h3 class="subhead" id="admin-console-polywire">Admin console<a class="permalink" href="#admin-console-polywire" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="admin-console-warp">Admin console<a class="permalink" href="#admin-console-warp" aria-label="Link to this section">#</a></h3>
       <p class="lede">
         Warp ships its own admin app — live traffic metrics across every protocol (gRPC and
         MCP shown separately, not merged into one label), per-tool MCP call counts and error
@@ -143,7 +143,7 @@
         all in one place, not scattered across each protocol's own tooling.
       </p>
       <p class="lede" style="margin-top:24px">
-        Click through it yourself: <a href="/demo-polywire.html" class="btn btn-primary">Open the interactive demo →</a>
+        Click through it yourself: <a href="/demo-warp.html" class="btn btn-primary">Open the interactive demo →</a>
         No signup, no backend required — synthetic data, real layout.
       </p>
 
@@ -303,7 +303,7 @@
         via literal-value matching — the feature degrades to "still correct," not "silently
         wrong." Hash, consistent-hash (150 virtual nodes per backend, minimizing what actually
         moves when the shard set changes), range, and list strategies are all real, configured via
-        the same <code>POLYWIRE_ROUTER_VALUE_SHARD_RULES</code> knob regardless of which protocol
+        the same <code>WARP_ROUTER_VALUE_SHARD_RULES</code> knob regardless of which protocol
         or bind style the traffic arrives as.
       </p>
       <p class="rttNote">
@@ -495,7 +495,7 @@
         A rollup is a real Postgres table Warp creates and keeps current for you — the
         materialized result of a <code>GROUP BY</code>/aggregate query you define once, not a view
         and not something your application maintains by hand. Define it in YAML (a
-        <code>POLYWIRE_ROLLUP_DEFINITIONS_FILE</code>, or the same field via the admin API):
+        <code>WARP_ROLLUP_DEFINITIONS_FILE</code>, or the same field via the admin API):
       </p>
       <div class="runblock">
         <code>rollups:
@@ -513,8 +513,8 @@
       </div>
       <p class="rttNote">
         Every 15 minutes, Warp runs exactly the SQL you'd write by hand to keep this current —
-        <code>DROP TABLE IF EXISTS polywire_rollup_daily_order_totals;</code> then
-        <code>CREATE TABLE polywire_rollup_daily_order_totals AS SELECT customer_id, order_date,
+        <code>DROP TABLE IF EXISTS warp_rollup_daily_order_totals;</code> then
+        <code>CREATE TABLE warp_rollup_daily_order_totals AS SELECT customer_id, order_date,
         SUM(amount) AS total_amount, COUNT(*) AS order_count FROM orders GROUP BY customer_id,
         order_date;</code> — against the real <code>orders</code> table, on the backend named
         <code>primary</code>. <code>max_staleness_minutes</code> is the cutoff past which Warp
@@ -526,7 +526,7 @@
         relational query planner inside its own pipeline. When a client sends an aggregate query
         against <code>orders</code>, Warp parses it, checks whether a fresh rollup's source
         table is mentioned, and rewrites the query to read from
-        <code>polywire_rollup_daily_order_totals</code> instead whenever its
+        <code>warp_rollup_daily_order_totals</code> instead whenever its
         materialized-view matcher can prove that substitution is valid for that specific query
         shape — defining the rollup above <i>is</i> turning rewriting on for it, nothing else to
         configure. Your application still just queries <code>orders</code> — it never has to know
@@ -553,14 +553,14 @@
         Warp exposes two real, independent export surfaces — a Prometheus-format
         <code>/metrics</code> endpoint and a periodic OTLP metrics push, over either gRPC
         (<code>:4317</code>, the default) or HTTP (<code>:4318</code>, set
-        <code>POLYWIRE_OTEL_PROTOCOL=http</code>) — and how each platform gets that data differs
+        <code>WARP_OTEL_PROTOCOL=http</code>) — and how each platform gets that data differs
         by platform. Some scrape <code>/metrics</code> directly, some accept an OTLP push with no
         extra hop, and some (CloudWatch, Azure Monitor, GCP Cloud Monitoring, AppDynamics) need an
         OpenTelemetry Collector in between to translate into their native API. OTLP/HTTP exists
         for the networks gRPC doesn't reach cleanly — corporate proxies and L7 load balancers that
         only forward plain HTTP/HTTPS. This is metrics only today — no traces or logs — and
         Warp doesn't set a <code>service.name</code> resource attribute, so a receiving
-        platform identifies its data by the <code>polywire_*</code> metric-name prefix, not a
+        platform identifies its data by the <code>warp_*</code> metric-name prefix, not a
         service tag.
       </p>
 
@@ -575,12 +575,12 @@
             <tr><th>Env var</th><th>Default</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td>POLYWIRE_OTEL_PROTOCOL</td><td class="num">grpc</td><td><code>grpc</code> or <code>http</code></td></tr>
-            <tr><td>POLYWIRE_OTEL_ENDPOINT</td><td class="num">http://localhost:4317</td><td>Collector/backend endpoint (defaults to :4318 when protocol=http)</td></tr>
-            <tr><td>POLYWIRE_OTEL_EXPORT_INTERVAL_MS</td><td class="num">5000</td><td>Push interval</td></tr>
-            <tr><td>POLYWIRE_OTEL_HEADERS</td><td class="num">—</td><td>Comma-separated key=value request headers (e.g. an API key)</td></tr>
-            <tr><td>POLYWIRE_METRICS_PORT</td><td class="num">19090</td><td>Prometheus <code>/metrics</code> scrape port</td></tr>
-            <tr><td>POLYWIRE_ADMIN_TOKEN</td><td class="num">—</td><td>Bearer auth on <code>/metrics</code>, if set</td></tr>
+            <tr><td>WARP_OTEL_PROTOCOL</td><td class="num">grpc</td><td><code>grpc</code> or <code>http</code></td></tr>
+            <tr><td>WARP_OTEL_ENDPOINT</td><td class="num">http://localhost:4317</td><td>Collector/backend endpoint (defaults to :4318 when protocol=http)</td></tr>
+            <tr><td>WARP_OTEL_EXPORT_INTERVAL_MS</td><td class="num">5000</td><td>Push interval</td></tr>
+            <tr><td>WARP_OTEL_HEADERS</td><td class="num">—</td><td>Comma-separated key=value request headers (e.g. an API key)</td></tr>
+            <tr><td>WARP_METRICS_PORT</td><td class="num">19090</td><td>Prometheus <code>/metrics</code> scrape port</td></tr>
+            <tr><td>WARP_ADMIN_TOKEN</td><td class="num">—</td><td>Bearer auth on <code>/metrics</code>, if set</td></tr>
           </tbody>
         </table>
       </div>
@@ -604,7 +604,7 @@
         <div class="obsCard">
           <div class="obsPills"><span class="obsPill direct">Direct OTLP</span></div>
           <h4>New Relic</h4>
-          <p>Push OTLP straight to <code>otlp.nr-data.net:4317</code> with your API key in <code>POLYWIRE_OTEL_HEADERS</code>. No collector hop.</p>
+          <p>Push OTLP straight to <code>otlp.nr-data.net:4317</code> with your API key in <code>WARP_OTEL_HEADERS</code>. No collector hop.</p>
         </div>
         <div class="obsCard">
           <div class="obsPills"><span class="obsPill collector">Via Collector</span></div>
@@ -642,7 +642,7 @@
         existed, a narration always comes with the real fact it describes, and anything that
         actually runs still passes through Warp's own firewall/QoS/pipeline like every other
         statement. All ten read one shared LLM provider config
-        (<code>POLYWIRE_LLM_PROVIDER</code>/<code>API_KEY</code>/<code>BASE_URL</code>/<code>MODEL</code>,
+        (<code>WARP_LLM_PROVIDER</code>/<code>API_KEY</code>/<code>BASE_URL</code>/<code>MODEL</code>,
         hot-reloadable via <code>PUT /api/llm-config</code> with no restart) — configure it once,
         every feature below picks it up.
       </p>
@@ -654,7 +654,7 @@
           SQLSTATEs (syntax error, undefined function, datatype mismatch, feature not supported —
           never "this table doesn't exist," which no LLM can fix), the LLM gets one shot at
           rewriting it, retried exactly once. Any second failure surfaces the ORIGINAL Postgres
-          error, not a confusing second one. Set <code>POLYWIRE_QUERY_REPAIR_ENABLED=true</code> to
+          error, not a confusing second one. Set <code>WARP_QUERY_REPAIR_ENABLED=true</code> to
           enable — off by default since rewriting a rejected statement is more invasive than
           translating a known dialect gap.</p>
         </div>
@@ -676,7 +676,7 @@
           by default, with a minimum-rate floor so near-zero traffic isn't flagged on noise. The
           LLM's only job is turning that into one plain-English sentence; with no LLM configured,
           the raw numeric anomaly is still recorded. Set
-          <code>POLYWIRE_ANOMALY_SCAN_INTERVAL_MINUTES=&lt;n&gt;</code> to enable, read back via
+          <code>WARP_ANOMALY_SCAN_INTERVAL_MINUTES=&lt;n&gt;</code> to enable, read back via
           <code>GET /api/anomalies</code>.</p>
         </div>
         <div class="obsCard">
@@ -768,22 +768,22 @@
       </p>
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">SQL firewall</span><span class="uc-desc">Allow/deny rules matched on statement type, table (glob), and a SQL regex, stored in Postgres and pushed live to every node over LISTEN/NOTIFY — no restart to change a rule. Stacked-query injection (<code>SELECT ...; DROP TABLE ...</code>) is blocked unconditionally, independent of any rule. Rules are process-wide today, not yet per-tenant or per-role, and the only actions are allow/deny — no rate-limit or log-only action.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Connection ACL</span><span class="uc-desc">CIDR allow/deny lists, fail-closed once any rule is configured, enforced at accept time on every TCP wire protocol, every HTTP endpoint, and gRPC. PROXY protocol v2 preserves the real client IP behind a load balancer. Configure <code>POLYWIRE_ACL_TRUSTED_PROXIES</code> for HTTP endpoints — without it, the first <code>X-Forwarded-For</code> hop is trusted, which a client in front of an untrusted proxy could spoof.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Connection ACL</span><span class="uc-desc">CIDR allow/deny lists, fail-closed once any rule is configured, enforced at accept time on every TCP wire protocol, every HTTP endpoint, and gRPC. PROXY protocol v2 preserves the real client IP behind a load balancer. Configure <code>WARP_ACL_TRUSTED_PROXIES</code> for HTTP endpoints — without it, the first <code>X-Forwarded-For</code> hop is trusted, which a client in front of an untrusted proxy could spoof.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">A real token-bucket limiter — rate, burst, and max-wait, configurable per workload class (query/write/ddl/txn) — plus shedding when a backend's connection pool is saturated. Today the limiter is per-workload-class and process-wide, not yet per-tenant or per-client.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>POLYWIRE_AUTH_MODE=postgres_roles</code> and Warp verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>POLYWIRE_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>WARP_AUTH_MODE=postgres_roles</code> and Warp verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>WARP_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">TLS everywhere</span><span class="uc-desc">In-band TLS for Postgres, MySQL, and SQL Server wire protocols (standard client <code>sslmode</code>/encryption settings just work), a dedicated TCPS port for Oracle, TLS for gRPC, and mutual TLS between cluster nodes for cache traffic — all from one PKCS12 keystore. Client-certificate authentication isn't implemented yet; TLS today verifies the server to the client, not the client to the server.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>NEXAGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and Warp logs a warning at startup saying so.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API accepts either of two auth paths, simultaneously — a shared bearer token (<code>POLYWIRE_ADMIN_TOKEN</code>, constant-time compare) that always grants full read+write access, the simplest option for a single operator, CI, or a quick trial; or real SSO — Okta, Entra ID, or any OIDC-compliant IdP, via the same <code>POLYWIRE_OAUTH_ISSUER</code> config as every other OIDC-backed surface on this page. With SSO, a caller's IdP group or app-role claim (<code>POLYWIRE_OAUTH_ROLES_CLAIM</code>) is checked against <code>POLYWIRE_OAUTH_ADMIN_ROLES</code>/<code>POLYWIRE_OAUTH_VIEWER_ROLES</code> to grant either read-only viewer access or full admin — an SSO caller with neither role name is denied, not silently downgraded to viewer. Every mutating call made through either path is recorded to the audit log, attributed to the real SSO identity when there is one, or plainly to <code>"shared-admin-token"</code> when there isn't. Turning SSO on doesn't retire the shared token — both stay live together, and either one alone fails closed the same way the single-token setup always did.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API accepts either of two auth paths, simultaneously — a shared bearer token (<code>WARP_ADMIN_TOKEN</code>, constant-time compare) that always grants full read+write access, the simplest option for a single operator, CI, or a quick trial; or real SSO — Okta, Entra ID, or any OIDC-compliant IdP, via the same <code>WARP_OAUTH_ISSUER</code> config as every other OIDC-backed surface on this page. With SSO, a caller's IdP group or app-role claim (<code>WARP_OAUTH_ROLES_CLAIM</code>) is checked against <code>WARP_OAUTH_ADMIN_ROLES</code>/<code>WARP_OAUTH_VIEWER_ROLES</code> to grant either read-only viewer access or full admin — an SSO caller with neither role name is denied, not silently downgraded to viewer. Every mutating call made through either path is recorded to the audit log, attributed to the real SSO identity when there is one, or plainly to <code>"shared-admin-token"</code> when there isn't. Turning SSO on doesn't retire the shared token — both stay live together, and either one alone fails closed the same way the single-token setup always did.</span></span></li>
       </ul>
       <p class="statTeaser">Row-level security, for real — your own Postgres RLS policies do the filtering, not Warp rewriting SQL.</p>
       <details class="methodDetails">
         <summary>See RLS detail and requirements →</summary>
       <p class="rttNote">
-        <b>Row-level security, for real:</b> under <code>POLYWIRE_AUTH_MODE=postgres_roles</code>
-        (Postgres, SQL Server) or <code>POLYWIRE_AUTH_CREDENTIALS</code> (Oracle), every login sets
-        <code>polywire.user_id</code> as a session GUC on the backend connection before each
+        <b>Row-level security, for real:</b> under <code>WARP_AUTH_MODE=postgres_roles</code>
+        (Postgres, SQL Server) or <code>WARP_AUTH_CREDENTIALS</code> (Oracle), every login sets
+        <code>warp.user_id</code> as a session GUC on the backend connection before each
         statement — filtering is enforced by your own Postgres RLS policies
-        (<code>USING (owner_user = current_setting('polywire.user_id'))</code>-style), not by
+        (<code>USING (owner_user = current_setting('warp.user_id'))</code>-style), not by
         Warp rewriting SQL. This holds even fronted by the Oracle wire protocol: orawire's SQL
         translation always executes against Postgres, so the same Postgres RLS mechanism applies —
         no separate Oracle VPD/<code>SYS_CONTEXT</code> setup needed, since there's no real Oracle
@@ -810,7 +810,7 @@
       </p>
       <ul class="usecases">
         <li><span class="uc-body"><span class="uc-title">Planned switchover</span><span class="uc-desc"><code>POST /api/backends/{name}/drain</code> stops routing new statements to a backend in favor of a configured fallback (a same-region replica or another region's backend — the mechanism doesn't distinguish the two), then waits (bounded by <code>graceMs</code>) for its connection pool to empty before closing it. It also waits for the fallback to reach real zero replication lag before reporting success — a planned window has no outage forcing an immediate cutover, so it actually waits for a clean one. Refuses (409) to drain a backend with any unresolved in-doubt XA transaction against it, and fans the call out to every other node in the cluster (not just whichever one received the HTTP request) so a switchover is genuinely cluster-wide, not single-node.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Unplanned failover</span><span class="uc-desc">A background prober re-checks every backend's connectivity (<code>POLYWIRE_BACKEND_HEALTH_CHECK_SECONDS</code>, default 15s) and automatically redirects new statements to a backend's fallback the moment it stops responding — no operator, no admin call. Set <code>POLYWIRE_FAILOVER_MAX_LAG_SECONDS</code> to name the replication lag (the data loss) you're willing to accept from an outage nobody scheduled; exceeding it doesn't block the failover — refusing to redirect would only trade a bounded loss for a total outage — but it does log loudly, exactly what a real alert should page on.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Unplanned failover</span><span class="uc-desc">A background prober re-checks every backend's connectivity (<code>WARP_BACKEND_HEALTH_CHECK_SECONDS</code>, default 15s) and automatically redirects new statements to a backend's fallback the moment it stops responding — no operator, no admin call. Set <code>WARP_FAILOVER_MAX_LAG_SECONDS</code> to name the replication lag (the data loss) you're willing to accept from an outage nobody scheduled; exceeding it doesn't block the failover — refusing to redirect would only trade a bounded loss for a total outage — but it does log loudly, exactly what a real alert should page on.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Crash-safe recovery, even after a switchover</span><span class="uc-desc">An in-doubt two-phase-commit branch records the exact backend (jdbc URL, user, password) it was prepared against, not just its name — so if that name gets repointed to a different physical target between the crash and the next restart (a switchover, a credential rotation, a config edit), startup recovery still reconnects to where the branch actually lives, not wherever the name currently resolves to.</span></span></li>
       </ul>
       <p class="rttNote">
@@ -857,7 +857,7 @@
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/polywire/README.md">polywire/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

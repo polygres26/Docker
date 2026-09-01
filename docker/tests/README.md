@@ -1,4 +1,4 @@
-# Polywire smoke tests
+# Warp smoke tests
 
 Real client libraries, real protocols, one basic smoke test per wire protocol frontend —
 verifying `ghcr.io/polygres26/warp` actually works, with **no source checkout required**.
@@ -7,9 +7,9 @@ whichever fits your stack — they're not duplicates of each other, just two ind
 
 Every frontend translates to the *same* Postgres underneath, so there's no real Oracle/SQL
 Server/MongoDB/DynamoDB behind any of these ports — `docker-compose.test.yml` only needs one
-Postgres container plus Polywire itself.
+Postgres container plus Warp itself.
 
-## 1. Start Polywire
+## 1. Start Warp
 
 ```bash
 docker compose -f docker-compose.test.yml up -d
@@ -18,8 +18,8 @@ docker compose -f docker-compose.test.yml up -d
 Wait for both services to report healthy (`docker compose -f docker-compose.test.yml ps`), or
 just re-run the test suite below a couple of times — each test connects fresh.
 
-Already have Polywire running some other way? Skip this step and set `POLYWIRE_HOST` (and the
-per-protocol `POLYWIRE_*_PORT` env vars, if you remapped any ports) instead of using the compose
+Already have Warp running some other way? Skip this step and set `WARP_HOST` (and the
+per-protocol `WARP_*_PORT` env vars, if you remapped any ports) instead of using the compose
 file's defaults.
 
 ## 2. Run the tests

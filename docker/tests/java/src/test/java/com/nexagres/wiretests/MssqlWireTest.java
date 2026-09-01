@@ -38,10 +38,10 @@ class MssqlWireTest {
         String table = "mssqlwire_smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         try (Connection conn = connect(); Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE " + table + " (id INT PRIMARY KEY, name TEXT)");
-            st.execute("INSERT INTO " + table + " (id, name) VALUES (1, 'polywire')");
+            st.execute("INSERT INTO " + table + " (id, name) VALUES (1, 'warp')");
             try (ResultSet rs = st.executeQuery("SELECT name FROM " + table + " WHERE id = 1")) {
                 rs.next();
-                assertEquals("polywire", rs.getString(1));
+                assertEquals("warp", rs.getString(1));
             }
             st.execute("DROP TABLE " + table);
         }

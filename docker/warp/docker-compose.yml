@@ -1,8 +1,8 @@
 version: "3.8"
 
-# Run from the repo root: docker compose -f docker/polywire/docker-compose.yml up --build
-# Brings up a real Postgres backend plus PolyWire itself, wired together -- enough to point psql/
-# any of PolyWire's other client protocols at localhost and get a real, working gateway.
+# Run from the repo root: docker compose -f docker/warp/docker-compose.yml up --build
+# Brings up a real Postgres backend plus Warp itself, wired together -- enough to point psql/
+# any of Warp's other client protocols at localhost and get a real, working gateway.
 
 services:
   postgres:
@@ -14,43 +14,43 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - polywire-postgres-data:/var/lib/postgresql/data
+      - warp-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  polywire:
+  warp:
     build:
       context: ../..
-      dockerfile: docker/polywire/Dockerfile
+      dockerfile: docker/warp/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      # The one real backend every control-plane table (polywire_config, polywire_firewall_rules,
-      # polywire_translation_cache, polywire_failed_statements) and, by default, all query traffic
+      # The one real backend every control-plane table (warp_config, warp_firewall_rules,
+      # warp_translation_cache, warp_failed_statements) and, by default, all query traffic
       # target -- see PgConnections'/BackendTarget's javadoc for the "config primary vs. sharded
-      # data plane" split if POLYWIRE_BACKENDS is ever added here.
-      POLYWIRE_HOST: postgres
-      POLYWIRE_PORT: "5432"
-      POLYWIRE_DATABASE: postgres
-      POLYWIRE_USER: postgres
-      POLYWIRE_PASSWORD: postgres
+      # data plane" split if WARP_BACKENDS is ever added here.
+      WARP_HOST: postgres
+      WARP_PORT: "5432"
+      WARP_DATABASE: postgres
+      WARP_USER: postgres
+      WARP_PASSWORD: postgres
       # Shared dev credential for every wire-protocol frontend's default (non-postgres_roles) auth
       # -- see com.nexagres.wire.auth.CredentialStore's javadoc. Change for anything beyond local
-      # dev/test; consider POLYWIRE_AUTH_MODE=postgres_roles for real per-role Postgres auth instead
+      # dev/test; consider WARP_AUTH_MODE=postgres_roles for real per-role Postgres auth instead
       # (see com.nexagres.wire.auth.PgRoleAuthCache's javadoc).
-      POLYWIRE_AUTH_USER: postgres
-      POLYWIRE_AUTH_PASSWORD: postgres
+      WARP_AUTH_USER: postgres
+      WARP_AUTH_PASSWORD: postgres
     ports:
       - "15432:15432" # pgwire (Postgres wire protocol)
       - "13306:13306" # mywire (MySQL wire protocol)
       - "11521:11521" # orawire (Oracle TNS/TTC)
       - "14333:14333" # mssqlwire (SQL Server TDS)
       - "27017:27017" # mongowire (MongoDB wire protocol)
-      - "7070:7070"   # gRPC (PolyWire's own native driver protocol)
+      - "7070:7070"   # gRPC (Warp's own native driver protocol)
       - "18000:18000" # dynamowire (DynamoDB HTTP/JSON)
       - "9324:9324"   # sqswire (Amazon SQS HTTP/JSON)
       - "9200:9200"   # oswire (OpenSearch HTTP/JSON)
@@ -59,4 +59,4 @@ services:
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 
 volumes:
-  polywire-postgres-data:
+  warp-postgres-data:

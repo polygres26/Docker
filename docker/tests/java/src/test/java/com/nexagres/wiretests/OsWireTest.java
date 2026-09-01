@@ -33,7 +33,7 @@ class OsWireTest {
         String index = "smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
         Map<String, Object> doc1 = new HashMap<>();
-        doc1.put("name", "polywire");
+        doc1.put("name", "warp");
         doc1.put("category", "gateway");
         c.index(r -> r.index(index).id("1").document(doc1).refresh(
                 org.opensearch.client.opensearch._types.Refresh.True));
@@ -50,7 +50,7 @@ class OsWireTest {
 
         assertEquals(1, response.hits().hits().size());
         assertEquals("1", response.hits().hits().get(0).id());
-        assertEquals("polywire", response.hits().hits().get(0).source().get("name"));
+        assertEquals("warp", response.hits().hits().get(0).source().get("name"));
     }
 
     @Test
@@ -59,12 +59,12 @@ class OsWireTest {
         String index = "smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
         Map<String, Object> doc = new HashMap<>();
-        doc.put("name", "polywire");
+        doc.put("name", "warp");
         c.index(r -> r.index(index).id("1").document(doc));
 
         var got = c.get(g -> g.index(index).id("1"), Map.class);
         assertTrue(got.found());
-        assertEquals("polywire", got.source().get("name"));
+        assertEquals("warp", got.source().get("name"));
 
         c.delete(d -> d.index(index).id("1"));
         var afterDelete = c.get(g -> g.index(index).id("1"), Map.class);
@@ -107,7 +107,7 @@ class OsWireTest {
         OpenSearchClient c = client();
         String index = "smoke_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
-        index(c, index, "1", Map.of("description", "a polywire gateway", "vector", List.of(0.1, 0.2, 0.3, 0.4)));
+        index(c, index, "1", Map.of("description", "a warp gateway", "vector", List.of(0.1, 0.2, 0.3, 0.4)));
         index(c, index, "2", Map.of("description", "unrelated text", "vector", List.of(0.9, 0.8, 0.1, 0.05)));
         c.indices().refresh(r -> r.index(index));
 
@@ -116,7 +116,7 @@ class OsWireTest {
         // for this one query shape, same raw wire request any real client (including
         // opensearch-py, used for this same scenario in docker/tests/python) sends underneath.
         String body = "{\"query\":{\"hybrid\":{\"queries\":["
-                + "{\"match\":{\"description\":\"polywire\"}},"
+                + "{\"match\":{\"description\":\"warp\"}},"
                 + "{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":2}}}"
                 + "]}}}";
         var httpClient = java.net.http.HttpClient.newHttpClient();

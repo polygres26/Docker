@@ -36,8 +36,8 @@ scatter-gather path's own broadcast-and-merge. See
 ![Warp architecture: nine client protocols (OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP) feed a shared eight-stage pipeline -- frontends, firewall, router, QoS, dialect translation, rollup, cache, stats collector -- each paired with the customer outcome it drives, backed by a Postgres control plane over LISTEN/NOTIFY and executing against horizontally-sharded Postgres backends](docs/architecture.png)
 
 The full architecture, security, HA, and deployment guide with more diagrams lives at
-[`polywire/index.html`](https://polygres26.github.io/polywire/) (or open it directly:
-[polywire/index.html](https://github.com/polygres26/polygres26.github.io/blob/main/polywire/index.html)).
+[`warp/index.html`](https://polygres26.github.io/warp/) (or open it directly:
+[warp/index.html](https://github.com/polygres26/polygres26.github.io/blob/main/warp/index.html)).
 
 ## Quick start
 

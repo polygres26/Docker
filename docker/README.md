@@ -26,16 +26,16 @@ the `polyadvisor-data` volume across restarts.
 docker run \
   -p 15432:15432 -p 13306:13306 -p 11521:11521 -p 14333:14333 -p 27017:27017 \
   -p 18000:18000 -p 9324:9324 -p 7070:7070 -p 19090:19090 \
-  -e POLYWIRE_HOST=<your-postgres-host> \
-  -e POLYWIRE_PORT=5432 \
-  -e POLYWIRE_DATABASE=postgres \
-  -e POLYWIRE_USER=postgres \
-  -e POLYWIRE_PASSWORD=<password> \
+  -e WARP_HOST=<your-postgres-host> \
+  -e WARP_PORT=5432 \
+  -e WARP_DATABASE=postgres \
+  -e WARP_USER=postgres \
+  -e WARP_PASSWORD=<password> \
   ghcr.io/polygres26/warp:latest
 ```
 
-Point it at a real Postgres backend via `POLYWIRE_*`. Every other setting is an env var with a
-documented default — see `polywire/README.md` in this repo for the full port list and
+Point it at a real Postgres backend via `WARP_*`. Every other setting is an env var with a
+documented default — see `warp/README.md` in this repo for the full port list and
 configuration reference. The admin app (Metrics, Topology, SQL Firewall, ACL, OAuth, LLM
 configuration, and more) is baked into the image and served on port `19090` — no separate setup
 needed, just open it in a browser.
@@ -66,7 +66,7 @@ running against these published images directly, no source checkout required. Se
 
 ## Image packaging reference
 
-`polywire/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
+`warp/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
 `wire/` and `dms/` (formerly `advisor/`), which live in NexaGres's private source repos — they're

@@ -1,9 +1,9 @@
--- PolyWire: optional Oracle built-in function compatibility shims for Postgres.
+-- Warp: optional Oracle built-in function compatibility shims for Postgres.
 --
--- PolyWire never modifies your backend's schema on its own -- install this file once, by hand,
+-- Warp never modifies your backend's schema on its own -- install this file once, by hand,
 -- only if your own application queries (or a real Oracle client's own internal behavior, like
 -- SQL*Plus's connection-banner probe) call an Oracle built-in function Postgres doesn't have.
--- PolyWire's dialect translation rewrites the *shape* of a query (table/column references,
+-- Warp's dialect translation rewrites the *shape* of a query (table/column references,
 -- SYS.DUAL, etc.) but does not invent missing Oracle built-in *functions* on your behalf --
 -- that's what this file is for.
 --
@@ -44,7 +44,7 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 -- XS_SYS_CONTEXT('XS$SESSION', 'USERNAME') as part of its own internal startup probe
 -- (`SELECT DECODE(USER, 'XS$NULL', XS_SYS_CONTEXT('XS$SESSION','USERNAME'), USER) FROM SYS.DUAL`,
 -- run automatically right after login to populate its own "Connected to ... as USER" banner
--- line) -- PolyWire already recognizes and rewrites that exact query internally (see
+-- line) -- Warp already recognizes and rewrites that exact query internally (see
 -- DualTableRewriter.SQLPLUS_STARTUP_USER_PROBE), so a stock SQL*Plus session needs none of this
 -- file to work. This function exists for application code that calls XS_SYS_CONTEXT directly,
 -- for any other namespace/parameter pair. Only the one pair with real, known meaning here is

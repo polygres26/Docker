@@ -34,7 +34,7 @@ instead of re-deriving it from the whole site.
 
 ## Warp
 
-- [Main page](https://nexagres.com/#polywire): the pitch -- what Warp is, a live
+- [Main page](https://nexagres.com/#warp): the pitch -- what Warp is, a live
   "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
   protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
   architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
@@ -42,7 +42,7 @@ instead of re-deriving it from the whole site.
   click deeper on the same page, collapsed by default under "Explore Warp in depth" (the
   standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
   databases" use case and the live Oracle demo, both already on the page).
-- [Full capabilities](https://nexagres.com/polywire/): outcomes (organized by the
+- [Full capabilities](https://nexagres.com/warp/): outcomes (organized by the
   five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
   architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
   observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
@@ -88,7 +88,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
 - Security features implemented today: SQL firewall (stacked-query injection blocked
   unconditionally), connection ACL (CIDR allow/deny, PROXY protocol v2), QoS admission control
   (token-bucket, per workload class), authentication (real Postgres role verification via
-  POLYWIRE_AUTH_MODE=postgres_roles, or per-user credentials for Oracle), TLS everywhere, secrets
+  WARP_AUTH_MODE=postgres_roles, or per-user credentials for Oracle), TLS everywhere, secrets
   management (Vault/CyberArk), and admin API auth -- either a shared bearer token or real SSO
   (Okta, Entra ID, any OIDC IdP) with read-vs-write roles resolved from an IdP group/app-role
   claim, both usable at once, mutating admin actions recorded to an audit log.
@@ -112,7 +112,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
   context, so a cross-protocol hit happens when a request from one protocol translates to the same
   SQL as a request from another (the common case for a plain `SELECT ... WHERE id = ?` shape) --
   not a query-plan-equivalence engine. See
-  [Cache vs. round trip](https://nexagres.com/polywire/#cache-vs-round-trip)
+  [Cache vs. round trip](https://nexagres.com/warp/#cache-vs-round-trip)
   for the full mechanism and per-protocol benchmarks.
 - InfluxDB (influxwire): real InfluxDB v1 line-protocol writes (`POST /write`) and a bounded
   InfluxQL read path (`WHERE`, `GROUP BY time()`, `mean/sum/count/min/max`) against Postgres --

@@ -612,11 +612,11 @@ hold a full copy if reachable, not that reads stay consistent during a partition
 ## 5. Deploying on a laptop (fastest path)
 
 ```bash
-docker compose -f docker/polywire/docker-compose.yml up --build
+docker compose -f docker/warp/docker-compose.yml up --build
 ```
 
 Run from the **repo root** — the build context is the repo root even though the Dockerfile
-lives under `docker/polywire/` (see `docker/polywire/README.md` for why). Bring your own
+lives under `docker/warp/` (see `docker/warp/README.md` for why). Bring your own
 Postgres, or point `WARP_*` at one running elsewhere — no cloud account, no Kubernetes
 required for a full local smoke test.
 
@@ -665,7 +665,7 @@ flowchart TB
 - **`WARP_TRUSTED_BACKEND_HOSTS`** must be set at deploy time (env var / secret /
   Kubernetes `NetworkPolicy`-equivalent) — this is infrastructure config, not something to put
   in application config management that developers can edit.
-- **Container image**: build with `docker/polywire/Dockerfile`, push to a registry (e.g.
+- **Container image**: build with `docker/warp/Dockerfile`, push to a registry (e.g.
   `ghcr.io` — see the repo root `.env.example` for the token fields needed), deploy via your
   platform's normal rolling update mechanism (ECS service, GKE/EKS Deployment, etc.).
 - **Secrets**: `WARP_PASSWORD`, `WARP_AWS_IAM_CREDENTIALS`, OAuth client secrets, and
@@ -683,7 +683,7 @@ flowchart TB
 
 | | Detail |
 |---|---|
-| Image | 1 — `docker/polywire/Dockerfile` |
+| Image | 1 — `docker/warp/Dockerfile` |
 | Base (build) | `maven:3.9-eclipse-temurin-21` |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` |
 | Published ports | 15432 (pgwire), 13306 (mywire), 11521/2484 (orawire plaintext/TLS), 14333 (mssqlwire), 27017 (mongowire), 7070/17071 (gRPC plaintext/TLS), 18000 (dynamowire), 9324 (sqswire), 18010 (MCP), 19090 (admin/metrics) |
@@ -693,7 +693,7 @@ flowchart TB
 Build standalone (no compose), from the repo root:
 
 ```bash
-docker build -f docker/polywire/Dockerfile -t warp:latest .
+docker build -f docker/warp/Dockerfile -t warp:latest .
 ```
 
 ---

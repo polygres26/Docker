@@ -36,11 +36,11 @@ class SqsWireTest {
         String queueName = "smoke-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         String queueUrl = c.createQueue(CreateQueueRequest.builder().queueName(queueName).build()).queueUrl();
         try {
-            c.sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody("hello from polywire").build());
+            c.sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody("hello from warp").build());
             List<Message> messages = c.receiveMessage(ReceiveMessageRequest.builder()
                     .queueUrl(queueUrl).maxNumberOfMessages(1).waitTimeSeconds(2).build()).messages();
             assertEquals(1, messages.size());
-            assertEquals("hello from polywire", messages.get(0).body());
+            assertEquals("hello from warp", messages.get(0).body());
             c.deleteMessage(DeleteMessageRequest.builder()
                     .queueUrl(queueUrl).receiptHandle(messages.get(0).receiptHandle()).build());
         } finally {

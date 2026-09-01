@@ -18,9 +18,9 @@ def test_insert_and_find_by_id():
     try:
         db = c[f"smoke_{uuid.uuid4().hex[:8]}"]
         coll = db["widgets"]
-        doc_id = coll.insert_one({"name": "polywire"}).inserted_id
+        doc_id = coll.insert_one({"name": "warp"}).inserted_id
         found = coll.find_one({"_id": doc_id})
-        assert found["name"] == "polywire"
+        assert found["name"] == "warp"
     finally:
         c.close()
 

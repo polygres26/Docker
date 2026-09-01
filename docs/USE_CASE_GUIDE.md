@@ -325,7 +325,7 @@ Both modules have a Docker Compose file that needs nothing but Docker Desktop.
 **Warp** (gateway only, bring your own Postgres or point at one running elsewhere):
 
 ```bash
-docker compose -f docker/polywire/docker-compose.yml up --build
+docker compose -f docker/warp/docker-compose.yml up --build
 ```
 
 **Nexagres DMS** (one container — API + SPA served together by embedded Jetty):
@@ -387,7 +387,7 @@ flowchart TB
 - **`WARP_TRUSTED_BACKEND_HOSTS`** must be set at deploy time (env var / secret /
   Kubernetes `NetworkPolicy`-equivalent) — this is infrastructure config, not something to put
   in application config management that developers can edit.
-- **Container images**: build with the Dockerfiles under `docker/polywire/` and
+- **Container images**: build with the Dockerfiles under `docker/warp/` and
   `docker/dms/`, push to a registry (e.g. `ghcr.io` — see the repo root
   `.env.example` for the token fields needed), deploy via your platform's normal rolling
   update mechanism (ECS service, GKE/EKS Deployment, etc.).
@@ -405,7 +405,7 @@ flowchart TB
 
 | | Warp | Nexagres DMS |
 |---|---|---|
-| Images | 1 (`docker/polywire/Dockerfile`) | 1 (`docker/dms/Dockerfile`) — API + SPA in one container |
+| Images | 1 (`docker/warp/Dockerfile`) | 1 (`docker/dms/Dockerfile`) — API + SPA in one container |
 | Base (build) | `maven:3.9-eclipse-temurin-21` | same, plus a `node:22-alpine` stage to build the SPA |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
@@ -417,7 +417,7 @@ Build standalone (no compose):
 
 ```bash
 # from repo root
-docker build -f docker/polywire/Dockerfile -t warp:latest .
+docker build -f docker/warp/Dockerfile -t warp:latest .
 docker build -f docker/dms/Dockerfile -t nexagres-dms:latest .
 ```
 

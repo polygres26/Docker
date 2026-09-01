@@ -1,6 +1,6 @@
 """dynamowire: real DynamoDB HTTP/JSON API, real boto3 client, translated to Postgres
 underneath. Dummy static credentials are enough since AWS SigV4 request verification is opt-in
-(POLYWIRE_AWS_IAM_CREDENTIALS, unset in the test compose file).
+(WARP_AWS_IAM_CREDENTIALS, unset in the test compose file).
 """
 import uuid
 
@@ -28,8 +28,8 @@ def test_create_table_put_get_item():
         BillingMode="PAY_PER_REQUEST",
     )
     try:
-        c.put_item(TableName=table, Item={"id": {"S": "1"}, "name": {"S": "polywire"}})
+        c.put_item(TableName=table, Item={"id": {"S": "1"}, "name": {"S": "warp"}})
         item = c.get_item(TableName=table, Key={"id": {"S": "1"}})["Item"]
-        assert item["name"]["S"] == "polywire"
+        assert item["name"]["S"] == "warp"
     finally:
         c.delete_table(TableName=table)

@@ -27,7 +27,7 @@
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
       <a href="/">Home</a>
-      <a href="/polywire/">Warp</a>
+      <a href="/warp/">Warp</a>
       <a href="/dms/">Ferry</a>
       <a href="/mach.html">Mach</a>
       <a href="/db-compat/">Shim</a>
@@ -77,23 +77,23 @@
         Every one of these keeps the same split every Warp AI feature does: a deterministic
         decision stays deterministic (the read-only check, the firewall rule, the ACL match), the
         LLM only drafts, phrases, or judges — see
-        <a href="/polywire/#ai-features">all ten AI features Warp has, beyond MCP →</a>.
+        <a href="/warp/#ai-features">all ten AI features Warp has, beyond MCP →</a>.
       </p>
 
       <h3 class="subhead" id="mcp-governance">Same policy, same audit trail<a class="permalink" href="#mcp-governance" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">SQL firewall + ACL</span><span class="uc-desc">An MCP-issued statement is checked against the exact same firewall rules and connection ACL as any other protocol's traffic — no MCP-specific bypass. <a href="/polywire/#security">Security detail →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">SQL firewall + ACL</span><span class="uc-desc">An MCP-issued statement is checked against the exact same firewall rules and connection ACL as any other protocol's traffic — no MCP-specific bypass. <a href="/warp/#security">Security detail →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">An agent making many calls in a burst is rate-limited and shed under load the same way any workload class is. <a href="/#qos">QoS detail →</a></span></span></li>
         <li><span class="uc-body"><span class="uc-title">Audit + summarization</span><span class="uc-desc">Every MCP tool call lands a real audit event — tool, arguments, success/failure — with an LLM able to summarize recent activity for a human reviewer on request.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">OIDC/JWT bearer auth</span><span class="uc-desc">The MCP endpoint supports OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured — the same auth model the admin API uses.</span></span></li>
       </ul>
 
-      <p class="rttNote"><a href="/polywire/">Explore Warp in depth — detailed architecture, comparison →</a></p>
+      <p class="rttNote"><a href="/warp/">Explore Warp in depth — detailed architecture, comparison →</a></p>
     </section>
 
     <footer>
       Source for all tools is private; this is the public documentation and image surface.
-      Full setup reference: <a href="/README.md">README.md</a>, <a href="/polywire/README.md">polywire/</a>,
+      Full setup reference: <a href="/README.md">README.md</a>, <a href="/warp/README.md">warp/</a>,
       <a href="/dms/README.md">dms/</a> in this repo; the DB compatibility layer's own source and README live in a separate repo, github.com/polygres26/DB.
     </footer>
   </main>

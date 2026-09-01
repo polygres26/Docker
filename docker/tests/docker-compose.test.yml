@@ -1,10 +1,10 @@
-# Spins up a real, disposable Postgres backend plus PolyWire itself, using the published images
+# Spins up a real, disposable Postgres backend plus Warp itself, using the published images
 # (no source checkout, no `mvn`/`npm` build) -- everything a wire-protocol client needs to talk
 # to is on localhost once `docker compose up` reports both services healthy.
 #
 # Every wire protocol frontend translates to the *same* Postgres underneath, so one backend
 # container is all this needs -- there's no real Oracle/SQL Server/MongoDB/DynamoDB behind any
-# of these ports, only Postgres. That's the whole point of PolyWire.
+# of these ports, only Postgres. That's the whole point of Warp.
 #
 # Usage: see ../../tests/README.md (or the sibling python/java dirs directly).
 
@@ -21,29 +21,29 @@ services:
       timeout: 3s
       retries: 20
 
-  polywire:
+  warp:
     image: ghcr.io/polygres26/warp:latest
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      POLYWIRE_HOST: postgres
-      POLYWIRE_PORT: "5432"
-      POLYWIRE_DATABASE: postgres
-      POLYWIRE_USER: postgres
-      POLYWIRE_PASSWORD: postgres
-      # POLYWIRE_AUTH_* is the *frontend* login credential every wire-protocol client
-      # authenticates with -- separate from POLYWIRE_* above (how PolyWire itself reaches the
+      WARP_HOST: postgres
+      WARP_PORT: "5432"
+      WARP_DATABASE: postgres
+      WARP_USER: postgres
+      WARP_PASSWORD: postgres
+      # WARP_AUTH_* is the *frontend* login credential every wire-protocol client
+      # authenticates with -- separate from WARP_* above (how Warp itself reaches the
       # real Postgres). Defaults to orapg/orapg if unset; set to postgres/postgres here so every
       # test below can just connect as user=postgres password=postgres, same as the backend.
-      POLYWIRE_AUTH_USER: postgres
-      POLYWIRE_AUTH_PASSWORD: postgres
-      POLYWIRE_ADMIN_TOKEN: test-admin-token
-      # PolyWire's out-of-the-box QoS default is intentionally conservative (5 requests/sec,
+      WARP_AUTH_USER: postgres
+      WARP_AUTH_PASSWORD: postgres
+      WARP_ADMIN_TOKEN: test-admin-token
+      # Warp's out-of-the-box QoS default is intentionally conservative (5 requests/sec,
       # burst 5) -- sensible for a real deployment, too tight for this suite's ~15 tests firing
       # in well under a second. Raised here for the test environment only.
-      POLYWIRE_QOS_RATE_PER_SEC: "200"
-      POLYWIRE_QOS_BURST: "400"
+      WARP_QOS_RATE_PER_SEC: "200"
+      WARP_QOS_BURST: "400"
     ports:
       - "15432:15432" # pgwire
       - "13306:13306" # mywire
