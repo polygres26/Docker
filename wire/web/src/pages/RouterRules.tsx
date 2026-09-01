@@ -52,7 +52,7 @@ function serializeTableShards(rows: TableShardRow[]): string {
  * Statement routing rules -- edits the `polywire_config.router*` fields RouterStage parses (see
  * RouterStage#reconfigure for the exact grammar). Raw spec editors for the older rule kinds, same
  * escape-hatch treatment as the SQL Firewall page's regex field: those formats are compact and
- * specific enough that reproducing NexaGate's own grammar directly is more honest than a leaky
+ * specific enough that reproducing Warp's own grammar directly is more honest than a leaky
  * friendly widget. Declarative table sharding gets a real structured editor instead (below) --
  * it's the mechanism meant to replace hand-written per-query schema-qualifier conventions with
  * one simple declaration per table, so the UI for it should be equally declarative, not another

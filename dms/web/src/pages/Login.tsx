@@ -33,7 +33,7 @@ export default function Login() {
           <div className={styles.brand}>
             <div className={styles.brandMark} />
             <div>
-              <p className={styles.title}>Nexagres DMS</p>
+              <p className={styles.title}>Nexagres Ferry</p>
               <p className={styles.subtitle}>Database Migration Service</p>
             </div>
           </div>

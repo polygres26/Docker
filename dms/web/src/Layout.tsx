@@ -13,7 +13,7 @@ import styles from './Layout.module.css'
 const MIGRATION_ADVISOR_ROUTES = ['/connections', '/reports', '/sizing']
 
 /**
- * Shell for every authenticated route. Nexagres DMS's two halves each get their own sidebar
+ * Shell for every authenticated route. Ferry's two halves each get their own sidebar
  * section: Migration Advisor -- per-database assessment tools (Connections, Reports, Sizing,
  * tabbed on one another, see DmsTabs) -- and Migration Service -- nexagres-migration's real
  * data-movement jobs and their live progress (the Data Sync page). Plus Configuration, settings
@@ -35,7 +35,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
             <span className={styles.railBrandTitle}>Nexagres</span>
-            <span className={styles.railBrandSub}>DMS</span>
+            <span className={styles.railBrandSub}>Ferry</span>
           </div>
         </div>
 

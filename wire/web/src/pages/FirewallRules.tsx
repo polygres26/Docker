@@ -10,7 +10,7 @@ import {
 
 /**
  * SQL Firewall rule management -- create/edit/delete against `polywire_firewall_rules`, straight
- * against NexaGate's own admin API. Changes take effect on every running NexaGate process within
+ * against Warp's own admin API. Changes take effect on every running Warp process within
  * milliseconds (LISTEN/NOTIFY), no restart.
  */
 export default function FirewallRules() {

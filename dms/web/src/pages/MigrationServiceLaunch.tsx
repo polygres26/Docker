@@ -146,7 +146,7 @@ function JobsPanel({ jobs, onStop }: { jobs: MigrationJobState[]; onStop: (id: s
   if (jobs.length === 0) return null
   return (
     <div className="panel" style={{ overflowX: 'auto' }}>
-      <h2 style={{ fontSize: 15, marginTop: 0, marginBottom: 12 }}>Jobs launched from this DMS process</h2>
+      <h2 style={{ fontSize: 15, marginTop: 0, marginBottom: 12 }}>Jobs launched from this Ferry process</h2>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
         <thead>
           <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>

@@ -5,7 +5,7 @@ import { type BackendInfo, type NodeInfo, type WireMetricsSummary, getWireMetric
 /**
  * Landing page after connecting -- modeled on versitygw's Admin Dashboard (see
  * https://github.com/versity/versitygw/wiki/WebGUI#admin-dashboard): a handful of stat cards
- * giving an at-a-glance read on gateway health before drilling into any one page. NexaGate has no
+ * giving an at-a-glance read on gateway health before drilling into any one page. Warp has no
  * single "uptime" figure exposed yet, so this leans on what /api/metrics/summary, /api/backends
  * and /api/nodes already report: throughput, backend count, and node topology health.
  */
@@ -59,7 +59,7 @@ export default function Dashboard() {
     <div>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Dashboard</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 24 }}>
-        Live snapshot of this NexaGate process -- throughput, configured backends, and node topology.
+        Live snapshot of this Warp process -- throughput, configured backends, and node topology.
       </p>
 
       {error && <div style={{ marginBottom: 16, color: 'var(--hard, crimson)', fontSize: 13 }}>{error}</div>}

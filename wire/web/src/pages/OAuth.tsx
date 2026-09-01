@@ -52,7 +52,7 @@ export default function OAuth() {
     <div style={{ maxWidth: 560 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>OAuth / OIDC</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Bearer-token verification for NexaGate's HTTP-facing surfaces. Leave the issuer blank to
+        Bearer-token verification for Warp's HTTP-facing surfaces. Leave the issuer blank to
         keep OAuth disabled.
       </p>
 
@@ -72,7 +72,7 @@ export default function OAuth() {
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Audience</div>
             <input type="text" value={audience} onChange={(e) => setAudience(e.target.value)}
-              placeholder="nexagate" style={{ width: '100%', padding: '8px 10px', fontSize: 14 }} />
+              placeholder="warp" style={{ width: '100%', padding: '8px 10px', fontSize: 14 }} />
           </label>
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>User-ID claim</div>
@@ -82,7 +82,7 @@ export default function OAuth() {
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Roles claim</div>
             <input type="text" value={rolesClaim} onChange={(e) => setRolesClaim(e.target.value)}
-              placeholder="https://nexagate/roles" style={{ width: '100%', padding: '8px 10px', fontSize: 14 }} />
+              placeholder="https://warp/roles" style={{ width: '100%', padding: '8px 10px', fontSize: 14 }} />
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
           {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
