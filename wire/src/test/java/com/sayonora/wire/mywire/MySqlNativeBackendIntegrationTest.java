@@ -2,6 +2,7 @@ package com.sayonora.wire.mywire;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.sayonora.wire.testsupport.RealMySql;
 import com.sayonora.wire.testsupport.RealPostgres;
@@ -9,7 +10,10 @@ import com.sayonora.wire.testsupport.WarpProcess;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +74,42 @@ class MySqlNativeBackendIntegrationTest {
             assertEquals("real-mysql-row", rs.getString(1),
                     "the value must come from the real MySQL table -- getting no row or a "
                             + "different value would mean native mode is still hitting Postgres");
+        }
+
+        // Proof this session's statements now run through the shared pipeline instead of the old
+        // JdbcBackendExecutor-direct bypass: a firewall DENY rule against a real MySQL-bound
+        // statement rejects it, exactly as it would for the default dialect-translated Postgres
+        // path. See MssqlNativeBackendIntegrationTest's identical extension for the full mechanism
+        // (warp_firewall_rules lives in Warp's own control-plane Postgres; its insert trigger
+        // NOTIFYs the running Warp process to reload live -- poll briefly since that's async).
+        try (Connection controlPlane = DriverManager.getConnection(
+                "jdbc:postgresql://" + postgres.host() + ":" + postgres.port() + "/" + postgres.database(),
+                postgres.username(), postgres.password());
+                Statement st = controlPlane.createStatement()) {
+            // sql_pattern, not table_pattern -- see MssqlNativeBackendIntegrationTest's identical
+            // rule for why (a plain table_pattern doesn't reliably match a schema-qualified FROM
+            // clause; sql_pattern's plain substring search is simpler and qualification-proof).
+            st.execute("INSERT INTO warp_firewall_rules (priority, action, statement_type, table_pattern, "
+                    + "sql_pattern, enabled, description) VALUES (100, 'deny', 'SELECT', NULL, "
+                    + "'native_test', true, 'block reads of native_test')");
+        }
+
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(10));
+        SQLException lastFailure = null;
+        while (Instant.now().isBefore(deadline)) {
+            try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
+                    Statement st = conn.createStatement()) {
+                st.executeQuery("SELECT label FROM native_test WHERE id = 1");
+                Thread.sleep(200);
+            } catch (SQLException e) {
+                lastFailure = e;
+                break;
+            }
+        }
+        if (lastFailure == null) {
+            fail("expected the firewall DENY rule (loaded live via warp_firewall_rules) to reject a "
+                    + "native-backend-mode SELECT against native_test within 10s -- native mode is still "
+                    + "bypassing FirewallStage");
         }
     }
 }

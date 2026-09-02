@@ -13,7 +13,6 @@ import com.sayonora.wire.core.SqlStateErrorMapper;
 import com.sayonora.wire.core.Statement;
 import com.sayonora.wire.core.StatementPipeline;
 import com.sayonora.wire.core.UntranslatableQueryException;
-import com.sayonora.wire.mssqlwire.MssqlBackendConnections;
 import com.sayonora.wire.mssqlwire.frontend.Login7Handler;
 import com.sayonora.wire.mssqlwire.frontend.PreLoginHandshake;
 import com.sayonora.wire.mssqlwire.frontend.RpcRequestReader;
@@ -283,32 +282,38 @@ public final class MssqlWireSessionHandler implements Runnable {
             return;
         }
 
-        try (Connection backend = options.mssqlwireNativeBackend()
-                ? MssqlBackendConnections.open(options) : PgConnections.open(options)) {
-            backend.setAutoCommit(true);
-            Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext);
+        Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext);
+        try {
             ExecutionResult result;
             try {
-                // Native mode bypasses the whole shared pipeline (RouterStage/
-                // DialectTranslationStage/etc.), not just picks a different connection -- confirmed
-                // live as a real bug otherwise: RouterStage still resolves "default" (a BackendTarget
-                // ALWAYS constructed against Postgres in Main.java, regardless of this protocol's own
-                // native-mode flag, since it's shared across every wire protocol in the same process),
-                // so DialectTranslationStage still translated SQL_SERVER->POSTGRES and sent the
-                // translated (wrong) SQL to the real SQL Server backend -- a real "'set_config' is
-                // not a recognized built-in function name" (a Postgres-only function the translator
-                // injected) the first time this was tried. `terminalExecutor` isn't reusable here
-                // either: it's permanently bound to MssqlPgEmulationSessionInitializer, which is
-                // Postgres-specific session setup that would fail the same way against a real SQL
-                // Server connection. A fresh, plain JdbcBackendExecutor (same pattern
-                // RoutingBackendExecutor#executeOnFreshConnection already uses for its own per-shard
-                // connections) sends the client's real, untranslated T-SQL straight to the real
-                // backend, which is the whole point of native mode.
                 if (options.mssqlwireNativeBackend()) {
-                    result = new JdbcBackendExecutor(backend).execute(statement);
+                    // Pin targetBackend to the "mssql-native" BackendTarget Main.java registers
+                    // for this mode (see BackendRegistry's staticExtraTargets) -- RouterStage's
+                    // handle() takes its early-return branch (statement.targetBackend() != null)
+                    // and runs its own workload-classification but not its own backend resolution,
+                    // so this doesn't touch any WARP_ROUTER_* rule configured for the default
+                    // Postgres backend. DialectTranslationStage then sees sourceDialect
+                    // (SQL_SERVER) == mssql-native's resolved dialect() (sniffed from its
+                    // jdbc:sqlserver: URL) and no-ops -- no translation, the client's real T-SQL
+                    // reaches the real backend untouched, same as before this change.
+                    // FirewallStage/QosControlStage/CacheStage run unmodified: none of them
+                    // inspect dialect at all. RoutingBackendExecutor.execute() resolves this named,
+                    // non-default target via its own executeOnFreshConnection path -- a pooled
+                    // connection via BackendTarget#open() and a plain JdbcBackendExecutor(Connection)
+                    // with NO NativeRlsSessionInitializer, unlike this session's own terminalExecutor
+                    // (bound to MssqlPgEmulationSessionInitializer, Postgres-only `SET db_emulation =
+                    // 'sqlserver'` setup that a real SQL Server backend has no use for and would
+                    // reject) -- so this connection lifecycle matches what the previous direct
+                    // MssqlBackendConnections.open()+JdbcBackendExecutor bypass did, just now with
+                    // the shared pipeline's dialect-agnostic stages actually running first.
+                    Statement pinned = statement.withRouting(statement.workloadClass(), "mssql-native");
+                    result = pipeline.execute(pinned);
                 } else {
-                    terminalExecutor.rebind(backend);
-                    result = pipeline.execute(statement);
+                    try (Connection backend = PgConnections.open(options)) {
+                        backend.setAutoCommit(true);
+                        terminalExecutor.rebind(backend);
+                        result = pipeline.execute(statement);
+                    }
                 }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.SQL_SERVER, sql,

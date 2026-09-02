@@ -2,6 +2,7 @@ package com.sayonora.wire.mssqlwire;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.sayonora.wire.testsupport.RealAzureSqlEdge;
 import com.sayonora.wire.testsupport.RealPostgres;
@@ -11,6 +12,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -79,6 +82,46 @@ class MssqlNativeBackendIntegrationTest {
             assertEquals("real-sql-server-row", rs.getString(1),
                     "the value must come from the real SQL Server table -- getting no row or a "
                             + "different value would mean native mode is still hitting Postgres");
+        }
+
+        // Proof this session's statements now run through the shared pipeline instead of the old
+        // JdbcBackendExecutor-direct bypass: a firewall DENY rule against a real SQL Server-bound
+        // statement rejects it, exactly as it would for the default dialect-translated Postgres
+        // path. warp_firewall_rules lives in Warp's own control-plane Postgres (the same real
+        // `postgres` this test already started, per the class javadoc), and FirewallRuleStore's
+        // insert trigger NOTIFYs the running Warp process to reload live -- poll briefly since
+        // that reload is asynchronous.
+        try (Connection controlPlane = DriverManager.getConnection(
+                "jdbc:postgresql://" + postgres.host() + ":" + postgres.port() + "/" + postgres.database(),
+                postgres.username(), postgres.password());
+                Statement st = controlPlane.createStatement()) {
+            // sql_pattern (matched via Pattern#find against the raw SQL text), not table_pattern
+            // (matched via SqlTableReferences' schema-qualified FROM/JOIN extraction with anchored
+            // ^...$ matching) -- the query below is "FROM dbo.native_test" and a plain
+            // table_pattern of "native_test" wouldn't match "dbo.native_test" as extracted (find()
+            // does not anchor past the "dbo." prefix). sql_pattern's plain substring search is
+            // simpler and dialect-qualification-proof for this test's purpose.
+            st.execute("INSERT INTO warp_firewall_rules (priority, action, statement_type, table_pattern, "
+                    + "sql_pattern, enabled, description) VALUES (100, 'deny', 'SELECT', NULL, "
+                    + "'native_test', true, 'block reads of native_test')");
+        }
+
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(10));
+        SQLException lastFailure = null;
+        while (Instant.now().isBefore(deadline)) {
+            try (Connection conn = DriverManager.getConnection(url);
+                    Statement st = conn.createStatement()) {
+                st.executeQuery("SELECT label FROM dbo.native_test WHERE id = 1");
+                Thread.sleep(200);
+            } catch (SQLException e) {
+                lastFailure = e;
+                break;
+            }
+        }
+        if (lastFailure == null) {
+            fail("expected the firewall DENY rule (loaded live via warp_firewall_rules) to reject a "
+                    + "native-backend-mode SELECT against native_test within 10s -- native mode is still "
+                    + "bypassing FirewallStage");
         }
     }
 }

@@ -36,7 +36,9 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLServerSocket;
@@ -102,8 +104,42 @@ public final class Main {
         BackendTarget defaultBackendTarget = new BackendTarget(BackendRegistry.DEFAULT_BACKEND_NAME,
                 "jdbc:postgresql://" + options.pgHost() + ":" + options.pgPort() + "/" + options.pgDatabase(),
                 options.pgUser(), options.pgPassword(), options);
+
+        // Native-backend-mode targets: one named BackendTarget per protocol actually running in
+        // native mode, so the shared pipeline (FirewallStage/QosControlStage/RouterStage/
+        // CacheStage -- all dialect-agnostic already) can run against these statements instead of
+        // the previous JdbcBackendExecutor-direct bypass. DialectTranslationStage already no-ops
+        // when a Statement's sourceDialect equals its resolved BackendTarget's dialect() (sniffed
+        // from the jdbc:mysql:/jdbc:sqlserver: URL prefix below), which is exactly the same-dialect
+        // case each protocol's own native-mode session handler pins its statements to (see
+        // MySqlWireSessionHandler/MssqlWireSessionHandler). orawire's own native mode isn't wired
+        // in here yet -- it still bypasses SQL parsing entirely via NativeSessionRelay, a separate,
+        // larger lift tracked on its own.
+        // Deliberately the 4-arg BackendTarget constructor (no failoverOptions) -- passing
+        // `options` as failoverOptions (as defaultBackendTarget above does) makes BackendTarget#
+        // borrow() short-circuit straight to PgConnections.open(failoverOptions), ignoring this
+        // target's own jdbcUrl/user/password entirely and reconnecting to POSTGRES regardless.
+        // Confirmed live as a real bug while building this: with failoverOptions set, every native-
+        // mode query silently ran against Postgres and failed with a Postgres "relation does not
+        // exist" mapped through DialectErrorMessages into a SQL-Server-flavored "Invalid object
+        // name" -- misleadingly looking like a real SQL Server response while never having reached
+        // the real backend at all. These targets have no failover backend of their own; a plain
+        // pooled connection via BackendConnectionPools (the same path MssqlBackendConnections/
+        // MySqlBackendConnections already used) is exactly right.
+        Map<String, BackendTarget> nativeBackendTargets = new LinkedHashMap<>();
+        if (options.mywireNativeBackend()) {
+            nativeBackendTargets.put("mysql-native", new BackendTarget("mysql-native",
+                    "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase(),
+                    options.mysqlUser(), options.mysqlPassword()));
+        }
+        if (options.mssqlwireNativeBackend()) {
+            nativeBackendTargets.put("mssql-native", new BackendTarget("mssql-native",
+                    "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
+                            + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
+                    options.mssqlUser(), options.mssqlPassword()));
+        }
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
-                config.backends(), config.shardBackends(), defaultBackendTarget);
+                config.backends(), config.shardBackends(), defaultBackendTarget, nativeBackendTargets);
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it

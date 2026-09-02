@@ -36,14 +36,27 @@ public final class BackendRegistry {
 
     private final BackendTarget defaultTarget;
 
+    // Native-backend-mode targets (mysql-native, mssql-native, ...), registered once at startup
+    // from each protocol's own WARP_*_BACKEND env var, not from WARP_BACKENDS -- see Main.java.
+    // Kept separate from the env-driven spec so a WARP_BACKENDS reload (reload() below) can't
+    // silently drop them: reload() re-merges this same fixed map back in every time, exactly like
+    // it re-threads defaultTarget through every rebuild.
+    private final Map<String, BackendTarget> staticExtraTargets;
+
     public BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup) {
         this(targets, shardGroup, null);
     }
 
     private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget) {
+        this(targets, shardGroup, defaultTarget, Map.of());
+    }
+
+    private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget,
+            Map<String, BackendTarget> staticExtraTargets) {
         this.targets = Map.copyOf(targets);
         this.shardGroup = List.copyOf(shardGroup);
         this.defaultTarget = defaultTarget;
+        this.staticExtraTargets = Map.copyOf(staticExtraTargets);
     }
 
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec) {
@@ -51,7 +64,19 @@ public final class BackendRegistry {
     }
 
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec, BackendTarget defaultTarget) {
-        
+        return fromConfig(spec, shardGroupSpec, defaultTarget, Map.of());
+    }
+
+    /** As the 3-arg overload, plus {@code staticExtraTargets} -- backends registered outside the
+     * WARP_BACKENDS spec entirely (today: native-backend-mode targets like {@code mysql-native}/
+     * {@code mssql-native}, one per protocol actually running in native mode). These bypass the
+     * WARP_TRUSTED_BACKEND_HOSTS check and the Developer-edition backend-count cap above, same as
+     * {@code defaultTarget} always has -- both are the operator's own single configured backend
+     * for that protocol, not an operator-supplied list of additional Postgres shards, which is
+     * what those two checks exist to gate. */
+    public static BackendRegistry fromConfig(String spec, String shardGroupSpec, BackendTarget defaultTarget,
+            Map<String, BackendTarget> staticExtraTargets) {
+
         TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
         if (spec != null && !spec.isBlank()) {
@@ -102,14 +127,15 @@ public final class BackendRegistry {
                     + "implicit WARP_* backend as '{}' so routing/translation has a fallback target",
                     DEFAULT_BACKEND_NAME);
         }
+        targets.putAll(staticExtraTargets);
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()
                 ? List.of()
                 : List.of(shardGroupSpec.split(",")).stream().map(String::trim).toList();
-        return new BackendRegistry(targets, shardGroup, defaultTarget);
+        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets);
     }
 
     public void reload(String spec, String shardGroupSpec) {
-        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, this.defaultTarget);
+        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, this.defaultTarget, this.staticExtraTargets);
         this.targets = fresh.targets;
         this.shardGroup = fresh.shardGroup;
     }
