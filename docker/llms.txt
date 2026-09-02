@@ -184,7 +184,7 @@ production traffic), not competing products.
 
 - [Main page](https://sayonora.com/#dms): the bridge from the Warp pitch --
   what Ferry is and a quick start.
-- [Full detail](https://sayonora.com/dms/): how assessment works (live
+- [Full detail](https://sayonora.com/ferry/): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
   recommendations.
 - Rules-based migration-difficulty scoring for Oracle/MySQL/MariaDB/SQL Server -> Postgres --

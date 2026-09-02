@@ -13,19 +13,19 @@
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://sayonora.com/dms/</loc>
+    <loc>https://sayonora.com/ferry/</loc>
     <lastmod>2026-09-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://sayonora.com/mach.html</loc>
+    <loc>https://sayonora.com/mach/</loc>
     <lastmod>2026-09-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://sayonora.com/db-compat/</loc>
+    <loc>https://sayonora.com/shim/</loc>
     <lastmod>2026-09-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
@@ -97,7 +97,7 @@
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sayonora.com/dms/README.md</loc>
+    <loc>https://sayonora.com/ferry/README.md</loc>
     <lastmod>2026-09-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>

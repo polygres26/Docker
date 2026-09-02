@@ -70,7 +70,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "A rules-based (not LLM-generated) migration-difficulty assessor for moving an Oracle, MySQL, MariaDB, or SQL Server database to Postgres -- scores difficulty, breaks down what drives the score, and recommends Postgres sizing. Reproducible: running it twice against the same database gives the same answer.",
-      "url": "https://sayonora.com/dms/",
+      "url": "https://sayonora.com/ferry/",
       "offers": [
         { "@type": "Offer", "name": "Developer", "price": "0", "priceCurrency": "USD" },
         {
@@ -89,7 +89,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
       "description": "Postgres extensions (pg_oracle/pg_mysql/pg_sqlserver) that resolve real Oracle/SQL Server/MySQL catalog objects and built-in functions -- V$SESSION, DBMS_OUTPUT, sys.objects, GROUP_CONCAT -- natively inside stock Postgres.",
-      "url": "https://sayonora.com/db-compat/",
+      "url": "https://sayonora.com/shim/",
       "offers": [
         { "@type": "Offer", "name": "Free / Basic", "price": "0", "priceCurrency": "USD" },
         {
@@ -127,8 +127,8 @@
       <a href="#warp">Warp</a>
       <a href="#dms">Ferry</a>
       <a href="#pricing">Pricing</a>
-      <a href="/mach.html">Mach</a>
-      <a href="/db-compat/">Shim</a>
+      <a href="/mach/">Mach</a>
+      <a href="/shim/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="#faq">FAQ</a>
@@ -231,7 +231,7 @@
       <div class="obsGrid">
         <div class="obsCard"><h4>Warp — run better</h4><p>Your universal database infrastructure layer: cache, scale, monitor, secure, route, and roll up. Works with Postgres, Oracle, MySQL, and SQL Server. <a href="#warp">See Warp →</a></p></div>
         <div class="obsCard"><h4>Ferry — move better</h4><p>Assess → Size → Migrate → Validate → Cut over. Scores how hard your Oracle, MySQL, or SQL Server migration to Postgres will really be, before you commit to it. <a href="#dms">See Ferry →</a></p></div>
-        <div class="obsCard"><h4>Shim — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/db-compat/">See Shim →</a></p></div>
+        <div class="obsCard"><h4>Shim — change less</h4><p>Brings familiar Oracle, SQL Server, and MySQL catalogs, functions, and behaviors into Postgres, reducing the application changes a migration otherwise requires. <a href="/shim/">See Shim →</a></p></div>
       </div>
       <p class="rttNote">
         Together: Ferry moves the data, Shim reduces the SQL and application changes, and
@@ -489,7 +489,7 @@ aws sqs receive-message \                          # SQS wire
         </div>
       </figure>
       <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
-      <p class="rttNote"><a href="/mach.html">Explore Mach — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
+      <p class="rttNote"><a href="/mach/">Explore Mach — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
 
       <details class="exploreMore">
         <summary class="exploreSummary">Explore Warp in depth — detailed architecture, comparison →</summary>
@@ -616,7 +616,7 @@ aws sqs receive-message \                          # SQS wire
         <span class="stepFlowArrow">→</span>
         <div class="stepFlowItem"><h4>Run</h4><p>Warp keeps applications connected and governed.</p></div>
       </div>
-      <p class="rttNote"><a href="/dms/">Explore Ferry →</a></p>
+      <p class="rttNote"><a href="/ferry/">Explore Ferry →</a></p>
     </section>
 
     <section class="tool" id="pricing">
@@ -748,7 +748,7 @@ aws sqs receive-message \                          # SQS wire
       </div>
       <p class="pricingNote">
         Full row-by-row capability breakdown, including exactly which real license check backs
-        each row: <a href="/dms/#dms-packaging">Ferry capability table →</a>
+        each row: <a href="/ferry/#dms-packaging">Ferry capability table →</a>
       </p>
 
       <h3 class="subhead" id="db-compat-pricing">Shim<a class="permalink" href="#db-compat-pricing" aria-label="Link to this section">#</a></h3>
@@ -784,7 +784,7 @@ aws sqs receive-message \                          # SQS wire
         </div>
       </div>
       <p class="pricingNote">
-        Full per-engine compatibility tables: <a href="/db-compat/">Shim →</a>
+        Full per-engine compatibility tables: <a href="/shim/">Shim →</a>
       </p>
     </section>
 
@@ -854,7 +854,7 @@ aws sqs receive-message \                          # SQS wire
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/ferry/README.md">dms/</a>
       in this repo.
     </footer>
 

@@ -1,6 +1,6 @@
 version: "3.8"
 
-# Run from the repo root: docker compose -f docker/dms/docker-compose.yml up --build
+# Run from the repo root: docker compose -f docker/ferry/docker-compose.yml up --build
 # One container: DmsHttpServer (embedded Jetty) serves both the JSON API and the built SPA
 # directly (SpaResourceHandler) -- no nginx needed. See Dockerfile's own comment if you'd rather
 # front it with a separate static tier instead.
@@ -9,7 +9,7 @@ services:
   advisor:
     build:
       context: ../..
-      dockerfile: docker/dms/Dockerfile
+      dockerfile: docker/ferry/Dockerfile
     environment:
       SAYONORA_DMS_PORT: "8090"
     volumes:

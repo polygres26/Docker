@@ -28,9 +28,9 @@
     <div class="siteNavInner">
       <a href="/">Home</a>
       <a href="/warp/" class="active">Warp</a>
-      <a href="/dms/">Ferry</a>
-      <a href="/mach.html">Mach</a>
-      <a href="/db-compat/">Shim</a>
+      <a href="/ferry/">Ferry</a>
+      <a href="/mach/">Mach</a>
+      <a href="/shim/">Shim</a>
       <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="/docs/">Docs</a>
@@ -162,7 +162,7 @@
         sharing its cache entries with any SQL client reading the same physical Postgres table
         (though not directly with each other, since they store data under different physical
         tables even when the logical table/collection name matches). See
-        <a href="/mach.html#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
+        <a href="/mach/#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
         that looks like.
       </p>
       <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
@@ -431,7 +431,7 @@
         <code>jsonb</code>. Like oswire and sqswire, influxwire has no result cache of its own
         (a time-series write is a new point, not a repeatable read to serve from cache) and sits
         outside the shared pipeline Mach's other six protocols share -- see
-        <a href="/mach.html">Mach</a> for that scope.
+        <a href="/mach/">Mach</a> for that scope.
       </p>
       <p class="rttNote">
         <b>TimescaleDB, detected not required.</b> influxwire checks whether the target Postgres
@@ -501,7 +501,7 @@
         <code>WITH RECURSIVE</code> query with cycle detection) -- an unbounded <code>[*]</code> path is
         rejected at parse time rather than accepted and left to run away against a large graph.
         Like influxwire, boltwire has no result cache of its own and sits outside Mach's shared
-        pipeline -- see <a href="/mach.html">Mach</a> for
+        pipeline -- see <a href="/mach/">Mach</a> for
         that scope.
       </p>
       <div class="rttTableWrap">
@@ -910,7 +910,7 @@
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/warp/README.md">warp/</a> / <a href="/dms/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/ferry/README.md">dms/</a>
       in this repo.
     </footer>
   </main>

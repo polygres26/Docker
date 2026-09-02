@@ -11,7 +11,7 @@ Maven module with no parent pom, but the Dockerfile still needs `dms/` as a subd
 can `COPY` from):
 
 ```bash
-docker compose -f docker/dms/docker-compose.yml up --build
+docker compose -f docker/ferry/docker-compose.yml up --build
 ```
 
 Open `http://localhost:8090`. The API and UI are on the same origin — `/api/*` is handled by
@@ -22,7 +22,7 @@ via `SpaResourceHandler`, standard SPA-hosting behavior.
 ## Building the image standalone
 
 ```bash
-docker build -f docker/dms/Dockerfile -t sayonora-dms:latest .
+docker build -f docker/ferry/Dockerfile -t sayonora-ferry:latest .
 ```
 
 (Still run from the repo root — same reason as above.)
