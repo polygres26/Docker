@@ -48,7 +48,7 @@ RUN chown warp:warp /app
 # means a full new copy of everything under /app), doubling this jar's real footprint in the
 # image for zero benefit. --chown sets ownership as part of the same COPY layer instead -- same
 # final files, same owner, same permissions, just without paying for them twice.
-COPY --from=build --chown=warp:warp /build/target/nexagres-wire.jar /app/nexagres-wire.jar
+COPY --from=build --chown=warp:warp /build/target/sayonora-wire.jar /app/sayonora-wire.jar
 COPY --from=web-build --chown=warp:warp /build/dist /app/web
 
 # WARP_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
@@ -89,4 +89,4 @@ ENTRYPOINT ["java", \
     "--add-opens=java.base/java.net=ALL-UNNAMED", \
     "--add-opens=java.sql/java.sql=ALL-UNNAMED", \
     "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", \
-    "-jar", "/app/nexagres-wire.jar"]
+    "-jar", "/app/sayonora-wire.jar"]

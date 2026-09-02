@@ -1,85 +1,85 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://nexagres.com/</loc>
+    <loc>https://sayonora.com/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/warp/</loc>
+    <loc>https://sayonora.com/warp/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/dms/</loc>
+    <loc>https://sayonora.com/dms/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/mach.html</loc>
+    <loc>https://sayonora.com/mach.html</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/db-compat/</loc>
+    <loc>https://sayonora.com/db-compat/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/postgres-gateway/</loc>
+    <loc>https://sayonora.com/postgres-gateway/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/mcp-postgres/</loc>
+    <loc>https://sayonora.com/mcp-postgres/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/oracle-to-postgres/</loc>
+    <loc>https://sayonora.com/oracle-to-postgres/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/mysql-to-postgres.html</loc>
+    <loc>https://sayonora.com/mysql-to-postgres.html</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/mongodb-to-postgres.html</loc>
+    <loc>https://sayonora.com/mongodb-to-postgres.html</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/opensearch-to-postgres.html</loc>
+    <loc>https://sayonora.com/opensearch-to-postgres.html</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/docs/</loc>
+    <loc>https://sayonora.com/docs/</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/CONNECTING.md</loc>
+    <loc>https://sayonora.com/CONNECTING.md</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://nexagres.com/ERRORS.md</loc>
+    <loc>https://sayonora.com/ERRORS.md</loc>
     <lastmod>2026-08-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>

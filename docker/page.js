@@ -95,7 +95,7 @@
   // #what-you-get/#llm-assist/#admin-console-polyadvisor moved to dms.html (variable/string names
   // below keep their original "polyadvisor" spelling deliberately -- they're the OLD anchor names
   // real external bookmarks/shared links may still use, from before Polyadvisor was renamed to
-  // Nexagres DMS; renaming these strings would break exactly the backward-compat this redirect
+  // Sayonora DMS; renaming these strings would break exactly the backward-compat this redirect
   // exists for). A bookmarked or shared link to one of the old anchors would otherwise land on
   // this page with nothing to scroll to; this forwards it to the new page's matching anchor
   // instead, once, on load.
@@ -124,7 +124,7 @@
       window.location.replace('/dms/#' + hash);
     } else if (hash === 'polyadvisor') {
       // The #polyadvisor section itself was renamed to #dms on this same page (the Polyadvisor
-      // -> Nexagres DMS rebrand) -- an in-page hash swap, not a cross-page redirect like the
+      // -> Sayonora DMS rebrand) -- an in-page hash swap, not a cross-page redirect like the
       // cases above, since the section never left this page.
       window.location.hash = 'dms';
     }

@@ -39,9 +39,9 @@ services:
       WARP_USER: postgres
       WARP_PASSWORD: postgres
       # Shared dev credential for every wire-protocol frontend's default (non-postgres_roles) auth
-      # -- see com.nexagres.wire.auth.CredentialStore's javadoc. Change for anything beyond local
+      # -- see com.sayonora.wire.auth.CredentialStore's javadoc. Change for anything beyond local
       # dev/test; consider WARP_AUTH_MODE=postgres_roles for real per-role Postgres auth instead
-      # (see com.nexagres.wire.auth.PgRoleAuthCache's javadoc).
+      # (see com.sayonora.wire.auth.PgRoleAuthCache's javadoc).
       WARP_AUTH_USER: postgres
       WARP_AUTH_PASSWORD: postgres
     ports:

@@ -9,7 +9,7 @@ import {
 const POLL_INTERVAL_MS = 5000
 
 /**
- * Migration Service's "Status" tab -- the "Web Progress Report" for nexagres-migration runs,
+ * Migration Service's "Status" tab -- the "Web Progress Report" for sayonora-migration runs,
  * reading the same bookkeeping tables (warp_cdc_checkpoints, migration_partition_leases) the
  * migration workers themselves read and write, via GET /api/migration/status. Defaults its
  * connection picker to whichever target the Launch tab was last pointed at (see

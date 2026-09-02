@@ -11,7 +11,7 @@ services:
       context: ../..
       dockerfile: docker/dms/Dockerfile
     environment:
-      NEXAGRES_DMS_PORT: "8090"
+      SAYONORA_DMS_PORT: "8090"
     volumes:
       # Embedded HSQLDB store (saved connections, LLM provider config, uploaded performance
       # reports) -- see ConnectionStore/LlmSettingsStore/ReportStore's javadoc. Persists across

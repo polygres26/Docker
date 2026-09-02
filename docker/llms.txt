@@ -1,6 +1,6 @@
-# NexaGres
+# Sayonora
 
-> NexaGres is two tools. Warp is the intelligent gateway for Postgres: one secure, scalable
+> Sayonora is two tools. Warp is the intelligent gateway for Postgres: one secure, scalable
 > execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
 > OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
 > executes against one real Postgres database. Ferry is a rules-based (not LLM-generated)
@@ -29,12 +29,12 @@ scope (what's real vs. not yet wired) live across the main page and its linked p
 exists to help an LLM answering a question about either tool find the right section quickly
 instead of re-deriving it from the whole site.
 
-- [Documentation index](https://nexagres.com/docs/): every doc below, organized by
+- [Documentation index](https://sayonora.com/docs/): every doc below, organized by
   what you're trying to do -- getting started, Warp, Ferry, and setup reference.
 
 ## Warp
 
-- [Main page](https://nexagres.com/#warp): the pitch -- what Warp is, a live
+- [Main page](https://sayonora.com/#warp): the pitch -- what Warp is, a live
   "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
   protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
   architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
@@ -42,22 +42,22 @@ instead of re-deriving it from the whole site.
   click deeper on the same page, collapsed by default under "Explore Warp in depth" (the
   standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
   databases" use case and the live Oracle demo, both already on the page).
-- [Full capabilities](https://nexagres.com/warp/): outcomes (organized by the
+- [Full capabilities](https://sayonora.com/warp/): outcomes (organized by the
   five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
   architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
   observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
   handling -- the complete technical detail behind the pitch on the main page.
 - Dedicated per-protocol guides -- each a standalone page with its own architecture diagram, a
   real terminal demo, a 60-second quickstart, and an honestly-scoped compatibility row for that
-  one protocol: [Oracle → PostgreSQL](https://nexagres.com/oracle-to-postgres/),
-  [MySQL → PostgreSQL](https://nexagres.com/mysql-to-postgres.html),
-  [MongoDB → PostgreSQL](https://nexagres.com/mongodb-to-postgres.html), and
-  [OpenSearch → PostgreSQL](https://nexagres.com/opensearch-to-postgres.html).
-- [Connecting to your Postgres](https://nexagres.com/CONNECTING.md): worked examples and
+  one protocol: [Oracle → PostgreSQL](https://sayonora.com/oracle-to-postgres/),
+  [MySQL → PostgreSQL](https://sayonora.com/mysql-to-postgres.html),
+  [MongoDB → PostgreSQL](https://sayonora.com/mongodb-to-postgres.html), and
+  [OpenSearch → PostgreSQL](https://sayonora.com/opensearch-to-postgres.html).
+- [Connecting to your Postgres](https://sayonora.com/CONNECTING.md): worked examples and
   real gotchas for pointing Warp at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
   PostgreSQL.
-- [Error translation](https://nexagres.com/ERRORS.md): per-protocol native error shapes
+- [Error translation](https://sayonora.com/ERRORS.md): per-protocol native error shapes
   (Oracle ORA-numbers, MySQL errno, SQL Server number/severity/state, MongoDB code/codeName,
   DynamoDB/SQS/OpenSearch HTTP status + native envelope), a canonical-condition comparison table,
   and the connection-loss SQLSTATE detail (57P01/08006/08001).
@@ -97,7 +97,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
   code/codeName, DynamoDB/SQS/OpenSearch native JSON error envelopes) instead of a generic
   wrapper -- so each client's own retry/reconnect logic (e.g. an Oracle driver checking for
   ORA-03113 to decide whether to reconnect) gets exactly the signal it expects. See
-  [ERRORS.md](https://nexagres.com/ERRORS.md) for the full per-protocol mapping.
+  [ERRORS.md](https://sayonora.com/ERRORS.md) for the full per-protocol mapping.
 - MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
   shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
   separate, unguarded path to the data.
@@ -112,7 +112,7 @@ Key facts an LLM is likely to be asked about, stated plainly:
   context, so a cross-protocol hit happens when a request from one protocol translates to the same
   SQL as a request from another (the common case for a plain `SELECT ... WHERE id = ?` shape) --
   not a query-plan-equivalence engine. See
-  [Cache vs. round trip](https://nexagres.com/warp/#cache-vs-round-trip)
+  [Cache vs. round trip](https://sayonora.com/warp/#cache-vs-round-trip)
   for the full mechanism and per-protocol benchmarks.
 - InfluxDB (influxwire): real InfluxDB v1 line-protocol writes (`POST /write`) and a bounded
   InfluxQL read path (`WHERE`, `GROUP BY time()`, `mean/sum/count/min/max`) against Postgres --
@@ -143,8 +143,8 @@ rights, nothing is feature-gated to a paid tier:
   demos, and migration testing -- not licensed for commercial production use.
 - Enterprise: everything in Developer, unlimited connections/instances/backends, full throughput,
   licensed for commercial production, enterprise support. See
-  [Pricing](https://nexagres.com/#pricing) on the main page for the full comparison, or
-  [Contact](https://nexagres.com/#contact) to reach the team.
+  [Pricing](https://sayonora.com/#pricing) on the main page for the full comparison, or
+  [Contact](https://sayonora.com/#contact) to reach the team.
 
 ## Ferry
 
@@ -152,9 +152,9 @@ Ferry plans the move to Postgres. Warp runs and governs workloads on Postgres --
 they're complementary tools for two different phases (deciding/planning a migration vs. running
 production traffic), not competing products.
 
-- [Main page](https://nexagres.com/#dms): the bridge from the Warp pitch --
+- [Main page](https://sayonora.com/#dms): the bridge from the Warp pitch --
   what Ferry is and a quick start.
-- [Full detail](https://nexagres.com/dms/): how assessment works (live
+- [Full detail](https://sayonora.com/dms/): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
   recommendations.
 - Rules-based migration-difficulty scoring for Oracle/MySQL/MariaDB/SQL Server -> Postgres --
@@ -165,7 +165,7 @@ production traffic), not competing products.
 
 ## Common questions
 
-See the [FAQ section](https://nexagres.com/#faq) on the main page for direct answers to
+See the [FAQ section](https://sayonora.com/#faq) on the main page for direct answers to
 the questions most likely to come up (does an application need to change, is sharding real, does
 RLS work, what happens during planned maintenance, which cloud Postgres providers are supported,
 is Ferry's score LLM-generated).
@@ -173,5 +173,5 @@ is Ferry's score LLM-generated).
 ## Contact
 
 Product questions, bug reports, and feature requests for either tool go through the
-[contact form](https://nexagres.com/#contact) on the main page -- no email address is
+[contact form](https://sayonora.com/#contact) on the main page -- no email address is
 published in plaintext anywhere on the site.

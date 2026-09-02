@@ -6,7 +6,7 @@ export type CredentialSource = 'plaintext' | 'vault' | 'cyberark' | 'awssm' | 'a
  * Password input that can also point at an external secret instead of holding a literal value --
  * the value this component produces (`onChange`) is always the one flat string the backend
  * already expects in a password field: a plain password, or a `vault:...`/`cyberark:...`/
- * `awssm:...`/`azurekv:...`/`gcpsm:...` reference (see `com.nexagres.dms.secrets.SecretRef` for
+ * `awssm:...`/`azurekv:...`/`gcpsm:...` reference (see `com.sayonora.dms.secrets.SecretRef` for
  * the exact grammar and `SecretResolver` for how each is resolved at connect time). No new API
  * shape needed -- this is purely a friendlier way to build the string that already round-trips
  * through every password field.

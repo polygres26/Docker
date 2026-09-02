@@ -71,7 +71,7 @@ doesn't need to know it's talking to Warp.
 
 Warp does not move your schema or existing data for you — it's a live compatibility layer,
 not a migration tool. If you need to migrate schema and data from Oracle/MySQL/SQL Server to
-Postgres, see Nexagres DMS (the companion tool) or [`docs/USE_CASE_GUIDE.md`](USE_CASE_GUIDE.md).
+Postgres, see Sayonora DMS (the companion tool) or [`docs/USE_CASE_GUIDE.md`](USE_CASE_GUIDE.md).
 
 ## Where to go next
 

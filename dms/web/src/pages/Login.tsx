@@ -33,7 +33,7 @@ export default function Login() {
           <div className={styles.brand}>
             <div className={styles.brandMark} />
             <div>
-              <p className={styles.title}>Nexagres Ferry</p>
+              <p className={styles.title}>Sayonora Ferry</p>
               <p className={styles.subtitle}>Database Migration Service</p>
             </div>
           </div>
@@ -75,7 +75,7 @@ export default function Login() {
         </form>
         <p className={styles.note}>
           Default admin credentials are printed to the server log on first startup if
-          NEXAGRES_ADMIN_PASSWORD isn't set.
+          SAYONORA_ADMIN_PASSWORD isn't set.
         </p>
       </div>
     </div>

@@ -61,7 +61,7 @@ function QueueRow({ queue, onDeleted }: { queue: QueueInfo; onDeleted: (name: st
 }
 
 /**
- * Read-only-ish view onto sqswire's queues (see com.nexagres.wire.sqswire) -- live depth,
+ * Read-only-ish view onto sqswire's queues (see com.sayonora.wire.sqswire) -- live depth,
  * FIFO/DLQ attributes, and which shard backend each queue currently resolves to, so sharding
  * being real (not just configured) is visible at a glance the same way the Backends page shows
  * SQL's shard group. Polls every 5s rather than pushing -- queue depth is the kind of number

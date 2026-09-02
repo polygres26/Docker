@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ferry — Migration Assessment</title>
 <meta name="description" content="Ferry: a rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres -- feature inventory, schema/workload browsing, Postgres sizing, and PL/SQL summarization with an LLM's help.">
-<link rel="canonical" href="https://nexagres.com/dms/">
+<link rel="canonical" href="https://sayonora.com/dms/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
 <link rel="icon" type="image/png" href="/assets/logo.png">
@@ -13,14 +13,14 @@
 <link rel="stylesheet" href="/styles.min.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://nexagres.com/dms/">
+<meta property="og:url" content="https://sayonora.com/dms/">
 <meta property="og:title" content="Ferry — Migration Assessment">
 <meta property="og:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
-<meta property="og:image" content="https://nexagres.com/assets/admin-dms.png">
+<meta property="og:image" content="https://sayonora.com/assets/admin-dms.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Ferry — Migration Assessment">
 <meta name="twitter:description" content="A rules-based, reproducible migration-difficulty assessor for Oracle/MySQL/MariaDB/SQL Server to Postgres.">
-<meta name="twitter:image" content="https://nexagres.com/assets/admin-dms.png">
+<meta name="twitter:image" content="https://sayonora.com/assets/admin-dms.png">
 </head>
 <body>
   <a href="#main" class="skipLink">Skip to content</a>
@@ -42,8 +42,8 @@
   <main class="wrap" id="main">
     <header>
       <div class="brandRow">
-        <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
-        <h1 class="eyebrow">NexaGres</h1>
+        <img src="/assets/logo.png" alt="Sayonora" class="brandMark">
+        <h1 class="eyebrow">Sayonora</h1>
       </div>
       <p class="lede">
         <a href="/">← Back to home</a> — <b>Ferry plans the move to Postgres.
@@ -107,7 +107,7 @@
       </figure>
       <p class="rttNote">
         <b>Where Ferry is still early:</b> connection credentials are encrypted at rest
-        (AES-256-GCM) when <code>NEXAGRES_ENCRYPTION_KEY</code> is set, or resolved from Vault,
+        (AES-256-GCM) when <code>SAYONORA_ENCRYPTION_KEY</code> is set, or resolved from Vault,
         CyberArk, AWS Secrets Manager, Azure Key Vault, or GCP Secret Manager instead of being
         stored at all — but that's opt-in, and a bare install without it stores a plain password,
         so set it (or use a secret reference) for anything beyond local dev. A second, read-only
@@ -178,7 +178,7 @@
       <h3 class="subhead" id="migration-service">Migration Service: launch and track a migration<a class="permalink" href="#migration-service" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
         Assessment tells you what you're dealing with; Migration Service is where you actually
-        move the data — real, massively-parallel <a href="https://github.com/polygres26/Docker/tree/main/docker/dms" target="_blank" rel="noopener"><code>nexagres-migration</code></a> runs
+        move the data — real, massively-parallel <a href="https://github.com/polygres26/Docker/tree/main/docker/dms" target="_blank" rel="noopener"><code>sayonora-migration</code></a> runs
         (MongoDB change streams, MySQL binlog, SQL Server/Oracle native CDC, DynamoDB Streams,
         SQS, Neo4j snapshot, InfluxDB timestamp-cursor tail), launched from a form and tracked to
         completion, without ever leaving Ferry. Every write lands through
@@ -187,7 +187,7 @@
         cache pipeline as any other client.
       </p>
       <figure>
-        <img src="/assets/migration-architecture.svg" alt="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into WarpGrpcSink, which writes exclusively through Warp's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
+        <img src="/assets/migration-architecture.svg" alt="sayonora-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus, where the source supports it, a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into WarpGrpcSink, which writes exclusively through Warp's own gRPC driver into the target Postgres. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal.">
         <figcaption>Every source connector feeds the same pipeline: parallel initial snapshot, then (where the source has one) a live change-data-capture tail owned by exactly one leader, retried and dead-lettered on failure, and written into Postgres exclusively through Warp's own gRPC driver. Local thread-pool parallelism is free; a distributed worker fleet sharing one lease store is the Enterprise tier. A readiness checker rolls partitions, lag, dead letters, and row-level verification into one go/no-go signal before you cut over.</figcaption>
       </figure>
       <p class="rttNote">
@@ -278,7 +278,7 @@
         </table>
       </div>
       <p class="rttNote">
-        <b>†</b> enforced today by a real license gate in <code>nexagres-migration</code> or
+        <b>†</b> enforced today by a real license gate in <code>sayonora-migration</code> or
         <code>Ferry</code> itself — not a marketing line, a check that actually throws,
         clamps, or degrades when it's not licensed. Bandwidth throttling and source protection are
         the same mechanism (a token-bucket rate limiter on the write path, which backpressures the
@@ -286,7 +286,7 @@
         without needing to be tuned; Enterprise can raise, lower, or effectively disable it.
         Encryption at rest (AES-256-GCM) and every secret-reference source (Vault, CyberArk, AWS
         Secrets Manager, Azure Key Vault, GCP Secret Manager) are real and unrestricted on every
-        tier — opt-in via <code>NEXAGRES_ENCRYPTION_KEY</code> or a secret reference, not something
+        tier — opt-in via <code>SAYONORA_ENCRYPTION_KEY</code> or a secret reference, not something
         a license key changes. Audit logging, the second read-only account, and SSO bearer-token
         login are genuinely new capabilities, Enterprise-only, and inert (not merely hidden) on the
         free/Developer tier. Everything else runs identically regardless of license — CDC,

@@ -1,6 +1,6 @@
-# NexaGres — Docker
+# Sayonora — Docker
 
-Public packaging and documentation for the NexaGres project's two tools: **Ferry**
+Public packaging and documentation for the Sayonora project's two tools: **Ferry**
 (migration assessment) and **Warp** (protocol gateway). Their source repos are private; this
 repo is the public surface — prebuilt images, architecture, and how to run them.
 
@@ -69,7 +69,7 @@ running against these published images directly, no source checkout required. Se
 `warp/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
-`wire/` and `dms/` (formerly `advisor/`), which live in NexaGres's private source repos — they're
+`wire/` and `dms/` (formerly `advisor/`), which live in Sayonora's private source repos — they're
 included here for transparency into exactly how each image is put together, not as a
 build-it-yourself path.
 

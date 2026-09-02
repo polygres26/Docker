@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // Dev-mode CORS avoidance: proxy /api to the real Java server (DmsHttpServer, default 8090)
 // instead of adding CORS headers there. In production the SPA is served by that same process
 // (see SpaResourceHandler pattern in Omnigate, not yet ported here), so this proxy is dev-only.
-const backendTarget = process.env.NEXAGRES_DMS_DEV_BACKEND_URL ?? 'http://localhost:8090'
+const backendTarget = process.env.SAYONORA_DMS_DEV_BACKEND_URL ?? 'http://localhost:8090'
 
 export default defineConfig({
   plugins: [react()],

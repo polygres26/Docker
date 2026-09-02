@@ -9,7 +9,7 @@ pgwire has its own JDBC-based suite instead: `../../src/test/java/.../pgwire/PgW
 
 ```bash
 cd wire
-mvn -DskipTests package        # produces target/nexagres-wire.jar, which these tests launch
+mvn -DskipTests package        # produces target/sayonora-wire.jar, which these tests launch
 pip install pytest oracledb pymssql pymysql
 cd tests/python
 pytest -v

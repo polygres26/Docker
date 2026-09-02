@@ -263,7 +263,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 
 <!-- ============================================================ Demo chrome ============================================================ -->
 <div class="demoBar">
-  <a href="/" style="font-size:12.5px;color:var(--muted);white-space:nowrap">&larr; nexagres.com</a>
+  <a href="/" style="font-size:12.5px;color:var(--muted);white-space:nowrap">&larr; sayonora.com</a>
   <span class="tag">Interactive demo</span>
   <span class="hint">Click sidebar items and rows to explore &mdash; mock data, nothing here reaches a real backend.</span>
 </div>
@@ -302,7 +302,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         <nav class="rail">
           <div class="railBrand">
             <div class="railMark"></div>
-            <div><span class="railBrandTitle">NexaGres</span><span class="railBrandSub">Ferry</span></div>
+            <div><span class="railBrandTitle">Sayonora</span><span class="railBrandSub">Ferry</span></div>
           </div>
 
           <div class="railSection">
@@ -338,7 +338,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
         </nav>
 
         <div class="main">
-          <div class="topbar"><div class="crumb">nexagres dms</div></div>
+          <div class="topbar"><div class="crumb">sayonora dms</div></div>
           <div class="content" id="dms-content"></div>
         </div>
       </div>
@@ -474,7 +474,7 @@ const firewallRules = [
 ];
 
 const oauthConfig = {
-  issuer: 'https://auth.nexagres.internal/realms/prod',
+  issuer: 'https://auth.sayonora.internal/realms/prod',
   audience: 'warp-admin',
   userIdClaim: 'sub',
   rolesClaim: 'realm_access.roles',
@@ -578,7 +578,7 @@ function dataSyncJobsTable() {
 
 function dataSyncLaunchPage() {
   return dataSyncTabsFn('launch') + '<h1 class="pageTitle">Migration Service</h1>' +
-    '<p class="pageLede">Launch a real, massively-parallel <code>nexagres-migration</code> run, writing into Warp over its own gRPC driver &mdash; never a direct JDBC backdoor.</p>' +
+    '<p class="pageLede">Launch a real, massively-parallel <code>sayonora-migration</code> run, writing into Warp over its own gRPC driver &mdash; never a direct JDBC backdoor.</p>' +
     '<div class="panel" style="max-width:560px">' +
       '<div class="sectionTitle">Start a migration</div>' +
       '<div class="field"><label>Connector</label><select id="dsConnector">' +

@@ -185,7 +185,7 @@ function JobsPanel({ jobs, onStop }: { jobs: MigrationJobState[]; onStop: (id: s
 }
 
 /**
- * Migration Service's "Launch" tab -- starts a real nexagres-migration Coordinator run server-side
+ * Migration Service's "Launch" tab -- starts a real sayonora-migration Coordinator run server-side
  * (see MigrationJobRunner's own javadoc) via POST /api/migration/jobs. Parallelism above 1 is an
  * Enterprise feature -- the migration engine itself (not this page) silently runs serial without a
  * license, so nothing here fakes or duplicates that enforcement.
@@ -229,7 +229,7 @@ export default function MigrationServiceLaunch() {
     <div style={{ maxWidth: 1080 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Migration Service</h1>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 16 }}>
-        Launch massively-parallel migration runs (nexagres-migration) writing into Warp over
+        Launch massively-parallel migration runs (sayonora-migration) writing into Warp over
         its own gRPC driver. Massively parallel throughput (parallelism &gt; 1, and multi-process
         distributed coordination) requires an Enterprise Warp license — without one, migrations
         run correctly but serially, one partition at a time.

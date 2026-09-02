@@ -1,6 +1,6 @@
-# NexaGres DMS
+# Sayonora DMS
 
-NexaGres DMS (Database Migration Service) — formerly "Polyadvisor"/NexaGres Advisor — is two
+Sayonora DMS (Database Migration Service) — formerly "Polyadvisor"/Sayonora Advisor — is two
 tools in one module:
 
 - **Migration Advisor** answers "how hard is it to migrate this database to Postgres, and how much
@@ -9,7 +9,7 @@ tools in one module:
   difficulty score, a breakdown of what's actually driving that score, and a Postgres sizing
   recommendation — no guesswork, no black box.
 - **Migration Service** actually moves the data: launches and monitors real, massively-parallel
-  [`nexagres-migration`](../migration/) runs (the Data Sync section) — real change-data-capture
+  [`sayonora-migration`](../migration/) runs (the Data Sync section) — real change-data-capture
   connectors for MongoDB, MySQL, SQL Server, Oracle, DynamoDB, SQS, Neo4j, and InfluxDB, writing
   into Postgres exclusively through [Warp](../wire/README.md)'s own gRPC driver.
 
@@ -49,7 +49,7 @@ workload capture, object browsing, and parameter inspection today.
 Backend:
 ```bash
 mvn package -DskipTests
-NEXAGRES_DMS_PORT=8090 java -jar target/nexagres-dms.jar
+SAYONORA_DMS_PORT=8090 java -jar target/sayonora-dms.jar
 ```
 
 Frontend (dev, proxies `/api` to the backend):
@@ -64,7 +64,7 @@ straight to the Data Sync section to launch a real migration job (Migration Serv
 
 Connection credentials are stored server-side so the browser never sees them again after you
 enter them — but they're currently stored **unencrypted** in DMS's local data directory (see
-`NEXAGRES_ENCRYPTION_KEY` to opt into encryption at rest for the ones this module itself controls).
+`SAYONORA_ENCRYPTION_KEY` to opt into encryption at rest for the ones this module itself controls).
 Keep that in mind before pointing this at a production credential you wouldn't want sitting in
 plaintext on disk.
 
@@ -74,7 +74,7 @@ plaintext on disk.
   lets your existing application keep talking its native protocol (Oracle, MySQL, SQL Server,
   MongoDB, DynamoDB, Amazon SQS) while the data actually lives in Postgres, either as a permanent
   compatibility layer or a temporary bridge during the migration itself.
-- The engine behind Migration Service: [`nexagres-migration`](../migration/) — usable standalone
+- The engine behind Migration Service: [`sayonora-migration`](../migration/) — usable standalone
   (`Migrate*Cli` entry points) or launched from here.
 - Technical/internal reference for contributors (package layout, class responsibilities, internal
   routes): [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).

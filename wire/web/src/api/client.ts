@@ -1,5 +1,5 @@
 // This SPA talks directly to Warp's own admin API (see
-// wire/src/main/java/com/nexagres/wire/http/admin/MetricsServer.java) -- there is no advisor
+// wire/src/main/java/com/sayonora/wire/http/admin/MetricsServer.java) -- there is no advisor
 // backend in between. That server is explicitly documented as designed for server-to-server use
 // ("no CORS handling and no session/cookie machinery on purpose"), so the browser has to supply
 // its own base URL + bearer token on every request instead of relying on a cookie-backed session.
@@ -172,7 +172,7 @@ export async function deleteFirewallRule(id: number): Promise<void> {
 
 // --- Full config: /api/config ---
 // One GET/PUT(-partial) resource over every field of WarpConfig -- see
-// com.nexagres.wire.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
+// com.sayonora.wire.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
 // carry the fields a page actually edits; everything else is carried forward from the latest
 // warp_config version untouched.
 

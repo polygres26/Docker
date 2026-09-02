@@ -15,7 +15,7 @@ const MIGRATION_ADVISOR_ROUTES = ['/connections', '/reports', '/sizing']
 /**
  * Shell for every authenticated route. Ferry's two halves each get their own sidebar
  * section: Migration Advisor -- per-database assessment tools (Connections, Reports, Sizing,
- * tabbed on one another, see DmsTabs) -- and Migration Service -- nexagres-migration's real
+ * tabbed on one another, see DmsTabs) -- and Migration Service -- sayonora-migration's real
  * data-movement jobs and their live progress (the Data Sync page). Plus Configuration, settings
  * that aren't specific to either half; LLM lives there since it drives Migration Advisor's
  * migration-report narrative generation.
@@ -34,7 +34,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className={styles.railBrand}>
           <img src={logo} alt="" className={styles.railMark} />
           <div className={styles.railBrandText}>
-            <span className={styles.railBrandTitle}>Nexagres</span>
+            <span className={styles.railBrandTitle}>Sayonora</span>
             <span className={styles.railBrandSub}>Ferry</span>
           </div>
         </div>
@@ -97,7 +97,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </nav>
       <div className={styles.main}>
         <div className={styles.topbar}>
-          <div className={styles.crumb}>nexagres dms</div>
+          <div className={styles.crumb}>sayonora dms</div>
         </div>
         <div className={styles.content}>{children}</div>
       </div>

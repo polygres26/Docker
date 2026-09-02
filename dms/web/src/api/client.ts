@@ -310,7 +310,7 @@ export async function runReportsSizing(ids: string[]): Promise<SizingRecommendat
   return api('/api/reports/sizing', { method: 'POST', body: JSON.stringify({ ids }) })
 }
 
-// --- Data Sync (nexagres-migration progress report) ---
+// --- Data Sync (sayonora-migration progress report) ---
 
 export interface MigrationSourceStatus {
   sourceKey: string

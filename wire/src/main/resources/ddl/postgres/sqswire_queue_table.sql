@@ -1,7 +1,7 @@
 -- Postgres's own original query shape, unchanged -- a real single-statement UPDATE ... WHERE
 -- msg_id = (SELECT ... FOR UPDATE SKIP LOCKED) ... RETURNING. Oracle/SQL Server/MySQL now have
 -- their own real DDL AND query support too (ddl/<engine>/sqswire_queue_table.sql,
--- com.nexagres.wire.sqswire.SqswireDialect) -- see that class's own javadoc for the real,
+-- com.sayonora.wire.sqswire.SqswireDialect) -- see that class's own javadoc for the real,
 -- deliberate two-statement claim pattern those three engines share instead of this one.
 -- ### table
 CREATE TABLE IF NOT EXISTS ${table} (

@@ -6,7 +6,7 @@
 #
 # Prefer a separate static-file tier anyway (CDN-fronted, scaled independently of the API)?
 # Dockerfile.frontend + nginx.conf are still here for that -- just don't set
-# NEXAGRES_DMS_WEB_DIR on the backend and put your own static server in front instead.
+# SAYONORA_DMS_WEB_DIR on the backend and put your own static server in front instead.
 
 # ---- build the SPA ----
 FROM node:22-alpine AS web-build
@@ -34,23 +34,23 @@ WORKDIR /app
 
 RUN groupadd --system polyadvisor && useradd --system --gid polyadvisor --home-dir /app polyadvisor
 
-COPY --from=build /build/target/nexagres-dms.jar /app/nexagres-dms.jar
+COPY --from=build /build/target/sayonora-dms.jar /app/sayonora-dms.jar
 COPY --from=web-build /build/dist /app/web
 
-# NEXAGRES_DATA_DIR: embedded HSQLDB file store (ConnectionStore/LlmSettingsStore/ReportStore --
+# SAYONORA_DATA_DIR: embedded HSQLDB file store (ConnectionStore/LlmSettingsStore/ReportStore --
 # saved connections, LLM provider config, uploaded performance reports) -- see those classes'
-# javadoc. Defaults to ~/.nexagres; pointed at a dedicated, volume-mountable directory here so
+# javadoc. Defaults to ~/.sayonora; pointed at a dedicated, volume-mountable directory here so
 # `docker-compose.yml` can persist it across container restarts without needing to know this
 # app's home-directory default.
 #
-# NEXAGRES_DMS_WEB_DIR: tells DmsHttpServer to serve the SPA copied in above via its own
+# SAYONORA_DMS_WEB_DIR: tells DmsHttpServer to serve the SPA copied in above via its own
 # embedded Jetty (SpaResourceHandler) -- unset this env var (or don't set it) to run API-only.
-ENV NEXAGRES_DATA_DIR=/data
-ENV NEXAGRES_DMS_WEB_DIR=/app/web
+ENV SAYONORA_DATA_DIR=/data
+ENV SAYONORA_DMS_WEB_DIR=/app/web
 RUN mkdir -p /data && chown -R polyadvisor:polyadvisor /app /data
 USER polyadvisor
 
 VOLUME ["/data"]
 EXPOSE 8090
 
-ENTRYPOINT ["java", "-jar", "/app/nexagres-dms.jar"]
+ENTRYPOINT ["java", "-jar", "/app/sayonora-dms.jar"]

@@ -1,10 +1,10 @@
-# Nexagres Use Case & Deployment Guide
+# Sayonora Use Case & Deployment Guide
 
-Covers both modules — **Nexagres DMS** (migration assessment) and **Warp** (protocol
+Covers both modules — **Sayonora DMS** (migration assessment) and **Warp** (protocol
 gateway) — plus the Docker packaging for each. Each section is self-contained; jump to what
 you need.
 
-> **On screenshots**: this guide doesn't include UI screenshots. Nexagres DMS's web UI only has
+> **On screenshots**: this guide doesn't include UI screenshots. Sayonora DMS's web UI only has
 > real content once it's pointed at an actual source database, and generating images here would
 > mean either fabricating a fake UI or a blank shell — neither is useful. Once you run `docker
 > compose up` (see the Docker section), tell me and I'll drive the running UI in a browser and
@@ -16,18 +16,18 @@ you need.
 
 | Module | Question it answers | Output |
 |---|---|---|
-| **Nexagres DMS** | "How hard is it to migrate this Oracle/MySQL/SQL Server database to Postgres, and can you do the easy parts for me?" | Assessment report (schema/feature/workload scoring) + automated migration for low-risk objects |
+| **Sayonora DMS** | "How hard is it to migrate this Oracle/MySQL/SQL Server database to Postgres, and can you do the easy parts for me?" | Assessment report (schema/feature/workload scoring) + automated migration for low-risk objects |
 | **Warp** | "Can my existing app, written against Oracle/MySQL/SQL Server/MongoDB/DynamoDB wire protocols, talk to Postgres without a rewrite?" | A gateway process that speaks the client's native wire protocol on one side and real Postgres SQL on the other |
 
 They're complementary, not sequential-only: a team can run Warp indefinitely as a
 permanent compatibility shim (e.g. legacy MongoDB driver code that's not worth rewriting) or
-as a temporary cutover bridge while Nexagres DMS migrates schema/data behind the scenes.
+as a temporary cutover bridge while Sayonora DMS migrates schema/data behind the scenes.
 
 ---
 
 ## 2. Architecture
 
-### 2.1 Nexagres DMS
+### 2.1 Sayonora DMS
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
@@ -35,12 +35,12 @@ flowchart LR
     subgraph Client["Your browser"]
         UI["dms/web\nReact + Vite SPA"]
     end
-    subgraph Advisor["Nexagres DMS process"]
+    subgraph Advisor["Sayonora DMS process"]
         HTTP["DmsHttpServer\n(REST API)"]
         Profiler["Schema / feature\nprofiler"]
         Workload["Workload capture\n& scorer"]
         Migrator["Easy-tier\nmigration engine"]
-        Store["Embedded HSQLDB\n(NEXAGRES_DATA_DIR)\nconnections, LLM config, reports"]
+        Store["Embedded HSQLDB\n(SAYONORA_DATA_DIR)\nconnections, LLM config, reports"]
     end
     Source[("Source DB\nOracle / MySQL /\nMariaDB / SQL Server")]
     PG[("Target Postgres")]
@@ -58,7 +58,7 @@ flowchart LR
 
 - **Stateless compute, stateful store**: the process itself holds nothing between requests;
   all durable state (saved connections, LLM provider keys, uploaded/generated reports) lives
-  in the embedded HSQLDB file store — one directory (`NEXAGRES_DATA_DIR`), trivially backed up.
+  in the embedded HSQLDB file store — one directory (`SAYONORA_DATA_DIR`), trivially backed up.
 - **Read-mostly against the source**: profiling and workload capture are read-only against the
   source database. Only the migration engine writes, and only to the Postgres target — it
   never mutates the source.
@@ -328,7 +328,7 @@ Both modules have a Docker Compose file that needs nothing but Docker Desktop.
 docker compose -f docker/warp/docker-compose.yml up --build
 ```
 
-**Nexagres DMS** (one container — API + SPA served together by embedded Jetty):
+**Sayonora DMS** (one container — API + SPA served together by embedded Jetty):
 
 ```bash
 docker compose -f docker/dms/docker-compose.yml up --build
@@ -403,14 +403,14 @@ flowchart TB
 
 ## 7. Docker packaging reference
 
-| | Warp | Nexagres DMS |
+| | Warp | Sayonora DMS |
 |---|---|---|
 | Images | 1 (`docker/warp/Dockerfile`) | 1 (`docker/dms/Dockerfile`) — API + SPA in one container |
 | Base (build) | `maven:3.9-eclipse-temurin-21` | same, plus a `node:22-alpine` stage to build the SPA |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
-| Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `NEXAGRES_DATA_DIR` (embedded HSQLDB) |
-| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`NEXAGRES_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/dms/` for teams that want a separately-scaled static tier instead |
+| Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `SAYONORA_DATA_DIR` (embedded HSQLDB) |
+| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`SAYONORA_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/dms/` for teams that want a separately-scaled static tier instead |
 | `.dockerignore` | repo-root only — both compose files set `context: ../..`, and classic Docker only honors a root-level `.dockerignore` | same |
 
 Build standalone (no compose):
@@ -418,7 +418,7 @@ Build standalone (no compose):
 ```bash
 # from repo root
 docker build -f docker/warp/Dockerfile -t warp:latest .
-docker build -f docker/dms/Dockerfile -t nexagres-dms:latest .
+docker build -f docker/dms/Dockerfile -t sayonora-dms:latest .
 ```
 
 ---
@@ -427,7 +427,7 @@ docker build -f docker/dms/Dockerfile -t nexagres-dms:latest .
 
 Every end-user-facing feature in both modules, in one place, with its config knob.
 
-### 8.1 Nexagres DMS features
+### 8.1 Sayonora DMS features
 
 | Feature | What it does | Where |
 |---|---|---|
@@ -518,8 +518,8 @@ Every frontend above feeds the same shared pipeline, in this order:
 
 | Scenario | Module(s) | Notes |
 |---|---|---|
-| Assess Oracle → Postgres migration difficulty | Nexagres DMS | Read-only profiling, no source-side risk |
-| Auto-migrate low-risk schema objects | Nexagres DMS | Writes only to the Postgres target |
+| Assess Oracle → Postgres migration difficulty | Sayonora DMS | Read-only profiling, no source-side risk |
+| Auto-migrate low-risk schema objects | Sayonora DMS | Writes only to the Postgres target |
 | Keep a legacy Oracle-driver app running against Postgres, permanently | Warp (orawire) | No app rewrite; TNS/TTC + TCPS supported |
 | Cut over a MySQL-protocol app during a migration window | Warp (mywire) | Temporary bridge, decommission after cutover |
 | Let an AI agent call vetted stored procedures as tools | Warp (MCP frontend) | Only `WARP_MCP_TOOLS`-registered functions are exposed, not arbitrary SQL |

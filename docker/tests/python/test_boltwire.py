@@ -1,6 +1,6 @@
 """boltwire: real Neo4j Bolt+Cypher wire protocol -- CREATE (nodes and single-hop node-edge-node
 patterns), MATCH/WHERE/RETURN (fixed single-hop and bounded variable-length [*min..max] paths), all
-translated to Postgres underneath (see com.nexagres.wire.boltwire.PgGraphStore's javadoc for the
+translated to Postgres underneath (see com.sayonora.wire.boltwire.PgGraphStore's javadoc for the
 two-table property-graph schema). Uses the real `neo4j` Python driver, not a hand-rolled Bolt
 client -- no auth configured in the test compose file, so any username/password is accepted.
 """

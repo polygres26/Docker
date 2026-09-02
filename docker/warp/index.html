@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Warp — Full Capabilities of the Intelligent Database Gateway</title>
 <meta name="description" content="Warp's full technical detail, organized by what it does — Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, admin console, Mach benchmarks per protocol, sharding, SQS, rollups, observability, multi-AZ deployment, security, planned/unplanned outages, and error translation.">
-<link rel="canonical" href="https://nexagres.com/warp/">
+<link rel="canonical" href="https://sayonora.com/warp/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
 <link rel="icon" type="image/png" href="/assets/logo.png">
@@ -13,14 +13,14 @@
 <link rel="stylesheet" href="/styles.min.css">
 
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://nexagres.com/warp/">
+<meta property="og:url" content="https://sayonora.com/warp/">
 <meta property="og:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
 <meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
-<meta property="og:image" content="https://nexagres.com/assets/og-image.png">
+<meta property="og:image" content="https://sayonora.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
 <meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
-<meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
+<meta name="twitter:image" content="https://sayonora.com/assets/og-image.png">
 </head>
 <body>
   <a href="#main" class="skipLink">Skip to content</a>
@@ -42,8 +42,8 @@
   <main class="wrap" id="main">
     <header>
       <div class="brandRow">
-        <img src="/assets/logo.png" alt="NexaGres" class="brandMark">
-        <h1 class="eyebrow">NexaGres</h1>
+        <img src="/assets/logo.png" alt="Sayonora" class="brandMark">
+        <h1 class="eyebrow">Sayonora</h1>
       </div>
       <p class="lede">
         <a href="/">← Back to the Warp overview</a> — Warp is the intelligent
@@ -825,7 +825,7 @@
         <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">A real token-bucket limiter — rate, burst, and max-wait, configurable per workload class (query/write/ddl/txn) — plus shedding when a backend's connection pool is saturated. Today the limiter is per-workload-class and process-wide, not yet per-tenant or per-client.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Authentication</span><span class="uc-desc">Set <code>WARP_AUTH_MODE=postgres_roles</code> and Warp verifies real Postgres roles — SCRAM-SHA-256 and md5, read live from <code>pg_authid</code> — for the Postgres and SQL Server wire protocols (needs a backend role granted <code>SELECT ON pg_authid</code> to read role hashes — deliberately not a superuser, since a superuser bypasses row-level security unconditionally, which matters if you're relying on RLS below). The Oracle wire protocol authenticates differently — its O5LOGON handshake needs a real plaintext password server-side to verify the client's own encrypted challenge response, so it can't be satisfied from Postgres's hashed role verifiers the way SCRAM can; set <code>WARP_AUTH_CREDENTIALS</code> (a <code>user=pass;user2=pass2</code> list) to give it real, distinguishable per-caller identities instead. Without either, pgwire/mssqlwire/orawire all fall back to one shared username/password, and MySQL only supports that shared credential today. The admin API and MCP endpoint separately support OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">TLS everywhere</span><span class="uc-desc">In-band TLS for Postgres, MySQL, and SQL Server wire protocols (standard client <code>sslmode</code>/encryption settings just work), a dedicated TCPS port for Oracle, TLS for gRPC, and mutual TLS between cluster nodes for cache traffic — all from one PKCS12 keystore. Client-certificate authentication isn't implemented yet; TLS today verifies the server to the client, not the client to the server.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>NEXAGRES_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and Warp logs a warning at startup saying so.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Secrets management</span><span class="uc-desc">A backend password can be a <code>vault:</code> or <code>cyberark:</code> reference instead of a literal — resolved fresh from HashiCorp Vault (KV v1/v2) or CyberArk CCP on every connection, so a rotated secret takes effect without a restart. Credential fields in the config table can additionally be encrypted at rest with AES-256-GCM — set <code>SAYONORA_ENCRYPTION_KEY</code>; without it, those fields are stored as plain text, and Warp logs a warning at startup saying so.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Admin API authentication</span><span class="uc-desc">The config/backends/queues/topology API accepts either of two auth paths, simultaneously — a shared bearer token (<code>WARP_ADMIN_TOKEN</code>, constant-time compare) that always grants full read+write access, the simplest option for a single operator, CI, or a quick trial; or real SSO — Okta, Entra ID, or any OIDC-compliant IdP, via the same <code>WARP_OAUTH_ISSUER</code> config as every other OIDC-backed surface on this page. With SSO, a caller's IdP group or app-role claim (<code>WARP_OAUTH_ROLES_CLAIM</code>) is checked against <code>WARP_OAUTH_ADMIN_ROLES</code>/<code>WARP_OAUTH_VIEWER_ROLES</code> to grant either read-only viewer access or full admin — an SSO caller with neither role name is denied, not silently downgraded to viewer. Every mutating call made through either path is recorded to the audit log, attributed to the real SSO identity when there is one, or plainly to <code>"shared-admin-token"</code> when there isn't. Turning SSO on doesn't retire the shared token — both stay live together, and either one alone fails closed the same way the single-token setup always did.</span></span></li>
       </ul>
       <p class="statTeaser">Row-level security, for real — your own Postgres RLS policies do the filtering, not Warp rewriting SQL.</p>

@@ -30,4 +30,4 @@ Allow: /
 User-agent: Bingbot
 Allow: /
 
-Sitemap: https://nexagres.com/sitemap.xml
+Sitemap: https://sayonora.com/sitemap.xml

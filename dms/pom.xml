@@ -4,20 +4,20 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.nexagres</groupId>
-  <artifactId>nexagres-dms</artifactId>
+  <groupId>com.sayonora</groupId>
+  <artifactId>sayonora-dms</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>NexaGres DMS</name>
+  <name>Sayonora DMS</name>
   <description>
-    NexaGres DMS (Database Migration Service) -- formerly "PolyAdvisor"/NexaGres Advisor. Two
+    Sayonora DMS (Database Migration Service) -- formerly "PolyAdvisor"/Sayonora Advisor. Two
     halves under one module: Migration Advisor (connects to a source database -- Oracle first,
     MariaDB/MySQL next -- profiles schema + workload, scores Postgres-migration difficulty) and
-    Migration Service (launches and monitors real nexagres-migration runs -- see
-    com.nexagres.dms.migration and the MigrationJobsRoute/MigrationStatusRoute HTTP routes).
+    Migration Service (launches and monitors real sayonora-migration runs -- see
+    com.sayonora.dms.migration and the MigrationJobsRoute/MigrationStatusRoute HTTP routes).
 
-    The connectivity layer (com.nexagres.dms.core) is a trimmed adaptation of Omnigate's
+    The connectivity layer (com.sayonora.dms.core) is a trimmed adaptation of Omnigate's
     JDBC connection-pool/backend-target model (~/Projects/Omnigate, com.omnigate.core);
     copied in, not depended on, per project decision to keep this repo standalone.
   </description>
@@ -123,7 +123,7 @@
     </dependency>
 
     <!-- Hyperscaler secret store: AWS Secrets Manager, for SecretRef.AwsSecretsManager (see
-         com.nexagres.dms.secrets.SecretRef/SecretResolver). Azure Key Vault and GCP Secret
+         com.sayonora.dms.secrets.SecretRef/SecretResolver). Azure Key Vault and GCP Secret
          Manager are resolved over plain HTTPS with java.net.http instead (same style as this
          module's own Vault/CyberArk resolvers); neither needs a dedicated SDK dependency the
          way AWS's SigV4 signing genuinely benefits from one. -->
@@ -140,16 +140,16 @@
       <version>3.0.3</version>
     </dependency>
 
-    <!-- Lets NexaGres DMS's Migration Service half actually LAUNCH a nexagres-migration run
+    <!-- Lets Sayonora DMS's Migration Service half actually LAUNCH a sayonora-migration run
          (MigrationJobRunner), not just read
          its bookkeeping tables the way MigrationStatusStore already did before this dependency
-         existed. Brings in nexagres-wire, every connector's real vendor client (mongodb-driver-
+         existed. Brings in sayonora-wire, every connector's real vendor client (mongodb-driver-
          sync, the AWS SDK dynamodb/sqs modules, the mysql-binlog-connector, neo4j-java-driver,
          mssql-jdbc/ojdbc11) transitively; deliberately the exact same jars every Migrate*Cli
          entry point already runs against, not a second copy pinned to different versions. -->
     <dependency>
-      <groupId>com.nexagres</groupId>
-      <artifactId>nexagres-migration</artifactId>
+      <groupId>com.sayonora</groupId>
+      <artifactId>sayonora-migration</artifactId>
       <version>0.1.0-SNAPSHOT</version>
     </dependency>
 
@@ -164,8 +164,8 @@
          new job-launching glue against real infrastructure using the SAME helpers every
          connector's own integration test already relies on. -->
     <dependency>
-      <groupId>com.nexagres</groupId>
-      <artifactId>nexagres-migration</artifactId>
+      <groupId>com.sayonora</groupId>
+      <artifactId>sayonora-migration</artifactId>
       <version>0.1.0-SNAPSHOT</version>
       <classifier>tests</classifier>
       <scope>test</scope>
@@ -173,7 +173,7 @@
   </dependencies>
 
   <build>
-    <finalName>nexagres-dms</finalName>
+    <finalName>sayonora-dms</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -186,7 +186,7 @@
             <configuration>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>com.nexagres.dms.http.DmsHttpServer</mainClass>
+                  <mainClass>com.sayonora.dms.http.DmsHttpServer</mainClass>
                 </transformer>
                 <!-- Merges every dependency's META-INF/services/java.sql.Driver (Oracle, MySQL,
                      MariaDB, Postgres, HSQLDB all self-register this way); without this, the
@@ -214,10 +214,10 @@
           </execution>
         </executions>
       </plugin>
-      <!-- Same add-opens set nexagres-migration's own pom.xml carries for its test JVM (see that
+      <!-- Same add-opens set sayonora-migration's own pom.xml carries for its test JVM (see that
            pom's own comment); needed here too now that this module's tests (via the new
-           nexagres-migration test dependency, MigrationJobRunnerIntegrationTest) pull in
-           ignite-core transitively through nexagres-wire, and IgniteJdbcThinDriver's static
+           sayonora-migration test dependency, MigrationJobRunnerIntegrationTest) pull in
+           ignite-core transitively through sayonora-wire, and IgniteJdbcThinDriver's static
            initializer throws under the module system's default reflection restrictions without
            these; confirmed live, not hypothetical: every DriverManager.getConnection call in
            this module's tests failed with NoClassDefFoundError before this was added. -->

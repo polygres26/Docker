@@ -11,7 +11,7 @@ import time
 import uuid
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-JAR_PATH = os.path.join(REPO_ROOT, "target", "nexagres-wire.jar")
+JAR_PATH = os.path.join(REPO_ROOT, "target", "sayonora-wire.jar")
 
 ADD_OPENS = [
     "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",

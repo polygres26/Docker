@@ -129,7 +129,7 @@ instance-metadata. See the full deployment guide for the complete verification d
 mvn package -DskipTests
 ```
 
-Produces `target/nexagres-wire.jar` (shaded, runnable with `java -jar`). Requires the
+Produces `target/sayonora-wire.jar` (shaded, runnable with `java -jar`). Requires the
 `--add-opens` flags in `scripts/run.sh` for the embedded Ignite distributed cache.
 
 ## License

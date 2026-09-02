@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1540 1080" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="nexagres-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus (where the source supports it) a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into WarpGrpcSink, which writes exclusively through Warp's own gRPC driver -- never a direct JDBC backdoor -- into the target Postgres. Target-Postgres bookkeeping (CdcCheckpointStore, PartitionLeaseStore, DeadLetterStore, CutoverReadinessChecker) connects directly since it is migration infrastructure, not customer data. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal before a connection is pointed at Postgres for good.">
+<svg viewBox="0 0 1540 1080" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="sayonora-migration architecture: eight real source connectors -- MongoDB, MySQL, SQL Server, Oracle, DynamoDB, Amazon SQS, Neo4j, and InfluxDB -- each an initial parallel snapshot plus (where the source supports it) a live change-data-capture tail, coordinated by either Coordinator (one process, local thread pool, free tier runs serial) or DistributedCoordinator (a fleet of worker processes sharing a PartitionLeaseStore, Enterprise-licensed), landing through ResilientSink's retry-then-dead-letter path into WarpGrpcSink, which writes exclusively through Warp's own gRPC driver -- never a direct JDBC backdoor -- into the target Postgres. Target-Postgres bookkeeping (CdcCheckpointStore, PartitionLeaseStore, DeadLetterStore, CutoverReadinessChecker) connects directly since it is migration infrastructure, not customer data. A CutoverReadinessChecker rolls partition completion, change-feed lag, dead-letter count, and row-level verification into a single ready/not-ready signal before a connection is pointed at Postgres for good.">
   <defs>
     <marker id="mArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#6a4fd6"/>
@@ -14,7 +14,7 @@
   <rect x="0" y="0" width="1540" height="1080" fill="#ffffff"/>
 
   <!-- ===================== HEADER ===================== -->
-  <text x="20" y="46" font-size="30" font-weight="800" fill="#5a3fd6">nexagres-migration</text>
+  <text x="20" y="46" font-size="30" font-weight="800" fill="#5a3fd6">sayonora-migration</text>
   <line x1="330" y1="18" x2="330" y2="66" stroke="#d7d3e8" stroke-width="2"/>
   <text x="352" y="48" font-size="19" font-weight="600" fill="#33324a">Massively-parallel, low-downtime migration into Postgres -- through Warp's own gRPC driver, never a JDBC backdoor.</text>
 
@@ -239,5 +239,5 @@
   <text x="20" y="934" font-size="12.5" font-weight="500" fill="#5b5a72">CutoverReadinessChecker rolls partition completion + change-feed lag + dead-letter count + row-level verification into a single</text>
   <text x="20" y="952" font-size="12.5" font-weight="500" fill="#5b5a72">READY / NOT READY -- fail-closed: zero partitions recorded reads as "migration never ran," never as "nothing to check."</text>
 
-  <text x="20" y="998" font-size="12" fill="#8b8aa0">nexagres-migration v1 -- eight real source connectors, one gRPC path into Postgres, free-tier serial or Enterprise-tier fleet-parallel.</text>
+  <text x="20" y="998" font-size="12" fill="#8b8aa0">sayonora-migration v1 -- eight real source connectors, one gRPC path into Postgres, free-tier serial or Enterprise-tier fleet-parallel.</text>
 </svg>

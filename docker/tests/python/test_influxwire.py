@@ -1,6 +1,6 @@
 """influxwire: real InfluxDB v1 line-protocol write path plus a bounded InfluxQL read path
 (WHERE/GROUP BY time()/aggregates), real `influxdb` (the official v1 client, not the v2
-`influxdb-client` package -- see com.nexagres.wire.influxwire.InfluxWireServer's javadoc for why
+`influxdb-client` package -- see com.sayonora.wire.influxwire.InfluxWireServer's javadoc for why
 this speaks v1, not Flux), translated to Postgres underneath. No auth configured in the test
 compose file, so a bare client is enough.
 """
