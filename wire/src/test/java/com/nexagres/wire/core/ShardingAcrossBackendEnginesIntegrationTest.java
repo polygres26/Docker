@@ -27,19 +27,21 @@ import org.junit.jupiter.api.Test;
  * shard actually writes and reads back correctly, not an assumption from reading the dispatch
  * code.
  *
- * <p><b>Real, confirmed limitation found while writing this test, worth its own fix</b>: the
- * OTHER sharding mechanism, {@code WARP_ROUTER_SHARD_TABLES} (schema-qualified routing, e.g.
- * {@code public.orders}), hardcodes the assumption that {@code public} is a valid schema-like
- * qualifier on every shard's own dialect. It works for a Postgres shard (where {@code public}
- * really is the default schema) but breaks for a real MySQL shard (confirmed live: {@code ERROR:
- * Unknown database 'public'} -- MySQL read the qualifier as a database name, and no database
- * named {@code public} exists) and cannot work for a real Oracle shard at all ({@code PUBLIC} is
- * a reserved system role name in Oracle, not something a real schema/user can be named). This
- * test avoids that mechanism entirely and uses {@code WARP_TABLE_SHARDS} instead (an unqualified
- * table name, hash-sharded by column value across named backends -- see {@code
- * RouterStage#fromConfig}'s own {@code orders:hash:customer_id:shard1,shard2} example), which has
- * no such assumption. The schema-qualified mechanism's Postgres-only assumption is a separate,
- * real gap, not fixed here.
+ * <p><b>Real limitation found while writing this test, still open</b>: the OTHER sharding
+ * mechanism, {@code WARP_ROUTER_SHARD_TABLES} (schema-qualified routing, e.g. {@code
+ * public.orders}), hardcodes the assumption that {@code public} is a valid schema-like qualifier
+ * on every shard's own dialect. It works for a Postgres shard (where {@code public} really is the
+ * default schema) but breaks for a real MySQL shard (confirmed live: {@code ERROR: Unknown
+ * database 'public'} -- MySQL read the qualifier as a database name, and no database named
+ * {@code public} exists) and cannot work for a real Oracle shard at all ({@code PUBLIC} is a
+ * reserved system role name in Oracle, not something a real schema/user can be named). This test
+ * avoids that mechanism entirely and uses {@code WARP_TABLE_SHARDS} instead (an unqualified table
+ * name, hash-sharded by column value across named backends -- see {@code RouterStage#fromConfig}'s
+ * own {@code orders:hash:customer_id:shard1,shard2} example), which has no such assumption. Still
+ * genuinely open: fixing it needs {@code RouterStage}/{@code DialectTranslationStage} to strip or
+ * remap the schema qualifier per-target-dialect rather than forwarding it as literal SQL, a real
+ * design decision (does {@code public} become the shard's own default schema silently, or does a
+ * per-shard schema mapping need its own config?) rather than a small patch, so not attempted here.
  *
  * <p>Rows are inserted through the client (unqualified {@code orders}, not written directly to a
  * specific physical shard) so the router's own hash decides real placement -- this test doesn't
@@ -96,20 +98,17 @@ class ShardingAcrossBackendEnginesIntegrationTest {
     }
 
     /** Inserts 20 orders with distinct customer_ids through the client, letting the hash router
-     * decide real placement, then verifies the grand-total across shards -- correct only if every
-     * row genuinely landed somewhere real and scatter-gather genuinely read every shard back.
+     * decide real placement, then verifies the grand-total via a real {@code SELECT SUM(amount)}
+     * -- correct only if every row genuinely landed somewhere real and {@link
+     * ScatterGatherAggregateMerge} genuinely merged the aggregate across both shards.
      *
-     * <p>Deliberately sums the individual rows in Java rather than using {@code SELECT
-     * SUM(amount) FROM orders} -- found live that {@link ScatterGatherAggregateMerge}'s own
-     * per-shard query rewrite names its synthetic helper column {@code __agg_0} (a leading
-     * underscore, valid as an unquoted Postgres identifier), which is invalid Oracle syntax
-     * (Oracle requires an unquoted identifier to start with a letter) and produces a real {@code
-     * ORA-00911: invalid character after AS} the instant a shard is a real Oracle backend, not
-     * Postgres. A real, confirmed dialect-translation gap in cross-shard aggregate merging, not
-     * fixed here (needs a dialect-aware synthetic-alias naming scheme in
-     * ScatterGatherAggregateMerge, not a test-side workaround) -- this test routes around it with
-     * a plain row-fetch to still prove the write/read half of cross-dialect sharding without
-     * depending on the separately-broken aggregate path. */
+     * <p>This exercises the real cross-shard SQL SUM() path -- originally routed around here via
+     * a plain per-row fetch, because {@link ScatterGatherAggregateMerge}'s per-shard query rewrite
+     * named its synthetic helper column {@code __agg_0} (a leading underscore, valid as an
+     * unquoted Postgres identifier but invalid Oracle syntax), producing a real {@code
+     * ORA-00911: invalid character after AS} against a real Oracle shard. Now fixed (aliases
+     * renamed to {@code agg_0}/{@code agg_avg_sum_0}/{@code agg_avg_cnt_0}), so this test uses the
+     * real aggregate path again instead of working around it. */
     private void insertAndVerifyAcrossShards() throws SQLException {
         int expectedTotal = 0;
         // Literal SQL, not bind parameters -- pgjdbc defaults to binary-format bind params for
@@ -124,21 +123,16 @@ class ShardingAcrossBackendEnginesIntegrationTest {
                 expectedTotal += amount;
             }
         }
-        int actualTotal = 0;
-        int rowCount = 0;
         try (Connection conn = connectPgwire();
                 Statement st = conn.createStatement();
-                ResultSet rs = st.executeQuery("SELECT amount FROM orders")) {
-            while (rs.next()) {
-                actualTotal += rs.getInt(1);
-                rowCount++;
-            }
+                ResultSet rs = st.executeQuery("SELECT SUM(amount) FROM orders")) {
+            assertEquals(true, rs.next());
+            assertEquals(expectedTotal, rs.getInt(1),
+                    "grand total across both shards must match every inserted row -- only possible "
+                            + "if the hash router correctly wrote AND ScatterGatherAggregateMerge "
+                            + "correctly merged the SUM across both the Postgres shard and the real "
+                            + "non-Postgres shard");
         }
-        assertEquals(20, rowCount, "expected all 20 rows back -- only possible if scatter-gather "
-                + "genuinely read from both the Postgres shard and the real non-Postgres shard");
-        assertEquals(expectedTotal, actualTotal,
-                "grand total across both shards must match every inserted row -- only possible if "
-                        + "the hash router correctly wrote to both shards");
     }
 
     @Test

@@ -111,13 +111,19 @@ final class ScatterGatherAggregateMerge {
             AggKind kind = AggKind.valueOf(funcName);
             String outputName = alias != null ? alias : (funcName.toLowerCase(Locale.ROOT) + "_" + (helperIndex));
             if (kind == AggKind.AVG) {
-                String sumCol = "__avg_sum_" + helperIndex;
-                String cntCol = "__avg_cnt_" + helperIndex;
+                // "agg_avg_sum_N"/"agg_avg_cnt_N", not "__avg_sum_N"/"__avg_cnt_N" -- a leading
+                // underscore is a valid unquoted Postgres identifier but NOT valid unquoted Oracle
+                // syntax (Oracle requires an unquoted identifier to start with a letter);
+                // confirmed live as a real ORA-00911 the instant a scatter-gather aggregate query
+                // touched a real Oracle shard. mergeShardResult reads these back by ordinal
+                // position, never by name, so any valid-and-unique-per-helperIndex alias works.
+                String sumCol = "agg_avg_sum_" + helperIndex;
+                String cntCol = "agg_avg_cnt_" + helperIndex;
                 appendWithComma(rewrittenSelectList, "SUM(" + arg + ") AS " + sumCol);
                 appendWithComma(rewrittenSelectList, "COUNT(" + arg + ") AS " + cntCol);
                 planned.add(new PlannedColumn(outputName, true, AggKind.AVG, arg));
             } else {
-                String helperCol = "__agg_" + helperIndex;
+                String helperCol = "agg_" + helperIndex;
                 appendWithComma(rewrittenSelectList, funcName + "(" + arg + ") AS " + helperCol);
                 planned.add(new PlannedColumn(outputName, true, kind, arg));
             }

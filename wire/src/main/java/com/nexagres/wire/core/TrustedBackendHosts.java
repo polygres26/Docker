@@ -110,7 +110,14 @@ public final class TrustedBackendHosts {
     // "thin:@//host:port/service" shape needs its own separate pattern (the "thin:@" prefix isn't
     // a URI scheme); TNS-descriptor-style Oracle URLs (no host:port at all) are a real, further
     // gap this doesn't cover, same "return null -> not trusted" fallback as before this fix.
-    private static final Pattern JDBC_ORACLE_THIN = Pattern.compile("(?i)^jdbc:oracle:thin:@//([^/?]+)");
+    //
+    // Second real bug, found live writing ShardingAcrossBackendEnginesIntegrationTest: the thin
+    // driver ALSO accepts a single-slash "@host:port/service" form (no double slash) -- both are
+    // real, valid syntax, confirmed live via a real shard backend using the single-slash form
+    // that this regex's original "@//" requirement silently rejected as untrusted, for the exact
+    // same "extractHostPort returns null" reason described above, just a second URL shape hitting
+    // it. The "//" is now optional, not required.
+    private static final Pattern JDBC_ORACLE_THIN = Pattern.compile("(?i)^jdbc:oracle:thin:@/{0,2}([^/?]+)");
     private static final Pattern JDBC_HOST_PORT_STYLE =
             Pattern.compile("(?i)^jdbc:(?:sqlserver|mysql|mariadb)://([^/;?]+)");
     private static final Pattern MONGO_CONNECTION_STRING = Pattern.compile("(?i)^mongodb(?:\\+srv)?://([^/?]+)");
