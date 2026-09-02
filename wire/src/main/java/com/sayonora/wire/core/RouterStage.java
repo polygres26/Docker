@@ -401,23 +401,53 @@ public final class RouterStage implements PipelineStage {
                 }
             }
         }
-        return resolveUnambiguousDefault();
+        return resolveUnambiguousDefault(statement);
     }
 
-    private String resolveUnambiguousDefault() {
+    /** No rule matched -- fall back in two steps, neither of which needs the caller (a protocol's
+     * session handler) to pre-pin anything, so a configured router rule always takes precedence
+     * over either fallback:
+     * <ol>
+     * <li>If this statement's {@link Statement#sourceDialect()} has a reserved native-mode default
+     * name ({@link BackendRegistry#MYSQL_NATIVE_DEFAULT_NAME}/{@code MSSQL_NATIVE_DEFAULT_NAME}/
+     * {@code ORACLE_NATIVE_DEFAULT_NAME}) AND that exact name is registered, use it. Matched BY
+     * RESERVED NAME, not "the sole backend of a matching dialect" -- deliberately: an operator can
+     * separately register OTHER real Oracle/MySQL/SQL Server backends under arbitrary names via
+     * {@code WARP_BACKENDS} purely for router-rule-driven sharding (reachable via pgwire with
+     * dialect translation, per {@code ShardingAcrossBackendEnginesIntegrationTest}), while a
+     * DIFFERENT protocol still runs in its own default/translating mode -- matching on dialect
+     * alone would make an unrelated same-dialect shard look identical to that protocol's own
+     * would-be native default and silently hijack its untranslated routing with no rule and no
+     * operator intent behind it. See {@link BackendRegistry}'s own javadoc on these constants.</li>
+     * <li>Otherwise, fall back to the registered {@link BackendRegistry#DEFAULT_BACKEND_NAME}
+     * target if one exists -- the same Postgres backend every dialect has always translated into
+     * by default.</li>
+     * </ol> */
+    private String resolveUnambiguousDefault(Statement statement) {
         if (backendRegistry == null) {
             return null;
         }
-        var all = backendRegistry.all();
-        if (all.size() != 1) {
-            return null;
+        String reservedName = switch (statement.sourceDialect()) {
+            case MYSQL -> BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME;
+            case SQL_SERVER -> BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME;
+            case ORACLE -> BackendRegistry.ORACLE_NATIVE_DEFAULT_NAME;
+            default -> null;
+        };
+        if (reservedName != null) {
+            BackendTarget reserved = backendRegistry.get(reservedName);
+            if (reserved != null) {
+                log.debug("router: no rule matched, falling back to this protocol's own native-mode default '{}'",
+                        reserved.name());
+                return reserved.name();
+            }
         }
-        BackendTarget only = all.iterator().next();
-        if (!BackendRegistry.DEFAULT_BACKEND_NAME.equals(only.name())) {
-            return null;
+        BackendTarget defaultTarget = backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME);
+        if (defaultTarget != null) {
+            log.debug("router: no rule matched (and no native-mode default registered) -- falling back to '{}'",
+                    defaultTarget.name());
+            return defaultTarget.name();
         }
-        log.debug("router: no rule matched, falling back to implicit single backend '{}'", only.name());
-        return only.name();
+        return null;
     }
 
     private static String classifyWorkload(String sql) {

@@ -417,26 +417,25 @@ public final class MySqlWireSessionHandler implements Runnable {
             ExecutionResult result;
             try {
                 if (options.mywireNativeBackend()) {
-                    // Pin targetBackend to the "mysql-native" BackendTarget Main.java registers
-                    // for this mode (see BackendRegistry's staticExtraTargets) -- same wiring as
-                    // mssqlwire's own native mode. RouterStage's handle() takes its early-return
-                    // branch (statement.targetBackend() != null) and skips its own resolution, so
-                    // this doesn't touch any WARP_ROUTER_* rule configured for the default Postgres
-                    // backend. DialectTranslationStage then sees sourceDialect (MYSQL) ==
-                    // mysql-native's resolved dialect() (sniffed from its jdbc:mysql: URL) and
-                    // no-ops -- no translation, the client's real SQL reaches the real backend
-                    // untouched. FirewallStage/QosControlStage/CacheStage run unmodified: none of
-                    // them inspect dialect at all. RoutingBackendExecutor.execute() resolves this
-                    // named, non-default target via its own executeOnFreshConnection path -- a
+                    // No pin: leave targetBackend unset and let RouterStage resolve it like any
+                    // other statement -- same generalization as mssqlwire's own native mode (see
+                    // its identical comment). Any configured WARP_ROUTER_*/WARP_TABLE_SHARDS rule
+                    // can route this statement to ANY registered backend of ANY dialect; with no
+                    // rule matched, RouterStage.resolveUnambiguousDefault() falls back to the sole
+                    // registered MYSQL-dialect backend if exactly one exists -- "mysql-native",
+                    // registered by Main.java only when WARP_MYWIRE_BACKEND=mysql is set -- same
+                    // single-target behavior as before, just reached generically. Register a
+                    // SECOND MySQL target via WARP_BACKENDS and that fallback stops being
+                    // unambiguous, requiring an explicit rule instead. DialectTranslationStage
+                    // no-ops once resolved to a same-dialect target, so the client's real SQL still
+                    // reaches a real MySQL backend untouched. FirewallStage/QosControlStage/
+                    // CacheStage still run unmodified. RoutingBackendExecutor.execute() resolves
+                    // any non-default named target via its own executeOnFreshConnection path -- a
                     // pooled connection via BackendTarget#open() and a plain
                     // JdbcBackendExecutor(Connection) with NO NativeRlsSessionInitializer, unlike
                     // this session's own terminalExecutor (bound to MySqlPgEmulationSessionInitializer,
-                    // Postgres-only session setup that a real MySQL backend has no use for) -- so
-                    // this connection lifecycle matches what the previous direct
-                    // MySqlBackendConnections.open()+JdbcBackendExecutor bypass did, just now with
-                    // the shared pipeline's dialect-agnostic stages actually running first.
-                    Statement pinned = statement.withRouting(statement.workloadClass(), "mysql-native");
-                    result = pipeline.execute(pinned);
+                    // Postgres-only session setup a real MySQL backend has no use for).
+                    result = pipeline.execute(statement);
                 } else {
                     try (Connection backend = PgConnections.open(options)) {
                         backend.setAutoCommit(true);

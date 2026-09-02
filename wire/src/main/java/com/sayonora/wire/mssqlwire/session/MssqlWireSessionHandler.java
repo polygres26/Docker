@@ -287,27 +287,28 @@ public final class MssqlWireSessionHandler implements Runnable {
             ExecutionResult result;
             try {
                 if (options.mssqlwireNativeBackend()) {
-                    // Pin targetBackend to the "mssql-native" BackendTarget Main.java registers
-                    // for this mode (see BackendRegistry's staticExtraTargets) -- RouterStage's
-                    // handle() takes its early-return branch (statement.targetBackend() != null)
-                    // and runs its own workload-classification but not its own backend resolution,
-                    // so this doesn't touch any WARP_ROUTER_* rule configured for the default
-                    // Postgres backend. DialectTranslationStage then sees sourceDialect
-                    // (SQL_SERVER) == mssql-native's resolved dialect() (sniffed from its
-                    // jdbc:sqlserver: URL) and no-ops -- no translation, the client's real T-SQL
-                    // reaches the real backend untouched, same as before this change.
-                    // FirewallStage/QosControlStage/CacheStage run unmodified: none of them
-                    // inspect dialect at all. RoutingBackendExecutor.execute() resolves this named,
-                    // non-default target via its own executeOnFreshConnection path -- a pooled
+                    // No pin: leave targetBackend unset and let RouterStage resolve it like any
+                    // other statement. Any configured WARP_ROUTER_*/WARP_TABLE_SHARDS rule can
+                    // route this statement to ANY registered backend of ANY dialect (including a
+                    // Postgres one -- correctly translated by DialectTranslationStage, since that
+                    // stage keys off the RESOLVED target's own dialect, not this protocol's usual
+                    // one). When no rule matches, RouterStage.resolveUnambiguousDefault() falls
+                    // back to the sole registered SQL_SERVER-dialect backend if exactly one exists
+                    // -- "mssql-native", registered by Main.java only when
+                    // WARP_MSSQLWIRE_BACKEND=sqlserver is set -- which is exactly today's single-
+                    // target behavior, just reached generically instead of via a hardcoded pin.
+                    // Register a SECOND SQL Server target via WARP_BACKENDS and that fallback stops
+                    // being unambiguous, requiring an explicit rule -- the whole point of this.
+                    // DialectTranslationStage no-ops once resolved to a same-dialect target, so the
+                    // client's real T-SQL still reaches a real SQL Server backend untouched, same as
+                    // before. FirewallStage/QosControlStage/CacheStage still run unmodified -- none
+                    // of them inspect dialect at all. RoutingBackendExecutor.execute() resolves any
+                    // non-default named target via its own executeOnFreshConnection path -- a pooled
                     // connection via BackendTarget#open() and a plain JdbcBackendExecutor(Connection)
                     // with NO NativeRlsSessionInitializer, unlike this session's own terminalExecutor
                     // (bound to MssqlPgEmulationSessionInitializer, Postgres-only `SET db_emulation =
-                    // 'sqlserver'` setup that a real SQL Server backend has no use for and would
-                    // reject) -- so this connection lifecycle matches what the previous direct
-                    // MssqlBackendConnections.open()+JdbcBackendExecutor bypass did, just now with
-                    // the shared pipeline's dialect-agnostic stages actually running first.
-                    Statement pinned = statement.withRouting(statement.workloadClass(), "mssql-native");
-                    result = pipeline.execute(pinned);
+                    // 'sqlserver'` setup a real SQL Server backend has no use for and would reject).
+                    result = pipeline.execute(statement);
                 } else {
                     try (Connection backend = PgConnections.open(options)) {
                         backend.setAutoCommit(true);

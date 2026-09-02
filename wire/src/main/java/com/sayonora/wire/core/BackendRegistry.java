@@ -14,6 +14,23 @@ public final class BackendRegistry {
 
     public static final String DEFAULT_BACKEND_NAME = "default";
 
+    /** Reserved names for each protocol's own single native-backend-mode default target,
+     * registered by {@code Main.java} only when that protocol's own native-mode flag
+     * (WARP_MYWIRE_BACKEND=mysql / WARP_MSSQLWIRE_BACKEND=sqlserver / WARP_ORACLE_BACKEND_MODE=native)
+     * is on. {@link RouterStage}'s no-rule-matched fallback checks these BY NAME, not by "the sole
+     * backend of a matching dialect" -- deliberately: an operator can ALSO register other real
+     * Oracle/MySQL/SQL Server backends under arbitrary names via WARP_BACKENDS purely for router-
+     * rule-driven sharding (see ShardingAcrossBackendEnginesIntegrationTest), reachable via pgwire
+     * with dialect translation, while a DIFFERENT protocol (say mywire) still runs in its own
+     * default/translating mode -- a same-dialect match would otherwise ambiguously look identical
+     * to that protocol's OWN would-be native default and silently hijack its untranslated routing
+     * with no rule and no operator intent behind it. Confirmed as a real gap while generalizing
+     * native-mode routing away from a hardcoded per-session pin -- see RouterStage's own javadoc
+     * on resolveUnambiguousDefault. */
+    public static final String MYSQL_NATIVE_DEFAULT_NAME = "mysql-native";
+    public static final String MSSQL_NATIVE_DEFAULT_NAME = "mssql-native";
+    public static final String ORACLE_NATIVE_DEFAULT_NAME = "oracle-native";
+
     /** A backend's operational state for routing purposes -- see {@link #resolveForRouting}.
      * {@code ACTIVE} is the default for every backend that's never had its state touched.
      * {@code DRAINING} is set explicitly via the admin drain API ahead of planned maintenance;

@@ -128,12 +128,14 @@ public final class Main {
         // MySqlBackendConnections already used) is exactly right.
         Map<String, BackendTarget> nativeBackendTargets = new LinkedHashMap<>();
         if (options.mywireNativeBackend()) {
-            nativeBackendTargets.put("mysql-native", new BackendTarget("mysql-native",
+            nativeBackendTargets.put(BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME, new BackendTarget(
+                    BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME,
                     "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase(),
                     options.mysqlUser(), options.mysqlPassword()));
         }
         if (options.mssqlwireNativeBackend()) {
-            nativeBackendTargets.put("mssql-native", new BackendTarget("mssql-native",
+            nativeBackendTargets.put(BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME, new BackendTarget(
+                    BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME,
                     "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
                             + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
                     options.mssqlUser(), options.mssqlPassword()));
