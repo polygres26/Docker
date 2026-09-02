@@ -58,7 +58,7 @@
           "name": "Enterprise",
           "price": "15000",
           "priceCurrency": "USD",
-          "description": "Starting at $15,000/year per production deployment/cluster. Everything in Developer, unlimited connections/instances/backends, licensed for commercial production use, with enterprise support.",
+          "description": "Starting at $15,000/year per production deployment/cluster. Everything in Developer, no fixed connection/instance/backend cap, licensed for commercial production use, with enterprise support.",
           "url": "https://sayonora.com/#pricing"
         }
       ],
@@ -180,9 +180,13 @@
 
       <h3 class="subhead" id="why">Put an intelligent control point in front of your database.<a class="permalink" href="#why" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Connect, protect, control, accelerate, observe — the same five things, applied identically
-        no matter which protocol the caller speaks or which database sits behind Warp. <b>Different
-        protocols. Same policies.</b> <a href="/warp/#outcomes">See each one broken out in detail →</a>
+        Connect, protect, control, accelerate, observe — the same five things, applied
+        consistently no matter which protocol the caller speaks, in Warp's default
+        dialect-translation mode. <b>Different protocols. Same policies.</b> (Native-backend
+        mode trades some of that coverage — the SQL firewall, QoS, and caching are pipeline
+        stages it bypasses — for keeping your current database engine untranslated; see
+        <a href="/warp/#native-backend-mode">native-backend mode</a> for exactly what still
+        applies.) <a href="/warp/#outcomes">See each one broken out in detail →</a>
       </p>
 
       <h3 class="subhead" id="architecture-simple">What is Warp?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
@@ -329,17 +333,18 @@
             <tr><td>Ferry</td><td>Free</td><td>$7,500/year</td><td>per migration environment</td></tr>
             <tr><td>Shim</td><td>Free / Basic</td><td>$5,000/year</td><td>per production deployment</td></tr>
             <tr><td>Sayonora Platform</td><td>Free (dev)</td><td>$20,000/year</td><td>bundle of all three</td></tr>
-            <tr><td>Enterprise Unlimited</td><td>—</td><td>Custom, ~$75,000+</td><td>company/business-unit agreement</td></tr>
+            <tr><td>Enterprise (company-wide)</td><td>—</td><td>Custom, ~$75,000+</td><td>company/business-unit agreement</td></tr>
           </tbody>
         </table>
       </div>
       <p class="pricingNote">
         <b>Sayonora Platform</b> bundles Warp, Ferry, and Shim
         under one license at a discount to buying all three separately.
-        <b>Enterprise Unlimited</b> is a company- or business-unit-wide agreement — unlimited
-        deployments and migration environments across every product, negotiated directly. Starting
-        prices above are exactly that — a starting point for the smallest real production
-        footprint each product is sold against; talk to us for a quote on yours.
+        <b>Enterprise (company-wide)</b> is a company- or business-unit-wide agreement — scope
+        (how many deployments and migration environments, across which products) negotiated
+        directly rather than metered per unit. Starting prices above are exactly that — a
+        starting point for the smallest real production footprint each product is sold against;
+        talk to us for a quote on yours.
         <a href="#contact">Schedule a Warp Architecture Review →</a>
       </p>
 
@@ -372,9 +377,9 @@
           </p>
           <ul>
             <li>Everything in Developer, unrestricted</li>
-            <li>Unlimited concurrent client connections</li>
-            <li>Unlimited Warp instances</li>
-            <li>Unlimited Postgres backends</li>
+            <li>No fixed cap on concurrent client connections</li>
+            <li>No fixed cap on Warp instances</li>
+            <li>No fixed cap on Postgres backends</li>
             <li>Full throughput, no admission-control ceiling beyond what you configure</li>
             <li>Licensed for commercial production use</li>
             <li>Enterprise support</li>
@@ -426,7 +431,7 @@
             <li>Failed-row retry with dead-letter queue</li>
             <li>Cutover-readiness verdict, plus automatic cutover the instant it's ready</li>
             <li>Configurable throughput cap, tuned to your source, not just the default</li>
-            <li>Unlimited concurrent migrations</li>
+            <li>No fixed cap on concurrent migrations</li>
             <li>Audit log, a second read-only account, SSO bearer-token login</li>
             <li>Enterprise support</li>
           </ul>
