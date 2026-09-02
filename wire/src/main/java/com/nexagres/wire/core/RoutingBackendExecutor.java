@@ -247,7 +247,28 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (matchedSchema != null) {
             return ShardJoinExecutor.execute(registry, shardNames, matchedSchema, statement, statisticsStore, planStore);
         }
-        return scatterAcross(shardNames, statement);
+        // Real bug fixed here, found live building the Oracle/MySQL/SQL Server cross-dialect
+        // sharding tests: the schema qualifier a client types to trigger this whole ShardRule
+        // match (e.g. "public.orders") used to be forwarded to EVERY shard's own connection
+        // completely unmodified -- fine for a Postgres shard (where "public" really is the
+        // default schema), but a real ERROR: Unknown database 'public' against a real MySQL shard
+        // (MySQL read it as a database name) and impossible against a real Oracle shard at all
+        // (PUBLIC is a reserved system role name there, not something a real schema/user can be
+        // named). The qualifier's only real job is triggering this routing match -- once that's
+        // decided, nothing downstream needs it in the literal SQL text, on ANY shard's dialect
+        // (even Postgres: an unqualified reference already resolves to "public" via the default
+        // search_path). Stripped here, once, for every registered ShardRule's own schema pattern,
+        // rather than threading dialect-awareness through DialectTranslationStage (which this
+        // scatter path bypasses entirely -- see executeOnFreshConnection's own javadoc).
+        return scatterAcross(shardNames, statement.withSqlText(stripShardSchemaQualifiers(statement.sqlText())));
+    }
+
+    private String stripShardSchemaQualifiers(String sql) {
+        String result = sql;
+        for (RouterStage.ShardRule rule : shardRules) {
+            result = rule.schemaPattern().matcher(result).replaceAll("");
+        }
+        return result;
     }
 
     /** @return every configured {@link RouterStage.TableShardRule} whose bare table name is

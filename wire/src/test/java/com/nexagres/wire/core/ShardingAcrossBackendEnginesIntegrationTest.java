@@ -27,21 +27,21 @@ import org.junit.jupiter.api.Test;
  * shard actually writes and reads back correctly, not an assumption from reading the dispatch
  * code.
  *
- * <p><b>Real limitation found while writing this test, still open</b>: the OTHER sharding
+ * <p><b>Real limitation found while writing this test, since fixed</b>: the OTHER sharding
  * mechanism, {@code WARP_ROUTER_SHARD_TABLES} (schema-qualified routing, e.g. {@code
- * public.orders}), hardcodes the assumption that {@code public} is a valid schema-like qualifier
- * on every shard's own dialect. It works for a Postgres shard (where {@code public} really is the
- * default schema) but breaks for a real MySQL shard (confirmed live: {@code ERROR: Unknown
- * database 'public'} -- MySQL read the qualifier as a database name, and no database named
- * {@code public} exists) and cannot work for a real Oracle shard at all ({@code PUBLIC} is a
- * reserved system role name in Oracle, not something a real schema/user can be named). This test
- * avoids that mechanism entirely and uses {@code WARP_TABLE_SHARDS} instead (an unqualified table
- * name, hash-sharded by column value across named backends -- see {@code RouterStage#fromConfig}'s
- * own {@code orders:hash:customer_id:shard1,shard2} example), which has no such assumption. Still
- * genuinely open: fixing it needs {@code RouterStage}/{@code DialectTranslationStage} to strip or
- * remap the schema qualifier per-target-dialect rather than forwarding it as literal SQL, a real
- * design decision (does {@code public} become the shard's own default schema silently, or does a
- * per-shard schema mapping need its own config?) rather than a small patch, so not attempted here.
+ * public.orders}), used to hardcode the assumption that {@code public} is a valid schema-like
+ * qualifier on every shard's own dialect. It worked for a Postgres shard (where {@code public}
+ * really is the default schema) but broke for a real MySQL shard (confirmed live: {@code ERROR:
+ * Unknown database 'public'} -- MySQL read the qualifier as a database name, and no database
+ * named {@code public} exists) and couldn't work for a real Oracle shard at all ({@code PUBLIC}
+ * is a reserved system role name in Oracle, not something a real schema/user can be named). This
+ * test still uses {@code WARP_TABLE_SHARDS} (an unqualified table name, hash-sharded by column
+ * value -- see {@code RouterStage#fromConfig}'s own {@code orders:hash:customer_id:shard1,shard2}
+ * example) rather than the schema-qualified mechanism, since that's a genuinely different routing
+ * shape worth its own coverage regardless. The schema-qualifier bug itself is now fixed (see
+ * {@link RoutingBackendExecutor#stripShardSchemaQualifiers}, which strips the matched qualifier
+ * before any shard ever sees it) and covered by its own dedicated regression test,
+ * {@code SchemaQualifiedShardingAcrossBackendEnginesIntegrationTest}.
  *
  * <p>Rows are inserted through the client (unqualified {@code orders}, not written directly to a
  * specific physical shard) so the router's own hash decides real placement -- this test doesn't
