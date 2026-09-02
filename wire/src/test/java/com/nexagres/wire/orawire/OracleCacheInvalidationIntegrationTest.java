@@ -102,15 +102,9 @@ class OracleCacheInvalidationIntegrationTest {
                     assertEquals("pending", rs.getString(1));
                 }
             }
-            // Second, identical read -- a FRESH PreparedStatement, not the same one re-executed:
-            // ojdbc11's thin driver sends the re-execute of an already-open cursor as a real,
-            // distinct FUNC_REEXECUTE wire call (see RequestLoop#handleReexecute), and re-running
-            // ps.executeQuery() twice on the same PreparedStatement here was found live to
-            // deadlock the whole session (both client and server left waiting on each other, no
-            // exception, no timeout) -- reproduced with WARP_CACHE_TABLES unset too, so it's a
-            // general orawire cursor-reexecution bug, not specific to this cache tier. See
-            // OracleRepeatedQueryIsolationTest for the isolated repro; tracked as a real,
-            // unfixed bug, not something this test works around silently.
+            // Second, identical read -- a fresh PreparedStatement (not the same one re-executed;
+            // that specific pattern was a separate, now-fixed orawire cursor-reexecution bug, see
+            // OracleRepeatedQueryIsolationTest and ResponseWriter#writeSuccessEndWithWarning).
             try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {

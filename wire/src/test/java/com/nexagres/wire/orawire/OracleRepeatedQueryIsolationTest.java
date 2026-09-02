@@ -10,7 +10,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -86,15 +85,15 @@ class OracleRepeatedQueryIsolationTest {
         if (postgres != null) postgres.close();
     }
 
-    /** Disabled so this known, tracked bug doesn't perpetually fail the suite -- re-enable once
-     * {@link RequestLoop#handleReexecute} (or whatever the real fix turns out to be) is fixed and
-     * confirmed against a real Oracle capture; at that point this test should pass outright, no
-     * changes needed beyond removing {@code @Disabled}. {@code @Timeout} stays as a safety net so
-     * a future run against a still-broken build fails fast (~30s) rather than hanging CI. */
+    /** Fixed: root cause was NOT in {@link RequestLoop#handleReexecute} -- a real Oracle packet
+     * capture (see ResponseWriter#writeSuccessEndWithWarning's javadoc) proved the client's
+     * second-request bytes were always correct and already handled; the actual bug was that
+     * Warp's response to the FIRST select never told the client its cursor was exhausted (real
+     * Oracle embeds an inline "ORA-01403: no data found" warning alongside the real row data on
+     * that exact response shape), leaving the client's internal cursor state confused enough that
+     * it hung before ever writing its second request. {@code @Timeout} stays as a safety net so a
+     * future regression fails fast (~30s) rather than hanging CI. */
     @Test
-    @Disabled("Known bug: re-executing the same PreparedStatement's SELECT against orawire "
-            + "deadlocks the session -- see this class's javadoc for the confirmed root-cause "
-            + "investigation. Tracked, not silently worked around.")
     @Timeout(30)
     void reExecutingTheSamePreparedStatementTwiceHangsTheSession() throws Exception {
         postgres = RealPostgres.start();

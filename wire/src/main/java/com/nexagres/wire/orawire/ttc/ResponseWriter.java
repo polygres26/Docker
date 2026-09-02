@@ -331,6 +331,59 @@ public final class ResponseWriter {
         w.writeUb4(0);
     }
 
+    /**
+     * A success end that ALSO carries an inline warning (real row data plus a trailing
+     * error-number/message pair on the very same response), matching what a real Oracle server
+     * sends when a fetch both returns its last real row(s) AND exhausts the cursor in the same
+     * call -- confirmed via a real Oracle packet capture (ScratchRealOracleCaptureTest): its
+     * response to a "SELECT ... WHERE id = ?" fetch that both hands back the one matching row AND
+     * exhausts the cursor embeds "ORA-01403: no data found" as a trailing warning alongside the
+     * real rowcount, not as a separate no-rows-at-all error response. This is a genuinely
+     * different shape from the old, since-removed writeInlineExhaustionEnd: that one was a
+     * hardcoded, captured byte blob with error 1403 baked in and NO row-count/row-data field at
+     * all, so a real ojdbc client correctly read it as "zero rows" and raised ORA-01403 to the
+     * application even though the row was legitimately there -- a real, reproducible bug (see
+     * docker/tests/java's OraWireTest javadoc). This writer keeps writeSuccessEnd's real
+     * rowcount field (the actual row(s) already written via writeRows/similar are unaffected;
+     * this only changes the trailing status fields) while additionally carrying the errorNum and
+     * message fields writeErrorEnd uses, so a real client sees both "here are your real rows" and
+     * "the cursor is now exhausted" in one response, matching the real-Oracle capture exactly.
+     */
+    public static void writeSuccessEndWithWarning(TtcWriter w, long rowcount, int cursorId, int errorNum,
+            String message, int callNumber) {
+        w.writeUint8(TtcConstants.MSG_TYPE_ERROR);
+        w.writeUb4(0);
+        w.writeUb2(0);
+        w.writeUb4(0);
+        w.writeUb2(errorNum);
+        w.writeUb2(0);
+        w.writeUb2(0);
+        w.writeUb2(cursorId);
+        w.writeSb1(0);
+        w.writeUint8(0);
+        w.writeUint8(0);
+        w.writeUint8(0);
+        w.writeUint8(0);
+        w.writeUint8(0);
+        w.writeUint8(0);
+        writeZeroRowid(w);
+        w.writeUb4(0);
+        w.writeUint8(0);
+        w.writeUint8(callNumber);
+        w.writeUb2(0);
+        w.writeUb4(0);
+        w.writeBytesWithLength(null);
+        w.writeUb2(0);
+        w.writeUb4(0);
+        w.writeUb2(0);
+        w.writeUb4(errorNum);
+        w.writeUb8(rowcount);
+
+        w.writeUb4(0);
+        w.writeUb4(0);
+        w.writeStrWithLength(message);
+    }
+
     public static void writeErrorEnd(TtcWriter w, int errorNum, String message, int cursorId) {
         writeErrorEnd(w, errorNum, message, cursorId, 0);
     }
