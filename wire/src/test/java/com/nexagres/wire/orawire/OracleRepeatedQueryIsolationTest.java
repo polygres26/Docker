@@ -39,13 +39,35 @@ import org.junit.jupiter.api.Timeout;
  * complete by inspection (reads {@code cursor_id}/{@code iters}/options, looks up the recorded
  * {@code StatementSignature}, replays the bind values, delegates to {@code handleExecute}) --
  * whether the client actually sends {@code FUNC_REEXECUTE} for a re-run {@code SELECT} at all, or
- * some other function code / field layout this codebase doesn't yet parse, is unconfirmed. Per
- * this project's own established methodology for exactly this class of TTC framing bug (see
- * {@code RequestLoop}'s own extensive "confirmed live against a real Oracle 23c instance" /
- * "byte-diffing... against a real Oracle-to-Oracle self-loop capture" comments throughout), a real
- * fix needs a real Oracle server to capture and diff the actual second-execute wire bytes against
- * -- not available in this test environment (only orawire-emulating-Postgres), so this is
- * deliberately left as a documented, fast-failing regression rather than a guessed fix.
+ * some other function code / field layout this codebase doesn't yet parse, is unconfirmed.
+ *
+ * <p><b>Further narrowed via temporary function-code logging in {@link RequestLoop#handleData}
+ * </b> (added and removed for this investigation, not left in): the full sequence the server
+ * actually receives before hanging is {@code FUNC_EXECUTE} (CREATE TABLE), {@code FUNC_EXECUTE}
+ * (INSERT), {@code FUNC_COMMIT}, {@code FUNC_EXECUTE} (the first SELECT) -- then nothing. The hang
+ * is inside {@link com.nexagres.wire.orawire.wireformat.TnsPacketReader#readPacket}'s very FIRST
+ * {@code readFully} call, reading the TNS packet HEADER itself, before any function code is even
+ * parsed -- ruling out a length-field miscalculation on a received-but-misread packet (the kind of
+ * bug {@code BackendDriverRegistry}'s own {@code realCatalogSchemaName} javadoc documents fixing
+ * elsewhere in this project) in favor of a stronger, stranger conclusion: the server never receives ANY
+ * bytes of a new packet at all for the second request. Since the client's own {@code
+ * T4C8Oall.doOALL} stack trace shows it genuinely attempting a fresh OALL8 (execute) call, not a
+ * cursor-close or cancel, this points toward client-side ojdbc11 behavior gating the actual socket
+ * write behind some session/statement-cache precondition this minimal server implementation never
+ * satisfies (real Oracle servers do more post-query bookkeeping -- FAN/ONS notifications, server-
+ * side result caching negotiation, session state validation -- that a thin Phase-1 orawire never
+ * emits) -- not confirmed, would need the same real-Oracle-capture methodology this project
+ * already relies on for TTC framing bugs, just pointed at ojdbc11's OWN client-side decision logic
+ * rather than at the wire bytes themselves. Per this project's own established
+ * methodology for exactly this class of bug (see {@code RequestLoop}'s own extensive "confirmed
+ * live against a real Oracle 23c instance" / "byte-diffing... against a real Oracle-to-Oracle
+ * self-loop capture" comments throughout), a definitive fix needs a real packet capture (tcpdump/
+ * Wireshark) of a real ojdbc11 client re-executing the same PreparedStatement against a REAL
+ * Oracle server (this project already has a real, disposable one available via {@code RealOracle}
+ * for exactly this kind of investigation) to see what, if anything, differs about the SECOND
+ * request/response cycle that a real server does but this one doesn't -- not attempted here since
+ * it's a genuinely open-ended investigation, not a bounded fix. Left as a documented, fast-failing
+ * regression rather than a guessed fix that could be wrong in a way that's hard to detect later.
  *
  * <p><b>Practical impact</b>: any real client code that prepares a SELECT once and re-executes it
  * (a very common pattern -- exactly what proving a cache actually got hit requires) will hang
