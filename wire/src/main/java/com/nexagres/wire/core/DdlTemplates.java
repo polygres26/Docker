@@ -32,7 +32,32 @@ import java.util.regex.Pattern;
  * com.nexagres.wire.sqswire.SqswireDialect}. The Bolt/Cypher graph frontend is the one store still
  * genuinely Postgres-only: its {@code labels TEXT[]} array column has no cross-engine equivalent
  * at all (see {@code ddl/postgres/boltwire_graph_schema.sql}'s own comment) -- a real schema
- * redesign, not a query-portability problem the way sqswire's own gap was.
+ * redesign, not a query-portability problem the way sqswire's own gap was. oswire never adopted
+ * this class at all -- its own {@code PostgresSearchStore} still builds DDL inline, and (unlike
+ * boltwire) the gap runs through its query logic too, not just its schema; see that class's own
+ * javadoc for the real reason (Postgres-only JSONB operators throughout, not a portable schema
+ * with an engine-specific query layer on top).
+ *
+ * <p><b>Now verified against real containers -- and real bugs found doing it, the same way this
+ * project's own established discipline predicts.</b> {@code DynamowireNonPostgresBackendIntegrationTest}
+ * and {@code SqsNonPostgresBackendIntegrationTest} both prove real Oracle/MySQL/SQL Server
+ * end to end. sqswire's own {@code SqswireDialect} passed unmodified on the first real run against
+ * all three -- its own "live-measured RTT" design claim holds up. dynamowire did not: {@code
+ * PgItemStore#ensureCatalog} had hardcoded {@code "postgres"} regardless of the real target engine
+ * (a real {@code ER_BLOB_KEY_WITHOUT_LENGTH} against MySQL the first time it ran for real), the
+ * new {@code dynamowire_catalog.sql} files needed their own real per-engine idempotency idiom
+ * (Oracle has no {@code CREATE TABLE IF NOT EXISTS} at all, on any version -- correcting this
+ * project's own earlier, untested assumption that 23c added it), {@code _dynamo_tables} itself
+ * needed an Oracle-specific rename (a real {@code ORA-00911}: Oracle rejects an unquoted
+ * leading-underscore identifier outright -- see {@code PgItemStore#catalogTableName}), and
+ * {@code PutItem}/{@code UpdateItem}'s own upsert SQL was Postgres-only {@code INSERT ... ON
+ * CONFLICT} with no per-engine dispatch at all until {@code PgItemStoreDialect} added one
+ * (mirroring {@code SqswireDialect}'s own pattern) -- a real, previously-undiscovered gap that
+ * made the "real Oracle/SQL Server/MySQL DDL variants" claim above true for schema only, not for
+ * actually writing to a table through those schemas. influxwire's own DDL is real and now
+ * confirmed to at least create correctly, but {@code PgTimeSeriesStore#select}'s query-building
+ * logic is a separate, much deeper Postgres-only gap (real Postgres 14+ {@code date_bin()}, JSONB
+ * extraction operators) -- disclosed on that class's own javadoc, not yet fixed.
  */
 public final class DdlTemplates {
 

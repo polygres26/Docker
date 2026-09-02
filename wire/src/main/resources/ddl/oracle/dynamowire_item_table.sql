@@ -5,9 +5,13 @@
 --   jsonb -> CLOB with a real "IS JSON" check constraint (Oracle 12c+ real, native JSON validation
 --     -- 21c+ has an actual native JSON type, but CLOB+check is the broadly-compatible real choice
 --     here, matching this project's own BackendDriverRegistry Oracle-version-agnostic stance)
--- Real, disclosed gap: Oracle DDL (pre-23c) has no IF NOT EXISTS at all -- same real mitigating
--- factor as the MySQL variant (PgItemStore's own catalog check already prevents a second
--- CreateTable call), but a real limitation if this DDL is ever re-run by hand.
+-- Real, disclosed gap: Oracle DDL has no IF NOT EXISTS at all, on any version -- confirmed live
+-- (a real ORA-00911 "invalid character after EXISTS" against a real Oracle Free 23 instance,
+-- correcting this project's own earlier, wrong assumption that 23c added it; see
+-- ddl/oracle/dynamowire_catalog.sql's own comment for the real PL/SQL idiom used where
+-- idempotency is actually required). Same real mitigating factor as the MySQL variant here
+-- specifically (PgItemStore's own catalog check already prevents a second CreateTable call for
+-- this table), but a real limitation if this DDL is ever re-run by hand.
 -- Second real, disclosed gap, found live: Oracle treats an empty string ('') as NULL (a real,
 -- well-known Oracle-specific behavior, unlike every other engine here) -- an item with no sort
 -- key, which PgItemStore's own Java code writes as sk_value = '' (matching this table's own

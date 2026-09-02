@@ -2,9 +2,15 @@
 --   TEXT -> NVARCHAR(450) (SQL Server caps a PRIMARY KEY column at 900 bytes)
 --   BOOLEAN -> BIT (SQL Server's own real boolean-ish type; JDBC's setBoolean works fine against
 --     it, unlike Oracle's NUMBER(1) -- see SqswireDialect's own javadoc)
--- Real, disclosed gap: no IF NOT EXISTS on CREATE TABLE either, same real mitigating factor as
--- ddl/sqlserver/dynamowire_item_table.sql's own comment.
+-- Real, previously-latent bug, found and fixed the same way ddl/sqlserver/dynamowire_catalog.sql's
+-- own comment documents: sqs_queues_catalog is a single, permanent, shared table (unlike a
+-- per-queue table, which PgQueueStore's own Java-side catalog check already protects from a
+-- second CREATE), so it needs to survive being re-created on every Warp restart against a real
+-- SQL Server backend -- PgQueueStore's own catalogEnsured guard is per-process, not persistent.
+-- SQL Server has no CREATE TABLE IF NOT EXISTS at all -- the standard, documented T-SQL idiom is
+-- IF OBJECT_ID(...) IS NULL guarding the whole statement, real, valid T-SQL as one batch.
 -- ### table
+IF OBJECT_ID('sqs_queues_catalog', 'U') IS NULL
 CREATE TABLE sqs_queues_catalog (
     queue_name NVARCHAR(450) NOT NULL,
     visibility_timeout INT NOT NULL DEFAULT 30,

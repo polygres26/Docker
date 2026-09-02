@@ -253,30 +253,61 @@ public final class PgItemStore {
      * first time routing actually lands there, not never. Does NOT close {@code c} -- the caller
      * owns and returns it for real use. */
     private void ensureCatalog(Connection c) throws SQLException {
-        String key = c.getMetaData().getURL();
-        if (Boolean.TRUE.equals(catalogEnsured.get(key))) {
+        String url = c.getMetaData().getURL();
+        if (Boolean.TRUE.equals(catalogEnsured.get(url))) {
             return;
         }
-        // Real DDL, loaded from ddl/postgres/dynamowire_catalog.sql -- see DdlTemplates' own
-        // javadoc. Postgres-only today: the catalog connection is always the control-plane
-        // backend, which is always Postgres in every deployment shape this project supports.
-        List<String> statements = DdlTemplates.loadStatements("postgres", "dynamowire_catalog", Map.of());
+        // Real bug, found live the first time this catalog table was ever created against a real
+        // non-Postgres "default"/shard-group backend (WARP_BACKENDS pointed straight at it, the
+        // same real deployment shape currentCatalogBackendName's own javadoc already documents as
+        // supported): this used to hardcode "postgres" unconditionally, so a real MySQL backend
+        // got Postgres's own `table_name text PRIMARY KEY` DDL and failed outright with a real
+        // ER_BLOB_KEY_WITHOUT_LENGTH ("BLOB/TEXT column 'table_name' used in key specification
+        // without a key length") -- confirmed live, not hypothetical. Dispatches through
+        // DdlTemplates.engineDirFor the same way createTable's own per-item-table DDL already
+        // does, with real Oracle/SQL Server/MySQL variants now in ddl/<engine>/dynamowire_catalog.sql.
+        String engine = DdlTemplates.engineDirFor(url);
+        if (engine == null) {
+            throw new IllegalStateException("dynamowire: no DDL support for this backend engine's own "
+                    + "JDBC URL (" + url + ") -- see DdlTemplates.engineDirFor for the currently supported set");
+        }
+        List<String> statements = DdlTemplates.loadStatements(engine, "dynamowire_catalog", Map.of());
+        if (statements == null) {
+            throw new IllegalStateException("dynamowire: no dynamowire_catalog DDL for engine \"" + engine
+                    + "\" -- see ddl/" + engine + "/ for what's actually implemented");
+        }
         try (var st = c.createStatement()) {
             for (String statement : statements) {
                 st.execute(statement);
             }
         }
-        catalogEnsured.put(key, Boolean.TRUE);
+        catalogEnsured.put(url, Boolean.TRUE);
     }
 
     private static String pgTableName(String dynamoTableName) {
         return "dynamo_item_" + SAFE_IDENT.matcher(dynamoTableName.toLowerCase()).replaceAll("_");
     }
 
+    /** Real bug, found live the first time {@code _dynamo_tables} was ever created against a real
+     * Oracle backend: a real {@code ORA-00911} ("invalid character after TABLE") -- Oracle
+     * rejects an unquoted identifier starting with {@code _} outright (the same class of bug this
+     * project already found and fixed once for {@code ScatterGatherAggregateMerge}'s own
+     * synthetic aliases). Quoting it (making it a valid, case-sensitive Oracle identifier) was
+     * considered and rejected: MySQL treats a double-quoted string as a STRING LITERAL by default
+     * (not an identifier -- {@code ANSI_QUOTES} mode is off by default), so a single quoted form
+     * can't work identically across every engine here the way {@code _dynamo_tables} itself
+     * already does unquoted on Postgres/MySQL/SQL Server. A dedicated, letter-starting name for
+     * Oracle specifically avoids the quoting question entirely, at the cost of every one of this
+     * class's own catalog queries needing to resolve it per engine -- see every call site below. */
+    private static String catalogTableName(String engine) {
+        return "oracle".equals(engine) ? "dynamo_tables_catalog" : "_dynamo_tables";
+    }
+
     public TableSchema createTable(String tableName, String pkName, String pkType, String skName, String skType) {
         String pg = pgTableName(tableName);
         try (Connection c = borrowCatalogConnection()) {
-            try (var ps = c.prepareStatement("SELECT 1 FROM _dynamo_tables WHERE table_name = ?")) {
+            String catalogTable = catalogTableName(DdlTemplates.engineDirFor(c.getMetaData().getURL()));
+            try (var ps = c.prepareStatement("SELECT 1 FROM " + catalogTable + " WHERE table_name = ?")) {
                 ps.setString(1, tableName);
                 if (ps.executeQuery().next()) {
                     throw new DynamoException("ResourceInUseException", "Table already exists: " + tableName);
@@ -316,7 +347,7 @@ public final class PgItemStore {
             }
             long now = System.currentTimeMillis();
             try (var ps = c.prepareStatement(
-                    "INSERT INTO _dynamo_tables (table_name, pg_table, pk_name, pk_type, sk_name, sk_type, status, creation_time_millis) VALUES (?,?,?,?,?,?,?,?)")) {
+                    "INSERT INTO " + catalogTable + " (table_name, pg_table, pk_name, pk_type, sk_name, sk_type, status, creation_time_millis) VALUES (?,?,?,?,?,?,?,?)")) {
                 ps.setString(1, tableName);
                 ps.setString(2, pg);
                 ps.setString(3, pkName);
@@ -351,10 +382,12 @@ public final class PgItemStore {
                     st.execute("DROP TABLE IF EXISTS " + pgTableName(tableName));
                 }
             }
-            try (Connection c = borrowCatalogConnection();
-                    var ps = c.prepareStatement("DELETE FROM _dynamo_tables WHERE table_name = ?")) {
-                ps.setString(1, tableName);
-                ps.executeUpdate();
+            try (Connection c = borrowCatalogConnection()) {
+                String catalogTable = catalogTableName(DdlTemplates.engineDirFor(c.getMetaData().getURL()));
+                try (var ps = c.prepareStatement("DELETE FROM " + catalogTable + " WHERE table_name = ?")) {
+                    ps.setString(1, tableName);
+                    ps.executeUpdate();
+                }
             }
         } catch (SQLException e) {
             throw new RuntimeException("DeleteTable failed for " + tableName, e);
@@ -380,12 +413,15 @@ public final class PgItemStore {
     }
 
     private TableSchema loadTableSchema(String tableName) {
-        try (Connection c = borrowCatalogConnection();
-                var ps = c.prepareStatement("SELECT pk_name, pk_type, sk_name, sk_type, status, creation_time_millis FROM _dynamo_tables WHERE table_name = ?")) {
-            ps.setString(1, tableName);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) throw new DynamoException("ResourceNotFoundException", "Table not found: " + tableName);
-                return new TableSchema(tableName, rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5), rs.getLong(6));
+        try (Connection c = borrowCatalogConnection()) {
+            String catalogTable = catalogTableName(DdlTemplates.engineDirFor(c.getMetaData().getURL()));
+            try (var ps = c.prepareStatement("SELECT pk_name, pk_type, sk_name, sk_type, status, creation_time_millis FROM "
+                    + catalogTable + " WHERE table_name = ?")) {
+                ps.setString(1, tableName);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) throw new DynamoException("ResourceNotFoundException", "Table not found: " + tableName);
+                    return new TableSchema(tableName, rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5), rs.getLong(6));
+                }
             }
         } catch (SQLException e) {
             throw new RuntimeException("DescribeTable failed for " + tableName, e);
@@ -410,9 +446,12 @@ public final class PgItemStore {
 
     public List<String> listTables() {
         List<String> out = new ArrayList<>();
-        try (Connection c = borrowCatalogConnection(); var st = c.createStatement();
-                ResultSet rs = st.executeQuery("SELECT table_name FROM _dynamo_tables ORDER BY table_name")) {
-            while (rs.next()) out.add(rs.getString(1));
+        try (Connection c = borrowCatalogConnection()) {
+            String catalogTable = catalogTableName(DdlTemplates.engineDirFor(c.getMetaData().getURL()));
+            try (var st = c.createStatement();
+                    ResultSet rs = st.executeQuery("SELECT table_name FROM " + catalogTable + " ORDER BY table_name")) {
+                while (rs.next()) out.add(rs.getString(1));
+            }
         } catch (SQLException e) {
             throw new RuntimeException("ListTables failed", e);
         }
@@ -464,13 +503,9 @@ public final class PgItemStore {
                 }
                 String json = itemToJson(item).toString();
                 BigDecimal skNum = schema.hasSortKey() && "N".equals(schema.sortKeyType()) ? new BigDecimal(sk) : null;
-                try (var ps = c.prepareStatement(
-                        "INSERT INTO " + pg + " (pk_value, sk_value, sk_num, item) VALUES (?,?,?,?::jsonb) " +
-                        "ON CONFLICT (pk_value, sk_value) DO UPDATE SET sk_num = EXCLUDED.sk_num, item = EXCLUDED.item")) {
-                    ps.setString(1, pk);
-                    ps.setString(2, sk);
-                    if (skNum != null) ps.setBigDecimal(3, skNum); else ps.setNull(3, java.sql.Types.NUMERIC);
-                    ps.setString(4, json);
+                String engine = DdlTemplates.engineDirFor(c.getMetaData().getURL());
+                try (var ps = c.prepareStatement(PgItemStoreDialect.upsertSql(engine, pg))) {
+                    PgItemStoreDialect.bindUpsert(ps, engine, pk, sk, skNum, json);
                     ps.executeUpdate();
                 }
                 if (needsTransaction) {
@@ -579,13 +614,9 @@ public final class PgItemStore {
                 item.putAll(key);
                 String json = itemToJson(item).toString();
                 BigDecimal skNum = schema.hasSortKey() && "N".equals(schema.sortKeyType()) ? new BigDecimal(sk) : null;
-                try (var ps = c.prepareStatement(
-                        "INSERT INTO " + pg + " (pk_value, sk_value, sk_num, item) VALUES (?,?,?,?::jsonb) " +
-                        "ON CONFLICT (pk_value, sk_value) DO UPDATE SET sk_num = EXCLUDED.sk_num, item = EXCLUDED.item")) {
-                    ps.setString(1, pk);
-                    ps.setString(2, sk);
-                    if (skNum != null) ps.setBigDecimal(3, skNum); else ps.setNull(3, java.sql.Types.NUMERIC);
-                    ps.setString(4, json);
+                String engine = DdlTemplates.engineDirFor(c.getMetaData().getURL());
+                try (var ps = c.prepareStatement(PgItemStoreDialect.upsertSql(engine, pg))) {
+                    PgItemStoreDialect.bindUpsert(ps, engine, pk, sk, skNum, json);
                     ps.executeUpdate();
                 }
                 c.commit();

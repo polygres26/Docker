@@ -86,6 +86,21 @@ import org.slf4j.LoggerFactory;
  * over an already-limited per-sub-query candidate pool that interacts with sharding in a way that
  * needs its own pass, not a quick extension of this one. Both throw a clear
  * {@link OpenSearchException} rather than quietly returning only the default backend's rows.
+ *
+ * <p><b>Real, disclosed scope: oswire is genuinely Postgres-only, unlike dynamowire/influxwire/
+ * sqswire.</b> Those three externalize their DDL to {@code src/main/resources/ddl/<engine>/} (see
+ * {@link com.nexagres.wire.core.DdlTemplates}) with real Oracle/SQL Server/MySQL variants; oswire
+ * has none, and this class's own query logic -- not just its {@code CREATE TABLE} -- is the reason
+ * a straightforward DDL port wouldn't be enough on its own. Every {@code source}/{@code embedding}
+ * column is real Postgres {@code JSONB}, and the query logic throughout this class leans on
+ * Postgres-only JSONB operators to read it back (an unqualified {@code ->>} field extraction) and
+ * write it ({@code ::jsonb} casts on insert) -- Oracle's nearest equivalent is JSON stored as
+ * {@code CLOB}/native {@code JSON} with its own {@code JSON_VALUE}/{@code JSON_QUERY} functions,
+ * SQL Server's is native {@code JSON}-typed columns with {@code JSON_VALUE}, and MySQL's own
+ * {@code JSON} type has yet another accessor shape (path-string {@code ->}/{@code ->>} operators
+ * that look similar to Postgres's but aren't the same functions) -- a real per-engine query
+ * rewrite throughout this class, not a schema-only change the way boltwire's own genuinely-
+ * Postgres-only gap is (see {@code DdlTemplates}'s own javadoc for that one). Not started here.
  */
 public final class PostgresSearchStore {
 

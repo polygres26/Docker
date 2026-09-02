@@ -56,6 +56,19 @@ import org.slf4j.LoggerFactory;
  * is actually installed on that specific backend, and falls back to a plain indexed table
  * otherwise -- both paths use the identical schema and SQL for every other operation, so nothing
  * downstream of {@link #ensureMeasurement} needs to know or care which one is live.
+ *
+ * <p><b>Real, disclosed scope: writes are real Oracle/SQL Server/MySQL DDL, but {@link #select}'s
+ * own query logic is genuinely Postgres-only, found live testing this class against a real
+ * non-Postgres backend for the first time.</b> Unlike {@code PgItemStore}'s own gap (one Postgres-
+ * specific upsert statement, now fixed with a real per-engine {@code PgItemStoreDialect}), this
+ * one runs much deeper through the aggregate/{@code GROUP BY} query-building code: {@code
+ * tags->>'col'}/{@code (fields->>'field')::double precision} (Postgres JSONB operators -- no
+ * cross-engine equivalent syntax the way {@code PostgresSearchStore}'s own disclosed JSONB gap
+ * doesn't either), {@code date_bin(...)} (a real Postgres 14+ function with no Oracle/SQL Server/
+ * MySQL equivalent name), and a Postgres interval literal ({@code '&lt;n&gt; milliseconds'::interval}).
+ * {@link #ensureMeasurement}'s own DDL dispatch is real and portable; a real per-engine port of
+ * {@link #select} itself (four different JSON-extraction and time-bucketing idioms, not just a
+ * find/replace) is real, disclosed follow-up work, not started here.
  */
 public final class PgTimeSeriesStore {
 
