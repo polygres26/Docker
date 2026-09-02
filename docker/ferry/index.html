@@ -72,6 +72,7 @@
           <li><a href="#admin-console-dms">Admin console</a></li>
           <li><a href="#migration-service">Migration Service: launch and track a migration</a></li>
           <li><a href="#dms-sources">Sources Migration Service accepts</a></li>
+          <li><a href="#pricing">Pricing</a></li>
           <li><a href="#dms-packaging">Free vs. Enterprise</a></li>
         </ul>
       </details>
@@ -235,6 +236,55 @@
           <a class="embedOpenLink" href="/demo-dms.html?page=datasync&amp;autoEnter=1" target="_blank" rel="noopener">Open full-screen →</a>
         </figcaption>
       </figure>
+
+      <h3 class="subhead" id="pricing">Pricing<a class="permalink" href="#pricing" aria-label="Link to this section">#</a></h3>
+      <p class="lede">
+        Assessment — connect, score, size, browse, report — is unrestricted on every tier. What's
+        paid is the parts of actually moving the data that scale past a single-process,
+        single-migration setup: real parallelism, unattended cutover, and multi-tenant capacity.
+        Same <code>WARP_LICENSE_KEY</code> as Warp — one key, one thing to buy.
+      </p>
+      <div class="pricingGrid">
+        <div class="priceCard">
+          <h3>Developer</h3>
+          <p class="priceTag">$0 <small>/ forever</small></p>
+          <p class="priceSub">For evaluation, a real migration test, and one-migration-at-a-time production use.</p>
+          <ul>
+            <li>Full assessment: compatibility analysis, feature inventory, Postgres sizing</li>
+            <li>Real data migration — snapshot + live CDC, every source connector</li>
+            <li>Automatic resume/checkpointing, data validation, progress monitoring</li>
+            <li>Encryption at rest, Vault/CyberArk secrets — opt-in, unrestricted</li>
+            <li>Source protection — a fixed default throughput cap, always on</li>
+            <li class="limit">Serial migration — one partition/table read at a time</li>
+            <li class="limit">One migration job running at a time</li>
+            <li class="limit">A failed row stops the run — no retry or dead-letter queue</li>
+            <li class="limit">No packaged cutover-readiness verdict or automatic cutover</li>
+            <li class="limit">Single shared admin account — no RBAC, audit log, or SSO</li>
+            <li class="limit">Community support</li>
+          </ul>
+        </div>
+        <div class="priceCard enterprise">
+          <h3>Enterprise</h3>
+          <p class="priceTag">$7,500 <small>/ year, starting</small></p>
+          <p class="priceSub">Per migration environment. For production migrations run at real scale.</p>
+          <ul>
+            <li>Everything in Developer, unrestricted</li>
+            <li>Parallel snapshot/partition workers, single process</li>
+            <li>A distributed worker fleet — real, multi-process parallelism</li>
+            <li>Failed-row retry with dead-letter queue</li>
+            <li>Cutover-readiness verdict, plus automatic cutover the instant it's ready</li>
+            <li>Configurable throughput cap, tuned to your source, not just the default</li>
+            <li>No fixed cap on concurrent migrations</li>
+            <li>Audit log, a second read-only account, SSO bearer-token login</li>
+            <li>Enterprise support</li>
+          </ul>
+          <p class="rttNote" style="margin-top:12px;"><a href="#contact">Schedule a Warp Architecture Review →</a></p>
+        </div>
+      </div>
+      <p class="pricingNote">
+        Full row-by-row capability breakdown, including exactly which real license check backs
+        each row: <a href="/ferry/#dms-packaging">Ferry capability table →</a>
+      </p>
 
       <h3 class="subhead" id="dms-packaging">Free vs. Enterprise<a class="permalink" href="#dms-packaging" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">

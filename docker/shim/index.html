@@ -183,7 +183,31 @@ SELECT SCOPE_IDENTITY();                     -- sys.scope_identity</code>
         <code>DBMS_OUTPUT.PUT_LINE</code>/<code>sys.objects</code>/MySQL-function-name resolution
         above is what's gated, not the connection itself.
       </p>
-      <p class="rttNote">See the full <a href="/#pricing">Pricing</a> page for Warp and Ferry's own Free vs. Enterprise breakdowns.</p>
+      <div class="pricingGrid">
+        <div class="priceCard">
+          <h3>Free / Basic</h3>
+          <p class="priceTag">$0</p>
+          <p class="priceSub">A session still connects and runs ordinary SQL normally.</p>
+          <ul>
+            <li class="limit">No unqualified <code>V$</code>/<code>DBA_*</code>/<code>DBMS_*</code> resolution</li>
+            <li class="limit">No unqualified <code>sys.*</code>/T-SQL function resolution</li>
+            <li class="limit">No unqualified MySQL built-in function resolution</li>
+          </ul>
+        </div>
+        <div class="priceCard enterprise">
+          <h3>Enterprise</h3>
+          <p class="priceTag">$5,000 <small>/ year, starting</small></p>
+          <p class="priceSub">Per production deployment. For a migrated application that still calls vendor catalog objects or built-ins.</p>
+          <ul>
+            <li>Oracle: V$/GV$ views, DBA_*/USER_*/ALL_* views, 13 DBMS_*/UTL_* packages</li>
+            <li>MySQL: GROUP_CONCAT, DATE_FORMAT, SHOW COLUMNS/INDEX/VARIABLES, and more</li>
+            <li>SQL Server: sys.* catalog views, OBJECT_ID, SCOPE_IDENTITY, and more T-SQL functions</li>
+            <li>Enterprise support</li>
+          </ul>
+          <p class="rttNote" style="margin-top:12px;"><a href="/#contact">Schedule a Warp Architecture Review →</a></p>
+        </div>
+      </div>
+      <p class="pricingNote">Full comparison across Warp, Ferry, and Shim: <a href="/#pricing">Pricing overview →</a></p>
     </section>
 
     <footer>
