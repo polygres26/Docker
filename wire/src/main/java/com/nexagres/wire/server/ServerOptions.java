@@ -10,6 +10,24 @@ public final class ServerOptions {
         JDBC, NATIVE
     }
 
+    /** Which real backend the MCP frontend's tools (execute_sql, list_tables, etc.) target.
+     * POSTGRES (the default, unchanged behavior) runs every tool through the shared pipeline
+     * against the configured Postgres backend, same as before this existed. The other three mirror
+     * orawire/mywire/mssqlwire's own native-backend-mode pattern: bypass the shared pipeline
+     * entirely and proxy straight to a real Oracle/MySQL/SQL Server connection of the gateway's
+     * own (the WARP_ORACLE_, WARP_MYSQL_, WARP_MSSQL_ settings mywire/mssqlwire's own native modes
+     * already use; MCP has no client login step to source per-caller credentials from
+     * the way orawire's native mode does, so it needs WARP_ORACLE_USER/WARP_ORACLE_PASSWORD, a
+     * gateway-held credential that didn't need to exist before this -- orawire's default mode never
+     * connects outward to real Oracle at all, and its native mode sources credentials from the
+     * client's own O5LOGON login instead). See WarpMcpServer's own javadoc for exactly which tools
+     * work in each non-Postgres mode and which are refused with a clear error instead of silently
+     * running Postgres-only SQL against a different dialect.
+     */
+    public enum McpBackendMode {
+        POSTGRES, ORACLE, MYSQL, SQLSERVER
+    }
+
     private final int listenPort;
     private final int pgWireListenPort;
     private final int myWireListenPort;
@@ -39,6 +57,9 @@ public final class ServerOptions {
     private final int oraclePort;
     private final String oracleServiceName;
     private final OracleBackendMode oracleBackendMode;
+    private final String oracleUser;
+    private final String oraclePassword;
+    private final McpBackendMode mcpBackendMode;
     private final boolean mywireNativeBackend;
     private final String mysqlHost;
     private final int mysqlPort;
@@ -61,6 +82,7 @@ public final class ServerOptions {
             boolean dualExecEnabled, DualExecAuthority dualExecAuthority, boolean dualExecRequireBoth, boolean dualExecXaEnabled,
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
+            String oracleUser, String oraclePassword, McpBackendMode mcpBackendMode,
             boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
             int mssqlWireListenPort,
             boolean mssqlwireNativeBackend, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword) {
@@ -93,6 +115,9 @@ public final class ServerOptions {
         this.oraclePort = oraclePort;
         this.oracleServiceName = oracleServiceName;
         this.oracleBackendMode = oracleBackendMode;
+        this.oracleUser = oracleUser;
+        this.oraclePassword = oraclePassword;
+        this.mcpBackendMode = mcpBackendMode;
         this.mywireNativeBackend = mywireNativeBackend;
         this.mysqlHost = mysqlHost;
         this.mysqlPort = mysqlPort;
@@ -130,6 +155,24 @@ public final class ServerOptions {
         OracleBackendMode oracleBackendMode = "native".equalsIgnoreCase(
                 System.getenv().getOrDefault("WARP_ORACLE_BACKEND_MODE", "jdbc"))
                 ? OracleBackendMode.NATIVE : OracleBackendMode.JDBC;
+        // Gateway-held Oracle credentials, needed only by MCP's own native-backend mode below --
+        // orawire's own native mode (WARP_ORACLE_BACKEND_MODE=native, just above) sources Oracle
+        // credentials from the client's own O5LOGON login instead, since it's a real orawire
+        // session; MCP has no equivalent per-caller login step to source them from.
+        String oracleUser = System.getenv("WARP_ORACLE_USER");
+        String oraclePassword = System.getenv("WARP_ORACLE_PASSWORD");
+
+        // Same "keep the database you have" pattern as orawire/mywire/mssqlwire's own native-mode
+        // toggles, applied to the MCP frontend: WARP_MCP_BACKEND=oracle/mysql/sqlserver (default
+        // "postgres") switches execute_sql/list_tables/describe_table/registered-function-tools to
+        // bypass the shared pipeline and proxy straight to that real backend instead of Postgres --
+        // see WarpMcpServer's own javadoc for exactly which tools work in each mode.
+        McpBackendMode mcpBackendMode = switch (System.getenv().getOrDefault("WARP_MCP_BACKEND", "postgres").toLowerCase(java.util.Locale.ROOT)) {
+            case "oracle" -> McpBackendMode.ORACLE;
+            case "mysql" -> McpBackendMode.MYSQL;
+            case "sqlserver" -> McpBackendMode.SQLSERVER;
+            default -> McpBackendMode.POSTGRES;
+        };
 
         boolean mywireNativeBackend = "mysql".equalsIgnoreCase(
                 System.getenv().getOrDefault("WARP_MYWIRE_BACKEND", "postgres"));
@@ -192,6 +235,7 @@ public final class ServerOptions {
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
+                oracleUser, oraclePassword, mcpBackendMode,
                 mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,
                 mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword);
@@ -217,6 +261,7 @@ public final class ServerOptions {
                 false, DualExecAuthority.POSTGRES, false, false,
                 false,
                 "localhost", 1521, "orcl", OracleBackendMode.JDBC,
+                null, null, McpBackendMode.POSTGRES,
                 false, "localhost", 3306, "mysql", null, null,
                 0,
                 false, "localhost", 1433, "master", null, null);
@@ -346,6 +391,18 @@ public final class ServerOptions {
 
     public OracleBackendMode oracleBackendMode() {
         return oracleBackendMode;
+    }
+
+    public String oracleUser() {
+        return oracleUser;
+    }
+
+    public String oraclePassword() {
+        return oraclePassword;
+    }
+
+    public McpBackendMode mcpBackendMode() {
+        return mcpBackendMode;
     }
 
     public boolean mywireNativeBackend() {

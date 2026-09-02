@@ -8,14 +8,22 @@ import com.google.gson.JsonParser;
 import com.nexagres.wire.acl.ConnectionGate;
 import com.nexagres.wire.core.AdHocQueryRunner;
 import com.nexagres.wire.core.BackendRegistry;
+import com.nexagres.wire.core.ExecutionResult;
+import com.nexagres.wire.core.JdbcBackendExecutor;
 import com.nexagres.wire.core.PipelineStage;
+import com.nexagres.wire.core.SourceDialect;
+import com.nexagres.wire.core.Statement;
+import com.nexagres.wire.mssqlwire.MssqlBackendConnections;
+import com.nexagres.wire.mywire.MySqlBackendConnections;
 import com.nexagres.wire.pgwire.PgConnections;
 import com.nexagres.wire.server.ServerOptions;
+import com.nexagres.wire.server.ServerOptions.McpBackendMode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -134,6 +142,17 @@ public final class WarpMcpServer {
         if (toolsSpec == null || toolsSpec.isBlank()) {
             return tools;
         }
+        // WARP_MCP_TOOLS registers real Postgres functions/procedures as MCP tools by introspecting
+        // pg_proc (see PgFunctionIntrospector) -- there's no Oracle/MySQL/SQL Server equivalent
+        // built yet, so in native mode this whole feature is cleanly unavailable rather than
+        // silently querying pg_proc against a connection that isn't Postgres at all.
+        if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
+            log.warn("MCP: WARP_MCP_TOOLS is configured but WARP_MCP_BACKEND={} -- registered "
+                    + "function tools introspect real Postgres functions (pg_proc) and aren't "
+                    + "supported in native-backend mode yet; skipping, every other tool still works",
+                    options.mcpBackendMode());
+            return tools;
+        }
         try (Connection conn = PgConnections.open(options)) {
             for (String entry : toolsSpec.split(";")) {
                 String trimmed = entry.trim();
@@ -203,16 +222,26 @@ public final class WarpMcpServer {
     }
 
     private JsonObject buildToolsListResult() {
+        String backendName = options.mcpBackendMode().name().charAt(0)
+                + options.mcpBackendMode().name().substring(1).toLowerCase(java.util.Locale.ROOT);
+        if (options.mcpBackendMode() == McpBackendMode.SQLSERVER) {
+            backendName = "SQL Server";
+        }
         JsonArray tools = new JsonArray();
-        tools.add(toolDef("execute_sql", "Execute a SQL statement against the Postgres backend and return the results.",
+        tools.add(toolDef("execute_sql", "Execute a SQL statement against the " + backendName + " backend and return the results.",
                 objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
-        tools.add(toolDef("list_tables", "List tables in the Postgres backend (excludes system schemas).",
+        tools.add(toolDef("list_tables", "List tables in the " + backendName + " backend (excludes system schemas).",
                 objectSchema(Map.of(), List.of())));
         tools.add(toolDef("describe_table", "Describe a table's columns (name, type, nullability).",
                 objectSchema(Map.of(
                         "table", stringSchema("Table name, optionally schema-qualified as schema.table"),
-                        "schema", stringSchema("Schema name (default: public)")),
+                        "schema", stringSchema("Schema name (default: " + defaultSchemaFor(options) + ")")),
                         List.of("table"))));
+        if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
+            JsonObject result = new JsonObject();
+            result.add("tools", tools);
+            return result;
+        }
         tools.add(toolDef("document_schema",
                 "List every table/column in the database (excludes system schemas) and, when an LLM "
                         + "provider is configured, generate a short plain-English data dictionary describing "
@@ -288,30 +317,31 @@ public final class WarpMcpServer {
         long startNanos = System.nanoTime();
         boolean isError = true;
         String errorMessage = null;
-        try (Connection backend = PgConnections.open(options)) {
-            if ("query_natural_language".equals(toolName)) {
-                ResultWithNote outcome = runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
-                isError = !outcome.result().success();
-                errorMessage = outcome.result().error();
-                writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
-            } else if ("explain_query".equals(toolName)) {
-                boolean analyze = arguments.has("analyze") && "true".equalsIgnoreCase(arguments.get("analyze").getAsString());
-                ResultWithNote outcome = runExplainQuery(backend, requireString(arguments, "sql"), analyze, accessContext);
-                isError = !outcome.result().success();
-                errorMessage = outcome.result().error();
-                writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
-            } else if ("document_schema".equals(toolName)) {
-                ResultWithNote outcome = runDocumentSchema(backend, accessContext);
+        McpBackendMode backendMode = options.mcpBackendMode();
+        try (Connection backend = openBackendConnection()) {
+            if ("query_natural_language".equals(toolName) || "explain_query".equals(toolName)
+                    || "document_schema".equals(toolName)) {
+                // All three hardcode Postgres-only SQL -- query_natural_language/document_schema
+                // draft against information_schema.columns text they then hand an LLM as if it
+                // were the ONLY schema shape that exists, and explain_query emits a literal
+                // EXPLAIN (FORMAT JSON ...) Postgres never shares syntax for with any of the other
+                // three dialects. Refusing cleanly here beats silently running SQL that's simply
+                // wrong for the configured backend.
+                ResultWithNote outcome = backendMode != McpBackendMode.POSTGRES
+                        ? new ResultWithNote(notSupportedInNativeMode(toolName, backendMode), null)
+                        : switch (toolName) {
+                            case "query_natural_language" -> runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
+                            case "explain_query" -> runExplainQuery(backend, requireString(arguments, "sql"),
+                                    arguments.has("analyze") && "true".equalsIgnoreCase(arguments.get("analyze").getAsString()), accessContext);
+                            default -> runDocumentSchema(backend, accessContext);
+                        };
                 isError = !outcome.result().success();
                 errorMessage = outcome.result().error();
                 writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
             } else {
                 AdHocQueryRunner.Result result = switch (toolName) {
                     case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
-                    case "list_tables" -> runSql(backend,
-                            "SELECT schemaname, tablename FROM pg_catalog.pg_tables "
-                                    + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
-                                    + "ORDER BY schemaname, tablename", accessContext);
+                    case "list_tables" -> runListTables(backend, accessContext);
                     case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
                     default -> runRegisteredTool(backend, toolName, arguments, accessContext);
                 };
@@ -356,9 +386,62 @@ public final class WarpMcpServer {
                 com.nexagres.wire.audit.AuditEvent.Type.MCP_TOOL_CALLED, userId, summary, details));
     }
 
+    /** Opens the connection every tool call in {@link #handleToolsCall} runs against -- Postgres
+     * by default (unchanged), or a real Oracle/MySQL/SQL Server connection of the gateway's own
+     * when {@code WARP_MCP_BACKEND} names one, mirroring orawire/mywire/mssqlwire's own
+     * native-backend-mode connection choice. See {@link ServerOptions.McpBackendMode}'s own
+     * javadoc for the full picture, including why MCP needs its own gateway-held Oracle credential
+     * where orawire's native mode doesn't. */
+    private Connection openBackendConnection() throws SQLException {
+        return switch (options.mcpBackendMode()) {
+            case ORACLE -> OracleJdbcConnections.open(options);
+            case MYSQL -> MySqlBackendConnections.open(options);
+            case SQLSERVER -> MssqlBackendConnections.open(options);
+            case POSTGRES -> PgConnections.open(options);
+        };
+    }
+
+    private static SourceDialect dialectFor(McpBackendMode mode) {
+        return switch (mode) {
+            case ORACLE -> SourceDialect.ORACLE;
+            case MYSQL -> SourceDialect.MYSQL;
+            case SQLSERVER -> SourceDialect.SQL_SERVER;
+            case POSTGRES -> SourceDialect.MCP;
+        };
+    }
+
     private AdHocQueryRunner.Result runSql(Connection backend, String sql,
             com.nexagres.wire.core.AccessContext accessContext) {
-        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, accessContext);
+        return runSql(backend, sql, List.of(), accessContext);
+    }
+
+    private AdHocQueryRunner.Result runSql(Connection backend, String sql, List<Object> bindParams,
+            com.nexagres.wire.core.AccessContext accessContext) {
+        if (options.mcpBackendMode() == McpBackendMode.POSTGRES) {
+            return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, bindParams, accessContext);
+        }
+        // Native mode bypasses the whole shared pipeline (RouterStage/DialectTranslationStage/
+        // FirewallStage/QosControlStage/etc.), not just picks a different connection -- the exact
+        // same reasoning orawire/mywire/mssqlwire's own native-mode dispatch already documents:
+        // the pipeline's "default" backend target is always Postgres regardless of this frontend's
+        // own mode, so running the client's real Oracle/MySQL/SQL Server SQL through it would still
+        // translate toward Postgres and send the (wrong) translated SQL to the real backend.
+        try {
+            backend.setAutoCommit(true);
+            Statement statement = Statement.of(dialectFor(options.mcpBackendMode()), sql, bindParams, accessContext);
+            ExecutionResult result = new JdbcBackendExecutor(backend).execute(statement);
+            return AdHocQueryRunner.Result.ofSuccess(result);
+        } catch (SQLException e) {
+            return AdHocQueryRunner.Result.ofError(e);
+        }
+    }
+
+    private static AdHocQueryRunner.Result notSupportedInNativeMode(String toolName, McpBackendMode mode) {
+        return new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "0A000",
+                toolName + " isn't supported with WARP_MCP_BACKEND=" + mode.name().toLowerCase(java.util.Locale.ROOT)
+                        + " yet -- it hardcodes Postgres-specific SQL (EXPLAIN syntax, an LLM schema-drafting "
+                        + "prompt, or both). execute_sql, list_tables, and describe_table all work natively; "
+                        + "use execute_sql directly for anything this tool would have run.");
     }
 
     private record ResultWithNote(AdHocQueryRunner.Result result, String note) {
@@ -617,19 +700,64 @@ public final class WarpMcpServer {
         return s.length() > max ? s.substring(0, max) + "…" : s;
     }
 
+    /** Real Postgres/MySQL/SQL Server all implement the same ANSI {@code information_schema}
+     * views, so {@code list_tables}/{@code describe_table}'s SQL is genuinely shared across three
+     * of the four backends -- only the "what counts as a system schema to exclude" and "what's the
+     * caller's default schema when they don't name one" answers differ per dialect. Oracle has no
+     * real {@code information_schema} at all; {@code all_tables}/{@code all_tab_columns} (filtered
+     * to the connected user's own schema, the same "don't need DBA privileges" scoping {@code
+     * user_tables}/{@code user_tab_columns} give directly) are its real equivalent. */
+    private static String defaultSchemaFor(ServerOptions options) {
+        return switch (options.mcpBackendMode()) {
+            case MYSQL -> options.mysqlDatabase();
+            case SQLSERVER -> "dbo";
+            // Oracle has no "public" schema concept -- an unqualified table always means the
+            // connected user's own schema, exactly what user_tables/all_tab_columns WHERE owner =
+            // (this) already assume. Real bug caught live by this class's own test: without this,
+            // describe_table's fallback silently queried owner = 'PUBLIC' (a reserved Oracle role
+            // name, never a real schema) and always came back empty, even for a table that
+            // genuinely existed.
+            case ORACLE -> options.oracleUser();
+            case POSTGRES -> "public";
+        };
+    }
+
+    private AdHocQueryRunner.Result runListTables(Connection backend, com.nexagres.wire.core.AccessContext accessContext) {
+        String sql = switch (options.mcpBackendMode()) {
+            case POSTGRES -> "SELECT schemaname, tablename FROM pg_catalog.pg_tables "
+                    + "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
+                    + "ORDER BY schemaname, tablename";
+            case MYSQL -> "SELECT table_schema, table_name FROM information_schema.tables "
+                    + "WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') "
+                    + "ORDER BY table_schema, table_name";
+            case SQLSERVER -> "SELECT table_schema, table_name FROM information_schema.tables "
+                    + "WHERE table_type = 'BASE TABLE' ORDER BY table_schema, table_name";
+            case ORACLE -> "SELECT USER AS owner, table_name FROM user_tables ORDER BY table_name";
+        };
+        return runSql(backend, sql, accessContext);
+    }
+
     private AdHocQueryRunner.Result runDescribeTable(Connection backend, JsonObject arguments,
             com.nexagres.wire.core.AccessContext accessContext) {
         String table = requireString(arguments, "table");
-        String schema = arguments.has("schema") ? arguments.get("schema").getAsString() : "public";
+        String schema = arguments.has("schema") ? arguments.get("schema").getAsString() : defaultSchemaFor(options);
         if (table.contains(".")) {
             String[] parts = table.split("\\.", 2);
             schema = parts[0];
             table = parts[1];
         }
+        // Oracle has no information_schema -- all_tab_columns is its real equivalent, and its
+        // column order is already the connected user's own creation order (no ordinal_position
+        // column to sort by the way information_schema.columns has one for the other three).
+        if (options.mcpBackendMode() == McpBackendMode.ORACLE) {
+            String sql = "SELECT column_name, data_type, nullable FROM all_tab_columns "
+                    + "WHERE owner = ? AND table_name = ? ORDER BY column_id";
+            return runSql(backend, sql, List.of(schema.toUpperCase(java.util.Locale.ROOT),
+                    table.toUpperCase(java.util.Locale.ROOT)), accessContext);
+        }
         String sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
                 + "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
-        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql,
-                List.of(schema, table), accessContext);
+        return runSql(backend, sql, List.of(schema, table), accessContext);
     }
 
     private AdHocQueryRunner.Result runRegisteredTool(Connection backend, String toolName, JsonObject arguments,

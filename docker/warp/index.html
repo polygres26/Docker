@@ -66,6 +66,7 @@
           <li><a href="#admin-console-warp">Admin console</a></li>
           <li><a href="#cache-vs-round-trip">Mach vs. round trip</a></li>
           <li><a href="#sharding">Sharding</a></li>
+          <li><a href="#native-backend-mode">Native-backend mode</a></li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
           <li><a href="#influxdb-line-protocol">InfluxDB</a></li>
           <li><a href="#graphdb-bolt-cypher">GraphDB (Neo4j Bolt+Cypher)</a></li>
@@ -89,7 +90,7 @@
       <p class="pillarLabel">Connect</p>
       <div class="obsGrid">
         <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
-        <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real Postgres access through the same SQL firewall, ACL, and QoS controls as every other client — not a separate, unguarded path to your data.</p></div>
+        <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real database access — Postgres by default, or Oracle/MySQL/SQL Server directly in native-backend mode — through the same SQL firewall, ACL, and QoS controls as every other client (Postgres mode only — see "Native-backend mode" below for what native MCP mode carries over) — not a separate, unguarded path to your data.</p></div>
         <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no Warp-specific SDK to learn first.</p></div>
       </div>
 
@@ -118,15 +119,16 @@
 
       <h3 class="subhead" id="use-cases">Use cases<a class="permalink" href="#use-cases" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">Governed access for AI agents</span><span class="uc-desc">An MCP frontend lets AI agents and modern service architectures query Postgres directly — through the same SQL firewall, ACL, and QoS controls as every other client, not a separate, unguarded path to your data.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Governed access for AI agents</span><span class="uc-desc">An MCP frontend lets AI agents and modern service architectures query Postgres directly — through the same SQL firewall, ACL, and QoS controls as every other client, not a separate, unguarded path to your data. <code>WARP_MCP_BACKEND=oracle/mysql/sqlserver</code> points the same tools at a real Oracle/MySQL/SQL Server backend instead, the same "keep the database you have" tradeoff native-backend mode makes for every other protocol.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">A single, secure gateway across multiple data sources</span><span class="uc-desc">One admin surface — SQL firewall, ACL, routing, QoS, live metrics — in front of traffic that used to be spread across five different databases' own tooling, each with its own access model.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Connection pooling for Postgres</span><span class="uc-desc">Every backend is fronted by a bounded connection pool — many client connections share a small, fixed set of real Postgres connections, the same problem PgBouncer solves, built into the same gateway that's already translating and firewalling the traffic.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Connection pooling for Postgres, Oracle, MySQL, or SQL Server</span><span class="uc-desc">Every backend — whichever of the four it is — is fronted by a bounded connection pool: thousands of client connections into Warp can share a small, fixed-size pool of real backend connections, the number configured independently of client concurrency, the same problem PgBouncer solves for Postgres specifically. Built into the same gateway that's already translating and firewalling the traffic, and the one thing native-backend mode (see below) keeps even though it bypasses everything else in the pipeline.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Horizontal sharding, by real bound values</span><span class="uc-desc">Route by schema, predicate, or a real bound parameter value — decoded from each protocol's own wire format across Postgres, Oracle, SQL Server, and MySQL, not just SQL text — with genuine cross-shard merge (not concatenation) for aggregates, sorted/paginated hits, and DynamoDB/MongoDB/SQS/OpenSearch sharding alongside SQL. See "Sharding" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Distributed transactions (XA)</span><span class="uc-desc">Coordinate a transaction across multiple backend databases from a client that only knows how to talk to one, for the cases a single-database commit isn't enough.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Query result caching (Mach)</span><span class="uc-desc">Warp's embedded distributed cache, opt-in per table, serves repeat exact-key reads without a round trip to Postgres. Invalidation is automatic and table-level — any write against a cached table (whether it binds parameters or sends literal values, the invalidation match works either way) evicts every cached entry for that table — no application-side caching code to write or invalidate.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — Warp keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Time-series writes without running InfluxDB</span><span class="uc-desc">A real line-protocol <code>/write</code> endpoint and a bounded InfluxQL <code>/query</code> (WHERE, GROUP BY time(), mean/sum/count/min/max) land on Postgres — a real TimescaleDB hypertable when the backend has the extension, a plain indexed table otherwise. See "InfluxDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Property-graph queries without running Neo4j</span><span class="uc-desc">Real Bolt+Cypher — <code>CREATE</code>, <code>MATCH ... WHERE ... RETURN</code>, bounded variable-length paths — against a real Postgres nodes/edges schema, spoken to the official <code>neo4j</code> driver over the real Bolt wire protocol. See "GraphDB" below.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Keeping the database engine you already have</span><span class="uc-desc">Native-backend mode proxies straight to a real Oracle, MySQL, or SQL Server backend of your own — no dialect translation, no Postgres migration — with Warp's connection pooling and connection ACL still in front of it (the SQL firewall, QoS, and caching are pipeline stages this mode bypasses). See "Native-backend mode" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. Warp lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run Warp indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Warp while Ferry (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
@@ -333,6 +335,57 @@
         the shard set doesn't migrate data, queues, or documents already placed under the old set.
         Consistent hashing minimizes what <i>would</i> need to move; nothing moves it
         automatically today.
+      </p>
+      </details>
+
+      <h3 class="subhead" id="native-backend-mode">Native-backend mode: proxy straight to Oracle, MySQL, or SQL Server<a class="permalink" href="#native-backend-mode" aria-label="Link to this section">#</a></h3>
+      <p class="statTeaser">Keep the existing database engine and still get Warp's connection pooling, connection ACL, and observability in front of it — no dialect translation, no Postgres migration. orawire, mywire, mssqlwire, and MCP all get the same toggle.</p>
+      <details class="methodDetails">
+        <summary>See native-backend detail →</summary>
+      <p class="rttNote">
+        By default, orawire/mywire/mssqlwire all translate the client's SQL into Postgres dialect
+        and run it against real Postgres — that's the whole point of the shared pipeline described
+        under "Architecture" above. Setting <code>WARP_ORACLE_BACKEND_MODE=native</code>,
+        <code>WARP_MYWIRE_BACKEND=mysql</code>, or <code>WARP_MSSQLWIRE_BACKEND=sqlserver</code>
+        switches that one protocol to the opposite mode instead: no translation at all, statements
+        proxy straight through to a real Oracle, MySQL, or SQL Server backend of your own,
+        configured via that protocol's own <code>WARP_ORACLE_HOST</code>/<code>WARP_MYSQL_HOST</code>/
+        <code>WARP_MSSQL_HOST</code> family of settings. A client that already speaks Oracle,
+        MySQL, or SQL Server keeps talking to the exact same engine it always has, with nothing
+        about the SQL itself rewritten in transit.
+      </p>
+      <p class="rttNote">
+        <b>MCP gets the same toggle:</b> <code>WARP_MCP_BACKEND=oracle</code>,
+        <code>=mysql</code>, or <code>=sqlserver</code> (default <code>postgres</code>) points
+        <code>execute_sql</code>, <code>list_tables</code>, and <code>describe_table</code> at a
+        real Oracle/MySQL/SQL Server connection of Warp's own the same way. Oracle needs its own
+        <code>WARP_ORACLE_USER</code>/<code>WARP_ORACLE_PASSWORD</code> here specifically — unlike
+        orawire's native mode, which reuses whatever credentials the client itself logged in with,
+        MCP has no client login step to source a per-caller Oracle identity from, so it needs one
+        configured. Three MCP tools stay Postgres-only regardless of the toggle —
+        <code>document_schema</code>, <code>explain_query</code>, and
+        <code>query_natural_language</code> all hardcode Postgres-specific SQL (a literal
+        <code>EXPLAIN (FORMAT JSON ...)</code>, or a schema-drafting prompt written assuming
+        Postgres) — <code>tools/list</code> doesn't even advertise them in native mode, and
+        calling one anyway returns a clear "not supported" error rather than silently running SQL
+        that's simply wrong for the configured backend. Tools registered via
+        <code>WARP_MCP_TOOLS</code> (real Postgres functions/procedures turned into MCP tools) are
+        Postgres-only for the same reason and aren't introspected at all in native mode.
+      </p>
+      <p class="rttNote">
+        <b>What native mode doesn't do:</b> it bypasses the shared eight-stage pipeline entirely for
+        every statement, not just the dialect-translation stage — so the SQL firewall and QoS
+        admission control (both pipeline stages) don't apply to native-mode traffic, any more than
+        Mach caching, rollups, or cross-backend value-sharding do. What still applies is whatever
+        happens before a statement ever reaches that pipeline: connection ACL (CIDR allow/deny,
+        enforced at TCP accept time, protocol-agnostic) and the connection pool itself — a real
+        <code>WARP_POOL_MAX_SIZE</code>-bounded pool (default 30) of actual backend connections
+        that a much larger number of client connections into Warp share, the client-facing and
+        backend-facing connection counts deliberately decoupled, exactly as they are for every
+        other protocol. Native mode is a real, direct, pooled proxy to your existing database —
+        not the fully-governed path dialect-translation mode (the default) gives every other
+        protocol; pick it when keeping the current engine matters more than SQL firewall/QoS/
+        caching coverage, and the default mode when it doesn't.
       </p>
       </details>
 
