@@ -340,6 +340,12 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
             </div>
           </div>
           <div class="railSection">
+            <div class="railSectionLabel">Native-backend mode</div>
+            <div class="railGroup">
+              <button class="railItem" data-wire-page="native-backends"><span class="ico">${iDb}</span>Backends</button>
+            </div>
+          </div>
+          <div class="railSection">
             <div class="railSectionLabel">Configuration</div>
             <div class="railGroup">
               <button class="railItem" data-wire-page="llm"><span class="ico">${iCpu}</span>LLM</button>
@@ -397,7 +403,7 @@ const chevronRight = svg('<polyline points="9 18 15 12 9 6"/>');
 // once, after every icon constant above is defined).
 const ICONS = {
   iLayout, iActivity, iWaypoints, iShield, iNetwork, iKey, iServer, iList, iTable,
-  iRoute, iSliders, iMerge, iCpu, iLogout, iCompass, chevronRight,
+  iRoute, iSliders, iMerge, iCpu, iLogout, iCompass, iDb, chevronRight,
 };
 document.body.innerHTML = document.body.innerHTML.replace(/\$\{(\w+)\}/g, (_, name) => ICONS[name] || '');
 
@@ -408,6 +414,15 @@ const wireBackends = [
   { name: 'reporting', url: 'jdbc:postgresql://reporting-host:5432/app', fav: true },
   { name: 'analytics', url: 'jdbc:postgresql://analytics-host:5432/app', fav: false },
   { name: 'shard0', url: 'jdbc:postgresql://shard0-host:5432/app', fav: false },
+];
+// Native-backend mode targets -- a separate list from wireBackends above, since these aren't
+// Postgres and the router can't shard across them: each one is Warp connecting straight through
+// to the caller's own existing engine (WARP_ORACLE_BACKEND_MODE / WARP_MYWIRE_BACKEND /
+// WARP_MSSQLWIRE_BACKEND), keeping only connection ACL and pooling from the shared pipeline.
+const nativeBackends = [
+  { name: 'oracle-prod', engine: 'Oracle', url: 'jdbc:oracle:thin:@prod-ora:1521/ORCLPDB1', envVar: 'WARP_ORACLE_BACKEND_MODE' },
+  { name: 'mysql-legacy', engine: 'MySQL', url: 'jdbc:mysql://legacy-mysql:3306/app', envVar: 'WARP_MYWIRE_BACKEND' },
+  { name: 'mssql-billing', engine: 'SQL Server', url: 'jdbc:sqlserver://billing-host:1433;databaseName=billing', envVar: 'WARP_MSSQLWIRE_BACKEND' },
 ];
 const advisorConnections = [
   { id: 1, name: 'Prod Oracle 19c', url: 'jdbc:oracle:thin:@prod-ora:1521/ORCLPDB1', fav: true },
@@ -701,6 +716,20 @@ function wireBackendsPage() {
     '<div class="rowList" id="wireBackendList">' + rows + '</div>';
 }
 
+function nativeBackendsPage() {
+  const rows = nativeBackends.map((b) =>
+    '<div class="rowItem">' +
+      '<span class="badge" style="color:var(--muted);background:var(--bg)">' + b.engine + '</span>' +
+      '<div class="rowMain"><span class="rowName mono">' + b.name + '</span><span class="rowSub mono">' + b.url + '</span></div>' +
+      '<span class="rowSub mono" style="color:var(--muted)">' + b.envVar + '</span>' +
+      '<button type="button" class="iconBtn" title="Test connection" onclick="flashTested(this)"><span class="ico">' + iZap + '</span></button>' +
+    '</div>').join('');
+  return '<h1 class="pageTitle">Native backends</h1>' +
+    '<p class="pageLede">Each one connects Warp straight through to your existing Oracle, MySQL, or SQL Server engine instead of Postgres &mdash; your database stays untranslated. It keeps connection ACL and pooling; sharding, the SQL firewall, QoS admission control, and Mach caching don\'t apply here, since those are stages of the default dialect-translation pipeline this mode bypasses. <a href="/warp/#native-backend-mode" target="_blank" rel="noopener">Full tradeoffs &rarr;</a></p>' +
+    '<div class="sectionTitle">Configured native backends</div>' +
+    '<div class="rowList">' + rows + '</div>';
+}
+
 function wireStub(title, lede, note) {
   return '<h1 class="pageTitle">' + title + '</h1><p class="pageLede">' + lede + '</p><div class="stubNote">' + note + '</div>';
 }
@@ -981,6 +1010,7 @@ const wirePages = {
   acl: aclPage,
   oauth: () => '<h1 class="pageTitle">OAuth</h1><p class="pageLede">Issuer, audience, and claim mapping for OAuth-authenticated connections.</p>' + oauthSummaryPanel(oauthConfig),
   backends: wireBackendsPage,
+  'native-backends': nativeBackendsPage,
   queues: queuesPage,
   data: dataExplorerPage,
   router: routerRulesPage,
