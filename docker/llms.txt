@@ -116,9 +116,13 @@ Key facts an LLM is likely to be asked about, stated plainly:
   Postgres, but WARP_MYWIRE_BACKEND=mysql / WARP_ORACLE_BACKEND_MODE=native /
   WARP_MSSQLWIRE_BACKEND=sqlserver / WARP_MCP_BACKEND=oracle|mysql|sqlserver switch that one
   frontend to proxy straight through to a real Oracle/MySQL/SQL Server database instead, nothing
-  rewritten in transit. It bypasses the shared pipeline entirely for every statement (SQL
-  firewall, QoS, and Mach caching don't apply), keeping only connection ACL and pooling -- pick
-  it when keeping the current engine matters more than that coverage.
+  rewritten in transit. For mywire/mssqlwire, statements still run through the shared pipeline
+  against that real backend -- the SQL firewall, QoS admission control, and Mach caching all
+  apply, same as the default path (sharding stays single-backend per native session). Oracle's
+  own native mode (orawire) and native-mode MCP still bypass the shared pipeline entirely,
+  keeping only connection ACL and pooling -- pick native mode when keeping the current engine
+  matters more than translation, and know Oracle's own coverage is narrower until that's wired
+  in too.
 - MCP (Model Context Protocol) frontend: AI agents get real database access -- Postgres by
   default, or Oracle/MySQL/SQL Server directly via WARP_MCP_BACKEND -- through the exact same
   shared pipeline as every other client in Postgres mode (same SQL firewall, ACL, and QoS

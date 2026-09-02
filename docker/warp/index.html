@@ -133,7 +133,7 @@
         <li><span class="uc-body"><span class="uc-title">Pre-aggregated rollups for analytics queries</span><span class="uc-desc">Define a GROUP BY/aggregate summary once — Warp keeps a real materialized table fresh on a schedule and rewrites matching client queries to read from it automatically, via a real SQL query planner, not a hand-maintained second copy your application has to know about.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Time-series writes without running InfluxDB</span><span class="uc-desc">A real line-protocol <code>/write</code> endpoint and a bounded InfluxQL <code>/query</code> (WHERE, GROUP BY time(), mean/sum/count/min/max) land on Postgres — a real TimescaleDB hypertable when the backend has the extension, a plain indexed table otherwise. See "InfluxDB" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Property-graph queries without running Neo4j</span><span class="uc-desc">Real Bolt+Cypher — <code>CREATE</code>, <code>MATCH ... WHERE ... RETURN</code>, bounded variable-length paths — against a real Postgres nodes/edges schema, spoken to the official <code>neo4j</code> driver over the real Bolt wire protocol. See "GraphDB" below.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Keeping the database engine you already have</span><span class="uc-desc">Native-backend mode proxies straight to a real Oracle, MySQL, or SQL Server backend of your own — no dialect translation, no Postgres migration — with Warp's connection pooling and connection ACL still in front of it (the SQL firewall, QoS, and caching are pipeline stages this mode bypasses). See "Native-backend mode" below.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Keeping the database engine you already have</span><span class="uc-desc">Native-backend mode proxies straight to a real Oracle, MySQL, or SQL Server backend of your own — no dialect translation, no Postgres migration. For MySQL and SQL Server, the SQL firewall, QoS admission control, and Mach caching still apply, same as the default path; Oracle's own native mode doesn't yet. See "Native-backend mode" below.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Standardizing on one database</span><span class="uc-desc">Different teams' applications speak different protocols against different databases. Warp lets every one of them land on the same Postgres, without every team rewriting its data layer first.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Permanent compatibility shim</span><span class="uc-desc">Some client code isn't worth touching — an old MongoDB driver, a legacy ORM tied to a specific dialect. Run Warp indefinitely and let it keep speaking that protocol forever while everything actually lives in Postgres.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Mid-migration bridge</span><span class="uc-desc">Run Warp while Ferry (or another migration tool) moves schema and data behind the scenes — old client code keeps working unmodified throughout the cutover, no coordinated "flag day" rewrite required.</span></span></li>
@@ -378,19 +378,25 @@
         Postgres-only for the same reason and aren't introspected at all in native mode.
       </p>
       <p class="rttNote">
-        <b>What native mode doesn't do:</b> it bypasses the shared eight-stage pipeline entirely for
-        every statement, not just the dialect-translation stage — so the SQL firewall and QoS
-        admission control (both pipeline stages) don't apply to native-mode traffic, any more than
-        Mach caching, rollups, or cross-backend value-sharding do. What still applies is whatever
-        happens before a statement ever reaches that pipeline: connection ACL (CIDR allow/deny,
-        enforced at TCP accept time, protocol-agnostic) and the connection pool itself — a real
-        <code>WARP_POOL_MAX_SIZE</code>-bounded pool (default 30) of actual backend connections
-        that a much larger number of client connections into Warp share, the client-facing and
-        backend-facing connection counts deliberately decoupled, exactly as they are for every
-        other protocol. Native mode is a real, direct, pooled proxy to your existing database —
-        not the fully-governed path dialect-translation mode (the default) gives every other
-        protocol; pick it when keeping the current engine matters more than SQL firewall/QoS/
-        caching coverage, and the default mode when it doesn't.
+        <b>What native mode covers, by protocol:</b> for <code>WARP_MYWIRE_BACKEND=mysql</code> and
+        <code>WARP_MSSQLWIRE_BACKEND=sqlserver</code>, statements run through the same shared
+        pipeline as the default dialect-translation path — the SQL firewall and QoS admission
+        control apply exactly as they do for a Postgres-backed session, since neither stage
+        inspects dialect at all; dialect translation itself no-ops (the client's real, untranslated
+        SQL reaches the real backend unmodified) because the statement's own dialect already
+        matches the native backend's. Mach caching applies too, keyed the same way it always is
+        (SQL text + bind params + tenant), with the same caveat the default Postgres path already
+        has: it only sees writes that go through Warp, not ones made directly against the backend
+        by another client. Sharding stays single-backend per native session — there's no
+        multi-shard fan-out across several native Oracle/MySQL/SQL Server targets yet, the way
+        there is across several named Postgres backends. <code>WARP_ORACLE_BACKEND_MODE=native</code>
+        (orawire) and native-mode MCP are not yet wired into the shared pipeline this way — they
+        still bypass it entirely for every statement, with only connection ACL (CIDR allow/deny,
+        enforced at TCP accept time) and the connection pool itself applying, same as before. A
+        real <code>WARP_POOL_MAX_SIZE</code>-bounded pool (default 30) of actual backend
+        connections is shared by a much larger number of client connections into Warp either way —
+        the client-facing and backend-facing connection counts are deliberately decoupled for every
+        protocol, native mode included.
       </p>
       </details>
 
@@ -1162,7 +1168,7 @@ aws sqs receive-message \                          # SQS wire
       <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
       <figure>
         <img src="/assets/architecture.svg" alt="Warp architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (Mach — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (warp_config/warp_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
-        <figcaption>Every wire protocol feeds the same shared pipeline in Warp's default dialect-translation mode — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages. (Native-backend mode bypasses this whole pipeline instead, keeping only connection ACL and pooling — see <a href="#native-backend-mode">native-backend mode</a> for exactly what that trades off. gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/warp/">full capabilities</a> for what that means.)</figcaption>
+        <figcaption>Every wire protocol feeds the same shared pipeline in Warp's default dialect-translation mode — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages. (Native-backend mode runs MySQL and SQL Server through this same pipeline against their own real backend instead of a translated Postgres one; Oracle's own native mode still bypasses it, keeping only connection ACL and pooling — see <a href="#native-backend-mode">native-backend mode</a> for exactly what applies where. gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/warp/">full capabilities</a> for what that means.)</figcaption>
       </figure>
 
       <h3 class="subhead" id="comparison">Warp vs. alternatives<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>

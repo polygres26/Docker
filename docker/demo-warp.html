@@ -725,7 +725,7 @@ function nativeBackendsPage() {
       '<button type="button" class="iconBtn" title="Test connection" onclick="flashTested(this)"><span class="ico">' + iZap + '</span></button>' +
     '</div>').join('');
   return '<h1 class="pageTitle">Native backends</h1>' +
-    '<p class="pageLede">Each one connects Warp straight through to your existing Oracle, MySQL, or SQL Server engine instead of Postgres &mdash; your database stays untranslated. It keeps connection ACL and pooling; sharding, the SQL firewall, QoS admission control, and Mach caching don\'t apply here, since those are stages of the default dialect-translation pipeline this mode bypasses. <a href="/warp/#native-backend-mode" target="_blank" rel="noopener">Full tradeoffs &rarr;</a></p>' +
+    '<p class="pageLede">Each one connects Warp straight through to your existing Oracle, MySQL, or SQL Server engine instead of Postgres &mdash; your database stays untranslated. For MySQL and SQL Server, the SQL firewall, QoS admission control, and Mach caching still apply, running against the real backend instead of a translated Postgres one; sharding stays single-backend per native session. Oracle\'s own native mode doesn\'t have that coverage yet. <a href="/warp/#native-backend-mode" target="_blank" rel="noopener">Full tradeoffs &rarr;</a></p>' +
     '<div class="sectionTitle">Configured native backends</div>' +
     '<div class="rowList">' + rows + '</div>';
 }
