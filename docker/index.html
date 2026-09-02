@@ -124,6 +124,7 @@
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
+      <a href="#use-cases">Use Cases</a>
       <a href="#warp">Warp</a>
       <a href="#ferry">Ferry</a>
       <a href="#shim">Shim</a>
@@ -145,6 +146,54 @@
       </div>
       <h2 class="heroTitle">Database infrastructure for the agentic era.</h2>
     </header>
+
+    <section class="tool" id="use-cases">
+      <div class="kicker">
+        <span class="num">00</span>
+      </div>
+      <h2>Use Cases</h2>
+      <p class="heroSub">
+        Start with what you're trying to do, not which product does it.
+      </p>
+      <div class="obsGrid">
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Accelerate</p>
+          <h4>Database Caching</h4>
+          <p><b>Make your database faster without changing the application.</b> Put Warp in front of your database. Repeated queries are served from Mach instead of hitting the database again.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#why-warp">See how →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Scale</p>
+          <h4>Database Sharding</h4>
+          <p><b>Scale one database into many without teaching the application about shards.</b> Warp decides where each request goes and combines results when necessary.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">See how →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Observe</p>
+          <h4>SQL Observability</h4>
+          <p><b>See every query across every database from one place.</b> Find slow SQL, errors, latency spikes, expensive workloads, and application behavior without jumping between database-specific tools.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Connect</p>
+          <h4>Query Federation</h4>
+          <p><b>Query data across databases without moving it first.</b> Give applications one access point while Warp routes requests to the right databases and brings results together.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Protect</p>
+          <h4>Database Security</h4>
+          <p><b>Put one security checkpoint in front of every database.</b> Inspect SQL, block dangerous queries, control workloads, govern AI agents, and audit access before requests reach the database.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">See how →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Modernize</p>
+          <h4>Database Migration</h4>
+          <p><b>Move to Postgres without rewriting everything at once.</b> Assess the migration, move and synchronize the data, preserve familiar database behavior, and keep existing applications connected during the transition.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">See how →</a></p>
+        </div>
+      </div>
+    </section>
 
     <section class="tool" id="warp">
       <div class="kicker">
