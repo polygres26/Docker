@@ -237,6 +237,67 @@ public final class WarpMcpServer {
                         "table", stringSchema("Table name, optionally schema-qualified as schema.table"),
                         "schema", stringSchema("Schema name (default: " + defaultSchemaFor(options) + ")")),
                         List.of("table"))));
+        // The data-investigation toolset -- structured, JSON-shaped database operations meant for
+        // an agent (an SLM being trained or evaluated, in particular) to build up evidence about a
+        // database step by step, rather than writing every query itself from scratch every time.
+        // Same name as execute_sql -- run_sql is registered separately since that's the name this
+        // toolset uses. All nine work in every WARP_MCP_BACKEND mode, with real per-dialect SQL
+        // where the dialects genuinely differ (see DataInvestigationTools's own javadoc).
+        tools.add(toolDef("run_sql", "Execute a SQL statement against the " + backendName
+                        + " backend and return the results. Identical to execute_sql.",
+                objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
+        tools.add(toolDef("inspect_schema",
+                "List every table and column in the " + backendName + " backend (excludes system schemas) -- "
+                        + "the starting point for exploring an unfamiliar database.",
+                objectSchema(Map.of(), List.of())));
+        tools.add(toolDef("column_stats",
+                "Statistical summary of one column: row count, null count, mean, standard deviation, "
+                        + "min, max, and distinct-value count.",
+                objectSchema(Map.of(
+                        "table", stringSchema("Table name, optionally schema-qualified"),
+                        "column", stringSchema("Column name")),
+                        List.of("table", "column"))));
+        tools.add(toolDef("compare_groups",
+                "Aggregate a metric column grouped by another column, sorted by the aggregate value -- "
+                        + "e.g. average order value by region.",
+                objectSchema(Map.of(
+                        "table", stringSchema("Table name, optionally schema-qualified"),
+                        "group_by", stringSchema("Column to group by"),
+                        "metric", stringSchema("Column to aggregate"),
+                        "agg", stringSchema("avg, sum, count, min, or max (default avg)"),
+                        "limit", stringSchema("Max groups to return (default 50, capped at 1000)")),
+                        List.of("table", "group_by", "metric"))));
+        tools.add(toolDef("correlation",
+                "Pearson correlation coefficient between two numeric columns, plus the row count used.",
+                objectSchema(Map.of(
+                        "table", stringSchema("Table name, optionally schema-qualified"),
+                        "col1", stringSchema("First column"),
+                        "col2", stringSchema("Second column")),
+                        List.of("table", "col1", "col2"))));
+        tools.add(toolDef("sample_rows",
+                "A representative sample of rows from a table.",
+                objectSchema(Map.of(
+                        "table", stringSchema("Table name, optionally schema-qualified"),
+                        "limit", stringSchema("Row count to return (default 20, capped at 1000)")),
+                        List.of("table"))));
+        tools.add(toolDef("find_outliers",
+                "Rows where a column's value deviates from the column's own mean by more than "
+                        + "threshold standard deviations (z-score outlier detection), most extreme first.",
+                objectSchema(Map.of(
+                        "table", stringSchema("Table name, optionally schema-qualified"),
+                        "column", stringSchema("Column to check")),
+                        List.of("table", "column"))));
+        tools.add(toolDef("find_join_path",
+                "Find the shortest real foreign-key JOIN path between two tables, as a list of hops "
+                        + "plus the ready-to-use JOIN SQL -- for a table relationship an agent hasn't seen yet.",
+                objectSchema(Map.of(
+                        "from_table", stringSchema("Starting table name"),
+                        "to_table", stringSchema("Target table name")),
+                        List.of("from_table", "to_table"))));
+        tools.add(toolDef("explain_sql",
+                "A real EXPLAIN plan for a SQL statement, without an LLM narration -- available in "
+                        + "every backend mode (the Postgres-only, LLM-narrated explain tool is separate).",
+                objectSchema(Map.of("sql", stringSchema("The SQL statement to explain")), List.of("sql"))));
         if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
             JsonObject result = new JsonObject();
             result.add("tools", tools);
@@ -338,11 +399,37 @@ public final class WarpMcpServer {
                 isError = !outcome.result().success();
                 errorMessage = outcome.result().error();
                 writeResult(response, id, toolCallResult(outcome.result(), outcome.note()));
+            } else if ("find_join_path".equals(toolName)) {
+                // Its own JSON shape (a hop list), not the tabular {columns, rows} every other
+                // tool here returns -- see runFindJoinPath's own javadoc.
+                JsonObject pathResult = runFindJoinPath(backend, requireString(arguments, "from_table"),
+                        requireString(arguments, "to_table"));
+                isError = false;
+                writeResult(response, id, pathResult);
             } else {
                 AdHocQueryRunner.Result result = switch (toolName) {
-                    case "execute_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
+                    case "execute_sql", "run_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
                     case "list_tables" -> runListTables(backend, accessContext);
                     case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
+                    case "inspect_schema" -> runSql(backend, DataInvestigationTools.inspectSchemaSql(backendMode), accessContext);
+                    case "column_stats" -> runSql(backend, DataInvestigationTools.columnStatsSql(backendMode,
+                            requireString(arguments, "table"), requireString(arguments, "column")), accessContext);
+                    case "compare_groups" -> runSql(backend, DataInvestigationTools.compareGroupsSql(backendMode,
+                            requireString(arguments, "table"), requireString(arguments, "group_by"),
+                            requireString(arguments, "metric"),
+                            arguments.has("agg") ? arguments.get("agg").getAsString() : "avg",
+                            positiveIntArg(arguments, "limit", 50, 1000)), accessContext);
+                    case "correlation" -> runSql(backend, DataInvestigationTools.correlationSql(backendMode,
+                            requireString(arguments, "table"), requireString(arguments, "col1"),
+                            requireString(arguments, "col2")), accessContext);
+                    case "sample_rows" -> runSql(backend, DataInvestigationTools.sampleRowsSql(backendMode,
+                            requireString(arguments, "table"),
+                            positiveIntArg(arguments, "limit", 20, 1000)), accessContext);
+                    case "find_outliers" -> runSql(backend, DataInvestigationTools.findOutliersSql(backendMode,
+                            requireString(arguments, "table"), requireString(arguments, "column"),
+                            arguments.has("threshold") ? arguments.get("threshold").getAsDouble() : 3.0,
+                            positiveIntArg(arguments, "limit", 50, 1000)), accessContext);
+                    case "explain_sql" -> runExplainSql(backend, requireString(arguments, "sql"));
                     default -> runRegisteredTool(backend, toolName, arguments, accessContext);
                 };
                 isError = !result.success();
@@ -814,6 +901,154 @@ public final class WarpMcpServer {
             throw new IllegalArgumentException("missing required argument: " + key);
         }
         return obj.get(key).getAsString();
+    }
+
+    /** Caps a caller-supplied row limit at {@code max} (every data-investigation tool that takes
+     * one dumps rows into a small model's context -- an unbounded value would defeat the point of
+     * a "sample", not just waste a query). */
+    private static int positiveIntArg(JsonObject obj, String key, int defaultValue, int max) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) {
+            return defaultValue;
+        }
+        int value = obj.get(key).getAsInt();
+        if (value <= 0) {
+            throw new IllegalArgumentException(key + " must be positive -- got: " + value);
+        }
+        return Math.min(value, max);
+    }
+
+    /** find_join_path's own JSON shape -- a real BFS-shortest hop list (see {@link
+     * JoinPathFinder}), not the tabular {@code {columns, rows}} shape every other tool here
+     * returns, since the point of this tool is the JOIN chain itself, not a row dump. Reads the
+     * whole schema's real foreign-key edges fresh on every call (see {@link
+     * DataInvestigationTools#foreignKeyEdgesSql}) rather than caching them -- a schema that's
+     * actively being explored by an agent (creating tables, adding constraints) shouldn't answer
+     * from a stale graph. */
+    private JsonObject runFindJoinPath(Connection backend, String fromTable, String toTable) throws SQLException {
+        DataInvestigationTools.requireValidIdentifier(fromTable, "from_table");
+        DataInvestigationTools.requireValidIdentifier(toTable, "to_table");
+        List<JoinPathFinder.Edge> edges = new ArrayList<>();
+        try (var st = backend.createStatement();
+                var rs = st.executeQuery(DataInvestigationTools.foreignKeyEdgesSql(options.mcpBackendMode()))) {
+            while (rs.next()) {
+                edges.add(new JoinPathFinder.Edge(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)));
+            }
+        }
+        List<JoinPathFinder.Hop> hops = JoinPathFinder.findPath(edges, fromTable, toTable);
+        JsonObject payload = new JsonObject();
+        if (hops == null) {
+            payload.addProperty("found", false);
+            payload.addProperty("message", "no foreign-key path connects " + fromTable + " and " + toTable);
+        } else {
+            payload.addProperty("found", true);
+            JsonArray hopsJson = new JsonArray();
+            StringBuilder joinSql = new StringBuilder();
+            for (JoinPathFinder.Hop hop : hops) {
+                JsonObject hopJson = new JsonObject();
+                hopJson.addProperty("from_table", hop.fromTable());
+                hopJson.addProperty("from_column", hop.fromColumn());
+                hopJson.addProperty("to_table", hop.toTable());
+                hopJson.addProperty("to_column", hop.toColumn());
+                hopsJson.add(hopJson);
+                if (!joinSql.isEmpty()) {
+                    joinSql.append(" ");
+                }
+                joinSql.append("JOIN ").append(hop.toTable()).append(" ON ")
+                        .append(hop.fromTable()).append(".").append(hop.fromColumn())
+                        .append(" = ").append(hop.toTable()).append(".").append(hop.toColumn());
+            }
+            payload.add("hops", hopsJson);
+            payload.addProperty("join_sql", "FROM " + fromTable + " " + joinSql);
+        }
+        JsonObject content = new JsonObject();
+        JsonArray contentArray = new JsonArray();
+        JsonObject textContent = new JsonObject();
+        textContent.addProperty("type", "text");
+        textContent.addProperty("text", GSON.toJson(payload));
+        contentArray.add(textContent);
+        content.add("content", contentArray);
+        content.addProperty("isError", false);
+        return content;
+    }
+
+    /** {@code explain_sql} -- a real, no-LLM, dialect-aware EXPLAIN available in every backend
+     * mode (unlike {@code explain_query}, which stays Postgres-only and adds an LLM narration on
+     * top -- see this class's own native-mode dispatch comment). Postgres and MySQL both accept a
+     * single {@code EXPLAIN ... FORMAT JSON <sql>} statement and never execute the query for real.
+     * Oracle and SQL Server can't do that in one statement, so both get their own real,
+     * standard-for-that-database two-statement flow, executed directly against {@code backend}
+     * (not through {@link JdbcBackendExecutor}, which caches one {@link java.sql.PreparedStatement}
+     * per SQL text and isn't built for a "run this control statement, then read this different
+     * query" pair sharing session state).
+     */
+    private AdHocQueryRunner.Result runExplainSql(Connection backend, String sql) throws SQLException {
+        return switch (options.mcpBackendMode()) {
+            case POSTGRES -> runSql(backend, "EXPLAIN (FORMAT JSON) " + sql, com.nexagres.wire.core.AccessContext.ANONYMOUS);
+            case MYSQL -> runSql(backend, "EXPLAIN FORMAT=JSON " + sql, com.nexagres.wire.core.AccessContext.ANONYMOUS);
+            case ORACLE -> runOracleExplain(backend, sql);
+            case SQLSERVER -> runSqlServerExplain(backend, sql);
+        };
+    }
+
+    /** {@code EXPLAIN PLAN FOR <sql>} populates Oracle's own {@code PLAN_TABLE} (a real,
+     * automatically-available global temporary table, session-scoped, needing no setup) without
+     * executing the statement; {@code DBMS_XPLAN.DISPLAY()} with no arguments then reads back the
+     * most recently explained plan in THIS session -- which is exactly why both statements have to
+     * run on the same, still-open {@code backend} connection. */
+    private AdHocQueryRunner.Result runOracleExplain(Connection backend, String sql) throws SQLException {
+        try (var st = backend.createStatement()) {
+            st.execute("EXPLAIN PLAN FOR " + sql);
+        }
+        try (var st = backend.createStatement();
+                var rs = st.executeQuery("SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")) {
+            return AdHocQueryRunner.Result.ofSuccess(readResultSet(rs));
+        }
+    }
+
+    /** SQL Server has no single-statement JSON-plan syntax; {@code SET SHOWPLAN_ALL ON} instead
+     * puts the WHOLE session into "next statement returns its plan instead of running it" mode
+     * (the real mechanism behind SSMS's own "Display Estimated Execution Plan") -- genuinely
+     * different in kind from Postgres/MySQL's inline {@code EXPLAIN}, not just spelled differently.
+     * Must be turned back {@code OFF} before this connection returns to its pool (see
+     * {@code BackendConnectionPools}) or every later borrower would silently get plan rows instead
+     * of real query results -- the {@code finally} block is load-bearing, not defensive style. */
+    private AdHocQueryRunner.Result runSqlServerExplain(Connection backend, String sql) throws SQLException {
+        try (var setOn = backend.createStatement()) {
+            setOn.execute("SET SHOWPLAN_ALL ON");
+        }
+        try (var st = backend.createStatement();
+                var rs = st.executeQuery(sql)) {
+            return AdHocQueryRunner.Result.ofSuccess(readResultSet(rs));
+        } finally {
+            try (var setOff = backend.createStatement()) {
+                setOff.execute("SET SHOWPLAN_ALL OFF");
+            }
+        }
+    }
+
+    /** As {@code JdbcBackendExecutor}'s own package-private {@code readResultSet} (not reusable
+     * across packages) -- builds an {@link ExecutionResult} from a plain, already-executed {@link
+     * java.sql.ResultSet}, for the raw-JDBC explain/join-path paths above that read a result set
+     * directly rather than going through a {@link Statement}. */
+    private static ExecutionResult readResultSet(java.sql.ResultSet rs) throws SQLException {
+        java.sql.ResultSetMetaData md = rs.getMetaData();
+        int columnCount = md.getColumnCount();
+        List<com.nexagres.wire.core.ColumnInfo> columns = new ArrayList<>(columnCount);
+        for (int i = 1; i <= columnCount; i++) {
+            columns.add(new com.nexagres.wire.core.ColumnInfo(md.getColumnLabel(i), md.getColumnType(i),
+                    md.getPrecision(i), md.getScale(i), md.getColumnDisplaySize(i),
+                    md.isNullable(i) != java.sql.ResultSetMetaData.columnNoNulls));
+        }
+        List<List<Object>> rows = new ArrayList<>();
+        while (rs.next()) {
+            List<Object> row = new ArrayList<>(columnCount);
+            for (int i = 1; i <= columnCount; i++) {
+                Object value = rs.getObject(i);
+                row.add(rs.wasNull() ? null : value);
+            }
+            rows.add(row);
+        }
+        return ExecutionResult.ofQuery(columns, rows);
     }
 
     private static JsonObject toolCallResult(AdHocQueryRunner.Result result) {

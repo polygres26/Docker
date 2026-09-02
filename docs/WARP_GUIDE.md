@@ -816,10 +816,37 @@ Every frontend above feeds the same shared pipeline, in this order:
 |---|---|
 | Generic SQL tools | `execute_sql`, `list_tables`, `describe_table` exposed as MCP tools out of the box |
 | Native-backend mode | `WARP_MCP_BACKEND=oracle/mysql/sqlserver` (default `postgres`) points the generic SQL tools at a real Oracle/MySQL/SQL Server connection instead of the dialect-translated Postgres backend — see §8.1.1 for exactly which tools work in each mode and which are refused |
+| Data-investigation tool set | `run_sql`, `inspect_schema`, `column_stats`, `compare_groups`, `correlation`, `sample_rows`, `find_outliers`, `find_join_path`, `explain_sql` — see §8.5.1. Real per-dialect SQL, available in every `WARP_MCP_BACKEND` mode |
 | Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL; Postgres mode only (skipped, with a clear log message, in native mode) |
 | Automatic input-schema generation | Introspects each registered function's real Postgres parameter types and builds the matching JSON Schema (`PgFunctionIntrospector`, `PgTypeToJsonSchema`) |
 | OUT-parameter handling | OUT parameters are correctly excluded from the callable input schema |
 | JSON Streamable HTTP transport | Standard MCP transport, so any MCP-compatible AI client can connect without custom glue |
+
+#### 8.5.1 Data-investigation tool set (for training/evaluating a small model against a database)
+
+Nine tools, real per-dialect SQL, available in every `WARP_MCP_BACKEND` mode — built for the
+agent-loop approach [this post](https://www.linkedin.com/pulse/how-train-small-model-databases-kumar-rajamani-n1i5c/)
+describes for training a small model (SLM) to investigate a real database: a fixed toolset of
+structured, JSON-shaped operations an agent calls step by step to build up evidence, rather than
+generating raw SQL as the only interface. The database is external working memory the model
+learns which evidence to seek from, not something to embed into the model's own weights.
+
+| Tool | What it does | Real dialect difference |
+|---|---|---|
+| `run_sql` | Executes a SQL statement and returns the results — identical to `execute_sql` | — |
+| `inspect_schema` | Lists every table and column | Oracle has no `information_schema`; uses `user_tab_columns` instead |
+| `column_stats` | Row count, null count, mean, standard deviation, min, max, distinct count for one column | SQL Server's population-stddev function is `STDEVP`, not `STDDEV_POP` |
+| `compare_groups` | Aggregates a metric column grouped by another column | Row-cap syntax: `LIMIT` (Postgres/MySQL), `FETCH FIRST n ROWS ONLY` (Oracle), `TOP n` (SQL Server, a prefix not a suffix) |
+| `correlation` | Pearson correlation coefficient between two numeric columns | Postgres/Oracle have a real `CORR()` aggregate; MySQL/SQL Server don't, so their SQL derives it by hand from `AVG`/`STDDEV_POP` — SQL Server additionally needs an explicit `FLOAT` cast to avoid its own integer-division truncation in that formula |
+| `sample_rows` | A representative sample of rows | Same row-cap syntax split as `compare_groups` |
+| `find_outliers` | Rows more than *threshold* standard deviations from the column's own mean (z-score), most extreme first | Same stddev-function and row-cap differences as `column_stats`/`compare_groups` |
+| `find_join_path` | Real breadth-first search over the schema's own foreign keys — the shortest JOIN chain between two tables, as a hop list plus ready-to-use JOIN SQL | Postgres/MySQL/SQL Server share one ANSI query (`information_schema.referential_constraints` joined to `key_column_usage` twice); Oracle uses `user_constraints`/`user_cons_columns` (no `information_schema` at all) |
+| `explain_sql` | A real EXPLAIN plan, no LLM narration (unlike the Postgres-only `explain_query`) | Postgres/MySQL: one `EXPLAIN ... FORMAT JSON` statement, never executes the query. Oracle: `EXPLAIN PLAN FOR` then `DBMS_XPLAN.DISPLAY()` reads the plan back from the session's own `PLAN_TABLE` — two statements, same connection. SQL Server: `SET SHOWPLAN_ALL ON` puts the whole session into plan-only mode for the next statement — genuinely different in kind, not just spelling, and must be turned back `OFF` before the connection returns to its pool |
+
+Table/column/group-by identifiers arrive as free-form tool arguments and get interpolated
+directly into SQL text (bind parameters can't stand in for identifiers) — every tool validates
+each one against a plain-identifier pattern first, the one guard against a caller closing a
+string and injecting arbitrary SQL through what's supposed to be a bare name.
 
 ---
 
