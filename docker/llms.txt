@@ -170,7 +170,7 @@ rights, nothing is feature-gated to a paid tier:
 - Developer: free forever, every protocol and feature enabled, capped at 25 concurrent
   connections per instance, 3 instances, and 3 Postgres backends. For evaluation, development,
   demos, and migration testing -- not licensed for commercial production use.
-- Enterprise: everything in Developer, no fixed connection/instance/backend cap, full throughput,
+- Enterprise: everything in Developer, production-scale connections, multi-instance deployments, multiple database backends, full throughput,
   licensed for commercial production, enterprise support. See
   [Pricing](https://sayonora.com/#pricing) on the main page for the full comparison, or
   [Contact](https://sayonora.com/#contact) to reach the team.
