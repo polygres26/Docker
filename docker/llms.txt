@@ -66,7 +66,7 @@ instead of re-deriving it from the whole site.
   does and doesn't carry over for AI agent access.
 - Real, no-signup click-through demos of the actual admin console UI, synthetic data, no backend
   required: [Warp admin console](https://sayonora.com/demo-warp.html) and
-  [Ferry migration assessment](https://sayonora.com/demo-dms.html).
+  [Ferry migration assessment](https://sayonora.com/demo-ferry.html).
 - [Connecting to your Postgres](https://sayonora.com/CONNECTING.md): worked examples and
   real gotchas for pointing Warp at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
