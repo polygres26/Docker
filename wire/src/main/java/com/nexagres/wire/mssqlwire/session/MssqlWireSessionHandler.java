@@ -13,6 +13,7 @@ import com.nexagres.wire.core.SqlStateErrorMapper;
 import com.nexagres.wire.core.Statement;
 import com.nexagres.wire.core.StatementPipeline;
 import com.nexagres.wire.core.UntranslatableQueryException;
+import com.nexagres.wire.mssqlwire.MssqlBackendConnections;
 import com.nexagres.wire.mssqlwire.frontend.Login7Handler;
 import com.nexagres.wire.mssqlwire.frontend.PreLoginHandshake;
 import com.nexagres.wire.mssqlwire.frontend.RpcRequestReader;
@@ -270,20 +271,45 @@ public final class MssqlWireSessionHandler implements Runnable {
      * TdsTokens#writeDoneProc's javadoc for why an RPC (sp_executesql) response needs it. */
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
             boolean viaRpc) throws IOException {
-        if (SET_STATEMENT.matcher(sql).find() || TRANSACTION_CONTROL_STATEMENT.matcher(sql).find()) {
+        // Same gate as mywire's own SET_STATEMENT/MySqlSessionVariableQuery short-circuits: only
+        // a no-op against the (fake, dialect-translated) Postgres backend -- in native mode a SET
+        // or transaction-control statement means something real against the real SQL Server
+        // backend and must actually run, not be silently swallowed.
+        if (!options.mssqlwireNativeBackend()
+                && (SET_STATEMENT.matcher(sql).find() || TRANSACTION_CONTROL_STATEMENT.matcher(sql).find())) {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
 
-        try (Connection backend = PgConnections.open(options)) {
+        try (Connection backend = options.mssqlwireNativeBackend()
+                ? MssqlBackendConnections.open(options) : PgConnections.open(options)) {
             backend.setAutoCommit(true);
-            terminalExecutor.rebind(backend);
             Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext);
             ExecutionResult result;
             try {
-                result = pipeline.execute(statement);
+                // Native mode bypasses the whole shared pipeline (RouterStage/
+                // DialectTranslationStage/etc.), not just picks a different connection -- confirmed
+                // live as a real bug otherwise: RouterStage still resolves "default" (a BackendTarget
+                // ALWAYS constructed against Postgres in Main.java, regardless of this protocol's own
+                // native-mode flag, since it's shared across every wire protocol in the same process),
+                // so DialectTranslationStage still translated SQL_SERVER->POSTGRES and sent the
+                // translated (wrong) SQL to the real SQL Server backend -- a real "'set_config' is
+                // not a recognized built-in function name" (a Postgres-only function the translator
+                // injected) the first time this was tried. `terminalExecutor` isn't reusable here
+                // either: it's permanently bound to MssqlPgEmulationSessionInitializer, which is
+                // Postgres-specific session setup that would fail the same way against a real SQL
+                // Server connection. A fresh, plain JdbcBackendExecutor (same pattern
+                // RoutingBackendExecutor#executeOnFreshConnection already uses for its own per-shard
+                // connections) sends the client's real, untranslated T-SQL straight to the real
+                // backend, which is the whole point of native mode.
+                if (options.mssqlwireNativeBackend()) {
+                    result = new JdbcBackendExecutor(backend).execute(statement);
+                } else {
+                    terminalExecutor.rebind(backend);
+                    result = pipeline.execute(statement);
+                }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
                         FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());

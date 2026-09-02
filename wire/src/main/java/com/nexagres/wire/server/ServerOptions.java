@@ -46,6 +46,12 @@ public final class ServerOptions {
     private final String mysqlUser;
     private final String mysqlPassword;
     private final int mssqlWireListenPort;
+    private final boolean mssqlwireNativeBackend;
+    private final String mssqlHost;
+    private final int mssqlPort;
+    private final String mssqlDatabase;
+    private final String mssqlUser;
+    private final String mssqlPassword;
 
     private ServerOptions(int listenPort, int pgWireListenPort, int myWireListenPort, int grpcPort, int httpPort, int httpsPort, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             String pgSslMode, String pgSslRootCert,
@@ -56,7 +62,8 @@ public final class ServerOptions {
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
             boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
-            int mssqlWireListenPort) {
+            int mssqlWireListenPort,
+            boolean mssqlwireNativeBackend, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword) {
         this.listenPort = listenPort;
         this.pgWireListenPort = pgWireListenPort;
         this.myWireListenPort = myWireListenPort;
@@ -93,6 +100,12 @@ public final class ServerOptions {
         this.mysqlUser = mysqlUser;
         this.mysqlPassword = mysqlPassword;
         this.mssqlWireListenPort = mssqlWireListenPort;
+        this.mssqlwireNativeBackend = mssqlwireNativeBackend;
+        this.mssqlHost = mssqlHost;
+        this.mssqlPort = mssqlPort;
+        this.mssqlDatabase = mssqlDatabase;
+        this.mssqlUser = mssqlUser;
+        this.mssqlPassword = mssqlPassword;
     }
 
     public static ServerOptions parse(String[] args) {
@@ -125,6 +138,19 @@ public final class ServerOptions {
         String mysqlDatabase = System.getenv().getOrDefault("WARP_MYSQL_DATABASE", "mysql");
         String mysqlUser = System.getenv("WARP_MYSQL_USER");
         String mysqlPassword = System.getenv("WARP_MYSQL_PASSWORD");
+
+        // Same shape as mywireNativeBackend just above: WARP_MSSQLWIRE_BACKEND=sqlserver (default
+        // "postgres") toggles mssqlwire between dialect-translating into Postgres (the only mode
+        // that existed before this) and proxying straight through to a real SQL Server backend --
+        // the "keep the database you have" path this product's own positioning already claims for
+        // Oracle/MySQL but, until this, never actually implemented for SQL Server.
+        boolean mssqlwireNativeBackend = "sqlserver".equalsIgnoreCase(
+                System.getenv().getOrDefault("WARP_MSSQLWIRE_BACKEND", "postgres"));
+        String mssqlHost = System.getenv().getOrDefault("WARP_MSSQL_HOST", "localhost");
+        int mssqlPort = parseIntEnv("WARP_MSSQL_PORT", 1433);
+        String mssqlDatabase = System.getenv().getOrDefault("WARP_MSSQL_DATABASE", "master");
+        String mssqlUser = System.getenv("WARP_MSSQL_USER");
+        String mssqlPassword = System.getenv("WARP_MSSQL_PASSWORD");
 
         int pgWireListenPort = parseIntEnv("WARP_PGWIRE_PORT", 15432);
         int myWireListenPort = parseIntEnv("WARP_MYWIRE_PORT", 13306);
@@ -167,7 +193,8 @@ public final class ServerOptions {
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
-                mssqlWireListenPort);
+                mssqlWireListenPort,
+                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword);
     }
 
     public int mssqlWireListenPort() {
@@ -191,7 +218,8 @@ public final class ServerOptions {
                 false,
                 "localhost", 1521, "orcl", OracleBackendMode.JDBC,
                 false, "localhost", 3306, "mysql", null, null,
-                0);
+                0,
+                false, "localhost", 1433, "master", null, null);
     }
 
     private static int parseIntEnv(String name, int defaultValue) {
@@ -342,5 +370,29 @@ public final class ServerOptions {
 
     public String mysqlPassword() {
         return mysqlPassword;
+    }
+
+    public boolean mssqlwireNativeBackend() {
+        return mssqlwireNativeBackend;
+    }
+
+    public String mssqlHost() {
+        return mssqlHost;
+    }
+
+    public int mssqlPort() {
+        return mssqlPort;
+    }
+
+    public String mssqlDatabase() {
+        return mssqlDatabase;
+    }
+
+    public String mssqlUser() {
+        return mssqlUser;
+    }
+
+    public String mssqlPassword() {
+        return mssqlPassword;
     }
 }

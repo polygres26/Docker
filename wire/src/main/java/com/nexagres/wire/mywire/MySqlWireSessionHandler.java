@@ -415,11 +415,29 @@ public final class MySqlWireSessionHandler implements Runnable {
         try (Connection backend = options.mywireNativeBackend()
                 ? MySqlBackendConnections.open(options) : PgConnections.open(options)) {
             backend.setAutoCommit(true);
-            terminalExecutor.rebind(backend);
             Statement statement = Statement.of(SourceDialect.MYSQL, sql, bindParams);
             ExecutionResult result;
             try {
-                result = pipeline.execute(statement);
+                // Same fix as mssqlwire's own native mode: bypass the whole shared pipeline, not
+                // just pick a different connection. RouterStage still resolves "default" (a
+                // BackendTarget ALWAYS constructed against Postgres in Main.java, shared across
+                // every wire protocol in the same process, regardless of this protocol's own
+                // native-mode flag), so DialectTranslationStage was still translating MYSQL->
+                // POSTGRES and sending the translated SQL to the real MySQL backend -- and
+                // `terminalExecutor` is permanently bound to MySqlPgEmulationSessionInitializer,
+                // Postgres-specific session setup that doesn't apply to a real MySQL connection
+                // either. A fresh, plain JdbcBackendExecutor (same pattern
+                // RoutingBackendExecutor#executeOnFreshConnection already uses for its own
+                // per-shard connections) sends the client's real, untranslated SQL straight to the
+                // real backend, which is the whole point of native mode. Found and fixed alongside
+                // building mssqlwire's own native-backend support -- this MySQL path had shipped
+                // with the same bug, just never exercised by a real end-to-end test until now.
+                if (options.mywireNativeBackend()) {
+                    result = new JdbcBackendExecutor(backend).execute(statement);
+                } else {
+                    terminalExecutor.rebind(backend);
+                    result = pipeline.execute(statement);
+                }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.MYSQL, sql,
                         FailedStatementLog.FailureType.UNTRANSLATABLE, null, null, e.getMessage());
