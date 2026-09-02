@@ -4,11 +4,16 @@
 > security, HA, deployment. If you're an application team looking to connect to Warp, start
 > with [`USER_GUIDE.md`](USER_GUIDE.md) instead.
 
-Warp is a mid-tier, Postgres-only database gateway. It speaks Oracle TNS/TTC, MySQL
-client/server protocol, SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol,
-DynamoDB's HTTP/JSON API, Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — translating and
-routing every one of them to real Postgres backend(s). It's wire-protocol compatibility for a
-pre- or post-migration cutover, not a schema/data migration tool itself.
+Warp is a mid-tier database gateway. It speaks Oracle TNS/TTC, MySQL client/server protocol,
+SQL Server TDS, Postgres wire protocol v3, MongoDB wire protocol, DynamoDB's HTTP/JSON API,
+Amazon SQS's HTTP/JSON API, gRPC, and MCP to clients — by default, translating and routing every
+one of them to real Postgres backend(s), the wire-protocol-compatibility path for a pre- or
+post-migration cutover (not a schema/data migration tool itself). mywire, orawire, mssqlwire, and
+MCP can each also run in **native-backend mode** instead (§8.1.1): no translation at all, proxying
+straight through to a real Oracle/MySQL/SQL Server database of your own — for keeping the engine
+you already run, not just migrating off it. §4.4 covers a third, independent capability: real
+Oracle/SQL Server/MySQL `WARP_BACKENDS` targets that Warp routes plain SQL to, federates `JOIN`s
+against, and runs real distributed (XA) transactions across, alongside Postgres.
 
 > **Performance**: every number claimed anywhere in this guide about latency, caching, or RTT is
 > backed by a live before/after benchmark against a real client library, documented in
@@ -705,15 +710,59 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | Frontend | Protocol | Default port | Notes |
 |---|---|---|---|
 | pgwire | Postgres wire protocol v3 | 15432 | native passthrough, no translation needed |
-| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres |
-| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated; both plaintext and TLS listeners run together |
-| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated |
+| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default; `WARP_MYWIRE_BACKEND=mysql` switches to native mode — see §8.1.1 |
+| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native mode — see §8.1.1 |
+| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default; `WARP_MSSQLWIRE_BACKEND=sqlserver` switches to native mode — see §8.1.1 |
 | mongowire | MongoDB wire protocol | 27017 | document ops mapped to SQL |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
 | sqswire | Amazon SQS HTTP/JSON API | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); FIFO queues, DLQ/redrive, both JSON-1.1 and legacy XML protocols; sharded by queue name |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
-| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | see §8.5 |
+| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` switches to native mode — see §8.1.1 and §8.5 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
+
+#### 8.1.1 Native-backend mode: proxy straight to Oracle, MySQL, or SQL Server instead of translating
+
+mywire, orawire, mssqlwire, and MCP each default to **dialect-translation mode**: the client's own
+SQL/T-SQL/PL-SQL is rewritten into Postgres dialect and run against the real, configured Postgres
+backend — the shared eight-stage pipeline in §8.2, unmodified. Each of the four also has a
+**native-backend mode**, which instead proxies the client's SQL straight through, completely
+unmodified, to a real Oracle/MySQL/SQL Server connection of Warp's own:
+
+| Frontend | Env var to enable | Backend connection config |
+|---|---|---|
+| mywire | `WARP_MYWIRE_BACKEND=mysql` (default `postgres`) | `WARP_MYSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| orawire | `WARP_ORACLE_BACKEND_MODE=native` (default `jdbc`) | `WARP_ORACLE_HOST`/`_PORT`/`_SERVICE`; credentials come from the client's own O5LOGON login, not a separate config var |
+| mssqlwire | `WARP_MSSQLWIRE_BACKEND=sqlserver` (default `postgres`) | `WARP_MSSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| MCP | `WARP_MCP_BACKEND=oracle` / `mysql` / `sqlserver` (default `postgres`) | Reuses the same `WARP_ORACLE_*`/`WARP_MYSQL_*`/`WARP_MSSQL_*` vars above, plus `WARP_ORACLE_USER`/`WARP_ORACLE_PASSWORD` specifically for MCP's Oracle mode — MCP has no client login step to source per-caller Oracle credentials from the way orawire's native mode does, so it needs a real, gateway-held credential configured |
+
+**Native mode bypasses the shared pipeline entirely for every statement, not just the
+dialect-translation stage** — a real, previously-live bug, not a design choice: `RouterStage`'s
+"default" backend target is always Postgres-typed regardless of a frontend's own mode (it's shared
+across every protocol in the same process), so running native-dialect SQL through the ordinary
+pipeline still translated it toward Postgres and sent the (wrong) translated SQL to the real
+non-Postgres backend — confirmed live via a real `'set_config' is not a recognized built-in
+function name` error from a real SQL Server instance. The fix is that native mode never enters the
+pipeline at all: it executes directly against a fresh backend connection. The consequence, stated
+plainly: **the SQL Firewall and QoS admission control (both pipeline stages) do not apply to
+native-mode traffic**, any more than the distributed cache, rollups, or cross-backend
+value-sharding do (all of those are built against Postgres). What still applies, because it
+happens before a statement ever reaches the pipeline: connection ACL (§3.1, enforced at TCP/HTTP
+accept time, protocol-agnostic) and the connection pool itself (§8.4's `WARP_POOL_MAX_SIZE`, a
+real fixed-size pool of backend connections that a much larger number of client connections can
+share, decoupled from client concurrency exactly as it is in dialect-translation mode). Pick
+native mode when keeping the current engine matters more than SQL Firewall/QoS/caching coverage,
+and dialect-translation mode (the default) when it doesn't.
+
+MCP's own native mode narrows further: `execute_sql`, `list_tables`, and `describe_table` all work
+natively (with real per-dialect catalog queries for `list_tables`/`describe_table` — Oracle has no
+`information_schema`, so those use `user_tables`/`all_tab_columns` instead), but `document_schema`,
+`explain_query`, and `query_natural_language` stay Postgres-only — they hardcode Postgres-specific
+SQL (a literal `EXPLAIN (FORMAT JSON ...)`, or an LLM schema-drafting prompt written assuming
+Postgres). `tools/list` doesn't even advertise those three in native mode, and calling one anyway
+returns a clear "not supported" error rather than silently running SQL that's wrong for the
+configured backend. `WARP_MCP_TOOLS` (real Postgres functions/procedures registered as MCP tools
+via `pg_proc` introspection) is Postgres-only for the same reason and isn't introspected at all in
+native mode.
 
 ### 8.2 Statement pipeline stages
 
@@ -766,7 +815,8 @@ Every frontend above feeds the same shared pipeline, in this order:
 | Feature | Detail |
 |---|---|
 | Generic SQL tools | `execute_sql`, `list_tables`, `describe_table` exposed as MCP tools out of the box |
-| Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL |
+| Native-backend mode | `WARP_MCP_BACKEND=oracle/mysql/sqlserver` (default `postgres`) points the generic SQL tools at a real Oracle/MySQL/SQL Server connection instead of the dialect-translated Postgres backend — see §8.1.1 for exactly which tools work in each mode and which are refused |
+| Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL; Postgres mode only (skipped, with a clear log message, in native mode) |
 | Automatic input-schema generation | Introspects each registered function's real Postgres parameter types and builds the matching JSON Schema (`PgFunctionIntrospector`, `PgTypeToJsonSchema`) |
 | OUT-parameter handling | OUT parameters are correctly excluded from the callable input schema |
 | JSON Streamable HTTP transport | Standard MCP transport, so any MCP-compatible AI client can connect without custom glue |

@@ -446,14 +446,20 @@ Every end-user-facing feature in both modules, in one place, with its config kno
 | Frontend | Protocol | Default port | Notes |
 |---|---|---|---|
 | pgwire | Postgres wire protocol v3 | 15432 | native passthrough, no translation needed |
-| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres |
-| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated; both plaintext and TLS listeners run together |
-| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated |
+| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default; `WARP_MYWIRE_BACKEND=mysql` for native-backend mode |
+| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` for native-backend mode |
+| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default; `WARP_MSSQLWIRE_BACKEND=sqlserver` for native-backend mode |
 | mongowire | MongoDB wire protocol | 27017 | document ops mapped to SQL |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
-| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | see §8.4 |
+| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` for native-backend mode — see §8.6 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
+
+mywire/orawire/mssqlwire/MCP's native-backend mode proxies straight through to a real Oracle/
+MySQL/SQL Server connection with nothing rewritten in transit, instead of translating into
+Postgres — for keeping the engine you already run. It bypasses the shared pipeline below
+entirely (SQL Firewall and QoS admission control included), keeping only connection ACL and
+pooling. Full detail: [`WARP_GUIDE.md` §8.1.1](WARP_GUIDE.md#811-native-backend-mode-proxy-straight-to-oracle-mysql-or-sql-server-instead-of-translating).
 
 ### 8.3 Warp — statement pipeline stages
 
@@ -501,7 +507,8 @@ Every frontend above feeds the same shared pipeline, in this order:
 | Feature | Detail |
 |---|---|
 | Generic SQL tools | `execute_sql`, `list_tables`, `describe_table` exposed as MCP tools out of the box |
-| Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL |
+| Native-backend mode | `WARP_MCP_BACKEND=oracle/mysql/sqlserver` (default `postgres`) points the generic SQL tools at a real Oracle/MySQL/SQL Server connection instead — `document_schema`/`explain_query`/`query_natural_language` stay Postgres-only and are refused with a clear error (not advertised by `tools/list`) in native mode, since they hardcode Postgres-specific SQL |
+| Registered stored-procedure tools | `WARP_MCP_TOOLS` names specific Postgres functions/procedures to expose as individually-named MCP tools — only what's explicitly registered is callable, not arbitrary SQL; Postgres mode only |
 | Automatic input-schema generation | Introspects each registered function's real Postgres parameter types and builds the matching JSON Schema (`PgFunctionIntrospector`, `PgTypeToJsonSchema`) |
 | OUT-parameter handling | OUT parameters are correctly excluded from the callable input schema |
 | JSON Streamable HTTP transport | Standard MCP transport, so any MCP-compatible AI client can connect without custom glue |

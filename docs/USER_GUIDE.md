@@ -5,6 +5,15 @@ DynamoDB, or Amazon SQS keep using its existing driver and connection code, whil
 actually lives in Postgres. Point your app at Warp instead of your original database —
 nothing else in your application changes.
 
+That's the default. If you'd rather keep the database engine you already run instead of moving
+to Postgres, orawire/mywire/mssqlwire (and the MCP frontend) can each run in **native-backend
+mode** instead — Warp proxies straight through to a real Oracle/MySQL/SQL Server database of
+your own, nothing about your SQL rewritten in transit, while you still get connection pooling,
+connection ACL, and observability in front of it. See
+[`WARP_GUIDE.md` §8.1.1](WARP_GUIDE.md#811-native-backend-mode-proxy-straight-to-oracle-mysql-or-sql-server-instead-of-translating)
+for exactly what that mode does and doesn't carry over (notably: the SQL Firewall, QoS admission
+control, and caching are Postgres-pipeline features that don't apply in native mode).
+
 ## Why you'd use it
 
 - **Moving to Postgres, but not ready to rewrite every client yet.** Run Warp as a bridge
@@ -13,6 +22,9 @@ nothing else in your application changes.
   not worth touching. Run Warp permanently as a compatibility layer.
 - **Standardizing on one database.** Different teams' apps speak different protocols; Warp
   lets them all land on the same Postgres.
+- **Keeping the database engine you already run.** Native-backend mode adds connection pooling,
+  connection ACL, and observability in front of Oracle/MySQL/SQL Server without moving the data
+  or translating a single statement.
 
 ## What it supports
 

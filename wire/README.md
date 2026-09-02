@@ -7,7 +7,10 @@ backend. Postgres was the original, still-primary backend; Oracle, SQL Server, a
 are now real backend engines too, not just protocols Warp imitates for clients — see
 [`../docs/WARP_GUIDE.md` §4.4](../docs/WARP_GUIDE.md#44-multiple-backend-engines-top-5-by-db-engines-ranking-alongside-postgres).
 It's wire-protocol compatibility for a pre- or post-migration cutover, not a schema/data migration
-tool itself.
+tool itself. mywire, orawire, mssqlwire, and MCP can each also run in **native-backend mode**
+instead of translating — proxying straight through to a real Oracle/MySQL/SQL Server database of
+your own with nothing rewritten in transit, for keeping the engine you already run rather than
+migrating off it. See [`../docs/WARP_GUIDE.md` §8.1.1](../docs/WARP_GUIDE.md#811-native-backend-mode-proxy-straight-to-oracle-mysql-or-sql-server-instead-of-translating).
 
 New here? Start with [`../docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) — what Warp does, why
 you'd use it, and how to point your app at it. [`../docs/WARP_GUIDE.md`](../docs/WARP_GUIDE.md)
@@ -87,6 +90,7 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_OAUTH_ISSUER` / `_AUDIENCE` | OAuth2/OIDC bearer-token auth (Okta, EntraID, any standard issuer) for HTTP frontends |
 | `WARP_AWS_IAM_CREDENTIALS` | AWS SigV4 request verification for dynamowire |
 | `WARP_MCP_TOOLS` | Postgres functions/procedures to expose as individually-named MCP tools |
+| `WARP_ORACLE_BACKEND_MODE` / `WARP_MYWIRE_BACKEND` / `WARP_MSSQLWIRE_BACKEND` / `WARP_MCP_BACKEND` | Native-backend mode per frontend — proxy straight to a real Oracle/MySQL/SQL Server backend instead of dialect-translating into Postgres (§8.1.1) |
 | `WARP_TLS_KEYSTORE` | Shared keystore for orawire TCPS / gRPC TLS |
 
 ## Security

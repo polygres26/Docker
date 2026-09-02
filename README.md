@@ -9,11 +9,15 @@ projects that happen to live together.
   database (Oracle/MySQL/MariaDB/SQL Server), profiles schema/feature/workload usage, and scores
   Postgres-migration difficulty; **Migration Service** launches and monitors real
   `nexagres-migration` runs (the Data Sync section). React/TS/Vite frontend in `dms/web/`.
-- **[wire/](wire/)** -- Warp: a mid-tier, Postgres-only database gateway. Speaks Oracle TNS/
-  TTC, Postgres wire protocol v3, MySQL client/server protocol, and gRPC to clients, translating
-  and routing to real Postgres backend(s) -- wire-protocol compatibility for a pre- or
-  post-migration cutover, not a schema/data migration tool itself (that's DMS's job). Ported
-  from Omnigate (`~/Projects/Omnigate`, package `com.omnigate.*` -> `com.nexagres.wire.*`).
+- **[wire/](wire/)** -- Warp: a mid-tier database gateway. Speaks Oracle TNS/TTC, Postgres wire
+  protocol v3, MySQL client/server protocol, SQL Server TDS, MongoDB wire protocol, DynamoDB/SQS
+  HTTP/JSON, gRPC, and MCP to clients -- by default translating and routing every one to real
+  Postgres backend(s) (wire-protocol compatibility for a pre- or post-migration cutover, not a
+  schema/data migration tool itself -- that's DMS's job); orawire/mywire/mssqlwire/MCP can each
+  also run in native-backend mode instead, proxying straight through to a real Oracle/MySQL/SQL
+  Server database of your own with no translation, for keeping the engine you already run. See
+  `docs/WARP_GUIDE.md` §8.1.1. Ported from Omnigate (`~/Projects/Omnigate`, package
+  `com.omnigate.*` -> `com.nexagres.wire.*`).
 - **[migration/](migration/)** -- `nexagres-migration`: massively-parallel, low-downtime migration
   connectors (MongoDB, MySQL, SQL Server, Oracle, DynamoDB, SQS, Neo4j, InfluxDB) writing into a
   running Warp instance over its own native gRPC driver. Used both standalone (`Migrate*Cli`)
