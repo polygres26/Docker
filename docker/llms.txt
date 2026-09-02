@@ -1,28 +1,37 @@
 # Sayonora
 
-> Sayonora is two tools. Warp is the intelligent gateway for Postgres: one secure, scalable
-> execution layer that lets Postgres, MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS,
-> OpenSearch, InfluxDB, GraphDB (Neo4j Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
-> executes against one real Postgres database. Ferry is a rules-based (not LLM-generated)
-> tool that scores how hard migrating an existing database to Postgres will be, and Warp
-> bridges your application to Postgres while that migration happens.
+> Sayonora is two tools. Warp is an intelligent database gateway: by default it lets Postgres,
+> MySQL, Oracle, SQL Server, MongoDB, DynamoDB, Amazon SQS, OpenSearch, InfluxDB, GraphDB (Neo4j
+> Bolt+Cypher), gRPC, and MCP (AI agent) clients connect unmodified while everything actually
+> executes against one real Postgres database -- but mywire, orawire, mssqlwire, and MCP can each
+> also run in **native-backend mode** instead, proxying straight through to a real Oracle/MySQL/
+> SQL Server database of your own with nothing rewritten in transit, for keeping the engine you
+> already run rather than migrating off it. Ferry is a rules-based (not LLM-generated) tool that
+> scores how hard migrating an existing database to Postgres will be, and Warp bridges your
+> application to Postgres while that migration happens, or stands in front of the database you
+> keep either way.
 >
-> Protocol translation ("everything talks to Postgres") is one capability, not the whole product.
-> Warp's real category is "one control point for every Postgres workload." Frozen three-level
-> message: **Warp — the intelligent gateway for Postgres** (what it is) -> **Everything talks
-> to Postgres** (what's different) -> **One control point for every Postgres workload** (why
-> enterprises keep it running). One supporting line ties protocol support + security + QoS +
-> observability together: **different protocols, same policies, same Postgres**.
+> Protocol translation ("everything talks to Postgres") is one capability, not the whole product,
+> and no longer the only path through Warp. Warp's real category is "one control point for every
+> workload, on whichever database you run." Frozen three-level message: **Warp — the intelligent
+> database gateway** (what it is) -> **One gateway, the database you already run or Postgres**
+> (what's different) -> **One control point for every workload** (why enterprises keep it
+> running). One supporting line ties protocol support + security + QoS + observability together:
+> **different protocols, same policies**.
 >
-> Its full scope is five capabilities: **Connect** (twelve client protocols, one Postgres backend --
-> with live semantic execution translation, protocol to SQL/API semantics to PostgreSQL execution,
-> not just protocol framing), **Protect** (SQL firewall, connection ACL, authentication, row-level
-> security -- security follows the request, not the protocol), **Control** (QoS admission control,
-> routing, connection pooling, sharding, planned/unplanned failover), **Accelerate** (Mach --
-> one distributed cache shared across PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, not a
-> per-protocol silo -- and rollups), and **Observe** (native per-protocol error translation,
-> Prometheus/OTEL export, audit log). Migration is one reason to run it -- many teams run it indefinitely as a permanent control
-> point in front of Postgres, whether or not anything is being migrated at all.
+> Its full scope is five capabilities: **Connect** (twelve client protocols, one backend of your
+> choice -- with live semantic execution translation, protocol to SQL/API semantics to that
+> backend's own execution, not just protocol framing), **Protect** (SQL firewall, connection ACL,
+> authentication, row-level security -- security follows the request, not the protocol; the SQL
+> firewall and QoS are pipeline stages native-backend mode bypasses, connection ACL and pooling
+> still apply there), **Control** (QoS admission control, routing, connection pooling, sharding,
+> planned/unplanned failover), **Accelerate** (Mach -- one distributed cache shared across
+> PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP, not a per-protocol silo -- and rollups;
+> Postgres-pipeline features, so native-backend mode doesn't get them), and **Observe** (native
+> per-protocol error translation, Prometheus/OTEL export, audit log). Migration is one reason to
+> run it -- many teams run it indefinitely as a permanent control point in front of Postgres, or
+> in native-backend mode in front of the database they already run, whether or not anything is
+> being migrated at all.
 
 Full documentation, architecture diagrams, real benchmark numbers, and every feature's honest
 scope (what's real vs. not yet wired) live across the main page and its linked pages. This file
@@ -53,6 +62,12 @@ instead of re-deriving it from the whole site.
   [MySQL → PostgreSQL](https://sayonora.com/mysql-to-postgres.html),
   [MongoDB → PostgreSQL](https://sayonora.com/mongodb-to-postgres.html), and
   [OpenSearch → PostgreSQL](https://sayonora.com/opensearch-to-postgres.html).
+- [MCP for databases](https://sayonora.com/mcp-postgres/): every MCP tool described in full,
+  the generic/data-investigation/AI-assisted grouping, and exactly what native-backend mode
+  does and doesn't carry over for AI agent access.
+- Real, no-signup click-through demos of the actual admin console UI, synthetic data, no backend
+  required: [Warp admin console](https://sayonora.com/demo-warp.html) and
+  [Ferry migration assessment](https://sayonora.com/demo-dms.html).
 - [Connecting to your Postgres](https://sayonora.com/CONNECTING.md): worked examples and
   real gotchas for pointing Warp at an existing on-prem Postgres, Supabase, Amazon RDS, Google
   Cloud SQL, Azure Database for PostgreSQL, or Oracle Cloud Infrastructure's Database with
@@ -98,9 +113,24 @@ Key facts an LLM is likely to be asked about, stated plainly:
   wrapper -- so each client's own retry/reconnect logic (e.g. an Oracle driver checking for
   ORA-03113 to decide whether to reconnect) gets exactly the signal it expects. See
   [ERRORS.md](https://sayonora.com/ERRORS.md) for the full per-protocol mapping.
-- MCP (Model Context Protocol) frontend: AI agents get real Postgres access through the exact same
-  shared pipeline as every other client -- same SQL firewall, ACL, and QoS controls, not a
-  separate, unguarded path to the data.
+- Native-backend mode: mywire, orawire, mssqlwire, and MCP each default to translating into
+  Postgres, but WARP_MYWIRE_BACKEND=mysql / WARP_ORACLE_BACKEND_MODE=native /
+  WARP_MSSQLWIRE_BACKEND=sqlserver / WARP_MCP_BACKEND=oracle|mysql|sqlserver switch that one
+  frontend to proxy straight through to a real Oracle/MySQL/SQL Server database instead, nothing
+  rewritten in transit. It bypasses the shared pipeline entirely for every statement (SQL
+  firewall, QoS, and Mach caching don't apply), keeping only connection ACL and pooling -- pick
+  it when keeping the current engine matters more than that coverage.
+- MCP (Model Context Protocol) frontend: AI agents get real database access -- Postgres by
+  default, or Oracle/MySQL/SQL Server directly via WARP_MCP_BACKEND -- through the exact same
+  shared pipeline as every other client in Postgres mode (same SQL firewall, ACL, and QoS
+  controls, not a separate, unguarded path to the data). Eighteen tools total: generic SQL
+  (execute_sql/run_sql, list_tables, describe_table -- every backend mode), a nine-tool
+  data-investigation set built for training/evaluating a small model against a real database
+  (inspect_schema, column_stats, compare_groups, correlation, sample_rows, find_outliers,
+  find_join_path, explain_sql -- every backend mode, with real per-dialect SQL, not one query
+  reused everywhere: Oracle has no information_schema, MySQL/SQL Server have no CORR()
+  aggregate), and three Postgres-only AI-assisted tools (query_natural_language, explain_query,
+  document_schema) plus WARP_MCP_TOOLS's own Postgres-only registered-function tools.
 - Mach: Warp's embedded, distributed query result cache, opt-in per table, shared across
   protocols -- PostgreSQL, MySQL, Oracle, SQL Server, gRPC, and MCP all read and populate the same
   cache, so a result cached via one protocol is served to another without recomputing it. MongoDB
