@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCP for Postgres — Govern AI Agent Access</title>
-<meta name="description" content="Warp's MCP frontend gives AI agents real Postgres access -- execute_sql, query_natural_language, explain_query, document_schema -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client.">
+<title>MCP for Databases — Govern AI Agent Access</title>
+<meta name="description" content="Warp's MCP frontend gives AI agents real database access -- Postgres, Oracle, MySQL, or SQL Server -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client. Eighteen tools: generic SQL, a nine-tool data-investigation set built for training/evaluating small models, and three Postgres-only AI-assisted tools.">
 <link rel="canonical" href="https://nexagres.com/mcp-postgres/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#3f5b9b">
@@ -14,12 +14,12 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nexagres.com/mcp-postgres/">
-<meta property="og:title" content="MCP for Postgres — Govern AI Agent Access">
-<meta property="og:description" content="AI agents get real Postgres access through the exact same SQL firewall, ACL, QoS, and audit path as every other client -- not a separate, unguarded route to your data.">
+<meta property="og:title" content="MCP for Databases — Govern AI Agent Access">
+<meta property="og:description" content="AI agents get real database access -- Postgres, Oracle, MySQL, or SQL Server -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client, not a separate, unguarded route to your data.">
 <meta property="og:image" content="https://nexagres.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="MCP for Postgres — Govern AI Agent Access">
-<meta name="twitter:description" content="AI agents get real Postgres access through the exact same SQL firewall, ACL, QoS, and audit path as every other client.">
+<meta name="twitter:title" content="MCP for Databases — Govern AI Agent Access">
+<meta name="twitter:description" content="AI agents get real database access -- Postgres, Oracle, MySQL, or SQL Server -- through the exact same SQL firewall, ACL, QoS, and audit path as every other client.">
 <meta name="twitter:image" content="https://nexagres.com/assets/og-image.png">
 </head>
 <body>
@@ -47,9 +47,10 @@
       </div>
       <p class="lede">
         <a href="/">← Back to home</a> — <b>MCP is one more protocol Warp speaks, not a
-        separate, unguarded door into Postgres.</b> An AI agent connecting over MCP goes through
-        the exact same SQL firewall, connection ACL, QoS admission control, and audit path as a
-        plain <code>psql</code> client.
+        separate, unguarded door into your database.</b> An AI agent connecting over MCP goes
+        through the exact same SQL firewall, connection ACL, QoS admission control, and audit
+        path as a plain <code>psql</code> client — against Postgres by default, or a real Oracle,
+        MySQL, or SQL Server backend of your own in native-backend mode.
       </p>
     </header>
 
@@ -58,7 +59,7 @@
         <span class="num">01</span>
         <span class="badge">Part of Warp</span>
       </div>
-      <h2>MCP for Postgres</h2>
+      <h2>MCP for databases</h2>
       <p class="lede">
         The Model Context Protocol (MCP) is how an AI agent calls tools — and Warp's MCP
         frontend is a real wire protocol Warp terminates, the same way it terminates Postgres,
@@ -66,9 +67,69 @@
         the same gateway everything else goes through.
       </p>
 
-      <h3 class="subhead" id="mcp-tools">What the MCP frontend exposes<a class="permalink" href="#mcp-tools" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="mcp-backend-mode">Postgres by default, or your own Oracle/MySQL/SQL Server<a class="permalink" href="#mcp-backend-mode" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        By default, every MCP tool call runs through Warp's shared pipeline against the
+        configured Postgres backend — dialect translation, the SQL firewall, ACL, QoS, and
+        caching all apply. Setting <code>WARP_MCP_BACKEND=oracle</code>, <code>=mysql</code>, or
+        <code>=sqlserver</code> (default <code>postgres</code>) instead points
+        <code>execute_sql</code> and the whole data-investigation tool set below at a real
+        Oracle/MySQL/SQL Server connection of your own, with nothing about the SQL rewritten in
+        transit — the same "keep the database you have" tradeoff native-backend mode makes for
+        orawire/mywire/mssqlwire. Native mode bypasses the shared pipeline entirely for every
+        statement, so the SQL firewall, QoS admission control, and caching don't apply to it —
+        connection ACL and pooling still do. Three tools stay Postgres-only regardless of the
+        toggle (see below); <code>tools/list</code> doesn't even advertise them in native mode,
+        and calling one anyway returns a clear error instead of silently running SQL that's wrong
+        for the configured backend. <a href="/warp/#native-backend-mode">Full native-backend-mode detail →</a>
+      </p>
+
+      <h3 class="subhead" id="mcp-tools">Generic SQL tools<a class="permalink" href="#mcp-tools" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">Available in every backend mode.</p>
       <ul class="whatyouget">
-        <li><span class="wg-body"><span class="wg-title"><code>execute_sql</code></span><span class="wg-desc">Runs a real SQL statement through Warp's own pipeline — dialect translation, the SQL firewall, ACL, QoS, and caching all apply exactly as they would for pgwire/mywire/orawire traffic.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>execute_sql</code> / <code>run_sql</code></span><span class="wg-desc">Runs a real SQL statement and returns the results — the two names are identical. In Postgres mode this goes through Warp's own pipeline (dialect translation, the SQL firewall, ACL, QoS, and caching, exactly as pgwire/mywire/orawire traffic gets); in native mode it runs straight against the real configured backend.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>list_tables</code></span><span class="wg-desc">Lists tables in the configured backend, excluding system schemas — a real per-dialect catalog query (Postgres's <code>pg_catalog.pg_tables</code>, MySQL/SQL Server's ANSI <code>information_schema.tables</code>, Oracle's <code>user_tables</code>, since Oracle has no <code>information_schema</code> at all).</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>describe_table</code></span><span class="wg-desc">A table's columns — name, type, nullability — schema-qualified or defaulted per dialect (<code>public</code> on Postgres, the configured database on MySQL, <code>dbo</code> on SQL Server, the connected user's own schema on Oracle).</span></span></li>
+      </ul>
+
+      <h3 class="subhead" id="mcp-data-investigation">Data-investigation tool set<a class="permalink" href="#mcp-data-investigation" aria-label="Link to this section">#</a></h3>
+      <p class="statTeaser">Nine tools, real per-dialect SQL, available in every backend mode — built for training and evaluating a small model (SLM) against a real database.</p>
+      <details class="methodDetails">
+        <summary>See data-investigation detail →</summary>
+      <p class="rttNote">
+        Structured, JSON-shaped database operations an agent calls step by step to build up
+        evidence about a database, rather than generating raw SQL as the only interface — the
+        approach <a href="https://www.linkedin.com/pulse/how-train-small-model-databases-kumar-rajamani-n1i5c/">this post</a>
+        describes for training an SLM to investigate a database, treating it as external working
+        memory the model learns which evidence to seek from, not something to embed into its own
+        weights.
+      </p>
+      <ul class="whatyouget">
+        <li><span class="wg-body"><span class="wg-title"><code>inspect_schema</code></span><span class="wg-desc">Every table and column in the backend, in one call — the starting point for exploring an unfamiliar database.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>column_stats</code></span><span class="wg-desc">Row count, null count, mean, standard deviation, min, max, and distinct-value count for one column. SQL Server's own population-stddev function is spelled <code>STDEVP</code>, not <code>STDDEV_POP</code> — a real per-dialect difference, not just cosmetic.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>compare_groups</code></span><span class="wg-desc">Aggregates a metric column grouped by another column, sorted by the aggregate value — e.g. average order value by region.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>correlation</code></span><span class="wg-desc">Pearson correlation coefficient between two numeric columns. Postgres and Oracle have a real <code>CORR()</code> aggregate; MySQL and SQL Server don't, so their SQL derives it by hand from <code>AVG</code>/<code>STDDEV_POP</code> — SQL Server's own <code>AVG</code> does integer division on integer columns, so its formula also needs an explicit <code>FLOAT</code> cast the others don't.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>sample_rows</code></span><span class="wg-desc">A representative sample of rows from a table.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>find_outliers</code></span><span class="wg-desc">Rows where a column's value deviates from the column's own mean by more than a configurable number of standard deviations (z-score outlier detection), most extreme first.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>find_join_path</code></span><span class="wg-desc">A real breadth-first search over the schema's own foreign-key graph — the shortest real JOIN chain between two tables, as a hop list plus ready-to-use JOIN SQL. Postgres/MySQL/SQL Server share one ANSI query (<code>information_schema.referential_constraints</code> joined to <code>key_column_usage</code> twice); Oracle uses <code>user_constraints</code>/<code>user_cons_columns</code>, since it has no <code>information_schema</code> at all.</span></span></li>
+        <li><span class="wg-body"><span class="wg-title"><code>explain_sql</code></span><span class="wg-desc">A real EXPLAIN plan, no LLM narration — available in every backend mode, unlike the Postgres-only <code>explain_query</code> below. Postgres/MySQL run one <code>EXPLAIN ... FORMAT JSON</code> statement without executing the query; Oracle runs a real two-statement <code>EXPLAIN PLAN FOR</code> + <code>DBMS_XPLAN.DISPLAY()</code> flow; SQL Server puts the session into plan-only mode via <code>SET SHOWPLAN_ALL ON</code> for its next statement, then turns it back off.</span></span></li>
+      </ul>
+      <p class="rttNote">
+        Table/column/group-by identifiers arrive as free-form tool arguments and get
+        interpolated directly into SQL text (bind parameters can't stand in for identifiers) —
+        every tool validates each one against a plain-identifier pattern first, the one guard
+        against a caller closing a string and injecting arbitrary SQL through what's supposed to
+        be a bare name.
+      </p>
+      </details>
+
+      <h3 class="subhead" id="mcp-ai-tools">AI-assisted tools (Postgres only)<a class="permalink" href="#mcp-ai-tools" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        All three hardcode Postgres-specific SQL or an LLM prompt written assuming Postgres —
+        refused with a clear error (and not advertised by <code>tools/list</code>) in native
+        mode, rather than silently running SQL that's wrong for the configured backend.
+      </p>
+      <ul class="whatyouget">
         <li><span class="wg-body"><span class="wg-title"><code>query_natural_language</code></span><span class="wg-desc">Drafts a read-only SQL <code>SELECT</code> from a plain-English question, with a second, independent LLM pass judging (and correcting) the drafted SQL before a deterministic read-only check runs it — the LLM drafts and judges, it never gets to execute unchecked.</span></span></li>
         <li><span class="wg-body"><span class="wg-title"><code>explain_query</code></span><span class="wg-desc">Runs a real Postgres <code>EXPLAIN</code> (optionally <code>ANALYZE</code>) and has an LLM narrate the plan in plain English — the same read-only gate <code>query_natural_language</code> uses gates this tool too.</span></span></li>
         <li><span class="wg-body"><span class="wg-title"><code>document_schema</code></span><span class="wg-desc">Lists every real table/column and foreign-key relationship and has an LLM generate plain-English schema documentation from it — read from the live catalog, not a stale cache.</span></span></li>
@@ -80,12 +141,22 @@
         <a href="/warp/#ai-features">all ten AI features Warp has, beyond MCP →</a>.
       </p>
 
+      <h3 class="subhead" id="mcp-registered-tools">Registered stored-procedure tools (Postgres only)<a class="permalink" href="#mcp-registered-tools" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        <code>WARP_MCP_TOOLS</code> names specific real Postgres functions/procedures to expose
+        as individually-named MCP tools — only what's explicitly registered is callable, not
+        arbitrary SQL. Each tool's input schema is generated automatically by introspecting the
+        real function's own parameter types, with <code>OUT</code> parameters correctly excluded
+        from what a caller needs to supply. Postgres-only (it introspects <code>pg_proc</code>
+        directly) — skipped, with a clear log message, in native mode.
+      </p>
+
       <h3 class="subhead" id="mcp-governance">Same policy, same audit trail<a class="permalink" href="#mcp-governance" aria-label="Link to this section">#</a></h3>
       <ul class="usecases">
-        <li><span class="uc-body"><span class="uc-title">SQL firewall + ACL</span><span class="uc-desc">An MCP-issued statement is checked against the exact same firewall rules and connection ACL as any other protocol's traffic — no MCP-specific bypass. <a href="/warp/#security">Security detail →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">An agent making many calls in a burst is rate-limited and shed under load the same way any workload class is. <a href="/#qos">QoS detail →</a></span></span></li>
-        <li><span class="uc-body"><span class="uc-title">Audit + summarization</span><span class="uc-desc">Every MCP tool call lands a real audit event — tool, arguments, success/failure — with an LLM able to summarize recent activity for a human reviewer on request.</span></span></li>
-        <li><span class="uc-body"><span class="uc-title">OIDC/JWT bearer auth</span><span class="uc-desc">The MCP endpoint supports OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured — the same auth model the admin API uses.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">SQL firewall + ACL</span><span class="uc-desc">An MCP-issued statement is checked against the exact same firewall rules and connection ACL as any other protocol's traffic in Postgres mode — no MCP-specific bypass. In native mode, connection ACL still applies; the SQL firewall is a pipeline stage native mode bypasses, same as it does for orawire/mywire/mssqlwire's own native modes. <a href="/warp/#security">Security detail →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">QoS admission control</span><span class="uc-desc">An agent making many calls in a burst is rate-limited and shed under load the same way any workload class is — in Postgres mode. Another pipeline stage native mode bypasses. <a href="/#qos">QoS detail →</a></span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Audit + summarization</span><span class="uc-desc">Every MCP tool call lands a real audit event — tool, arguments, success/failure — with an LLM able to summarize recent activity for a human reviewer on request, in every backend mode.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">OIDC/JWT bearer auth</span><span class="uc-desc">The MCP endpoint supports OIDC/JWT bearer tokens with live JWKS rotation, off by default until an issuer is configured — the same auth model the admin API uses, in every backend mode.</span></span></li>
       </ul>
 
       <p class="rttNote"><a href="/warp/">Explore Warp in depth — detailed architecture, comparison →</a></p>
