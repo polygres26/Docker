@@ -77,6 +77,10 @@
           <li><a href="#security">Security</a></li>
           <li><a href="#outages">Planned/unplanned outages</a></li>
           <li><a href="#error-handling">Error handling</a></li>
+          <li><a href="#demo">See it happen</a></li>
+          <li><a href="#try">Try Warp in 60 seconds</a></li>
+          <li><a href="#comparison">Warp vs. alternatives</a></li>
+          <li><a href="#compatibility">Compatibility, honestly scoped</a></li>
         </ul>
       </details>
 
@@ -905,12 +909,364 @@
         condition comparison, and the connection-loss detail live in
         <a href="ERRORS.md">ERRORS.md</a>.
       </p>
+
+      <h3 class="subhead" id="demo">See it happen<a class="permalink" href="#demo" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">Pick a protocol — same demo, different client, same PostgreSQL on the other end.</p>
+      <div class="demoSelector">
+        <input type="radio" name="demoProto" id="demo-oracle" class="demoRadio" checked>
+        <input type="radio" name="demoProto" id="demo-mysql" class="demoRadio">
+        <input type="radio" name="demoProto" id="demo-mongodb" class="demoRadio">
+        <input type="radio" name="demoProto" id="demo-opensearch" class="demoRadio">
+        <div class="demoTabs">
+          <label for="demo-oracle" class="demoTab">Oracle</label>
+          <label for="demo-mysql" class="demoTab">MySQL</label>
+          <label for="demo-mongodb" class="demoTab">MongoDB</label>
+          <label for="demo-opensearch" class="demoTab">OpenSearch</label>
+        </div>
+
+        <div class="demoPanel" id="panel-oracle">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ sql app/password@//localhost:11521/postgres
+
+SQLcl: Release 23.4 Production
+
+SQL&gt; SELECT * FROM orders;
+
+ORDER_ID  CUSTOMER_ID  AMOUNT
+--------  -----------  -------
+    1001           42   129.99
+    1002           57    89.50
+
+2 rows selected.
+
+SQL&gt;</pre>
+          </div>
+          <div class="demoFlow">
+            <span>SQLcl (Oracle client)</span><span class="rewireArrow">→</span><span>OraWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+          <p class="rttNote"><a href="/oracle-to-postgres/">Full Oracle → Postgres guide →</a></p>
+        </div>
+
+        <div class="demoPanel" id="panel-mysql">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mysql -h 127.0.0.1 -P 13306 -u root -p
+
+mysql&gt; SELECT * FROM orders;
+
++----------+-------------+--------+
+| order_id | customer_id | amount |
++----------+-------------+--------+
+|     1001 |          42 | 129.99 |
+|     1002 |          57 |  89.50 |
++----------+-------------+--------+
+2 rows in set
+
+mysql&gt;</pre>
+          </div>
+          <div class="demoFlow">
+            <span>mysql CLI</span><span class="rewireArrow">→</span><span>MyWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+          <p class="rttNote"><a href="/mysql-to-postgres.html">Full MySQL → Postgres guide →</a></p>
+        </div>
+
+        <div class="demoPanel" id="panel-mongodb">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ mongosh mongodb://localhost:27017
+
+test&gt; db.orders.find()
+
+[
+  { _id: 1001, customer_id: 42, amount: 129.99 },
+  { _id: 1002, customer_id: 57, amount: 89.50 }
+]
+
+test&gt;</pre>
+          </div>
+          <div class="demoFlow">
+            <span>mongosh</span><span class="rewireArrow">→</span><span>MongoWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+          <p class="rttNote"><a href="/mongodb-to-postgres.html">Full MongoDB → Postgres guide →</a></p>
+        </div>
+
+        <div class="demoPanel" id="panel-opensearch">
+          <div class="termWindow">
+            <div class="termBar"><span class="termDot r"></span><span class="termDot y"></span><span class="termDot g"></span></div>
+            <pre class="termBody">$ curl -s localhost:9200/orders/_search
+
+{
+  "hits": {
+    "total": { "value": 2 },
+    "hits": [
+      { "_source": { "order_id": 1001, "amount": 129.99 } },
+      { "_source": { "order_id": 1002, "amount": 89.50 } }
+    ]
+  }
+}</pre>
+          </div>
+          <div class="demoFlow">
+            <span>REST client</span><span class="rewireArrow">→</span><span>OSWire</span><span class="rewireArrow">→</span><span>Warp</span><span class="rewireArrow">→</span><span class="postgres">PostgreSQL</span>
+          </div>
+          <p class="rttNote"><a href="/opensearch-to-postgres.html">Full OpenSearch → Postgres guide →</a></p>
+        </div>
+      </div>
+      <p class="rttNote">
+        <i>Real client. Real wire protocol. PostgreSQL database. No client rewrite.</i>
+        Table/document contents above are illustrative — the protocol and path are exactly real.
+        (SQLcl, JDBC, and psql are what's most thoroughly verified today; see
+        <a href="/warp/">Warp capabilities</a> for exact client-by-client coverage.)
+      </p>
+
+      <h3 class="subhead" id="try">Try Warp in 60 seconds<a class="permalink" href="#try" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">What do you use? Point it at a Postgres you already have:</p>
+      <div class="demoSelector">
+        <input type="radio" name="tryProto" id="try-postgres" class="demoRadio" checked>
+        <input type="radio" name="tryProto" id="try-oracle" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-mysql" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-mongodb" class="demoRadio">
+        <input type="radio" name="tryProto" id="try-opensearch" class="demoRadio">
+        <div class="demoTabs">
+          <label for="try-postgres" class="demoTab">Postgres</label>
+          <label for="try-oracle" class="demoTab">Oracle</label>
+          <label for="try-mysql" class="demoTab">MySQL</label>
+          <label for="try-mongodb" class="demoTab">MongoDB</label>
+          <label for="try-opensearch" class="demoTab">OpenSearch</label>
+        </div>
+
+        <div class="demoPanel" id="trypanel-postgres">
+          <p class="rttNote"><b>1. Start Warp</b></p>
+          <div class="runblock"><code>docker run -p 15432:15432 \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>psql -h localhost -p 15432 -U postgres</code></div>
+          <p class="rttNote"><b>3. Done</b> — your client → Warp → PostgreSQL. No rewrite.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-oracle">
+          <p class="rttNote"><b>1. Start Warp</b></p>
+          <div class="runblock"><code>docker run -p 11521:11521 \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>sql app/password@//localhost:11521/postgres</code></div>
+          <p class="rttNote"><b>3. Done</b> — Oracle client → OraWire → Warp → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-mysql">
+          <p class="rttNote"><b>1. Start Warp</b></p>
+          <div class="runblock"><code>docker run -p 13306:13306 \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>mysql -h 127.0.0.1 -P 13306 -u root -p</code></div>
+          <p class="rttNote"><b>3. Done</b> — mysql CLI → MyWire → Warp → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-mongodb">
+          <p class="rttNote"><b>1. Start Warp</b></p>
+          <div class="runblock"><code>docker run -p 27017:27017 \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>mongosh mongodb://localhost:27017</code></div>
+          <p class="rttNote"><b>3. Done</b> — mongosh → MongoWire → Warp → PostgreSQL. No driver change.</p>
+        </div>
+
+        <div class="demoPanel" id="trypanel-opensearch">
+          <p class="rttNote"><b>1. Start Warp</b></p>
+          <div class="runblock"><code>docker run -p 9200:9200 \
+  -e WARP_HOST=&lt;host&gt; -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code></div>
+          <p class="rttNote"><b>2. Connect</b></p>
+          <div class="runblock"><code>curl -s localhost:9200/_search</code></div>
+          <p class="rttNote"><b>3. Done</b> — REST client → OSWire → Warp → PostgreSQL. No driver change.</p>
+        </div>
+      </div>
+      <details class="methodDetails">
+        <summary>See every protocol at once (SQL Server, DynamoDB, SQS included) →</summary>
+        <div class="runblock">
+          <code>docker run \
+  -p 19090:19090 -p 15432:15432 -p 13306:13306 -p 11521:11521 \
+  -p 14333:14333 -p 27017:27017 -p 18000:18000 -p 9324:9324 \
+  -e WARP_HOST=&lt;host&gt; \
+  -e WARP_PASSWORD=&lt;password&gt; \
+  ghcr.io/polygres26/warp:latest</code>
+        </div>
+        <div class="runblock">
+          <code>psql -h localhost -p 15432 -U postgres           # Postgres wire
+mysql -h 127.0.0.1 -P 13306 -u root -p             # MySQL wire
+sqlcmd -S localhost,14333 -U sa -P '&lt;password&gt;'   # SQL Server wire
+sql app/password@//localhost:11521/postgres        # Oracle wire (SQLcl)
+mongosh mongodb://localhost:27017                  # MongoDB wire
+curl -s localhost:9200/_search                     # OpenSearch wire
+aws dynamodb scan --table-name orders \            # DynamoDB wire
+  --endpoint-url http://localhost:18000
+aws sqs receive-message \                          # SQS wire
+  --queue-url http://localhost:9324/queue/orders \
+  --endpoint-url http://localhost:9324</code>
+        </div>
+        <p class="rttNote">
+          That works as-is against an existing on-prem Postgres. For a specific managed
+          provider instead — Supabase, Amazon RDS, Google Cloud SQL, Azure Database for
+          PostgreSQL, or Oracle Cloud Infrastructure's Database with PostgreSQL — see
+          <a href="/CONNECTING.md">CONNECTING.md</a>.
+        </p>
+      </details>
+
+      <h3 class="subhead" id="security-boundary">Different protocols. Same security policy.<a class="permalink" href="#security-boundary" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        Oracle application? Same policy. MySQL application? Same policy. MCP agent? Same policy.
+        <b>Security follows the request, not the protocol.</b>
+      </p>
+      <p class="pillarStrip">SQL Firewall · ACL · Authentication · RLS · TLS · Secrets · Audit</p>
+      <p class="rttNote"><a href="/warp/#security">Full, honestly-scoped security detail →</a></p>
+
+      <h3 class="subhead" id="qos">Stop one workload from taking down Postgres.<a class="permalink" href="#qos" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        <b>QoS for Postgres, at the gateway.</b> Prioritize, throttle, bound concurrency, and
+        shed load — before Postgres saturates, not after it falls over. A real token-bucket
+        admission controller, per workload class (query/write/ddl/txn). See
+        <a href="/warp/#security">Security</a> for the full scope.
+      </p>
+
+      <h3 class="subhead" id="distributed-cache">Cache once. Access across protocols.<a class="permalink" href="#distributed-cache" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        A result cached through one Warp protocol can be served through another — across
+        Warp instances — without another Postgres round trip. <b>One distributed cache,
+        not a per-protocol silo.</b> Confirmed live: a row read via a Postgres client, then asked
+        for again through a MySQL client, comes back as a cache hit — zero Postgres round trips
+        on the second read.
+      </p>
+      <figure>
+        <div class="cacheFlow">
+          <div class="cacheFlowRow">
+            <span class="cacheChip">MySQL client</span>
+            <span class="cacheArrow">→</span>
+            <span class="cacheHub">Mach</span>
+            <span class="cacheArrow">←</span>
+            <span class="cacheChip">Oracle client</span>
+          </div>
+          <span class="cacheArrowDown">↓ same cached result</span>
+          <span class="cachePg">PostgreSQL — system of record</span>
+        </div>
+      </figure>
+      <p class="pillarStrip">Cross-Protocol · Distributed · Automatically Invalidated · No Application Cache Code</p>
+      <p class="rttNote"><a href="/mach/">Explore Mach — live terminal walkthroughs, DynamoDB/MongoDB point-lookup sharing, JOINs across wire protocols →</a></p>
+
+      <details class="exploreMore">
+        <summary class="exploreSummary">Explore Warp in depth — detailed architecture, comparison →</summary>
+      <h3 class="subhead" id="architecture">Built for enterprise Postgres<a class="permalink" href="#architecture" aria-label="Link to this section">#</a></h3>
+      <figure>
+        <img src="/assets/architecture.svg" alt="Warp architecture: twelve client protocols — OraWire, MySQL, SQL Server, Postgres wire, MongoDB, DynamoDB, Amazon SQS, gRPC, MCP, OpenSearch, InfluxDB, and GraphDB (Neo4j Bolt+Cypher) — feed one shared eight-stage pipeline: Frontends, FirewallStage (ACL/IP allow-deny, PROXY protocol v2/XFF — security first, policy-driven access control), RouterStage (shard/backend selection — shard scatter-gather, HA failover to standby), QosControlStage (concurrency control, throttling, priority queues), DialectTranslationStage, RollupStage, CacheStage (Mach — distributed, cross-protocol, shared by six of the twelve protocols), and StatsCollectorStage, each stage paired with the customer outcome it drives (multi-protocol single entry point, security-first access control, shard-aware smart routing, protected resources/SLAs, protocol-agnostic consistency, reduced load via pre-aggregation, lower latency, real-time observability), backed by a Postgres control plane (warp_config/warp_firewall_rules with hot-reload and standby failover via LISTEN/NOTIFY), executing against a primary Postgres and any number of additional shards, with a key-outcomes panel calling out simple architecture, strong security (centralized policies, auth, and SQL firewall), max performance, elastic scaling, lower costs, operational excellence, and the newly added InfluxDB (time-series) and GraphDB (Neo4j Bolt+Cypher) protocols">
+        <figcaption>Every wire protocol feeds the same shared pipeline — firewall (ACL/PROXY protocol), router (shard scatter-gather and standby failover), QoS admission control, dialect translation, rollups, Mach, stats — before reaching real Postgres. Sharding, security, and caching aren't bolted on beside the pipeline — they're three of its eight stages, applied to every protocol identically. (gRPC is Warp's own native driver protocol, not an emulated foreign database — see <a href="/warp/">full capabilities</a> for what that means.)</figcaption>
+      </figure>
+
+      <h3 class="subhead" id="without-warp">Without Warp vs. with it<a class="permalink" href="#without-warp" aria-label="Link to this section">#</a></h3>
+      <div class="withoutWithGrid">
+        <div class="withoutCol">
+          <h4>Without Warp</h4>
+          <ul>
+            <li>Different database infrastructure per protocol</li>
+            <li>A separate connection proxy</li>
+            <li>Different security controls per system</li>
+            <li>Different observability per system</li>
+            <li>Separate migration tooling</li>
+            <li>A separate, unguarded AI access path</li>
+          </ul>
+        </div>
+        <div class="withCol">
+          <h4>With Warp</h4>
+          <p class="withStatement">One gateway → the database you already run, or Postgres.</p>
+          <ul>
+            <li><b>Fewer systems to operate</b> — one gateway instead of five databases' own tooling.</li>
+            <li><b>One place to govern workloads</b> — the same firewall, QoS, and audit path for every protocol.</li>
+            <li><b>Standardize on Postgres, or keep your current engine</b> — without rewriting every application first, either way.</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3 class="subhead" id="comparison">Warp vs. alternatives<a class="permalink" href="#comparison" aria-label="Link to this section">#</a></h3>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Capability</th><th>Direct to Postgres</th><th>Traditional proxy</th><th>Warp</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Postgres wire protocol</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Foreign DB protocols (Oracle, MySQL, SQL Server, MongoDB…)</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Live dialect / semantic translation</td><td class="no">—</td><td class="no">—</td><td class="yes">✓, every call</td></tr>
+            <tr><td>SQL firewall</td><td class="maybe">DB-side only</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Workload QoS / admission control</td><td class="maybe">DB-side only</td><td class="maybe">Limited</td><td class="yes">✓</td></tr>
+            <tr><td>Intelligent routing</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Sharding</td><td class="maybe">App/DB-side</td><td class="maybe">Some</td><td class="yes">✓</td></tr>
+            <tr><td>Cross-protocol distributed caching</td><td class="no">Separate system</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>AI / MCP access, same governed path</td><td class="no">Separate path</td><td class="no">—</td><td class="yes">✓</td></tr>
+            <tr><td>Unified observability</td><td class="maybe">Multiple layers</td><td class="maybe">Proxy layer only</td><td class="yes">✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote"><a href="/warp/">Comparison methodology →</a></p>
+
+      </details>
+
+      <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
+      <div class="statGrid">
+        <div class="statCard"><span class="statNum">12</span><span class="statLabel">Client protocols</span></div>
+        <div class="statCard"><span class="statNum">8</span><span class="statLabel">Real client stacks verified</span></div>
+        <div class="statCard"><span class="statNum">Multi-AZ</span><span class="statLabel">Failover tested</span></div>
+        <div class="statCard"><span class="statNum">5</span><span class="statLabel">Managed Postgres platforms documented</span></div>
+      </div>
+      <p class="rttNote">
+        Every row below is verified against that protocol's real client library, not a synthetic
+        harness — this table states only what's actually confirmed today.
+      </p>
+      <details class="methodDetails">
+        <summary>See the full per-protocol compatibility table →</summary>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Protocol</th><th>Client tested against</th><th>Bound parameters decoded</th><th>Native error translation</th><th>RLS identity</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>PostgreSQL</td><td>psycopg2</td><td class="yes">✓</td><td class="yes">✓ (native SQLSTATE)</td><td class="yes">✓</td></tr>
+            <tr><td>Oracle</td><td>python-oracledb, SQLcl, JDBC</td><td class="yes">✓</td><td class="yes">✓ (ORA-NNNNN)</td><td class="yes">✓</td></tr>
+            <tr><td>SQL Server</td><td>python-tds / pymssql, JDBC</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>MySQL</td><td>MySQL CLI, JDBC</td><td class="yes">✓</td><td class="yes">✓ (errno)</td><td class="no">—</td></tr>
+            <tr><td>MongoDB</td><td>mongodb-driver-sync, mongosh</td><td class="maybe">Hash by <code>_id</code></td><td class="yes">✓ (code/codeName)</td><td class="no">—</td></tr>
+            <tr><td>DynamoDB</td><td>AWS SDK v2</td><td class="maybe">Hash by partition key</td><td class="yes">✓ (AWS exception names)</td><td class="no">—</td></tr>
+            <tr><td>Amazon SQS</td><td>boto3</td><td class="maybe">Hash by queue name</td><td class="yes">✓ (AWS error codes)</td><td class="no">—</td></tr>
+            <tr><td>OpenSearch</td><td>opensearch-py</td><td class="maybe">Hash by <code>doc_id</code></td><td class="yes">✓ (error.type/reason)</td><td class="no">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        "—" means not yet implemented for that protocol, stated plainly rather than omitted — see
+        <a href="/warp/#security">Security</a> for exactly which protocols propagate a
+        real per-caller identity today, and <a href="/warp/">full capabilities</a> /
+        <a href="ERRORS.md">ERRORS.md</a> for the complete per-protocol detail including known
+        limitations.
+      </p>
+      </details>
+
+      <h3 class="subhead" id="production">Built for production<a class="permalink" href="#production" aria-label="Link to this section">#</a></h3>
+      <ul class="usecases">
+        <li><span class="uc-body"><span class="uc-title">HA &amp; Failover</span><span class="uc-desc">Multi-AZ Warp deployment, planned drain/switchover and automatic unplanned failover, both tested across every wire protocol. See <a href="/warp/#multi-az">Multi-AZ deployment</a> and <a href="/warp/#outages">Planned and unplanned outages</a>.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Security</span><span class="uc-desc">SQL firewall, connection ACL, authentication, TLS, row-level security identity propagation, Vault/CyberArk secrets, admin SSO. See <a href="/warp/#security">Security</a> for the exact, honestly-scoped detail.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Workload protection</span><span class="uc-desc">QoS admission control, connection pooling, and load shedding before a backend saturates — see "Stop one workload from taking down Postgres" above.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Observability</span><span class="uc-desc">Prometheus <code>/metrics</code> and OTLP export, reaching Grafana, Datadog, New Relic, CloudWatch, Azure Monitor, and GCP Cloud Monitoring. See <a href="/warp/#observability">Observability</a>.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Deployment</span><span class="uc-desc">Docker, Kubernetes, AWS, Azure, GCP, OCI, or on-prem — your infrastructure, your network, your database.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Support</span><span class="uc-desc">Community support on Developer; enterprise support on Enterprise — see Pricing below.</span></span></li>
+      </ul>
+      <p class="rttNote"><a href="/#contact">Schedule a Warp Architecture Review →</a></p>
     </section>
 
     <footer>
       Source for both tools is private; this is the public documentation and image surface.
       Full setup reference: <a href="/README.md">README.md</a> and
-      <a href="/warp/README.md">warp/</a> / <a href="/ferry/README.md">dms/</a>
+      <a href="/warp/README.md">warp/</a> / <a href="/ferry/README.md">ferry/</a>
       in this repo.
     </footer>
   </main>

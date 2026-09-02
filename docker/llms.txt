@@ -43,19 +43,18 @@ instead of re-deriving it from the whole site.
 
 ## Warp
 
-- [Main page](https://sayonora.com/#warp): the pitch -- what Warp is, a live
-  "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB, OpenSearch), a
-  protocol-specific 60-second quickstart (Postgres/Oracle/MySQL/MongoDB/OpenSearch), the simple
-  architecture diagram, dedicated QoS and security sections, a proof/compatibility stat strip,
-  and pricing -- the detailed eight-stage architecture and the full comparison table sit one
-  click deeper on the same page, collapsed by default under "Explore Warp in depth" (the
-  standalone Oracle-modernization walkthrough was removed as redundant with the "Modernize
-  databases" use case and the live Oracle demo, both already on the page).
-- [Full capabilities](https://sayonora.com/warp/): outcomes (organized by the
-  five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
-  architecture, admin console, cache/RTT benchmarks per protocol, sharding, rollups,
-  observability, multi-AZ deployment, security, error handling, and planned/unplanned outage
-  handling -- the complete technical detail behind the pitch on the main page.
+- [Main page](https://sayonora.com/#warp): a short pitch only -- what Warp is, why teams run
+  it, the simple three-tier architecture diagram, and pricing. Deliberately light: every
+  technical deep dive, the live "see it happen" demo, the 60-second quickstart, and the
+  comparison/compatibility tables live on Warp's own dedicated page, not duplicated here.
+- [Full capabilities](https://sayonora.com/warp/): everything else -- outcomes (organized by
+  the five capabilities above -- Connect, Protect, Control, Accelerate, Observe), use cases,
+  architecture, native-backend mode, admin console, cache/RTT benchmarks per protocol, sharding,
+  rollups, observability, multi-AZ deployment, security, error handling, planned/unplanned
+  outage handling, a live "see it happen" demo selectable per protocol (Oracle, MySQL, MongoDB,
+  OpenSearch), a protocol-specific 60-second quickstart, a comparison table against alternatives,
+  and a full per-protocol compatibility table -- the complete technical detail behind the pitch
+  on the main page.
 - Dedicated per-protocol guides -- each a standalone page with its own architecture diagram, a
   real terminal demo, a 60-second quickstart, and an honestly-scoped compatibility row for that
   one protocol: [Oracle → PostgreSQL](https://sayonora.com/oracle-to-postgres/),
@@ -182,7 +181,7 @@ Ferry plans the move to Postgres. Warp runs and governs workloads on Postgres --
 they're complementary tools for two different phases (deciding/planning a migration vs. running
 production traffic), not competing products.
 
-- [Main page](https://sayonora.com/#dms): the bridge from the Warp pitch --
+- [Main page](https://sayonora.com/#ferry): the bridge from the Warp pitch --
   what Ferry is and a quick start.
 - [Full detail](https://sayonora.com/ferry/): how assessment works (live
   connection or uploaded report), what you get, the admin console dashboards, and sizing
@@ -192,6 +191,30 @@ production traffic), not competing products.
   drives the score and why.
 - Two ways to run an assessment: a live database connection, or uploading a performance report
   when a live connection can't be shared.
+
+## Shim
+
+Shim reduces how much SQL and application code a migration has to change, by making Postgres
+itself answer to familiar Oracle/SQL Server/MySQL catalog objects and functions -- a companion
+to Ferry (which moves the data) and Warp (which keeps clients connected), not a replacement for
+either.
+
+- [Main page](https://sayonora.com/#shim): a short pitch and a link out.
+- [Full detail](https://sayonora.com/shim/): the real Postgres extensions --
+  pg_oracle, pg_mysql, pg_sqlserver -- and exactly which catalog objects/functions each one
+  resolves (V$SESSION, DBMS_OUTPUT, sys.objects, GROUP_CONCAT, and more).
+
+## Mach
+
+Mach is Warp's own embedded, distributed query result cache, not a separate product to deploy --
+"Part of Warp" is stated as such everywhere it's mentioned.
+
+- [Main page](https://sayonora.com/#mach): a short pitch and a link out.
+- [Full detail](https://sayonora.com/mach/): cross-protocol cache hits (a result written
+  through one wire protocol read back through another), live terminal walkthroughs for both
+  cache tiers, DynamoDB/MongoDB point-lookup sharing, and automatic table-level invalidation.
+  See also [Cache vs. round trip](https://sayonora.com/warp/#cache-vs-round-trip) on Warp's own
+  page for the full mechanism and per-protocol benchmarks.
 
 ## Common questions
 
