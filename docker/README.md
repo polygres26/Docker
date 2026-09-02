@@ -8,13 +8,13 @@ repo is the public surface — prebuilt images, architecture, and how to run the
 
 | Tool | What it does | Image |
 |---|---|---|
-| **Ferry** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/dms` |
+| **Ferry** | Connects to an Oracle/MySQL/MariaDB/SQL Server database (or takes an uploaded performance report) and scores how hard it'd be to migrate to Postgres, plus a sizing recommendation. | `ghcr.io/polygres26/ferry` |
 | **Warp** | A mid-tier gateway that speaks Oracle, MySQL, SQL Server, Postgres, MongoDB, DynamoDB, and Amazon SQS wire protocols on one side and real Postgres on the other — so an existing app keeps its driver and connection code while the data lives in Postgres. | `ghcr.io/polygres26/warp` |
 
 ## Run Ferry
 
 ```bash
-docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/dms:latest
+docker run -p 8090:8090 -v polyadvisor-data:/data ghcr.io/polygres26/ferry:latest
 ```
 
 Open `http://localhost:8090`. State (saved connections, LLM config, uploaded reports) persists in
