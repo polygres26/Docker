@@ -159,59 +159,63 @@
       <div class="obsGrid">
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Accelerate</p>
-          <h4>The database is getting slower as traffic grows.</h4>
-          <p><b>Make your database faster without changing the application.</b> Put Warp in front of your database. Repeated queries are served from Mach instead of hitting the database again.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#why-warp">See how →</a></p>
+          <h4>⚡ The database is getting slower as traffic grows.</h4>
+          <p>Repeated queries keep doing the same expensive work. Scaling the database vertically is getting expensive, but rewriting the application around a cache isn't attractive.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#why-warp">Make it faster →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Scale</p>
-          <h4>One database isn't enough anymore.</h4>
-          <p><b>Scale one database into many without teaching the application about shards.</b> Warp decides where each request goes and combines results when necessary.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">See how →</a></p>
+          <h4>↗ One database isn't enough anymore.</h4>
+          <p>The workload has outgrown a single database, but sharding means teaching applications where the data lives—and living with that decision forever.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">Scale without the rewrite →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Observe</p>
-          <h4>Something is slow. Nobody knows why.</h4>
-          <p><b>See every SQL query, API call, and MCP request across every database from one place.</b> Find slow SQL, errors, latency spikes, expensive workloads, and application behavior without jumping between database-specific tools.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
+          <h4>◉ Something is slow. Nobody knows why.</h4>
+          <p>SQL, APIs and AI agents are hitting multiple databases, each with different monitoring. Finding the workload causing the problem means jumping between tools.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See everything →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Connect</p>
-          <h4>The data you need is always in another database.</h4>
-          <p><b>Query data across databases without moving it first.</b> Give applications one access point while Warp routes requests to the right databases and brings results together.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
+          <h4>⇄ The data you need is always somewhere else.</h4>
+          <p>Applications need data spread across databases, but copying everything into another system creates pipelines, stale copies and more infrastructure.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">Query it where it lives →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Protect</p>
-          <h4>Too many applications have direct access to the database.</h4>
-          <p><b>Put one security checkpoint in front of every database.</b> Inspect SQL, block dangerous queries, control workloads, govern AI agents, and audit access before requests reach the database.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">See how →</a></p>
+          <h4>🛡 Too many things connect directly to the database.</h4>
+          <p>Applications, scripts, APIs and now AI agents all have different paths to production data. Security policy gets fragmented across databases and clients.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">Create one checkpoint →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Modernize</p>
-          <h4>You want to modernize. You can't rewrite everything.</h4>
-          <p><b>Move to Postgres without rewriting everything at once.</b> Assess the migration, move and synchronize the data, preserve familiar database behavior, and keep existing applications connected during the transition.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">See how →</a></p>
+          <h4>🚚 You want to modernize. You can't rewrite everything.</h4>
+          <p>Moving from Oracle, MySQL or SQL Server to Postgres sounds great—until existing SQL, drivers, stored procedures and application assumptions show up.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">Modernize gradually →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Power AI</p>
-          <h4>AI needs your data. Security says absolutely not.</h4>
-          <p><b>Let AI agents query your database without opening a side door.</b> MCP and natural-language querying go through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">See how →</a></p>
+          <h4>🤖 AI needs your data. Security says absolutely not.</h4>
+          <p>Agents need live enterprise data to be useful. Giving them unrestricted database credentials or creating a separate AI access path isn't acceptable.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">Give AI governed access →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Emulate</p>
-          <h4>You're running five data services just to support five APIs.</h4>
-          <p><b>Get InfluxDB, SQS, DynamoDB, GraphDB, and MongoDB workloads without running those services.</b> Warp speaks their real wire protocols in front of Postgres — in any cloud, or on-prem, with no separate managed service to operate.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">See how →</a></p>
+          <h4>◇ You're running databases just to support their APIs.</h4>
+          <p>MongoDB. DynamoDB. SQS. InfluxDB. Graph databases. Sometimes you need the interface more than you need another distributed system to operate.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Consolidate infrastructure →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Manage</p>
-          <h4>Your applications want more connections than your database can handle.</h4>
-          <p><b>Give connection-hungry applications all the connections they want.</b> Warp multiplexes many client connections down to a small, stable pool of backend connections — the database never sees the client-side count.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">See how →</a></p>
+          <h4>⇆ Your applications want more connections than your database can handle.</h4>
+          <p>Microservices and serverless applications can create thousands of connections while the database works best with a much smaller, stable pool.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Take back connection control →</a></p>
         </div>
       </div>
+      <p class="rttNote">
+        Nearly every database architect, DBA, CTO, platform engineer, or application architect
+        should recognize at least 2–3 cards immediately.
+      </p>
     </section>
 
     <section class="tool" id="warp">
