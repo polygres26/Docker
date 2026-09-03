@@ -144,8 +144,9 @@
         <img src="/assets/logo.png" alt="Sayonora" class="brandMark">
         <h1 class="eyebrow">Sayonora</h1>
       </div>
-      <h2 class="heroTitle">Database problems? Sayonora.</h2>
-      <p class="heroSub">Run faster. Scale further. Secure everything. Power AI.</p>
+      <h2 class="heroTitle">Every database. Better.</h2>
+      <p class="heroSub">Faster. Safer. Smarter. Ready for AI.</p>
+      <p class="heroSub">One intelligent layer across the databases you already run — and the ones you're moving to.</p>
     </header>
 
     <section class="tool" id="use-cases">
@@ -161,7 +162,7 @@
           <p class="pillarLabel" style="margin-top:0">Accelerate</p>
           <h4>⚡ The database is getting slower as traffic grows.</h4>
           <p>Repeated queries keep doing the same expensive work. Scaling the database vertically is getting expensive, but rewriting the application around a cache isn't attractive.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#why-warp">Make it faster →</a></p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mach/">Make it faster →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Scale</p>
@@ -218,45 +219,27 @@
       </p>
     </section>
 
+    <section class="tool" id="insight">
+      <h2>Different problems. Same architectural problem.</h2>
+      <p class="heroSub">
+        Too much database infrastructure lives inside applications or around individual
+        databases. Caching here. Connection pooling there. Security somewhere else. Another
+        system for federation. Another for observability. Another access path for AI.
+      </p>
+    </section>
+
     <section class="tool" id="warp">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/warp</span>
       </div>
       <h2>Warp</h2>
-      <h3 class="toolTagline">The Intelligent Database Gateway.</h3>
-      <p class="heroSub">
-        Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server —
-        in any cloud or on-prem. 12 protocols, one execution pipeline.
-      </p>
-      <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
-      <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try Warp Free</a>
-        <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
-        <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
-      </div>
+      <h3 class="toolTagline">Warp brings it together.</h3>
+      <p class="heroSub">One intelligent control point between every workload and every database.</p>
 
-      <h3 class="subhead" id="why-warp">Why Warp?<a class="permalink" href="#why-warp" aria-label="Link to this section">#</a></h3>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>⚡ Go faster</h4><p>Distributed caching and automatic rollups cut repeated database work and query latency, shared across every protocol that hits Warp.</p></div>
-        <div class="obsCard"><h4>↗ Scale further</h4><p>Shard and intelligently route workloads without embedding database topology into applications.</p></div>
-        <div class="obsCard"><h4>◉ See every query</h4><p>Monitor SQL, latency, errors, workload behavior, and resource consumption from one control point instead of each database's own tooling.</p></div>
-        <div class="obsCard"><h4>🛡 Protect the database</h4><p>SQL firewall, QoS, admission control, and workload isolation before traffic ever reaches the database.</p></div>
-        <div class="obsCard"><h4>⇄ Connect anything</h4><p>Twelve client protocols and application interfaces through one gateway — Postgres, Oracle, MySQL, SQL Server, MongoDB, and more.</p></div>
-        <div class="obsCard"><h4>🌐 Run anywhere</h4><p>AWS, Azure, GCP, OCI, Kubernetes, or on-prem. Keep the database and infrastructure you already have.</p></div>
-        <div class="obsCard"><h4>🤖 Govern AI access</h4><p>MCP and AI agents enter through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p></div>
-      </div>
-      <p class="rttNote">
-        Applies consistently no matter which protocol the caller speaks, in Warp's default
-        dialect-translation mode — native-backend mode for MySQL and SQL Server keeps that same
-        coverage while proxying straight through, untranslated; Oracle's own native mode trades it
-        away for the same tradeoff. <a href="/warp/#native-backend-mode">See what applies where →</a>
-      </p>
-
-      <h3 class="subhead" id="architecture-simple">What is Warp?<a class="permalink" href="#architecture-simple" aria-label="Link to this section">#</a></h3>
-      <div class="simpleArch">
+      <div class="simpleArch" id="architecture-simple">
         <div class="archTier archTierApps">
-          <span class="archTierLabel">Applications &amp; AI agents</span>
+          <span class="archTierLabel">Applications · APIs · AI agents</span>
           <span class="archTierDetail">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · InfluxDB · GraphDB · AWS APIs · MCP</span>
         </div>
         <div class="archArrow">↓</div>
@@ -266,9 +249,15 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
-          <span class="archTierLabel">Your database, anywhere</span>
-          <span class="archTierDetail">Postgres · Oracle · MySQL · SQL Server — RDS · Aurora · Cloud SQL · Azure · OCI · On-prem</span>
+          <span class="archTierLabel">Postgres · Oracle · MySQL · SQL Server</span>
+          <span class="archTierDetail">RDS · Aurora · Cloud SQL · Azure · OCI · On-prem</span>
         </div>
+      </div>
+      <p class="toolTagline" style="margin:8px 0 14px">12 protocols. One execution pipeline. One control point.</p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try Warp Free</a>
+        <a class="btn btn-secondary" href="/warp/#outcomes">See How It Works</a>
+        <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
       </div>
       <p class="rttNote">
         <a href="/warp/#outcomes">See how Warp works, stage by stage →</a> — the
