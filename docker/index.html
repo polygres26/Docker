@@ -184,27 +184,9 @@
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Protect</p>
-          <h4>🛡 Too many things connect directly to the database.</h4>
+          <h4>🛡 AI needs your data. Security says absolutely not.</h4>
           <p>Applications, scripts, APIs and now AI agents all have different paths to production data. Security policy gets fragmented across databases and clients.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">Create one checkpoint →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Modernize</p>
-          <h4>🚚 You want to modernize. You can't rewrite everything.</h4>
-          <p>Moving from Oracle, MySQL or SQL Server to Postgres sounds great—until existing SQL, drivers, stored procedures and application assumptions show up.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">Modernize gradually →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Power AI</p>
-          <h4>🤖 AI needs your data. Security says absolutely not.</h4>
-          <p>Agents need live enterprise data to be useful. Giving them unrestricted database credentials or creating a separate AI access path isn't acceptable.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">Give AI governed access →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Emulate</p>
-          <h4>◇ You're running databases just to support their APIs.</h4>
-          <p>MongoDB. DynamoDB. SQS. InfluxDB. Graph databases. Sometimes you need the interface more than you need another distributed system to operate.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Consolidate infrastructure →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Manage</p>
@@ -221,6 +203,46 @@
         The result is fragmented infrastructure, inconsistent security, incomplete
         visibility — and no clean foundation for AI.
       </p>
+    </section>
+
+    <section class="tool" id="postgres-target">
+      <h2>Everything becomes Postgres.</h2>
+      <p class="heroSub">
+        Modernizing off Oracle, MySQL, or SQL Server and consolidating the extra data
+        services you run just for their APIs point at the same target: one Postgres,
+        reached through whichever protocol a client already speaks.
+      </p>
+      <div class="obsGrid">
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Modernize</p>
+          <h4>🚚 You want to modernize. You can't rewrite everything.</h4>
+          <p>Moving from Oracle, MySQL or SQL Server to Postgres sounds great—until existing SQL, drivers, stored procedures and application assumptions show up.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">Modernize gradually →</a></p>
+        </div>
+        <div class="obsCard">
+          <p class="pillarLabel" style="margin-top:0">Emulate</p>
+          <h4>◇ You're running databases just to support their APIs.</h4>
+          <p>MongoDB. DynamoDB. SQS. InfluxDB. Graph databases. Sometimes you need the interface more than you need another distributed system to operate.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Consolidate infrastructure →</a></p>
+        </div>
+      </div>
+      <div class="simpleArch">
+        <div class="archTier archTierApps">
+          <span class="archTierLabel">Applications · APIs · AI agents</span>
+          <span class="archTierDetail">Postgres · Oracle · MySQL · SQL Server · MongoDB · InfluxDB<br>OpenSearch · GraphDB · SQS · DynamoDB · gRPC · MCP</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierHub">
+          <span class="archTierLabel archHubLabel">WARP</span>
+          <span class="archTierDetail archHubFlow">Connect · Protect · Control · Accelerate · Observe</span>
+        </div>
+        <div class="archArrow">↓</div>
+        <div class="archTier archTierPg">
+          <span class="archTierLabel">Postgres</span>
+          <span class="archTierDetail">AWS (RDS/Aurora) · Azure · GCP (Cloud SQL) · OCI · On-prem</span>
+        </div>
+      </div>
+      <p class="rttNote">12 protocols in. One Postgres out — anywhere you run it.</p>
     </section>
 
     <section class="tool" id="warp">
