@@ -160,36 +160,42 @@
       <div class="obsGrid">
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Accelerate</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"My database can't keep doing the same expensive work."</p>
           <h4>⚡ The database is getting slower as traffic grows.</h4>
-          <p>Repeated queries keep doing the same expensive work. Scaling the database vertically is getting expensive, but rewriting the application around a cache isn't attractive.</p>
+          <p>Repeated queries keep doing the same expensive work, and the same expensive aggregations get recomputed from scratch every time instead of rolled up once. Scaling the database vertically is getting expensive, but rewriting the application around a cache isn't attractive.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mach/">Make it faster →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Scale</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"We've outgrown one database, but we can't rewrite the application."</p>
           <h4>↗ One database isn't enough anymore.</h4>
           <p>The workload has outgrown a single database, but sharding means teaching applications where the data lives, dealing with distributed query and transactions—and living with that decision forever.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">Scale without the rewrite →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Power AI</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"Every database we add means another AI integration to build."</p>
           <h4>🤖 Every database needs its own AI integration.</h4>
           <p>One MCP server gives AI agents and tools a single governed path across every database — Postgres, Oracle, MySQL, SQL Server, and more — instead of a separate integration per database.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">Give AI one path →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">QoS</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"Our applications want more connections than the database can handle."</p>
           <h4>⇆ Your applications want more resources than your database can handle.</h4>
           <p>Connections, runaway queries, and noisy workloads all compete for the same database — they have to be managed for the best experience, or one bad actor degrades everything for everyone.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#qos">QoS admission control →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Protect</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"AI needs our data. Security needs control."</p>
           <h4>🛡 AI needs your data. Security says absolutely not.</h4>
           <p>Applications, scripts, APIs and now AI agents all have different paths to production data. Security policy gets fragmented across databases and clients.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">Create one checkpoint →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Observe</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"Something is slow. We just don't know what's causing it."</p>
           <h4>◉ Something is slow. Nobody knows why.</h4>
           <p>SQL, APIs and AI agents are hitting multiple databases, each with different monitoring. Finding the workload causing the problem means jumping between tools.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See everything →</a></p>
@@ -255,12 +261,14 @@
       <div class="obsGrid">
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Modernize</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"We want to modernize, but we can't rewrite everything."</p>
           <h4>🚚 You want to modernize. You can't rewrite everything.</h4>
           <p>Moving from Oracle, MySQL or SQL Server to Postgres sounds great—until existing SQL, drivers, stored procedures and application assumptions show up.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">Modernize gradually →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Emulate</p>
+          <p style="font-style:italic;color:var(--ink-dim);margin:0 0 4px">"Why are we running five data services just to support five APIs?"</p>
           <h4>◇ You're running databases just to support their APIs.</h4>
           <p>MongoDB. DynamoDB. SQS. InfluxDB. Graph databases. Sometimes you need the interface more than you need another distributed system to operate.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Consolidate infrastructure →</a></p>
@@ -274,7 +282,7 @@
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
           <span class="archTierLabel archHubLabel">WARP</span>
-          <span class="archTierDetail archHubFlow">SQL Dialect Translation · API Implementation</span>
+          <span class="archTierDetail archHubFlow">Wire Protocols · SQL Dialect Translation · API Implementation</span>
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
