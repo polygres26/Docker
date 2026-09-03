@@ -124,7 +124,6 @@
   <a href="#main" class="skipLink">Skip to content</a>
   <nav class="siteNav" aria-label="Page sections">
     <div class="siteNavInner">
-      <a href="#use-cases">Use Cases</a>
       <a href="#warp">Warp</a>
       <a href="#ferry">Ferry</a>
       <a href="#shim">Shim</a>
@@ -148,93 +147,25 @@
       <p class="heroSub">Run faster. Scale further. Secure everything. Power AI.</p>
     </header>
 
-    <section class="tool" id="use-cases">
-      <div class="kicker">
-        <span class="num">00</span>
-      </div>
-      <h2>Use Cases</h2>
-      <p class="heroSub">
-        Start with what you're trying to do, not which product does it.
-      </p>
-      <div class="obsGrid">
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Accelerate</p>
-          <h4>Database Caching</h4>
-          <p><b>Make your database faster without changing the application.</b> Put Warp in front of your database. Repeated queries are served from Mach instead of hitting the database again.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#why-warp">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Scale</p>
-          <h4>Database Sharding</h4>
-          <p><b>Scale one database into many without teaching the application about shards.</b> Warp decides where each request goes and combines results when necessary.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Observe</p>
-          <h4>Access Observability</h4>
-          <p><b>See every SQL query, API call, and MCP request across every database from one place.</b> Find slow SQL, errors, latency spikes, expensive workloads, and application behavior without jumping between database-specific tools.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Connect</p>
-          <h4>Query Federation</h4>
-          <p><b>Query data across databases without moving it first.</b> Give applications one access point while Warp routes requests to the right databases and brings results together.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Protect</p>
-          <h4>Database Security</h4>
-          <p><b>Put one security checkpoint in front of every database.</b> Inspect SQL, block dangerous queries, control workloads, govern AI agents, and audit access before requests reach the database.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#security">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Modernize</p>
-          <h4>Database Migration</h4>
-          <p><b>Move to Postgres without rewriting everything at once.</b> Assess the migration, move and synchronize the data, preserve familiar database behavior, and keep existing applications connected during the transition.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="#ferry">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Power AI</p>
-          <h4>AI Agent Access</h4>
-          <p><b>Let AI agents query your database without opening a side door.</b> MCP and natural-language querying go through the exact same firewall, QoS, and audit path as every other client — not a separate, unguarded route to your data.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Emulate</p>
-          <h4>Run Without Running Them</h4>
-          <p><b>Get InfluxDB, SQS, DynamoDB, GraphDB, and MongoDB workloads without running those services.</b> Warp speaks their real wire protocols in front of Postgres — in any cloud, or on-prem, with no separate managed service to operate.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">See how →</a></p>
-        </div>
-        <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Manage</p>
-          <h4>Connection Management</h4>
-          <p><b>Give connection-hungry applications all the connections they want.</b> Warp multiplexes many client connections down to a small, stable pool of backend connections — the database never sees the client-side count.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">See how →</a></p>
-        </div>
-      </div>
-    </section>
-
     <section class="tool" id="warp">
       <div class="kicker">
         <span class="num">01</span>
         <span class="badge">ghcr.io/polygres26/warp</span>
       </div>
       <h2>Warp</h2>
-      <h3 class="toolTagline">The Intelligent Database Gateway.</h3>
+      <h3 class="toolTagline">One intelligent control point for every database.</h3>
+      <p class="pillarStrip">Caching · Sharding · Security · Observability · AI access · Federation · Connection management</p>
+      <p class="heroTagline">Different problems. One infrastructure layer.</p>
       <p class="heroSub">
-        Accelerate, scale, secure, and observe Postgres, Oracle, MySQL, and SQL Server —
-        in any cloud or on-prem.
+        Warp sits between applications, APIs, and AI agents and the databases they access —
+        giving every workload a common place to connect, protect, control, accelerate, and observe.
       </p>
-      <p class="pillarStrip">Connect · Protect · Control · Accelerate · Observe</p>
-      <p class="protoStrip">Oracle · MySQL · SQL Server · MongoDB · OpenSearch · DynamoDB · SQS · InfluxDB · GraphDB · PostgreSQL · gRPC · MCP</p>
-      <p class="toolTagline" style="margin:8px 0 14px">12 protocols. One execution pipeline.</p>
+      <p class="toolTagline" style="margin:8px 0 14px">12 protocols. One execution pipeline. One control point.</p>
       <div class="heroCtas">
         <a class="btn btn-primary" href="#try">Try Warp Free</a>
         <a class="btn btn-secondary" href="#architecture-simple">See How It Works</a>
         <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
       </div>
-      <p class="heroTagline">One intelligent infrastructure layer for the database you already run.</p>
-      <p class="heroTagline2">Postgres, Oracle, MySQL, or SQL Server — same control point.</p>
 
       <h3 class="subhead" id="why-warp">Why Warp?<a class="permalink" href="#why-warp" aria-label="Link to this section">#</a></h3>
       <div class="obsGrid">
