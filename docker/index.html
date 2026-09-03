@@ -167,20 +167,20 @@
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Scale</p>
           <h4>↗ One database isn't enough anymore.</h4>
-          <p>The workload has outgrown a single database, but sharding means teaching applications where the data lives—and living with that decision forever.</p>
+          <p>The workload has outgrown a single database, but sharding means teaching applications where the data lives, dealing with distributed query and transactions—and living with that decision forever.</p>
           <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#sharding">Scale without the rewrite →</a></p>
         </div>
         <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Connect</p>
-          <h4>⇄ The data you need is always somewhere else.</h4>
-          <p>Applications need data spread across databases, but copying everything into another system creates pipelines, stale copies and more infrastructure.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#outcomes">Query it where it lives →</a></p>
+          <p class="pillarLabel" style="margin-top:0">Power AI</p>
+          <h4>🤖 Every database needs its own AI integration.</h4>
+          <p>One MCP server gives AI agents and tools a single governed path across every database — Postgres, Oracle, MySQL, SQL Server, and more — instead of a separate integration per database.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/mcp-postgres/">Give AI one path →</a></p>
         </div>
         <div class="obsCard">
-          <p class="pillarLabel" style="margin-top:0">Manage</p>
-          <h4>⇆ Your applications want more connections than your database can handle.</h4>
-          <p>Microservices and serverless applications can create thousands of connections while the database works best with a much smaller, stable pool.</p>
-          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/">Take back connection control →</a></p>
+          <p class="pillarLabel" style="margin-top:0">QoS</p>
+          <h4>⇆ Your applications want more resources than your database can handle.</h4>
+          <p>Connections, runaway queries, and noisy workloads all compete for the same database — they have to be managed for the best experience, or one bad actor degrades everything for everyone.</p>
+          <p class="rttNote" style="margin:6px 0 0;font-size:12px"><a href="/warp/#qos">QoS admission control →</a></p>
         </div>
         <div class="obsCard">
           <p class="pillarLabel" style="margin-top:0">Protect</p>
@@ -222,7 +222,7 @@
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
           <span class="archTierLabel archHubLabel">WARP</span>
-          <span class="archTierDetail archHubFlow">Accelerate · Scale · Connect · Manage · Protect · Observe</span>
+          <span class="archTierDetail archHubFlow">Accelerate · Scale · Power AI · QoS · Protect · Observe</span>
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
@@ -274,7 +274,7 @@
         <div class="archArrow">↓</div>
         <div class="archTier archTierHub">
           <span class="archTierLabel archHubLabel">WARP</span>
-          <span class="archTierDetail archHubFlow">Accelerate · Scale · Connect · Manage · Protect · Observe</span>
+          <span class="archTierDetail archHubFlow">SQL Dialect Translation · API Implementation</span>
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
