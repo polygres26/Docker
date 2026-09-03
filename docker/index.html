@@ -128,9 +128,7 @@
       <a href="#warp">Warp</a>
       <a href="#ferry">Ferry</a>
       <a href="#shim">Shim</a>
-      <a href="#mach">Mach</a>
       <a href="#pricing">Pricing</a>
-      <a href="/postgres-gateway/">Postgres Gateway</a>
       <a href="/mcp-postgres/">MCP</a>
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
@@ -212,9 +210,6 @@
         infrastructure, and an architecture that gets harder to evolve with every new
         initiative — especially AI.
       </p>
-      <p class="heroSub" style="max-width:none">
-        And when you're ready, everything can become Postgres.
-      </p>
     </section>
 
     <section class="tool" id="warp">
@@ -223,8 +218,15 @@
         <span class="badge">ghcr.io/polygres26/warp</span>
       </div>
       <h2>Warp</h2>
-      <h3 class="toolTagline">Warp brings it together.</h3>
-      <p class="heroSub">One execution pipeline. One control point.</p>
+      <h3 class="toolTagline">One intelligent control point.</h3>
+      <p class="heroSub">
+        Warp brings fragmented database infrastructure together — between every
+        application, API, and AI agent and the databases they access.
+      </p>
+      <p class="heroSub">
+        One place to connect, protect, control, accelerate, and observe workloads across
+        Postgres, Oracle, MySQL, SQL Server and MongoDB.
+      </p>
 
       <div class="simpleArch" id="architecture-simple">
         <div class="archTier archTierApps">
@@ -237,26 +239,12 @@
         </div>
         <div class="archArrow">↓</div>
         <div class="archTier archTierPg">
-          <span class="archTierLabel">Postgres · Oracle · MySQL · SQL Server</span>
+          <span class="archTierLabel">Postgres · Oracle · MySQL · SQL Server · MongoDB</span>
           <span class="archTierDetail">AWS · Azure · GCP · OCI · On-prem</span>
         </div>
       </div>
 
-      <p class="rttNote">
-        Run Warp next to the applications and databases you already operate — no managed
-        control plane required. Try it, see live protocol demos, and the full technical
-        depth — architecture, security, sharding, caching, native-backend mode, and
-        honestly-scoped compatibility — on the <a href="/warp/">dedicated Warp page →</a>
-      </p>
-      <div class="heroCtas">
-        <a class="btn btn-primary" href="#try">Try Warp Free</a>
-        <a class="btn btn-secondary" href="/warp/#outcomes">See How It Works</a>
-        <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
-      </div>
-    </section>
-
-    <section class="tool" id="postgres-target">
-      <h2>Everything becomes Postgres.</h2>
+      <h3 class="subhead" id="postgres-target">And when you're ready, everything can become Postgres.<a class="permalink" href="#postgres-target" aria-label="Link to this section">#</a></h3>
       <p class="toolTagline">12 protocols in. One Postgres out — anywhere you run it.</p>
       <p class="heroSub">
         Modernizing off Oracle, MySQL, or SQL Server and consolidating the extra data
@@ -294,6 +282,20 @@
           <span class="archTierLabel">Postgres</span>
           <span class="archTierDetail">AWS (RDS/Aurora) · Azure · GCP (Cloud SQL) · OCI · On-prem</span>
         </div>
+      </div>
+
+      <p class="rttNote">
+        Run Warp next to the applications and databases you already operate — no managed
+        control plane required. Try it, see live protocol demos, and the full technical
+        depth — architecture, security, sharding, caching, native-backend mode, and
+        honestly-scoped compatibility — on the <a href="/warp/">dedicated Warp page →</a>
+        See also how Warp compares to a plain connection pooler on the
+        <a href="/postgres-gateway/">Postgres Gateway →</a> page.
+      </p>
+      <div class="heroCtas">
+        <a class="btn btn-primary" href="#try">Try Warp Free</a>
+        <a class="btn btn-secondary" href="/warp/#outcomes">Explore Warp</a>
+        <a class="btn btn-secondary" href="/demo-warp.html">Click-Through Demo</a>
       </div>
     </section>
 
@@ -350,25 +352,10 @@
       <p class="rttNote"><a href="/shim/">Explore Shim →</a></p>
     </section>
 
-    <section class="tool" id="mach">
-      <div class="kicker">
-        <span class="num">04</span>
-        <span class="badge">Part of Warp</span>
-      </div>
-      <p class="bridgeKicker">Also from Sayonora</p>
-      <h2>Mach</h2>
-      <h3 class="toolTagline">Cache once. Read it back through any protocol.</h3>
-      <p class="rttNote">
-        Warp's embedded, distributed query result cache — a row written through one wire
-        protocol and read back through another comes back as a real cache hit, not a
-        per-protocol silo, with automatic table-level invalidation on every write.
-      </p>
-      <p class="rttNote"><a href="/mach/">Explore Mach →</a></p>
-    </section>
 
     <section class="tool" id="pricing">
       <div class="kicker">
-        <span class="num">05</span>
+        <span class="num">04</span>
       </div>
       <h2>Pricing</h2>
       <p class="lede">
@@ -414,7 +401,7 @@
 
     <section class="tool" id="faq">
       <div class="kicker">
-        <span class="num">06</span>
+        <span class="num">05</span>
       </div>
       <h2>Common questions</h2>
       <ul class="usecases">
@@ -433,7 +420,7 @@
 
     <section class="tool" id="contact">
       <div class="kicker">
-        <span class="num">07</span>
+        <span class="num">06</span>
       </div>
       <h2>Contact</h2>
       <p class="lede">

@@ -178,7 +178,7 @@
      instead of a hamburger menu -- only 4 links, not worth the extra JS/state. */
   .siteNav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   .siteNav .siteNavInner { max-width: 900px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; gap: 4px; overflow-x: auto; }
-  .siteNav a { flex: none; font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); text-decoration: none; padding: 14px 10px; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .siteNav a { flex: none; font-family: var(--mono); font-size: 12.5px; color: var(--ink); text-decoration: none; padding: 14px 10px; border-bottom: 2px solid transparent; white-space: nowrap; }
   .siteNav a:hover { color: var(--ink); }
   .siteNav a.active { color: var(--indigo); border-bottom-color: var(--indigo); }
 
