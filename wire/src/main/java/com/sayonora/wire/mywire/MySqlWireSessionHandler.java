@@ -58,7 +58,19 @@ public final class MySqlWireSessionHandler implements Runnable {
     // to schema-qualify mysql_catalog.* by hand.
     private final JdbcBackendExecutor terminalExecutor =
             new JdbcBackendExecutor(null, new com.sayonora.wire.core.access.MySqlPgEmulationSessionInitializer());
+    private final com.sayonora.wire.core.RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
+    // Real gap found auditing this frontend for GA transparency: every statement used to open a
+    // BRAND NEW backend connection, force autocommit=true, execute, and close -- meaning
+    // START TRANSACTION/COMMIT/ROLLBACK sent by a real MySQL client were just strings executed
+    // against a throwaway connection with zero effect on any OTHER statement. Any ORM transaction
+    // (ActiveRecord, Django, Hibernate, Sequelize -- virtually every write path in a typical app)
+    // was silently non-atomic. Fixed the same way pgwire already does it: one connection lives for
+    // the whole session (see sessionConnection()), and BEGIN/COMMIT/ROLLBACK toggle its real
+    // autoCommit state and actually commit/rollback, instead of being no-op'd or run against a
+    // connection nobody else will ever see again.
+    private Connection sessionConnection;
+    private boolean inTransaction;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
@@ -90,12 +102,12 @@ public final class MySqlWireSessionHandler implements Runnable {
             List<com.sayonora.wire.core.PipelineStage> sharedStages, com.sayonora.wire.core.BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
         this.options = options;
-        this.pipeline = new StatementPipeline(sharedStages,
-                new com.sayonora.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
+        this.routingExecutor = new com.sayonora.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
                 new com.sayonora.wire.xa.XaRecoveryLog(options),
                 com.sayonora.wire.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.wire.core.RouterStage.tableShardRulesIn(sharedStages))
                 .withFederationSupport(com.sayonora.wire.core.RouterStage.statisticsStoreIn(sharedStages),
-                        com.sayonora.wire.core.RouterStage.planStoreIn(sharedStages)));
+                        com.sayonora.wire.core.RouterStage.planStoreIn(sharedStages));
+        this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
         this.sqlMetrics = com.sayonora.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
@@ -122,9 +134,108 @@ public final class MySqlWireSessionHandler implements Runnable {
             try {
                 activeSocket.close();
             } catch (IOException ignoredOnSessionTeardown) {
-                
+
+            }
+            try {
+                routingExecutor.endTransaction(false);
+            } catch (SQLException ignoredOnSessionTeardown) {
+
+            }
+            if (sessionConnection != null) {
+                try {
+                    sessionConnection.close();
+                } catch (SQLException ignoredOnSessionTeardown) {
+
+                }
             }
         }
+    }
+
+    private Connection sessionConnection() throws SQLException {
+        if (sessionConnection == null) {
+            sessionConnection = PgConnections.open(options);
+            sessionConnection.setAutoCommit(true);
+            terminalExecutor.rebind(sessionConnection);
+        }
+        return sessionConnection;
+    }
+
+    // MySQL clients express transaction control two ways a real app hits constantly: the SQL
+    // verbs (START TRANSACTION/BEGIN/COMMIT/ROLLBACK), and mysql-connector-j's own
+    // Connection#setAutoCommit(boolean), which it implements by sending a literal
+    // "SET autocommit = 0/1" statement -- not a TDS/wire-level flag, plain SQL text, the same as
+    // real MySQL itself expects. Both need to actually toggle this session's real backend
+    // connection, not be swallowed as a no-op the way SET_STATEMENT already does for every other
+    // SET.
+    private static final java.util.regex.Pattern TXN_CONTROL_PREFIX = java.util.regex.Pattern.compile(
+            "^\\s*(start\\s+transaction|begin|commit|rollback)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern SET_AUTOCOMMIT = java.util.regex.Pattern.compile(
+            "^\\s*set\\s+(?:session\\s+|@@(?:session\\.)?)?autocommit\\s*=\\s*'?(0|1|off|on|false|true)'?\\s*$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
+        java.util.regex.Matcher autocommit = SET_AUTOCOMMIT.matcher(sql);
+        if (autocommit.matches()) {
+            boolean enable = switch (autocommit.group(1).toLowerCase(java.util.Locale.ROOT)) {
+                case "0", "off", "false" -> false;
+                default -> true;
+            };
+            if (!enable && !inTransaction) {
+                connection.setAutoCommit(false);
+                inTransaction = true;
+                routingExecutor.beginTransaction();
+            } else if (enable && inTransaction) {
+                // Real MySQL commits whatever's pending when autocommit is turned back on
+                // mid-transaction -- matching that rather than silently discarding it.
+                connection.commit();
+                connection.setAutoCommit(true);
+                inTransaction = false;
+                routingExecutor.endTransaction(true);
+            }
+            return true;
+        }
+        java.util.regex.Matcher prefix = TXN_CONTROL_PREFIX.matcher(sql);
+        if (!prefix.find()) {
+            return false;
+        }
+        String verb = prefix.group(1).replaceAll("\\s+", " ").toUpperCase(java.util.Locale.ROOT);
+        switch (verb) {
+            case "START TRANSACTION", "BEGIN" -> {
+                connection.setAutoCommit(false);
+                inTransaction = true;
+                routingExecutor.beginTransaction();
+            }
+            // Real gap found live: a real mysql-connector-j client sends a bare "COMMIT"/
+            // "ROLLBACK" even when it never explicitly started a transaction via SQL text (no
+            // preceding START TRANSACTION/BEGIN and, confirmed live, no SET autocommit=0 either --
+            // its own client-side setAutoCommit(false) apparently updates local state only, with
+            // nothing sent over the wire until the actual commit()/rollback() call). Calling
+            // connection.commit()/rollback() unconditionally in that case throws a real "Cannot
+            // commit when autoCommit is enabled" from the BACKEND's own JDBC connection (still
+            // genuinely in autocommit mode, since nothing here ever told it otherwise) -- a hard
+            // failure for what real MySQL treats as a harmless no-op (COMMIT/ROLLBACK outside an
+            // active transaction commits/rolls back nothing, it's not an error).
+            case "COMMIT" -> {
+                if (inTransaction) {
+                    connection.commit();
+                    connection.setAutoCommit(true);
+                    inTransaction = false;
+                    routingExecutor.endTransaction(true);
+                }
+            }
+            case "ROLLBACK" -> {
+                if (inTransaction) {
+                    connection.rollback();
+                    connection.setAutoCommit(true);
+                    inTransaction = false;
+                    routingExecutor.endTransaction(false);
+                }
+            }
+            default -> {
+                return false;
+            }
+        }
+        return true;
     }
 
     private record HandshakeStreams(DataInputStream in, OutputStream out) {
@@ -407,6 +518,19 @@ public final class MySqlWireSessionHandler implements Runnable {
      * every column is declared/encoded as VAR_STRING either way. */
     private void executeQuery(OutputStream out, MySqlPacket packets, String sql, List<Object> bindParams,
             boolean binaryResult) throws IOException {
+        if (!options.mywireNativeBackend()) {
+            try {
+                if (handleTransactionControl(sessionConnection(), sql)) {
+                    packets.writePayload(out, MySqlMessages.okPacket(0));
+                    return;
+                }
+            } catch (SQLException e) {
+                String state = sqlState(e);
+                packets.writePayload(out, MySqlMessages.errPacket(SqlStateErrorMapper.toMySqlError(state, e.getMessage()),
+                        state, e.getMessage() == null ? "backend error" : e.getMessage()));
+                return;
+            }
+        }
         if (!options.mywireNativeBackend() && SET_STATEMENT.matcher(sql).find()) {
             packets.writePayload(out, MySqlMessages.okPacket(0));
             return;
@@ -450,11 +574,16 @@ public final class MySqlWireSessionHandler implements Runnable {
                     // Postgres-only session setup a real MySQL backend has no use for).
                     result = pipeline.execute(statement);
                 } else {
-                    try (Connection backend = PgConnections.open(options)) {
-                        backend.setAutoCommit(true);
-                        terminalExecutor.rebind(backend);
-                        result = pipeline.execute(statement);
-                    }
+                    // One connection for the whole session (see sessionConnection()'s own
+                    // javadoc, which also does the one-time terminalExecutor.rebind()), not a
+                    // fresh one per statement -- required for BEGIN/COMMIT/ROLLBACK (handled
+                    // above) to mean anything across statements. Deliberately NOT calling
+                    // rebind() again here on every statement: that would defeat
+                    // JdbcBackendExecutor's own prepared-statement cache (documented in its own
+                    // class -- rebind() closes and clears every cached entry, since it exists for
+                    // a genuine reconnect/failover, not routine reuse of the same connection).
+                    sessionConnection();
+                    result = pipeline.execute(statement);
                 }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.MYSQL, sql,
