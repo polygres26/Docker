@@ -55,6 +55,8 @@ public final class RpcRequestReader {
     private static final int TYPE_NUMERICN = 0x6C;
     private static final int TYPE_BIGVARBINARY = 0xA5;
     private static final int TYPE_BIGBINARY = 0xAD;
+    private static final int TYPE_DATEN = 0x28;
+    private static final int TYPE_DATETIME2N = 0x2A;
 
     private static final long PLP_NULL = 0xFFFFFFFFFFFFFFFFL;
 
@@ -97,10 +99,15 @@ public final class RpcRequestReader {
             case TYPE_BITN -> readBitNValue(c);
             case TYPE_DECIMALN, TYPE_NUMERICN -> readDecimalNValue(c);
             case TYPE_BIGVARBINARY, TYPE_BIGBINARY -> readBinaryValue(c);
+            case TYPE_DATEN -> readDateNValue(c);
+            case TYPE_DATETIME2N -> readDateTime2NValue(c);
             default -> throw new IOException("RPC parameter \"" + name + "\" has unsupported TDS type 0x"
                     + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT/DECIMAL/"
-                    + "NUMERIC/BINARY/VARBINARY parameters are supported (refusing rather than risking a "
-                    + "mis-decode that would desync every parameter after it)");
+                    + "NUMERIC/BINARY/VARBINARY/DATE/DATETIME2 parameters are supported (refusing rather than "
+                    + "risking a mis-decode that would desync every parameter after it -- TIME/DATETIMEOFFSET/"
+                    + "legacy DATETIME are a separate, not-yet-covered gap: confirmed live that mssql-jdbc's own "
+                    + "PreparedStatement.setTime() sends the LEGACY DATETIMN type 0x6f, not TIMEN, with a "
+                    + "different low-precision tick encoding this class doesn't decode yet)");
         };
         return new RpcParam(name, value, output);
     }
@@ -224,6 +231,60 @@ public final class RpcRequestReader {
             data.writeBytes(c.readBytes((int) chunkLen));
         }
         return data.toByteArray();
+    }
+
+    private static final java.time.LocalDate TDS_DATE_EPOCH = java.time.LocalDate.of(1, 1, 1);
+
+    /**
+     * DATEN -- confirmed live (mssql-jdbc {@code PreparedStatement.setDate}, captured via a
+     * temporary debug probe, since removed): unlike every other date/time-family type, DATEN has
+     * NO TYPE_INFO byte at all (no scale, no length) -- the type byte is immediately followed by
+     * the value's own Length(1)/3-byte-date shape. {@code 2026-09-04} arrived as {@code 03 16 4A
+     * 0B}: length 3, then the date as a little-endian day count from {@code 0001-01-01} (proleptic
+     * Gregorian) -- {@code 0x0B4A16 = 739862} days after {@code 0001-01-01} is genuinely
+     * {@code 2026-09-04}, confirmed by direct calculation, not assumed from the spec alone.
+     */
+    private static Object readDateNValue(Cursor c) throws IOException {
+        int len = c.readU8();
+        if (len == 0) {
+            return null;
+        }
+        if (len != 3) {
+            throw new IOException("DATEN parameter has unexpected length " + len + " (expected 3)");
+        }
+        long days = c.readU8() | (c.readU8() << 8) | (c.readU8() << 16);
+        return java.sql.Date.valueOf(TDS_DATE_EPOCH.plusDays(days));
+    }
+
+    /**
+     * DATETIME2N -- confirmed live (mssql-jdbc {@code PreparedStatement.setTimestamp}, captured
+     * via a temporary debug probe, since removed): TYPE_INFO is a single Scale byte (0-7, unlike
+     * DECIMALN's 3-byte MaxLen/Precision/Scale). The value is Length(1) then a scale-dependent-
+     * width little-endian TIME component (3 bytes for scale 0-2, 4 bytes for scale 3-4, 5 bytes
+     * for scale 5-7 -- confirmed live at scale 7, a 5-byte time field) immediately followed by the
+     * SAME 3-byte DATEN-shaped date field {@link #readDateNValue} decodes. The time component is
+     * an integer count of {@code 10^-scale} second units since midnight.
+     */
+    private static Object readDateTime2NValue(Cursor c) throws IOException {
+        int scale = c.readU8();
+        int len = c.readU8();
+        if (len == 0) {
+            return null;
+        }
+        int timeByteCount = scale <= 2 ? 3 : scale <= 4 ? 4 : 5;
+        if (len != timeByteCount + 3) {
+            throw new IOException("DATETIME2N parameter has length " + len + " inconsistent with its own "
+                    + "scale " + scale + " (expected " + (timeByteCount + 3) + ")");
+        }
+        long timeUnits = 0;
+        for (int i = 0; i < timeByteCount; i++) {
+            timeUnits |= (long) c.readU8() << (8 * i);
+        }
+        long days = c.readU8() | ((long) c.readU8() << 8) | ((long) c.readU8() << 16);
+        long nanosPerUnit = (long) Math.pow(10, 9 - scale);
+        java.time.LocalTime time = java.time.LocalTime.ofNanoOfDay(timeUnits * nanosPerUnit);
+        java.time.LocalDateTime dateTime = java.time.LocalDateTime.of(TDS_DATE_EPOCH.plusDays(days), time);
+        return java.sql.Timestamp.valueOf(dateTime);
     }
 
     private static Object readBitNValue(Cursor c) throws IOException {

@@ -183,10 +183,90 @@ class RpcRequestReaderTest {
         noAllHeaders(out);
         procIdSpExecuteSql(out);
         writeParamHeader(out, "@P0");
-        out.write(0x2A); // DATETIME2N -- deliberately unsupported (variable, scale-dependent length)
+        out.write(0x29); // TIMEN -- deliberately unsupported (see RpcRequestReader's own javadoc:
+                          // mssql-jdbc's setTime() actually sends legacy DATETIMN 0x6f instead, a
+                          // separate, not-yet-covered gap)
 
         IOException e = assertThrows(IOException.class, () -> RpcRequestReader.read(out.toByteArray()));
         assertTrue(e.getMessage().contains("unsupported"));
+    }
+
+    /**
+     * Golden bytes captured live from a real mssql-jdbc {@code PreparedStatement.setDate(1,
+     * Date.valueOf("2026-09-04"))} call: no TYPE_INFO byte at all for DATEN, just {@code 03 16 4A
+     * 0B} -- length 3, then the date as a little-endian day count from 0001-01-01
+     * (0x0B4A16 = 739862 days after 0001-01-01 is genuinely 2026-09-04).
+     */
+    @Test
+    void dateNParamMatchesRealMssqlJdbcWireBytesForSeptemberFourthTwentyTwentySix() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x28); // DATEN
+        out.write(0x03); // length
+        out.write(0x16); out.write(0x4A); out.write(0x0B); // date, little-endian
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertEquals(java.sql.Date.valueOf("2026-09-04"), request.params().get(0).value());
+    }
+
+    @Test
+    void dateNNullIsDecodedAsNull() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x28);
+        out.write(0x00); // length 0 -> NULL
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertNull(request.params().get(0).value());
+    }
+
+    /**
+     * Golden bytes captured live from a real mssql-jdbc {@code PreparedStatement.setTimestamp}
+     * call at its default scale (7): TYPE_INFO {@code 07} (Scale=7), value {@code 08 D0 DB 49 AD
+     * 5C 16 4A 0B} -- length 8 (5-byte time field for scale 5-7, + 3-byte date field), time units
+     * are 100ns increments since midnight, date is the SAME DATEN-shaped field as above.
+     */
+    @Test
+    void dateTime2NParamMatchesRealMssqlJdbcWireBytes() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x2A); // DATETIME2N
+        out.write(0x07); // scale
+        out.write(0x08); // length: 5-byte time + 3-byte date
+        out.write(0xD0); out.write(0xDB); out.write(0x49); out.write(0xAD); out.write(0x5C); // time
+        out.write(0x16); out.write(0x4A); out.write(0x0B); // date
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        Object value = request.params().get(0).value();
+        assertTrue(value instanceof java.sql.Timestamp);
+        // Real captured value's date component is the same 2026-09-04 DATEN's own golden test
+        // decodes -- confirms both share the identical date-field decode path.
+        java.sql.Timestamp ts = (java.sql.Timestamp) value;
+        assertEquals(java.sql.Date.valueOf("2026-09-04").toLocalDate(), ts.toLocalDateTime().toLocalDate());
+    }
+
+    @Test
+    void dateTime2NNullIsDecodedAsNull() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x2A);
+        out.write(0x07);
+        out.write(0x00); // length 0 -> NULL
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertNull(request.params().get(0).value());
     }
 
     /**
