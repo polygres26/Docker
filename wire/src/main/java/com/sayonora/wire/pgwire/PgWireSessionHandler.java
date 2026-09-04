@@ -428,12 +428,32 @@ public final class PgWireSessionHandler implements Runnable {
         try {
             step.run();
         } catch (SQLException e) {
-            
+
             routingExecutor.markTransactionFailed();
             if (lastExtendedSql != null) {
                 recordFailure(lastExtendedSql, e);
             }
             PgMessages.writeErrorResponse(out, sqlState(e), e.getMessage() == null ? "backend error" : e.getMessage());
+            out.flush();
+            skipUntilSync = true;
+        } catch (IOException e) {
+            // Real bug, found live auditing this frontend: PgBinaryParamDecoder throws a plain
+            // IOException (not SQLException) for a bind value whose binary-format type it doesn't
+            // decode (UUID/JSON/JSONB/NUMERIC/arrays -- see that class's own javadoc). Before this
+            // fix, that IOException propagated straight out of dispatchExtended and up through
+            // queryLoop uncaught, killing the ENTIRE connection over one unsupported parameter
+            // type -- turning "this one statement can't bind a UUID" into "this client's session
+            // is now dead," including every other unrelated statement already pending on it.
+            // Every real Postgres server error is recoverable at the statement level; this must
+            // be too. IOExceptions from genuine socket I/O failure (a truly dead connection)
+            // still ultimately terminate the session the same way they always did -- they just
+            // do it via the normal write-side IOException the next real I/O call raises, not via
+            // this decode-time exception being conflated with one.
+            // Not recordFailure: this is a protocol-level bind-decode failure before the
+            // statement ever reached the backend, not a real backend SQL failure -- there's
+            // nothing meaningful to attribute to the backend/failed-statement log here.
+            routingExecutor.markTransactionFailed();
+            PgMessages.writeErrorResponse(out, "08P01", e.getMessage() == null ? "protocol error" : e.getMessage());
             out.flush();
             skipUntilSync = true;
         }

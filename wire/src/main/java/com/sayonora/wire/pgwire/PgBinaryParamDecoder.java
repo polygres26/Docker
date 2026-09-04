@@ -41,6 +41,9 @@ final class PgBinaryParamDecoder {
     private static final int OID_DATE = 1082;
     private static final int OID_TIMESTAMP = 1114;
     private static final int OID_TIMESTAMPTZ = 1184;
+    private static final int OID_JSON = 114;
+    private static final int OID_UUID = 2950;
+    private static final int OID_JSONB = 3802;
 
     // Postgres's own binary date/timestamp epoch -- 2000-01-01, NOT the Unix epoch -- see
     // https://www.postgresql.org/docs/current/protocol-message-formats.html's own notes on the
@@ -57,7 +60,8 @@ final class PgBinaryParamDecoder {
     static boolean supports(int oid) {
         return switch (oid) {
             case OID_BOOL, OID_BYTEA, OID_INT8, OID_INT2, OID_INT4, OID_TEXT, OID_FLOAT4, OID_FLOAT8,
-                    OID_BPCHAR, OID_VARCHAR, OID_DATE, OID_TIMESTAMP, OID_TIMESTAMPTZ -> true;
+                    OID_BPCHAR, OID_VARCHAR, OID_DATE, OID_TIMESTAMP, OID_TIMESTAMPTZ,
+                    OID_UUID, OID_JSON, OID_JSONB -> true;
             default -> false;
         };
     }
@@ -123,6 +127,30 @@ final class PgBinaryParamDecoder {
                 }
             }
             case OID_TIMESTAMP, OID_TIMESTAMPTZ -> parseTimestampOrElseText(text, text);
+            // A plain String bound with no type hint negotiates as Postgres's "unknown"
+            // pseudo-type, which fails to implicitly cast to uuid/json/jsonb for a column
+            // comparison or insert (the same "column x is of type Y but expression is of type
+            // character varying" class of error boolean/timestamp already had -- see this
+            // method's own javadoc). java.util.UUID binds as a real uuid parameter automatically
+            // (pgjdbc's own behavior); PGobject with its type set is the equivalent for json/
+            // jsonb, since plain JDBC has no built-in Java type for either.
+            case OID_UUID -> {
+                try {
+                    yield java.util.UUID.fromString(text);
+                } catch (IllegalArgumentException e) {
+                    yield text;
+                }
+            }
+            case OID_JSON, OID_JSONB -> {
+                try {
+                    org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
+                    pgObject.setType(oid == OID_JSONB ? "jsonb" : "json");
+                    pgObject.setValue(text);
+                    yield pgObject;
+                } catch (java.sql.SQLException e) {
+                    yield text;
+                }
+            }
             // oid=0: the common real case for date/time binds (see this method's own javadoc) --
             // everything else left as plain text, same as before.
             default -> {
@@ -189,10 +217,44 @@ final class PgBinaryParamDecoder {
                 long microsSincePgEpoch = readInt(bytes, 8);
                 yield new Timestamp(PG_EPOCH_MILLIS + Math.floorDiv(microsSincePgEpoch, 1000L));
             }
+            // 16 raw bytes, standard RFC 4122 layout -- the same shape java.util.UUID's own
+            // most/least-significant-bits pair uses, so no byte reordering is needed.
+            case OID_UUID -> {
+                requireLength(oid, bytes, 16, paramIndex);
+                long mostSigBits = readInt(bytes, 8);
+                long leastSigBits = 0;
+                for (int i = 8; i < 16; i++) {
+                    leastSigBits = (leastSigBits << 8) | (bytes[i] & 0xFFL);
+                }
+                yield new java.util.UUID(mostSigBits, leastSigBits);
+            }
+            // Plain UTF-8 text, no extra framing.
+            case OID_JSON -> wrapAsPgJson(bytes, "json", paramIndex);
+            // One leading version byte (always 1 in every Postgres version that defines a binary
+            // jsonb format), then the same plain UTF-8 text json uses.
+            case OID_JSONB -> {
+                if (bytes.length < 1) {
+                    throw new IOException("binary-format bind parameter " + (paramIndex + 1)
+                            + " (type OID " + oid + ") is empty, expected a leading version byte");
+                }
+                yield wrapAsPgJson(java.util.Arrays.copyOfRange(bytes, 1, bytes.length), "jsonb", paramIndex);
+            }
             default -> throw new IOException("binary-format bind parameter " + (paramIndex + 1)
-                    + " uses type OID " + oid + ", which has no binary decoder yet (numeric, arrays, "
-                    + "json/jsonb, and uuid aren't implemented) -- send it as a text-format parameter instead");
+                    + " uses type OID " + oid + ", which has no binary decoder yet (numeric and "
+                    + "arrays aren't implemented) -- send it as a text-format parameter instead");
         };
+    }
+
+    private static Object wrapAsPgJson(byte[] utf8Bytes, String pgType, int paramIndex) throws IOException {
+        try {
+            org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
+            pgObject.setType(pgType);
+            pgObject.setValue(new String(utf8Bytes, StandardCharsets.UTF_8));
+            return pgObject;
+        } catch (java.sql.SQLException e) {
+            throw new IOException("binary-format bind parameter " + (paramIndex + 1)
+                    + " (type " + pgType + ") could not be wrapped: " + e.getMessage(), e);
+        }
     }
 
     private static long readInt(byte[] bytes, int len) {
