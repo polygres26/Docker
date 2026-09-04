@@ -332,6 +332,7 @@ td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
             <div class="railSectionLabel">Traffic</div>
             <div class="railGroup">
               <button class="railItem" data-wire-page="backends"><span class="ico">${iServer}</span>Backends</button>
+              <button class="railItem" data-wire-page="backend-sets"><span class="ico">${iBoxes}</span>Backend sets</button>
               <button class="railItem" data-wire-page="queues"><span class="ico">${iList}</span>Queues</button>
               <button class="railItem" data-wire-page="data"><span class="ico">${iTable}</span>Data explorer</button>
               <button class="railItem" data-wire-page="router"><span class="ico">${iRoute}</span>Router rules</button>
@@ -395,6 +396,7 @@ const iZap = svg('<polygon points="13 2 3 14 11 14 9 22 21 10 13 10 13 2"/>');
 const iSearch = svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
 const iTrash = svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>');
 const iDb = svg('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>');
+const iBoxes = svg('<rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/><path d="M12 8h4a1 1 0 0 1 1 1v3"/><path d="M12 16H8a1 1 0 0 1-1-1v-3"/>');
 const iFile = svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/>');
 const chevronRight = svg('<polyline points="9 18 15 12 9 6"/>');
 
@@ -403,7 +405,7 @@ const chevronRight = svg('<polyline points="9 18 15 12 9 6"/>');
 // once, after every icon constant above is defined).
 const ICONS = {
   iLayout, iActivity, iWaypoints, iShield, iNetwork, iKey, iServer, iList, iTable,
-  iRoute, iSliders, iMerge, iCpu, iLogout, iCompass, iDb, chevronRight,
+  iRoute, iSliders, iMerge, iCpu, iLogout, iCompass, iDb, iBoxes, chevronRight,
 };
 document.body.innerHTML = document.body.innerHTML.replace(/\$\{(\w+)\}/g, (_, name) => ICONS[name] || '');
 
@@ -414,6 +416,22 @@ const wireBackends = [
   { name: 'reporting', url: 'jdbc:postgresql://reporting-host:5432/app', fav: true },
   { name: 'analytics', url: 'jdbc:postgresql://analytics-host:5432/app', fav: false },
   { name: 'shard0', url: 'jdbc:postgresql://shard0-host:5432/app', fav: false },
+  // A plain Postgres target, same as the three above -- it just happens to be the one
+  // mongowire's translated support/session-activity traffic lands on. Named for the story it
+  // tells in "Backend sets" below, not a different kind of backend under the hood.
+  { name: 'mongo-support', url: 'jdbc:postgresql://mongo-support-host:5432/app', fav: false },
+];
+
+// A named, reusable set of backends -- possibly spanning multiple engines -- that a Router rule
+// can reference by name instead of retyping every backend (see BackendRegistry#backendSets /
+// RouterStage#expandBackendSets in the real product). "customer-360" groups the three backends
+// that together hold one customer's full picture: their live profile (reporting, Postgres), their
+// order history migrated from a legacy ERP (oracle-prod, real Oracle via native-backend mode),
+// and their support/session activity (mongo-support, Postgres, reached via mongowire) -- three
+// systems nobody wants to merge, grouped under one name so a single hash-sharding rule can span
+// all three without listing them out every time.
+const backendSets = [
+  { name: 'customer-360', members: ['reporting', 'oracle-prod', 'mongo-support'] },
 ];
 // Native-backend mode targets -- a separate list from wireBackends above, since these aren't
 // Postgres and the router can't shard across them: each one is Warp connecting straight through
@@ -474,7 +492,10 @@ const wireMetrics = {
     { sql: 'UPDATE inventory SET qty = qty - $1 WHERE sku = $2', calls: 160227, avgMs: 8.9, avgRttMs: 8.1, totalMs: 1426021 },
     { sql: "SELECT count(*) FROM events WHERE occurred_at > now() - interval '1 hour'", calls: 94018, avgMs: 12.3, avgRttMs: 11.6, totalMs: 1156421 },
     { sql: 'INSERT INTO audit_log (actor, action, payload) VALUES ($1, $2, $3)', calls: 71553, avgMs: 4.7, avgRttMs: 4.2, totalMs: 336299 },
-    { sql: 'SELECT * FROM shard0.orders o WHERE o.region = $1', calls: 68210, avgMs: 3.9, avgRttMs: 3.4, totalMs: 266019 },
+    // Routed by RouterStage's table-shard rule for "customer_activity" (see Router rules ->
+    // Table shards), which names the "customer-360" backend set -- this one query fans out
+    // across reporting/oracle-prod/mongo-support without the client knowing any of that.
+    { sql: 'SELECT * FROM customer_activity WHERE customer_id = $1', calls: 68210, avgMs: 3.9, avgRttMs: 3.4, totalMs: 266019 },
     { sql: 'db.orders.find({customerId: ?})', calls: 55044, avgMs: 2.8, avgRttMs: 2.5, totalMs: 154123 },
     { sql: 'GetItem(TableName=orders, Key={id})', calls: 49882, avgMs: 1.6, avgRttMs: 1.3, totalMs: 79811 },
     { sql: 'MATCH (c:Customer)-[:PLACED]->(o:Order) WHERE c.id = $id RETURN o', calls: 31207, avgMs: 9.4, avgRttMs: 8.8, totalMs: 293345 },
@@ -537,6 +558,12 @@ const routerRules = {
   valueShard: [
     { table: 'orders', column: 'customer_id', strategy: 'hash mod 3', targets: 'shard0, shard1, shard2' },
   ],
+  tableShard: [
+    // "customer-360" here is a backend-set NAME (see backendSets above), not a raw list of
+    // backends -- RouterStage#expandBackendSets resolves it to its members at rule-parse time,
+    // so this one rule reaches all three engines without spelling them out.
+    { table: 'customer_activity', column: 'customer_id', strategy: 'hash', targets: 'customer-360' },
+  ],
 };
 
 const qosConfig = {
@@ -569,6 +596,31 @@ const advisorSizing = {
 const advisorLlmConfig = { provider: 'local', model: 'llama3.1:8b (on-box)', baseUrl: null, apiKeySet: false };
 
 const federationPlans = [
+  {
+    // Federates across the "customer-360" backend set's three members directly -- a real
+    // Postgres backend (reporting), a real Oracle backend reached via native-backend mode
+    // (oracle-prod), and another Postgres backend that happens to hold mongowire-translated
+    // documents (mongo-support). Ties the story together with Router rules' "customer_activity"
+    // table-shard rule and the matching row in Top SQL by cost.
+    planId: 5, capturedAt: '12s ago', backends: 'reporting, oracle-prod, mongo-support', elapsedMillis: 34, rowCount: 3, success: true,
+    sqlText: 'SELECT c.name, o.total, s.last_contact FROM reporting.customers c ' +
+      'JOIN oracle_prod.orders o ON o.customer_id = c.id ' +
+      'JOIN mongo_support.sessions s ON s.customer_id = c.id WHERE c.id = $1',
+    planText:
+'EnumerableHashJoin(condition=[=($0, $3)], joinType=[inner])\n' +
+'  EnumerableHashJoin(condition=[=($0, $1)], joinType=[inner])\n' +
+'    JdbcToEnumerableConverter\n' +
+'      JdbcTableScan(table=[[__warp_reporting, customers]])\n' +
+'    JdbcToEnumerableConverter\n' +
+'      JdbcTableScan(table=[[__warp_oracle_prod, orders]])\n' +
+'  JdbcToEnumerableConverter\n' +
+'    JdbcTableScan(table=[[__warp_mongo_support, sessions]])',
+    leafScans: [
+      { backend: 'reporting', elapsedMillis: 8, rowCount: 1, errorMessage: null },
+      { backend: 'oracle-prod', elapsedMillis: 19, rowCount: 1, errorMessage: null },
+      { backend: 'mongo-support', elapsedMillis: 11, rowCount: 1, errorMessage: null },
+    ],
+  },
   {
     planId: 4, capturedAt: '37s ago', backends: 'shard1, shard2', elapsedMillis: 21, rowCount: 2, success: true,
     sqlText: 'SELECT c.name, COUNT(o.id) AS n FROM shard0.customers c JOIN shard1.orders o ON o.customer_id = c.id GROUP BY c.name',
@@ -669,13 +721,14 @@ function wireDashboardPage() {
   const staleNodes = wireNodes.length - upNodes;
 
   return '<h1 class="pageTitle">Dashboard</h1>' +
-    '<p class="pageLede">Live snapshot of this Warp process &mdash; throughput, configured backends, and node topology.</p>' +
+    '<p class="pageLede">Live snapshot of this Warp process &mdash; throughput, configured backends and backend sets, and node topology.</p>' +
     '<div class="statGrid">' +
       statCard(iArrowDown, 'Reads / sec', '842.3', '3,204,118 total reads') +
       statCard(iArrowUp, 'Writes / sec', '96.1', '412,003 total writes') +
       statCard(iGauge, 'Avg round-trip', '4.2ms', '1.8M samples') +
       statCard(iActivity, 'Statements handled', '3,616,121', '0 other') +
-      statCard(iServer, 'Backends', '3', 'reporting, analytics, shard0') +
+      statCard(iServer, 'Backends', String(wireBackends.length), wireBackends.map((b) => b.name).join(', ')) +
+      statCard(iBoxes, 'Backend sets', String(backendSets.length), backendSets.map((s) => s.name).join(', ')) +
       statCard(iWaypoints, 'Nodes up', String(upNodes) + ' / ' + wireNodes.length, staleNodes > 0 ? staleNodes + ' stale' : 'all healthy', staleNodes > 0 ? 'warn' : 'ok') +
     '</div>' +
 
@@ -684,6 +737,7 @@ function wireDashboardPage() {
       '<tr><td class="mono">reporting</td><td>1,204,880</td><td>1,180,220</td><td>24,660</td><td>3.9</td></tr>' +
       '<tr><td class="mono">analytics</td><td>982,004</td><td>970,441</td><td>11,563</td><td>4.6</td></tr>' +
       '<tr><td class="mono">shard0</td><td>1,429,237</td><td>1,390,190</td><td>39,047</td><td>4.1</td></tr>' +
+      '<tr><td class="mono">mongo-support</td><td>318,204</td><td>288,140</td><td>30,064</td><td>3.6</td></tr>' +
     '</tbody></table></div>' +
 
     sectionHead('Round-trip by outcome', 'metrics', 'Metrics') +
@@ -728,6 +782,54 @@ function nativeBackendsPage() {
     '<p class="pageLede">Each one connects Warp straight through to your existing Oracle, MySQL, or SQL Server engine instead of Postgres &mdash; your database stays untranslated. For MySQL and SQL Server, the SQL firewall, QoS admission control, and Mach caching still apply, running against the real backend instead of a translated Postgres one; sharding stays single-backend per native session. Oracle\'s own native mode doesn\'t have that coverage yet. <a href="/warp/#native-backend-mode" target="_blank" rel="noopener">Full tradeoffs &rarr;</a></p>' +
     '<div class="sectionTitle">Configured native backends</div>' +
     '<div class="rowList">' + rows + '</div>';
+}
+
+// Looks a backend name up across BOTH lists a real BackendRegistry would merge (WARP_BACKENDS
+// entries, wireBackends here, plus native-backend-mode reserved targets, nativeBackends here) --
+// a backend set's members can come from either, exactly like real validation checks against the
+// union of both (see BackendRegistry#parseBackendSets in the real product).
+function engineOf(name) {
+  if (wireBackends.some((b) => b.name === name)) return 'Postgres';
+  const native = nativeBackends.find((b) => b.name === name);
+  return native ? native.engine : 'unknown';
+}
+
+function backendSetsPage() {
+  const rows = backendSets.map((s) =>
+    '<div class="rowItem" style="align-items:flex-start">' +
+      '<span class="ico" style="color:var(--muted);margin-top:2px">' + iBoxes + '</span>' +
+      '<div class="rowMain">' +
+        '<span class="rowName mono">' + s.name + '</span>' +
+        '<span class="rowSub" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">' +
+          s.members.map((m) => '<span class="badge mono" style="color:var(--text);background:var(--bg);border:1px solid var(--border)">' + m + ' &middot; ' + engineOf(m) + '</span>').join('') +
+        '</span>' +
+      '</div>' +
+    '</div>').join('');
+  const backendOptions = wireBackends.map((b) => b.name + ' (Postgres)')
+    .concat(nativeBackends.map((b) => b.name + ' (' + b.engine + ')')).join(', ');
+
+  return '<h1 class="pageTitle">Backend sets</h1>' +
+    '<p class="pageLede">Name a reusable set of backends &mdash; any mix of engines &mdash; then reference the set\'s name instead of every backend individually in a <a href="#" onclick="selectWire(\'router\');return false">Router rule</a>\'s hash/consistent-hash sharding.</p>' +
+    '<p style="font-size:12.5px;color:var(--muted);margin-bottom:16px">Configured backends: ' + backendOptions + '</p>' +
+    '<div class="sectionTitle">Configured sets</div>' +
+    '<div class="rowList" style="margin-bottom:24px">' + rows + '</div>' +
+
+    '<div class="panel" style="margin-bottom:24px">' +
+      '<div style="font-size:13.5px;font-weight:600;margin-bottom:6px">Customer 360</div>' +
+      '<p style="font-size:12.5px;color:var(--muted);margin:0">' +
+        'Three systems nobody wants to merge: <b>reporting</b> holds the live customer profile ' +
+        '(Postgres), <b>oracle-prod</b> holds order history still sitting in a legacy ERP ' +
+        '(real Oracle, native-backend mode), and <b>mongo-support</b> holds support tickets and ' +
+        'session activity (Postgres, reached over mongowire). Grouping them as <code>customer-360</code> ' +
+        'lets one <code>customer_activity:hash:customer_id:customer-360</code> rule shard across all ' +
+        'three &mdash; see <a href="#" onclick="selectWire(\'router\');return false">Router rules</a> ' +
+        'and <a href="#" onclick="selectWire(\'federation\');return false">Federation Plans</a> for it in action.' +
+      '</p>' +
+    '</div>' +
+
+    sectionHead('Round-trip by outcome', 'metrics', 'Metrics') +
+    '<p class="pageLede" style="margin-top:-4px">Every backend in a set is still measured the same way as any other &mdash; a set changes what a rule can reference, not how traffic through it is observed.</p>' +
+    rttOutcomeTable(wireMetrics.rttByOutcome);
 }
 
 function wireStub(title, lede, note) {
@@ -872,6 +974,7 @@ function wireMetricsPage() {
       '<tr><td class="mono">reporting</td><td class="numCell">1,204,880</td><td class="numCell">1,180,220</td><td class="numCell">24,660</td><td class="numCell">3.9ms</td></tr>' +
       '<tr><td class="mono">analytics</td><td class="numCell">982,004</td><td class="numCell">970,441</td><td class="numCell">11,563</td><td class="numCell">4.6ms</td></tr>' +
       '<tr><td class="mono">shard0</td><td class="numCell">1,429,237</td><td class="numCell">1,390,190</td><td class="numCell">39,047</td><td class="numCell">4.1ms</td></tr>' +
+      '<tr><td class="mono">mongo-support</td><td class="numCell">318,204</td><td class="numCell">288,140</td><td class="numCell">30,064</td><td class="numCell">3.6ms</td></tr>' +
     '</tbody></table></div></div>' +
 
     '<div class="sectionTitle">Top 10 SQL by cost</div>' +
@@ -971,11 +1074,21 @@ function dataExplorerPage() {
 function routerRulesPage() {
   const t = (rows, cols, get) => '<div class="panel" style="padding:0;margin-bottom:16px"><table><thead><tr>' + cols.map((c) => '<th>' + c + '</th>').join('') + '</tr></thead><tbody>' +
     rows.map((r) => '<tr>' + get(r).map((v) => '<td class="mono">' + v + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  const tableShardRows = routerRules.tableShard.map((r) => {
+    const set = backendSets.find((s) => s.name === r.targets);
+    const targetsCell = set
+      ? r.targets + ' <span style="color:var(--muted);font-style:italic">&rarr; ' + set.members.join(', ') + '</span>'
+      : r.targets;
+    return '<tr><td class="mono">' + r.table + '</td><td class="mono">' + r.column + '</td><td class="mono">' + r.strategy + '</td><td class="mono">' + targetsCell + '</td></tr>';
+  }).join('');
   return '<h1 class="pageTitle">Router rules</h1>' +
     '<p class="pageLede">Schema, predicate, and real-bound-value sharding rules &mdash; decoded from each protocol\'s own wire format, not just SQL text.</p>' +
     '<div class="sectionTitle">Schema rules</div>' + t(routerRules.schema, ['Schema pattern', 'Target'], (r) => [r.pattern, r.target]) +
     '<div class="sectionTitle">Predicate rules</div>' + t(routerRules.predicate, ['Table', 'Predicate', 'Target'], (r) => [r.table, r.predicate, r.target]) +
-    '<div class="sectionTitle">Value-shard rules</div>' + t(routerRules.valueShard, ['Table', 'Column', 'Strategy', 'Targets'], (r) => [r.table, r.column, r.strategy, r.targets]);
+    '<div class="sectionTitle">Value-shard rules</div>' + t(routerRules.valueShard, ['Table', 'Column', 'Strategy', 'Targets'], (r) => [r.table, r.column, r.strategy, r.targets]) +
+    sectionHead('Table shards', 'backend-sets', 'Backend sets') +
+    '<p style="font-size:12px;color:var(--muted);margin:-4px 0 10px">A targets field can name a backend set instead of listing every backend &mdash; expanded here to show what it actually resolves to.</p>' +
+    '<div class="panel" style="padding:0;margin-bottom:16px"><table><thead><tr><th>Table</th><th>Column</th><th>Strategy</th><th>Targets</th></tr></thead><tbody>' + tableShardRows + '</tbody></table></div>';
 }
 
 function qosPage() {
@@ -1010,6 +1123,7 @@ const wirePages = {
   acl: aclPage,
   oauth: () => '<h1 class="pageTitle">OAuth</h1><p class="pageLede">Issuer, audience, and claim mapping for OAuth-authenticated connections.</p>' + oauthSummaryPanel(oauthConfig),
   backends: wireBackendsPage,
+  'backend-sets': backendSetsPage,
   'native-backends': nativeBackendsPage,
   queues: queuesPage,
   data: dataExplorerPage,
