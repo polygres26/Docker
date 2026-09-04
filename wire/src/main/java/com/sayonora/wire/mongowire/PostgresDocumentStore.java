@@ -222,6 +222,146 @@ final class PostgresDocumentStore {
     }
 
 
+    /** Real {@code listCollections} support -- a genuine, high-impact gap found auditing this
+     * frontend for GA transparency: mongoose's default {@code autoIndex} startup behavior (and
+     * plenty of admin tooling) calls this before ever running a query, so its absence broke
+     * CONNECTION setup for a typical app, not just a later query. Queries the real Postgres
+     * {@code information_schema} directly rather than the in-process, this-instance-only {@code
+     * knownPhysicalTables} cache -- a durable, schema-derived answer that also sees collections
+     * created by an earlier process or before this one started. */
+    List<String> listCollections(String db) throws SQLException {
+        List<Connection> targets = allBackendConnections();
+        if (targets.isEmpty()) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        try (Connection conn = targets.get(0)) {
+            for (int i = 1; i < targets.size(); i++) {
+                targets.get(i).close();
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name")) {
+                ps.setString(1, db);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        names.add(rs.getString(1));
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    /** Real {@code count}/{@code countDocuments} support -- an ordinary filtered row count, same
+     * {@code WHERE} translation {@link #find} already uses, just {@code count(*)} instead of
+     * fetching rows. Scatter-gathers and sums across shards, same honestly-scoped limitation
+     * every other multi-shard operation here already has. */
+    long count(String db, String collection, MongoQueryTranslator.Where where) throws SQLException {
+        ensureTable(db, collection);
+        long total = 0;
+        String sql = "SELECT count(*) FROM " + qualifiedTable(db, collection) + where.sql();
+        for (Connection conn : allBackendConnections()) {
+            try (conn; PreparedStatement ps = conn.prepareStatement(sql)) {
+                bindParams(ps, where.jsonbParams());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        total += rs.getLong(1);
+                    }
+                }
+            }
+        }
+        return total;
+    }
+
+    /** Real {@code distinct} support -- the values of one top-level field across every matching
+     * document, deduplicated. {@code field} is validated the same way {@link
+     * MongoAggregationTranslator}'s own field references are (top-level only, no dotted path). */
+    List<org.bson.BsonValue> distinct(String db, String collection, String field, MongoQueryTranslator.Where where)
+            throws SQLException {
+        ensureTable(db, collection);
+        if (field.contains(".") || field.isEmpty()) {
+            throw new IllegalArgumentException("distinct: only a top-level field name is supported, not \"" + field + "\"");
+        }
+        java.util.LinkedHashSet<String> distinctJson = new java.util.LinkedHashSet<>();
+        String sql = "SELECT DISTINCT doc->" + quoteLiteral(field) + " FROM " + qualifiedTable(db, collection)
+                + where.sql();
+        for (Connection conn : allBackendConnections()) {
+            try (conn; PreparedStatement ps = conn.prepareStatement(sql)) {
+                bindParams(ps, where.jsonbParams());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String json = rs.getString(1);
+                        if (json != null) {
+                            distinctJson.add(json);
+                        }
+                    }
+                }
+            }
+        }
+        List<org.bson.BsonValue> values = new ArrayList<>();
+        for (String json : distinctJson) {
+            values.add(BsonJson.fromJson("{\"v\":" + json + "}").toBsonDocument().get("v"));
+        }
+        return values;
+    }
+
+    private static String quoteLiteral(String value) {
+        return "'" + value.replace("'", "''") + "'";
+    }
+
+    /** Real {@code findAndModify} support -- the single wire command real drivers/ODMs use for
+     * BOTH {@code findOneAndUpdate} and {@code findOneAndDelete} (distinguished by whether the
+     * caller sent an {@code update} or a {@code remove: true}). Only an exact-{@code _id} filter
+     * routes to one shard the way {@link #find}/{@link #updateMany} do; anything else finds the
+     * first match by scanning shards in order (no cross-shard "first by original insertion order"
+     * guarantee beyond that -- same honestly-scoped limitation the rest of this class already
+     * has). Returns the matched document as it was BEFORE the update (real MongoDB's own default,
+     * {@code new: false}) unless {@code returnNew} is set.
+     */
+    Document findAndModify(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where,
+            Document updateMerger, boolean remove, boolean returnNew) throws SQLException {
+        ensureTable(db, collection);
+        String idJson = MongoQueryTranslator.exactIdEquality(filter);
+        List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
+        String selectSql = "SELECT id, doc FROM " + qualifiedTable(db, collection) + where.sql() + " LIMIT 1";
+        for (Connection conn : targets) {
+            try (conn) {
+                String matchedId = null;
+                Document before = null;
+                try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
+                    bindParams(ps, where.jsonbParams());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            matchedId = rs.getString(1);
+                            before = BsonJson.fromJson(rs.getString(2));
+                        }
+                    }
+                }
+                if (matchedId == null) {
+                    continue;
+                }
+                if (remove) {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM " + qualifiedTable(db, collection) + " WHERE id = ?")) {
+                        ps.setString(1, matchedId);
+                        ps.executeUpdate();
+                    }
+                    return before;
+                }
+                Document after = new Document(before);
+                UpdateApplier.apply(after, updateMerger);
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE " + qualifiedTable(db, collection) + " SET doc = ? WHERE id = ?")) {
+                    ps.setObject(1, jsonb(BsonJson.toJson(after)));
+                    ps.setString(2, matchedId);
+                    ps.executeUpdate();
+                }
+                return returnNew ? after : before;
+            }
+        }
+        return null;
+    }
+
     /** Runs a real {@code aggregate} pipeline's already-translated SQL (see {@link
      * MongoAggregationTranslator}) and reads back one document per result row -- same shape as
      * {@link #find}. Note this does NOT re-aggregate across shards the way a true distributed

@@ -49,6 +49,10 @@ final class MongoCommandDispatcher {
                 case "aggregate" -> aggregate(command, db);
                 case "update" -> update(command, db);
                 case "delete" -> delete(command, db);
+                case "listcollections" -> listCollections(command, db);
+                case "count" -> count(command, db);
+                case "distinct" -> distinct(command, db);
+                case "findandmodify" -> findAndModify(command, db);
                 default -> commandNotFound(commandName);
             };
         } catch (IllegalArgumentException badFilter) {
@@ -348,6 +352,75 @@ final class MongoCommandDispatcher {
         recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
         BsonDocument reply = ok();
         reply.put("n", new BsonInt32(deleted));
+        return reply;
+    }
+
+    /** Real {@code listCollections} support -- see {@link PostgresDocumentStore#listCollections}'s
+     * own javadoc for why this closes a connection-SETUP gap, not just a query gap (mongoose's
+     * default {@code autoIndex} behavior calls this before ever running a real query). Reply
+     * shape mirrors a real server's own {@code {cursor: {firstBatch: [{name, type}]}}}. */
+    private BsonDocument listCollections(BsonDocument command, String db) throws SQLException {
+        List<String> names = store.listCollections(db);
+        BsonArray firstBatch = new BsonArray();
+        for (String name : names) {
+            BsonDocument entry = new BsonDocument();
+            entry.put("name", new BsonString(name));
+            entry.put("type", new BsonString("collection"));
+            firstBatch.add(entry);
+        }
+        BsonDocument cursor = new BsonDocument();
+        cursor.put("id", new BsonInt64(0));
+        cursor.put("ns", new BsonString(db + ".$cmd.listCollections"));
+        cursor.put("firstBatch", firstBatch);
+        BsonDocument reply = ok();
+        reply.put("cursor", cursor);
+        return reply;
+    }
+
+    /** Real {@code count}/{@code countDocuments} support. */
+    private BsonDocument count(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("count").getValue();
+        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
+        long n = store.count(db, collection, MongoQueryTranslator.translate(filter));
+        BsonDocument reply = ok();
+        reply.put("n", new BsonInt64(n));
+        return reply;
+    }
+
+    /** Real {@code distinct} support. */
+    private BsonDocument distinct(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("distinct").getValue();
+        String field = command.getString("key").getValue();
+        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
+        List<org.bson.BsonValue> values = store.distinct(db, collection, field, MongoQueryTranslator.translate(filter));
+        BsonDocument reply = ok();
+        reply.put("values", new BsonArray(values));
+        return reply;
+    }
+
+    /** Real {@code findAndModify} support -- the single wire command real drivers/ODMs use for
+     * BOTH {@code findOneAndUpdate} and {@code findOneAndDelete}. See {@link
+     * PostgresDocumentStore#findAndModify}'s own javadoc for the exact matching/return-value
+     * semantics. Reply shape mirrors a real server's own {@code {value: <doc-or-null>}}. */
+    private BsonDocument findAndModify(BsonDocument command, String db) throws SQLException {
+        // The command's own first key IS its collection-name value, whatever casing the client
+        // actually sent ("findAndModify" vs "findandmodify" -- driver-dependent) -- reading it
+        // positionally like this sidesteps needing to guess which spelling to look up.
+        String collection = command.get(command.getFirstKey()).asString().getValue();
+        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
+        boolean remove = command.containsKey("remove") && command.getBoolean("remove").getValue();
+        boolean returnNew = command.containsKey("new") && command.getBoolean("new").getValue();
+        Document updateMerger = null;
+        if (!remove) {
+            if (!command.containsKey("update")) {
+                throw new IllegalArgumentException("findAndModify: either \"remove\" or \"update\" must be given");
+            }
+            updateMerger = Document.parse(command.getDocument("update").toJson());
+        }
+        Document result = store.findAndModify(db, collection, filter, MongoQueryTranslator.translate(filter),
+                updateMerger, remove, returnNew);
+        BsonDocument reply = ok();
+        reply.put("value", result != null ? result.toBsonDocument() : org.bson.BsonNull.VALUE);
         return reply;
     }
 }
