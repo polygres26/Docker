@@ -27,7 +27,10 @@ import java.util.List;
  * <p>Bind-*parameter* decoding (the input side) has no such shortcut available -- the client
  * chooses the wire type, not this server -- so every type a real client commonly binds is decoded
  * per its real MySQL binary-protocol encoding. {@code COM_STMT_SEND_LONG_DATA} (streamed
- * BLOB/CLOB parameters) is refused rather than attempted; see {@code MySqlWireSessionHandler}.
+ * BLOB/CLOB parameters, sent as separate packets ahead of EXECUTE) is supported -- see
+ * {@code MySqlWireSessionHandler#handleSendLongData} for the buffering and
+ * {@link #decodeExecuteParams(byte[], int[], int, int[], java.util.Map)}'s {@code longData}
+ * parameter for how EXECUTE's decode loop skips those parameters' (absent) inline value bytes.
  */
 final class MySqlBinaryProtocol {
 
@@ -213,6 +216,17 @@ final class MySqlBinaryProtocol {
 
     static List<Object> decodeExecuteParams(byte[] payload, int[] pos, int numParams,
             int[] cachedTypes) throws IOException {
+        return decodeExecuteParams(payload, pos, numParams, cachedTypes, null);
+    }
+
+    /** @param longData parameter-index -> accumulated {@code COM_STMT_SEND_LONG_DATA} bytes, or
+     *      {@code null}/empty if none were streamed for this EXECUTE. A long-data parameter's
+     *      null-bitmap bit is 0 (it's not NULL) and its type is still declared like any other
+     *      parameter, but real MySQL clients send NO value bytes for it in EXECUTE's own value
+     *      section -- the value came earlier, out of band. Getting this skip wrong desyncs every
+     *      parameter after it, same risk class as an unsupported type. */
+    static List<Object> decodeExecuteParams(byte[] payload, int[] pos, int numParams,
+            int[] cachedTypes, java.util.Map<Integer, byte[]> longData) throws IOException {
         boolean[] isNull = readParamNullBitmap(payload, pos, numParams);
         int newParamsBound = payload[pos[0]++] & 0xFF;
         int[] types = cachedTypes;
@@ -221,7 +235,8 @@ final class MySqlBinaryProtocol {
             for (int i = 0; i < numParams; i++) {
                 types[i] = payload[pos[0]] & 0xFF;
                 pos[0] += 2; // type (1 byte) + unsigned flag (1 byte, ignored -- see class doc scope)
-                if (!isSupportedType(types[i]) && !isNull[i]) {
+                if (!isSupportedType(types[i]) && !isNull[i]
+                        && (longData == null || !longData.containsKey(i))) {
                     throw new IOException("unsupported COM_STMT_EXECUTE parameter type 0x"
                             + Integer.toHexString(types[i]) + " for parameter " + i);
                 }
@@ -233,7 +248,9 @@ final class MySqlBinaryProtocol {
         }
         List<Object> values = new ArrayList<>(numParams);
         for (int i = 0; i < numParams; i++) {
-            if (isNull[i]) {
+            if (longData != null && longData.containsKey(i)) {
+                values.add(longData.get(i)); // raw bytes -- no value was sent inline for this param
+            } else if (isNull[i]) {
                 values.add(null);
             } else {
                 values.add(readValue(payload, pos, types[i]));

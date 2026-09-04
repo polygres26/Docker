@@ -180,6 +180,67 @@ class MySqlJdbcIntegrationTest {
         }
     }
 
+    /** Real proof that {@code COM_STMT_SEND_LONG_DATA} (streamed BLOB parameters) works -- a real
+     * gap found and fixed: {@code setBinaryStream}/{@code setBlob} with an {@code InputStream}
+     * makes Connector/J stream the value via one or more {@code COM_STMT_SEND_LONG_DATA} packets
+     * ahead of {@code COM_STMT_EXECUTE} rather than inlining it in EXECUTE's own value section --
+     * a shape {@code MySqlWireSessionHandler} used to detect and refuse outright on the next
+     * EXECUTE. Large enough (64KB, well past Connector/J's internal buffer) to make it likely
+     * real chunking across multiple SEND_LONG_DATA packets occurs, not just one.
+     */
+    @Test
+    void streamedBlobParameterViaSendLongDataRoundTripsCorrectly() throws Exception {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement setup = conn.createStatement()) {
+                setup.execute("CREATE TABLE mysql_jdbc_blob_it (id INTEGER PRIMARY KEY, payload BYTEA)");
+                conn.commit();
+            }
+
+            byte[] payload = new byte[64 * 1024];
+            new java.util.Random(42).nextBytes(payload);
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO mysql_jdbc_blob_it (id, payload) VALUES (?, ?)")) {
+                ps.setInt(1, 1);
+                ps.setBinaryStream(2, new java.io.ByteArrayInputStream(payload), payload.length);
+                assertEquals(1, ps.executeUpdate());
+                conn.commit();
+            }
+
+            // Verify directly against the real Postgres backend rather than reading the value back
+            // through mywire's own result-row path: MySqlBinaryProtocol.encodeRow deliberately
+            // declares/encodes every column as VAR_STRING (see its class doc), so a raw byte[]
+            // result would come back as Java's String.valueOf(byte[]) rather than real bytes --
+            // a separate, already-disclosed trade-off unrelated to SEND_LONG_DATA's bind-side
+            // correctness, which is what this test is actually proving. encode(...,'hex') sidesteps
+            // that entirely by comparing as text on both sides.
+            try (Connection direct = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
+                    PreparedStatement check = direct.prepareStatement(
+                            "SELECT encode(payload, 'hex') FROM mysql_jdbc_blob_it WHERE id = 1")) {
+                try (ResultSet rs = check.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(hex(payload), rs.getString(1),
+                            "streamed BLOB bind value must round-trip byte-for-byte through "
+                                    + "COM_STMT_SEND_LONG_DATA");
+                }
+            }
+
+            try (Statement cleanup = conn.createStatement()) {
+                cleanup.execute("DROP TABLE mysql_jdbc_blob_it");
+                conn.commit();
+            }
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
     @Test
     void aNotNullViolationReturnsARealMySqlError1048() throws SQLException {
         try (Connection conn = connect()) {

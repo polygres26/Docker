@@ -73,7 +73,10 @@ public final class MySqlWireSessionHandler implements Runnable {
         final int paramCount;
         // -1 sentinel in [0] means "no cached types yet" -- see MySqlBinaryProtocol.decodeExecuteParams.
         final int[] cachedParamTypes;
-        boolean longDataRefused;
+        // COM_STMT_SEND_LONG_DATA-accumulated chunks, keyed by parameter index -- populated across
+        // possibly many SEND_LONG_DATA packets, consumed (and cleared) by the next EXECUTE. Lazily
+        // created since most statements never use it.
+        Map<Integer, ByteArrayOutputStream> longData;
 
         PreparedStmt(String sql, int paramCount) {
             this.sql = sql;
@@ -256,8 +259,8 @@ public final class MySqlWireSessionHandler implements Runnable {
                 case COM_STMT_RESET -> {
                     if (payload.length >= 5) {
                         PreparedStmt stmt = preparedStatements.get(readInt32LE(payload, 1));
-                        if (stmt != null) {
-                            stmt.longDataRefused = false;
+                        if (stmt != null && stmt.longData != null) {
+                            stmt.longData.clear();
                         }
                     }
                     packets.writePayload(out, MySqlMessages.okPacket(0));
@@ -269,22 +272,25 @@ public final class MySqlWireSessionHandler implements Runnable {
     }
 
     private void handleSendLongData(byte[] payload) {
-        // COM_STMT_SEND_LONG_DATA streams a BLOB/CLOB parameter across multiple packets, sent
+        // COM_STMT_SEND_LONG_DATA streams a BLOB/CLOB parameter across possibly many packets, sent
         // separately from -- and excluded entirely from -- the following EXECUTE's own parameter
-        // value section. Correctly supporting it means buffering per-parameter chunks and having
-        // EXECUTE's decode loop skip those parameter indices rather than read them from the wire,
-        // which is real additional protocol-state tracking this pass doesn't implement. No
-        // response is sent for this command either way (matches real MySQL); refusing here would
-        // require synthesizing an out-of-band error the client isn't expecting. Instead: mark the
-        // statement so the *next* EXECUTE fails cleanly instead of silently using a wrong/missing
-        // value for that parameter.
-        if (payload.length < 5) {
+        // value section (that param's null-bitmap bit stays 0 and its declared type is sent as
+        // usual, but no value bytes for it appear in EXECUTE's payload at all). No response is
+        // sent for this command either way, matching real MySQL. Layout: command(1) + stmt_id(4) +
+        // param_id(2) + data(rest, raw bytes, appended verbatim to whatever arrived before).
+        if (payload.length < 7) {
             return;
         }
         PreparedStmt stmt = preparedStatements.get(readInt32LE(payload, 1));
-        if (stmt != null) {
-            stmt.longDataRefused = true;
+        if (stmt == null) {
+            return;
         }
+        int paramId = (payload[5] & 0xFF) | ((payload[6] & 0xFF) << 8);
+        if (stmt.longData == null) {
+            stmt.longData = new HashMap<>();
+        }
+        stmt.longData.computeIfAbsent(paramId, k -> new ByteArrayOutputStream())
+                .write(payload, 7, payload.length - 7);
     }
 
     private static int readInt32LE(byte[] data, int offset) {
@@ -355,23 +361,30 @@ public final class MySqlWireSessionHandler implements Runnable {
                     "Unknown prepared statement handle: " + stmtId));
             return;
         }
-        if (stmt.longDataRefused) {
-            packets.writePayload(out, MySqlMessages.errPacket(1235, "42000",
-                    "COM_STMT_SEND_LONG_DATA parameters are not supported -- bind this value as a "
-                            + "regular (non-streamed) parameter instead"));
-            return;
-        }
-
         List<Object> bindParams;
         try {
             int[] pos = {10}; // command(1) + stmt_id(4) + flags(1) + iteration_count(4)
+            Map<Integer, byte[]> longData = null;
+            if (stmt.longData != null && !stmt.longData.isEmpty()) {
+                longData = new HashMap<>();
+                for (Map.Entry<Integer, ByteArrayOutputStream> e : stmt.longData.entrySet()) {
+                    longData.put(e.getKey(), e.getValue().toByteArray());
+                }
+            }
             bindParams = stmt.paramCount == 0
                     ? List.of()
-                    : MySqlBinaryProtocol.decodeExecuteParams(payload, pos, stmt.paramCount, stmt.cachedParamTypes);
+                    : MySqlBinaryProtocol.decodeExecuteParams(payload, pos, stmt.paramCount, stmt.cachedParamTypes, longData);
         } catch (IOException e) {
             packets.writePayload(out, MySqlMessages.errPacket(1210, "HY000",
                     "could not decode COM_STMT_EXECUTE parameters: " + e.getMessage()));
             return;
+        } finally {
+            // Real MySQL clears accumulated long-data buffers once the statement is executed
+            // (or reset/closed) -- a second EXECUTE without a fresh SEND_LONG_DATA must not
+            // silently reuse the previous value.
+            if (stmt.longData != null) {
+                stmt.longData.clear();
+            }
         }
 
         long rttStart = System.nanoTime();
