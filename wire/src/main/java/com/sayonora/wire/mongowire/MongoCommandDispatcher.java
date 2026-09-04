@@ -46,6 +46,7 @@ final class MongoCommandDispatcher {
                 case "endsessions" -> ok();
                 case "insert" -> insert(command, db);
                 case "find" -> find(command, db);
+                case "aggregate" -> aggregate(command, db);
                 case "update" -> update(command, db);
                 case "delete" -> delete(command, db);
                 default -> commandNotFound(commandName);
@@ -64,7 +65,7 @@ final class MongoCommandDispatcher {
             // latency entries.
             if (sqlMetrics != null) {
                 var kind = switch (lower) {
-                    case "find" -> com.sayonora.wire.core.SqlMetricsCollector.StatementKind.READ;
+                    case "find", "aggregate" -> com.sayonora.wire.core.SqlMetricsCollector.StatementKind.READ;
                     case "insert", "update", "delete" -> com.sayonora.wire.core.SqlMetricsCollector.StatementKind.WRITE;
                     default -> null;
                 };
@@ -174,8 +175,8 @@ final class MongoCommandDispatcher {
 
     private static BsonDocument commandNotFound(String commandName) {
         return error("no such command: '" + commandName + "' (mongowire covers hello/ping/buildInfo/"
-                + "getParameter/endSessions plus find/insert/update/delete — not the aggregation "
-                + "pipeline or index/admin commands)", 59);
+                + "getParameter/endSessions plus find/insert/update/delete/aggregate — not "
+                + "index/admin commands or auth)", 59);
     }
 
     /** Shared by every read/write branch below -- one sample per Mongo command, same granularity
@@ -256,6 +257,33 @@ final class MongoCommandDispatcher {
             docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
             recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
         }
+
+        BsonArray firstBatch = new BsonArray();
+        for (Document d : docs) {
+            firstBatch.add(d.toBsonDocument());
+        }
+        BsonDocument cursor = new BsonDocument();
+        cursor.put("id", new BsonInt64(0));
+        cursor.put("ns", new BsonString(db + "." + collection));
+        cursor.put("firstBatch", firstBatch);
+
+        BsonDocument reply = ok();
+        reply.put("cursor", cursor);
+        return reply;
+    }
+
+    /** Real {@code aggregate} support -- see {@link MongoAggregationTranslator}'s own javadoc for
+     * the exact pipeline shape this understands ({@code [$match] [$group] [$sort] [$limit]
+     * [$project]}, each optional). Reply shape mirrors {@link #find}'s cursor-with-firstBatch --
+     * a real driver's {@code aggregate()} cursor iterator reads this identically either way. */
+    private BsonDocument aggregate(BsonDocument command, String db) throws SQLException {
+        String collection = command.getString("aggregate").getValue();
+        BsonArray pipeline = command.containsKey("pipeline") ? command.getArray("pipeline") : new BsonArray();
+        String table = PostgresDocumentStore.qualifiedTable(db, collection);
+
+        long readStart = System.nanoTime();
+        List<Document> docs = store.aggregate(db, collection, MongoAggregationTranslator.translate(table, pipeline));
+        recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
 
         BsonArray firstBatch = new BsonArray();
         for (Document d : docs) {

@@ -164,7 +164,7 @@ final class PostgresDocumentStore {
         return "\"" + name + "\"";
     }
 
-    private static String qualifiedTable(String db, String collection) {
+    static String qualifiedTable(String db, String collection) {
         return quoteIdent(db) + "." + quoteIdent(collection);
     }
 
@@ -221,6 +221,32 @@ final class PostgresDocumentStore {
         return document;
     }
 
+
+    /** Runs a real {@code aggregate} pipeline's already-translated SQL (see {@link
+     * MongoAggregationTranslator}) and reads back one document per result row -- same shape as
+     * {@link #find}. Note this does NOT re-aggregate across shards the way a true distributed
+     * aggregation would: with more than one backend, this runs the SAME grouped query on each and
+     * concatenates the results, so a {@code $group}'s sums/counts are only correct when every
+     * matching document lives on the SAME shard (true for the common single-backend deployment,
+     * and for a sharded one whenever the group key IS the shard key) -- same honestly-scoped
+     * limitation {@link #find}'s own multi-shard concatenation already has for an unsorted,
+     * unlimited scatter-gather. */
+    List<Document> aggregate(String db, String collection, MongoAggregationTranslator.AggregateQuery query)
+            throws SQLException {
+        ensureTable(db, collection);
+        List<Document> results = new ArrayList<>();
+        for (Connection conn : allBackendConnections()) {
+            try (conn; PreparedStatement ps = conn.prepareStatement(query.sql())) {
+                bindParams(ps, query.jsonbParams());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        results.add(BsonJson.fromJson(rs.getString(1)));
+                    }
+                }
+            }
+        }
+        return results;
+    }
 
     List<Document> find(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where, int limit) throws SQLException {
         ensureTable(db, collection);

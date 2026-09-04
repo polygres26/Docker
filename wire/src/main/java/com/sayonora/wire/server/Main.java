@@ -806,7 +806,8 @@ public final class Main {
         int mongoPort = parseIntEnv("WARP_MONGOWIRE_PORT", 27017);
         try (ServerSocket serverSocket = new ServerSocket(mongoPort)) {
             log.info("warp listening for TCP (MongoDB wire) on port {} "
-                    + "(find/insert/update/delete only -- no aggregation pipeline, see MongoWireSessionHandler)",
+                    + "(find/insert/update/delete, plus a real [$match][$group][$sort][$limit][$project] "
+                    + "aggregate pipeline -- see MongoAggregationTranslator for its exact scope)",
                     mongoPort);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
