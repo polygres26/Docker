@@ -18,6 +18,15 @@ public final class StatsCollectorStage implements PipelineStage {
     }
 
     private final ConcurrentHashMap<String, Counters> byTenant = new ConcurrentHashMap<>();
+    // Real usage/cost gap, found auditing this against the product's own "Quality of Service"
+    // pillar (traffic prioritization by workload class -- App/Analytics/AI, the exact
+    // classification QosControlStage already rate-limits by): usage/cost was only ever visible
+    // broken down by tenant or by backend, never by WORKLOAD CLASS, so there was no way to answer
+    // "how much of our usage/cost is AI traffic vs. ordinary app traffic" -- the natural way a
+    // customer running a shared gateway for both actually wants to see cost. Uses the exact same
+    // Statement#workloadClass() RouterStage/QosControlStage already classify by, so it reflects
+    // real routing/QoS decisions rather than a separate guess. See #usageByWorkloadClass below.
+    private final ConcurrentHashMap<String, Counters> byWorkloadClass = new ConcurrentHashMap<>();
     private final WarpTelemetry telemetry;
     private final SqlMetricsCollector sqlMetrics;
 
@@ -42,12 +51,19 @@ public final class StatsCollectorStage implements PipelineStage {
     @Override
     public ExecutionResult handle(Statement statement, PipelineChain next) throws SQLException {
         Counters counters = byTenant.computeIfAbsent(statement.tenantId(), k -> new Counters());
+        // RouterStage runs before this stage and always resolves "default" into a real
+        // classification (see its own classifyWorkload) before a statement reaches here -- so by
+        // the time this stage sees it, statement.workloadClass() already reflects the SAME
+        // App/Analytics/AI-shaped class QosControlStage rate-limited it by, not a placeholder.
+        Counters workloadCounters = byWorkloadClass.computeIfAbsent(statement.workloadClass(), k -> new Counters());
         long start = System.nanoTime();
         try {
             ExecutionResult result = next.proceed(statement);
             long elapsedNanos = System.nanoTime() - start;
             counters.statementCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
+            workloadCounters.statementCount().increment();
+            workloadCounters.totalLatencyNanos().add(elapsedNanos);
             sqlMetrics.record(statement.sourceDialect(), statement.targetBackend(), statement.sqlText(), elapsedNanos);
             recordRttOutcome(statement, elapsedNanos);
             record(statement.tenantId(), false, elapsedNanos);
@@ -57,6 +73,9 @@ public final class StatsCollectorStage implements PipelineStage {
             counters.statementCount().increment();
             counters.errorCount().increment();
             counters.totalLatencyNanos().add(elapsedNanos);
+            workloadCounters.statementCount().increment();
+            workloadCounters.errorCount().increment();
+            workloadCounters.totalLatencyNanos().add(elapsedNanos);
             sqlMetrics.record(statement.sourceDialect(), statement.targetBackend(), statement.sqlText(), elapsedNanos);
             record(statement.tenantId(), true, elapsedNanos);
             log.debug("statement failed: tenant={} dialect={} error={}",
@@ -123,5 +142,14 @@ public final class StatsCollectorStage implements PipelineStage {
 
     public java.util.Map<String, Counters> snapshot() {
         return java.util.Map.copyOf(byTenant);
+    }
+
+    /** Real, per-workload-class usage/cost counters -- see {@link #byWorkloadClass}'s own javadoc
+     * for why this exists as its own breakdown, separate from {@link #snapshot()}'s per-tenant
+     * one. Keys are whatever {@code RouterStage#classifyWorkload} (or an explicit router rule)
+     * actually assigned -- "query"/"write"/etc. by default, or a custom class name if one's
+     * configured. */
+    public java.util.Map<String, Counters> usageByWorkloadClass() {
+        return java.util.Map.copyOf(byWorkloadClass);
     }
 }

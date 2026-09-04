@@ -380,6 +380,22 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if ("/api/usage".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(renderUsage(statsStage));
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if ("/api/anomalies".equals(target) && "GET".equals(request.getMethod())) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -2084,6 +2100,53 @@ public final class MetricsServer {
                     .append(",\"currentPerSec\":").append(String.format(java.util.Locale.ROOT, "%.3f", note.currentPerSec()))
                     .append(",\"ratio\":").append(String.format(java.util.Locale.ROOT, "%.2f", note.ratio()))
                     .append(",\"narrative\":").append(note.narrative() == null ? "null" : jsonString(note.narrative()))
+                    .append('}');
+        }
+        json.append("]}");
+        return json.toString();
+    }
+
+    /** Real usage/cost visibility broken down by workload class (App/Analytics/AI, or whatever a
+     * router rule assigns -- see {@code StatsCollectorStage#usageByWorkloadClass}'s own javadoc)
+     * -- the cross-cut {@code /api/metrics/summary}'s existing {@code byBackend} breakdown doesn't
+     * cover: that answers "how much load is hitting backend X," this answers "how much of our
+     * usage is App traffic vs. Analytics vs. AI," the question a shared gateway's own cost
+     * accounting actually needs. Counts and total latency are real numbers straight from the same
+     * counters QosControlStage's own rate limiting reads -- not a fabricated dollar figure; a
+     * deployment that wants an actual cost estimate multiplies these by its own per-class rate. */
+    private static String renderUsage(StatsCollectorStage statsStage) {
+        StringBuilder json = new StringBuilder("{\"byWorkloadClass\":[");
+        boolean first = true;
+        for (var entry : statsStage.usageByWorkloadClass().entrySet()) {
+            StatsCollectorStage.Counters c = entry.getValue();
+            long calls = c.statementCount().sum();
+            long errors = c.errorCount().sum();
+            long totalMs = c.totalLatencyNanos().sum() / 1_000_000L;
+            double avgMs = calls == 0 ? 0.0 : (double) totalMs / calls;
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"workloadClass\":").append(jsonString(entry.getKey()))
+                    .append(",\"calls\":").append(calls)
+                    .append(",\"errors\":").append(errors)
+                    .append(",\"totalMs\":").append(totalMs)
+                    .append(",\"avgMs\":").append(String.format(java.util.Locale.ROOT, "%.2f", avgMs))
+                    .append('}');
+        }
+        json.append("],\"byTenant\":[");
+        first = true;
+        for (var entry : statsStage.snapshot().entrySet()) {
+            StatsCollectorStage.Counters c = entry.getValue();
+            long calls = c.statementCount().sum();
+            long errors = c.errorCount().sum();
+            long totalMs = c.totalLatencyNanos().sum() / 1_000_000L;
+            double avgMs = calls == 0 ? 0.0 : (double) totalMs / calls;
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"tenant\":").append(jsonString(entry.getKey()))
+                    .append(",\"calls\":").append(calls)
+                    .append(",\"errors\":").append(errors)
+                    .append(",\"totalMs\":").append(totalMs)
+                    .append(",\"avgMs\":").append(String.format(java.util.Locale.ROOT, "%.2f", avgMs))
                     .append('}');
         }
         json.append("]}");
