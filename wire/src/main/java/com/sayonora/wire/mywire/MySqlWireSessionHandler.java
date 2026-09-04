@@ -542,6 +542,56 @@ public final class MySqlWireSessionHandler implements Runnable {
         return true;
     }
 
+    // "SET NAMES 'utf8mb4'" -- sent by essentially every real MySQL client/driver at connection
+    // time, previously a silent no-op like every other SET. Real gap, found auditing this
+    // frontend for GA transparency: an app inserting non-ASCII data (the entire point of
+    // requesting a specific charset) got whatever encoding the backend Postgres session happened
+    // to default to instead, with no error -- a genuine, silent correctness gap for non-Latin
+    // text. Scope, deliberately narrow: only the common MySQL charset names that have a real,
+    // unambiguous Postgres equivalent are translated; an unrecognized charset name is left as a
+    // no-op (same as before this fix) rather than guessed at.
+    private static final java.util.regex.Pattern SET_NAMES = java.util.regex.Pattern.compile(
+            "^\\s*set\\s+names\\s+'?([A-Za-z0-9_]+)'?", java.util.regex.Pattern.CASE_INSENSITIVE);
+    // UTF8-family only, deliberately -- found live: actually issuing "SET client_encoding =
+    // 'LATIN1'" against terminalExecutor's own backend connection breaks pgjdbc ITSELF ("The JDBC
+    // driver requires client_encoding to be UTF8 for correct operation"), since that's the SAME
+    // connection Warp's own backend driver depends on for every other statement in the session,
+    // not a separate client-facing-only setting. UTF8/utf8mb4/utf8mb3 (MySQL 8's own default) are
+    // the overwhelmingly common real request anyway and are a genuine no-op here (pgjdbc's
+    // connection is already UTF8), so this still correctly ACKs the client's request instead of
+    // silently ignoring it -- it just never issues a SQL statement pgjdbc itself couldn't survive.
+    // A non-UTF8 charset request is left as a no-op, same as before this fix, rather than
+    // corrupting the shared backend connection.
+    private static final java.util.Set<String> UTF8_FAMILY_CHARSETS = java.util.Set.of("utf8mb4", "utf8mb3", "utf8");
+
+    private static boolean handleSetNames(String sql) {
+        java.util.regex.Matcher m = SET_NAMES.matcher(sql);
+        return m.matches() && UTF8_FAMILY_CHARSETS.contains(m.group(1).toLowerCase(java.util.Locale.ROOT));
+    }
+
+    // "SET [SESSION|GLOBAL] TRANSACTION ISOLATION LEVEL ..." -- MySQL and Postgres share the
+    // exact same four standard isolation level names, so no value translation is needed, just the
+    // statement shape. Real gap: previously silently swallowed like every other SET, so an app
+    // relying on a non-default isolation level (e.g. READ COMMITTED, common for apps ported from
+    // Postgres/Oracle conventions) silently ran at whatever level the backend connection happened
+    // to already be in.
+    private static final java.util.regex.Pattern SET_ISOLATION_LEVEL = java.util.regex.Pattern.compile(
+            "^\\s*set\\s+(?:session\\s+|global\\s+)?transaction\\s+isolation\\s+level\\s+"
+                    + "(READ\\s+UNCOMMITTED|READ\\s+COMMITTED|REPEATABLE\\s+READ|SERIALIZABLE)\\s*$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private static boolean handleSetIsolationLevel(Connection connection, String sql) throws SQLException {
+        java.util.regex.Matcher m = SET_ISOLATION_LEVEL.matcher(sql);
+        if (!m.matches()) {
+            return false;
+        }
+        try (java.sql.Statement stmt = connection.createStatement()) {
+            stmt.execute("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL "
+                    + m.group(1).toUpperCase(java.util.Locale.ROOT).replaceAll("\\s+", " "));
+        }
+        return true;
+    }
+
     private void executeQuery(OutputStream out, MySqlPacket packets, String sql, List<Object> bindParams)
             throws IOException {
         executeQuery(out, packets, sql, bindParams, false);
@@ -567,7 +617,9 @@ public final class MySqlWireSessionHandler implements Runnable {
         }
         if (!options.mywireNativeBackend()) {
             try {
-                if (handleSetTimeZone(sessionConnection(), sql)) {
+                if (handleSetTimeZone(sessionConnection(), sql)
+                        || handleSetNames(sql)
+                        || handleSetIsolationLevel(sessionConnection(), sql)) {
                     packets.writePayload(out, MySqlMessages.okPacket(0));
                     return;
                 }
