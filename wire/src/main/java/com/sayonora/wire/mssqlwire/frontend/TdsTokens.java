@@ -18,6 +18,13 @@ public final class TdsTokens {
     private static final byte TOKEN_DONEPROC = (byte) 0xFE;
     // The response to sp_prepare's @handle OUTPUT parameter -- see writeReturnValueInt below.
     private static final byte TOKEN_RETURNVALUE = (byte) 0xAC;
+    // Wraps a raw NTLM Type-2 (Challenge) blob when replying to a Windows/SSPI LOGIN7 -- confirmed
+    // live (mssql-jdbc authenticationScheme=NTLM): sending the raw blob as a TABULAR_RESULT
+    // packet's payload with no token wrapper at all gets rejected client-side ("unexpected token
+    // unknown token (0x4E)" -- 'N', the first byte of "NTLMSSP\0" -- because the client parses the
+    // packet as a token stream and expects a real token type byte first, same as every other
+    // TABULAR_RESULT response this class builds).
+    private static final byte TOKEN_SSPI = (byte) 0xED;
 
     private static final int ENVCHANGE_DATABASE = 1;
 
@@ -96,6 +103,15 @@ public final class TdsTokens {
         out.write(TOKEN_ENVCHANGE);
         writeU16LE(out, body.size());
         out.writeBytes(body.toByteArray());
+    }
+
+    /** Wraps a raw NTLM Type-2 blob as a real TOKEN_SSPI -- see that constant's own javadoc. */
+    public static byte[] sspiToken(byte[] blob) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(TOKEN_SSPI);
+        writeU16LE(out, blob.length);
+        out.writeBytes(blob);
+        return out.toByteArray();
     }
 
     public static byte[] errorMessage(int number, String message) {
