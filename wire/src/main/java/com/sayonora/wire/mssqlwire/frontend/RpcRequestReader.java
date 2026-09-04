@@ -53,6 +53,8 @@ public final class RpcRequestReader {
     private static final int TYPE_BITN = 0x68;
     private static final int TYPE_DECIMALN = 0x6A;
     private static final int TYPE_NUMERICN = 0x6C;
+    private static final int TYPE_BIGVARBINARY = 0xA5;
+    private static final int TYPE_BIGBINARY = 0xAD;
 
     private static final long PLP_NULL = 0xFFFFFFFFFFFFFFFFL;
 
@@ -94,10 +96,11 @@ public final class RpcRequestReader {
             case TYPE_FLTN -> readFltNValue(c);
             case TYPE_BITN -> readBitNValue(c);
             case TYPE_DECIMALN, TYPE_NUMERICN -> readDecimalNValue(c);
+            case TYPE_BIGVARBINARY, TYPE_BIGBINARY -> readBinaryValue(c);
             default -> throw new IOException("RPC parameter \"" + name + "\" has unsupported TDS type 0x"
-                    + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT/DECIMAL/NUMERIC "
-                    + "parameters are supported (refusing rather than risking a mis-decode that would "
-                    + "desync every parameter after it)");
+                    + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT/DECIMAL/"
+                    + "NUMERIC/BINARY/VARBINARY parameters are supported (refusing rather than risking a "
+                    + "mis-decode that would desync every parameter after it)");
         };
         return new RpcParam(name, value, output);
     }
@@ -185,6 +188,42 @@ public final class RpcRequestReader {
             unscaled = unscaled.negate();
         }
         return new java.math.BigDecimal(unscaled, scale);
+    }
+
+    /**
+     * BIGVARBINARY/BIGBINARY -- confirmed live (mssql-jdbc {@code PreparedStatement.setBytes},
+     * captured via a temporary debug probe, since removed): unlike the char types, TYPE_INFO has
+     * no collation field at all (collation is meaningless for raw binary), and MaxLen/ActualLen
+     * are both plain U16 (not the PLP/1-byte shapes some other types use for their short form).
+     * An 8-byte array arrived as TYPE_INFO {@code 40 1F} (MaxLen=8000) then value {@code 08 00}
+     * (ActualLen=8) followed by the 8 raw bytes, byte-for-byte identical to the bound array.
+     */
+    private static Object readBinaryValue(Cursor c) throws IOException {
+        int maxLen = c.readU16();
+        if (maxLen == 0xFFFF) {
+            return readPlpBytes(c);
+        }
+        int actualLen = c.readU16();
+        if (actualLen == 0xFFFF) {
+            return null;
+        }
+        return c.readBytes(actualLen);
+    }
+
+    private static byte[] readPlpBytes(Cursor c) throws IOException {
+        long plpLen = c.readU64();
+        if (plpLen == PLP_NULL) {
+            return null;
+        }
+        java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+        while (true) {
+            long chunkLen = c.readU32();
+            if (chunkLen == 0) {
+                break;
+            }
+            data.writeBytes(c.readBytes((int) chunkLen));
+        }
+        return data.toByteArray();
     }
 
     private static Object readBitNValue(Cursor c) throws IOException {

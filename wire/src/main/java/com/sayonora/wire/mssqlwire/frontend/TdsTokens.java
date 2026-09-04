@@ -117,25 +117,64 @@ public final class TdsTokens {
         return out.toByteArray();
     }
 
-    public static void writeColMetaData(ByteArrayOutputStream out, List<String> columnNames) {
+    // java.sql.Types values for the binary family -- kept as plain ints (not an import of
+    // java.sql.Types) since this is the frontend/wire-encoding layer and the only thing it needs
+    // from that class is these four numeric constants.
+    private static final int JDBC_TYPE_BINARY = -2;
+    private static final int JDBC_TYPE_VARBINARY = -3;
+    private static final int JDBC_TYPE_LONGVARBINARY = -4;
+    private static final int JDBC_TYPE_BLOB = 2004;
+    private static final int TDS_TYPE_BIGVARBINARY = 0xA5;
+
+    private static boolean isBinaryColumn(com.sayonora.wire.core.ColumnInfo column) {
+        return switch (column.jdbcType()) {
+            case JDBC_TYPE_BINARY, JDBC_TYPE_VARBINARY, JDBC_TYPE_LONGVARBINARY, JDBC_TYPE_BLOB -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Declares each column's real TDS type instead of blanket NVARCHAR(8000) -- found live
+     * auditing this frontend for GA transparency: a BINARY/VARBINARY/BLOB column was declared
+     * NVARCHAR and its value encoded via {@code String.valueOf(byte[])} (Java's default
+     * {@code Object.toString()}, e.g. {@code "[B@1a2b3c4d"}), silently corrupting every binary
+     * column's data end to end rather than merely mis-declaring its type. Everything else still
+     * goes out as NVARCHAR(8000) text (unchanged from before) -- real SQL Server clients decode a
+     * declared-NVARCHAR numeric/date value from its string form without issue, so that part of
+     * the original design is kept; only the specifically corrupting binary case is fixed here.
+     */
+    public static void writeColMetaData(ByteArrayOutputStream out, List<com.sayonora.wire.core.ColumnInfo> columns) {
         out.write(TOKEN_COLMETADATA);
-        writeU16LE(out, columnNames.size());
-        for (String name : columnNames) {
+        writeU16LE(out, columns.size());
+        for (com.sayonora.wire.core.ColumnInfo column : columns) {
             writeU32LE(out, 0);
             writeU16LE(out, 0);
-            out.write(0xE7);
-            writeU16LE(out, 8000);
-            
-            out.write(0x09); out.write(0x04); out.write(0x00); out.write(0x00); out.write(0x00);
-            writeBVarChar(out, name);
+            if (isBinaryColumn(column)) {
+                out.write(TDS_TYPE_BIGVARBINARY);
+                writeU16LE(out, 8000);
+                // No collation field for a binary TYPE_INFO -- that's a char-type-only field.
+            } else {
+                out.write(0xE7);
+                writeU16LE(out, 8000);
+                out.write(0x09); out.write(0x04); out.write(0x00); out.write(0x00); out.write(0x00);
+            }
+            writeBVarChar(out, column.name());
         }
     }
 
-    public static void writeRow(ByteArrayOutputStream out, List<Object> values) {
+    /** Encodes each value per its real column type -- a binary column's {@code byte[]} value goes
+     * out as its actual raw bytes (matching the BIGVARBINARY TYPE_INFO {@link
+     * #writeColMetaData(ByteArrayOutputStream, List)} declares for it above), not
+     * {@code String.valueOf(byte[])}'s garbage {@code Object.toString()} form. */
+    public static void writeRow(ByteArrayOutputStream out, List<Object> values, List<com.sayonora.wire.core.ColumnInfo> columns) {
         out.write(TOKEN_ROW);
-        for (Object v : values) {
+        for (int i = 0; i < values.size(); i++) {
+            Object v = values.get(i);
             if (v == null) {
                 writeU16LE(out, 0xFFFF);
+            } else if (i < columns.size() && isBinaryColumn(columns.get(i)) && v instanceof byte[] bytes) {
+                writeU16LE(out, bytes.length);
+                out.writeBytes(bytes);
             } else {
                 byte[] chars = String.valueOf(v).getBytes(StandardCharsets.UTF_16LE);
                 writeU16LE(out, chars.length);

@@ -453,10 +453,9 @@ public final class MssqlWireSessionHandler implements Runnable {
                 TdsTokens.writeReturnValueInt(body, 1, prepareHandleToReturn);
             }
             if (result.isQuery()) {
-                List<String> columnNames = result.columnNames();
-                TdsTokens.writeColMetaData(body, columnNames);
+                TdsTokens.writeColMetaData(body, result.columns());
                 for (List<Object> row : result.rows()) {
-                    TdsTokens.writeRow(body, row);
+                    TdsTokens.writeRow(body, row, result.columns());
                 }
                 writeFinalDone(body, viaRpc, TdsTokens.curCmdSelect(), result.rows().size());
             } else {
