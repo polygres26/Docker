@@ -212,6 +212,48 @@ class RpcRequestReaderTest {
         assertEquals(java.sql.Date.valueOf("2026-09-04"), request.params().get(0).value());
     }
 
+    /**
+     * Golden bytes captured live from a real mssql-jdbc {@code PreparedStatement.setObject(1,
+     * UUID.fromString("12345678-90ab-cdef-1234-567890abcdef"))} call: TYPE_INFO {@code 10}
+     * (MaxLen=16), value {@code 10} (length=16) then 16 bytes in real .NET GUID wire layout --
+     * each of the first three fields byte-reversed from UUID's own string form, the last 8 bytes
+     * (Data4) untouched.
+     */
+    @Test
+    void guidNParamMatchesRealMssqlJdbcWireBytes() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x24); // GUIDN
+        out.write(0x10); // MaxLen = 16
+        out.write(0x10); // value length = 16
+        for (int b : new int[] {0x78, 0x56, 0x34, 0x12, 0xab, 0x90, 0xef, 0xcd,
+                0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef}) {
+            out.write(b);
+        }
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertEquals(java.util.UUID.fromString("12345678-90ab-cdef-1234-567890abcdef"),
+                request.params().get(0).value());
+    }
+
+    @Test
+    void guidNNullIsDecodedAsNull() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x24);
+        out.write(0x10);
+        out.write(0x00); // length 0 -> NULL
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertNull(request.params().get(0).value());
+    }
+
     @Test
     void dateNNullIsDecodedAsNull() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
