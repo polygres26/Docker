@@ -51,6 +51,8 @@ public final class RpcRequestReader {
     private static final int TYPE_INTN = 0x26;
     private static final int TYPE_FLTN = 0x6D;
     private static final int TYPE_BITN = 0x68;
+    private static final int TYPE_DECIMALN = 0x6A;
+    private static final int TYPE_NUMERICN = 0x6C;
 
     private static final long PLP_NULL = 0xFFFFFFFFFFFFFFFFL;
 
@@ -91,8 +93,9 @@ public final class RpcRequestReader {
             case TYPE_INTN -> readIntNValue(c);
             case TYPE_FLTN -> readFltNValue(c);
             case TYPE_BITN -> readBitNValue(c);
+            case TYPE_DECIMALN, TYPE_NUMERICN -> readDecimalNValue(c);
             default -> throw new IOException("RPC parameter \"" + name + "\" has unsupported TDS type 0x"
-                    + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT "
+                    + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT/DECIMAL/NUMERIC "
                     + "parameters are supported (refusing rather than risking a mis-decode that would "
                     + "desync every parameter after it)");
         };
@@ -151,6 +154,37 @@ public final class RpcRequestReader {
             case 8 -> Double.longBitsToDouble(c.readS64LE());
             default -> throw new IOException("FLTN parameter has invalid length " + len);
         };
+    }
+
+    /**
+     * DECIMALN/NUMERICN -- confirmed live (mssql-jdbc {@code PreparedStatement.setBigDecimal},
+     * captured via a temporary debug probe, since removed) rather than guessed: TYPE_INFO is
+     * {@code MaxLen(1) Precision(1) Scale(1)}, then the value is {@code Length(1) Sign(1)
+     * UnscaledValueLE((Length-1) bytes)} -- Sign is 1 for positive, 0 for negative, and the
+     * unscaled magnitude is little-endian. {@code 12.34} arrived on the wire as TYPE_INFO
+     * {@code 11 26 02} (MaxLen=17, Precision=38, Scale=2) and value {@code 03 01 D2 04} (length 3
+     * = 1 sign byte + 2 data bytes, sign=positive, unscaled=0x04D2=1234, scale 2 -> 12.34).
+     */
+    private static Object readDecimalNValue(Cursor c) throws IOException {
+        c.readU8(); // declared MaxLen -- not needed, the value's own length below is authoritative
+        c.readU8(); // Precision -- not needed either; BigDecimal's own scale below round-trips fine
+        int scale = c.readU8();
+        int len = c.readU8();
+        if (len == 0) {
+            return null;
+        }
+        int sign = c.readU8();
+        byte[] magnitude = c.readBytes(len - 1);
+        // BigInteger wants big-endian, most-significant byte first; the wire is little-endian.
+        byte[] bigEndian = new byte[magnitude.length];
+        for (int i = 0; i < magnitude.length; i++) {
+            bigEndian[i] = magnitude[magnitude.length - 1 - i];
+        }
+        java.math.BigInteger unscaled = new java.math.BigInteger(1, bigEndian);
+        if (sign == 0) {
+            unscaled = unscaled.negate();
+        }
+        return new java.math.BigDecimal(unscaled, scale);
     }
 
     private static Object readBitNValue(Cursor c) throws IOException {

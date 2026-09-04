@@ -183,10 +183,69 @@ class RpcRequestReaderTest {
         noAllHeaders(out);
         procIdSpExecuteSql(out);
         writeParamHeader(out, "@P0");
-        out.write(0x6C); // NUMERICNTYPE -- deliberately unsupported
+        out.write(0x2A); // DATETIME2N -- deliberately unsupported (variable, scale-dependent length)
 
         IOException e = assertThrows(IOException.class, () -> RpcRequestReader.read(out.toByteArray()));
         assertTrue(e.getMessage().contains("unsupported"));
+    }
+
+    /**
+     * Golden bytes captured live from a real mssql-jdbc {@code PreparedStatement.setBigDecimal(1,
+     * new BigDecimal("12.34"))} call (via a temporary debug probe, since removed): TYPE_INFO
+     * {@code 11 26 02} (MaxLen=17, Precision=38, Scale=2), value {@code 03 01 D2 04} (length 3 = 1
+     * sign byte + 2 magnitude bytes, sign=positive, unscaled magnitude little-endian 0x04D2=1234).
+     */
+    @Test
+    void decimalNParamMatchesRealMssqlJdbcWireBytesForOnePointTwoThreeFour() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x6A); // DECIMALN
+        out.write(0x11); // MaxLen
+        out.write(0x26); // Precision
+        out.write(0x02); // Scale
+        out.write(0x03); // value length: 1 sign byte + 2 magnitude bytes
+        out.write(0x01); // sign: positive
+        out.write(0xD2); out.write(0x04); // unscaled magnitude, little-endian: 0x04D2 = 1234
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertEquals(new java.math.BigDecimal("12.34"), request.params().get(0).value());
+    }
+
+    @Test
+    void decimalNNegativeValueDecodesWithCorrectSign() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x6C); // NUMERICN -- same wire shape as DECIMALN
+        out.write(0x11);
+        out.write(0x26);
+        out.write(0x02);
+        out.write(0x03);
+        out.write(0x00); // sign: negative
+        out.write(0xD2); out.write(0x04);
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertEquals(new java.math.BigDecimal("-12.34"), request.params().get(0).value());
+    }
+
+    @Test
+    void decimalNNullIsDecodedAsNull() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        noAllHeaders(out);
+        procIdSpExecuteSql(out);
+        writeParamHeader(out, "@P0");
+        out.write(0x6A);
+        out.write(0x11); out.write(0x26); out.write(0x02);
+        out.write(0x00); // value length 0 -> NULL
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertNull(request.params().get(0).value());
     }
 
     @Test
