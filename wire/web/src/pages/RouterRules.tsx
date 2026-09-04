@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
+import { type WireConfig, draftRouterSuggestion, getWireConfig, saveWireConfig } from '../api/client'
 
 type ShardStrategy = 'hash' | 'consistent' | 'list' | 'range' | 'date'
 
@@ -68,6 +68,9 @@ export default function RouterRules() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [suggestion, setSuggestion] = useState<Awaited<ReturnType<typeof draftRouterSuggestion>> | null>(null)
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestError, setSuggestError] = useState<string | null>(null)
 
   useEffect(() => {
     getWireConfig()
@@ -111,6 +114,25 @@ export default function RouterRules() {
     }
   }
 
+  async function handleSuggest() {
+    setSuggesting(true)
+    setSuggestError(null)
+    try {
+      setSuggestion(await draftRouterSuggestion())
+    } catch (e) {
+      setSuggestError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  function applySuggestionToForm() {
+    if (suggestion?.routerTableShardsIfApplied !== undefined) {
+      setTableShardRows(parseTableShards(suggestion.routerTableShardsIfApplied))
+    }
+    setSuggestion(null)
+  }
+
   return (
     <div style={{ maxWidth: 720 }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Router rules</h1>
@@ -120,6 +142,32 @@ export default function RouterRules() {
 
       {error && (
         <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+      )}
+
+      <button type="button" onClick={handleSuggest} disabled={suggesting} style={{ marginBottom: 16 }}>
+        {suggesting ? 'Drafting…' : '✦ Suggest table sharding with AI'}
+      </button>
+      {suggestError && (
+        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{suggestError}</div>
+      )}
+      {suggestion && (
+        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+          {suggestion.draft ? (
+            <>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>
+                Proposed: shard <code>{suggestion.draft.table}</code> on <code>{suggestion.draft.shardColumn}</code>{' '}
+                across {suggestion.draft.backends.join(', ')}.
+              </div>
+              <button type="button" onClick={applySuggestionToForm} style={{ marginRight: 8 }}>Fill into form</button>
+              <button type="button" onClick={() => setSuggestion(null)}>Dismiss</button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>{suggestion.note}</div>
+              <button type="button" onClick={() => setSuggestion(null)}>Dismiss</button>
+            </>
+          )}
+        </div>
       )}
 
       {!loaded && !error ? (

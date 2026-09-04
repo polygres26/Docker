@@ -170,6 +170,25 @@ export async function deleteFirewallRule(id: number): Promise<void> {
   await api(`/api/firewall-rules/${id}`, { method: 'DELETE' })
 }
 
+/** Draft-only: never inserts a rule. Turns a plain-English prompt into a proposed
+ * `/api/firewall-rules` POST body (see `MetricsServer#handleFirewallRuleDraft`) for the caller to
+ * review/edit and then submit itself via `createFirewallRule`. */
+export async function draftFirewallRule(prompt: string): Promise<{
+  draft: {
+    priority: number
+    action: 'allow' | 'deny'
+    statementType: string | null
+    tablePattern: string | null
+    sqlPattern: string | null
+    enabled: boolean
+    description: string | null
+  }
+  applied: false
+  note: string
+}> {
+  return api('/api/firewall-rules/draft', { method: 'POST', body: JSON.stringify({ prompt }) })
+}
+
 // --- Full config: /api/config ---
 // One GET/PUT(-partial) resource over every field of WarpConfig -- see
 // com.sayonora.wire.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
@@ -208,6 +227,35 @@ export async function getWireConfig(): Promise<WireConfig> {
 
 export async function saveWireConfig(partial: Partial<WireConfig>): Promise<{ ok: boolean; version: number }> {
   return api('/api/config', { method: 'PUT', body: JSON.stringify(partial) })
+}
+
+/** Draft-only: never writes to `warp_config`. Proposes ONE targeted rate-limit change based on
+ * current config and recent per-backend load (see `MetricsServer#handleQosSuggestionDraft`); the
+ * `*IfApplied` field(s) are exactly what `saveWireConfig` needs to actually apply it. */
+export async function draftQosSuggestion(): Promise<{
+  draft: { target: string; ratePerSecond: number; burstCapacity: number; maxWaitMillis: number; rationale: string | null }
+  qosRatePerSecIfApplied?: string
+  qosBurstIfApplied?: string
+  qosMaxWaitMsIfApplied?: string
+  qosClassLimitsIfApplied?: string
+  applied: false
+  note: string
+}> {
+  return api('/api/qos-suggestions/draft', { method: 'POST' })
+}
+
+/** Draft-only: never writes to `warp_config`. Proposes ONE new per-table hash-sharding rule based
+ * on real per-backend load (see `MetricsServer#handleRouterSuggestionDraft`); when the LLM found
+ * nothing worth sharding, `draft`/`routerTableShardsIfApplied` come back null and `note` explains
+ * why. `routerTableShardsIfApplied` is the FULL candidate spec (existing rules plus the new one)
+ * -- exactly what `saveWireConfig({ routerTableShards: ... })` needs to actually apply it. */
+export async function draftRouterSuggestion(): Promise<{
+  draft: { table: string; shardColumn: string; backends: string[] } | null
+  routerTableShardsIfApplied?: string
+  applied?: false
+  note: string
+}> {
+  return api('/api/router-suggestions/draft', { method: 'POST' })
 }
 
 // --- Live metrics: /api/metrics/summary ---

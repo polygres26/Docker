@@ -4,9 +4,16 @@ import {
   type FirewallRule,
   createFirewallRule,
   deleteFirewallRule,
+  draftFirewallRule,
   listFirewallRules,
   updateFirewallRule,
 } from '../api/client'
+
+/** A drafted-but-never-saved rule: same fields as a real one, minus the `id`/`createdAt` a row
+ * only gets once it's actually inserted. Distinguishing on `'id' in x` (rather than a separate
+ * flag) is what lets `RuleForm` reuse its existing create/update branch for both "+ Add rule" and
+ * a prefilled AI suggestion. */
+type DraftRule = Omit<FirewallRule, 'id' | 'createdAt'>
 
 /**
  * SQL Firewall rule management -- create/edit/delete against `warp_firewall_rules`, straight
@@ -16,7 +23,8 @@ import {
 export default function FirewallRules() {
   const [rules, setRules] = useState<FirewallRule[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [editing, setEditing] = useState<FirewallRule | 'new' | null>(null)
+  const [editing, setEditing] = useState<FirewallRule | 'new' | DraftRule | null>(null)
+  const [suggesting, setSuggesting] = useState(false)
 
   function reload() {
     listFirewallRules().then(setRules).catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -45,7 +53,17 @@ export default function FirewallRules() {
         <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
       )}
 
-      <button onClick={() => setEditing('new')} style={{ marginBottom: 16 }}>+ Add rule</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button onClick={() => setEditing('new')}>+ Add rule</button>
+        <button onClick={() => setSuggesting(true)}>✦ Suggest with AI</button>
+      </div>
+
+      {suggesting && (
+        <AiSuggestPanel
+          onCancel={() => setSuggesting(false)}
+          onDrafted={(draft) => { setSuggesting(false); setEditing(draft) }}
+        />
+      )}
 
       {editing && (
         <RuleForm
@@ -97,10 +115,13 @@ export default function FirewallRules() {
 }
 
 function RuleForm({ initial, onCancel, onSaved }: {
-  initial: FirewallRule | null
+  // A real rule (has `id`) is edited in place; `null` ("+ Add rule") and a `DraftRule` (a
+  // prefilled AI suggestion, no `id` yet) both submit through createFirewallRule below.
+  initial: FirewallRule | DraftRule | null
   onCancel: () => void
   onSaved: () => void
 }) {
+  const isExisting = initial !== null && 'id' in initial
   const [priority, setPriority] = useState(initial?.priority ?? 100)
   const [action, setAction] = useState<'allow' | 'deny'>(initial?.action ?? 'deny')
   const [statementType, setStatementType] = useState(initial?.statementType ?? '')
@@ -117,8 +138,8 @@ function RuleForm({ initial, onCancel, onSaved }: {
     setError(null)
     const payload = { priority, action, statementType, tablePattern, sqlPattern, enabled, description }
     try {
-      if (initial) {
-        await updateFirewallRule(initial.id, payload)
+      if (isExisting) {
+        await updateFirewallRule((initial as FirewallRule).id, payload)
       } else {
         await createFirewallRule(payload)
       }
@@ -174,6 +195,64 @@ function RuleForm({ initial, onCancel, onSaved }: {
         Enabled
       </label>
       <button type="submit" disabled={saving} style={{ marginRight: 8 }}>{saving ? 'Saving…' : 'Save'}</button>
+      <button type="button" onClick={onCancel}>Cancel</button>
+      {error && <div style={{ marginTop: 12, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>}
+    </form>
+  )
+}
+
+/**
+ * "Suggest with AI": takes a plain-English prompt, calls the draft-only
+ * `POST /api/firewall-rules/draft` endpoint, and hands the (never-saved) result to `RuleForm` for
+ * review/editing -- nothing is written here. Requires an LLM provider already configured via the
+ * LLM Config page; a 503 from the backend surfaces that directly.
+ */
+function AiSuggestPanel({ onCancel, onDrafted }: {
+  onCancel: () => void
+  onDrafted: (draft: DraftRule) => void
+}) {
+  const [prompt, setPrompt] = useState('')
+  const [drafting, setDrafting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleDraft(e: React.FormEvent) {
+    e.preventDefault()
+    if (!prompt.trim()) return
+    setDrafting(true)
+    setError(null)
+    try {
+      const { draft } = await draftFirewallRule(prompt)
+      onDrafted({
+        priority: draft.priority,
+        action: draft.action,
+        statementType: draft.statementType,
+        tablePattern: draft.tablePattern,
+        sqlPattern: draft.sqlPattern,
+        enabled: draft.enabled,
+        description: draft.description,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDrafting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleDraft} style={{
+      border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20,
+    }}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>
+        Describe the rule in plain English — e.g. "block any DELETE against orders without a
+        WHERE clause". Nothing is created yet; you'll review and edit the proposed rule below
+        before saving it.
+      </div>
+      <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} autoFocus
+        placeholder="Describe the rule you want…"
+        style={{ width: '100%', padding: '6px 8px', marginBottom: 12, fontFamily: 'inherit' }} />
+      <button type="submit" disabled={drafting || !prompt.trim()} style={{ marginRight: 8 }}>
+        {drafting ? 'Drafting…' : 'Draft rule'}
+      </button>
       <button type="button" onClick={onCancel}>Cancel</button>
       {error && <div style={{ marginTop: 12, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>}
     </form>
