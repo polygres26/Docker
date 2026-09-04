@@ -33,4 +33,8 @@ public record ExecutionResult(
     public List<Integer> columnJdbcTypes() {
         return columns.stream().map(ColumnInfo::jdbcType).toList();
     }
+
+    public List<String> columnTypeNames() {
+        return columns.stream().map(ColumnInfo::typeName).toList();
+    }
 }

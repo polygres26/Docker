@@ -120,11 +120,13 @@ public final class PgWireSessionHandler implements Runnable {
             return null;
         }
         List<Integer> jdbcTypes = portal.result().columnJdbcTypes();
+        List<String> typeNames = portal.result().columnTypeNames();
         int[] codes = portal.resultFormatCodes();
         boolean[] binary = new boolean[jdbcTypes.size()];
         for (int i = 0; i < binary.length; i++) {
             int requested = codes.length == 0 ? 0 : codes[codes.length == 1 ? 0 : Math.min(i, codes.length - 1)];
-            binary[i] = requested != 0 && PgBinaryResultEncoder.supports(PgMessages.oidForJdbcType(jdbcTypes.get(i)));
+            binary[i] = requested != 0
+                    && PgBinaryResultEncoder.supports(PgMessages.oidFor(jdbcTypes.get(i), typeNames.get(i)));
         }
         return binary;
     }
@@ -575,7 +577,7 @@ public final class PgWireSessionHandler implements Runnable {
         }
         if (portal.result().isQuery()) {
             PgMessages.writeRowDescription(out, portal.result().columnNames(), portal.result().columnJdbcTypes(),
-                    binaryColumnsFor(portal));
+                    portal.result().columnTypeNames(), binaryColumnsFor(portal));
         } else {
             PgMessages.writeNoData(out);
         }
@@ -604,7 +606,8 @@ public final class PgWireSessionHandler implements Runnable {
             int start = portal.nextRow()[0];
             int end = maxRows <= 0 ? rows.size() : Math.min(rows.size(), start + maxRows);
             for (int i = start; i < end; i++) {
-                PgMessages.writeDataRow(out, rows.get(i), portal.result().columnJdbcTypes(), binaryColumns);
+                PgMessages.writeDataRow(out, rows.get(i), portal.result().columnJdbcTypes(),
+                        portal.result().columnTypeNames(), binaryColumns);
             }
             portal.nextRow()[0] = end;
             if (end < rows.size()) {
@@ -644,9 +647,10 @@ public final class PgWireSessionHandler implements Runnable {
             Statement statement = Statement.of(SourceDialect.POSTGRES, sql, List.of(), accessContext);
             ExecutionResult result = pipeline.execute(statement);
             if (result.isQuery()) {
-                PgMessages.writeRowDescription(out, result.columnNames(), result.columnJdbcTypes());
+                PgMessages.writeRowDescription(out, result.columnNames(), result.columnJdbcTypes(),
+                        result.columnTypeNames(), null);
                 for (List<Object> row : result.rows()) {
-                    PgMessages.writeDataRow(out, row);
+                    PgMessages.writeDataRow(out, row, result.columnJdbcTypes(), result.columnTypeNames(), null);
                 }
                 PgMessages.writeCommandComplete(out, "SELECT " + result.rows().size());
             } else {

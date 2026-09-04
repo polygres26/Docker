@@ -61,7 +61,7 @@ final class PgMessages {
 
     static void writeRowDescription(DataOutputStream out, java.util.List<String> columnNames,
             java.util.List<Integer> columnJdbcTypes) throws IOException {
-        writeRowDescription(out, columnNames, columnJdbcTypes, null);
+        writeRowDescription(out, columnNames, columnJdbcTypes, null, null);
     }
 
     /** @param binaryColumns per-column "send this one in binary" decision -- {@code null} or a
@@ -72,6 +72,17 @@ final class PgMessages {
      *      binary) -- this method trusts the array as the final decision, it doesn't re-check. */
     static void writeRowDescription(DataOutputStream out, java.util.List<String> columnNames,
             java.util.List<Integer> columnJdbcTypes, boolean[] binaryColumns) throws IOException {
+        writeRowDescription(out, columnNames, columnJdbcTypes, null, binaryColumns);
+    }
+
+    /** @param columnTypeNames the real backend column type names (see {@link
+     *      com.sayonora.wire.core.ColumnInfo#typeName}), same length/order as {@code
+     *      columnJdbcTypes} -- {@code null}, or a shorter/all-null list, falls back to {@code
+     *      columnJdbcTypes}-only OID resolution (unchanged behavior). See {@link #oidFor}'s own
+     *      javadoc for why a real type name is needed at all. */
+    static void writeRowDescription(DataOutputStream out, java.util.List<String> columnNames,
+            java.util.List<Integer> columnJdbcTypes, java.util.List<String> columnTypeNames,
+            boolean[] binaryColumns) throws IOException {
         int n = columnNames.size();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeShort(body, n);
@@ -79,7 +90,8 @@ final class PgMessages {
             body.write(cstring(columnNames.get(i)));
             writeInt(body, 0);
             writeShort(body, 0);
-            writeInt(body, oidForJdbcType(columnJdbcTypes.get(i)));
+            String typeName = columnTypeNames != null && i < columnTypeNames.size() ? columnTypeNames.get(i) : null;
+            writeInt(body, oidFor(columnJdbcTypes.get(i), typeName));
             writeShort(body, -1);
             writeInt(body, -1);
             writeShort(body, binaryColumns != null && i < binaryColumns.length && binaryColumns[i] ? 1 : 0);
@@ -90,7 +102,7 @@ final class PgMessages {
     }
 
     static void writeDataRow(DataOutputStream out, java.util.List<Object> row) throws IOException {
-        writeDataRow(out, row, null, null);
+        writeDataRow(out, row, null, null, null);
     }
 
     /** @param columnJdbcTypes required (non-null) whenever {@code binaryColumns} names ANY
@@ -101,6 +113,15 @@ final class PgMessages {
      *      columns are binary. */
     static void writeDataRow(DataOutputStream out, java.util.List<Object> row,
             java.util.List<Integer> columnJdbcTypes, boolean[] binaryColumns) throws IOException {
+        writeDataRow(out, row, columnJdbcTypes, null, binaryColumns);
+    }
+
+    /** @param columnTypeNames see {@link #writeRowDescription}'s own overload -- must be the SAME
+     *      list passed there, or a binary column's OID (and therefore its encoding) disagrees
+     *      between the two messages. */
+    static void writeDataRow(DataOutputStream out, java.util.List<Object> row,
+            java.util.List<Integer> columnJdbcTypes, java.util.List<String> columnTypeNames,
+            boolean[] binaryColumns) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeShort(body, row.size());
         for (int i = 0; i < row.size(); i++) {
@@ -110,8 +131,9 @@ final class PgMessages {
                 continue;
             }
             boolean binary = binaryColumns != null && i < binaryColumns.length && binaryColumns[i];
+            String typeName = columnTypeNames != null && i < columnTypeNames.size() ? columnTypeNames.get(i) : null;
             byte[] bytes = binary
-                    ? PgBinaryResultEncoder.encode(oidForJdbcType(columnJdbcTypes.get(i)), value)
+                    ? PgBinaryResultEncoder.encode(oidFor(columnJdbcTypes.get(i), typeName), value)
                     : textFormat(value).getBytes(StandardCharsets.UTF_8);
             writeInt(body, bytes.length);
             body.write(bytes);
@@ -205,14 +227,55 @@ final class PgMessages {
     }
 
     static int oidForJdbcType(int jdbcType) {
+        return oidFor(jdbcType, null);
+    }
+
+    // Real Postgres type name -> real OID, for the exact cases java.sql.Types alone can't
+    // distinguish (pgjdbc reports BOTH uuid and jsonb as the same generic Types.OTHER, and
+    // Types.SMALLINT was being reported as OID 23/int4 instead of the real 21/int2). Real bug
+    // found auditing this frontend for GA transparency: every one of these real, common Postgres
+    // column types (UUID primary keys, JSONB columns, arrays, bytea, timestamptz -- all
+    // mainstream, not exotic) was declared to the client as plain TEXT (OID 25), so pgjdbc's own
+    // typed accessors (getObject() dispatching on the declared OID, java.sql.Array, UUID) got
+    // back a String instead of the real typed value.
+    private static final java.util.Map<String, Integer> OID_BY_PG_TYPE_NAME = java.util.Map.ofEntries(
+            java.util.Map.entry("uuid", 2950),
+            java.util.Map.entry("json", 114),
+            java.util.Map.entry("jsonb", 3802),
+            java.util.Map.entry("bytea", 17),
+            java.util.Map.entry("timestamptz", 1184),
+            java.util.Map.entry("int2", 21),
+            java.util.Map.entry("_text", 1009),
+            java.util.Map.entry("_varchar", 1015),
+            java.util.Map.entry("_int4", 1007),
+            java.util.Map.entry("_int8", 1016),
+            java.util.Map.entry("_numeric", 1231),
+            java.util.Map.entry("_uuid", 2951),
+            java.util.Map.entry("_bool", 1000));
+
+    /** @param typeName the real backend driver's own column type name (see {@link
+     *      com.sayonora.wire.core.ColumnInfo#typeName}'s own javadoc) -- consulted FIRST, since
+     *      it disambiguates cases {@code jdbcType} alone genuinely can't; falls back to the
+     *      generic {@code jdbcType}-keyed mapping (unchanged from before this existed) whenever
+     *      {@code typeName} is {@code null} or not one of the specific types above. */
+    static int oidFor(int jdbcType, String typeName) {
+        if (typeName != null) {
+            Integer oid = OID_BY_PG_TYPE_NAME.get(typeName);
+            if (oid != null) {
+                return oid;
+            }
+        }
         return switch (jdbcType) {
-            case Types.INTEGER, Types.SMALLINT -> 23;
+            case Types.INTEGER -> 23;
+            case Types.SMALLINT -> 21;
             case Types.BIGINT -> 20;
             case Types.NUMERIC, Types.DECIMAL -> 1700;
             case Types.DOUBLE, Types.FLOAT, Types.REAL -> 701;
             case Types.BOOLEAN, Types.BIT -> 16;
             case Types.DATE -> 1082;
             case Types.TIMESTAMP -> 1114;
+            case Types.TIMESTAMP_WITH_TIMEZONE -> 1184;
+            case Types.VARBINARY, Types.BINARY, Types.LONGVARBINARY -> 17;
             default -> 25;
         };
     }

@@ -159,7 +159,8 @@ public final class JdbcBackendExecutor implements BackendExecutor {
         List<ColumnInfo> columns = new ArrayList<>(columnCount);
         for (int i = 1; i <= columnCount; i++) {
             columns.add(new ColumnInfo(md.getColumnLabel(i), md.getColumnType(i), md.getPrecision(i), md.getScale(i),
-                    md.getColumnDisplaySize(i), md.isNullable(i) != ResultSetMetaData.columnNoNulls));
+                    md.getColumnDisplaySize(i), md.isNullable(i) != ResultSetMetaData.columnNoNulls,
+                    md.getColumnTypeName(i)));
         }
         List<List<Object>> rows = new ArrayList<>();
         while (rs.next()) {
