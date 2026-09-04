@@ -47,6 +47,10 @@ final class MySqlBinaryProtocol {
     static final int TYPE_DATE = 0x0a;
     static final int TYPE_DATETIME = 0x0c;
     static final int TYPE_TIMESTAMP = 0x07;
+    // Confirmed live (a real mysql-connector-j PreparedStatement.setTime(Time.valueOf("13:45:31")),
+    // useServerPrepStmts=true): arrives as this exact type code, with the length-prefixed
+    // is_negative/days/hours/minutes/seconds[/microseconds] encoding readTime decodes below.
+    static final int TYPE_TIME = 0x0b;
     static final int TYPE_STRING = 0xfe;
     static final int TYPE_VAR_STRING = 0xfd;
     static final int TYPE_VARCHAR = 0x0f;
@@ -56,7 +60,7 @@ final class MySqlBinaryProtocol {
 
     private static final java.util.Set<Integer> SUPPORTED_TYPES = java.util.Set.of(
             TYPE_NULL, TYPE_TINY, TYPE_SHORT, TYPE_LONG, TYPE_INT24, TYPE_LONGLONG, TYPE_YEAR,
-            TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIMESTAMP,
+            TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIMESTAMP, TYPE_TIME,
             TYPE_STRING, TYPE_VAR_STRING, TYPE_VARCHAR, TYPE_BLOB, TYPE_DECIMAL, TYPE_NEWDECIMAL);
 
     static boolean isSupportedType(int type) {
@@ -120,6 +124,7 @@ final class MySqlBinaryProtocol {
                 yield Double.longBitsToDouble(bits);
             }
             case TYPE_DATE, TYPE_DATETIME, TYPE_TIMESTAMP -> readDateTime(data, pos);
+            case TYPE_TIME -> readTime(data, pos);
             case TYPE_STRING, TYPE_VAR_STRING, TYPE_VARCHAR, TYPE_BLOB, TYPE_DECIMAL, TYPE_NEWDECIMAL ->
                     MySqlPacket.readLenEncString(data, pos);
             default -> throw new IOException("unsupported COM_STMT_EXECUTE parameter type 0x"
@@ -156,6 +161,53 @@ final class MySqlBinaryProtocol {
                 | ((data[pos[0] + 2] & 0xFFL) << 16) | ((data[pos[0] + 3] & 0xFFL) << 24);
         pos[0] += 4;
         return String.format("%04d-%02d-%02d %02d:%02d:%02d.%06d", year, month, day, hour, minute, second, micros);
+    }
+
+    /** TIME's own variable-length encoding (distinct from {@link #readDateTime}'s): a 1-byte length
+     * prefix (0, 8, or 12) -- 0 means {@code "00:00:00"}; 8 means is_negative(1 byte) + days(u32,
+     * little-endian) + hours/minutes/seconds(1 byte each); 12 adds microseconds(u32, little-endian).
+     * Confirmed live -- see {@link #TYPE_TIME}'s javadoc for the captured bytes. MySQL's TIME can
+     * exceed 24 hours (it's an interval, not a wall-clock time), hence the separate days field --
+     * folded into hours here since Postgres's own {@code time}/{@code interval} target columns
+     * don't need day/hour kept apart for the values ordinary binds use in practice.
+     *
+     * <p>Returns a real {@link java.sql.Time}, not a formatted string -- {@link
+     * com.sayonora.wire.core.JdbcBackendExecutor#executeOnPreparedStatement} binds every value via
+     * plain {@code setObject}, and a bare {@code String} bound against a real {@code time} column
+     * fails ({@code "column is of type time without time zone but expression is of type character
+     * varying"}, confirmed live) since pgjdbc sends an untyped string bind with no implicit cast in
+     * that context. A real {@link java.sql.Time} carries its own JDBC type, so {@code setObject}
+     * binds it correctly without that cast problem. */
+    private static java.sql.Time readTime(byte[] data, int[] pos) {
+        int len = data[pos[0]++] & 0xFF;
+        if (len == 0) {
+            return java.sql.Time.valueOf("00:00:00");
+        }
+        boolean negative = data[pos[0]] != 0;
+        pos[0] += 1;
+        long days = (data[pos[0]] & 0xFFL) | ((data[pos[0] + 1] & 0xFFL) << 8)
+                | ((data[pos[0] + 2] & 0xFFL) << 16) | ((data[pos[0] + 3] & 0xFFL) << 24);
+        pos[0] += 4;
+        int hours = data[pos[0]] & 0xFF;
+        int minutes = data[pos[0] + 1] & 0xFF;
+        int seconds = data[pos[0] + 2] & 0xFF;
+        pos[0] += 3;
+        long micros = 0;
+        if (len == 12) {
+            micros = (data[pos[0]] & 0xFFL) | ((data[pos[0] + 1] & 0xFFL) << 8)
+                    | ((data[pos[0] + 2] & 0xFFL) << 16) | ((data[pos[0] + 3] & 0xFFL) << 24);
+            pos[0] += 4;
+        }
+        // java.sql.Time has no days-beyond-24h or negative-interval concept (it's a wall-clock
+        // time-of-day, unlike MySQL's TIME which is really a signed interval) -- fold days into
+        // hours and clamp to a plain, non-negative time-of-day, which is what every ordinary
+        // "time of day" bind (java.sql.Time / LocalTime on the client side) actually represents in
+        // practice; a real interval-shaped TIME value (>24h or negative) is a narrower case not
+        // covered here, same "refuse the exotic case rather than risk misdecoding" posture as
+        // OracleDateCodec's WITH LOCAL TIME ZONE gap.
+        long totalHours = ((negative ? -1 : 1) * (days * 24 + hours));
+        long normalizedHours = ((totalHours % 24) + 24) % 24;
+        return java.sql.Time.valueOf(String.format("%02d:%02d:%02d", normalizedHours, minutes, seconds));
     }
 
     /** {@code (numColumns+9)/8} bytes, each column's presence bit at index {@code i+2} (not
