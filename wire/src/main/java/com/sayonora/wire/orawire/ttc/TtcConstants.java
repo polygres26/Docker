@@ -8,6 +8,14 @@ public final class TtcConstants {
     public static final int MSG_TYPE_ROW_DATA = 7;
     public static final int MSG_TYPE_PARAMETER = 8;
     public static final int MSG_TYPE_STATUS = 9;
+    // Confirmed live via a real Oracle 23c self-loop capture of a real ojdbc CallableStatement
+    // call with a scalar OUT parameter: the response carries the OUT value in a block whose own
+    // leading byte is 11, distinct from every other message type this codebase already decodes
+    // (3/4/6/7/8/9/15/16/17/21/29/34). Not independently confirmed against Oracle's own public TTC
+    // documentation (none is available) -- named IO_VECTOR because that's the closest match to
+    // what the structure actually carries (a vector of bind values), not because the name itself
+    // is confirmed.
+    public static final int MSG_TYPE_IO_VECTOR = 11;
     public static final int MSG_TYPE_PIGGYBACK = 17;
     public static final int MSG_TYPE_WARNING = 15;
     public static final int MSG_TYPE_DESCRIBE_INFO = 16;

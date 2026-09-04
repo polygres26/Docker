@@ -1283,21 +1283,18 @@ public final class RequestLoop {
      *   <li>Only a single procedure/function CALL block is supported ({@code
      *       OracleProcedureCatalog#extractProcedureName}'s own scope) -- a genuine multi-statement
      *       anonymous block with real PL/SQL logic is refused, not attempted.
-     *   <li><b>OUT and IN OUT parameters (including REF CURSOR) are refused with a clear error,
-     *       not attempted.</b> A first attempt at this used {@code writeDescribeInfo}/{@code
-     *       writeRow} (the same primitives an ordinary query's result uses) to return a scalar OUT
-     *       value, on the theory (from an earlier, narrower capture) that it round-trips as an
-     *       ordinary {@code ROW_DATA}-tagged value. Verified live against a real ojdbc client and
-     *       found WRONG: the client rejected it with {@code ORA-17401 Protocol violation}. A
-     *       fuller capture of the real response shows it does NOT start with a {@code
-     *       DESCRIBE_INFO} (message type 16) at all -- it starts with message type {@code 0x0b}
-     *       (11), an OUT-bind-specific response shape this codebase hasn't decoded yet. Rather
-     *       than guess a second time, this is refused with a clear error -- the same "verify
-     *       against a real client before shipping" discipline the REEXECUTE fix earlier this
-     *       session took real effort to establish. IN-only calls (no OUT/IN OUT parameters at
-     *       all) are fully supported and verified: they need no new response encoding at all,
-     *       since {@link ResponseWriter#writeSuccessEnd} (already correct for every other DML
-     *       Execute) is all a call with nothing to return needs.
+     *   <li><b>REF CURSOR OUT parameters are refused with a clear error, not attempted:</b> a real
+     *       capture shows the cursor's column metadata and already-fetched rows embedded inline in
+     *       this same response, interleaved with any scalar OUT values -- a hybrid shape this
+     *       narrow slice hasn't verified byte-for-byte yet. IN-only calls, and calls with exactly
+     *       ONE scalar OUT/IN OUT parameter (NUMBER/VARCHAR2/DATE), are supported and verified
+     *       live: see {@link ResponseWriter#writeOutBindValues}'s own javadoc for the exact
+     *       captured byte shape this builds on -- a first attempt using {@code
+     *       writeDescribeInfo}/{@code writeRow} (the primitives an ordinary query result uses) was
+     *       tried and found WRONG (a real {@code ORA-17401} protocol violation) before that fix.
+     *       More than one scalar OUT parameter in the same call is refused too -- only a single-OUT
+     *       shape has actually been captured and confirmed; nothing says multiple OUT values
+     *       concatenate the same way without another live capture to prove it.
      * </ul>
      */
     private void handlePlSqlExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
@@ -1321,27 +1318,52 @@ public final class RequestLoop {
             throw new IllegalStateException("orawire: procedure \"" + procName + "\" declares "
                     + args.size() + " parameter(s) but the client sent " + bindParams.size());
         }
+        long outCount = args.stream().filter(OracleProcedureCatalog.ArgumentInfo::isOut).count();
+        if (outCount > 1) {
+            throw new UnsupportedOperationException(
+                    "orawire: procedure \"" + procName + "\" has " + outCount + " OUT/IN OUT "
+                            + "parameters -- only a single scalar OUT parameter per call has been "
+                            + "verified against a real client so far (see handlePlSqlExecute's own "
+                            + "scope notes)");
+        }
         for (OracleProcedureCatalog.ArgumentInfo arg : args) {
-            if (arg.isOut()) {
+            if (arg.isOut() && "REF CURSOR".equalsIgnoreCase(arg.dataType())) {
                 throw new UnsupportedOperationException(
-                        "orawire: procedure \"" + procName + "\" has an OUT or IN OUT parameter "
-                                + "(position " + arg.position() + ") -- not yet supported (see "
-                                + "handlePlSqlExecute's own javadoc for why: the real response "
-                                + "shape needs more live-capture verification before it's safe to "
-                                + "implement). Only IN-only procedure/function calls are supported "
-                                + "in this narrow slice.");
+                        "orawire: procedure \"" + procName + "\" has a REF CURSOR OUT parameter -- "
+                                + "not yet supported (see handlePlSqlExecute's own javadoc for why: "
+                                + "the real response shape needs more live-capture verification "
+                                + "before it's safe to implement)");
             }
         }
 
         terminalExecutor.rebind(oracle);
         try (CallableStatement cs = oracle.prepareCall(request.sqlText)) {
+            OracleProcedureCatalog.ArgumentInfo outArg = null;
+            int outPosition = -1;
             for (int i = 0; i < args.size(); i++) {
-                cs.setObject(i + 1, bindParams.get(i).value);
+                OracleProcedureCatalog.ArgumentInfo arg = args.get(i);
+                int position = i + 1;
+                if (arg.isIn()) {
+                    cs.setObject(position, bindParams.get(i).value);
+                }
+                if (arg.isOut()) {
+                    cs.registerOutParameter(position, jdbcTypeForOracleDataType(arg.dataType()));
+                    outArg = arg;
+                    outPosition = position;
+                }
             }
             cs.execute();
 
+            Object outValue = outArg != null ? cs.getObject(outPosition) : null;
+
             if (wantsCommit(request)) {
                 oracle.commit();
+            }
+
+            if (outArg != null) {
+                ColumnMetadata outColumn = new ColumnMetadata("OUT_" + outPosition,
+                        oraTypeNumForOracleDataType(outArg.dataType()), 0, 0, 4000, true);
+                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { outValue });
             }
 
             openCursorId = nextCursorId++;
@@ -1351,6 +1373,31 @@ public final class RequestLoop {
 
     private static boolean wantsCommit(ExecuteRequest request) {
         return (request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0;
+    }
+
+    // Scoped to exactly what ResponseWriter.writeColumnValue can actually encode back to the wire
+    // (NUMBER/VARCHAR2/DATE -- the same three types RequestLoop.toColumnMetadata already supports
+    // for ordinary query results) -- other Oracle types are refused here rather than accepted and
+    // then crashing inside writeColumnValue's own "unsupported column type" branch.
+    private static int jdbcTypeForOracleDataType(String oracleDataType) {
+        return switch (oracleDataType.toUpperCase(java.util.Locale.ROOT)) {
+            case "NUMBER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE" -> Types.NUMERIC;
+            case "VARCHAR2", "VARCHAR", "CHAR", "NVARCHAR2", "NCHAR" -> Types.VARCHAR;
+            case "DATE" -> Types.DATE;
+            default -> throw new UnsupportedOperationException(
+                    "orawire: unsupported PL/SQL OUT/IN OUT parameter type \"" + oracleDataType
+                            + "\" -- NUMBER/VARCHAR2/DATE only in this narrow slice");
+        };
+    }
+
+    private static int oraTypeNumForOracleDataType(String oracleDataType) {
+        return switch (oracleDataType.toUpperCase(java.util.Locale.ROOT)) {
+            case "NUMBER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE" -> TtcConstants.ORA_TYPE_NUM_NUMBER;
+            case "VARCHAR2", "VARCHAR", "CHAR", "NVARCHAR2", "NCHAR" -> TtcConstants.ORA_TYPE_NUM_VARCHAR;
+            case "DATE" -> TtcConstants.ORA_TYPE_NUM_DATE;
+            default -> throw new UnsupportedOperationException(
+                    "orawire: unsupported PL/SQL OUT/IN OUT parameter type \"" + oracleDataType + "\"");
+        };
     }
 
     private void handleExecuteNative(ExecuteRequest request, TtcWriter w) throws SQLException {

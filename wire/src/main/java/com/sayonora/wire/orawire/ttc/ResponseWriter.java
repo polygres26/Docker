@@ -203,6 +203,33 @@ public final class ResponseWriter {
         }
     }
 
+    // Confirmed live via a real Oracle 23c self-loop capture (a real ojdbc CallableStatement
+    // call, one IN NUMBER + one OUT NUMBER parameter): the response's OUT-bind-carrying block is
+    // NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that shape produced a real
+    // ORA-17401 protocol violation against a real client, confirmed live) -- it's this fixed
+    // 10-byte preamble, whose individual field meanings aren't independently confirmed (no public
+    // TTC spec available to cross-check against), followed by a MSG_TYPE_DESCRIBE_INFO (0x10) tag
+    // byte, then one ROW_DATA-tagged value per OUT parameter in call-position order. This exact
+    // byte sequence for exactly ONE scalar OUT parameter is what was captured and is what's
+    // shipped here -- untested/unconfirmed for more than one OUT parameter in the same call (see
+    // RequestLoop#handlePlSqlExecute's own scope notes).
+    private static final byte[] IO_VECTOR_PREAMBLE = { 0x05, 0x01, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x20 };
+
+    public static void writeOutBindValues(TtcWriter w, List<ColumnMetadata> outColumns, Object[] outValues) {
+        w.writeUint8(TtcConstants.MSG_TYPE_IO_VECTOR);
+        w.writeRaw(IO_VECTOR_PREAMBLE);
+        w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
+        w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
+        for (int i = 0; i < outColumns.size(); i++) {
+            writeColumnValue(w, outColumns.get(i), outValues[i]);
+        }
+        // The real capture's value bytes are followed by one more 0x00 byte before the response's
+        // next section begins -- a terminator for this values list, not part of the value's own
+        // encoding (confirmed: writeColumnValue's own length-prefixed NUMBER encoding for this
+        // exact value is only 3 bytes, "02 c1 2b"; the real capture has a 4th, "00", right after).
+        w.writeUint8(0);
+    }
+
     // A real distributed-database-link connection's native OCI client's own real row data --
     // embedded inline in its Execute response, not a separate Fetch (see RequestLoop's
     // nativeOciExecuteCount javadoc for why) -- carries 4 extra bytes between the ROW_DATA tag and

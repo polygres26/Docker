@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.sayonora.wire.testsupport.RealOracle;
 import com.sayonora.wire.testsupport.RealPostgres;
 import com.sayonora.wire.testsupport.WarpProcess;
+import oracle.jdbc.OracleTypes;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -17,13 +18,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Real proof that a real ojdbc {@code CallableStatement} call to a PL/SQL procedure with only IN
- * parameters (a real, common EBS-style shape: a side-effecting call with no return value) works
- * through orawire against a REAL Oracle backend (dual-exec, Oracle as authority) -- see {@code
+ * Real proof that a real ojdbc {@code CallableStatement} call to a PL/SQL procedure works through
+ * orawire against a REAL Oracle backend (dual-exec, Oracle as authority) -- see {@code
  * RequestLoop#handlePlSqlExecute}'s own javadoc for the full root-cause/scope writeup this
- * implements, including why OUT/IN OUT parameters (including REF CURSOR) are refused rather than
- * guessed at: a first attempt at scalar OUT params was tried and found wrong live (a real
- * ORA-17401 protocol violation), so this narrow slice covers only what's actually been verified.
+ * implements: IN-only calls and a single scalar OUT/IN OUT parameter are supported (the latter
+ * only after a first attempt using the wrong response shape was tried and found wrong live -- a
+ * real ORA-17401 protocol violation -- before {@link com.sayonora.wire.orawire.ttc.ResponseWriter
+ * #writeOutBindValues}'s real captured shape replaced it); REF CURSOR and multiple OUT parameters
+ * in the same call remain refused, not guessed at.
  */
 class OraclePlsqlCallIntegrationTest {
 
@@ -94,7 +96,7 @@ class OraclePlsqlCallIntegrationTest {
 
     @Test
     @Timeout(120)
-    void outParameterIsRefusedNotSilentlyWrong() throws Exception {
+    void callableStatementWithASingleScalarOutParameterWorks() throws Exception {
         try (RealOracle oracle = RealOracle.start();
                 RealPostgres postgres = RealPostgres.start()) {
 
@@ -128,15 +130,64 @@ class OraclePlsqlCallIntegrationTest {
                         CallableStatement cs = conn.prepareCall("{call plsql_call_out_it_proc(?, ?)}")) {
                     cs.setInt(1, 21);
                     cs.registerOutParameter(2, Types.NUMERIC);
-                    assertThrows(SQLException.class, cs::execute,
-                            "an OUT parameter must be refused with a clean error, not silently "
-                                    + "mishandled, hung, or produce a corrupted response");
+                    cs.execute();
+                    assertEquals(42, cs.getInt(2), "OUT parameter must carry the procedure's real computed value");
                 }
             } finally {
                 try (Connection cleanup = DriverManager.getConnection(
                         oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
                         Statement stmt = cleanup.createStatement()) {
                     stmt.execute("DROP PROCEDURE plsql_call_out_it_proc");
+                } catch (SQLException ignored) {
+                }
+            }
+        }
+    }
+
+    @Test
+    @Timeout(120)
+    void refCursorOutParameterIsRefusedNotSilentlyWrong() throws Exception {
+        try (RealOracle oracle = RealOracle.start();
+                RealPostgres postgres = RealPostgres.start()) {
+
+            try (Connection setup = DriverManager.getConnection(
+                    oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                    Statement stmt = setup.createStatement()) {
+                try {
+                    stmt.execute("DROP PROCEDURE plsql_call_refcursor_it_proc");
+                } catch (SQLException ignored) {
+                }
+                stmt.execute("CREATE PROCEDURE plsql_call_refcursor_it_proc(p_cur OUT SYS_REFCURSOR) AS "
+                        + "BEGIN OPEN p_cur FOR SELECT 1 FROM DUAL; END;");
+            }
+
+            try (WarpProcess warp = WarpProcess.builder()
+                    .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
+                    .frontend("orawire", "WARP_ORAWIRE_PORT")
+                    .env("WARP_DUAL_EXEC_ENABLED", "true")
+                    .env("WARP_DUAL_EXEC_AUTHORITY", "oracle")
+                    .env("WARP_DUAL_EXEC_SHADOW_ENABLED", "false")
+                    .env("WARP_ORACLE_HOST", oracle.host())
+                    .env("WARP_ORACLE_PORT", String.valueOf(oracle.port()))
+                    .env("WARP_ORACLE_SERVICE", oracle.serviceName())
+                    .env("WARP_ORACLE_USER", oracle.sysUsername())
+                    .env("WARP_ORACLE_PASSWORD", oracle.sysPassword())
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
+                    .start()) {
+
+                String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
+                try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
+                        CallableStatement cs = conn.prepareCall("{call plsql_call_refcursor_it_proc(?)}")) {
+                    cs.registerOutParameter(1, OracleTypes.CURSOR);
+                    assertThrows(SQLException.class, cs::execute,
+                            "a REF CURSOR OUT parameter must be refused with a clean error, not "
+                                    + "silently mishandled or hung");
+                }
+            } finally {
+                try (Connection cleanup = DriverManager.getConnection(
+                        oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                        Statement stmt = cleanup.createStatement()) {
+                    stmt.execute("DROP PROCEDURE plsql_call_refcursor_it_proc");
                 } catch (SQLException ignored) {
                 }
             }
