@@ -53,9 +53,16 @@ final class MongoQueryTranslator {
             }
             BsonValue value = entry.getValue();
             String column = fieldExpr(field);
-            if (value.isDocument() && hasOperatorKeys(value.asDocument())) {
+            if (value.isRegularExpression()) {
+                // {field: /pattern/flags} -- a real BSON regex value used DIRECTLY, not wrapped
+                // in {field: {$regex: ...}}. Real driver helpers (Filters.regex(...)) send this
+                // shape, confirmed live: without this branch it fell through to the plain
+                // equality case below, comparing the field to a JSON-encoded regex object that
+                // could never match a real string value.
+                clauses.add(operatorClause(field, column, "$regex", value, params));
+            } else if (value.isDocument() && hasOperatorKeys(value.asDocument())) {
                 for (Map.Entry<String, BsonValue> op : value.asDocument().entrySet()) {
-                    clauses.add(operatorClause(column, op.getKey(), op.getValue(), params));
+                    clauses.add(operatorClause(field, column, op.getKey(), op.getValue(), params));
                 }
             } else {
                 clauses.add(column + " = ?::jsonb");
@@ -104,7 +111,7 @@ final class MongoQueryTranslator {
         return !doc.isEmpty() && doc.getFirstKey().startsWith("$");
     }
 
-    private static String operatorClause(String column, String op, BsonValue value, List<String> params) {
+    private static String operatorClause(String field, String column, String op, BsonValue value, List<String> params) {
         switch (op) {
             case "$eq" -> {
                 params.add(BsonJson.valueToJson(value));
@@ -141,14 +148,67 @@ final class MongoQueryTranslator {
                 }
                 return alternatives.isEmpty() ? "FALSE" : "(" + String.join(" OR ", alternatives) + ")";
             }
-            default -> throw unsupported("operator \"" + op + "\" ($regex/$elemMatch/geo/$exists/$type and others "
+            // $exists/$regex -- real gap, found auditing this frontend for GA transparency: both
+            // are near-universal in real query filters (optional-field checks, partial text
+            // search) and were refused outright before this.
+            case "$exists" -> {
+                if (!value.isBoolean()) {
+                    throw unsupported("$exists with a non-boolean operand");
+                }
+                // jsonb_exists(doc, 'field'), NOT the "?" containment operator -- "?" collides
+                // with JDBC's own bind-placeholder syntax in the SQL text this becomes, so the
+                // function form is used instead. Checks real KEY PRESENCE, not "value is non-
+                // null" -- a field explicitly set to JSON null still counts as existing, matching
+                // real MongoDB's own $exists semantics.
+                String existsExpr = "jsonb_exists(doc, " + quoteLiteral(field) + ")";
+                return value.asBoolean().getValue() ? existsExpr : "NOT " + existsExpr;
+            }
+            case "$regex" -> {
+                String pattern;
+                String flags;
+                if (value.isRegularExpression()) {
+                    pattern = value.asRegularExpression().getPattern();
+                    flags = value.asRegularExpression().getOptions();
+                } else if (value.isString()) {
+                    pattern = value.asString().getValue();
+                    flags = "";
+                } else {
+                    throw unsupported("$regex operand (expected a string or a real BSON regex)");
+                }
+                // POSIX regex match against the field's TEXT form (->>, not ->) -- ~* for
+                // MongoDB's "i" (case-insensitive) flag, ~ otherwise. Other Mongo-specific flags
+                // (m/s/x/u) aren't translated -- Postgres's own POSIX regex engine has a
+                // different multiline/dotall story than PCRE, so silently mapping those would
+                // risk a subtly wrong match rather than an honest refusal.
+                if (flags.chars().anyMatch(ch -> "msxu".indexOf(ch) >= 0)) {
+                    throw unsupported("$regex flag(s) \"" + flags + "\" (only \"i\" is supported in this pass)");
+                }
+                // A literal, not a bind parameter -- every OTHER param in this class is bound as
+                // a jsonb-typed value (see PostgresDocumentStore#bindParams), which would corrupt
+                // a plain text regex pattern (or fail outright, since an arbitrary pattern is
+                // rarely valid JSON on its own). Escaped the same way every other literal in this
+                // package is (quoteLiteral, doubling embedded single quotes).
+                return textFieldExpr(field) + (flags.indexOf('i') >= 0 ? " ~* " : " ~ ") + quoteLiteral(pattern);
+            }
+            default -> throw unsupported("operator \"" + op + "\" ($elemMatch/geo/$type and others "
                     + "are not implemented in this pass)");
         }
     }
 
     private static String fieldExpr(String field) {
-        
+
         return "doc->'" + field.replace("'", "''") + "'";
+    }
+
+    /** {@code doc->>'field'} (jsonb's TEXT extraction, not {@code ->}'s own jsonb-typed one) --
+     * needed for {@code $regex}, which matches against a string's actual characters, not its
+     * jsonb-quoted-and-escaped representation. */
+    private static String textFieldExpr(String field) {
+        return "doc->>'" + field.replace("'", "''") + "'";
+    }
+
+    private static String quoteLiteral(String value) {
+        return "'" + value.replace("'", "''") + "'";
     }
 
     private static IllegalArgumentException unsupported(String what) {
