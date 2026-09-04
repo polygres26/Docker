@@ -255,7 +255,7 @@ public final class RouterStage implements PipelineStage {
                 }
                 String key = parts[0].trim();
                 ShardingStrategy strategy = ShardingStrategy.fromConfig(parts[1].trim(),
-                        expandBackendGroups(parts[1].trim(), parts[2].trim(), backendRegistry));
+                        expandBackendSets(parts[1].trim(), parts[2].trim(), backendRegistry));
                 // A purely-numeric first field is (unchanged, back-compat) a bind-parameter index.
                 // Anything else is a column name -- routes a client that sent the sharding value
                 // as a plain SQL literal instead of a bind parameter (see ValueShardColumnRule's
@@ -289,7 +289,7 @@ public final class RouterStage implements PipelineStage {
                     continue;
                 }
                 String strategyType = parts[1].trim();
-                String params = expandBackendGroups(strategyType, parts[3].trim(), backendRegistry);
+                String params = expandBackendSets(strategyType, parts[3].trim(), backendRegistry);
                 ShardingStrategy strategy = ShardingStrategy.fromConfig(strategyType, params);
                 tableShardRules.add(new TableShardRule(table,
                         Pattern.compile("\\b" + Pattern.quote(table) + "\\b", Pattern.CASE_INSENSITIVE),
@@ -302,23 +302,23 @@ public final class RouterStage implements PipelineStage {
 
     /**
      * Lets a {@code WARP_TABLE_SHARDS} entry's backend list name a {@link BackendRegistry}
-     * backend GROUP (see {@code BackendRegistry#backendGroups}) instead of, or alongside,
+     * backend SET (see {@code BackendRegistry#backendSets}) instead of, or alongside,
      * individual backend names -- each comma-separated token is expanded if it matches a known
-     * group name (a group may itself mix engines: a Postgres, an Oracle, a MySQL, a SQL Server,
+     * set name (a set may itself mix engines: a Postgres, an Oracle, a MySQL, a SQL Server,
      * and a MongoDB backend together), left as-is (a plain backend name) otherwise, then
      * de-duplicated. Scoped to {@code hash}/{@code consistent} only -- those are the two
      * strategies where the whole params field IS a flat backend list; {@code list}/{@code range}/
      * {@code date} each name exactly one backend per value/range entry, so "the whole field is a
      * set" doesn't apply there. A null registry (unit tests that build a {@link RouterStage}
-     * without one) or one with no groups configured leaves {@code paramsSpec} untouched.
+     * without one) or one with no sets configured leaves {@code paramsSpec} untouched.
      */
-    private static String expandBackendGroups(String strategyType, String paramsSpec, BackendRegistry backendRegistry) {
+    private static String expandBackendSets(String strategyType, String paramsSpec, BackendRegistry backendRegistry) {
         if (backendRegistry == null
                 || !("hash".equalsIgnoreCase(strategyType) || "consistent".equalsIgnoreCase(strategyType))) {
             return paramsSpec;
         }
-        Map<String, List<String>> groups = backendRegistry.backendGroups();
-        if (groups.isEmpty()) {
+        Map<String, List<String>> sets = backendRegistry.backendSets();
+        if (sets.isEmpty()) {
             return paramsSpec;
         }
         java.util.LinkedHashSet<String> expanded = new java.util.LinkedHashSet<>();
@@ -327,7 +327,7 @@ public final class RouterStage implements PipelineStage {
             if (name.isEmpty()) {
                 continue;
             }
-            List<String> members = groups.get(name);
+            List<String> members = sets.get(name);
             if (members != null) {
                 expanded.addAll(members);
             } else {
@@ -344,7 +344,7 @@ public final class RouterStage implements PipelineStage {
     public void reconfigure(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec,
             String tableShardSpec) {
         // Passes this.backendRegistry (not null) so a table-shard rule's "backends" field can
-        // still resolve a WARP_BACKEND_GROUPS group name -- see #expandBackendGroups. The
+        // still resolve a WARP_BACKEND_SETS set name -- see #expandBackendSets. The
         // registry reference itself is never replaced by this call; only the rule lists below are.
         RouterStage fresh = fromConfig(schemaSpec, predicateSpec, valueShardSpec, shardTablesSpec, tableShardSpec,
                 this.backendRegistry);

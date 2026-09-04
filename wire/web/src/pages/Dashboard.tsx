@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Activity, ArrowDownToLine, ArrowUpFromLine, Gauge, Server, Waypoints } from 'lucide-react'
-import { type BackendInfo, type NodeInfo, type WireMetricsSummary, getWireMetrics, listBackends, listNodes } from '../api/client'
+import { Activity, ArrowDownToLine, ArrowUpFromLine, Boxes, Gauge, Server, Waypoints } from 'lucide-react'
+import {
+  type BackendInfo, type NodeInfo, type WireConfig, type WireMetricsSummary,
+  getWireConfig, getWireMetrics, listBackends, listNodes, parseBackendSetNames,
+} from '../api/client'
 
 /**
  * Landing page after connecting -- modeled on versitygw's Admin Dashboard (see
  * https://github.com/versity/versitygw/wiki/WebGUI#admin-dashboard): a handful of stat cards
  * giving an at-a-glance read on gateway health before drilling into any one page. Warp has no
- * single "uptime" figure exposed yet, so this leans on what /api/metrics/summary, /api/backends
- * and /api/nodes already report: throughput, backend count, and node topology health.
+ * single "uptime" figure exposed yet, so this leans on what /api/metrics/summary, /api/backends,
+ * /api/config, and /api/nodes already report: throughput, backend count, backend sets, and node
+ * topology health.
  */
 
 interface StatCardProps {
@@ -39,6 +43,7 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState<WireMetricsSummary | null>(null)
   const [backends, setBackends] = useState<BackendInfo[] | null>(null)
   const [nodes, setNodes] = useState<NodeInfo[] | null>(null)
+  const [backendSets, setBackendSets] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export default function Dashboard() {
     // Node heartbeats are a newer, optional endpoint (single-node deployments may not run the
     // heartbeat loop at all) -- absence here just means "no topology data," not an error.
     listNodes().then(setNodes).catch(() => setNodes(null))
+    getWireConfig().then((c: WireConfig) => setBackendSets(parseBackendSetNames(c.backendSets))).catch(() => setBackendSets(null))
   }, [])
 
   const upNodes = nodes?.filter((n) => n.status === 'up').length ?? null
@@ -59,7 +65,7 @@ export default function Dashboard() {
     <div>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Dashboard</h1>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 24 }}>
-        Live snapshot of this Warp process -- throughput, configured backends, and node topology.
+        Live snapshot of this Warp process -- throughput, configured backends and backend sets, and node topology.
       </p>
 
       {error && <div style={{ marginBottom: 16, color: 'var(--hard, crimson)', fontSize: 13 }}>{error}</div>}
@@ -94,6 +100,12 @@ export default function Dashboard() {
           label="Backends"
           value={backends ? String(backends.length) : '—'}
           hint={backends && backends.length > 0 ? backends.map((b) => b.name).join(', ') : 'none configured'}
+        />
+        <StatCard
+          icon={Boxes}
+          label="Backend sets"
+          value={backendSets ? String(backendSets.length) : '—'}
+          hint={backendSets && backendSets.length > 0 ? backendSets.join(', ') : 'none configured'}
         />
         <StatCard
           icon={Waypoints}

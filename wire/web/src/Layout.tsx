@@ -36,7 +36,7 @@ const GROUPS = [
     label: 'Traffic',
     items: [
       { to: '/backends', label: 'Backends', icon: Server },
-      { to: '/backend-groups', label: 'Backend groups', icon: Boxes },
+      { to: '/backend-sets', label: 'Backend sets', icon: Boxes },
       { to: '/queues', label: 'Queues', icon: ListOrdered },
       { to: '/data', label: 'Data explorer', icon: TableProperties },
       { to: '/router', label: 'Router rules', icon: Route },

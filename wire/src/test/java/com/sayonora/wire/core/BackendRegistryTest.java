@@ -9,7 +9,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit coverage for {@code WARP_BACKEND_GROUPS} parsing/validation -- a named, reusable set of
+ * Unit coverage for {@code WARP_BACKEND_SETS} parsing/validation -- a named, reusable set of
  * backend names an admin defines once (possibly spanning multiple engines: a Postgres, an
  * Oracle, a MySQL, a SQL Server, and a MongoDB backend all in one group) and then references BY
  * NAME wherever a backend list would otherwise be typed out by hand (see
@@ -33,21 +33,21 @@ class BackendRegistryTest {
     void aGroupCanMixEnginesAndIsExposedByName() {
         BackendRegistry registry = BackendRegistry.fromConfig(BACKENDS, null,
                 "all-engines=pg,ora,mysql", null, Map.of());
-        assertEquals(Map.of("all-engines", List.of("pg", "ora", "mysql")), registry.backendGroups());
+        assertEquals(Map.of("all-engines", List.of("pg", "ora", "mysql")), registry.backendSets());
     }
 
     @Test
     void multipleGroupsAreIndependent() {
         BackendRegistry registry = BackendRegistry.fromConfig(BACKENDS, null,
                 "pair-a=pg,ora|pair-b=ora,mysql", null, Map.of());
-        assertEquals(List.of("pg", "ora"), registry.backendGroups().get("pair-a"));
-        assertEquals(List.of("ora", "mysql"), registry.backendGroups().get("pair-b"));
+        assertEquals(List.of("pg", "ora"), registry.backendSets().get("pair-a"));
+        assertEquals(List.of("ora", "mysql"), registry.backendSets().get("pair-b"));
     }
 
     @Test
     void noGroupsConfiguredIsAnEmptyMapNotNull() {
         BackendRegistry registry = BackendRegistry.fromConfig(BACKENDS, null, null, null, Map.of());
-        assertTrue(registry.backendGroups().isEmpty());
+        assertTrue(registry.backendSets().isEmpty());
     }
 
     @Test
@@ -79,8 +79,8 @@ class BackendRegistryTest {
     @Test
     void reloadPicksUpChangedGroups() {
         BackendRegistry registry = BackendRegistry.fromConfig(BACKENDS, null, "g=pg,ora", null, Map.of());
-        assertEquals(List.of("pg", "ora"), registry.backendGroups().get("g"));
+        assertEquals(List.of("pg", "ora"), registry.backendSets().get("g"));
         registry.reload(BACKENDS, null, "g=pg,ora,mysql");
-        assertEquals(List.of("pg", "ora", "mysql"), registry.backendGroups().get("g"));
+        assertEquals(List.of("pg", "ora", "mysql"), registry.backendSets().get("g"));
     }
 }

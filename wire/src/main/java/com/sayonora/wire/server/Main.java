@@ -141,7 +141,7 @@ public final class Main {
                     options.mssqlUser(), options.mssqlPassword()));
         }
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
-                config.backends(), config.shardBackends(), config.backendGroups(), defaultBackendTarget, nativeBackendTargets);
+                config.backends(), config.shardBackends(), config.backendSets(), defaultBackendTarget, nativeBackendTargets);
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it
@@ -585,11 +585,11 @@ public final class Main {
                     c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(), telemetry);
             qosStage.reconfigure(parsedQos.defaultLimit(), parsedQos.classLimits(), parsedQos.poolWaitThreshold());
             // backendRegistry reloads BEFORE routerStage reconfigures: a table-shard rule's
-            // "backends" field can name a WARP_BACKEND_GROUPS group, expanded using whatever
-            // groups are live in the registry at the moment routerStage rebuilds its rules (see
-            // RouterStage#expandBackendGroups) -- reconfiguring first would expand against the
-            // groups from BEFORE this same config version, one version stale.
-            backendRegistry.reload(c.backends(), c.shardBackends(), c.backendGroups());
+            // "backends" field can name a WARP_BACKEND_SETS set, expanded using whatever
+            // sets are live in the registry at the moment routerStage rebuilds its rules (see
+            // RouterStage#expandBackendSets) -- reconfiguring first would expand against the
+            // sets from BEFORE this same config version, one version stale.
+            backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets());
             routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
                     c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards());
             if (cacheStage != null) {

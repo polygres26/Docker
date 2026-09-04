@@ -205,7 +205,7 @@ export interface WireConfig {
   cacheTtlMs: string | null
   backends: string | null
   shardBackends: string | null
-  backendGroups: string | null
+  backendSets: string | null
   routerSchemaRules: string | null
   routerPredicateRules: string | null
   routerValueShardRules: string | null
@@ -224,6 +224,14 @@ export interface WireConfig {
 
 export async function getWireConfig(): Promise<WireConfig> {
   return api('/api/config')
+}
+
+/** Names of the backend sets in a `backendSets` spec ({@code name=b1,b2,...|name2=...}), without
+ * pulling in the full row-editing logic `BackendSets.tsx` has -- shared by any page (Dashboard,
+ * Metrics) that just wants a count/list, not the editor itself. */
+export function parseBackendSetNames(spec: string | null): string[] {
+  if (!spec || !spec.trim()) return []
+  return spec.split('|').map((entry) => entry.slice(0, entry.indexOf('=')).trim()).filter(Boolean)
 }
 
 export async function saveWireConfig(partial: Partial<WireConfig>): Promise<{ ok: boolean; version: number }> {

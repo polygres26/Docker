@@ -11,14 +11,14 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit coverage for letting a {@code WARP_TABLE_SHARDS}/{@code WARP_ROUTER_VALUE_SHARD_RULES}
  * hash/consistent-hash "backends" field name a {@link BackendRegistry} backend GROUP instead of
- * (or alongside) individual backend names -- see {@link RouterStage#expandBackendGroups}. Backends
+ * (or alongside) individual backend names -- see {@link RouterStage#expandBackendSets}. Backends
  * are registered via {@code staticExtraTargets} (bypassing {@code BackendRegistry.fromConfig}'s
  * spec-parsing path entirely, WARP_TRUSTED_BACKEND_HOSTS checks and Developer-edition backend cap
  * included) purely so this test can freely register five DIFFERENT-engine backends -- Postgres,
  * Oracle, MySQL, SQL Server, and MongoDB -- the exact scenario a "group my backends" feature
  * exists for, without the count itself becoming what the test is actually about.
  */
-class RouterStageBackendGroupExpansionTest {
+class RouterStageBackendSetExpansionTest {
 
     private static Map<String, BackendTarget> fiveEngineTargets() {
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
@@ -86,7 +86,7 @@ class RouterStageBackendGroupExpansionTest {
         // "all-engines" here is deliberately used as a literal VALUE, not a backend list -- list/
         // range/date strategies name exactly one backend per value/range entry, so there's no
         // "whole field is a backend set" position for group expansion to act on. This just proves
-        // expandBackendGroups is scoped to hash/consistent and never touches this grammar at all.
+        // expandBackendSets is scoped to hash/consistent and never touches this grammar at all.
         BackendRegistry registry = registryWithGroup("all-engines=pg,ora,mysql,mssql,mongo");
         RouterStage router = RouterStage.fromConfig(null, null, null, null,
                 "orders:list:region:pg=east,west", registry);

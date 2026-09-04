@@ -1,7 +1,7 @@
 import { ArrowDownToLine, ArrowUpFromLine, Gauge, Link as LinkIcon, RefreshCw, Timer } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { type WireMetricsSummary, getWireMetrics } from '../api/client'
+import { type WireConfig, type WireMetricsSummary, getWireConfig, getWireMetrics, parseBackendSetNames } from '../api/client'
 import styles from './Metrics.module.css'
 
 const PROTOCOL_COLORS: Record<string, string> = {
@@ -33,6 +33,7 @@ export default function Metrics() {
   const [metrics, setMetrics] = useState<WireMetricsSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [backendSetNames, setBackendSetNames] = useState<string[]>([])
 
   function load() {
     getWireMetrics()
@@ -43,6 +44,9 @@ export default function Metrics() {
   useEffect(() => {
     load()
     const id = setInterval(load, 5000)
+    // Backend sets change rarely (an admin edit, not live traffic) -- fetched once, not on the
+    // same 5s poll as the metrics themselves.
+    getWireConfig().then((c: WireConfig) => setBackendSetNames(parseBackendSetNames(c.backendSets))).catch(() => {})
     return () => clearInterval(id)
   }, [])
 
@@ -201,7 +205,10 @@ export default function Metrics() {
         </div>
         <p className={styles.cardSubtitle}>
           Where statements actually landed, by routing target — see <Link to="/backends">Backends</Link> to
-          change what's configured.
+          change what's configured{backendSetNames.length > 0 && (
+            <> and <Link to="/backend-sets">Backend sets</Link> ({backendSetNames.join(', ')}) for named
+            groups sharding rules can reference by name</>
+          )}.
         </p>
         {metrics.byBackend.length === 0 ? (
           <div className={styles.empty}>No traffic yet.</div>
