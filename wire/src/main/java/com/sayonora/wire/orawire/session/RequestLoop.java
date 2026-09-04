@@ -476,7 +476,10 @@ public final class RequestLoop {
      */
     private ExecuteRequest readExecuteRequest(TtcReader r, TnsPacket packet) {
         try {
-            ExecuteRequest parsed = ExecuteRequestReader.read(r);
+            ExecuteRequest parsed = ExecuteRequestReader.read(r, cid -> {
+                StatementSignature cached = statementSignatures.get((int) cid);
+                return cached == null ? null : cached.bindTypes();
+            });
             // Real bug, found live against a real dblink client's Execute for a query shaped
             // differently from the "SELECT *" one this fallback was originally found and fixed
             // against ("SELECT id, amount FROM t@link" instead): this client's field layout
@@ -1086,7 +1089,7 @@ public final class RequestLoop {
                         "EXECUTE for cursor_id=" + request.cursorId + " with no prior EXECUTE on this connection to reuse");
             }
             request = new ExecuteRequest(request.cursorId, cached.sql(), request.options, request.numIters,
-                    request.bindParams);
+                    request.bindRows);
         }
         
         int[] bindTypes = null;
@@ -1119,8 +1122,6 @@ public final class RequestLoop {
         }
 
         BindVariableRewriter.Result rewritten = BindVariableRewriter.rewrite(primarySql);
-        List<Object> binds = orderedBindValues(request.bindParams, rewritten.placeholderToBindIndex());
-        Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds, accessContext);
         lastRewrittenSqlText = rewritten.sql();
         terminalExecutor.rebind(primaryConn);
 
@@ -1139,16 +1140,29 @@ public final class RequestLoop {
         // per-call pipeline-construction costs earlier in this investigation were already fixed.
         boolean wantsCommit = (request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0;
         boolean useNativeAutocommit = wantsCommit && !dual && replicaConnections.isEmpty() && xaTransaction == null;
-        ExecutionResult result;
-        if (useNativeAutocommit) {
-            primaryConn.setAutoCommit(true);
-            try {
+        // A real DML array-execute (ojdbc's PreparedStatement.addBatch()/executeBatch(), confirmed
+        // live -- see ExecuteRequest#bindRows's own javadoc) carries one bind row per batched
+        // statement. This codebase's execution pipeline has no native JDBC-batch path, so each row
+        // runs through the ordinary single-statement path in sequence instead -- correct (every
+        // row's real effect lands on the backend) even though it forgoes a real batch round trip's
+        // efficiency. This loop runs exactly once, unchanged from before this fix, for every
+        // non-batch Execute (request.bindRows always has exactly one entry then).
+        ExecutionResult result = null;
+        long totalUpdateCount = 0;
+        for (List<BindParam> bindRow : request.bindRows) {
+            List<Object> binds = orderedBindValues(bindRow, rewritten.placeholderToBindIndex());
+            Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds, accessContext);
+            if (useNativeAutocommit) {
+                primaryConn.setAutoCommit(true);
+                try {
+                    result = reusablePipeline.execute(statement);
+                } finally {
+                    primaryConn.setAutoCommit(false);
+                }
+            } else {
                 result = reusablePipeline.execute(statement);
-            } finally {
-                primaryConn.setAutoCommit(false);
             }
-        } else {
-            result = reusablePipeline.execute(statement);
+            totalUpdateCount += result.updateCount();
         }
         openCursorId = nextCursorId++;
         if (bindTypes != null) {
@@ -1226,7 +1240,7 @@ public final class RequestLoop {
             if (wantsCommit && !useNativeAutocommit) {
                 commitAll();
             }
-            ResponseWriter.writeSuccessEnd(w, result.updateCount(), openCursorId, callNumber);
+            ResponseWriter.writeSuccessEnd(w, totalUpdateCount, openCursorId, callNumber);
         }
     }
 
@@ -1262,14 +1276,19 @@ public final class RequestLoop {
         }
         lastSqlText = signature.sql();
 
-        List<BindParam> bindParams = signature.bindTypes().length > 0
-                ? ExecuteRequestReader.readBindValueRow(r, signature.bindTypes())
-                : List.of();
+        // Same self-delimited multi-row bind shape a fresh Execute uses (see
+        // ExecuteRequestReader#readAllBindValueRows's own javadoc, and ExecuteRequest#bindRows for
+        // how this was confirmed live) -- REEXECUTE shares the identical wire shape for its bind
+        // values, so it needs the same "keep reading rows while the wire has another ROW_DATA tag"
+        // loop rather than reading exactly one, for the same real DML array-execute case.
+        List<List<BindParam>> bindRows = signature.bindTypes().length > 0
+                ? ExecuteRequestReader.readAllBindValueRows(r, signature.bindTypes())
+                : List.of(List.of());
 
         long syntheticOptions = (andFetch ? TtcConstants.EXEC_OPTION_FETCH : 0)
                 | ((options2 & TtcConstants.EXEC_OPTION_COMMIT_REEXECUTE) != 0 ? TtcConstants.EXEC_OPTION_COMMIT : 0);
         ExecuteRequest synthetic = new ExecuteRequest(0, signature.sql(), syntheticOptions,
-                andFetch ? numIters : 0, bindParams);
+                andFetch ? numIters : 0, bindRows);
         handleExecute(synthetic, w, callNumber);
     }
 

@@ -7,6 +7,30 @@ import java.util.List;
 public final class ExecuteRequestReader {
 
     public static ExecuteRequest read(TtcReader r) {
+        return read(r, cursorId -> null);
+    }
+
+    /** @param cachedBindTypesLookup resolves a previously-parsed cursor's bind types by cursor id
+     *      -- needed for the real gap this parameter exists to close (see below); a lookup that
+     *      always returns {@code null} (the no-arg {@link #read(TtcReader)} overload) is exactly
+     *      as safe as this codebase's previous behavior for every OTHER shape.
+     *
+     *      <p>Real bug, found live via byte-level capture (see {@link ExecuteRequest#bindRows}'s
+     *      own javadoc for the sibling array-execute finding from the same investigation): when a
+     *      client re-executes an already-parsed cursor with NEW bind values (real ojdbc shape,
+     *      confirmed live -- {@code cursorId != 0}, {@code sqlText == null}, this is a genuine
+     *      {@code FUNC_EXECUTE}, NOT a {@code FUNC_REEXECUTE}, for reusing one statement across
+     *      calls that aren't literally the same {@code PreparedStatement.addBatch()} run),
+     *      {@code bindsPointer} reads as 0 (no FRESH descriptors, since the client already
+     *      described them on the original parse) even though the wire genuinely still carries real
+     *      {@code ROW_DATA}-tagged bind VALUE rows afterward, using the types from that original
+     *      description. The old code's {@code bindsPointer != 0} gate treated "no fresh
+     *      descriptors" as "no bind values at all" and silently left those real trailing bytes
+     *      unread -- exactly the corruption {@code RequestLoop.handleReexecute} already had to
+     *      solve for its own, textually-different code path (a real {@code FUNC_REEXECUTE}) by
+     *      keeping the cached types from the original parse; this closes the same gap for the
+     *      EXECUTE-shaped case of the identical real client behavior. */
+    public static ExecuteRequest read(TtcReader r, java.util.function.LongFunction<int[]> cachedBindTypesLookup) {
         long options = r.readUb4();
         long cursorId = r.readUb4();
 
@@ -79,15 +103,30 @@ public final class ExecuteRequestReader {
         r.readUb4();
         r.readUb4();
 
-        List<BindParam> bindParams = Collections.emptyList();
+        List<List<BindParam>> bindRows = List.of(Collections.<BindParam>emptyList());
         if (bindsPointer != 0 && numParams > 0) {
-            bindParams = readBindParams(r, (int) numParams);
+            bindRows = readBindParams(r, (int) numParams);
+        } else if (!freshParse && r.hasRemaining()) {
+            // See this method's own two-arg overload javadoc: a cursor-reuse Execute with NEW bind
+            // values sends them without re-describing types (bindsPointer stays 0), so the only way
+            // to know how to decode the real bytes still sitting in this message is the cursor's
+            // ORIGINAL bind types, from its first (fresh-parse) Execute.
+            int[] cachedTypes = cachedBindTypesLookup.apply(cursorId);
+            if (cachedTypes != null && cachedTypes.length > 0) {
+                bindRows = readAllBindValueRows(r, cachedTypes);
+            }
         }
 
-        return new ExecuteRequest(cursorId, sqlText, options, numIters, bindParams);
+        return new ExecuteRequest(cursorId, sqlText, options, numIters, bindRows);
     }
 
-    private static List<BindParam> readBindParams(TtcReader r, int numParams) {
+    /** Reads the per-parameter descriptors ONCE (type/length/etc, sent once regardless of how many
+     * rows follow), then every row of bind VALUES that actually follows -- see
+     * {@link ExecuteRequest#bindRows}'s own javadoc for how live byte-capture confirmed rows are
+     * self-delimited (each starts with its own {@code ROW_DATA} tag byte) rather than counted by
+     * any field this reader has found, and why looping on that tag rather than trusting
+     * {@code numIters} is the correct, confirmed-safe way to read them. */
+    private static List<List<BindParam>> readBindParams(TtcReader r, int numParams) {
         int[] oraTypeNums = new int[numParams];
         for (int i = 0; i < numParams; i++) {
             oraTypeNums[i] = r.readUint8();
@@ -105,8 +144,29 @@ public final class ExecuteRequestReader {
             r.readUb4();
         }
 
-        List<BindParam> params = readBindValueRow(r, oraTypeNums);
-        return params;
+        return readAllBindValueRows(r, oraTypeNums);
+    }
+
+    /** Reads one row of bind values, then keeps reading more for as long as the wire genuinely has
+     * another one -- see {@link ExecuteRequest#bindRows}'s javadoc for how live byte-capture
+     * confirmed a real DML array-execute (ojdbc's {@code addBatch()}/{@code executeBatch()}) sends
+     * N rows this way, each self-delimited by its own {@code ROW_DATA} ({@code 0x07}) tag with no
+     * count field anywhere, rather than a single row plus a separate {@code numIters}-driven count
+     * (confirmed live NOT to carry it: it read 0 for every Execute observed, batched or not). Used
+     * both for a fresh-parse Execute's bind section ({@link #readBindParams}) and for REEXECUTE's
+     * (see {@code RequestLoop#handleReexecute}), which shares the identical bind-value wire shape. */
+    public static List<List<BindParam>> readAllBindValueRows(TtcReader r, int[] oraTypeNums) {
+        List<List<BindParam>> rows = new ArrayList<>();
+        rows.add(readBindValueRow(r, oraTypeNums));
+        // A single row's own values end exactly where the next row's ROW_DATA tag would begin
+        // (or where the message simply ends, for the overwhelmingly common single-row case) --
+        // confirmed live: a genuine 2-row array-execute's second row is a second, complete
+        // ROW_DATA-tagged block with NO separator and no count field anywhere before it, appended
+        // immediately after the first row's last value byte.
+        while (r.hasRemaining() && (r.peekRawBytes(0, 1)[0] & 0xFF) == TtcConstants.MSG_TYPE_ROW_DATA) {
+            rows.add(readBindValueRow(r, oraTypeNums));
+        }
+        return rows;
     }
 
     public static List<BindParam> readBindValueRow(TtcReader r, int[] oraTypeNums) {
