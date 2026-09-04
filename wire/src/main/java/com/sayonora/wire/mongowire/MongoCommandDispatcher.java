@@ -1,9 +1,13 @@
 package com.sayonora.wire.mongowire;
 
+import com.sayonora.wire.auth.CredentialStore;
+import com.sayonora.wire.mongowire.auth.MongoScramConversation;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import org.bson.BsonArray;
+import org.bson.BsonBinary;
 import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
 import org.bson.BsonDouble;
@@ -21,6 +25,14 @@ final class MongoCommandDispatcher {
     private final PostgresDocumentStore store;
     private final com.sayonora.wire.cluster.RowCache cache;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
+    private final CredentialStore credentials = new CredentialStore();
+    // SCRAM state for the single login attempt in flight on this connection -- mongowire is one
+    // dispatcher instance per connection (see MongoWireSessionHandler), so instance fields are the
+    // right scope, same as MongoScramConversation's own javadoc explains. conversationId is a
+    // simple per-connection counter; real MongoDB drivers just echo back whatever the server sent
+    // in saslStart's reply, they never invent their own.
+    private MongoScramConversation pendingScram;
+    private int scramConversationId;
 
     MongoCommandDispatcher(PostgresDocumentStore store, com.sayonora.wire.cluster.RowCache cache) {
         this(store, cache, null);
@@ -39,11 +51,13 @@ final class MongoCommandDispatcher {
         long start = System.nanoTime();
         try {
             return switch (lower) {
-                case "hello", "ismaster", "ismastercmd" -> hello();
+                case "hello", "ismaster", "ismastercmd" -> hello(command);
                 case "ping" -> ok();
                 case "buildinfo" -> buildInfo();
                 case "getparameter" -> ok();
                 case "endsessions" -> ok();
+                case "saslstart" -> saslStart(command);
+                case "saslcontinue" -> saslContinue(command);
                 case "insert" -> insert(command, db);
                 case "find" -> find(command, db);
                 case "aggregate" -> aggregate(command, db);
@@ -125,7 +139,7 @@ final class MongoCommandDispatcher {
         return specs.get(0).asDocument().getDocument("q", new BsonDocument());
     }
 
-    private BsonDocument hello() {
+    private BsonDocument hello(BsonDocument command) {
         BsonDocument reply = new BsonDocument();
         reply.put("ismaster", BsonBoolean.TRUE);
         reply.put("helloOk", BsonBoolean.TRUE);
@@ -136,10 +150,68 @@ final class MongoCommandDispatcher {
         reply.put("logicalSessionTimeoutMinutes", new BsonInt32(30));
         reply.put("connectionId", new BsonInt32(1));
         reply.put("minWireVersion", new BsonInt32(0));
-        
+
         reply.put("maxWireVersion", new BsonInt32(17));
         reply.put("readOnly", BsonBoolean.FALSE);
+        // A client that's about to authenticate probes here first with saslSupportedMechs:
+        // "<db>.<user>" (real mongo-java-driver behavior whenever a MongoCredential is
+        // configured) to pick a mechanism before ever sending saslStart. Only SCRAM-SHA-256 is
+        // implemented (see MongoScramConversation's javadoc), so that's the only one advertised --
+        // a driver that only supports SCRAM-SHA-1 will fail to negotiate a mechanism and report
+        // that clearly, rather than this server silently accepting a mechanism it can't actually
+        // verify.
+        if (command.containsKey("saslSupportedMechs")) {
+            String spec = command.getString("saslSupportedMechs").getValue();
+            int dot = spec.indexOf('.');
+            String username = dot >= 0 ? spec.substring(dot + 1) : spec;
+            if (credentials.lookupPassword(username) != null) {
+                reply.put("saslSupportedMechs", new BsonArray(List.of(new BsonString("SCRAM-SHA-256"))));
+            }
+        }
         reply.put("ok", new BsonDouble(1.0));
+        return reply;
+    }
+
+    private BsonDocument saslStart(BsonDocument command) {
+        String mechanism = command.containsKey("mechanism") ? command.getString("mechanism").getValue() : "";
+        if (!"SCRAM-SHA-256".equals(mechanism)) {
+            return error("Unsupported mechanism '" + mechanism + "' -- only SCRAM-SHA-256 is implemented", 334, "MechanismUnavailable");
+        }
+        String clientFirstMessage = new String(command.getBinary("payload").getData(), StandardCharsets.UTF_8);
+        MongoScramConversation conversation;
+        try {
+            conversation = MongoScramConversation.start(clientFirstMessage, credentials);
+        } catch (IllegalArgumentException malformed) {
+            return error("Invalid SCRAM client-first-message: " + malformed.getMessage(), 9);
+        }
+        if (conversation == null) {
+            return error("Authentication failed.", 18, "AuthenticationFailed");
+        }
+        pendingScram = conversation;
+        scramConversationId++;
+        BsonDocument reply = ok();
+        reply.put("conversationId", new BsonInt32(scramConversationId));
+        reply.put("done", BsonBoolean.FALSE);
+        reply.put("payload", new BsonBinary(conversation.serverFirstMessage().getBytes(StandardCharsets.UTF_8)));
+        return reply;
+    }
+
+    private BsonDocument saslContinue(BsonDocument command) {
+        int conversationId = command.getNumber("conversationId").intValue();
+        if (pendingScram == null || conversationId != scramConversationId) {
+            return error("Authentication failed.", 18, "AuthenticationFailed");
+        }
+        String clientFinalMessage = new String(command.getBinary("payload").getData(), StandardCharsets.UTF_8);
+        String serverFinalMessage = pendingScram.verifyAndFinish(clientFinalMessage);
+        if (serverFinalMessage == null) {
+            pendingScram = null;
+            return error("Authentication failed.", 18, "AuthenticationFailed");
+        }
+        pendingScram = null;
+        BsonDocument reply = ok();
+        reply.put("conversationId", new BsonInt32(conversationId));
+        reply.put("done", BsonBoolean.TRUE);
+        reply.put("payload", new BsonBinary(serverFinalMessage.getBytes(StandardCharsets.UTF_8)));
         return reply;
     }
 
