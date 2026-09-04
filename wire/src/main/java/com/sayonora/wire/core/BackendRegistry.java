@@ -44,6 +44,17 @@ public final class BackendRegistry {
     private volatile Map<String, BackendTarget> targets;
     private volatile List<String> shardGroup;
 
+    // Named, reusable sets of backend names -- possibly spanning multiple engines (a Postgres, an
+    // Oracle, a MySQL, a SQL Server, and a MongoDB backend all in one group), unlike shardGroup
+    // above (a single, unnamed, homogeneous set used for hash-sharding documents/items/queues).
+    // A group exists purely to be referenced BY NAME wherever a backend list is otherwise typed
+    // out by hand -- today, that's RouterStage#fromConfig's table-shard "backends" field for the
+    // hash/consistent strategies (see RouterStage.expandBackendGroups). Every member must be a
+    // real, currently-registered backend name -- checked at construction time, not lazily at
+    // lookup time, so a typo in WARP_BACKEND_GROUPS fails loudly at startup/reload instead of
+    // silently shrinking a shard set the first time a rule referencing it actually runs.
+    private volatile Map<String, List<String>> backendGroups;
+
     // Deliberately NOT reset by reload() -- a backend's drain/down state is an operational fact
     // set by an admin action or a health check, independent of whatever WARP_BACKENDS config
     // happens to be current. A name that disappears from a fresh reload just leaves its state
@@ -70,10 +81,16 @@ public final class BackendRegistry {
 
     private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget,
             Map<String, BackendTarget> staticExtraTargets) {
+        this(targets, shardGroup, defaultTarget, staticExtraTargets, Map.of());
+    }
+
+    private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget,
+            Map<String, BackendTarget> staticExtraTargets, Map<String, List<String>> backendGroups) {
         this.targets = Map.copyOf(targets);
         this.shardGroup = List.copyOf(shardGroup);
         this.defaultTarget = defaultTarget;
         this.staticExtraTargets = Map.copyOf(staticExtraTargets);
+        this.backendGroups = Map.copyOf(backendGroups);
     }
 
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec) {
@@ -93,6 +110,17 @@ public final class BackendRegistry {
      * what those two checks exist to gate. */
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec, BackendTarget defaultTarget,
             Map<String, BackendTarget> staticExtraTargets) {
+        return fromConfig(spec, shardGroupSpec, null, defaultTarget, staticExtraTargets);
+    }
+
+    /** As the 4-arg overload, plus {@code backendGroupsSpec} -- {@code WARP_BACKEND_GROUPS}'s
+     * grammar: {@code name=backend1,backend2,...} entries, {@code |}-separated (same delimiter
+     * convention {@code WARP_TABLE_SHARDS} uses). Every member must already be a real registered
+     * backend name (from {@code spec} or {@code staticExtraTargets}) -- a group can mix engines
+     * freely (a Postgres, an Oracle, a MySQL, a SQL Server, and a MongoDB backend in one group),
+     * but every one of them must actually exist. */
+    public static BackendRegistry fromConfig(String spec, String shardGroupSpec, String backendGroupsSpec,
+            BackendTarget defaultTarget, Map<String, BackendTarget> staticExtraTargets) {
 
         TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
@@ -148,13 +176,56 @@ public final class BackendRegistry {
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()
                 ? List.of()
                 : List.of(shardGroupSpec.split(",")).stream().map(String::trim).toList();
-        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets);
+        Map<String, List<String>> backendGroups = parseBackendGroups(backendGroupsSpec, targets.keySet());
+        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets, backendGroups);
     }
 
-    public void reload(String spec, String shardGroupSpec) {
-        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, this.defaultTarget, this.staticExtraTargets);
+    private static Map<String, List<String>> parseBackendGroups(String spec, java.util.Set<String> registeredNames) {
+        if (spec == null || spec.isBlank()) {
+            return Map.of();
+        }
+        Map<String, List<String>> groups = new LinkedHashMap<>();
+        for (String entry : spec.split("\\|")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int eq = entry.indexOf('=');
+            if (eq <= 0) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS entry \"" + entry
+                        + "\" is missing \"=\" -- expected groupName=backend1,backend2,...");
+            }
+            String name = entry.substring(0, eq).trim();
+            if (name.isEmpty() || name.indexOf(',') >= 0 || name.indexOf('|') >= 0) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group name \"" + name
+                        + "\" must be non-empty and contain neither \",\" nor \"|\"");
+            }
+            if (registeredNames.contains(name)) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group name \"" + name
+                        + "\" collides with a real backend name -- a rule referencing \"" + name
+                        + "\" would be ambiguous between the backend and the group");
+            }
+            List<String> members = List.of(entry.substring(eq + 1).split(",")).stream()
+                    .map(String::trim).filter(m -> !m.isEmpty()).toList();
+            if (members.isEmpty()) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group \"" + name + "\" has no members");
+            }
+            for (String member : members) {
+                if (!registeredNames.contains(member)) {
+                    throw new IllegalArgumentException("WARP_BACKEND_GROUPS group \"" + name
+                            + "\" names \"" + member + "\", which is not a registered backend ("
+                            + String.join(", ", registeredNames) + ")");
+                }
+            }
+            groups.put(name, members);
+        }
+        return Map.copyOf(groups);
+    }
+
+    public void reload(String spec, String shardGroupSpec, String backendGroupsSpec) {
+        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, backendGroupsSpec, this.defaultTarget, this.staticExtraTargets);
         this.targets = fresh.targets;
         this.shardGroup = fresh.shardGroup;
+        this.backendGroups = fresh.backendGroups;
     }
 
     /** Exact, unredirected lookup -- returns the literal backend registered under {@code name},
@@ -206,6 +277,12 @@ public final class BackendRegistry {
 
     public List<String> shardGroup() {
         return shardGroup;
+    }
+
+    /** Named backend groups from {@code WARP_BACKEND_GROUPS} -- see {@link #parseBackendGroups}.
+     * Empty (not null) when none are configured. */
+    public Map<String, List<String>> backendGroups() {
+        return backendGroups;
     }
 
     public java.util.Collection<BackendTarget> all() {

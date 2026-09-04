@@ -389,6 +389,23 @@ anyone not migrating — this is additive, not a replacement. Real vertical/func
 `WARP_ROUTER_SCHEMA_RULES` (§4.3's own `SchemaFederationStage`), a real, already-correctly-
 scoped mechanism this doesn't duplicate.
 
+**Named backend groups (`WARP_BACKEND_GROUPS`).** A `hash`/`consistent` params field above is
+just a flat backend list typed out by hand every time — fine for one rule, tedious and
+error-prone across several, and there's nowhere to give that set a name. `WARP_BACKEND_GROUPS`
+is that: `name=backend1,backend2,...` entries, `|`-delimited (same convention
+`WARP_TABLE_SHARDS` uses), each member checked against the real registered backend list at
+config-load time — a typo fails loud at startup/reload, not silently at the first statement that
+hits it. A group can mix engines freely: `all-engines=pg,ora,mysql,mssql,mongo` names a Postgres,
+an Oracle, a MySQL, a SQL Server, and a MongoDB backend together. Reference the group's name
+anywhere a `hash`/`consistent` backend list is otherwise expected —
+`orders:hash:customer_id:all-engines` in `WARP_TABLE_SHARDS`, or as the params field of a
+`WARP_ROUTER_VALUE_SHARD_RULES` entry — and `RouterStage` expands it to the group's members
+(`BackendRegistry#backendGroups`); a plain backend name alongside a group name in the same field
+still works unchanged and de-duplicates against the group's own members. `list`/`range`/`date`
+strategies name exactly one backend per value/range entry, not a flat set, so group expansion
+doesn't apply there. Manage groups from the admin console's Backend groups page, or `PUT
+/api/config` with a `backendGroups` field, same as any other config.
+
 ### 4.4 Multiple backend engines (top-5-by-DB-Engines-ranking, alongside Postgres)
 
 Warp used to be Postgres-only end to end, by explicit design (`BackendRegistry`/

@@ -9,6 +9,7 @@ import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
 import OAuth from './pages/OAuth'
 import Backends from './pages/Backends'
+import BackendGroups from './pages/BackendGroups'
 import Queues from './pages/Queues'
 import DataExplorer from './pages/DataExplorer'
 import RouterRules from './pages/RouterRules'
@@ -38,6 +39,7 @@ export default function App() {
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />
       <Route path="/oauth" element={<RequireAuth><OAuth /></RequireAuth>} />
       <Route path="/backends" element={<RequireAuth><Backends /></RequireAuth>} />
+      <Route path="/backend-groups" element={<RequireAuth><BackendGroups /></RequireAuth>} />
       <Route path="/queues" element={<RequireAuth><Queues /></RequireAuth>} />
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
       <Route path="/router" element={<RequireAuth><RouterRules /></RequireAuth>} />

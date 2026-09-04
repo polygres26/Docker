@@ -84,7 +84,7 @@ public final class ConfigStore implements AutoCloseable {
         return new WarpConfig(
                 c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
                 c.cacheTables(), c.cacheTtlMs(),
-                com.sayonora.wire.secrets.FieldCipher.encrypt(c.backends()), c.shardBackends(),
+                com.sayonora.wire.secrets.FieldCipher.encrypt(c.backends()), c.shardBackends(), c.backendGroups(),
                 c.routerSchemaRules(), c.routerPredicateRules(), c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards(),
                 c.rollupDefinitionsYaml(),
                 c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),
@@ -98,7 +98,7 @@ public final class ConfigStore implements AutoCloseable {
         return new WarpConfig(
                 c.qosRatePerSec(), c.qosBurst(), c.qosMaxWaitMs(), c.qosClassLimits(), c.qosPoolWaitThreshold(),
                 c.cacheTables(), c.cacheTtlMs(),
-                com.sayonora.wire.secrets.FieldCipher.decrypt(c.backends()), c.shardBackends(),
+                com.sayonora.wire.secrets.FieldCipher.decrypt(c.backends()), c.shardBackends(), c.backendGroups(),
                 c.routerSchemaRules(), c.routerPredicateRules(), c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards(),
                 c.rollupDefinitionsYaml(),
                 c.aclRules(), c.aclPpv2Enabled(), c.aclTrustedProxies(),

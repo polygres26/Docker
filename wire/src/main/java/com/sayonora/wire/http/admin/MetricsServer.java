@@ -1297,6 +1297,7 @@ public final class MetricsServer {
                         field(body, "cacheTtlMs", current.cacheTtlMs()),
                         field(body, "backends", current.backends()),
                         field(body, "shardBackends", current.shardBackends()),
+                        field(body, "backendGroups", current.backendGroups()),
                         field(body, "routerSchemaRules", current.routerSchemaRules()),
                         field(body, "routerPredicateRules", current.routerPredicateRules()),
                         field(body, "routerValueShardRules", current.routerValueShardRules()),
@@ -1318,6 +1319,15 @@ public final class MetricsServer {
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.wire.acl.ClientAcl.parse(updated.aclRules());
+                // backendGroups' member names are validated against the backends spec this same
+                // PUT is about to apply (not the currently-live registry) -- a request that
+                // changes both fields together (a new backend plus a group naming it) must not be
+                // rejected just because the registry hasn't reloaded yet. Native-backend-mode
+                // reserved targets (mysql-native etc.) are registered outside WARP_BACKENDS
+                // entirely, so a group naming one of those is intentionally not validatable here --
+                // it's caught for real once the live registry actually reloads this config.
+                com.sayonora.wire.core.BackendRegistry.fromConfig(updated.backends(), updated.shardBackends(),
+                        updated.backendGroups(), null, java.util.Map.of());
                 long version = configStore.write(updated);
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write("{\"ok\":true,\"version\":" + version + "}");
@@ -1390,7 +1400,7 @@ public final class MetricsServer {
                         current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
                         current.qosClassLimits(), current.qosPoolWaitThreshold(),
                         current.cacheTables(), current.cacheTtlMs(),
-                        current.backends(), current.shardBackends(),
+                        current.backends(), current.shardBackends(), current.backendGroups(),
                         current.routerSchemaRules(), current.routerPredicateRules(),
                         current.routerValueShardRules(), current.routerShardTables(), current.routerTableShards(),
                         current.rollupDefinitionsYaml(),

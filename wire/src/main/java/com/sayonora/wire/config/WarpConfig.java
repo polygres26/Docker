@@ -13,6 +13,7 @@ public record WarpConfig(
         String cacheTtlMs,
         String backends,
         String shardBackends,
+        String backendGroups,
         String routerSchemaRules,
         String routerPredicateRules,
         String routerValueShardRules,
@@ -43,6 +44,7 @@ public record WarpConfig(
                 System.getenv("WARP_CACHE_TTL_MS"),
                 System.getenv("WARP_BACKENDS"),
                 System.getenv("WARP_SHARD_BACKENDS"),
+                System.getenv("WARP_BACKEND_GROUPS"),
                 System.getenv("WARP_ROUTER_SCHEMA_RULES"),
                 System.getenv("WARP_ROUTER_PREDICATE_RULES"),
                 System.getenv("WARP_ROUTER_VALUE_SHARD_RULES"),
@@ -74,6 +76,7 @@ public record WarpConfig(
         fields.put("cacheTtlMs", cacheTtlMs);
         fields.put("backends", backends);
         fields.put("shardBackends", shardBackends);
+        fields.put("backendGroups", backendGroups);
         fields.put("routerSchemaRules", routerSchemaRules);
         fields.put("routerPredicateRules", routerPredicateRules);
         fields.put("routerValueShardRules", routerValueShardRules);
@@ -118,6 +121,7 @@ public record WarpConfig(
                 fields.get("cacheTtlMs"),
                 fields.get("backends"),
                 fields.get("shardBackends"),
+                fields.get("backendGroups"),
                 fields.get("routerSchemaRules"),
                 fields.get("routerPredicateRules"),
                 fields.get("routerValueShardRules"),

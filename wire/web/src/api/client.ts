@@ -205,6 +205,7 @@ export interface WireConfig {
   cacheTtlMs: string | null
   backends: string | null
   shardBackends: string | null
+  backendGroups: string | null
   routerSchemaRules: string | null
   routerPredicateRules: string | null
   routerValueShardRules: string | null
