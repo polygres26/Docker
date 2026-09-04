@@ -113,10 +113,38 @@ public final class SessionHandler implements Runnable {
 
     private void runPlain(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,
             O5LogonHandler.AuthResult auth, com.sayonora.wire.core.AccessContext accessContext) throws Exception {
-        try (com.sayonora.wire.core.LazyPooledConnection pgConnection = backendPool.borrowConnection(descriptor, auth.username())) {
-            new RequestLoop(reader, out, pgConnection, null, null, null, options, sharedStages, backendRegistry,
+        try (com.sayonora.wire.core.LazyPooledConnection pgConnection = backendPool.borrowConnection(descriptor, auth.username());
+                com.sayonora.wire.core.LazyPooledConnection oracleConnection = openDualExecOracleConnection()) {
+            new RequestLoop(reader, out, pgConnection, oracleConnection, null, null, options, sharedStages, backendRegistry,
                     null, null, accessContext).run();
         }
+    }
+
+    /** A real gap found live implementing PL/SQL support (see {@code RequestLoop
+     * #handlePlSqlExecute}): {@code RequestLoop}'s constructor has taken an {@code oracleConnection}
+     * parameter for its dual-exec-with-Oracle-authority path all along, but this class -- the only
+     * caller that actually constructs a {@code RequestLoop} for a real client session -- always
+     * passed {@code null} for it, in every code path. The dual-exec Oracle branches inside {@code
+     * RequestLoop} (bind rewriting, shadow execution, and now PL/SQL) were consequently dead code
+     * against a real server: only reachable from a test that constructs {@code RequestLoop}
+     * directly, never from a real client connection. This wires it up for the one combination that
+     * needs a real, directly-usable {@code java.sql.Connection} here: dual-exec enabled, Oracle as
+     * authority, and {@code WARP_ORACLE_BACKEND_MODE=jdbc} (the default) -- the {@code native} mode
+     * is handled entirely separately, above, via {@link
+     * com.sayonora.wire.orawire.backend.NativeSessionRelay}'s raw byte relay, which never
+     * constructs a {@code RequestLoop} (or any oracleConnection) at all. Returns {@code null} (same
+     * as before this fix) for every other configuration, so a plain single-backend deployment is
+     * completely unaffected. */
+    private com.sayonora.wire.core.LazyPooledConnection openDualExecOracleConnection() {
+        if (!options.dualExecEnabled()
+                || options.dualExecAuthority() != ServerOptions.DualExecAuthority.ORACLE
+                || options.oracleBackendMode() != ServerOptions.OracleBackendMode.JDBC) {
+            return null;
+        }
+        String url = "jdbc:oracle:thin:@//" + options.oracleHost() + ":" + options.oraclePort()
+                + "/" + options.oracleServiceName();
+        return new com.sayonora.wire.core.LazyPooledConnection(
+                () -> java.sql.DriverManager.getConnection(url, options.oracleUser(), options.oraclePassword()), null);
     }
 
     private void runReplicated(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,

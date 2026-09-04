@@ -19,6 +19,7 @@ import com.sayonora.wire.orawire.ttc.ColumnMetadata;
 import com.sayonora.wire.orawire.ttc.ExecuteRequest;
 import com.sayonora.wire.orawire.ttc.ExecuteRequestReader;
 import com.sayonora.wire.orawire.ttc.FetchRequest;
+import com.sayonora.wire.orawire.ttc.OracleProcedureCatalog;
 import com.sayonora.wire.orawire.ttc.ResponseWriter;
 import com.sayonora.wire.orawire.ttc.TtcConstants;
 import com.sayonora.wire.orawire.ttc.TtcReader;
@@ -29,6 +30,7 @@ import com.sayonora.wire.orawire.wireformat.TnsPacketReader;
 import com.sayonora.wire.orawire.wireformat.TnsPacketType;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -108,6 +110,7 @@ public final class RequestLoop {
     private boolean nativeOciDblinkClient;
 
     private final Map<Integer, StatementSignature> statementSignatures = new HashMap<>();
+    private final OracleProcedureCatalog procedureCatalog = new OracleProcedureCatalog();
 
     private volatile String lastSqlText;
     // Separate from lastSqlText (which stays the raw pre-rewrite Oracle text, e.g. bind
@@ -1091,7 +1094,12 @@ public final class RequestLoop {
             request = new ExecuteRequest(request.cursorId, cached.sql(), request.options, request.numIters,
                     request.bindRows);
         }
-        
+
+        if (isPlSqlBlock(request.sqlText)) {
+            handlePlSqlExecute(request, w, callNumber);
+            return;
+        }
+
         int[] bindTypes = null;
         if (request.sqlText != null) {
             bindTypes = new int[request.bindParams.size()];
@@ -1244,6 +1252,107 @@ public final class RequestLoop {
         }
     }
 
+    /** True for a PL/SQL anonymous block -- {@code BEGIN ... END;} or {@code DECLARE ... END;} --
+     * confirmed live via byte capture that a real ojdbc {@code CallableStatement} call (e.g.
+     * {@code {call proc(?, ?, ?)}}) arrives at orawire as ordinary SQL TEXT shaped exactly this
+     * way ({@code "BEGIN proc(:1, :2, :3); END;"}), through the SAME {@code FUNC_EXECUTE} path a
+     * plain statement uses -- no separate wire-level "this is PL/SQL" signal is needed to detect
+     * it, just this text-shape check, same discipline {@code DialectTranslationStage} already uses
+     * to recognize other SQL shapes. */
+    private static boolean isPlSqlBlock(String sqlText) {
+        if (sqlText == null) {
+            return false;
+        }
+        String trimmed = sqlText.stripLeading();
+        return trimmed.regionMatches(true, 0, "BEGIN", 0, 5)
+                || trimmed.regionMatches(true, 0, "DECLARE", 0, 7);
+    }
+
+    /**
+     * Executes a PL/SQL anonymous block against the real Oracle backend via {@link
+     * CallableStatement}, decoding OUT/IN OUT bind directions from Oracle's own data dictionary
+     * ({@link OracleProcedureCatalog}) since the TTC wire format doesn't carry them (see that
+     * class's own javadoc for the live byte-capture finding this is built on).
+     *
+     * <p>Scope, deliberately narrow, matching this session's discipline of shipping only what's
+     * been proven against a real client rather than guessing a wire shape:
+     * <ul>
+     *   <li>Requires a real Oracle backend ({@link #oracleConnection} configured, i.e. dual-exec
+     *       with Oracle as an authority) -- PL/SQL cannot be translated to run against Postgres,
+     *       so this is refused with a clear error rather than silently mistranslated.
+     *   <li>Only a single procedure/function CALL block is supported ({@code
+     *       OracleProcedureCatalog#extractProcedureName}'s own scope) -- a genuine multi-statement
+     *       anonymous block with real PL/SQL logic is refused, not attempted.
+     *   <li><b>OUT and IN OUT parameters (including REF CURSOR) are refused with a clear error,
+     *       not attempted.</b> A first attempt at this used {@code writeDescribeInfo}/{@code
+     *       writeRow} (the same primitives an ordinary query's result uses) to return a scalar OUT
+     *       value, on the theory (from an earlier, narrower capture) that it round-trips as an
+     *       ordinary {@code ROW_DATA}-tagged value. Verified live against a real ojdbc client and
+     *       found WRONG: the client rejected it with {@code ORA-17401 Protocol violation}. A
+     *       fuller capture of the real response shows it does NOT start with a {@code
+     *       DESCRIBE_INFO} (message type 16) at all -- it starts with message type {@code 0x0b}
+     *       (11), an OUT-bind-specific response shape this codebase hasn't decoded yet. Rather
+     *       than guess a second time, this is refused with a clear error -- the same "verify
+     *       against a real client before shipping" discipline the REEXECUTE fix earlier this
+     *       session took real effort to establish. IN-only calls (no OUT/IN OUT parameters at
+     *       all) are fully supported and verified: they need no new response encoding at all,
+     *       since {@link ResponseWriter#writeSuccessEnd} (already correct for every other DML
+     *       Execute) is all a call with nothing to return needs.
+     * </ul>
+     */
+    private void handlePlSqlExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
+        if (oracleConnection == null) {
+            throw new IllegalStateException(
+                    "orawire: PL/SQL execution requires a real Oracle backend (dual-exec with "
+                            + "Oracle configured) -- it cannot be translated to run against Postgres");
+        }
+        String procName = OracleProcedureCatalog.extractProcedureName(request.sqlText);
+        if (procName == null) {
+            throw new UnsupportedOperationException(
+                    "orawire: only a single procedure/function call PL/SQL block is supported "
+                            + "(\"BEGIN proc(:1, :2, ...); END;\"), not a general anonymous block: "
+                            + request.sqlText);
+        }
+
+        Connection oracle = oracleConnection.get();
+        List<OracleProcedureCatalog.ArgumentInfo> args = procedureCatalog.resolve(oracle, procName);
+        List<BindParam> bindParams = request.bindParams;
+        if (args.size() != bindParams.size()) {
+            throw new IllegalStateException("orawire: procedure \"" + procName + "\" declares "
+                    + args.size() + " parameter(s) but the client sent " + bindParams.size());
+        }
+        for (OracleProcedureCatalog.ArgumentInfo arg : args) {
+            if (arg.isOut()) {
+                throw new UnsupportedOperationException(
+                        "orawire: procedure \"" + procName + "\" has an OUT or IN OUT parameter "
+                                + "(position " + arg.position() + ") -- not yet supported (see "
+                                + "handlePlSqlExecute's own javadoc for why: the real response "
+                                + "shape needs more live-capture verification before it's safe to "
+                                + "implement). Only IN-only procedure/function calls are supported "
+                                + "in this narrow slice.");
+            }
+        }
+
+        terminalExecutor.rebind(oracle);
+        try (CallableStatement cs = oracle.prepareCall(request.sqlText)) {
+            for (int i = 0; i < args.size(); i++) {
+                cs.setObject(i + 1, bindParams.get(i).value);
+            }
+            cs.execute();
+
+            if (wantsCommit(request)) {
+                oracle.commit();
+            }
+
+            openCursorId = nextCursorId++;
+            ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+        }
+    }
+
+    private static boolean wantsCommit(ExecuteRequest request) {
+        return (request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0;
+    }
+
     private void handleExecuteNative(ExecuteRequest request, TtcWriter w) throws SQLException {
         if (nativeExecutor == null) {
             nativeExecutor = new com.sayonora.wire.orawire.backend.NativeOracleExecutor(
@@ -1316,9 +1425,14 @@ public final class RequestLoop {
                         Types.FLOAT, Types.REAL ->
                     TtcConstants.ORA_TYPE_NUM_NUMBER;
                 case Types.DATE, Types.TIMESTAMP -> TtcConstants.ORA_TYPE_NUM_DATE;
+                // Real Oracle has no native boolean type either -- PL/SQL callers and EBS-style
+                // flag columns alike use NUMBER(1) for this, so a Postgres BOOLEAN column maps
+                // the same way; ResponseWriter.writeColumnValue's own NUMBER case special-cases
+                // a Boolean value to 1/0 rather than failing to parse "true"/"false" as a number.
+                case Types.BOOLEAN, Types.BIT -> TtcConstants.ORA_TYPE_NUM_NUMBER;
                 default -> throw new UnsupportedOperationException(
                         "unsupported Postgres column type (jdbcType=" + col.jdbcType() + ") for column "
-                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE only");
+                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE/BOOLEAN only");
             };
             int precision = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.precision() : 0;
             int scale = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.scale() : 0;

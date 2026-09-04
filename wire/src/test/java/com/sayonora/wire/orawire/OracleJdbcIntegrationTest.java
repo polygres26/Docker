@@ -165,4 +165,35 @@ class OracleJdbcIntegrationTest {
             }
         }
     }
+
+    /** A real Postgres BOOLEAN column (real Oracle has no native boolean type -- PL/SQL and
+     * EBS-style flag columns alike use NUMBER(1) for this) must round-trip through orawire as a
+     * real NUMBER 1/0, not crash trying to parse "true"/"false" as a number -- see
+     * RequestLoop.toColumnMetadata/ResponseWriter.writeColumnValue's own javadoc for the fix. */
+    @Test
+    void aBooleanColumnRoundTripsAsNumberOneOrZero() throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE ojdbc_bool_it (id INTEGER PRIMARY KEY, active BOOLEAN)");
+                stmt.executeUpdate("INSERT INTO ojdbc_bool_it (id, active) VALUES (1, true)");
+                stmt.executeUpdate("INSERT INTO ojdbc_bool_it (id, active) VALUES (2, false)");
+                conn.commit();
+
+                try (ResultSet rs = stmt.executeQuery("SELECT active FROM ojdbc_bool_it ORDER BY id")) {
+                    assertTrue(rs.next());
+                    assertEquals(1, rs.getInt(1));
+                    assertTrue(rs.next());
+                    assertEquals(0, rs.getInt(1));
+                }
+            } finally {
+                try (Statement cleanup = conn.createStatement()) {
+                    cleanup.execute("DROP TABLE ojdbc_bool_it");
+                    conn.commit();
+                } catch (SQLException ignoredCleanupFailure) {
+                    // best-effort
+                }
+            }
+        }
+    }
 }

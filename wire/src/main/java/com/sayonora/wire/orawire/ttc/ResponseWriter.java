@@ -261,7 +261,14 @@ public final class ResponseWriter {
         switch (col.oraTypeNum) {
             case TtcConstants.ORA_TYPE_NUM_VARCHAR -> w.writeStrWithLength(value.toString());
             case TtcConstants.ORA_TYPE_NUM_NUMBER -> {
-                BigDecimal bd = value instanceof BigDecimal b ? b : new BigDecimal(value.toString());
+                // A Postgres BOOLEAN column is mapped to NUMBER (real Oracle's own NUMBER(1)
+                // convention -- see RequestLoop.toColumnMetadata) -- value.toString() on a real
+                // Boolean is "true"/"false", which BigDecimal can't parse as a number at all, so
+                // it needs converting to 1/0 explicitly rather than falling into the generic
+                // toString() parse below.
+                BigDecimal bd = value instanceof BigDecimal b ? b
+                        : value instanceof Boolean bool ? BigDecimal.valueOf(bool ? 1 : 0)
+                        : new BigDecimal(value.toString());
                 w.writeBytesWithLength(OracleNumberCodec.encode(bd));
             }
             case TtcConstants.ORA_TYPE_NUM_DATE -> {
