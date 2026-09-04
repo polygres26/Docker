@@ -61,6 +61,17 @@ final class PgMessages {
 
     static void writeRowDescription(DataOutputStream out, java.util.List<String> columnNames,
             java.util.List<Integer> columnJdbcTypes) throws IOException {
+        writeRowDescription(out, columnNames, columnJdbcTypes, null);
+    }
+
+    /** @param binaryColumns per-column "send this one in binary" decision -- {@code null} or a
+     *      shorter array means text (format code 0) for the columns it doesn't cover, same
+     *      "unspecified defaults to text" rule the client's own Bind-message result-format array
+     *      uses. Must already have folded in {@link PgBinaryResultEncoder#supports} (a column
+     *      whose OID has no real binary encoder stays text here even if the client asked for
+     *      binary) -- this method trusts the array as the final decision, it doesn't re-check. */
+    static void writeRowDescription(DataOutputStream out, java.util.List<String> columnNames,
+            java.util.List<Integer> columnJdbcTypes, boolean[] binaryColumns) throws IOException {
         int n = columnNames.size();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeShort(body, n);
@@ -68,10 +79,10 @@ final class PgMessages {
             body.write(cstring(columnNames.get(i)));
             writeInt(body, 0);
             writeShort(body, 0);
-            writeInt(body, oidFor(columnJdbcTypes.get(i)));
+            writeInt(body, oidForJdbcType(columnJdbcTypes.get(i)));
             writeShort(body, -1);
             writeInt(body, -1);
-            writeShort(body, 0);
+            writeShort(body, binaryColumns != null && i < binaryColumns.length && binaryColumns[i] ? 1 : 0);
         }
         out.writeByte('T');
         out.writeInt(4 + body.size());
@@ -79,16 +90,31 @@ final class PgMessages {
     }
 
     static void writeDataRow(DataOutputStream out, java.util.List<Object> row) throws IOException {
+        writeDataRow(out, row, null, null);
+    }
+
+    /** @param columnJdbcTypes required (non-null) whenever {@code binaryColumns} names ANY
+     *      binary column -- used to resolve that column's real Postgres OID for
+     *      {@link PgBinaryResultEncoder#encode}. See {@link #writeRowDescription}'s own javadoc
+     *      on {@code binaryColumns}' semantics -- this must be called with the EXACT SAME array
+     *      that produced that row's own RowDescription, or the two messages disagree about which
+     *      columns are binary. */
+    static void writeDataRow(DataOutputStream out, java.util.List<Object> row,
+            java.util.List<Integer> columnJdbcTypes, boolean[] binaryColumns) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeShort(body, row.size());
-        for (Object value : row) {
+        for (int i = 0; i < row.size(); i++) {
+            Object value = row.get(i);
             if (value == null) {
                 writeInt(body, -1);
-            } else {
-                byte[] bytes = String.valueOf(value).getBytes(StandardCharsets.UTF_8);
-                writeInt(body, bytes.length);
-                body.write(bytes);
+                continue;
             }
+            boolean binary = binaryColumns != null && i < binaryColumns.length && binaryColumns[i];
+            byte[] bytes = binary
+                    ? PgBinaryResultEncoder.encode(oidForJdbcType(columnJdbcTypes.get(i)), value)
+                    : textFormat(value).getBytes(StandardCharsets.UTF_8);
+            writeInt(body, bytes.length);
+            body.write(bytes);
         }
         out.writeByte('D');
         out.writeInt(4 + body.size());
@@ -148,7 +174,20 @@ final class PgMessages {
         out.writeShort(v);
     }
 
-    private static int oidFor(int jdbcType) {
+    /** Real Postgres's own canonical TEXT-format representation, not Java's -- a genuine, live
+     * bug found fixing binary-format results: {@code Boolean.toString()} gives {@code "true"}/
+     * {@code "false"}, but a real Postgres server always sends a boolean as a single character,
+     * {@code "t"}/{@code "f"}, in text format, and pgjdbc's own text-boolean parser only
+     * recognizes that canonical form -- it silently treated {@code "true"} as false rather than
+     * throwing, which is what made this so easy to miss without a real end-to-end round trip. */
+    private static String textFormat(Object value) {
+        if (value instanceof Boolean b) {
+            return b ? "t" : "f";
+        }
+        return String.valueOf(value);
+    }
+
+    static int oidForJdbcType(int jdbcType) {
         return switch (jdbcType) {
             case Types.INTEGER, Types.SMALLINT -> 23;
             case Types.BIGINT -> 20;

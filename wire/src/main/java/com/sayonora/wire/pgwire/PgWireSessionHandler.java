@@ -61,7 +61,18 @@ public final class PgWireSessionHandler implements Runnable {
     private final FailedStatementLog failedStatementLog;
 
     private Connection sessionConnection;
-    private final Map<String, String> preparedStatements = new LinkedHashMap<>();
+    /** @param sql the prepared statement's original {@code $n}-placeholder SQL text
+     *  @param paramTypeOids the real Postgres type OIDs the client declared in its own Parse
+     *      message, one per {@code $n} placeholder, in order -- 0 for a slot the client left
+     *      unspecified (meaning "infer it," which a real client only does for text-format binds;
+     *      a binary-format bind always names a real OID). Needed to decode a binary-format Bind
+     *      value correctly -- see {@link PgBinaryParamDecoder} -- which {@code handleParse} used
+     *      to discard entirely (a real gap: every binary-format parameter was refused outright,
+     *      since there was no way left to know what shape it was in). */
+    private record PreparedStatementInfo(String sql, int[] paramTypeOids) {
+    }
+
+    private final Map<String, PreparedStatementInfo> preparedStatements = new LinkedHashMap<>();
     private final Map<String, Portal> portals = new LinkedHashMap<>();
     private boolean skipUntilSync;
 
@@ -83,10 +94,39 @@ public final class PgWireSessionHandler implements Runnable {
     private static final Pattern TXN_CONTROL_PREFIX = Pattern.compile(
             "^\\s*(begin|start|commit|end|rollback)\\b", Pattern.CASE_INSENSITIVE);
 
-    private record Portal(String sqlText, ExecutionResult result, int[] nextRow) {
-        Portal(String sqlText, ExecutionResult result) {
-            this(sqlText, result, new int[1]);
+    /** @param resultFormatCodes the client's own requested result format per column, from its
+     *      Bind message -- empty means "text for every column" (the common case), one entry
+     *      means "this format for every column," N entries means one per column, all per the
+     *      real pgwire wire format's own broadcast rule. Resolved against
+     *      {@link PgBinaryResultEncoder#supports} once in {@link #binaryColumnsFor} rather than
+     *      per row, since every row in one portal's result set shares the same column types. */
+    private record Portal(String sqlText, ExecutionResult result, int[] nextRow, int[] resultFormatCodes) {
+        Portal(String sqlText, ExecutionResult result, int[] resultFormatCodes) {
+            this(sqlText, result, new int[1], resultFormatCodes);
         }
+
+        Portal(String sqlText, ExecutionResult result) {
+            this(sqlText, result, new int[1], new int[0]);
+        }
+    }
+
+    /** Resolves this portal's requested-per-column format codes against what
+     * {@link PgBinaryResultEncoder} can actually encode -- a column whose OID has no binary
+     * encoder stays text even if the client asked for binary (encoding it as raw UTF-8 text bytes
+     * while RowDescription claims binary would be a real protocol violation, not a graceful
+     * fallback). {@code null} when the portal isn't a query at all (no columns to resolve). */
+    private static boolean[] binaryColumnsFor(Portal portal) {
+        if (!portal.result().isQuery()) {
+            return null;
+        }
+        List<Integer> jdbcTypes = portal.result().columnJdbcTypes();
+        int[] codes = portal.resultFormatCodes();
+        boolean[] binary = new boolean[jdbcTypes.size()];
+        for (int i = 0; i < binary.length; i++) {
+            int requested = codes.length == 0 ? 0 : codes[codes.length == 1 ? 0 : Math.min(i, codes.length - 1)];
+            binary[i] = requested != 0 && PgBinaryResultEncoder.supports(PgMessages.oidForJdbcType(jdbcTypes.get(i)));
+        }
+        return binary;
     }
 
     public PgWireSessionHandler(Socket clientSocket, ServerOptions options,
@@ -260,6 +300,15 @@ public final class PgWireSessionHandler implements Runnable {
         PgMessages.writeAuthOk(out);
         PgMessages.writeParameterStatus(out, "server_version", "14.0 (warp)");
         PgMessages.writeParameterStatus(out, "client_encoding", "UTF8");
+        // Real gap found live fixing binary-format timestamp results: pgjdbc checks this exact
+        // startup parameter to decide whether a binary date/timestamp value is the modern
+        // int64-microseconds-since-2000-01-01 encoding (PgBinaryResultEncoder/PgBinaryParamDecoder
+        // both assume this -- correct for every real Postgres server since 8.4) or the pre-8.4
+        // float8-seconds encoding. Every real Postgres server still sends this parameter for
+        // exactly that driver-compatibility reason, even though the underlying GUC has been
+        // hardcoded "on" (unconfigurable) since 8.4 -- omitting it left pgjdbc to guess, and it
+        // guessed wrong, silently decoding a correct binary timestamp as 2000-01-01 (its epoch).
+        PgMessages.writeParameterStatus(out, "integer_datetimes", "on");
         PgMessages.writeBackendKeyData(out);
         PgMessages.writeReadyForQuery(out, 'I');
         out.flush();
@@ -401,8 +450,11 @@ public final class PgWireSessionHandler implements Runnable {
         String stmtName = r.readCString();
         String sql = r.readCString();
         int numParamTypes = r.readInt16();
-        r.skip(numParamTypes * 4);
-        preparedStatements.put(stmtName, sql);
+        int[] paramTypeOids = new int[numParamTypes];
+        for (int i = 0; i < numParamTypes; i++) {
+            paramTypeOids[i] = r.readInt32();
+        }
+        preparedStatements.put(stmtName, new PreparedStatementInfo(sql, paramTypeOids));
         PgMessages.writeParseComplete(out);
     }
 
@@ -410,6 +462,10 @@ public final class PgWireSessionHandler implements Runnable {
         PgBodyReader r = new PgBodyReader(body);
         String portalName = r.readCString();
         String stmtName = r.readCString();
+        PreparedStatementInfo stmtInfo = preparedStatements.get(stmtName);
+        if (stmtInfo == null) {
+            throw new IOException("no such prepared statement: " + stmtName);
+        }
         int numParamFormats = r.readInt16();
         int[] paramFormats = new int[numParamFormats];
         for (int i = 0; i < numParamFormats; i++) {
@@ -424,23 +480,29 @@ public final class PgWireSessionHandler implements Runnable {
                 continue;
             }
             int format = numParamFormats == 0 ? 0 : paramFormats[Math.min(i, numParamFormats - 1)];
-            if (format != 0) {
-                throw new IOException("binary-format bind parameters are not supported (param " + (i + 1) + ")");
+            byte[] valueBytes = r.readBytes(valueLen);
+            int oid = i < stmtInfo.paramTypeOids().length ? stmtInfo.paramTypeOids()[i] : 0;
+            if (format == 0) {
+                rawParams.add(PgBinaryParamDecoder.decodeText(oid, new String(valueBytes, StandardCharsets.UTF_8)));
+            } else {
+                // oid above is the real Postgres type OID the client declared for this
+                // placeholder in its own Parse message -- see PreparedStatementInfo's javadoc
+                // for why this has to be threaded through from there instead of guessed here.
+                rawParams.add(PgBinaryParamDecoder.decode(oid, valueBytes, i));
             }
-            rawParams.add(new String(r.readBytes(valueLen), StandardCharsets.UTF_8));
         }
         int numResultFormats = r.readInt16();
-        r.skip(numResultFormats * 2);
-
-        String sql = preparedStatements.get(stmtName);
-        if (sql == null) {
-            throw new IOException("no such prepared statement: " + stmtName);
+        int[] resultFormatCodes = new int[numResultFormats];
+        for (int i = 0; i < numResultFormats; i++) {
+            resultFormatCodes[i] = r.readInt16();
         }
+
+        String sql = stmtInfo.sql();
         lastExtendedSql = sql;
 
         Connection backend = sessionConnection();
         if (handleTransactionControl(backend, sql)) {
-            portals.put(portalName, new Portal(sql, ExecutionResult.ofUpdate(0)));
+            portals.put(portalName, new Portal(sql, ExecutionResult.ofUpdate(0), resultFormatCodes));
             PgMessages.writeBindComplete(out);
             return;
         }
@@ -451,7 +513,7 @@ public final class PgWireSessionHandler implements Runnable {
         terminalExecutor.rebind(backend);
         Statement statement = Statement.of(SourceDialect.POSTGRES, jdbcSql, orderedBinds, accessContext);
         ExecutionResult result = pipeline.execute(statement);
-        portals.put(portalName, new Portal(sql, result));
+        portals.put(portalName, new Portal(sql, result, resultFormatCodes));
         PgMessages.writeBindComplete(out);
     }
 
@@ -485,7 +547,8 @@ public final class PgWireSessionHandler implements Runnable {
             throw new IOException("no such portal: " + name);
         }
         if (portal.result().isQuery()) {
-            PgMessages.writeRowDescription(out, portal.result().columnNames(), portal.result().columnJdbcTypes());
+            PgMessages.writeRowDescription(out, portal.result().columnNames(), portal.result().columnJdbcTypes(),
+                    binaryColumnsFor(portal));
         } else {
             PgMessages.writeNoData(out);
         }
@@ -510,10 +573,11 @@ public final class PgWireSessionHandler implements Runnable {
                 return;
             }
             List<List<Object>> rows = portal.result().rows();
+            boolean[] binaryColumns = binaryColumnsFor(portal);
             int start = portal.nextRow()[0];
             int end = maxRows <= 0 ? rows.size() : Math.min(rows.size(), start + maxRows);
             for (int i = start; i < end; i++) {
-                PgMessages.writeDataRow(out, rows.get(i));
+                PgMessages.writeDataRow(out, rows.get(i), portal.result().columnJdbcTypes(), binaryColumns);
             }
             portal.nextRow()[0] = end;
             if (end < rows.size()) {
