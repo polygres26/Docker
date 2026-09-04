@@ -6,6 +6,12 @@ public final class TdsPacketType {
 
     public static final byte RPC = 0x03;
 
+    // Carries real BCP (Bulk Copy) data -- a COLMETADATA-shaped column-format header followed by
+    // row data, sent by the client after an "INSERT BULK <table> (...)" statement (itself plain
+    // SQL_BATCH text, not this type) with no server reply awaited in between. See
+    // MssqlWireSessionHandler#handleBulkLoadPacket.
+    public static final byte BULK_LOAD_BCP = 0x07;
+
     public static final byte TABULAR_RESULT = 0x04;
 
     public static final byte ATTENTION = 0x06;

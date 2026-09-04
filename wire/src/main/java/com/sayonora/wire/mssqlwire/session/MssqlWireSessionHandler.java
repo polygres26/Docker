@@ -58,6 +58,12 @@ public final class MssqlWireSessionHandler implements Runnable {
     // fix as pgwire/mywire already have: one connection lives for the whole session.
     private Connection sessionConnection;
     private boolean inTransaction;
+    // Set by an "INSERT BULK <table> (...)" statement (real BCP's own literal-SQL_BATCH trigger --
+    // see #INSERT_BULK's javadoc), consumed by the very next TdsPacketType.BULK_LOAD_BCP packet.
+    // Session-scoped, one in flight at a time -- a real client always completes one bulk load
+    // (INSERTBULK text, then its data packet(s)) before starting another, same assumption
+    // preparedRpcStatements' handle table already makes about single-session sequencing.
+    private volatile String pendingBulkLoadTable;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
@@ -402,6 +408,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                     TdsTokens.writeDone(body, TdsTokens.doneAttnStatus(), 0, 0);
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
                 }
+                case TdsPacketType.BULK_LOAD_BCP -> handleBulkLoadPacket(out, packets, msg.payload());
                 case TdsPacketType.RPC -> {
                     long rttStart = System.nanoTime();
                     String rpcSql = handleRpc(out, packets, msg.payload());
@@ -473,8 +480,148 @@ public final class MssqlWireSessionHandler implements Runnable {
      *      real query result in the SAME response message (a real client reads one continuous
      *      token stream per RPC call; a separate TDS message here would set the End-Of-Message
      *      flag after just the handle, telling the client the whole response was already done). */
+    // {@code SET FMTONLY ON <select> [SET FMTONLY OFF]} -- SQL Server's legacy "describe the
+    // result set's columns without actually running the query" mechanism, predating
+    // sp_describe_first_result_set. Found live: SQLServerBulkCopy sends exactly this (wrapped in a
+    // literal sp_executesql call, see BARE_SP_EXECUTESQL below) to learn its destination table's
+    // real column shape before it ever gets to the actual BCP wire protocol -- without handling it,
+    // bulk copy can't even start ("Unable to retrieve column metadata", the SELECT passed straight
+    // through to Postgres, which has no FMTONLY concept and chokes on the literal T-SQL syntax).
+    // Real SQL Server semantics: FMTONLY is a session-level setting that persists until explicitly
+    // turned off; this codebase has no per-session query-execution-suppression state to model that
+    // faithfully, so it's handled per-statement instead -- narrower than the real feature (a
+    // FMTONLY ON with no matching OFF anywhere in the SAME batch, which is exactly what
+    // SQLServerBulkCopy sends and the only shape found live), but correctly covers the one real
+    // client behavior this project has actually observed.
+    private static final Pattern FMTONLY_ON = Pattern.compile(
+            "(?is)^\\s*SET\\s+FMTONLY\\s+ON\\s+(.*?)\\s*(?:;\\s*SET\\s+FMTONLY\\s+OFF\\s*;?)?\\s*$");
+
+    // SQLServerBulkCopy's own literal-call shape for sp_executesql -- confirmed live: it sends
+    // {@code sp_executesql N'<stmt>'} as plain SQL_BATCH text, with NO leading EXEC/EXECUTE keyword
+    // (unlike {@link #EXEC_CALL}'s shape), so neither that rewrite nor DialectTranslationStage's
+    // normal handling ever sees this as a call at all -- it falls straight through as literal T-SQL
+    // and fails against Postgres ("syntax error at or near sp_executesql"). Only the single-N'...'-
+    // literal-argument shape is unwrapped (real doubled-quote escaping inside the literal is
+    // honored); sp_executesql's OWN parameter-list/bind-value arguments (its 2nd/3rd+ args, used
+    // for a real parameterized call) are a materially different, RPC-shaped case already handled
+    // by {@code RpcRequestReader}'s isExecSql path -- not this literal-SQL_BATCH shape at all.
+    private static final Pattern BARE_SP_EXECUTESQL = Pattern.compile(
+            "(?is)^\\s*sp_executesql\\s+N?'((?:[^']|'')*)'\\s*;?\\s*$");
+
+    private static String unwrapBareSpExecuteSql(String sql) {
+        Matcher m = BARE_SP_EXECUTESQL.matcher(sql);
+        return m.matches() ? m.group(1).replace("''", "'") : sql;
+    }
+
+    // SQLServerBulkCopy's own second real metadata-discovery query (after the FMTONLY probe
+    // above), confirmed live: an exact, fixed shape asking sys.columns for each destination
+    // column's collation and computed-ness. Real SQL Server's sys.columns has no direct Postgres
+    // analog outside the optional, not-always-installed pg_sqlserver emulation extension (see
+    // MssqlPgEmulationSessionInitializer's own javadoc on that being best-effort) -- rather than
+    // require that extension just for BCP to work, this recognizes the ONE exact query shape a
+    // real client sends and answers it directly from information_schema.columns, matching real
+    // driver behavior for the common case this project can actually verify: an ordinary table with
+    // no exotic per-column COLLATE clause and no computed columns. A real collation-aware or
+    // computed-column BCP target is a narrower case left unhandled (NULL collation, is_computed
+    // always false) rather than guessed at.
+    private static final Pattern BCP_SYS_COLUMNS_PROBE = Pattern.compile(
+            "(?is)^\\s*select\\s+collation_name\\s*,\\s*is_computed\\s+from\\s+sys\\.columns\\s+"
+                    + "where\\s+object_id\\s*=\\s*OBJECT_ID\\('([^']+)'\\)\\s+order\\s+by\\s+column_id\\s+ASC\\s*$");
+
+    // Real BCP's own trigger, sent as plain SQL_BATCH text just like INSERT/CREATE TABLE (not RPC)
+    // -- confirmed live via SQLServerBulkCopy: "INSERT BULK <table> ([col] TYPE [, ...])". Only the
+    // table name is captured here; the authoritative column list/types arrive again, properly
+    // wire-encoded, in the COLMETADATA-shaped header of the BULK_LOAD_BCP packet(s) that follow --
+    // see #handleBulkLoadPacket.
+    private static final Pattern INSERT_BULK = Pattern.compile(
+            "(?is)^\\s*INSERT\\s+BULK\\s+([A-Za-z_][\\w.$#\\[\\]]*)\\s*\\(.*\\)\\s*$");
+
+    private static String rewriteBcpSysColumnsProbe(String sql) {
+        Matcher m = BCP_SYS_COLUMNS_PROBE.matcher(sql);
+        if (!m.matches()) {
+            return sql;
+        }
+        return "SELECT NULL AS collation_name, false AS is_computed FROM information_schema.columns "
+                + "WHERE table_name = '" + m.group(1).replace("'", "''") + "' ORDER BY ordinal_position ASC";
+    }
+
+    private static String stripBrackets(String identifier) {
+        return identifier.replace("[", "").replace("]", "");
+    }
+
+    /**
+     * Real BCP data ({@code TdsPacketType.BULK_LOAD_BCP}), decoded by {@link
+     * com.sayonora.wire.mssqlwire.frontend.BcpDataReader} -- see its own javadoc for the wire
+     * shape. Each decoded row is inserted as a real, ordinary parameterized {@code INSERT}
+     * through this session's normal {@link #executeQuery} path (same dialect-translation/routing
+     * pipeline every other statement uses), one statement per row rather than a true batched/COPY
+     * write -- correctness over raw bulk-load throughput for a first working implementation; a
+     * genuinely large BCP load would be materially slower here than real SQL Server's own bulk
+     * path, a real, disclosed limitation rather than a silent one.
+     */
+    private void handleBulkLoadPacket(OutputStream out, TdsPacket packets, byte[] payload) throws IOException {
+        String table = pendingBulkLoadTable;
+        pendingBulkLoadTable = null;
+        com.sayonora.wire.mssqlwire.frontend.BcpDataReader.BcpResult bcp;
+        try {
+            bcp = com.sayonora.wire.mssqlwire.frontend.BcpDataReader.read(payload);
+        } catch (IOException e) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "could not decode BCP data: " + e.getMessage()));
+            return;
+        }
+        if (table == null) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "BCP data packet with no preceding INSERT BULK statement"));
+            return;
+        }
+        String columnList = String.join(", ", bcp.columns().stream().map(c -> "[" + c.name() + "]").toList());
+        String placeholders = String.join(", ", bcp.columns().stream().map(c -> "?").toList());
+        String insertSql = "INSERT INTO " + table + " (" + columnList + ") VALUES (" + placeholders + ")";
+        int rowsInserted = 0;
+        try {
+            sessionConnection();
+            for (List<Object> row : bcp.rows()) {
+                Statement statement = Statement.of(SourceDialect.SQL_SERVER, insertSql, row, accessContext);
+                pipeline.execute(statement);
+                rowsInserted++;
+            }
+        } catch (SQLException e) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(SqlStateErrorMapper.SQL_SERVER_DEFAULT,
+                            "BCP bulk load into '" + table + "' failed after " + rowsInserted + " row(s): "
+                                    + (e.getMessage() == null ? "backend error" : e.getMessage())));
+            return;
+        }
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, rowsInserted);
+        packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
+    }
+
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
             boolean viaRpc, Integer prepareHandleToReturn) throws IOException {
+        sql = rewriteBcpSysColumnsProbe(unwrapBareSpExecuteSql(sql));
+        Matcher insertBulk = INSERT_BULK.matcher(sql);
+        if (insertBulk.matches()) {
+            // A real client DOES wait for a response to INSERT BULK itself (confirmed live: no
+            // response here hangs both sides -- this server waiting to read the next packet, the
+            // client waiting for an ack of this one) before sending the actual
+            // BULK_LOAD_BCP data packet(s) -- see #handleBulkLoadPacket. A plain DONE (same shape
+            // as any other successful zero-row batch) is what a real client expects.
+            pendingBulkLoadTable = stripBrackets(insertBulk.group(1));
+            ByteArrayOutputStream body = new ByteArrayOutputStream();
+            TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
+            return;
+        }
+        Matcher fmtOnly = FMTONLY_ON.matcher(sql);
+        if (fmtOnly.matches()) {
+            // Metadata-only: wrap the real query so Postgres itself never returns any rows (no
+            // separate "describe without executing" primitive exists over a plain JDBC
+            // PreparedStatement/ResultSetMetaData path here), while still getting the query's real
+            // column shape back -- exactly what FMTONLY ON is for.
+            sql = "SELECT * FROM (" + fmtOnly.group(1) + ") AS warp_fmtonly_probe WHERE 1 = 0";
+        }
         if (!options.mssqlwireNativeBackend()) {
             String execRewrite = rewriteExecCallToFunctionCall(sql);
             if (execRewrite != null) {
