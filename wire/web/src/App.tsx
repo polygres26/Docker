@@ -13,6 +13,7 @@ import Queues from './pages/Queues'
 import DataExplorer from './pages/DataExplorer'
 import RouterRules from './pages/RouterRules'
 import Qos from './pages/Qos'
+import Rollups from './pages/Rollups'
 import LlmConfig from './pages/LlmConfig'
 import FederationPlans from './pages/FederationPlans'
 
@@ -41,6 +42,7 @@ export default function App() {
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
       <Route path="/router" element={<RequireAuth><RouterRules /></RequireAuth>} />
       <Route path="/qos" element={<RequireAuth><Qos /></RequireAuth>} />
+      <Route path="/rollups" element={<RequireAuth><Rollups /></RequireAuth>} />
       <Route path="/federation-plans" element={<RequireAuth><FederationPlans /></RequireAuth>} />
       <Route path="/llm-config" element={<RequireAuth><LlmConfig /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

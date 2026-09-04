@@ -258,6 +258,29 @@ export async function draftRouterSuggestion(): Promise<{
   return api('/api/router-suggestions/draft', { method: 'POST' })
 }
 
+/** Draft-only: never writes to `warp_config`. Proposes ONE new RollupStage pre-aggregation
+ * definition based on recent expensive/frequent SQL (see `MetricsServer#handleRollupSuggestionDraft`);
+ * when the LLM found nothing worth pre-aggregating, `draft`/`rollupDefinitionsYamlIfApplied` come
+ * back null and `note` explains why. `rollupDefinitionsYamlIfApplied` is the FULL candidate YAML
+ * (existing definitions plus the new one) -- exactly what
+ * `saveWireConfig({ rollupDefinitionsYaml: ... })` needs to actually apply it. */
+export async function draftRollupSuggestion(): Promise<{
+  draft: {
+    name: string
+    backend?: string
+    sourceTable: string
+    groupBy: string[]
+    aggregations: string[]
+    refreshIntervalMinutes: number
+    maxStalenessMinutes: number
+  } | null
+  rollupDefinitionsYamlIfApplied?: string
+  applied?: false
+  note: string
+}> {
+  return api('/api/rollup-suggestions/draft', { method: 'POST' })
+}
+
 // --- Live metrics: /api/metrics/summary ---
 
 export interface WireMetricsSql {

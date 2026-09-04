@@ -1,5 +1,5 @@
 import {
-  Activity, Cpu, GitMerge, KeyRound, LayoutDashboard, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties, Waypoints,
+  Activity, Cpu, GitMerge, KeyRound, Layers, LayoutDashboard, ListOrdered, LogOut, Network, Route, Server, Shield, SlidersHorizontal, TableProperties, Waypoints,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { clearConnection } from './api/client'
@@ -40,6 +40,7 @@ const GROUPS = [
       { to: '/data', label: 'Data explorer', icon: TableProperties },
       { to: '/router', label: 'Router rules', icon: Route },
       { to: '/qos', label: 'QoS', icon: SlidersHorizontal },
+      { to: '/rollups', label: 'Rollups', icon: Layers },
       { to: '/federation-plans', label: 'Federation Plans', icon: GitMerge },
     ],
   },
