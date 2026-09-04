@@ -16,6 +16,8 @@ public final class TdsTokens {
     // count DONEPROC to know an RPC call specifically has finished, distinct from a DONE inside a
     // batch. Same body shape as DONE otherwise.
     private static final byte TOKEN_DONEPROC = (byte) 0xFE;
+    // The response to sp_prepare's @handle OUTPUT parameter -- see writeReturnValueInt below.
+    private static final byte TOKEN_RETURNVALUE = (byte) 0xAC;
 
     private static final int ENVCHANGE_DATABASE = 1;
 
@@ -140,6 +142,29 @@ public final class TdsTokens {
                 out.writeBytes(chars);
             }
         }
+    }
+
+    /**
+     * A RETURNVALUE token carrying a single {@code int} (TDS {@code INTN}) value for an OUTPUT
+     * parameter -- specifically {@code sp_prepare}'s {@code @handle OUTPUT}, per MS-TDS 2.2.7.17.
+     * Sent BEFORE the final DONEPROC, same ordering real SQL Server uses. {@code ordinal} is the
+     * parameter's 1-based position in the original RPC call (2 for {@code sp_prepare}'s
+     * {@code @handle}, since {@code @params}/{@code @stmt} occupy 0 and 1... actually {@code
+     * @handle} is param 1 -- see the caller for the exact position used).
+     */
+    public static void writeReturnValueInt(ByteArrayOutputStream out, int ordinal, int value) {
+        out.write(TOKEN_RETURNVALUE);
+        writeU16LE(out, ordinal);
+        writeBVarChar(out, ""); // ParamName -- real SQL Server also sends this empty for a
+                                 // positional (unnamed) parameter, matching the request shape.
+        out.write(0x01); // Status: 1 = the value came from an OUTPUT parameter.
+        writeU32LE(out, 0); // UserType
+        writeU16LE(out, 0); // Flags
+        out.write(0x26); // TYPE_INFO: INTN
+        out.write(4);    // MaxLen: 4 bytes (a real int, not smallint/tinyint/bigint)
+        out.write(4);    // Value's actual length: 4 (never NULL -- Warp always hands back a
+                          // real handle, never fails this specific step silently)
+        writeU32LE(out, value & 0xFFFFFFFFL);
     }
 
     public static void writeDone(ByteArrayOutputStream out, int status, int curCmd, long rowCount) {

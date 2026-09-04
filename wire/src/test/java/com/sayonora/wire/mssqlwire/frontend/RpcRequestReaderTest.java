@@ -190,15 +190,32 @@ class RpcRequestReaderTest {
     }
 
     @Test
-    void byRefOutputParameterIsRefused() {
+    void byRefOutputParameterIsDecodedNotRefused() throws IOException {
+        // sp_prepare's real shape: @handle is declared OUTPUT (BY_REF) but the client still sends
+        // real value bytes for it (NULL here, since the caller doesn't know the handle yet) that
+        // must be consumed just like an input param's, or the stream desyncs for every param after.
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         noAllHeaders(out);
         procIdSpExecuteSql(out);
-        out.write(0); // no name
+        String name = "@handle";
+        out.write(name.length());
+        out.writeBytes(name.getBytes(StandardCharsets.UTF_16LE));
         out.write(0x01); // StatusFlags: BY_REF bit set
+        out.write(0x26); // INTN
+        out.write(4); // declared max length
+        out.write(0); // actual length 0 -> NULL
 
-        IOException e = assertThrows(IOException.class, () -> RpcRequestReader.read(out.toByteArray()));
-        assertTrue(e.getMessage().contains("BY_REF"));
+        // a plain input param right after it, to prove the stream stayed in sync
+        intNParam(out, "@P0", 7L);
+
+        RpcRequestReader.RpcRequest request = RpcRequestReader.read(out.toByteArray());
+
+        assertEquals(2, request.params().size());
+        assertTrue(request.params().get(0).output(), "BY_REF status flag must be decoded as output=true");
+        assertNull(request.params().get(0).value());
+        assertEquals("@handle", request.params().get(0).name());
+        assertEquals(7L, request.params().get(1).value(), "param after the BY_REF one must decode correctly");
+        assertTrue(!request.params().get(1).output());
     }
 
     @Test

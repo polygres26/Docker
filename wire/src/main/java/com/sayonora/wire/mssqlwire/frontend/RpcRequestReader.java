@@ -23,11 +23,22 @@ import java.util.List;
  * refused with an {@link IOException} rather than guessed at -- those have variable-length or
  * precision-dependent encodings where a wrong guess desyncs every parameter that follows in the
  * same call, silently. Also refused: anything other than a single RPC call per message (real
- * drivers send exactly one), and binary-format/output/BY_REF parameters.
+ * drivers send exactly one). OUTPUT/BY_REF parameters (status flag 0x01) are decoded, not
+ * refused -- {@code sp_prepare}'s {@code @handle OUTPUT} is exactly this shape, and a real client
+ * still sends real (if usually NULL) value bytes for one that have to be consumed in step with
+ * everything else, same as for a plain input parameter -- see {@link RpcParam#output}.
  */
 public final class RpcRequestReader {
 
-    public record RpcParam(String name, Object value) {
+    /** @param output true if the client marked this parameter OUTPUT/BY_REF (status flag 0x01)
+     *      -- {@code sp_prepare}'s {@code @handle} is the one real shape that carries this;
+     *      {@code value} is still decoded (a real client sends a real, if usually NULL, value
+     *      even for an output param, and the byte stream desyncs for every param after it if
+     *      those bytes aren't consumed the same way an input param's would be). */
+    public record RpcParam(String name, Object value, boolean output) {
+        public RpcParam(String name, Object value) {
+            this(name, value, false);
+        }
     }
 
     public record RpcRequest(int procId, String procName, List<RpcParam> params) {
@@ -73,10 +84,7 @@ public final class RpcRequestReader {
         int nameLen = c.readU8();
         String name = nameLen == 0 ? null : c.readUtf16(nameLen);
         int statusFlags = c.readU8();
-        if ((statusFlags & 0x01) != 0) {
-            throw new IOException("RPC parameter \"" + name + "\" is BY_REF (output parameter) -- "
-                    + "not supported, only plain input parameters");
-        }
+        boolean output = (statusFlags & 0x01) != 0;
         int type = c.readU8();
         Object value = switch (type) {
             case TYPE_NVARCHAR, TYPE_BIGVARCHAR, TYPE_NCHAR, TYPE_BIGCHAR -> readCharValue(c, type == TYPE_NVARCHAR || type == TYPE_NCHAR);
@@ -88,7 +96,7 @@ public final class RpcRequestReader {
                     + "parameters are supported (refusing rather than risking a mis-decode that would "
                     + "desync every parameter after it)");
         };
-        return new RpcParam(name, value);
+        return new RpcParam(name, value, output);
     }
 
     private static Object readCharValue(Cursor c, boolean wide) throws IOException {

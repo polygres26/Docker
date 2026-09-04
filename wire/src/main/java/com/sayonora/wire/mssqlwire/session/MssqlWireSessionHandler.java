@@ -59,6 +59,16 @@ public final class MssqlWireSessionHandler implements Runnable {
     private final com.sayonora.wire.audit.AuditLog auditLog;
     private volatile com.sayonora.wire.core.AccessContext accessContext = com.sayonora.wire.core.AccessContext.ANONYMOUS;
 
+    // sp_prepare/sp_execute/sp_unprepare's own handle table -- server-side statement caching a
+    // real client (mssql-jdbc confirmed live) switches to automatically after a few repeated
+    // executions of the SAME PreparedStatement, instead of continuing to use sp_executesql every
+    // time. Session-scoped (one connection's own handles, not shared or persisted), same lifetime
+    // as a real SQL Server's own prepared-statement cache for a session. A plain incrementing int
+    // is enough -- these handles are never compared against anything but this same map, on this
+    // same connection, unlike a real backend's actual statement-cache identifiers.
+    private final Map<Integer, String> preparedRpcStatements = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger nextPreparedHandle = new java.util.concurrent.atomic.AtomicInteger(1);
+
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry) {
         this(clientSocket, options, sharedStages, backendRegistry, null, null);
@@ -270,6 +280,16 @@ public final class MssqlWireSessionHandler implements Runnable {
      * TdsTokens#writeDoneProc's javadoc for why an RPC (sp_executesql) response needs it. */
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
             boolean viaRpc) throws IOException {
+        executeQuery(out, packets, sql, bindParams, viaRpc, null);
+    }
+
+    /** @param prepareHandleToReturn non-null only for {@code sp_prepexec} -- the handle its own
+     *      {@code @handle OUTPUT} parameter names, written as a RETURNVALUE token ahead of the
+     *      real query result in the SAME response message (a real client reads one continuous
+     *      token stream per RPC call; a separate TDS message here would set the End-Of-Message
+     *      flag after just the handle, telling the client the whole response was already done). */
+    private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
+            boolean viaRpc, Integer prepareHandleToReturn) throws IOException {
         // Same gate as mywire's own SET_STATEMENT/MySqlSessionVariableQuery short-circuits: only
         // a no-op against the (fake, dialect-translated) Postgres backend -- in native mode a SET
         // or transaction-control statement means something real against the real SQL Server
@@ -326,6 +346,9 @@ public final class MssqlWireSessionHandler implements Runnable {
             }
 
             ByteArrayOutputStream body = new ByteArrayOutputStream();
+            if (prepareHandleToReturn != null) {
+                TdsTokens.writeReturnValueInt(body, 1, prepareHandleToReturn);
+            }
             if (result.isQuery()) {
                 List<String> columnNames = result.columnNames();
                 TdsTokens.writeColMetaData(body, columnNames);
@@ -360,13 +383,21 @@ public final class MssqlWireSessionHandler implements Runnable {
         }
     }
 
-    // Only sp_executesql is supported -- covers the overwhelming majority of real
-    // parameterized-query traffic (JDBC PreparedStatement, .NET SqlCommand with parameters, most
-    // ORMs). sp_prepare/sp_execute/sp_prepexec (server-side statement caching across round-trips)
-    // and arbitrary stored-procedure calls are refused with a clean error rather than attempted --
-    // a driver that probes one of those first sees an error, not the silent hang the old blanket
-    // RPC rejection risked for anything that assumed *some* RPC response would come back.
+    // sp_executesql, sp_prepare, sp_execute, and sp_unprepare are the four RPC shapes actually
+    // covering real parameterized-query traffic (JDBC PreparedStatement, .NET SqlCommand with
+    // parameters, most ORMs) -- sp_executesql for a statement's first few executions, then a real
+    // client (mssql-jdbc confirmed live) switches to sp_prepare (once) + sp_execute (every
+    // execution after) + sp_unprepare (on close), the server-side statement-caching path.
+    // sp_prepexec/sp_cursor*/arbitrary stored-procedure calls are still refused with a clean
+    // error rather than attempted -- a driver that probes one of those first sees an error, not
+    // the silent hang the old blanket RPC rejection risked for anything that assumed *some* RPC
+    // response would come back. Proc IDs are the standard MS-TDS special-stored-procedure numbers
+    // (2.2.6.6), not arbitrary constants.
     private static final int SP_EXECUTESQL_PROC_ID = 10;
+    private static final int SP_PREPARE_PROC_ID = 11;
+    private static final int SP_EXECUTE_PROC_ID = 12;
+    private static final int SP_PREPEXEC_PROC_ID = 13;
+    private static final int SP_UNPREPARE_PROC_ID = 15;
 
     private static final Pattern NAMED_PARAM_PLACEHOLDER = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*");
     // Confirmed live against a real client (mssql-jdbc): the RPC parameters carrying the actual
@@ -391,12 +422,29 @@ public final class MssqlWireSessionHandler implements Runnable {
         }
         boolean isExecSql = request.procId() == SP_EXECUTESQL_PROC_ID
                 || "sp_executesql".equalsIgnoreCase(request.procName());
+        boolean isPrepare = request.procId() == SP_PREPARE_PROC_ID || "sp_prepare".equalsIgnoreCase(request.procName());
+        boolean isExecute = request.procId() == SP_EXECUTE_PROC_ID || "sp_execute".equalsIgnoreCase(request.procName());
+        boolean isPrepExec = request.procId() == SP_PREPEXEC_PROC_ID || "sp_prepexec".equalsIgnoreCase(request.procName());
+        boolean isUnprepare = request.procId() == SP_UNPREPARE_PROC_ID || "sp_unprepare".equalsIgnoreCase(request.procName());
+        if (isPrepare) {
+            return handleSpPrepare(out, packets, request);
+        }
+        if (isExecute) {
+            return handleSpExecute(out, packets, request);
+        }
+        if (isPrepExec) {
+            return handleSpPrepExec(out, packets, request);
+        }
+        if (isUnprepare) {
+            return handleSpUnprepare(out, packets, request);
+        }
         if (!isExecSql) {
             String proc = request.procName() != null ? request.procName() : ("proc #" + request.procId());
-            log.warn("mssqlwire: RPC call to {} not supported -- only sp_executesql is", proc);
+            log.warn("mssqlwire: RPC call to {} not supported -- only sp_executesql/sp_prepare/"
+                    + "sp_execute/sp_prepexec/sp_unprepare are", proc);
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                    TdsTokens.errorMessage(50000, "only sp_executesql RPC calls are supported "
-                            + "(not stored procedures or sp_prepare/sp_execute/sp_prepexec)"));
+                    TdsTokens.errorMessage(50000, "only sp_executesql/sp_prepare/sp_execute/sp_prepexec/"
+                            + "sp_unprepare RPC calls are supported (not arbitrary stored procedures)"));
             return null;
         }
         if (request.params().size() < 2 || !(request.params().get(0).value() instanceof String sql)) {
@@ -415,6 +463,101 @@ public final class MssqlWireSessionHandler implements Runnable {
         }
         executeQuery(out, packets, jdbcSql, orderedBinds, true);
         return jdbcSql;
+    }
+
+    /** {@code sp_prepare(@handle OUTPUT, @params, @stmt)} -- real SQL Server doesn't execute
+     * anything at this step, it just hands back a handle the client uses in every later
+     * {@code sp_execute} call for the same statement. Nothing here reaches a real backend either;
+     * this only ever stores {@code @stmt}'s text against a new handle and returns it. */
+    private String handleSpPrepare(OutputStream out, TdsPacket packets, RpcRequestReader.RpcRequest request)
+            throws IOException {
+        if (request.params().size() < 3 || !(request.params().get(2).value() instanceof String sql)) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "sp_prepare call missing a string @stmt parameter"));
+            return null;
+        }
+        int handle = nextPreparedHandle.getAndIncrement();
+        preparedRpcStatements.put(handle, sql);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        TdsTokens.writeReturnValueInt(body, 1, handle);
+        TdsTokens.writeDoneProc(body, TdsTokens.doneFinalStatus(), 0, 0);
+        packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
+        return null; // Nothing executed against any backend -- no RTT sample to attribute.
+    }
+
+    /** {@code sp_execute(@handle, @P0, @P1, ...)} -- the handle names a statement this same
+     * session's {@code sp_prepare} already stored; the rest is identical to
+     * {@code sp_executesql}'s own bind-and-execute path, just against that remembered SQL text
+     * instead of a freshly-supplied one. */
+    private String handleSpExecute(OutputStream out, TdsPacket packets, RpcRequestReader.RpcRequest request)
+            throws IOException {
+        if (request.params().isEmpty() || !(request.params().get(0).value() instanceof Number handleValue)) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "sp_execute call missing an integer @handle parameter"));
+            return null;
+        }
+        int handle = handleValue.intValue();
+        String sql = preparedRpcStatements.get(handle);
+        if (sql == null) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "sp_execute: no prepared statement for handle " + handle
+                            + " (never sp_prepare'd on this connection, or already sp_unprepare'd)"));
+            return null;
+        }
+        List<RpcRequestReader.RpcParam> boundParams = request.params().subList(1, request.params().size());
+        List<Object> orderedBinds = new java.util.ArrayList<>();
+        String jdbcSql;
+        try {
+            jdbcSql = rewriteNamedParams(sql, boundParams, orderedBinds);
+        } catch (IOException e) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(50000, e.getMessage()));
+            return null;
+        }
+        executeQuery(out, packets, jdbcSql, orderedBinds, true);
+        return jdbcSql;
+    }
+
+    /** {@code sp_prepexec(@handle OUTPUT, @params, @stmt, @P0, @P1, ...)} -- confirmed live as
+     * the actual shape mssql-jdbc sends (not the separate {@code sp_prepare}+{@code sp_execute}
+     * pair {@link #handleSpPrepare}/{@link #handleSpExecute} also support, for whichever client
+     * DOES split them): prepare AND execute in the same round trip, remembering {@code @stmt}
+     * under a new handle for any LATER {@code sp_execute} call the same statement reuses. */
+    private String handleSpPrepExec(OutputStream out, TdsPacket packets, RpcRequestReader.RpcRequest request)
+            throws IOException {
+        if (request.params().size() < 3 || !(request.params().get(2).value() instanceof String sql)) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(50000, "sp_prepexec call missing a string @stmt parameter"));
+            return null;
+        }
+        int handle = nextPreparedHandle.getAndIncrement();
+        preparedRpcStatements.put(handle, sql);
+        List<RpcRequestReader.RpcParam> boundParams = request.params().subList(3, request.params().size());
+        List<Object> orderedBinds = new java.util.ArrayList<>();
+        String jdbcSql;
+        try {
+            jdbcSql = rewriteNamedParams(sql, boundParams, orderedBinds);
+        } catch (IOException e) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(50000, e.getMessage()));
+            return null;
+        }
+        executeQuery(out, packets, jdbcSql, orderedBinds, true, handle);
+        return jdbcSql;
+    }
+
+    /** {@code sp_unprepare(@handle)} -- releases a handle {@code sp_prepare} returned. A real
+     * client calls this once it closes the {@code PreparedStatement} object; a handle that's
+     * never explicitly unprepared just stays in {@link #preparedRpcStatements} for the rest of
+     * the connection's lifetime, same as a real SQL Server session's own prepared-statement
+     * cache would until the connection closes. */
+    private String handleSpUnprepare(OutputStream out, TdsPacket packets, RpcRequestReader.RpcRequest request)
+            throws IOException {
+        if (!request.params().isEmpty() && request.params().get(0).value() instanceof Number handleValue) {
+            preparedRpcStatements.remove(handleValue.intValue());
+        }
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        TdsTokens.writeDoneProc(body, TdsTokens.doneFinalStatus(), 0, 0);
+        packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
+        return null;
     }
 
     /** Rewrites {@code @P0}/{@code @name}-style placeholders in {@code sql} to JDBC {@code ?}.
