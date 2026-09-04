@@ -1330,15 +1330,21 @@ public final class RequestLoop {
             if (arg.isOut() && "REF CURSOR".equalsIgnoreCase(arg.dataType())) {
                 throw new UnsupportedOperationException(
                         "orawire: procedure \"" + procName + "\" has a REF CURSOR OUT parameter -- "
-                                + "not yet supported. A real capture shows ojdbc parses this "
-                                + "response's column description via its own dedicated internal "
-                                + "decoder (T4CTTIoac/T4C8TTIuds), not the generic DESCRIBE_INFO "
-                                + "path this codebase's writeDescribeInfo already produces for "
-                                + "ordinary queries -- reusing that path was tried live and caused "
-                                + "a real client-side ArrayIndexOutOfBoundsException mid-parse. "
-                                + "Replicating Oracle's own internal OAC/DCB byte format needs its "
-                                + "own dedicated capture-and-decode investigation before it's safe "
-                                + "to implement.");
+                                + "not yet supported. Two real attempts were tried live and both "
+                                + "failed with the identical client-side ArrayIndexOutOfBoundsException "
+                                + "inside ojdbc's own T4CTTIoac/T4C8TTIuds unmarshalling: first, "
+                                + "reusing writeDescribeInfo's generic column-description shape; "
+                                + "second, replaying the REAL captured OAC/DCB bytes for this exact "
+                                + "2-column shape VERBATIM. The second failure is the more telling "
+                                + "one -- byte-perfect real Oracle content still failed once relayed "
+                                + "through this server, meaning the gap isn't in the column-block "
+                                + "encoding itself but in something about framing, sequencing, or "
+                                + "session context this investigation hasn't isolated yet (possibly "
+                                + "how the response is split across TNS packets, or state carried "
+                                + "from earlier in a real session that a synthetic replay doesn't "
+                                + "reproduce). Needs a live protocol trace/debugger session against "
+                                + "ojdbc's own OAC unmarshaller, not just wire captures, before "
+                                + "further attempts are worthwhile.");
             }
         }
 
