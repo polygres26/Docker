@@ -1483,9 +1483,16 @@ public final class RequestLoop {
                 // the same way; ResponseWriter.writeColumnValue's own NUMBER case special-cases
                 // a Boolean value to 1/0 rather than failing to parse "true"/"false" as a number.
                 case Types.BOOLEAN, Types.BIT -> TtcConstants.ORA_TYPE_NUM_NUMBER;
+                // JdbcBackendExecutor materializes a CLOB/BLOB column's real value (the whole
+                // content, not a locator -- see its own javadoc) before it ever reaches here, so
+                // a CLOB is just a (possibly long) String and a BLOB is just a byte[] by the time
+                // toColumnMetadata/writeColumnValue see it -- VARCHAR2/RAW's own wire encodings
+                // already handle those Java types correctly, no LOB-locator protocol needed.
+                case Types.CLOB -> TtcConstants.ORA_TYPE_NUM_VARCHAR;
+                case Types.BLOB -> TtcConstants.ORA_TYPE_NUM_RAW;
                 default -> throw new UnsupportedOperationException(
                         "unsupported Postgres column type (jdbcType=" + col.jdbcType() + ") for column "
-                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE/BOOLEAN only");
+                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE/BOOLEAN/CLOB/BLOB only");
             };
             int precision = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.precision() : 0;
             int scale = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.scale() : 0;

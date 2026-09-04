@@ -150,10 +150,32 @@ public final class JdbcBackendExecutor implements BackendExecutor {
             List<Object> row = new ArrayList<>(columnCount);
             for (int i = 1; i <= columnCount; i++) {
                 Object value = rs.getObject(i);
-                row.add(rs.wasNull() ? null : value);
+                row.add(rs.wasNull() ? null : materializeLob(value));
             }
             rows.add(row);
         }
         return ExecutionResult.ofQuery(columns, rows);
+    }
+
+    /** A CLOB/BLOB column's {@code getObject} returns a real JDBC {@link java.sql.Clob}/{@link
+     * java.sql.Blob} locator object, not its content -- every wire protocol's own row-encoding
+     * expects a plain value (a String, a byte[], a number) it already knows how to write, not a
+     * locator it would have to separately stream. Materializing here, at the one place every
+     * protocol's query results pass through, means a real backend CLOB/BLOB column round-trips as
+     * plain text/bytes everywhere (orawire included, where {@code RequestLoop.toColumnMetadata}
+     * maps {@code Types.CLOB}/{@code Types.BLOB} to VARCHAR2/RAW accordingly) instead of failing
+     * or producing a locator's generic {@code toString()} garbage. Deliberately eager/whole-value
+     * (no streaming) -- real LOB streaming is a materially larger, separate piece of work; this
+     * covers the common case of a LOB column that comfortably fits in memory. */
+    private static Object materializeLob(Object value) throws SQLException {
+        if (value instanceof java.sql.Clob clob) {
+            long length = clob.length();
+            return length == 0 ? "" : clob.getSubString(1, (int) length);
+        }
+        if (value instanceof java.sql.Blob blob) {
+            long length = blob.length();
+            return length == 0 ? new byte[0] : blob.getBytes(1, (int) length);
+        }
+        return value;
     }
 }

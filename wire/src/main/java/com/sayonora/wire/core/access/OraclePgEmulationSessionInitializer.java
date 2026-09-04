@@ -66,6 +66,18 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
 
     @Override
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
+        // Real gap found live: orawire's dual-exec-with-Oracle-authority mode (WARP_DUAL_EXEC_
+        // AUTHORITY=oracle) rebinds this SAME executor -- Postgres-emulation-specific by design,
+        // per this whole class's own javadoc -- onto a genuinely REAL Oracle connection for
+        // ordinary (non-PL/SQL) statements too, not just PL/SQL calls. Every method here (the
+        // delegate's warp.* GUC propagation via Postgres's set_config(), db_emulation, pg_oracle's
+        // SYS_CONTEXT forwarding) is meaningless -- and actively fails with a real ORA-00904/
+        // ORA-00942 -- against a real Oracle backend, which already has its own real identity and
+        // VPD/context mechanisms that don't need any of this. Detected once, not cached, since a
+        // rebind can genuinely switch which physical backend this executor holds.
+        if (isRealOracleConnection(connection)) {
+            return;
+        }
         delegate.initialize(connection, accessContext);
 
         // Warp can be deployed against a plain, unmodified Postgres backend with no pg_oracle
@@ -108,6 +120,10 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
             // See comment above -- expected and harmless when 'warp_ctx' hasn't been
             // created via pg_oracle's oracle_catalog.create_context() in this database.
         }
+    }
+
+    private static boolean isRealOracleConnection(Connection connection) throws SQLException {
+        return "Oracle".equalsIgnoreCase(connection.getMetaData().getDatabaseProductName());
     }
 
     private static String quoteLiteral(String value) {

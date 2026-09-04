@@ -323,6 +323,10 @@ public final class ResponseWriter {
                 }
                 w.writeBytesWithLength(OracleDateCodec.encode(dt));
             }
+            // A materialized BLOB column (see JdbcBackendExecutor.materializeLob) is a plain
+            // byte[] by the time it gets here -- same length-prefixed wire shape as any other RAW
+            // value, no LOB-locator protocol involved.
+            case TtcConstants.ORA_TYPE_NUM_RAW -> w.writeBytesWithLength((byte[]) value);
             default -> throw new UnsupportedOperationException("unsupported column type: " + col.oraTypeNum);
         }
     }
