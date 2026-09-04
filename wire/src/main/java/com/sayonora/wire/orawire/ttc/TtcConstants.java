@@ -65,6 +65,10 @@ public final class TtcConstants {
     public static final int ORA_TYPE_NUM_RAW = 23;
     
     public static final int ORA_TYPE_NUM_TIMESTAMP = 180;
+    // A REF CURSOR OUT parameter's own bind descriptor -- the client still sends a placeholder
+    // "value" for it (same as any OUT param, real or not) that needs decoding-not-refusing so the
+    // byte stream stays in sync with whatever follows, same discipline as mssqlwire's BY_REF fix.
+    public static final int ORA_TYPE_NUM_CURSOR = 102;
 
     private TtcConstants() {
     }

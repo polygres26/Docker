@@ -230,6 +230,17 @@ public final class ResponseWriter {
         w.writeUint8(0);
     }
 
+    // A REF CURSOR OUT parameter's column-description response was ATTEMPTED here (reusing
+    // writeDescribeInfo, the same column-description writer that's already correct for every
+    // ordinary query) and found WRONG live: a real ojdbc CallableStatement crashed client-side
+    // with an ArrayIndexOutOfBoundsException inside its own T4CTTIoac/T4C8TTIuds unmarshalling --
+    // confirming this response is parsed via a dedicated internal decoder expecting Oracle's own
+    // OAC/DCB byte format, not the generic DESCRIBE_INFO shape this codebase emulates elsewhere.
+    // Deliberately not implemented (removed rather than left as dead/broken code) -- see
+    // RequestLoop#handlePlSqlExecute's own REF CURSOR refusal for the full writeup. Needs its own
+    // dedicated capture-and-decode investigation of the real OAC/DCB structure before it's safe to
+    // build.
+
     // A real distributed-database-link connection's native OCI client's own real row data --
     // embedded inline in its Execute response, not a separate Fetch (see RequestLoop's
     // nativeOciExecuteCount javadoc for why) -- carries 4 extra bytes between the ROW_DATA tag and

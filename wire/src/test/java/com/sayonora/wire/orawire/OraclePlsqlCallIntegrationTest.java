@@ -2,6 +2,7 @@ package com.sayonora.wire.orawire;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sayonora.wire.testsupport.RealOracle;
 import com.sayonora.wire.testsupport.RealPostgres;
@@ -144,6 +145,14 @@ class OraclePlsqlCallIntegrationTest {
         }
     }
 
+    /** REF CURSOR support was attempted (reusing writeDescribeInfo's column-description shape) and
+     * found wrong live: a real ojdbc CallableStatement crashed client-side with an
+     * ArrayIndexOutOfBoundsException inside its own internal unmarshalling, confirming this
+     * response needs Oracle's own dedicated OAC/DCB byte format, not this codebase's generic
+     * DESCRIBE_INFO emulation. Reverted rather than shipped -- see
+     * ResponseWriter's own removed-method note and RequestLoop#handlePlSqlExecute's refusal for
+     * the full writeup. This test proves the refusal is clean (a real SQLException, not a hang or
+     * a client-side crash) rather than proving REF CURSOR works. */
     @Test
     @Timeout(120)
     void refCursorOutParameterIsRefusedNotSilentlyWrong() throws Exception {
@@ -181,7 +190,7 @@ class OraclePlsqlCallIntegrationTest {
                     cs.registerOutParameter(1, OracleTypes.CURSOR);
                     assertThrows(SQLException.class, cs::execute,
                             "a REF CURSOR OUT parameter must be refused with a clean error, not "
-                                    + "silently mishandled or hung");
+                                    + "silently mishandled, hung, or crash the client mid-parse");
                 }
             } finally {
                 try (Connection cleanup = DriverManager.getConnection(

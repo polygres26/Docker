@@ -196,6 +196,9 @@ public final class ExecuteRequestReader {
             case TtcConstants.ORA_TYPE_NUM_DATE, TtcConstants.ORA_TYPE_NUM_TIMESTAMP -> OracleDateCodec.decode(bytes);
 
             case TtcConstants.ORA_TYPE_NUM_RAW -> bytes;
+            // A REF CURSOR OUT parameter's own placeholder value -- see TtcConstants
+            // .ORA_TYPE_NUM_CURSOR's own javadoc for why this decodes rather than refuses.
+            case TtcConstants.ORA_TYPE_NUM_CURSOR -> bytes;
             default -> throw new UnsupportedOperationException("unsupported bind variable type: " + oraTypeNum);
         };
     }

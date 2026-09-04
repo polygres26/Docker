@@ -1330,9 +1330,15 @@ public final class RequestLoop {
             if (arg.isOut() && "REF CURSOR".equalsIgnoreCase(arg.dataType())) {
                 throw new UnsupportedOperationException(
                         "orawire: procedure \"" + procName + "\" has a REF CURSOR OUT parameter -- "
-                                + "not yet supported (see handlePlSqlExecute's own javadoc for why: "
-                                + "the real response shape needs more live-capture verification "
-                                + "before it's safe to implement)");
+                                + "not yet supported. A real capture shows ojdbc parses this "
+                                + "response's column description via its own dedicated internal "
+                                + "decoder (T4CTTIoac/T4C8TTIuds), not the generic DESCRIBE_INFO "
+                                + "path this codebase's writeDescribeInfo already produces for "
+                                + "ordinary queries -- reusing that path was tried live and caused "
+                                + "a real client-side ArrayIndexOutOfBoundsException mid-parse. "
+                                + "Replicating Oracle's own internal OAC/DCB byte format needs its "
+                                + "own dedicated capture-and-decode investigation before it's safe "
+                                + "to implement.");
             }
         }
 
