@@ -110,16 +110,21 @@ final class MongoAggregationTranslator {
         BsonValue idSpec = groupSpec.get("_id");
         String idExprSql;
         String idFieldRef;
-        if (idSpec.isNull()) {
-            idExprSql = "'null'::jsonb";
-            idFieldRef = null;
-        } else if (idSpec.isString() && idSpec.asString().getValue().startsWith("$")) {
+        if (idSpec.isString() && idSpec.asString().getValue().startsWith("$")) {
             idFieldRef = idSpec.asString().getValue().substring(1);
             requireSimpleFieldName(idFieldRef, "$group._id");
             idExprSql = "doc->" + quoteLiteral(idFieldRef);
+        } else if (idSpec.isDocument() || idSpec.isArray()) {
+            throw unsupported("$group._id shape (only null/a constant or a single top-level "
+                    + "\"$field\" reference is supported in this pass, not a composite/document _id)");
         } else {
-            throw unsupported("$group._id shape (only null or a single top-level \"$field\" reference "
-                    + "is supported in this pass, not a composite/document _id)");
+            // Real MongoDB semantics: ANY constant expression (null, a literal number, a literal
+            // string not starting with "$", true/false -- confirmed live: mongo-java-driver 5.x's
+            // own countDocuments() sends {_id: 1}, not {_id: null}) collapses every matching
+            // document into ONE overall group -- the real constant value is preserved as the
+            // group's own reported _id, matching what real MongoDB itself would report.
+            idExprSql = quoteLiteral(BsonJson.valueToJson(idSpec)) + "::jsonb";
+            idFieldRef = null;
         }
 
         List<String> innerColumns = new ArrayList<>();
