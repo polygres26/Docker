@@ -204,6 +204,11 @@
   details.onThisPage .otpList a { font-size: 13px; color: var(--ink); text-decoration: none; }
   details.onThisPage .otpList a:hover { color: var(--indigo); text-decoration: underline; }
   details.onThisPage .otpList a.active { color: var(--indigo); font-weight: 600; }
+  /* Pillar-group labels inside a grouped "On this page" list (warp/index.html) -- each one
+     forces a new row (flex-basis:100%) and reads as a small caption above the links that follow
+     it, distinct from the links themselves. */
+  details.onThisPage .otpList .otpGroup { flex-basis: 100%; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 6px; }
+  details.onThisPage .otpList li:first-child.otpGroup { margin-top: 0; }
 
   #backToTop { position: fixed; right: 20px; bottom: 20px; z-index: 20; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink-dim); font-size: 16px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.15s; }
   #backToTop.show { opacity: 1; pointer-events: auto; }

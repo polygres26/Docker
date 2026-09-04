@@ -15,11 +15,11 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sayonora.com/warp/">
 <meta property="og:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
-<meta property="og:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
+<meta property="og:description" content="Accelerate, Scale, Power AI, Control, Protect, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
 <meta property="og:image" content="https://sayonora.com/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Warp — Full Capabilities of the Intelligent Database Gateway">
-<meta name="twitter:description" content="Connect, Protect, Control, Accelerate, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
+<meta name="twitter:description" content="Accelerate, Scale, Power AI, Control, Protect, Observe: outcomes, use cases, Mach benchmarks, sharding, observability, security, and error translation — the full Warp technical detail.">
 <meta name="twitter:image" content="https://sayonora.com/assets/og-image.png">
 </head>
 <body>
@@ -48,8 +48,8 @@
       <p class="lede">
         <a href="/">← Back to the Warp overview</a> — Warp is the intelligent
         database gateway. This page is the full technical detail behind that: every outcome,
-        use case, benchmark, and honestly-scoped capability, organized by what it does — Connect,
-        Protect, Control, Accelerate, Observe.
+        use case, benchmark, and honestly-scoped capability, organized by what it does — Accelerate,
+        Scale, Power AI, Control, Protect, Observe.
       </p>
     </header>
     <section class="tool" id="warp-detail" style="margin-top:0; padding-top:0; border-top:none;">
@@ -61,22 +61,29 @@
       <details class="onThisPage">
         <summary>On this page<span class="otpCurrent"></span></summary>
         <ul class="otpList">
-          <li><a href="#outcomes">Outcomes</a></li>
-          <li><a href="#use-cases">Use cases</a></li>
-          <li><a href="#admin-console-warp">Admin console</a></li>
-          <li><a href="#cache-vs-round-trip">Mach vs. round trip</a></li>
+          <li class="otpGroup">Accelerate</li>
+          <li><a href="#cache-vs-round-trip">Mach: built-in caching</a></li>
+          <li><a href="#rollups">Rollups</a></li>
+          <li class="otpGroup">Scale</li>
           <li><a href="#sharding">Sharding</a></li>
           <li><a href="#native-backend-mode">Native-backend mode</a></li>
+          <li class="otpGroup">Power AI</li>
+          <li><a href="#use-cases">Use cases</a></li>
+          <li><a href="#ai-features">AI features beyond MCP</a></li>
+          <li class="otpGroup">Control</li>
+          <li><a href="#admin-console-warp">Admin console</a></li>
+          <li><a href="#multi-az">Multi-AZ deployment</a></li>
+          <li><a href="#outages">Planned/unplanned outages</a></li>
+          <li class="otpGroup">Protect</li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#error-handling">Error handling</a></li>
+          <li class="otpGroup">Observe</li>
+          <li><a href="#observability">Observability</a></li>
+          <li class="otpGroup">More protocols</li>
           <li><a href="#sqs-enqueue-dequeue">SQS</a></li>
           <li><a href="#influxdb-line-protocol">InfluxDB</a></li>
           <li><a href="#graphdb-bolt-cypher">GraphDB (Neo4j Bolt+Cypher)</a></li>
-          <li><a href="#rollups">Rollups</a></li>
-          <li><a href="#observability">Observability</a></li>
-          <li><a href="#ai-features">AI features beyond MCP</a></li>
-          <li><a href="#multi-az">Multi-AZ deployment</a></li>
-          <li><a href="#security">Security</a></li>
-          <li><a href="#outages">Planned/unplanned outages</a></li>
-          <li><a href="#error-handling">Error handling</a></li>
+          <li class="otpGroup">Try it</li>
           <li><a href="#demo">See it happen</a></li>
           <li><a href="#try">Try Warp in 60 seconds</a></li>
           <li><a href="#comparison">Warp vs. alternatives</a></li>
@@ -87,28 +94,10 @@
 
       <h3 class="subhead" id="outcomes">Outcomes, by pillar<a class="permalink" href="#outcomes" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
-        Everything below rolls up into the same five things Warp does — <b>Connect, Protect,
-        Control, Accelerate, Observe</b> — grouped here instead of as one flat list, so it's clear
-        which outcome each capability is actually buying you.
+        Everything below rolls up into the same six things Warp does — <b>Accelerate, Scale,
+        Power AI, Control, Protect, Observe</b> — grouped here instead of as one flat list, so it's
+        clear which outcome each capability is actually buying you.
       </p>
-
-      <p class="pillarLabel">Connect</p>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
-        <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real database access — Postgres by default, or Oracle/MySQL/SQL Server directly in native-backend mode — through the same SQL firewall, ACL, and QoS controls as every other client (Postgres mode only — see "Native-backend mode" below for what native MCP mode carries over) — not a separate, unguarded path to your data.</p></div>
-        <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no Warp-specific SDK to learn first.</p></div>
-      </div>
-
-      <p class="pillarLabel">Protect</p>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall — see "Security" below for the full, honestly-scoped detail.</p></div>
-      </div>
-
-      <p class="pillarLabel">Control</p>
-      <div class="obsGrid">
-        <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
-        <div class="obsCard"><h4>Planned &amp; unplanned downtime management</h4><p>A scheduled drain waits for a clean cutover; an unrelated backend failure triggers automatic failover in seconds — the two cases are handled deliberately differently, across every wire protocol.</p></div>
-      </div>
 
       <p class="pillarLabel">Accelerate</p>
       <div class="obsGrid">
@@ -116,10 +105,33 @@
         <div class="obsCard"><h4>Lower costs</h4><p>Better resource utilization and reduced complexity.</p></div>
       </div>
 
+      <p class="pillarLabel">Scale</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Scale elastically</h4><p>Add shards, regions, tenants without re-architecting.</p></div>
+        <div class="obsCard"><h4>Easy to test</h4><p>Write tests against each protocol's own real client library — psql, mongosh, boto3, python-oracledb, opensearch-py, and more — no Warp-specific SDK to learn first.</p></div>
+      </div>
+
+      <p class="pillarLabel">Power AI</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Governed AI access</h4><p>An MCP frontend gives AI agents real database access — Postgres by default, or Oracle/MySQL/SQL Server directly in native-backend mode — through the same SQL firewall, ACL, and QoS controls as every other client (Postgres mode only — see "Native-backend mode" below for what native MCP mode carries over) — not a separate, unguarded path to your data.</p></div>
+        <div class="obsCard"><h4>One MCP server, every database</h4><p>Tools and agents get a single MCP surface instead of a bespoke integration per database — see "AI features beyond MCP" below.</p></div>
+      </div>
+
+      <p class="pillarLabel">Control</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Simple architecture</h4><p>One gateway for all protocols and data sources.</p></div>
+        <div class="obsCard"><h4>Planned &amp; unplanned downtime management</h4><p>A scheduled drain waits for a clean cutover; an unrelated backend failure triggers automatic failover in seconds — the two cases are handled deliberately differently, across every wire protocol.</p></div>
+      </div>
+
+      <p class="pillarLabel">Protect</p>
+      <div class="obsGrid">
+        <div class="obsCard"><h4>Strong security</h4><p>Centralized policies, auth, and SQL firewall — see "Security" below for the full, honestly-scoped detail.</p></div>
+        <div class="obsCard"><h4>Native error translation</h4><p>Every real Postgres failure comes back as that protocol's own genuine error — ORA-03113, a MongoDB codeName, a DynamoDB exception name — so each client's own retry/reconnect logic keys off exactly what it expects.</p></div>
+      </div>
+
       <p class="pillarLabel">Observe</p>
       <div class="obsGrid">
         <div class="obsCard"><h4>Operational excellence</h4><p>Deep observability, audit, and real-time insights.</p></div>
-        <div class="obsCard"><h4>Native error translation</h4><p>Every real Postgres failure comes back as that protocol's own genuine error — ORA-03113, a MongoDB codeName, a DynamoDB exception name — so each client's own retry/reconnect logic keys off exactly what it expects.</p></div>
       </div>
 
       <h3 class="subhead" id="use-cases">Use cases<a class="permalink" href="#use-cases" aria-label="Link to this section">#</a></h3>
@@ -154,47 +166,14 @@
         No signup, no backend required — synthetic data, real layout.
       </p>
 
-      <h3 class="subhead" id="cache-vs-round-trip">Mach hit vs. Postgres round trip, per protocol<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
+      <h3 class="subhead" id="cache-vs-round-trip">Mach: Warp's built-in distributed cache<a class="permalink" href="#cache-vs-round-trip" aria-label="Link to this section">#</a></h3>
       <p class="statTeaser">Up to <b>9.3× faster</b> repeat reads — built-in distributed caching reduces Postgres round trips across every protocol Warp speaks.</p>
       <p class="rttNote">
-        <b>Shared across protocols, not per-protocol silos — in two tiers.</b> PostgreSQL, MySQL,
-        Oracle, SQL Server, gRPC, and MCP all read and populate the same distributed cache for
-        arbitrary opted-in <code>SELECT</code> results — a result cached via one protocol is
-        served to another asking for the same row, with no duplicate cache and no
-        protocol-specific staleness window. A second, narrower tier now covers exact primary-key
-        point lookups only (<code>GetItem</code>, <code>find</code> by <code>_id</code>, SQL
-        <code>WHERE pk = ?</code>) — and this one <i>does</i> bring DynamoDB and MongoDB in, each
-        sharing its cache entries with any SQL client reading the same physical Postgres table
-        (though not directly with each other, since they store data under different physical
-        tables even when the logical table/collection name matches). See
-        <a href="/mach/#row-cache-dynamo-mongo">the DynamoDB/MongoDB demo</a> for exactly what
-        that looks like.
-      </p>
-      <h4 class="demoSubhead">How a cross-protocol hit actually happens</h4>
-      <p class="rttNote">
-        A sophisticated question to ask here: how does a request from one protocol resolve to the
-        <i>same</i> cache entry as an equivalent request from another? Warp doesn't parse two
-        differently-worded queries and recognize they mean the same thing — it's simpler and more
-        literal than that, on purpose. Every cache entry's key is built from: the backend the
-        request targets, the SQL text <b>after</b> dialect translation (the same stage that turns
-        an Oracle or MySQL query into the Postgres SQL that actually runs), the bind parameter
-        values, and the caller's access context. Two requests share an entry when all four match —
-        which happens routinely for the common case (an app issuing the same shaped query,
-        <code>SELECT ... WHERE id = ?</code>, from more than one protocol) since dialect
-        translation is a no-op for plain SQL with nothing protocol-specific to rewrite, but it
-        isn't a semantic-equivalence engine: the same logical read phrased with different
-        whitespace, casing, or column order — or via a query shape one protocol's own dialect
-        translator rewrites and another's doesn't touch — won't share an entry. Only <code>SELECT</code>
-        statements against tables explicitly opted in (a name/pattern list, not "every table") are
-        eligible at all; anything else always goes to Postgres. Every write against an opted-in
-        table evicts every cached entry for that table by name, regardless of whether the write
-        used bind parameters or literal values — a simple, coarse invalidation, not row-level
-        tracking, so a write to one row briefly costs a cache miss on unrelated rows in the same
-        table too. Entries expire after a configurable TTL (30 seconds by default) even without a
-        write. There's no cross-instance consistency protocol beyond that: every Warp instance
-        in the cluster reads and writes the same distributed cache directly, so a write anywhere is
-        visible everywhere on its very next read, bounded by ordinary distributed-cache propagation
-        time, not a separate sync step.
+        Mach is a distributed cache built into Warp itself — no separate service to run or
+        operate. Turn it on for a table, and a repeated read through <i>any</i> protocol Warp
+        speaks is served from cache instead of hitting Postgres again. Any write to that table
+        invalidates its cached entries automatically, so there's no application-side caching code
+        to write or keep in sync.
       </p>
       <details class="methodDetails">
         <summary>See benchmark methodology and full numbers →</summary>
