@@ -19,12 +19,34 @@ final class MongoQueryTranslator {
         if (filter == null || filter.isEmpty()) {
             return Where.MATCH_ALL;
         }
-        List<String> clauses = new ArrayList<>();
         List<String> params = new ArrayList<>();
+        List<String> clauses = translateClauses(filter, params);
+        String sql = clauses.isEmpty() ? "" : " WHERE " + String.join(" AND ", clauses);
+        return new Where(sql, params);
+    }
+
+    /** One clause per top-level filter key, ANDed together by the caller -- {@link #translate}
+     * for the outermost filter, or recursively for each {@code $or}/{@code $and}/{@code $nor}
+     * member document below. Real gap this closes, found auditing this frontend for GA
+     * transparency: {@code $or}/{@code $and}/{@code $nor} were refused outright, an extremely
+     * common real filter shape ("status = active OR priority = high"). Scope, deliberately
+     * narrow, matching this class's own existing restrictions: {@code $or}/{@code $and}/{@code
+     * $nor}'s own value must be a real array of sub-filter documents (real MongoDB's own shape);
+     * each sub-filter is translated with this SAME method, so {@code $or}/{@code $and} can nest,
+     * but a sub-filter's own fields are still subject to every restriction ordinary top-level
+     * fields already have (no dotted paths, no further nested logical operators mixed with plain
+     * fields in a way this wouldn't already handle correctly via plain recursion). */
+    private static List<String> translateClauses(BsonDocument filter, List<String> params) {
+        List<String> clauses = new ArrayList<>();
         for (Map.Entry<String, BsonValue> entry : filter.entrySet()) {
             String field = entry.getKey();
+            if ("$or".equals(field) || "$and".equals(field) || "$nor".equals(field)) {
+                clauses.add(translateLogicalOperator(field, entry.getValue(), params));
+                continue;
+            }
             if (field.startsWith("$")) {
-                throw unsupported("top-level operator \"" + field + "\" ($or/$and/$nor and friends)");
+                throw unsupported("top-level operator \"" + field + "\" (only $or/$and/$nor are supported "
+                        + "in this pass, not e.g. $expr/$where)");
             }
             if (field.contains(".")) {
                 throw unsupported("dotted field path \"" + field + "\"");
@@ -40,8 +62,27 @@ final class MongoQueryTranslator {
                 params.add(BsonJson.valueToJson(value));
             }
         }
-        String sql = clauses.isEmpty() ? "" : " WHERE " + String.join(" AND ", clauses);
-        return new Where(sql, params);
+        return clauses;
+    }
+
+    private static String translateLogicalOperator(String op, BsonValue arrayValue, List<String> params) {
+        if (!arrayValue.isArray() || arrayValue.asArray().isEmpty()) {
+            throw unsupported(op + " (expected a non-empty array of sub-filter documents)");
+        }
+        List<String> memberSql = new ArrayList<>();
+        for (BsonValue member : arrayValue.asArray()) {
+            if (!member.isDocument()) {
+                throw unsupported(op + " member (expected a sub-filter document)");
+            }
+            List<String> memberClauses = translateClauses(member.asDocument(), params);
+            memberSql.add(memberClauses.isEmpty() ? "TRUE" : "(" + String.join(" AND ", memberClauses) + ")");
+        }
+        // $or/$nor join their members with OR ($nor negates that whole disjunction below); $and
+        // joins with AND.
+        String combined = "$and".equals(op)
+                ? String.join(" AND ", memberSql)
+                : String.join(" OR ", memberSql);
+        return "$nor".equals(op) ? "NOT (" + combined + ")" : "(" + combined + ")";
     }
 
     static String exactIdEquality(BsonDocument filter) {
