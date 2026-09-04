@@ -31,6 +31,21 @@ public final class BackendRegistry {
     public static final String MSSQL_NATIVE_DEFAULT_NAME = "mssql-native";
     public static final String ORACLE_NATIVE_DEFAULT_NAME = "oracle-native";
 
+    /** The dual-port native-mode listener's own registered target -- a DIFFERENT name from
+     * {@link #MYSQL_NATIVE_DEFAULT_NAME}/{@link #MSSQL_NATIVE_DEFAULT_NAME} deliberately, so a
+     * dual-port deployment (BOTH a translated-mode listener AND a native-mode listener running
+     * from the same process at once -- see ServerOptions#withMywireNativeListener/
+     * withMssqlwireNativeListener) doesn't make RouterStage#resolveUnambiguousDefault's own
+     * same-dialect reserved-name fallback ambiguously hijack the TRANSLATED listener's own
+     * statements too. The dual-port native listener's own session pins its statements to this
+     * name explicitly (see MySqlWireSessionHandler/MssqlWireSessionHandler's own
+     * nativeViaDualPort check) rather than relying on that implicit fallback at all -- so, unlike
+     * the single-toggle native mode, a dual-port native session's routing isn't overridable by a
+     * router or table-shard rule. A real, deliberate narrowing for this first version:
+     * the single-toggle native mode (unaffected by any of this) keeps that flexibility. */
+    public static final String MYSQL_NATIVE_DUAL_PORT_NAME = "mysql-native-dual-port";
+    public static final String MSSQL_NATIVE_DUAL_PORT_NAME = "mssql-native-dual-port";
+
     /** A backend's operational state for routing purposes -- see {@link #resolveForRouting}.
      * {@code ACTIVE} is the default for every backend that's never had its state touched.
      * {@code DRAINING} is set explicitly via the admin drain API ahead of planned maintenance;

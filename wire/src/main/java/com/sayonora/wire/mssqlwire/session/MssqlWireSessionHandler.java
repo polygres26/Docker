@@ -470,6 +470,17 @@ public final class MssqlWireSessionHandler implements Runnable {
                     // with NO NativeRlsSessionInitializer, unlike this session's own terminalExecutor
                     // (bound to MssqlPgEmulationSessionInitializer, Postgres-only `SET db_emulation =
                     // 'sqlserver'` setup a real SQL Server backend has no use for and would reject).
+                    //
+                    // EXCEPT for dual-port mode's own native listener (see ServerOptions#
+                    // mssqlwireNativeViaDualPort's own javadoc): there, this same ambiguous
+                    // fallback would ALSO match the TRANSLATED listener's own statements once BOTH
+                    // are registered at once (a real bug, found live) -- so that one case pins
+                    // targetBackend explicitly to its own reserved dual-port name instead of
+                    // relying on the fallback at all.
+                    if (options.mssqlwireNativeViaDualPort()) {
+                        statement = statement.withRouting(statement.workloadClass(),
+                                com.sayonora.wire.core.BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME);
+                    }
                     result = pipeline.execute(statement);
                 } else {
                     // One connection for the whole session (see sessionConnection()'s own
