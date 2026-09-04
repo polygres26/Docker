@@ -1,5 +1,7 @@
 package com.sayonora.wire.mongowire;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.bson.Document;
 
@@ -31,9 +33,58 @@ final class UpdateApplier {
                         unsetDotted(existing, key);
                     }
                 }
+                // $inc/$push/$pull/$addToSet -- real gap, found auditing this frontend for GA
+                // transparency: counters ($inc) and array manipulation ($push/$pull) are used in
+                // nearly every non-trivial app, and were refused outright before this. Same
+                // dotted-path navigation discipline as $set/$unset above (no array-index path
+                // segments -- see setDotted's own javadoc).
+                case "$inc" -> {
+                    Document fields = (Document) op.getValue();
+                    for (Map.Entry<String, Object> f : fields.entrySet()) {
+                        Number delta = (Number) f.getValue();
+                        Object current = getDotted(existing, f.getKey());
+                        Number currentNum = current == null ? 0 : (Number) current;
+                        setDotted(existing, f.getKey(), addNumbers(currentNum, delta));
+                    }
+                }
+                case "$push" -> {
+                    Document fields = (Document) op.getValue();
+                    for (Map.Entry<String, Object> f : fields.entrySet()) {
+                        List<Object> list = asMutableList(getDotted(existing, f.getKey()), f.getKey(), "$push");
+                        Object rawValue = f.getValue();
+                        if (rawValue instanceof Document mod && mod.containsKey("$each")) {
+                            for (Object v : (List<?>) mod.get("$each")) {
+                                list.add(v);
+                            }
+                        } else {
+                            list.add(rawValue);
+                        }
+                        setDotted(existing, f.getKey(), list);
+                    }
+                }
+                case "$pull" -> {
+                    Document fields = (Document) op.getValue();
+                    for (Map.Entry<String, Object> f : fields.entrySet()) {
+                        List<Object> list = asMutableList(getDotted(existing, f.getKey()), f.getKey(), "$pull");
+                        Object toRemove = f.getValue();
+                        list.removeIf(existingElement -> java.util.Objects.equals(existingElement, toRemove));
+                        setDotted(existing, f.getKey(), list);
+                    }
+                }
+                case "$addToSet" -> {
+                    Document fields = (Document) op.getValue();
+                    for (Map.Entry<String, Object> f : fields.entrySet()) {
+                        List<Object> list = asMutableList(getDotted(existing, f.getKey()), f.getKey(), "$addToSet");
+                        Object value = f.getValue();
+                        if (list.stream().noneMatch(existingElement -> java.util.Objects.equals(existingElement, value))) {
+                            list.add(value);
+                        }
+                        setDotted(existing, f.getKey(), list);
+                    }
+                }
                 default -> throw new IllegalArgumentException(
                         "mongowire: unsupported update operator \"" + op.getKey()
-                                + "\" ($set/$unset only in this pass)");
+                                + "\" ($set/$unset/$inc/$push/$pull/$addToSet only in this pass)");
             }
         }
     }
@@ -68,6 +119,53 @@ final class UpdateApplier {
             }
         }
         cursor.put(segments[segments.length - 1], value);
+    }
+
+    /** Read-only counterpart to {@link #setDotted}/{@link #unsetDotted} -- same dotted-path
+     * navigation, {@code null} for a missing path (or a missing intermediate segment) rather than
+     * throwing, matching how {@code $inc}/{@code $push}/etc. treat a field that doesn't exist yet
+     * (real MongoDB's own behavior: {@code $inc} on a missing field starts from 0, {@code $push}
+     * on a missing field starts a new array). */
+    private static Object getDotted(Document root, String path) {
+        if (!path.contains(".")) {
+            return root.get(path);
+        }
+        String[] segments = path.split("\\.");
+        Object cursor = root;
+        for (String segment : segments) {
+            if (!(cursor instanceof Document doc)) {
+                return null;
+            }
+            cursor = doc.get(segment);
+        }
+        return cursor;
+    }
+
+    private static Number addNumbers(Number a, Number b) {
+        if (a instanceof Double || b instanceof Double || a instanceof Float || b instanceof Float) {
+            return a.doubleValue() + b.doubleValue();
+        }
+        if (a instanceof Long || b instanceof Long) {
+            return a.longValue() + b.longValue();
+        }
+        return a.intValue() + b.intValue();
+    }
+
+    /** {@code $push}/{@code $pull}/{@code $addToSet} all need a real, mutable {@link List} to
+     * operate on -- a missing field starts a fresh empty array (real MongoDB's own behavior for
+     * {@code $push [$addToSet]} on a field that doesn't exist yet; for {@code $pull} an empty
+     * list is simply a no-op removal, also matching real behavior). A field that DOES exist but
+     * isn't an array is refused rather than silently coerced or overwritten. */
+    @SuppressWarnings("unchecked")
+    private static List<Object> asMutableList(Object current, String field, String op) {
+        if (current == null) {
+            return new ArrayList<>();
+        }
+        if (current instanceof List<?> list) {
+            return new ArrayList<>((List<Object>) list);
+        }
+        throw new IllegalArgumentException("mongowire: " + op + " on \"" + field
+                + "\" -- the existing value is not an array");
     }
 
     /** Same navigation discipline as {@link #setDotted} but for {@code $unset}: a missing
