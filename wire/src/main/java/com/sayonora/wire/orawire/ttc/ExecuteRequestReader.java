@@ -194,6 +194,7 @@ public final class ExecuteRequestReader {
             case TtcConstants.ORA_TYPE_NUM_VARCHAR -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             case TtcConstants.ORA_TYPE_NUM_NUMBER -> OracleNumberCodec.decode(bytes);
             case TtcConstants.ORA_TYPE_NUM_DATE, TtcConstants.ORA_TYPE_NUM_TIMESTAMP -> OracleDateCodec.decode(bytes);
+            case TtcConstants.ORA_TYPE_NUM_TIMESTAMP_WITH_TIME_ZONE -> OracleDateCodec.decodeWithTimeZone(bytes);
 
             case TtcConstants.ORA_TYPE_NUM_RAW, TtcConstants.ORA_TYPE_NUM_BLOB -> bytes;
             // A CLOB bind value's own bytes are already length-prefixed/PLP-chunked the same way
