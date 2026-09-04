@@ -75,7 +75,13 @@ public final class JdbcBackendExecutor implements BackendExecutor {
         String sqlText = stripTrailingSemicolon(statement.sqlText());
         PreparedStatement stmt = statementCache.get(sqlText);
         if (stmt == null) {
-            stmt = connection.prepareStatement(sqlText);
+            // RETURN_GENERATED_KEYS is harmless to request unconditionally -- pgjdbc (the only
+            // backend driver this executor targets) only appends its RETURNING machinery for
+            // INSERT statements; for everything else getGeneratedKeys() just comes back empty and
+            // executeOnPreparedStatement()'s own read of it below is a no-op. Real gap this closes:
+            // without it, a MySQL/Oracle app relying on the backend to assign an auto-increment /
+            // sequence-based primary key got LAST_INSERT_ID()/getGeneratedKeys() == 0 always.
+            stmt = connection.prepareStatement(sqlText, java.sql.Statement.RETURN_GENERATED_KEYS);
             statementCache.put(sqlText, stmt);
         }
         try {
@@ -113,7 +119,17 @@ public final class JdbcBackendExecutor implements BackendExecutor {
                 return readResultSet(rs);
             }
         }
-        return ExecutionResult.ofUpdate(Math.max(stmt.getUpdateCount(), 0));
+        long generatedKey = 0;
+        try (ResultSet keys = stmt.getGeneratedKeys()) {
+            if (keys.next()) {
+                generatedKey = keys.getLong(1);
+            }
+        } catch (SQLException ignoredNoGeneratedKeysSupport) {
+            // Some backends/drivers throw rather than return an empty ResultSet for statements
+            // that never asked for generated keys in a way they support -- treat identically to
+            // "no generated key", since that's exactly what it means here.
+        }
+        return ExecutionResult.ofUpdate(Math.max(stmt.getUpdateCount(), 0), generatedKey);
     }
 
     private static String stripTrailingSemicolon(String sql) {

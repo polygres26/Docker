@@ -75,10 +75,19 @@ final class MySqlMessages {
     }
 
     static byte[] okPacket(long affectedRows) {
+        return okPacket(affectedRows, 0);
+    }
+
+    /** {@code lastInsertId} is real MySQL's own OK-packet field that mysql-connector-j surfaces
+     * as {@code Statement.getGeneratedKeys()} and that {@code LAST_INSERT_ID()} reflects
+     * server-side -- previously always sent as 0 regardless of whether the statement was an
+     * INSERT into an auto-increment column, silently breaking any app relying on the backend to
+     * assign its primary keys (essentially every ORM's default id strategy). */
+    static byte[] okPacket(long affectedRows, long lastInsertId) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         b.write(0x00);
         MySqlPacket.writeLenEncInt(b, affectedRows);
-        MySqlPacket.writeLenEncInt(b, 0);
+        MySqlPacket.writeLenEncInt(b, lastInsertId);
         MySqlPacket.writeFixedInt(b, 0x0002, 2);
         MySqlPacket.writeFixedInt(b, 0, 2);
         return b.toByteArray();

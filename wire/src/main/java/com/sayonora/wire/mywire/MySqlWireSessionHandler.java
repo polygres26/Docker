@@ -606,7 +606,7 @@ public final class MySqlWireSessionHandler implements Runnable {
                 }
                 packets.writePayload(out, MySqlMessages.eofPacket());
             } else {
-                packets.writePayload(out, MySqlMessages.okPacket(result.updateCount()));
+                packets.writePayload(out, MySqlMessages.okPacket(result.updateCount(), result.generatedKey()));
             }
         } catch (SQLException e) {
             String state = sqlState(e);
