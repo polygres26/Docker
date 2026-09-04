@@ -65,6 +65,14 @@ public final class TtcConstants {
     public static final int ORA_TYPE_NUM_RAW = 23;
     
     public static final int ORA_TYPE_NUM_TIMESTAMP = 180;
+    // Confirmed live (a real ojdbc PreparedStatement.setObject(1, OffsetDateTime.now())):
+    // TIMESTAMP WITH TIME ZONE arrives as this exact type code, with a real 13-byte value (the
+    // same 7-byte DATE fields, +4 bytes fractional-second nanos, +2 bytes timezone: hour offset
+    // +20, minute offset +60) -- see OracleDateCodec#decodeWithTimeZone's own javadoc for the
+    // captured bytes. WITH LOCAL TIME ZONE (231) has NOT been captured live -- its own encoding
+    // is different (no explicit offset stored, converted to session time instead) and is left
+    // unsupported rather than guessed at.
+    public static final int ORA_TYPE_NUM_TIMESTAMP_WITH_TIME_ZONE = 181;
     // Well-known Oracle TTC type codes for LOB bind values (matching every other Oracle wire
     // client implementation's own constants, e.g. cx_Oracle/python-oracledb) -- the VALUE bytes
     // themselves use the SAME length-prefixed/PLP-chunked encoding as VARCHAR/RAW already, so
