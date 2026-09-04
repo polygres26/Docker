@@ -557,8 +557,15 @@ public final class PgWireSessionHandler implements Runnable {
         char kind = (char) r.readByte();
         String name = r.readCString();
         if (kind == 'S') {
-            
-            PgMessages.writeParameterDescription(out, 0);
+            // Real bug, found live auditing this frontend for GA transparency: this always
+            // claimed 0 parameters regardless of the real statement -- but the client's own real
+            // declared OIDs from its Parse message are sitting right here in preparedStatements
+            // the whole time (see PreparedStatementInfo's own javadoc). Some drivers/tools use
+            // Describe(Statement) for real parameter-count/type introspection (e.g. building
+            // ParameterMetaData) and would misbehave being told a parameterized statement has no
+            // parameters at all.
+            PreparedStatementInfo stmtInfo = preparedStatements.get(name);
+            PgMessages.writeParameterDescription(out, stmtInfo == null ? new int[0] : stmtInfo.paramTypeOids());
             PgMessages.writeNoData(out);
             return;
         }

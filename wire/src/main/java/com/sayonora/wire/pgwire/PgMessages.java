@@ -144,9 +144,26 @@ final class PgMessages {
     }
 
     static void writeParameterDescription(DataOutputStream out, int paramCount) throws IOException {
+        writeParameterDescription(out, new int[paramCount]);
+    }
+
+    /** @param paramTypeOids one real Postgres type OID per parameter, in position order -- 0
+     *      (Postgres's own "unspecified/let the client infer" sentinel) is a legitimate value,
+     *      not an error, for a parameter whose type the client's own {@code Parse} message never
+     *      declared. Real bug fixed here: the previous {@code int paramCount}-only overload
+     *      computed this message's length AS IF {@code paramCount} OIDs would follow (
+     *      {@code 4 + 2 + paramCount * 4}) but never actually wrote them -- harmless only because
+     *      every call site always passed 0. A real client asking to Describe a statement that
+     *      actually has bind parameters got told it has none, when pgwire has the client's own
+     *      real declared OIDs (from that statement's Parse message) sitting right there in {@link
+     *      PgWireSessionHandler}'s own {@code PreparedStatementInfo} the whole time. */
+    static void writeParameterDescription(DataOutputStream out, int[] paramTypeOids) throws IOException {
         out.writeByte('t');
-        out.writeInt(4 + 2 + paramCount * 4);
-        writeShortDirect(out, paramCount);
+        out.writeInt(4 + 2 + paramTypeOids.length * 4);
+        writeShortDirect(out, paramTypeOids.length);
+        for (int oid : paramTypeOids) {
+            out.writeInt(oid);
+        }
     }
 
     static void writeNoData(DataOutputStream out) throws IOException {
