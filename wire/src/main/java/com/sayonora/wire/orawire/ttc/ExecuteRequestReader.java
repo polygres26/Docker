@@ -195,7 +195,11 @@ public final class ExecuteRequestReader {
             case TtcConstants.ORA_TYPE_NUM_NUMBER -> OracleNumberCodec.decode(bytes);
             case TtcConstants.ORA_TYPE_NUM_DATE, TtcConstants.ORA_TYPE_NUM_TIMESTAMP -> OracleDateCodec.decode(bytes);
 
-            case TtcConstants.ORA_TYPE_NUM_RAW -> bytes;
+            case TtcConstants.ORA_TYPE_NUM_RAW, TtcConstants.ORA_TYPE_NUM_BLOB -> bytes;
+            // A CLOB bind value's own bytes are already length-prefixed/PLP-chunked the same way
+            // VARCHAR's are (see TtcConstants.ORA_TYPE_NUM_CLOB's own javadoc) -- decoded
+            // identically, just tagged with a different type code on the wire.
+            case TtcConstants.ORA_TYPE_NUM_CLOB -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             // A REF CURSOR OUT parameter's own placeholder value -- see TtcConstants
             // .ORA_TYPE_NUM_CURSOR's own javadoc for why this decodes rather than refuses.
             case TtcConstants.ORA_TYPE_NUM_CURSOR -> bytes;

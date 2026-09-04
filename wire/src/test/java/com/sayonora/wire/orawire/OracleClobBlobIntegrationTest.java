@@ -24,6 +24,11 @@ import org.junit.jupiter.api.Timeout;
  * VARCHAR2/RAW encoding as a plain String/byte[], no locator protocol needed. Deliberately
  * scoped to LOBs that comfortably fit in memory -- real LOB streaming is a separate, larger piece
  * of work, not attempted here.
+ *
+ * <p>CLOB/BLOB *bind parameters* (as opposed to result columns) are also covered here --
+ * {@code ExecuteRequestReader} decodes Oracle's own well-known CLOB(112)/BLOB(113) TTC type codes
+ * using the exact same length-prefixed/PLP-chunked value encoding VARCHAR/RAW already use, so no
+ * new wire-decoding logic was needed beyond recognizing the type codes themselves.
  */
 class OracleClobBlobIntegrationTest {
 
@@ -60,26 +65,24 @@ class OracleClobBlobIntegrationTest {
                     .env("WARP_OTEL_ENDPOINT", "disabled")
                     .start()) {
 
-                // Insert directly against the real Oracle backend -- orawire's own bind-value
-                // decoding doesn't yet support CLOB/BLOB *parameters* (see ExecuteRequestReader's
-                // own scope), only CLOB/BLOB *result columns* (this test's actual subject).
-                try (Connection direct = DriverManager.getConnection(
-                        oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
-                        PreparedStatement ps = direct.prepareStatement(
-                                "INSERT INTO clob_blob_it (id, notes, payload) VALUES (?, ?, ?)")) {
-                    ps.setInt(1, 1);
-                    ps.setString(2, clobText);
-                    ps.setBytes(3, blobBytes);
-                    ps.executeUpdate();
-                }
-
                 String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
-                try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
-                        Statement stmt = conn.createStatement();
-                        ResultSet rs = stmt.executeQuery("SELECT notes, payload FROM clob_blob_it WHERE id = 1")) {
-                    assertTrue(rs.next());
-                    assertEquals(clobText, rs.getString(1), "CLOB column must round-trip as its real text");
-                    assertArrayEquals(blobBytes, rs.getBytes(2), "BLOB column must round-trip as its real bytes");
+                try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
+                    // Insert THROUGH orawire itself now (bind parameters, not literals) --
+                    // proves the CLOB/BLOB bind-decode path, not just the result-column path.
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO clob_blob_it (id, notes, payload) VALUES (?, ?, ?)")) {
+                        ps.setInt(1, 1);
+                        ps.setString(2, clobText);
+                        ps.setBytes(3, blobBytes);
+                        ps.executeUpdate();
+                    }
+
+                    try (Statement stmt = conn.createStatement();
+                            ResultSet rs = stmt.executeQuery("SELECT notes, payload FROM clob_blob_it WHERE id = 1")) {
+                        assertTrue(rs.next());
+                        assertEquals(clobText, rs.getString(1), "CLOB column must round-trip as its real text");
+                        assertArrayEquals(blobBytes, rs.getBytes(2), "BLOB column must round-trip as its real bytes");
+                    }
                 }
             } finally {
                 try (Connection cleanup = DriverManager.getConnection(

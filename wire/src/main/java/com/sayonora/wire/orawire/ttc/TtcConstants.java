@@ -65,6 +65,13 @@ public final class TtcConstants {
     public static final int ORA_TYPE_NUM_RAW = 23;
     
     public static final int ORA_TYPE_NUM_TIMESTAMP = 180;
+    // Well-known Oracle TTC type codes for LOB bind values (matching every other Oracle wire
+    // client implementation's own constants, e.g. cx_Oracle/python-oracledb) -- the VALUE bytes
+    // themselves use the SAME length-prefixed/PLP-chunked encoding as VARCHAR/RAW already, so
+    // TtcReader#readBytesWithLength needs no change at all; only the type-code dispatch below is
+    // new.
+    public static final int ORA_TYPE_NUM_CLOB = 112;
+    public static final int ORA_TYPE_NUM_BLOB = 113;
     // A REF CURSOR OUT parameter's own bind descriptor -- the client still sends a placeholder
     // "value" for it (same as any OUT param, real or not) that needs decoding-not-refusing so the
     // byte stream stays in sync with whatever follows, same discipline as mssqlwire's BY_REF fix.
