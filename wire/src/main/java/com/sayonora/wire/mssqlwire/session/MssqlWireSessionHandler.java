@@ -50,7 +50,14 @@ public final class MssqlWireSessionHandler implements Runnable {
     private final ServerOptions options;
     private final CredentialStore credentials = new CredentialStore();
     private final JdbcBackendExecutor terminalExecutor;
+    private final RoutingBackendExecutor routingExecutor;
     private final StatementPipeline pipeline;
+    // Real gap found auditing this frontend for GA transparency: every statement used to open a
+    // BRAND NEW backend connection, execute, and close -- meaning BEGIN TRAN/COMMIT TRAN/ROLLBACK
+    // TRAN (already regex-matched below, but only to NO-OP them) had nowhere real to apply. Same
+    // fix as pgwire/mywire already have: one connection lives for the whole session.
+    private Connection sessionConnection;
+    private boolean inTransaction;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
@@ -91,12 +98,12 @@ public final class MssqlWireSessionHandler implements Runnable {
         // 'sqlserver'` on top, so pg_sqlserver's unqualified sys.tables/OBJECT_ID(...)/
         // SCOPE_IDENTITY() etc. resolve -- see that class's own javadoc.
         this.terminalExecutor = new JdbcBackendExecutor(null, new com.sayonora.wire.core.access.MssqlPgEmulationSessionInitializer());
-        this.pipeline = new StatementPipeline(sharedStages,
-                new RoutingBackendExecutor(backendRegistry, terminalExecutor,
-                        new com.sayonora.wire.xa.XaRecoveryLog(options),
-                        com.sayonora.wire.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.wire.core.RouterStage.tableShardRulesIn(sharedStages))
-                        .withFederationSupport(com.sayonora.wire.core.RouterStage.statisticsStoreIn(sharedStages),
-                                com.sayonora.wire.core.RouterStage.planStoreIn(sharedStages)));
+        this.routingExecutor = new RoutingBackendExecutor(backendRegistry, terminalExecutor,
+                new com.sayonora.wire.xa.XaRecoveryLog(options),
+                com.sayonora.wire.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.wire.core.RouterStage.tableShardRulesIn(sharedStages))
+                .withFederationSupport(com.sayonora.wire.core.RouterStage.statisticsStoreIn(sharedStages),
+                        com.sayonora.wire.core.RouterStage.planStoreIn(sharedStages));
+        this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
         this.sqlMetrics = com.sayonora.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
@@ -147,9 +154,30 @@ public final class MssqlWireSessionHandler implements Runnable {
             try {
                 activeSocket.close();
             } catch (IOException ignoredOnSessionTeardown) {
-                
+
+            }
+            try {
+                routingExecutor.endTransaction(false);
+            } catch (SQLException ignoredOnSessionTeardown) {
+
+            }
+            if (sessionConnection != null) {
+                try {
+                    sessionConnection.close();
+                } catch (SQLException ignoredOnSessionTeardown) {
+
+                }
             }
         }
+    }
+
+    private Connection sessionConnection() throws SQLException {
+        if (sessionConnection == null) {
+            sessionConnection = PgConnections.open(options);
+            sessionConnection.setAutoCommit(true);
+            terminalExecutor.rebind(sessionConnection);
+        }
+        return sessionConnection;
     }
 
     private record HandshakeStreams(DataInputStream in, OutputStream out) {
@@ -230,9 +258,70 @@ public final class MssqlWireSessionHandler implements Runnable {
     // unrelated SQL if a translation happened to produce something parseable. No-op them the same
     // way SET_STATEMENT already is. Found live via MssqlJdbcIntegrationTest -- a real driver, not
     // a hand-constructed test payload, is what surfaced this.
+    // NOT anchored to the start of the batch: confirmed live (WARP_DEBUG_MSSQL_SQL) that
+    // mssql-jdbc's Connection#setAutoCommit(true) sends these concatenated in ONE batch --
+    // "set implicit_transactions off IF @@TRANCOUNT > 0 COMMIT TRAN" -- so an anchored "must be
+    // the very first token" pattern misses the COMMIT/ROLLBACK entirely once something else
+    // (like the SET here) comes first in the same batch. IMPLICIT_TRANSACTIONS ON/OFF is
+    // mssql-jdbc's OWN Connection#setAutoCommit(false/true) implementation -- SQL Server's native
+    // "next statement implicitly opens a transaction" mode, not a TDS-level flag -- confirmed the
+    // same way mywire's own SET autocommit=0/1 finding was.
     private static final Pattern TRANSACTION_CONTROL_STATEMENT = Pattern.compile(
-            "^\\s*(?:IF\\s+@@TRANCOUNT|BEGIN\\s+TRAN|COMMIT\\s+TRAN|ROLLBACK\\s+TRAN|SAVE\\s+TRAN)",
+            "IF\\s+@@TRANCOUNT|BEGIN\\s+TRAN|COMMIT\\s+TRAN|ROLLBACK\\s+TRAN|SAVE\\s+TRAN|IMPLICIT_TRANSACTIONS",
             Pattern.CASE_INSENSITIVE);
+
+    /** Real gap found live (same audit that found mywire's identical one): the comment this
+     * pattern used to justify no-op'ing every match is now out of date -- mssql-jdbc's
+     * "IF @@TRANCOUNT &gt; 0 COMMIT/ROLLBACK TRAN" idiom for {@code Connection#commit()}/
+     * {@code rollback()}, and its {@code SET IMPLICIT_TRANSACTIONS ON/OFF} for {@code
+     * Connection#setAutoCommit(false/true)}, need a REAL backend connection in manual-commit mode
+     * to mean anything; with the old per-statement-fresh-connection design there wasn't one, so
+     * no-op was the only safe choice. Now that {@link #sessionConnection()} is session-scoped,
+     * these can (and must) actually run. Checked in this exact order -- ROLLBACK/COMMIT before
+     * IMPLICIT_TRANSACTIONS ON -- because a real {@code setAutoCommit(true)} batch contains BOTH
+     * "IMPLICIT_TRANSACTIONS OFF" and a trailing "COMMIT TRAN": the COMMIT is the real action,
+     * the IMPLICIT_TRANSACTIONS OFF alone doesn't end anything by itself. {@code SAVE TRAN} (named
+     * savepoints) still falls through to a no-op below (matched by {@link
+     * #TRANSACTION_CONTROL_STATEMENT} but none of the checked verbs) -- not yet implemented, same
+     * as before this fix; still correctly swallowed rather than reaching the (Postgres-translated)
+     * backend as invalid T-SQL syntax. */
+    private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
+        if (!TRANSACTION_CONTROL_STATEMENT.matcher(sql).find()) {
+            return false;
+        }
+        String upper = sql.toUpperCase(java.util.Locale.ROOT);
+        if (upper.contains("ROLLBACK")) {
+            if (inTransaction) {
+                connection.rollback();
+                connection.setAutoCommit(true);
+                inTransaction = false;
+                routingExecutor.endTransaction(false);
+            }
+        } else if (upper.contains("COMMIT")) {
+            if (inTransaction) {
+                connection.commit();
+                connection.setAutoCommit(true);
+                inTransaction = false;
+                routingExecutor.endTransaction(true);
+            }
+        } else if (upper.contains("IMPLICIT_TRANSACTIONS") && upper.contains("ON")) {
+            if (!inTransaction) {
+                connection.setAutoCommit(false);
+                inTransaction = true;
+                routingExecutor.beginTransaction();
+            }
+        } else if (upper.contains("IMPLICIT_TRANSACTIONS")) {
+            // "...OFF" with no COMMIT/ROLLBACK alongside it (the ROLLBACK/COMMIT branches above
+            // already handle the common combined-batch case) -- nothing further to do; leaving
+            // any currently-open transaction exactly as it is matches real SQL Server, where
+            // turning implicit_transactions off doesn't itself end an already-open transaction.
+        } else if (upper.contains("BEGIN")) {
+            connection.setAutoCommit(false);
+            inTransaction = true;
+            routingExecutor.beginTransaction();
+        }
+        return true;
+    }
 
     private void queryLoop(DataInputStream in, OutputStream out, TdsPacket packets) throws IOException {
         while (true) {
@@ -290,12 +379,25 @@ public final class MssqlWireSessionHandler implements Runnable {
      *      flag after just the handle, telling the client the whole response was already done). */
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
             boolean viaRpc, Integer prepareHandleToReturn) throws IOException {
-        // Same gate as mywire's own SET_STATEMENT/MySqlSessionVariableQuery short-circuits: only
-        // a no-op against the (fake, dialect-translated) Postgres backend -- in native mode a SET
-        // or transaction-control statement means something real against the real SQL Server
-        // backend and must actually run, not be silently swallowed.
-        if (!options.mssqlwireNativeBackend()
-                && (SET_STATEMENT.matcher(sql).find() || TRANSACTION_CONTROL_STATEMENT.matcher(sql).find())) {
+        if (!options.mssqlwireNativeBackend()) {
+            try {
+                if (handleTransactionControl(sessionConnection(), sql)) {
+                    ByteArrayOutputStream body = new ByteArrayOutputStream();
+                    TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
+                    packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
+                    return;
+                }
+            } catch (SQLException e) {
+                packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                        TdsTokens.errorMessage(SqlStateErrorMapper.SQL_SERVER_DEFAULT,
+                                e.getMessage() == null ? "backend error" : e.getMessage()));
+                return;
+            }
+        }
+        // A no-op against the (fake, dialect-translated) Postgres backend -- in native mode a SET
+        // statement means something real against the real SQL Server backend and must actually
+        // run, not be silently swallowed.
+        if (!options.mssqlwireNativeBackend() && SET_STATEMENT.matcher(sql).find()) {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
@@ -330,11 +432,12 @@ public final class MssqlWireSessionHandler implements Runnable {
                     // 'sqlserver'` setup a real SQL Server backend has no use for and would reject).
                     result = pipeline.execute(statement);
                 } else {
-                    try (Connection backend = PgConnections.open(options)) {
-                        backend.setAutoCommit(true);
-                        terminalExecutor.rebind(backend);
-                        result = pipeline.execute(statement);
-                    }
+                    // One connection for the whole session (see sessionConnection()'s own
+                    // javadoc, which also does the one-time terminalExecutor.rebind()), not a
+                    // fresh one per statement -- required for BEGIN/COMMIT/ROLLBACK TRAN (handled
+                    // above) to mean anything across statements.
+                    sessionConnection();
+                    result = pipeline.execute(statement);
                 }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.SQL_SERVER, sql,
