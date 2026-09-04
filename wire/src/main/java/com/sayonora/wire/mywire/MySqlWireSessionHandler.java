@@ -508,6 +508,40 @@ public final class MySqlWireSessionHandler implements Runnable {
     private static final java.util.regex.Pattern SET_STATEMENT =
             java.util.regex.Pattern.compile("^\\s*set\\s+", java.util.regex.Pattern.CASE_INSENSITIVE);
 
+    // Every OTHER "SET ..." is a silent no-op (see SET_STATEMENT's own use below) -- correct for
+    // something with no real backend-session equivalent (sql_mode, character_set_*), but
+    // time_zone is a real, common exception: any app relying on it (session-local date/time
+    // rendering, TIMESTAMPDIFF/CONVERT_TZ-style logic) got silently wrong results using whatever
+    // timezone the backend Postgres session happened to default to, no error, nothing to notice.
+    // Scope, deliberately narrow: only a UTC numeric-offset value ('+05:00'/'-08:00') or the
+    // literal "UTC" is translated to Postgres's own SET TIME ZONE -- both dialects accept that
+    // exact syntax unchanged, so no translation of the VALUE itself is needed, just the statement
+    // shape. A real IANA zone name ('America/New_York') also happens to work identically in both
+    // (Postgres accepts the same names), so it's allowed through too. MySQL's "SYSTEM" keyword
+    // has no equivalent meaning here (there is no real MySQL system config to defer to) and is
+    // left as a no-op, same as before this fix.
+    private static final java.util.regex.Pattern SET_TIME_ZONE = java.util.regex.Pattern.compile(
+            "^\\s*set\\s+(?:session\\s+|@@(?:session\\.)?)?time_zone\\s*=\\s*'([^']+)'\\s*$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** @return true if {@code sql} was a real {@code SET time_zone} this rewrote and executed for
+     *      real against {@code connection} -- false (nothing done) for anything else, including
+     *      MySQL's "SYSTEM" keyword, left to the generic SET_STATEMENT no-op. */
+    private static boolean handleSetTimeZone(Connection connection, String sql) throws SQLException {
+        java.util.regex.Matcher m = SET_TIME_ZONE.matcher(sql);
+        if (!m.matches()) {
+            return false;
+        }
+        String value = m.group(1);
+        if ("system".equalsIgnoreCase(value)) {
+            return false;
+        }
+        try (java.sql.Statement stmt = connection.createStatement()) {
+            stmt.execute("SET TIME ZONE '" + value.replace("'", "''") + "'");
+        }
+        return true;
+    }
+
     private void executeQuery(OutputStream out, MySqlPacket packets, String sql, List<Object> bindParams)
             throws IOException {
         executeQuery(out, packets, sql, bindParams, false);
@@ -521,6 +555,19 @@ public final class MySqlWireSessionHandler implements Runnable {
         if (!options.mywireNativeBackend()) {
             try {
                 if (handleTransactionControl(sessionConnection(), sql)) {
+                    packets.writePayload(out, MySqlMessages.okPacket(0));
+                    return;
+                }
+            } catch (SQLException e) {
+                String state = sqlState(e);
+                packets.writePayload(out, MySqlMessages.errPacket(SqlStateErrorMapper.toMySqlError(state, e.getMessage()),
+                        state, e.getMessage() == null ? "backend error" : e.getMessage()));
+                return;
+            }
+        }
+        if (!options.mywireNativeBackend()) {
+            try {
+                if (handleSetTimeZone(sessionConnection(), sql)) {
                     packets.writePayload(out, MySqlMessages.okPacket(0));
                     return;
                 }
