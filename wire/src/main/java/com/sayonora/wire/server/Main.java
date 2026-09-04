@@ -613,6 +613,18 @@ public final class Main {
         mcpServer.start();
         log.info("warp listening for MCP (Model Context Protocol) on port {}", mcpPort);
 
+        // A real A2A (Agent2Agent) frontend -- the gap found auditing Warp's own architecture
+        // diagram against what was actually implemented (MCP was real, A2A was zero lines of
+        // code). See A2AServer's own javadoc for scope: one JSON-RPC method (message/send,
+        // synchronous), delegating to the SAME governed natural-language-to-SQL pipeline MCP's
+        // own query_natural_language tool already uses -- not a separate, less-governed path.
+        int a2aPort = parseIntEnv("WARP_A2A_PORT", 18020);
+        String a2aPublicUrl = System.getenv().getOrDefault("WARP_A2A_PUBLIC_URL", "http://localhost:" + a2aPort + "/");
+        com.sayonora.wire.a2a.A2AServer a2aServer = new com.sayonora.wire.a2a.A2AServer(
+                a2aPort, a2aPublicUrl, mcpServer, connectionGate, oauth);
+        a2aServer.start();
+        log.info("warp listening for A2A (Agent2Agent Protocol) on port {}", a2aPort);
+
         configStore.listen(newVersion -> {
             currentConfigVersion.set(newVersion);
             WarpConfig c = newVersion.payload();

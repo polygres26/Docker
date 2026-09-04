@@ -137,6 +137,31 @@ public final class WarpMcpServer {
         server.stop();
     }
 
+    /**
+     * Public entry point for OTHER Warp-hosted AI-agent protocol frontends (currently: A2A --
+     * see {@code com.sayonora.wire.a2a.A2AServer}) that want the SAME governed
+     * natural-language-to-SQL capability MCP's own {@code query_natural_language} tool exposes,
+     * without duplicating its draft/judge/read-only-enforcement logic or its Postgres-only-mode
+     * restriction (see {@link #handleToolsCall}'s own identical gate) -- A2A gets exactly the same
+     * "one deterministic check, everything else through the real firewall/QoS/audit pipeline"
+     * guarantee MCP already has, not a separate, less-governed path to the same backend.
+     *
+     * @return the same {@code AdHocQueryRunner.Result} shape every tool call already returns
+     *      (never {@code null}); a non-Postgres {@code WARP_MCP_BACKEND} mode or a missing LLM
+     *      provider both come back as an ordinary {@code Result.ofError}-shaped failure, not an
+     *      exception -- the caller doesn't need special-case handling beyond checking
+     *      {@code success()}, same as every other AdHocQueryRunner.Result consumer.
+     */
+    public AdHocQueryRunner.Result callNaturalLanguageQuery(String question, com.sayonora.wire.core.AccessContext accessContext)
+            throws SQLException {
+        if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
+            return notSupportedInNativeMode("query_natural_language", options.mcpBackendMode());
+        }
+        try (Connection backend = openBackendConnection()) {
+            return runNaturalLanguageQuery(backend, question, accessContext).result();
+        }
+    }
+
     private static List<RegisteredFunctionTool> introspectRegisteredTools(ServerOptions options, String toolsSpec) {
         List<RegisteredFunctionTool> tools = new ArrayList<>();
         if (toolsSpec == null || toolsSpec.isBlank()) {
