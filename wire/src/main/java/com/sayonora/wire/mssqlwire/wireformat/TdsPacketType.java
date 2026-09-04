@@ -14,6 +14,11 @@ public final class TdsPacketType {
 
     public static final byte LOGIN7 = 0x10;
 
+    // Carries a raw SSPI security-blob (NTLM/Kerberos) in EITHER direction of the post-LOGIN7
+    // continuation exchange -- unlike LOGIN7/TABULAR_RESULT, the payload is the bare blob itself,
+    // no TDS token wrapper. See NtlmMessages' javadoc for the exchange this type code is used in.
+    public static final byte SSPI = 0x11;
+
     public static final byte STATUS_NORMAL = 0x00;
     
     public static final byte STATUS_EOM = 0x01;

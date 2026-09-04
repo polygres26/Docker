@@ -227,10 +227,7 @@ public final class MssqlWireSessionHandler implements Runnable {
         }
         Login7Handler.Credentials creds = Login7Handler.parse(loginReq.payload());
         if (creds.integratedSecurity()) {
-            log.warn("mssqlwire: client requested Windows/SSPI auth, only SQL auth is supported");
-            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
-                    TdsTokens.errorMessage(18456, "Windows authentication is not supported"));
-            return null;
+            return performNtlmHandshake(in, out, packets, creds);
         }
 
         if (!authenticate(creds.userName(), creds.password())) {
@@ -240,6 +237,69 @@ public final class MssqlWireSessionHandler implements Runnable {
             return null;
         }
 
+        packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.loginAck(creds.database()));
+        return new HandshakeStreams(in, out);
+    }
+
+    /**
+     * NTLMv2 continuation exchange for a Windows/SSPI login (LOGIN7's {@code fIntSecurity} bit
+     * set) -- see {@link com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages}' javadoc for the
+     * real wire shape (raw Type-2/Type-3 blobs in standalone {@code TdsPacketType.SSPI} packets,
+     * confirmed live against mssql-jdbc's {@code authenticationScheme=NTLM}). The presented
+     * password is verified via {@link com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages
+     * #verifyNtlmV2Response} against {@link CredentialStore}'s plaintext credential -- the same
+     * server-side-plaintext-needed structural reason orawire's O5LOGON and mongowire's SCRAM both
+     * already depend on (an NTLMv2 response can only be verified by recomputing it from the real
+     * password, never from a stored hash of some other shape).
+     */
+    private HandshakeStreams performNtlmHandshake(DataInputStream in, OutputStream out, TdsPacket packets,
+            Login7Handler.Credentials creds) throws IOException {
+        if (!com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.isType1Negotiate(creds.sspiBlob())) {
+            log.warn("mssqlwire: client set fIntSecurity but sent no real NTLM Type-1 message -- "
+                    + "Kerberos/SSPI-native Windows auth isn't supported, only NTLM");
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(18456, "Windows authentication is only supported via NTLM"));
+            return null;
+        }
+        byte[] serverChallenge = com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.randomServerChallenge();
+        byte[] type2 = com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.buildType2Challenge(serverChallenge);
+        packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.sspiToken(type2));
+
+        TdsPacket.Message type3Msg = packets.readMessage(in);
+        if (type3Msg.type() != TdsPacketType.SSPI) {
+            log.warn("mssqlwire: expected an SSPI (0x11) continuation packet with the client's NTLM "
+                    + "Type-3 message, got 0x{}", Integer.toHexString(type3Msg.type()));
+            return null;
+        }
+        com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.Type3Message type3;
+        try {
+            type3 = com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.parseType3(type3Msg.payload());
+        } catch (IllegalArgumentException malformed) {
+            log.warn("mssqlwire: malformed NTLM Type-3 message: {}", malformed.getMessage());
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(18456, "Login failed: malformed NTLM authenticate message"));
+            return null;
+        }
+
+        byte[] expectedPassword = credentials.lookupPassword(type3.userName());
+        boolean ok = expectedPassword != null
+                && com.sayonora.wire.mssqlwire.frontend.auth.NtlmMessages.verifyNtlmV2Response(
+                        type3.ntChallengeResponse(), serverChallenge,
+                        new String(expectedPassword, java.nio.charset.StandardCharsets.UTF_8),
+                        type3.userName(), type3.domain());
+        if (auditLog != null) {
+            auditLog.record(ok
+                    ? com.sayonora.wire.audit.AuditEvent.of(com.sayonora.wire.audit.AuditEvent.Type.DB_LOGIN_SUCCEEDED,
+                            type3.userName(), "mssqlwire NTLM login succeeded for user \"" + type3.userName() + "\"")
+                    : com.sayonora.wire.audit.AuditEvent.of(com.sayonora.wire.audit.AuditEvent.Type.DB_LOGIN_FAILED,
+                            type3.userName(), "mssqlwire NTLM login failed for user \"" + type3.userName() + "\""));
+        }
+        if (!ok) {
+            log.warn("mssqlwire: NTLM login failed for user '{}'", type3.userName());
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
+                    TdsTokens.errorMessage(18456, "Login failed for user '" + type3.userName() + "'"));
+            return null;
+        }
         packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.loginAck(creds.database()));
         return new HandshakeStreams(in, out);
     }
