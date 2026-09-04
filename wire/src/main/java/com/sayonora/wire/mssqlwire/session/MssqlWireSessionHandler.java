@@ -365,6 +365,42 @@ public final class MssqlWireSessionHandler implements Runnable {
         executeQuery(out, packets, sql, List.of(), false);
     }
 
+    /**
+     * {@code EXEC}/{@code EXECUTE proc arg1, arg2, ...} -- Postgres has no {@code EXEC} statement
+     * at all, so forwarded untranslated this is a flat syntax error. Confirmed live to be a real,
+     * common shape (not just a hypothetical one): mssql-jdbc's own client-side JDBC-escape
+     * processing for {@code {call proc(?)}} builds exactly this text ("EXEC proc  ?") as an
+     * sp_executesql {@code @stmt} -- so this rewrite, together with {@link #rewriteNamedParams}'s
+     * bare-{@code ?} handling above, is what actually makes a real {@code CallableStatement} call
+     * work, not just a hand-typed {@code EXEC} batch.
+     *
+     * <p>Rewritten to {@code SELECT * FROM proc(arg1, arg2, ...)} -- Postgres's own way to invoke
+     * a {@code FUNCTION} and get its result rows back (see {@code
+     * MssqlStoredProcedureCallIntegrationTest} for why this assumes an equivalently-named,
+     * equivalently-positioned Postgres FUNCTION already exists; a bare {@code PROCEDURE} with no
+     * return value still executes correctly through this same rewrite, just yields an empty
+     * result set). Scope, deliberately narrow: only plain positional arguments are recognized --
+     * SQL Server's {@code @name = value} named-argument form is left untouched (and still fails
+     * exactly as before this fix) rather than guessed at.
+     *
+     * @return the rewritten SQL, or {@code null} if {@code sql} isn't an EXEC call at all.
+     */
+    private static final Pattern EXEC_CALL = Pattern.compile(
+            "(?is)^\\s*EXEC(?:UTE)?\\s+([A-Za-z_][\\w.$#]*)\\s*(.*?)\\s*;?\\s*$");
+
+    private static String rewriteExecCallToFunctionCall(String sql) {
+        if (sql == null) {
+            return null;
+        }
+        Matcher m = EXEC_CALL.matcher(sql);
+        if (!m.matches()) {
+            return null;
+        }
+        String procName = m.group(1);
+        String args = m.group(2);
+        return "SELECT * FROM " + procName + "(" + args + ")";
+    }
+
     /** {@code viaRpc} controls only the final DONE token's flavor (DONEPROC vs DONE) -- see
      * TdsTokens#writeDoneProc's javadoc for why an RPC (sp_executesql) response needs it. */
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
@@ -380,6 +416,10 @@ public final class MssqlWireSessionHandler implements Runnable {
     private void executeQuery(OutputStream out, TdsPacket packets, String sql, List<Object> bindParams,
             boolean viaRpc, Integer prepareHandleToReturn) throws IOException {
         if (!options.mssqlwireNativeBackend()) {
+            String execRewrite = rewriteExecCallToFunctionCall(sql);
+            if (execRewrite != null) {
+                sql = execRewrite;
+            }
             try {
                 if (handleTransactionControl(sessionConnection(), sql)) {
                     ByteArrayOutputStream body = new ByteArrayOutputStream();
@@ -501,7 +541,13 @@ public final class MssqlWireSessionHandler implements Runnable {
     private static final int SP_PREPEXEC_PROC_ID = 13;
     private static final int SP_UNPREPARE_PROC_ID = 15;
 
-    private static final Pattern NAMED_PARAM_PLACEHOLDER = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*");
+    // Confirmed live: mssql-jdbc's own client-side JDBC-escape processing for {@code
+    // {call proc(?)}} (via CallableStatement) builds an sp_executesql @stmt whose text is
+    // literally "EXEC proc  ?" -- a bare ODBC-style '?' marker, not an @P0-style named
+    // placeholder -- alongside the real bound value as an ordinary unnamed RPC parameter. A bare
+    // '?' is also matched here (see rewriteNamedParams's own handling of it) so this one real
+    // client shape resolves correctly, not just the @P0/@name shapes.
+    private static final Pattern NAMED_PARAM_PLACEHOLDER = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*|\\?");
     // Confirmed live against a real client (mssql-jdbc): the RPC parameters carrying the actual
     // bound values are sent UNNAMED (name field empty) -- only @stmt/@params carry real content,
     // and the @P0/@P1/... placeholders in @stmt are matched to bound values purely positionally,
@@ -541,12 +587,15 @@ public final class MssqlWireSessionHandler implements Runnable {
             return handleSpUnprepare(out, packets, request);
         }
         if (!isExecSql) {
-            String proc = request.procName() != null ? request.procName() : ("proc #" + request.procId());
-            log.warn("mssqlwire: RPC call to {} not supported -- only sp_executesql/sp_prepare/"
-                    + "sp_execute/sp_prepexec/sp_unprepare are", proc);
+            if (request.procName() != null && !request.procName().isBlank()) {
+                return handleUserDefinedProcCall(out, packets, request);
+            }
+            log.warn("mssqlwire: RPC call to proc #{} not supported -- only sp_executesql/sp_prepare/"
+                    + "sp_execute/sp_prepexec/sp_unprepare/a named stored procedure are", request.procId());
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
                     TdsTokens.errorMessage(50000, "only sp_executesql/sp_prepare/sp_execute/sp_prepexec/"
-                            + "sp_unprepare RPC calls are supported (not arbitrary stored procedures)"));
+                            + "sp_unprepare/a named stored procedure call are supported (not a numeric "
+                            + "system proc id)"));
             return null;
         }
         if (request.params().size() < 2 || !(request.params().get(0).value() instanceof String sql)) {
@@ -563,6 +612,45 @@ public final class MssqlWireSessionHandler implements Runnable {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(50000, e.getMessage()));
             return null;
         }
+        executeQuery(out, packets, jdbcSql, orderedBinds, true);
+        return jdbcSql;
+    }
+
+    /**
+     * A real, user-defined stored-procedure call ({@code {call myproc(?, ?)}}/{@code EXEC
+     * myproc @p1, @p2} -- confirmed live via mssql-jdbc's {@code CallableStatement}: this arrives
+     * as an ordinary RPC with {@code procName} set to the real procedure name and its arguments as
+     * plain, unnamed, positional params, the exact same shape {@code sp_execute}'s bound params
+     * already use). Previously refused outright with a clean error -- a real, common gap: any app
+     * that calls its own stored procedures (not just ad-hoc parameterized SQL) got a hard failure
+     * for every one of those calls.
+     *
+     * <p>Scope, deliberately narrow: this assumes the Postgres backend already has an
+     * equivalently-named, equivalently-positioned {@code FUNCTION} (not a bare {@code PROCEDURE}
+     * -- {@code SELECT * FROM name(...)} is what actually returns a result set for the common
+     * "procedure that returns rows" case a real app relies on; a true void {@code PROCEDURE} with
+     * no return value still executes correctly via this same call shape, just yields an empty
+     * result set instead of a real error). OUT/INOUT parameters are NOT supported (there is no
+     * data-dictionary lookup here the way {@code OracleProcedureCatalog} gives orawire's PL/SQL
+     * path real parameter directions) -- every argument is sent as a plain IN value; a mismatch
+     * (the real proc expects more args than an OUT parameter's caller sends actual values for)
+     * surfaces as an ordinary backend SQL error, not silently wrong results.
+     */
+    private String handleUserDefinedProcCall(OutputStream out, TdsPacket packets, RpcRequestReader.RpcRequest request)
+            throws IOException {
+        String procName = request.procName();
+        List<RpcRequestReader.RpcParam> params = request.params();
+        StringBuilder sql = new StringBuilder("SELECT * FROM ").append(procName).append('(');
+        List<Object> orderedBinds = new java.util.ArrayList<>(params.size());
+        for (int i = 0; i < params.size(); i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append('?');
+            orderedBinds.add(params.get(i).value());
+        }
+        sql.append(')');
+        String jdbcSql = sql.toString();
         executeQuery(out, packets, jdbcSql, orderedBinds, true);
         return jdbcSql;
     }
@@ -675,11 +763,20 @@ public final class MssqlWireSessionHandler implements Runnable {
         Matcher matcher = NAMED_PARAM_PLACEHOLDER.matcher(sql);
         StringBuilder rewritten = new StringBuilder();
         int last = 0;
+        int nextBarePlaceholder = 0;
         while (matcher.find()) {
             String name = matcher.group();
-            RpcRequestReader.RpcParam match = resolveBoundParam(name, boundParams);
-            if (match == null) {
-                throw new IOException("sp_executesql: no bound value found for placeholder " + name);
+            RpcRequestReader.RpcParam match;
+            if ("?".equals(name)) {
+                if (nextBarePlaceholder >= boundParams.size()) {
+                    throw new IOException("sp_executesql: more '?' placeholders than bound values sent");
+                }
+                match = boundParams.get(nextBarePlaceholder++);
+            } else {
+                match = resolveBoundParam(name, boundParams);
+                if (match == null) {
+                    throw new IOException("sp_executesql: no bound value found for placeholder " + name);
+                }
             }
             rewritten.append(sql, last, matcher.start());
             rewritten.append('?');
