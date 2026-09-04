@@ -57,6 +57,7 @@ public final class RpcRequestReader {
     private static final int TYPE_BIGBINARY = 0xAD;
     private static final int TYPE_DATEN = 0x28;
     private static final int TYPE_DATETIME2N = 0x2A;
+    private static final int TYPE_GUIDN = 0x24;
 
     private static final long PLP_NULL = 0xFFFFFFFFFFFFFFFFL;
 
@@ -101,9 +102,10 @@ public final class RpcRequestReader {
             case TYPE_BIGVARBINARY, TYPE_BIGBINARY -> readBinaryValue(c);
             case TYPE_DATEN -> readDateNValue(c);
             case TYPE_DATETIME2N -> readDateTime2NValue(c);
+            case TYPE_GUIDN -> readGuidNValue(c);
             default -> throw new IOException("RPC parameter \"" + name + "\" has unsupported TDS type 0x"
                     + Integer.toHexString(type) + " -- only NVARCHAR/VARCHAR/NCHAR/CHAR/INT/FLOAT/BIT/DECIMAL/"
-                    + "NUMERIC/BINARY/VARBINARY/DATE/DATETIME2 parameters are supported (refusing rather than "
+                    + "NUMERIC/BINARY/VARBINARY/DATE/DATETIME2/GUID parameters are supported (refusing rather than "
                     + "risking a mis-decode that would desync every parameter after it -- TIME/DATETIMEOFFSET/"
                     + "legacy DATETIME are a separate, not-yet-covered gap: confirmed live that mssql-jdbc's own "
                     + "PreparedStatement.setTime() sends the LEGACY DATETIMN type 0x6f, not TIMEN, with a "
@@ -285,6 +287,40 @@ public final class RpcRequestReader {
         java.time.LocalTime time = java.time.LocalTime.ofNanoOfDay(timeUnits * nanosPerUnit);
         java.time.LocalDateTime dateTime = java.time.LocalDateTime.of(TDS_DATE_EPOCH.plusDays(days), time);
         return java.sql.Timestamp.valueOf(dateTime);
+    }
+
+    /**
+     * GUIDN -- confirmed live (mssql-jdbc {@code PreparedStatement.setObject(1, UUID...)},
+     * captured via a temporary debug probe, since removed): TYPE_INFO is a single MaxLen byte
+     * (always 16), value is Length(1, always 16) then 16 raw bytes in real .NET/SQL Server GUID
+     * layout -- NOT the same byte order as {@link java.util.UUID}'s own {@code toString()}. A
+     * .NET {@code Guid}'s first three fields (Data1 4 bytes, Data2 2 bytes, Data3 2 bytes) are
+     * each individually little-endian on the wire, then the last 8 bytes (Data4) are sent as-is,
+     * big-endian, matching {@code UUID}'s own least-significant-bits layout directly. Confirmed by
+     * direct calculation against a real bound value: UUID
+     * {@code 12345678-90ab-cdef-1234-567890abcdef} arrived as bytes
+     * {@code 78563412 AB90 EFCD 1234567890ABCDEF} -- each of the first three groups is the
+     * corresponding UUID field's bytes reversed; the last group (Data4) is untouched.
+     */
+    private static Object readGuidNValue(Cursor c) throws IOException {
+        c.readU8(); // declared MaxLen -- always 16, the value's own length below is authoritative
+        int len = c.readU8();
+        if (len == 0) {
+            return null;
+        }
+        if (len != 16) {
+            throw new IOException("GUIDN parameter has unexpected length " + len + " (expected 16)");
+        }
+        byte[] b = c.readBytes(16);
+        long mostSigBits = ((long) (b[3] & 0xFF) << 56) | ((long) (b[2] & 0xFF) << 48)
+                | ((long) (b[1] & 0xFF) << 40) | ((long) (b[0] & 0xFF) << 32)
+                | ((long) (b[5] & 0xFF) << 24) | ((long) (b[4] & 0xFF) << 16)
+                | ((long) (b[7] & 0xFF) << 8) | (b[6] & 0xFF);
+        long leastSigBits = 0;
+        for (int i = 8; i < 16; i++) {
+            leastSigBits = (leastSigBits << 8) | (b[i] & 0xFF);
+        }
+        return new java.util.UUID(mostSigBits, leastSigBits);
     }
 
     private static Object readBitNValue(Cursor c) throws IOException {
