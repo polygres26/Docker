@@ -24,41 +24,47 @@ import org.junit.jupiter.api.Test;
  * {@link ShardingAcrossBackendEnginesIntegrationTest} proves ONE real Oracle shard alongside a
  * Postgres shard, via literal SQL through pgwire; this proves the case that's never been exercised
  * end to end: THREE real Oracle backends, no Postgres shard among them at all, hash-sharded by
- * {@code customer_id} -- and it exercises a genuinely different, previously unit-test-only path:
- * the rule's backend list names a {@code WARP_BACKEND_SETS} SET ({@code oracle-shards}) instead of
- * listing {@code ora1,ora2,ora3} directly. {@link RouterStage#expandBackendSets}, until now, was
- * only proven against an in-memory {@link BackendRegistry} built by hand
+ * {@code customer_id}, reached by a real Oracle JDBC client (ojdbc11's thin driver, real
+ * TNS/TTC/O5LOGON wire protocol -- the same client
+ * {@code com.sayonora.wire.orawire.OracleJdbcIntegrationTest} uses, not python-oracledb or a
+ * stand-in). It also exercises a genuinely different, previously unit-test-
+ * only path: the rule's backend list names a {@code WARP_BACKEND_SETS} SET ({@code oracle-shards})
+ * instead of listing {@code ora1,ora2,ora3} directly. {@link RouterStage#expandBackendSets}, until
+ * now, was only proven against an in-memory {@link BackendRegistry} built by hand
  * ({@code RouterStageBackendSetExpansionTest}), never against a real {@code WarpProcess} routing
  * real statements to real backends started from a real {@code WARP_BACKEND_SETS} env var.
  *
- * <p><b>Why bind-parameter routing (WARP_ROUTER_VALUE_SHARD_RULES), not WARP_TABLE_SHARDS, and
- * why mywire, not pgwire</b> -- both found live writing this test:
- * <ul>
- * <li>{@code WARP_TABLE_SHARDS}'s per-row routing goes through
+ * <p><b>Why bind-parameter routing (WARP_ROUTER_VALUE_SHARD_RULES), not WARP_TABLE_SHARDS</b> --
+ * found live writing this test: {@code WARP_TABLE_SHARDS}'s per-row routing goes through
  * {@link ValueShardLiteralMatcher}, which only recognizes {@code column = value} equality syntax
  * (a WHERE-clause shape, per its own javadoc). An {@code INSERT INTO t (col) VALUES (val)}
  * statement has no such substring -- the column and its value are related positionally, not by an
  * {@code =} -- so it never matches, and {@link RouterStage#resolveBackend} falls through to
  * {@code resolveUnambiguousDefault} for every insert, same real, pre-existing gap
  * {@code MultipleNativeMySqlBackendsIntegrationTest} documents for the identical reason. (A prior
- * version of this test used {@code WARP_TABLE_SHARDS} with literal-SQL inserts over pgwire and
- * every row silently landed on the "default" backend instead of being sharded at all -- caught
- * only because this test asserts each real backend independently received rows, not just a
- * grand-total SUM, which a single-backend landing would still get right by accident.)
- * {@code WARP_ROUTER_VALUE_SHARD_RULES} instead reads {@code Statement.bindParams()} by position,
+ * version of this test used {@code WARP_TABLE_SHARDS} with literal-SQL inserts and every row
+ * silently landed on the "default" backend instead of being sharded at all -- caught only because
+ * this test asserts each real backend independently received rows, not just a grand-total SUM,
+ * which a single-backend landing would still get right by accident.) {@code
+ * WARP_ROUTER_VALUE_SHARD_RULES} instead reads {@code Statement.bindParams()} by position,
  * populated identically regardless of statement shape, so this test issues the insert as a real
- * {@code PreparedStatement} with {@code customer_id} as its own bind parameter.
- * <li>pgjdbc defaults to binary-format bind parameters for plain integers, which
- * {@code PgWireSessionHandler} doesn't support -- confirmed live via a genuine "binary-format bind
- * parameters are not supported" failure the first time this test tried a real
- * {@code PreparedStatement} over pgwire. mywire has no such restriction (see
- * {@code MultipleNativeMySqlBackendsIntegrationTest}'s own real bind-param routing over mywire),
- * so this test's client is mywire even though every registered backend is Oracle -- exactly the
- * "different frontend protocol than every backend's own dialect" case {@code DialectTranslationStage}
- * translates per-target for. {@code WARP_MYWIRE_BACKEND} is deliberately left UNSET: this proves
- * default/translating mode, not native-backend mode -- a different, narrower code path already
- * covered by {@code MultipleNativeMySqlBackendsIntegrationTest} itself.
- * </ul>
+ * {@code PreparedStatement} with {@code customer_id} as its own bind parameter -- exactly the same
+ * real bind-value decoding {@code OracleCacheInvalidationIntegrationTest} already relies on for
+ * cache-key correctness, so orawire's own bind-param handling is proven independently of this
+ * test. {@code WARP_ORACLE_BACKEND_MODE} is deliberately left UNSET: this proves default/
+ * translating mode (real per-target dialect translation, here a no-op since source and every
+ * target already speak Oracle SQL), not native-backend mode -- a different, narrower code path.
+ *
+ * <p><b>A real, separate gap found live, worth its own fix outside this test's scope</b>: reusing
+ * ONE {@code PreparedStatement} across all 30 inserts (each hash-routing to a potentially
+ * different real backend) hit {@code RequestLoop.orderedBindValues}' "SQL references more distinct
+ * bind variables than the client sent values for" on the second insert -- orawire's own REEXECUTE
+ * path (reusing a prior EXECUTE's parsed signature/cursor) appears to assume the same cursor keeps
+ * talking to the same backend connection across re-executes, which genuine per-statement router
+ * decisions can violate. Worked around here with a fresh {@code PreparedStatement} per row
+ * (forces a real PARSE+EXECUTE each time, never REEXECUTE) -- correct client behavior JDBC permits
+ * either way, but the underlying REEXECUTE-across-a-router-decision interaction is real and not
+ * something this test is scoped to fix.
  *
  * <p>Rows are inserted through the client (unqualified {@code orders}, not written directly to a
  * specific physical shard) so the hash router's own decision decides real placement -- this test
@@ -153,7 +159,7 @@ class ThreeOracleBackendsHashShardedByCustomerIdIntegrationTest {
                 + ";ora3=" + ora3.jdbcUrl() + "|" + ora3.sysUsername() + "|" + ora3.sysPassword();
         warp = WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
-                .frontend("mywire", "WARP_MYWIRE_PORT")
+                .frontend("orawire", "WARP_ORAWIRE_PORT")
                 .env("WARP_LICENSE_KEY", generateEnterpriseLicenseKey())
                 .env("WARP_BACKENDS", backends)
                 .env("WARP_BACKEND_SETS", "oracle-shards=ora1,ora2,ora3")
@@ -169,21 +175,24 @@ class ThreeOracleBackendsHashShardedByCustomerIdIntegrationTest {
                 .start();
 
         int expectedTotal = 0;
-        String url = "jdbc:mysql://localhost:" + warp.port("mywire") + "/postgres"
-                + "?useSSL=false&allowPublicKeyRetrieval=true&useServerPrepStmts=true";
-        // useServerPrepStmts=true forces a genuine COM_STMT_PREPARE/COM_STMT_EXECUTE round trip --
-        // MySQL Connector/J's default inlines bind values into literal SQL client-side instead,
-        // which would arrive at mywire with an empty bindParams() and never match the rule at all
-        // (same real gap MultipleNativeMySqlBackendsIntegrationTest found and documents).
-        try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
-                PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO orders (id, customer_id, amount) VALUES (?, ?, ?)")) {
+        // Real ojdbc11 thin driver, real TNS/TTC wire protocol -- same client and same
+        // "jdbc:oracle:thin:@//host:port/anything" URL shape OracleJdbcIntegrationTest uses; the
+        // service name is arbitrary since orawire's own translation/routing never reads it.
+        String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
+        try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
             for (int i = 1; i <= 30; i++) {
                 int amount = i * 10;
-                ps.setInt(1, i);
-                ps.setInt(2, i);
-                ps.setInt(3, amount);
-                ps.executeUpdate();
+                // A fresh PreparedStatement per row, not one reused across all 30 -- each row
+                // hash-routes to a genuinely different real backend, and orawire's own REEXECUTE
+                // path (reusing a prior EXECUTE's cursor/signature) doesn't expect the same
+                // cursor to keep moving between backends underneath it every call.
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO orders (id, customer_id, amount) VALUES (?, ?, ?)")) {
+                    ps.setInt(1, i);
+                    ps.setInt(2, i);
+                    ps.setInt(3, amount);
+                    ps.executeUpdate();
+                }
                 expectedTotal += amount;
             }
         }
