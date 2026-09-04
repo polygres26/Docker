@@ -140,6 +140,29 @@ public final class Main {
                             + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
                     options.mssqlUser(), options.mssqlPassword()));
         }
+        // Dual-port mode's OWN target, under a DIFFERENT reserved name than the block above --
+        // see BackendRegistry#MYSQL_NATIVE_DUAL_PORT_NAME/MSSQL_NATIVE_DUAL_PORT_NAME's own
+        // javadoc for why: registering it under the SAME name RouterStage's dialect-based fallback
+        // already treats as "this protocol's own native default" would make that fallback
+        // ambiguously hijack the TRANSLATED listener's OWN statements too (both listeners' sessions
+        // build the identical SourceDialect-tagged Statement) -- a real bug, found live, that
+        // silently misrouted an ordinary translated-mode CREATE TABLE straight to the real native
+        // backend instead of Postgres. Registered independent of the global toggle above --
+        // dual-port mode is opt-in via its own port var, unrelated to WARP_MYWIRE_BACKEND/
+        // WARP_MSSQLWIRE_BACKEND.
+        if (options.mywireNativeListenPort() != 0) {
+            nativeBackendTargets.put(BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME, new BackendTarget(
+                    BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME,
+                    "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase(),
+                    options.mysqlUser(), options.mysqlPassword()));
+        }
+        if (options.mssqlwireNativeListenPort() != 0) {
+            nativeBackendTargets.put(BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME, new BackendTarget(
+                    BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME,
+                    "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
+                            + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
+                    options.mssqlUser(), options.mssqlPassword()));
+        }
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
                 config.backends(), config.shardBackends(), config.backendSets(), defaultBackendTarget, nativeBackendTargets);
 
@@ -471,6 +494,19 @@ public final class Main {
         listenerExecutor.submit(() -> acceptPgWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
         listenerExecutor.submit(() -> acceptMySqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, connectionGate));
         listenerExecutor.submit(() -> acceptMssqlWireLoop(options, pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
+        // Second, independent listener per backend for running BOTH native-passthrough and
+        // dialect-translated (JDBC) modes from the SAME Warp process at once -- disabled (0) by
+        // default, so a deployment that never sets WARP_MYWIRE_NATIVE_PORT/
+        // WARP_MSSQLWIRE_NATIVE_PORT/WARP_ORAWIRE_NATIVE_PORT (orawire's own native listener is
+        // submitted further down, right before its primary loop's own blocking call) sees no
+        // change at all -- see ServerOptions#withMywireNativeListener/withMssqlwireNativeListener/
+        // withOracleNativeListener's own javadoc for exactly what the copied config flips.
+        if (options.mywireNativeListenPort() != 0) {
+            listenerExecutor.submit(() -> acceptMySqlWireLoop(options.withMywireNativeListener(), pipelineStages, backendRegistry, sessionExecutor, connectionGate));
+        }
+        if (options.mssqlwireNativeListenPort() != 0) {
+            listenerExecutor.submit(() -> acceptMssqlWireLoop(options.withMssqlwireNativeListener(), pipelineStages, backendRegistry, sessionExecutor, roleAuthCache, connectionGate, auditLog));
+        }
         listenerExecutor.submit(() -> acceptMongoWireLoop(options, sessionExecutor, mongoCache, connectionGate, sqlMetrics, backendRegistry));
         // Cross-protocol row-cache sharing, mongowire's half: unlike dynamowire's PgItemStore,
         // PostgresDocumentStore's physical-table registry is a static field (it's constructed
@@ -625,6 +661,14 @@ public final class Main {
                     awsIamCredentials.isEnabled() ? "some" : "0");
         });
 
+        // Second, independent orawire listener for running native Oracle passthrough and
+        // dialect-translated (JDBC) mode from the SAME Warp process at once -- see
+        // ServerOptions#withOracleNativeListener's own javadoc. Submitted here, BEFORE the
+        // primary loop's own blocking call just below, so it actually starts (that call never
+        // returns).
+        if (options.oracleNativeListenPort() != 0) {
+            listenerExecutor.submit(() -> acceptOraWireLoop(options.withOracleNativeListener(), backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
+        }
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog);
     }
 

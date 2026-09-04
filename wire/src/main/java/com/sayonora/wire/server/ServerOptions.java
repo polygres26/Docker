@@ -73,6 +73,22 @@ public final class ServerOptions {
     private final String mssqlDatabase;
     private final String mssqlUser;
     private final String mssqlPassword;
+    // Second, independent listener port per backend for running BOTH native-passthrough and
+    // dialect-translated (JDBC) modes from the SAME Warp process at once -- 0 means "disabled,"
+    // same single-listener/single-mode behavior as before these existed. Previously native vs.
+    // translated was a single global toggle (WARP_ORACLE_BACKEND_MODE/WARP_MYWIRE_BACKEND/
+    // WARP_MSSQLWIRE_BACKEND) read once at startup, so switching modes meant restarting Warp with
+    // a different env var -- a real gap for a fleet migrating backend-by-backend, or wanting some
+    // apps on native passthrough while others use the translated Postgres path, without running
+    // two separate Warp deployments. See Main#acceptOraWireLoop/acceptMySqlWireLoop/
+    // acceptMssqlWireLoop's own native-mode variants for how this port is actually used: a SECOND
+    // accept loop, bound to this port, constructed from a copy of this same ServerOptions with
+    // just the relevant mode flag flipped (see withOracleNativeListener/withMywireNativeListener/
+    // withMssqlwireNativeListener below) -- the PRIMARY listener/port keeps running whatever mode
+    // its own existing single toggle says, unchanged.
+    private final int oracleNativeListenPort;
+    private final int mywireNativeListenPort;
+    private final int mssqlwireNativeListenPort;
 
     private ServerOptions(int listenPort, int pgWireListenPort, int myWireListenPort, int grpcPort, int httpPort, int httpsPort, String pgHost, int pgPort, String pgDatabase, String pgUser, String pgPassword,
             String pgSslMode, String pgSslRootCert,
@@ -85,7 +101,8 @@ public final class ServerOptions {
             String oracleUser, String oraclePassword, McpBackendMode mcpBackendMode,
             boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
             int mssqlWireListenPort,
-            boolean mssqlwireNativeBackend, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword) {
+            boolean mssqlwireNativeBackend, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword,
+            int oracleNativeListenPort, int mywireNativeListenPort, int mssqlwireNativeListenPort) {
         this.listenPort = listenPort;
         this.pgWireListenPort = pgWireListenPort;
         this.myWireListenPort = myWireListenPort;
@@ -131,6 +148,9 @@ public final class ServerOptions {
         this.mssqlDatabase = mssqlDatabase;
         this.mssqlUser = mssqlUser;
         this.mssqlPassword = mssqlPassword;
+        this.oracleNativeListenPort = oracleNativeListenPort;
+        this.mywireNativeListenPort = mywireNativeListenPort;
+        this.mssqlwireNativeListenPort = mssqlwireNativeListenPort;
     }
 
     public static ServerOptions parse(String[] args) {
@@ -200,6 +220,12 @@ public final class ServerOptions {
         int orawireListenPort = parseIntEnv("WARP_ORAWIRE_PORT", 11521);
         
         int mssqlWireListenPort = parseIntEnv("WARP_MSSQLWIRE_PORT", 14333);
+        // 0 = disabled (the default, single-listener/single-mode behavior unchanged) -- see the
+        // three oracleNativeListenPort/mywireNativeListenPort/mssqlwireNativeListenPort fields'
+        // own javadoc above for what setting one of these actually does.
+        int oracleNativeListenPort = parseIntEnv("WARP_ORAWIRE_NATIVE_PORT", 0);
+        int mywireNativeListenPort = parseIntEnv("WARP_MYWIRE_NATIVE_PORT", 0);
+        int mssqlwireNativeListenPort = parseIntEnv("WARP_MSSQLWIRE_NATIVE_PORT", 0);
         int grpcPort = parseIntEnv("WARP_GRPC_PORT", 7070);
         int httpPort = parseIntEnv("WARP_HTTP_PORT", 8080);
         
@@ -238,7 +264,8 @@ public final class ServerOptions {
                 oracleUser, oraclePassword, mcpBackendMode,
                 mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,
-                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword);
+                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 
     public int mssqlWireListenPort() {
@@ -264,7 +291,8 @@ public final class ServerOptions {
                 null, null, McpBackendMode.POSTGRES,
                 false, "localhost", 3306, "mysql", null, null,
                 0,
-                false, "localhost", 1433, "master", null, null);
+                false, "localhost", 1433, "master", null, null,
+                0, 0, 0);
     }
 
     private static int parseIntEnv(String name, int defaultValue) {
@@ -451,5 +479,94 @@ public final class ServerOptions {
 
     public String mssqlPassword() {
         return mssqlPassword;
+    }
+
+    /** True only for the copy {@link #withMywireNativeListener()} returns (derived, not a stored
+     * field: {@code myWireListenPort} equals {@code mywireNativeListenPort} on that copy and on
+     * no other ServerOptions instance a real deployment would construct) -- lets
+     * MySqlWireSessionHandler tell "the single-toggle native mode" (existing, unpinned/
+     * router-rule-overridable routing, left exactly as it was) apart from "dual-port mode's own
+     * native listener" (pins its statements to BackendRegistry#MYSQL_NATIVE_DUAL_PORT_NAME
+     * explicitly instead -- see that constant's own javadoc for why it can't safely rely on the
+     * same ambiguous same-dialect fallback the single-toggle mode uses). */
+    public boolean mywireNativeViaDualPort() {
+        return mywireNativeBackend && mywireNativeListenPort != 0 && myWireListenPort == mywireNativeListenPort;
+    }
+
+    /** See {@link #mywireNativeViaDualPort()} -- same derivation, for mssqlwire's dual-port
+     * listener and {@code BackendRegistry#MSSQL_NATIVE_DUAL_PORT_NAME}. */
+    public boolean mssqlwireNativeViaDualPort() {
+        return mssqlwireNativeBackend && mssqlwireNativeListenPort != 0 && mssqlWireListenPort == mssqlwireNativeListenPort;
+    }
+
+    public int oracleNativeListenPort() {
+        return oracleNativeListenPort;
+    }
+
+    public int mywireNativeListenPort() {
+        return mywireNativeListenPort;
+    }
+
+    public int mssqlwireNativeListenPort() {
+        return mssqlwireNativeListenPort;
+    }
+
+    /** A copy of this same config for orawire's SECOND (native-mode) listener -- {@code
+     * listenPort()} becomes {@code oracleNativeListenPort} (safe: nothing but {@code
+     * Main#acceptOraWireLoop}'s own bind+log reads {@code listenPort()}; {@code SessionHandler}
+     * itself never does) and {@code oracleBackendMode()} becomes {@code NATIVE} regardless of the
+     * PRIMARY listener's own mode -- the two listeners are fully independent once this exists. */
+    public ServerOptions withOracleNativeListener() {
+        return new ServerOptions(oracleNativeListenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                pgSslMode, pgSslRootCert,
+                pgStandbyHost, pgStandbyPort,
+                tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecShadowEnabled,
+                oracleHost, oraclePort, oracleServiceName, OracleBackendMode.NATIVE,
+                oracleUser, oraclePassword, mcpBackendMode,
+                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mssqlWireListenPort,
+                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
+    }
+
+    /** A copy of this same config for mywire's SECOND (native-mode) listener -- {@code
+     * myWireListenPort()} becomes {@code mywireNativeListenPort} (safe: nothing but {@code
+     * Main#acceptMySqlWireLoop}'s own bind+log reads {@code myWireListenPort()}) and {@code
+     * mywireNativeBackend()} becomes {@code true} regardless of the PRIMARY listener's own mode. */
+    public ServerOptions withMywireNativeListener() {
+        return new ServerOptions(listenPort, pgWireListenPort, mywireNativeListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                pgSslMode, pgSslRootCert,
+                pgStandbyHost, pgStandbyPort,
+                tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecShadowEnabled,
+                oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
+                oracleUser, oraclePassword, mcpBackendMode,
+                true, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mssqlWireListenPort,
+                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
+    }
+
+    /** A copy of this same config for mssqlwire's SECOND (native-mode) listener -- {@code
+     * mssqlWireListenPort()} becomes {@code mssqlwireNativeListenPort} (safe: nothing but {@code
+     * Main#acceptMssqlWireLoop}'s own bind+log reads {@code mssqlWireListenPort()}) and {@code
+     * mssqlwireNativeBackend()} becomes {@code true} regardless of the PRIMARY listener's own
+     * mode. */
+    public ServerOptions withMssqlwireNativeListener() {
+        return new ServerOptions(listenPort, pgWireListenPort, myWireListenPort, grpcPort, httpPort, httpsPort, pgHost, pgPort, pgDatabase, pgUser, pgPassword,
+                pgSslMode, pgSslRootCert,
+                pgStandbyHost, pgStandbyPort,
+                tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecShadowEnabled,
+                oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
+                oracleUser, oraclePassword, mcpBackendMode,
+                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mssqlwireNativeListenPort,
+                true, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 }

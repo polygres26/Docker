@@ -619,6 +619,17 @@ public final class MySqlWireSessionHandler implements Runnable {
                     // JdbcBackendExecutor(Connection) with NO NativeRlsSessionInitializer, unlike
                     // this session's own terminalExecutor (bound to MySqlPgEmulationSessionInitializer,
                     // Postgres-only session setup a real MySQL backend has no use for).
+                    //
+                    // EXCEPT for dual-port mode's own native listener (see ServerOptions#
+                    // mywireNativeViaDualPort's own javadoc): there, this same ambiguous fallback
+                    // would ALSO match the TRANSLATED listener's own statements once BOTH are
+                    // registered at once (a real bug, found live) -- so that one case pins
+                    // targetBackend explicitly to its own reserved dual-port name instead of
+                    // relying on the fallback at all.
+                    if (options.mywireNativeViaDualPort()) {
+                        statement = statement.withRouting(statement.workloadClass(),
+                                com.sayonora.wire.core.BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME);
+                    }
                     result = pipeline.execute(statement);
                 } else {
                     // One connection for the whole session (see sessionConnection()'s own
