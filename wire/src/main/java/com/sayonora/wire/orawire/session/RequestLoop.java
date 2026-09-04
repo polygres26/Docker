@@ -1495,10 +1495,15 @@ public final class RequestLoop {
                 // toColumnMetadata/writeColumnValue see it -- VARCHAR2/RAW's own wire encodings
                 // already handle those Java types correctly, no LOB-locator protocol needed.
                 case Types.CLOB -> TtcConstants.ORA_TYPE_NUM_VARCHAR;
-                case Types.BLOB -> TtcConstants.ORA_TYPE_NUM_RAW;
+                // A real Postgres bytea column (Oracle's own RAW(n)) reaches here the same way
+                // BLOB already did -- a plain byte[], no LOB-locator protocol needed, same
+                // ORA_TYPE_NUM_RAW wire encoding. Real gap, found auditing this frontend for GA
+                // transparency: GUID primary keys and hash columns stored as RAW are common, and
+                // any SELECT touching one threw outright before this.
+                case Types.BLOB, Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY -> TtcConstants.ORA_TYPE_NUM_RAW;
                 default -> throw new UnsupportedOperationException(
                         "unsupported Postgres column type (jdbcType=" + col.jdbcType() + ") for column "
-                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE/BOOLEAN/CLOB/BLOB only");
+                                + col.name() + "; narrow slice supports VARCHAR2/NUMBER/DATE/BOOLEAN/CLOB/BLOB/RAW only");
             };
             int precision = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.precision() : 0;
             int scale = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.scale() : 0;
