@@ -6,9 +6,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +34,17 @@ import org.slf4j.LoggerFactory;
  * covered here -- a real, disclosed limitation rather than a silent one, matching {@code
  * WARP_ROUTER_SCHEMA_RULES}' own equally real limitation (an operator has to know and declare the
  * schema name up front, same trade-off in the other direction).
+ *
+ * <p><b>Conflict detection is {@code WARP_BACKEND_GROUPS}-aware, not a flat "any collision is
+ * ambiguous" check</b> -- a real gap raised directly: sharding shouldn't require the same
+ * ceremony as federation. A table found on multiple backends within the SAME {@code sharded}
+ * group ({@link BackendRegistry.BackendGroupInfo#sharded()}) is never a conflict, regardless of
+ * how many members have it -- that's either the normal partitioned-fact-table shape (routing
+ * already goes through the shard key, via {@code WARP_TABLE_SHARDS}/{@code ShardJoinExecutor},
+ * not this class) or an intentionally-replicated dimension table for local joins; either way, a
+ * query against it is never ambiguous about which backend to use because it's never resolved that
+ * way at all. A table found on multiple backends within the same PLAIN group, or across two
+ * DIFFERENT groups (sharded or not), IS a real conflict -- see {@link #resolveUnambiguous}.
  */
 public final class BackendCatalogDiscovery {
 
@@ -77,6 +90,60 @@ public final class BackendCatalogDiscovery {
             byName.computeIfAbsent(t.tableName().toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(t);
         }
         return byName;
+    }
+
+    /** {@code sharded}: true when {@code backendName}'s hit came from a real {@code sharded}
+     * group -- a caller (e.g. {@code query_federated}'s own Calcite-mount step) MUST NOT treat
+     * this as "the one and only place this table lives" the way a plain-group resolution means;
+     * it means "this table's real location depends on the query's shard-key predicate, defer to
+     * the existing shard-routing machinery instead of picking a backend yourself." */
+    public record ResolvedTable(String backendName, String realSchemaName, boolean sharded, String groupName) {
+    }
+
+    /**
+     * Resolves every discovered hit for one table name against {@code registry}'s group semantics
+     * (see this class's own javadoc for the exact rule). Returns {@code null} for zero hits (the
+     * table wasn't found on any backend at all -- not this class's problem to report, the query
+     * that references it will fail naturally downstream). Throws {@link IllegalStateException}
+     * with a clear, group-aware message for a real conflict -- never silently picks one backend.
+     * A successful sharded-group resolution returns an arbitrary member as the representative (its
+     * own real schema name, for the rare case a caller still wants SOME concrete connection info)
+     * but callers should key off {@link ResolvedTable#sharded()} before using it for routing.
+     */
+    public static ResolvedTable resolveUnambiguous(List<DiscoveredTable> hits, BackendRegistry registry) {
+        if (hits == null || hits.isEmpty()) {
+            return null;
+        }
+        Map<String, List<DiscoveredTable>> byGroup = new LinkedHashMap<>();
+        for (DiscoveredTable t : hits) {
+            BackendRegistry.BackendGroupInfo info = registry.groupInfoFor(t.backendName());
+            String groupName = info == null ? BackendRegistry.UNGROUPED_GROUP_NAME : info.name();
+            byGroup.computeIfAbsent(groupName, k -> new ArrayList<>()).add(t);
+        }
+        if (byGroup.size() > 1) {
+            List<String> backendNames = hits.stream().map(DiscoveredTable::backendName).distinct().toList();
+            throw new IllegalStateException("found on backends in DIFFERENT backend groups ("
+                    + String.join(", ", backendNames) + ") -- these are unrelated to each other, "
+                    + "not sharded copies of the same table");
+        }
+        String soleGroupName = byGroup.keySet().iterator().next();
+        BackendRegistry.BackendGroupInfo groupInfo = registry.groupInfoFor(hits.get(0).backendName());
+        boolean sharded = groupInfo != null && groupInfo.sharded();
+        List<DiscoveredTable> groupHits = byGroup.get(soleGroupName);
+        if (!sharded) {
+            Set<String> distinctBackends = new LinkedHashSet<>();
+            for (DiscoveredTable t : groupHits) {
+                distinctBackends.add(t.backendName());
+            }
+            if (distinctBackends.size() > 1) {
+                throw new IllegalStateException("found on more than one backend within the same PLAIN "
+                        + "group \"" + soleGroupName + "\" (" + String.join(", ", distinctBackends)
+                        + ") -- these are independent backends, not shards of one table; mark the group "
+                        + "\":sharded\" if that's wrong, or rename one of the colliding tables");
+            }
+        }
+        DiscoveredTable representative = groupHits.get(0);
+        return new ResolvedTable(representative.backendName(), representative.realSchemaName(), sharded, soleGroupName);
     }
 
     private BackendCatalogDiscovery() {

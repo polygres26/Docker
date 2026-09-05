@@ -70,6 +70,32 @@ public final class BackendRegistry {
     // silently shrinking a shard set the first time a rule referencing it actually runs.
     private volatile Map<String, List<String>> backendSets;
 
+    // A SEPARATE concept from backendSets above, deliberately not reusing that name/grammar --
+    // WARP_BACKEND_SETS allows (and existing rules rely on) a backend belonging to MULTIPLE named
+    // sets at once (see RouterStageBackendSetExpansionTest: "pair-a=pg,ora" and "pair-b=ora,mysql"
+    // sharing "ora" is valid, existing behavior), which is fundamentally incompatible with THIS
+    // concept's own invariant -- every backend belongs to EXACTLY ONE group, because the whole
+    // point is answering one unambiguous question per backend ("is a table-name collision here
+    // expected, or a real conflict") that has no meaning if a backend could answer it two
+    // different ways depending on which set you asked about. WARP_BACKEND_GROUPS is that separate,
+    // mandatory-partition mechanism; WARP_BACKEND_SETS is untouched, same as before this existed.
+    public static final String UNGROUPED_GROUP_NAME = "__ungrouped__";
+    private volatile Map<String, Boolean> backendGroupSharded;
+    private volatile Map<String, String> backendToGroupName;
+
+    /** {@code name}: the real, declared group name, or {@link #UNGROUPED_GROUP_NAME} for a backend
+     * not named as a member of any {@code WARP_BACKEND_GROUPS} entry. {@code sharded}: whether
+     * this group is a real, partitioned shard set (a table-name collision among its OWN members is
+     * expected, not a conflict -- see {@code BackendCatalogDiscovery}'s own javadoc for the full
+     * reasoning) or a plain grouping of independent backends (a table-name collision among its
+     * members IS a real conflict). Declared via {@code WARP_BACKEND_GROUPS}' {@code
+     * name:sharded=member,...} / {@code name:plain=member,...} grammar -- {@code :plain} is also
+     * the default when no qualifier is given, matching this concept's own safe default (assume
+     * independence unless told otherwise). The synthetic ungrouped group is always {@code
+     * sharded=false}. */
+    public record BackendGroupInfo(String name, boolean sharded) {
+    }
+
     // Deliberately NOT reset by reload() -- a backend's drain/down state is an operational fact
     // set by an admin action or a health check, independent of whatever WARP_BACKENDS config
     // happens to be current. A name that disappears from a fresh reload just leaves its state
@@ -101,11 +127,27 @@ public final class BackendRegistry {
 
     private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget,
             Map<String, BackendTarget> staticExtraTargets, Map<String, List<String>> backendSets) {
+        this(targets, shardGroup, defaultTarget, staticExtraTargets, backendSets, Map.of(), Map.of());
+    }
+
+    private BackendRegistry(Map<String, BackendTarget> targets, List<String> shardGroup, BackendTarget defaultTarget,
+            Map<String, BackendTarget> staticExtraTargets, Map<String, List<String>> backendSets,
+            Map<String, Boolean> backendGroupSharded, Map<String, String> backendToGroupName) {
         this.targets = Map.copyOf(targets);
         this.shardGroup = List.copyOf(shardGroup);
         this.defaultTarget = defaultTarget;
         this.staticExtraTargets = Map.copyOf(staticExtraTargets);
         this.backendSets = Map.copyOf(backendSets);
+        this.backendGroupSharded = Map.copyOf(backendGroupSharded);
+        // Every backend not already assigned to a declared group belongs to the synthetic
+        // ungrouped group instead -- computed here (not left to callers) so every construction
+        // path, including the legacy 5-arg constructor above (used by tests/callers that never
+        // pass this information explicitly), still gives every backend a real, mandatory group.
+        Map<String, String> resolved = new LinkedHashMap<>(backendToGroupName);
+        for (String backendName : targets.keySet()) {
+            resolved.putIfAbsent(backendName, UNGROUPED_GROUP_NAME);
+        }
+        this.backendToGroupName = Map.copyOf(resolved);
     }
 
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec) {
@@ -136,6 +178,15 @@ public final class BackendRegistry {
      * but every one of them must actually exist. */
     public static BackendRegistry fromConfig(String spec, String shardGroupSpec, String backendSetsSpec,
             BackendTarget defaultTarget, Map<String, BackendTarget> staticExtraTargets) {
+        return fromConfig(spec, shardGroupSpec, backendSetsSpec, null, defaultTarget, staticExtraTargets);
+    }
+
+    /** As the 5-arg overload, plus {@code backendGroupsSpec} -- {@code WARP_BACKEND_GROUPS}' own,
+     * separate grammar: {@code name[:sharded|:plain]=backend1,backend2,...} entries,
+     * {@code |}-separated. See {@link #UNGROUPED_GROUP_NAME}'s own field javadoc for why this is a
+     * deliberately different mechanism from {@code backendSetsSpec}, not an extension of it. */
+    public static BackendRegistry fromConfig(String spec, String shardGroupSpec, String backendSetsSpec,
+            String backendGroupsSpec, BackendTarget defaultTarget, Map<String, BackendTarget> staticExtraTargets) {
 
         TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
@@ -192,7 +243,9 @@ public final class BackendRegistry {
                 ? List.of()
                 : List.of(shardGroupSpec.split(",")).stream().map(String::trim).toList();
         Map<String, List<String>> backendSets = parseBackendSets(backendSetsSpec, targets.keySet());
-        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets, backendSets);
+        ParsedBackendGroups parsedGroups = parseBackendGroups(backendGroupsSpec, targets.keySet());
+        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets,
+                backendSets, parsedGroups.sharded(), parsedGroups.backendToGroupName());
     }
 
     private static Map<String, List<String>> parseBackendSets(String spec, java.util.Set<String> registeredNames) {
@@ -236,11 +289,108 @@ public final class BackendRegistry {
         return Map.copyOf(sets);
     }
 
+    /** Holds one {@code WARP_BACKEND_GROUPS} parse's results -- {@code sharded} (group name ->
+     * whether it's a real shard set) and {@code backendToGroupName} (backend name -> its one and
+     * only group). See {@link #UNGROUPED_GROUP_NAME}'s own field javadoc for why this is a
+     * separate mechanism from {@link #parseBackendSets}, not a variant of it. */
+    private record ParsedBackendGroups(Map<String, Boolean> sharded, Map<String, String> backendToGroupName) {
+    }
+
+    private static ParsedBackendGroups parseBackendGroups(String spec, java.util.Set<String> registeredNames) {
+        if (spec == null || spec.isBlank()) {
+            return new ParsedBackendGroups(Map.of(), Map.of());
+        }
+        Map<String, Boolean> sharded = new LinkedHashMap<>();
+        Map<String, String> backendToGroupName = new LinkedHashMap<>();
+        for (String entry : spec.split("\\|")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int eq = entry.indexOf('=');
+            if (eq <= 0) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS entry \"" + entry
+                        + "\" is missing \"=\" -- expected groupName[:sharded|:plain]=backend1,backend2,...");
+            }
+            String rawName = entry.substring(0, eq).trim();
+            // Optional ":sharded"/":plain" qualifier -- see BackendGroupInfo's own javadoc for the
+            // real semantic difference. ":plain" is also the implicit default (no qualifier at
+            // all) -- "assume independence unless told otherwise" is the safer default for a
+            // table-name-collision check than "assume it's fine."
+            String name = rawName;
+            boolean isSharded = false;
+            int colon = rawName.indexOf(':');
+            if (colon >= 0) {
+                name = rawName.substring(0, colon).trim();
+                String qualifier = rawName.substring(colon + 1).trim().toLowerCase(java.util.Locale.ROOT);
+                if (qualifier.equals("sharded")) {
+                    isSharded = true;
+                } else if (!qualifier.equals("plain")) {
+                    throw new IllegalArgumentException("WARP_BACKEND_GROUPS group \"" + name + "\" has unknown "
+                            + "qualifier \"" + qualifier + "\" -- expected \"sharded\" or \"plain\"");
+                }
+            }
+            if (name.isEmpty() || name.indexOf(',') >= 0 || name.indexOf('|') >= 0) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group name \"" + name
+                        + "\" must be non-empty and contain neither \",\" nor \"|\"");
+            }
+            if (name.equals(UNGROUPED_GROUP_NAME)) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group name \"" + name
+                        + "\" is reserved for backends not assigned to any declared group");
+            }
+            List<String> members = List.of(entry.substring(eq + 1).split(",")).stream()
+                    .map(String::trim).filter(m -> !m.isEmpty()).toList();
+            if (members.isEmpty()) {
+                throw new IllegalArgumentException("WARP_BACKEND_GROUPS group \"" + name + "\" has no members");
+            }
+            for (String member : members) {
+                if (!registeredNames.contains(member)) {
+                    throw new IllegalArgumentException("WARP_BACKEND_GROUPS group \"" + name
+                            + "\" names \"" + member + "\", which is not a registered backend ("
+                            + String.join(", ", registeredNames) + ")");
+                }
+                // Every backend belongs to exactly ONE group -- unlike WARP_BACKEND_SETS, this
+                // concept's whole purpose (deciding whether a table-name collision at this backend
+                // is expected or a real conflict) requires exactly one unambiguous answer per
+                // backend, not silently picking whichever declaration happened to come first.
+                String existingGroup = backendToGroupName.get(member);
+                if (existingGroup != null) {
+                    throw new IllegalArgumentException("WARP_BACKEND_GROUPS backend \"" + member
+                            + "\" is a member of both \"" + existingGroup + "\" and \"" + name
+                            + "\" -- every backend must belong to exactly one group");
+                }
+                backendToGroupName.put(member, name);
+            }
+            sharded.put(name, isSharded);
+        }
+        return new ParsedBackendGroups(Map.copyOf(sharded), Map.copyOf(backendToGroupName));
+    }
+
     public void reload(String spec, String shardGroupSpec, String backendSetsSpec) {
-        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, backendSetsSpec, this.defaultTarget, this.staticExtraTargets);
+        reload(spec, shardGroupSpec, backendSetsSpec, null);
+    }
+
+    public void reload(String spec, String shardGroupSpec, String backendSetsSpec, String backendGroupsSpec) {
+        BackendRegistry fresh = fromConfig(spec, shardGroupSpec, backendSetsSpec, backendGroupsSpec,
+                this.defaultTarget, this.staticExtraTargets);
         this.targets = fresh.targets;
         this.shardGroup = fresh.shardGroup;
         this.backendSets = fresh.backendSets;
+        this.backendGroupSharded = fresh.backendGroupSharded;
+        this.backendToGroupName = fresh.backendToGroupName;
+    }
+
+    /** Every backend's mandatory group membership -- see {@link BackendGroupInfo}'s own javadoc.
+     * Never {@code null}: a backend not named in any declared {@code WARP_BACKEND_GROUPS} entry
+     * still resolves here, to the synthetic {@link #UNGROUPED_GROUP_NAME} group (plain). Returns
+     * {@code null} only for a name that isn't a registered backend at all (same "unknown name"
+     * contract as {@link #get}). */
+    public BackendGroupInfo groupInfoFor(String backendName) {
+        if (!targets.containsKey(backendName)) {
+            return null;
+        }
+        String groupName = backendToGroupName.getOrDefault(backendName, UNGROUPED_GROUP_NAME);
+        boolean sharded = backendGroupSharded.getOrDefault(groupName, false);
+        return new BackendGroupInfo(groupName, sharded);
     }
 
     /** Exact, unredirected lookup -- returns the literal backend registered under {@code name},

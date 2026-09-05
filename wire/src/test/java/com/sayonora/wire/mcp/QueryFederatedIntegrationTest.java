@@ -1,6 +1,7 @@
 package com.sayonora.wire.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -198,6 +199,87 @@ class QueryFederatedIntegrationTest {
         HttpResponse<String> response = mcpCall(warp.port("mcp"), "query_federated", "SELECT * FROM widgets");
         assertTrue(response.body().contains("more than one backend"),
                 "an ambiguous table name must be refused with a clear error, not silently resolved -- got: "
+                        + response.body());
+    }
+
+    /** The exact scenario raised directly: a table (a dimension table, replicated for local joins)
+     * exists on more than one backend WITHIN A SHARDED WARP_BACKEND_GROUPS group -- must NOT be
+     * flagged as a conflict the way the same collision would be in a plain group (previous test).
+     * Real shard-key-based ROUTING for it is a separate mechanism (WARP_TABLE_SHARDS) this test
+     * doesn't exercise; the point here is purely that discovery doesn't false-positive on it. */
+    @Test
+    void aTableReplicatedAcrossASharedGroupIsNotFlaggedAsAConflict() throws Exception {
+        ordersDb = RealPostgres.start();
+        customersDb = RealPostgres.start();
+        try (Connection c = DriverManager.getConnection(ordersDb.jdbcUrl(), ordersDb.username(), ordersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE regions (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+            st.execute("INSERT INTO regions VALUES (1, 'west')");
+        }
+        try (Connection c = DriverManager.getConnection(customersDb.jdbcUrl(), customersDb.username(), customersDb.password());
+                Statement st = c.createStatement()) {
+            // Same name, deliberately -- a real dimension table replicated to every shard for local
+            // joins, per the exact scenario this feature exists for.
+            st.execute("CREATE TABLE regions (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+            st.execute("INSERT INTO regions VALUES (1, 'west')");
+        }
+
+        String backends = "default=" + ordersDb.jdbcUrl() + "|" + ordersDb.username() + "|" + ordersDb.password()
+                + ";shard2=" + customersDb.jdbcUrl() + "|" + customersDb.username() + "|" + customersDb.password();
+        warp = WarpProcess.builder()
+                .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
+                .frontend("mcp", "WARP_MCP_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_BACKEND_GROUPS", "orders_shards:sharded=default,shard2")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start();
+
+        HttpResponse<String> response = mcpCall(warp.port("mcp"), "query_federated", "SELECT name FROM regions");
+        assertEquals(200, response.statusCode());
+        assertTrue(response.body().contains("west"),
+                "a replicated table within a sharded group must run normally, not be refused as "
+                        + "ambiguous -- got: " + response.body());
+        assertFalse(response.body().contains("is ambiguous"),
+                "a table collision WITHIN a sharded group must never be treated as a conflict -- got: "
+                        + response.body());
+    }
+
+    /** The same table name colliding across TWO DIFFERENT groups (one sharded, one not) is still a
+     * real conflict -- a sharded group's own internal replication doesn't excuse a collision
+     * against some other, unrelated group. */
+    @Test
+    void aCollisionAcrossTwoDifferentGroupsIsStillFlaggedEvenIfOneIsSharded() throws Exception {
+        ordersDb = RealPostgres.start();
+        customersDb = RealPostgres.start();
+        try (Connection c = DriverManager.getConnection(ordersDb.jdbcUrl(), ordersDb.username(), ordersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE gadgets (id INTEGER PRIMARY KEY)");
+        }
+        try (Connection c = DriverManager.getConnection(customersDb.jdbcUrl(), customersDb.username(), customersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE gadgets (id INTEGER PRIMARY KEY)");
+        }
+
+        String backends = "default=" + ordersDb.jdbcUrl() + "|" + ordersDb.username() + "|" + ordersDb.password()
+                + ";other=" + customersDb.jdbcUrl() + "|" + customersDb.username() + "|" + customersDb.password();
+        warp = WarpProcess.builder()
+                .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
+                .frontend("mcp", "WARP_MCP_PORT")
+                .env("WARP_BACKENDS", backends)
+                // "default" alone is its own sharded group of one; "other" is a separate plain group.
+                .env("WARP_BACKEND_GROUPS", "solo_shard:sharded=default")
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start();
+
+        HttpResponse<String> response = mcpCall(warp.port("mcp"), "query_federated", "SELECT * FROM gadgets");
+        assertTrue(response.body().contains("DIFFERENT backend groups"),
+                "a collision spanning two different groups must be flagged even though one is sharded -- got: "
                         + response.body());
     }
 }

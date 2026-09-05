@@ -164,7 +164,9 @@ public final class Main {
                     options.mssqlUser(), options.mssqlPassword()));
         }
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
-                config.backends(), config.shardBackends(), config.backendSets(), defaultBackendTarget, nativeBackendTargets);
+                config.backends(), config.shardBackends(), config.backendSets(), config.backendGroups(),
+                defaultBackendTarget, nativeBackendTargets);
+        logSchemaDiscoveryConflicts(backendRegistry);
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it
@@ -637,7 +639,7 @@ public final class Main {
             // sets are live in the registry at the moment routerStage rebuilds its rules (see
             // RouterStage#expandBackendSets) -- reconfiguring first would expand against the
             // sets from BEFORE this same config version, one version stale.
-            backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets());
+            backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
             routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
                     c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards());
             if (cacheStage != null) {
@@ -682,6 +684,41 @@ public final class Main {
             listenerExecutor.submit(() -> acceptOraWireLoop(options.withOracleNativeListener(), backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
         }
         acceptOraWireLoop(options, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog);
+    }
+
+    /**
+     * Real proactive conflict detection, at startup -- the gap raised directly: a plain-group
+     * table-name conflict should be "flagged as soon as discovery finds them," not only when some
+     * later {@code query_federated} call happens to reference the colliding table. Runs the same
+     * {@link com.sayonora.wire.core.BackendCatalogDiscovery} a live MCP call would, once, here.
+     * Loud, not fatal -- a real, disclosed narrowing for a first implementation: a genuinely live,
+     * periodic re-check (matching {@code StatisticsScheduler}'s own background-refresh pattern) is
+     * a real follow-up, not built yet; this catches the conflict an operator can act on before any
+     * real traffic hits it, which is the common case (a config mistake made once, not one that
+     * appears fresh mid-flight from an unrelated schema migration).
+     */
+    private static void logSchemaDiscoveryConflicts(BackendRegistry backendRegistry) {
+        var discovered = com.sayonora.wire.core.BackendCatalogDiscovery.discoverAll(backendRegistry);
+        var byName = com.sayonora.wire.core.BackendCatalogDiscovery.byTableNameLowercase(discovered);
+        int conflicts = 0;
+        for (var entry : byName.entrySet()) {
+            if (entry.getValue().size() < 2) {
+                continue;
+            }
+            try {
+                com.sayonora.wire.core.BackendCatalogDiscovery.resolveUnambiguous(entry.getValue(), backendRegistry);
+            } catch (IllegalStateException conflict) {
+                conflicts++;
+                log.warn("schema auto-discovery: table \"{}\" is a real conflict -- {}. This table is "
+                        + "unusable via query_federated's plain-table-name auto-discovery until resolved "
+                        + "(rename one, or mark the right WARP_BACKEND_GROUPS group \":sharded\" if this "
+                        + "collision is actually intentional).", entry.getKey(), conflict.getMessage());
+            }
+        }
+        if (conflicts > 0) {
+            log.warn("schema auto-discovery: {} table-name conflict(s) found across registered backends "
+                    + "at startup -- see the warning(s) above for which table(s) and why", conflicts);
+        }
     }
 
     private static WarpCluster startLocalCacheCluster() {
