@@ -626,7 +626,10 @@ public final class Main {
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("WARP_MCP_TOOLS"),
                 oauth, mcpMetrics, auditLog, dialectTranslationStage::llmClient);
         mcpServer.start();
-        log.info("warp listening for MCP (Model Context Protocol) on port {}", mcpPort);
+        com.sayonora.wire.mcp.McpScope mcpScope = com.sayonora.wire.mcp.McpScope.fromEnv();
+        log.info("warp listening for MCP (Model Context Protocol) on port {} (scope: {}{})", mcpPort,
+                mcpScope.type().name().toLowerCase(java.util.Locale.ROOT),
+                mcpScope.isAll() ? "" : "=" + mcpScope.name());
 
         // A real A2A (Agent2Agent) frontend -- the gap found auditing Warp's own architecture
         // diagram against what was actually implemented (MCP was real, A2A was zero lines of

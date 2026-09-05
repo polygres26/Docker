@@ -54,6 +54,7 @@ public final class WarpMcpServer {
     private final McpMetricsCollector metrics;
     private final com.sayonora.wire.audit.AuditLog auditLog;
     private final java.util.function.Supplier<com.sayonora.wire.core.TranslationLlmClient> llmClientSupplier;
+    private final McpScope scope;
 
     public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
@@ -104,6 +105,20 @@ public final class WarpMcpServer {
             com.sayonora.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
             com.sayonora.wire.audit.AuditLog auditLog,
             java.util.function.Supplier<com.sayonora.wire.core.TranslationLlmClient> llmClientSupplier) {
+        this(port, options, sharedStages, backendRegistry, connectionGate, toolsSpec, oauth, metrics, auditLog,
+                llmClientSupplier, McpScope.fromEnv());
+    }
+
+    /** As the 10-arg constructor, plus {@code scope} -- see {@link McpScope}'s own javadoc for the
+     * real access-boundary this enforces (not just a cosmetic listing filter). Every other
+     * overload defaults to {@link McpScope#fromEnv()} ({@code WARP_MCP_SCOPE}, itself defaulting
+     * to unscoped when unset) so existing callers/tests need no changes to keep today's behavior. */
+    public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
+            BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec,
+            com.sayonora.wire.http.auth.AccessContextResolver oauth, McpMetricsCollector metrics,
+            com.sayonora.wire.audit.AuditLog auditLog,
+            java.util.function.Supplier<com.sayonora.wire.core.TranslationLlmClient> llmClientSupplier,
+            McpScope scope) {
         this.options = options;
         this.sharedStages = sharedStages;
         this.backendRegistry = backendRegistry;
@@ -112,6 +127,7 @@ public final class WarpMcpServer {
         this.metrics = metrics;
         this.auditLog = auditLog;
         this.llmClientSupplier = llmClientSupplier;
+        this.scope = scope;
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -274,10 +290,32 @@ public final class WarpMcpServer {
         tools.add(toolDef("run_sql", "Execute a SQL statement against the " + backendName
                         + " backend and return the results. Identical to execute_sql.",
                 objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
-        tools.add(toolDef("inspect_schema",
-                "List every table and column in the " + backendName + " backend (excludes system schemas) -- "
-                        + "the starting point for exploring an unfamiliar database.",
-                objectSchema(Map.of(), List.of())));
+        tools.add(scope.type() != McpScope.Type.ALL
+                ? toolDef("inspect_schema",
+                        "List every table and column this endpoint can see -- " + (scope.type() == McpScope.Type.DATABASE
+                                ? "this endpoint is pinned (WARP_MCP_SCOPE) to a single backend (\"" + scope.name() + "\")"
+                                : "this endpoint is pinned (WARP_MCP_SCOPE) to backend group \"" + scope.name() + "\"")
+                                + "; there is nothing to choose -- every call always returns exactly this fixed scope, "
+                                + "the same set of backends every other tool on this endpoint (execute_sql, "
+                                + "query_federated) is limited to.",
+                        objectSchema(Map.of(), List.of()))
+                : toolDef("inspect_schema",
+                        "List every table and column, scoped by the optional \"scope\" argument: \"current\" "
+                                + "(default) -- just the " + backendName + " backend this session is connected to, "
+                                + "excluding system schemas, the original behavior. \"group\" -- every backend in one "
+                                + "named WARP_BACKEND_GROUPS group (pass \"group\": \"<name>\"), each row tagged with "
+                                + "which backend it came from -- use this to see a whole shard set or a whole plain "
+                                + "group at once, e.g. before writing a query meant to touch several backends in it. "
+                                + "\"all\" -- every registered backend, also tagged by backend -- the full multi-backend "
+                                + "catalog schema auto-discovery (query_federated) itself resolves against, so a query "
+                                + "referencing a table this call shows can be trusted to actually resolve. \"current\" is "
+                                + "a real SQL query with full column detail (name/type/nullability); \"group\"/\"all\" use "
+                                + "real JDBC metadata directly (works across mixed engines in one group) with the same "
+                                + "column detail.",
+                        objectSchema(Map.of(
+                                "scope", stringSchema("\"current\" (default), \"group\", or \"all\""),
+                                "group", stringSchema("Required when scope is \"group\": the WARP_BACKEND_GROUPS name")),
+                                List.of())));
         tools.add(toolDef("column_stats",
                 "Statistical summary of one column: row count, null count, mean, standard deviation, "
                         + "min, max, and distinct-value count.",
@@ -459,7 +497,7 @@ public final class WarpMcpServer {
                     case "execute_sql", "run_sql" -> runSql(backend, requireString(arguments, "sql"), accessContext);
                     case "list_tables" -> runListTables(backend, accessContext);
                     case "describe_table" -> runDescribeTable(backend, arguments, accessContext);
-                    case "inspect_schema" -> runSql(backend, DataInvestigationTools.inspectSchemaSql(backendMode), accessContext);
+                    case "inspect_schema" -> runInspectSchema(backend, arguments, accessContext);
                     case "column_stats" -> runSql(backend, DataInvestigationTools.columnStatsSql(backendMode,
                             requireString(arguments, "table"), requireString(arguments, "column")), accessContext);
                     case "compare_groups" -> runSql(backend, DataInvestigationTools.compareGroupsSql(backendMode,
@@ -528,6 +566,18 @@ public final class WarpMcpServer {
      * javadoc for the full picture, including why MCP needs its own gateway-held Oracle credential
      * where orawire's native mode doesn't. */
     private Connection openBackendConnection() throws SQLException {
+        // McpScope.DATABASE: open the NAMED backend directly, not the gateway's own default --
+        // see McpScope's own javadoc for why this is the one scope enforced with no gaps at all
+        // (runSql below also forces every statement onto THIS SAME connection with no RouterStage
+        // rerouting, so there is no path to any other backend regardless of what the SQL says).
+        if (scope.type() == McpScope.Type.DATABASE) {
+            com.sayonora.wire.core.BackendTarget target = backendRegistry.get(scope.name());
+            if (target == null) {
+                throw new SQLException("WARP_MCP_SCOPE names backend \"" + scope.name()
+                        + "\", which is not currently registered", "08001");
+            }
+            return target.open();
+        }
         return switch (options.mcpBackendMode()) {
             case ORACLE -> OracleJdbcConnections.open(options);
             case MYSQL -> MySqlBackendConnections.open(options);
@@ -572,7 +622,11 @@ public final class WarpMcpServer {
     // the cache and this doesn't).
     private ResultWithNote runFederatedQuery(Connection backend, String sql,
             com.sayonora.wire.core.AccessContext accessContext) {
-        List<BackendCatalogDiscovery.DiscoveredTable> discovered = BackendCatalogDiscovery.discoverAll(backendRegistry);
+        // scopedDiscoveredTables(), not the raw discoverAll -- a DATABASE/GROUP-scoped endpoint's
+        // query_federated must never be able to resolve a table onto a backend outside its own
+        // McpScope, or the "endpoint-level boundary" this class exists for would be fake for
+        // exactly the tool that most needs it enforced.
+        List<BackendCatalogDiscovery.DiscoveredTable> discovered = scopedDiscoveredTables();
         com.sayonora.wire.core.SchemaAutoDiscovery.Resolution auto = com.sayonora.wire.core.SchemaAutoDiscovery.resolve(
                 sql, backendRegistry, BackendCatalogDiscovery.byTableNameLowercase(discovered),
                 RouterStage.tableShardBackendNames(RouterStage.tableShardRulesIn(sharedStages)));
@@ -631,6 +685,26 @@ public final class WarpMcpServer {
 
     private AdHocQueryRunner.Result runSql(Connection backend, String sql, List<Object> bindParams,
             com.sayonora.wire.core.AccessContext accessContext) {
+        // McpScope.DATABASE: run directly on THIS connection with no pipeline/routing involved at
+        // all -- the real enforcement point. Unlike native mode below (which bypasses the pipeline
+        // for a DIFFERENT reason -- avoiding a wrong Postgres-dialect translation), this is a
+        // deliberate SECURITY boundary: even a query that would otherwise route elsewhere via an
+        // operator's own WARP_ROUTER_* rule has no path off this one named backend, because
+        // RouterStage never runs at all. See McpScope's own javadoc for why this is the one scope
+        // enforced with no gaps, unlike GROUP scope's narrower (discovery-only) enforcement.
+        if (scope.type() == McpScope.Type.DATABASE) {
+            try {
+                backend.setAutoCommit(true);
+                com.sayonora.wire.core.BackendTarget target = backendRegistry.get(scope.name());
+                com.sayonora.wire.core.SourceDialect dialect = target != null && target.dialect() != null
+                        ? target.dialect() : dialectFor(options.mcpBackendMode());
+                Statement statement = Statement.of(dialect, sql, bindParams, accessContext);
+                ExecutionResult result = new JdbcBackendExecutor(backend).execute(statement);
+                return AdHocQueryRunner.Result.ofSuccess(result);
+            } catch (SQLException e) {
+                return AdHocQueryRunner.Result.ofError(e);
+            }
+        }
         if (options.mcpBackendMode() == McpBackendMode.POSTGRES) {
             return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, bindParams, accessContext);
         }
@@ -934,6 +1008,84 @@ public final class WarpMcpServer {
             case ORACLE -> options.oracleUser();
             case POSTGRES -> "public";
         };
+    }
+
+    /**
+     * {@code scope} ARGUMENT-aware, per the real gap raised directly: {@code inspect_schema}
+     * previously only ever showed the ONE backend a session happens to be connected to, even
+     * though schema auto-discovery (query_federated) resolves queries against every registered
+     * backend -- an agent exploring the database before writing a query had no way to see the
+     * tables auto-discovery would actually find.
+     *
+     * <p>When this ENDPOINT itself is pinned to a scope (see {@link McpScope}'s own javadoc --
+     * {@code WARP_MCP_SCOPE}, a real, enforced boundary, not just a listing preference), the
+     * argument is ignored entirely: a DATABASE- or GROUP-scoped endpoint always shows exactly its
+     * own fixed scope, deterministically, with nothing for the caller to choose. Only an unscoped
+     * ({@code all}) endpoint honors the {@code scope}/{@code group} arguments below.
+     */
+    private AdHocQueryRunner.Result runInspectSchema(Connection backend, JsonObject arguments,
+            com.sayonora.wire.core.AccessContext accessContext) {
+        if (scope.type() == McpScope.Type.DATABASE || scope.type() == McpScope.Type.GROUP) {
+            return multiBackendInspectResult(scopedDiscoveredColumns());
+        }
+        String argScope = arguments.has("scope") ? arguments.get("scope").getAsString() : "current";
+        return switch (argScope) {
+            case "current" -> runSql(backend, DataInvestigationTools.inspectSchemaSql(options.mcpBackendMode()), accessContext);
+            case "all" -> multiBackendInspectResult(BackendCatalogDiscovery.discoverAllColumns(backendRegistry));
+            case "group" -> {
+                String groupName = requireString(arguments, "group");
+                List<BackendCatalogDiscovery.DiscoveredColumn> matched = BackendCatalogDiscovery.discoverAllColumns(backendRegistry)
+                        .stream()
+                        .filter(c -> {
+                            BackendRegistry.BackendGroupInfo info = backendRegistry.groupInfoFor(c.backendName());
+                            return info != null && info.name().equals(groupName);
+                        })
+                        .toList();
+                yield multiBackendInspectResult(matched);
+            }
+            default -> new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0, "22023",
+                    "unknown scope \"" + argScope + "\" -- expected \"current\", \"group\", or \"all\"");
+        };
+    }
+
+    /** Every {@link BackendCatalogDiscovery.DiscoveredColumn} visible to THIS endpoint's own
+     * {@link McpScope} -- the real filter behind both {@link #runInspectSchema}'s pinned-endpoint
+     * branch and {@link #runFederatedQuery}'s auto-discovery (via {@link #scopedDiscoveredTables}
+     * for the table-name-only shape that needs). {@code ALL} scope returns everything unfiltered. */
+    private List<BackendCatalogDiscovery.DiscoveredColumn> scopedDiscoveredColumns() {
+        List<BackendCatalogDiscovery.DiscoveredColumn> all = BackendCatalogDiscovery.discoverAllColumns(backendRegistry);
+        return switch (scope.type()) {
+            case DATABASE -> all.stream().filter(c -> c.backendName().equals(scope.name())).toList();
+            case GROUP -> all.stream().filter(c -> {
+                BackendRegistry.BackendGroupInfo info = backendRegistry.groupInfoFor(c.backendName());
+                return info != null && info.name().equals(scope.name());
+            }).toList();
+            case ALL -> all;
+        };
+    }
+
+    /** As {@link #scopedDiscoveredColumns}, for {@link BackendCatalogDiscovery.DiscoveredTable}'s
+     * table-name-only shape -- what {@link #runFederatedQuery}'s auto-discovery resolution needs. */
+    private List<BackendCatalogDiscovery.DiscoveredTable> scopedDiscoveredTables() {
+        List<BackendCatalogDiscovery.DiscoveredTable> all = BackendCatalogDiscovery.discoverAll(backendRegistry);
+        return switch (scope.type()) {
+            case DATABASE -> all.stream().filter(t -> t.backendName().equals(scope.name())).toList();
+            case GROUP -> all.stream().filter(t -> {
+                BackendRegistry.BackendGroupInfo info = backendRegistry.groupInfoFor(t.backendName());
+                return info != null && info.name().equals(scope.name());
+            }).toList();
+            case ALL -> all;
+        };
+    }
+
+    private static AdHocQueryRunner.Result multiBackendInspectResult(List<BackendCatalogDiscovery.DiscoveredColumn> discovered) {
+        List<String> columns = List.of("backend", "schema", "table", "column", "data_type", "is_nullable");
+        List<List<Object>> rows = new ArrayList<>();
+        for (BackendCatalogDiscovery.DiscoveredColumn c : discovered) {
+            rows.add(List.of(c.backendName(), c.realSchemaName() == null ? "" : c.realSchemaName(),
+                    c.tableName(), c.columnName(), c.dataTypeName(), c.nullable() ? "YES" : "NO"));
+        }
+        return new AdHocQueryRunner.Result(true, true, columns, rows, 0, null, null);
     }
 
     private AdHocQueryRunner.Result runListTables(Connection backend, com.sayonora.wire.core.AccessContext accessContext) {
