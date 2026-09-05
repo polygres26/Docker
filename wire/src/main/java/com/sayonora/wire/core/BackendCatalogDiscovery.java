@@ -67,6 +67,62 @@ public final class BackendCatalogDiscovery {
             BackendRegistry.ORACLE_NATIVE_DEFAULT_NAME, BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME,
             BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME);
 
+    // Real JDBC metadata (getTables/getColumns) has no engine-agnostic way to ask "exclude system
+    // schemas" the way each dialect's own information_schema/pg_tables query already does (see
+    // DataInvestigationTools#inspectSchemaSql/#listTables) -- it returns literally everything the
+    // connecting user can see, catalog internals included. Filtered here by name instead, covering
+    // every engine this codebase's own per-dialect SQL already excludes (Postgres, MySQL, SQL
+    // Server system catalogs) plus Oracle's default single-schema-per-user shape needing none of
+    // this at all.
+    private static final java.util.Set<String> SYSTEM_SCHEMA_NAMES = java.util.Set.of(
+            "pg_catalog", "information_schema", "mysql", "performance_schema", "sys");
+
+    private static boolean isSystemSchema(String schemaName) {
+        return schemaName != null && SYSTEM_SCHEMA_NAMES.contains(schemaName.toLowerCase(Locale.ROOT));
+    }
+
+    /** Column-level detail for one discovered table -- {@code inspect_schema}'s multi-backend
+     * ({@code scope=group}/{@code scope=all}) answer, per the real, disclosed limitation column-
+     * granularity introspection has when a group can mix engines (a Postgres backend alongside an
+     * Oracle one): {@link DatabaseMetaData#getColumns} is the one JDBC primitive that works
+     * identically regardless of the real backend's SQL dialect, unlike {@code
+     * DataInvestigationTools#inspectSchemaSql}'s own per-dialect {@code information_schema}/{@code
+     * user_tab_columns} text, which only knows how to ask ONE specific engine. */
+    public record DiscoveredColumn(String backendName, String realSchemaName, String tableName,
+            String columnName, String dataTypeName, boolean nullable) {
+    }
+
+    /** As {@link #discoverAll}, at column granularity -- used for a multi-backend {@code
+     * inspect_schema} scope, where {@link #discoverAll}'s table-name-only shape isn't enough to
+     * answer "what columns does this table have." Same exclusions (reserved native targets) and
+     * same "one unreachable backend doesn't block the others" tolerance. */
+    public static List<DiscoveredColumn> discoverAllColumns(BackendRegistry registry) {
+        List<DiscoveredColumn> columns = new ArrayList<>();
+        for (BackendTarget target : registry.all()) {
+            if (RESERVED_NATIVE_BACKEND_NAMES.contains(target.name())) {
+                continue;
+            }
+            try (Connection conn = target.open()) {
+                DatabaseMetaData md = conn.getMetaData();
+                try (ResultSet rs = md.getColumns(null, null, "%", "%")) {
+                    while (rs.next()) {
+                        String schemaName = rs.getString("TABLE_SCHEM");
+                        if (isSystemSchema(schemaName)) {
+                            continue;
+                        }
+                        columns.add(new DiscoveredColumn(target.name(), schemaName,
+                                rs.getString("TABLE_NAME"), rs.getString("COLUMN_NAME"),
+                                rs.getString("TYPE_NAME"), "YES".equals(rs.getString("IS_NULLABLE"))));
+                    }
+                }
+            } catch (SQLException e) {
+                log.warn("schema auto-discovery: could not introspect columns on backend \"{}\" -- "
+                        + "skipping it for this discovery pass ({})", target.name(), e.toString());
+            }
+        }
+        return columns;
+    }
+
     /** One real JDBC metadata query per backend -- not cached here (see this class's own javadoc
      * on why: a fresh discovery keyed to one MCP call, not a background service, is the deliberate
      * scope for this first implementation). A backend that fails to connect or introspect is
@@ -82,8 +138,11 @@ public final class BackendCatalogDiscovery {
                 DatabaseMetaData md = conn.getMetaData();
                 try (ResultSet rs = md.getTables(null, null, "%", new String[] {"TABLE"})) {
                     while (rs.next()) {
-                        String tableName = rs.getString("TABLE_NAME");
                         String schemaName = rs.getString("TABLE_SCHEM");
+                        if (isSystemSchema(schemaName)) {
+                            continue;
+                        }
+                        String tableName = rs.getString("TABLE_NAME");
                         tables.add(new DiscoveredTable(tableName, target.name(), schemaName));
                     }
                 }
