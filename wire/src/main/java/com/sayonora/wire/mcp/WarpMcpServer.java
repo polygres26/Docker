@@ -32,8 +32,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -568,114 +566,35 @@ public final class WarpMcpServer {
      * most commonly) is visible instead of silently indistinguishable from "it happened and there
      * was only one shard's worth of data anyway."
      */
-    // Bare (unqualified) FROM/JOIN table references only -- an already-qualified "schema.table"
-    // reference (the shape WARP_ROUTER_SCHEMA_RULES federation expects) is left untouched here;
-    // auto-discovery is specifically for the case an agent has no reason to know any schema-alias
-    // naming scheme and just writes plain table names. Regex over raw SQL, not a full parser --
-    // same posture as every other "table reference" scan in this codebase (e.g.
-    // MySqlBinaryProtocol#countPlaceholders); a CTE name or derived-table alias that happens to
-    // collide with a real discovered table name is a real, narrow, disclosed scope limit.
-    private static final Pattern BARE_TABLE_REF = Pattern.compile(
-            "\\b(FROM|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\.)", Pattern.CASE_INSENSITIVE);
-
-    private record AutoDiscoveryOutcome(AdHocQueryRunner.Result federatedResult, List<String> backendNames,
-            AdHocQueryRunner.Result ambiguityError) {
-        boolean federated() {
-            return federatedResult != null;
-        }
-    }
-
-    /**
-     * Real schema auto-discovery, per {@link BackendCatalogDiscovery}'s own javadoc: introspects
-     * every registered backend, resolves each bare table reference in {@code sql} to whichever
-     * backend(s) actually have it, and -- only when 2+ DISTINCT backends are actually touched --
-     * rewrites the SQL to qualify each reference with its backend's name as a Calcite mount alias
-     * and runs it through {@link SchemaFederationStage#executeWithMounts}, the SAME planning core
-     * {@code WARP_ROUTER_SCHEMA_RULES}-declared federation uses. Returns a "not federated" outcome
-     * (caller falls through to plain {@link #runSql}) when the query only touches one backend (or
-     * no discoverable table at all) -- the common case, and cheap to detect before paying for any
-     * Calcite connection setup. A table name found on more than one backend is a real ambiguity,
-     * surfaced as a clear error naming the colliding backends rather than guessed at.
-     */
-    private AutoDiscoveryOutcome tryAutoDiscoveredFederation(String sql, com.sayonora.wire.core.AccessContext accessContext) {
-        List<BackendCatalogDiscovery.DiscoveredTable> discovered = BackendCatalogDiscovery.discoverAll(backendRegistry);
-        Map<String, List<BackendCatalogDiscovery.DiscoveredTable>> byName = BackendCatalogDiscovery.byTableNameLowercase(discovered);
-
-        Map<String, SchemaFederationStage.BackendMount> mounts = new LinkedHashMap<>();
-        // A table resolved to a SHARDED backend group is real, deliberate scope this method does
-        // NOT attempt to Calcite-mount -- its actual location depends on the query's own shard-key
-        // predicate (WARP_TABLE_SHARDS/ShardJoinExecutor's job, not this one), so picking any single
-        // "representative" backend for it here would silently drop every other shard's rows. Any
-        // sharded-group reference is left untouched in the rewrite and this whole call defers to
-        // plain execution instead -- mixing a sharded-group table with plain-group Calcite
-        // federation in the SAME statement isn't supported yet (a real, disclosed limitation, not a
-        // guess at which execution path should win).
-        boolean touchesShardedGroupTable = false;
-        StringBuilder rewritten = new StringBuilder();
-        Matcher m = BARE_TABLE_REF.matcher(sql);
-        while (m.find()) {
-            String tableName = m.group(2);
-            List<BackendCatalogDiscovery.DiscoveredTable> matches = byName.get(tableName.toLowerCase(java.util.Locale.ROOT));
-            BackendCatalogDiscovery.ResolvedTable resolved;
-            try {
-                resolved = BackendCatalogDiscovery.resolveUnambiguous(matches, backendRegistry);
-            } catch (IllegalStateException ambiguous) {
-                return new AutoDiscoveryOutcome(null, null, new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0,
-                        "42P09", "table \"" + tableName + "\" is ambiguous: " + ambiguous.getMessage()));
-            }
-            if (resolved == null) {
-                m.appendReplacement(rewritten, Matcher.quoteReplacement(m.group()));
-                continue;
-            }
-            if (resolved.sharded()) {
-                touchesShardedGroupTable = true;
-                m.appendReplacement(rewritten, Matcher.quoteReplacement(m.group()));
-                continue;
-            }
-            mounts.putIfAbsent(resolved.backendName(),
-                    new SchemaFederationStage.BackendMount(resolved.backendName(), resolved.realSchemaName()));
-            // The mount alias is double-quoted, not bare -- a real backend name can be a reserved
-            // SQL keyword ("default", BackendRegistry.DEFAULT_BACKEND_NAME -- confirmed live, this
-            // broke Calcite's parser outright) or contain characters an unquoted identifier can't
-            // (a hyphen, e.g. "mysql-native-dual-port"). Calcite's own parser config here already
-            // accepts double-quoted identifiers (the Frameworks Planner's default), so this is a
-            // real fix, not a workaround.
-            m.appendReplacement(rewritten, Matcher.quoteReplacement(
-                    m.group(1) + " \"" + resolved.backendName() + "\"." + tableName));
-        }
-        m.appendTail(rewritten);
-
-        if (touchesShardedGroupTable || mounts.size() < 2) {
-            // Either nothing to federate via Calcite-mount, or this query touches a sharded-group
-            // table -- the caller runs the ORIGINAL (unrewritten) sql on its single already-open
-            // connection, which itself still goes through the full pipeline (RouterStage/
-            // ShardJoinExecutor included) via plain runSql, so a sharded table alone still routes
-            // correctly; only the MIXED case is the disclosed gap.
-            return new AutoDiscoveryOutcome(null, null, null);
-        }
-        try {
-            Statement statement = new Statement("default", SourceDialect.MCP, rewritten.toString(), List.of(),
-                    "default", null, accessContext);
-            ExecutionResult result = new SchemaFederationStage(List.of(), backendRegistry).executeWithMounts(mounts, statement);
-            return new AutoDiscoveryOutcome(AdHocQueryRunner.Result.ofSuccess(result), List.copyOf(mounts.keySet()), null);
-        } catch (SQLException e) {
-            return new AutoDiscoveryOutcome(AdHocQueryRunner.Result.ofError(e), List.copyOf(mounts.keySet()), null);
-        }
-    }
-
+    // Not cached, unlike SchemaAutoDiscoveryStage's own BackendCatalogCache -- an MCP tool call is
+    // comparatively rare, so a fresh BackendCatalogDiscovery.discoverAll per call is tolerable here
+    // in a way it isn't for wire-protocol traffic (see that stage's own javadoc for why it needs
+    // the cache and this doesn't).
     private ResultWithNote runFederatedQuery(Connection backend, String sql,
             com.sayonora.wire.core.AccessContext accessContext) {
-        AutoDiscoveryOutcome auto = tryAutoDiscoveredFederation(sql, accessContext);
-        if (auto.ambiguityError() != null) {
-            return new ResultWithNote(auto.ambiguityError(), null);
+        List<BackendCatalogDiscovery.DiscoveredTable> discovered = BackendCatalogDiscovery.discoverAll(backendRegistry);
+        com.sayonora.wire.core.SchemaAutoDiscovery.Resolution auto = com.sayonora.wire.core.SchemaAutoDiscovery.resolve(
+                sql, backendRegistry, BackendCatalogDiscovery.byTableNameLowercase(discovered),
+                RouterStage.tableShardBackendNames(RouterStage.tableShardRulesIn(sharedStages)));
+        if (auto.ambiguous()) {
+            return new ResultWithNote(new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0,
+                    "42P09", "table \"" + auto.ambiguousTable() + "\" is ambiguous: " + auto.ambiguousMessage()), null);
         }
         AdHocQueryRunner.Result result;
         String autoDiscoveryNote;
         if (auto.federated()) {
-            result = auto.federatedResult();
-            autoDiscoveryNote = "Auto-discovered and federated across " + auto.backendNames().size()
+            try {
+                Statement statement = new Statement("default", SourceDialect.MCP, auto.rewrittenSql(), List.of(),
+                        "default", null, accessContext);
+                ExecutionResult execResult = new SchemaFederationStage(List.of(), backendRegistry)
+                        .executeWithMounts(auto.mounts(), statement);
+                result = AdHocQueryRunner.Result.ofSuccess(execResult);
+            } catch (SQLException e) {
+                result = AdHocQueryRunner.Result.ofError(e);
+            }
+            autoDiscoveryNote = "Auto-discovered and federated across " + auto.mounts().size()
                     + " backend(s) with NO WARP_ROUTER_SCHEMA_RULES configuration needed: "
-                    + String.join(", ", auto.backendNames()) + ".";
+                    + String.join(", ", auto.mounts().keySet()) + ".";
         } else {
             result = runSql(backend, sql, accessContext);
             autoDiscoveryNote = null;

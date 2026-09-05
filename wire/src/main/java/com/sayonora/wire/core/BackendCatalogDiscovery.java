@@ -53,6 +53,20 @@ public final class BackendCatalogDiscovery {
     public record DiscoveredTable(String tableName, String backendName, String realSchemaName) {
     }
 
+    // Reserved native-backend-mode targets are protocol-specific passthrough connections -- each
+    // one is the SOLE backend a given protocol's OWN native-mode session ever resolves to
+    // (RouterStage's own same-dialect reserved-name fallback), never a genuine participant in
+    // cross-backend federation. Found live, breaking a real test: four native targets each holding
+    // their OWN separate, differently-shaped "widgets" table (one per protocol, by design, never
+    // meant to be joined or resolved together) got flagged as a false-positive plain-group
+    // conflict the moment auto-discovery started running for every statement, not just MCP's own
+    // tool calls. Excluded from discovery entirely, not just from the sharded/plain grouping,
+    // since they were never meant to be resolved through this mechanism at all.
+    private static final java.util.Set<String> RESERVED_NATIVE_BACKEND_NAMES = java.util.Set.of(
+            BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME, BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME,
+            BackendRegistry.ORACLE_NATIVE_DEFAULT_NAME, BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME,
+            BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME);
+
     /** One real JDBC metadata query per backend -- not cached here (see this class's own javadoc
      * on why: a fresh discovery keyed to one MCP call, not a background service, is the deliberate
      * scope for this first implementation). A backend that fails to connect or introspect is
@@ -61,6 +75,9 @@ public final class BackendCatalogDiscovery {
     public static List<DiscoveredTable> discoverAll(BackendRegistry registry) {
         List<DiscoveredTable> tables = new ArrayList<>();
         for (BackendTarget target : registry.all()) {
+            if (RESERVED_NATIVE_BACKEND_NAMES.contains(target.name())) {
+                continue;
+            }
             try (Connection conn = target.open()) {
                 DatabaseMetaData md = conn.getMetaData();
                 try (ResultSet rs = md.getTables(null, null, "%", new String[] {"TABLE"})) {
@@ -110,14 +127,73 @@ public final class BackendCatalogDiscovery {
      * own real schema name, for the rare case a caller still wants SOME concrete connection info)
      * but callers should key off {@link ResolvedTable#sharded()} before using it for routing.
      */
+    // The pre-existing, much older WARP_SHARD_BACKENDS/BackendRegistry#shardGroup() scatter-gather
+    // mechanism predates WARP_BACKEND_GROUPS entirely -- real, already-shipped deployments (and
+    // this codebase's own existing sharding tests) partition a table like "orders" across a
+    // shardGroup() without ever declaring WARP_BACKEND_GROUPS at all. Found live, breaking those
+    // exact tests: without this, every one of them fell into the synthetic UNGROUPED_GROUP_NAME
+    // (plain) bucket and got flagged as a false-positive conflict the instant this class started
+    // being consulted from a real statement path (SchemaAutoDiscoveryStage), not just MCP's
+    // comparatively rare tool calls. A shardGroup() member is therefore treated as implicitly
+    // sharded here too, in its own pseudo-group -- an operator gets the "sharded databases need no
+    // extra ceremony" behavior for free from a mechanism they already had configured, without
+    // needing to ALSO redeclare the same backends under the newer, separate WARP_BACKEND_GROUPS.
+    private static final String LEGACY_SHARD_GROUP_PSEUDO_NAME = "__legacy_shard_group__";
+
+    /** Two DIFFERENTLY-NAMED backend registrations can be the exact same real physical database --
+     * a real, common test/deployment pattern: {@code BackendRegistry.DEFAULT_BACKEND_NAME} ("default")
+     * is often registered pointing at the same connection info as one real named backend, purely
+     * so the session's own initial connection lands on a real shard member. Found live, breaking
+     * this codebase's own sharding tests: without collapsing these first, "orders" existing on
+     * both "default" and "shard1" (the SAME physical table, seen twice under two names) looked
+     * like a real cross-group conflict ("default" isn't itself named in any shard rule) rather
+     * than the non-issue it actually is. Compares by {@link BackendTarget#poolKey()} (real
+     * connection identity: URL + user), not name; when two hits collapse, the non-"default" name
+     * wins as the representative, since that's the name an operator's real routing rules actually
+     * reference. */
+    private static List<DiscoveredTable> dedupePhysicallyIdenticalBackends(List<DiscoveredTable> hits, BackendRegistry registry) {
+        Map<String, DiscoveredTable> byPoolKey = new LinkedHashMap<>();
+        for (DiscoveredTable t : hits) {
+            BackendTarget target = registry.get(t.backendName());
+            String key = target == null ? t.backendName() : target.poolKey();
+            DiscoveredTable existing = byPoolKey.get(key);
+            if (existing == null || BackendRegistry.DEFAULT_BACKEND_NAME.equals(existing.backendName())) {
+                byPoolKey.put(key, t);
+            }
+        }
+        return new ArrayList<>(byPoolKey.values());
+    }
+
     public static ResolvedTable resolveUnambiguous(List<DiscoveredTable> hits, BackendRegistry registry) {
+        return resolveUnambiguous(hits, registry, Set.of());
+    }
+
+    /** As the 2-arg overload, plus {@code extraShardedBackendNames} -- backend names an operator
+     * declared sharded through a mechanism OTHER than {@code shardGroup()} or {@code
+     * WARP_BACKEND_GROUPS}, most commonly {@code WARP_TABLE_SHARDS}' own per-table {@code
+     * ShardingStrategy} backend lists (a declarative table-shard rule's backends are never
+     * required to also be a member of the GLOBAL {@code shardGroup()} -- found live, breaking
+     * this codebase's own {@code WARP_TABLE_SHARDS}-only sharding tests, which never configure
+     * {@code WARP_SHARD_BACKENDS} at all). Callers (see {@code SchemaAutoDiscoveryStage}/{@code
+     * WarpMcpServer}) compute this from {@code RouterStage.tableShardRules()}'s own {@code
+     * ShardingStrategy.allBackends}. */
+    public static ResolvedTable resolveUnambiguous(List<DiscoveredTable> hits, BackendRegistry registry,
+            Set<String> extraShardedBackendNames) {
         if (hits == null || hits.isEmpty()) {
             return null;
         }
+        hits = dedupePhysicallyIdenticalBackends(hits, registry);
+        Set<String> legacyShardGroupMembers = new java.util.HashSet<>(registry.shardGroup());
+        legacyShardGroupMembers.addAll(extraShardedBackendNames);
         Map<String, List<DiscoveredTable>> byGroup = new LinkedHashMap<>();
         for (DiscoveredTable t : hits) {
-            BackendRegistry.BackendGroupInfo info = registry.groupInfoFor(t.backendName());
-            String groupName = info == null ? BackendRegistry.UNGROUPED_GROUP_NAME : info.name();
+            String groupName;
+            if (legacyShardGroupMembers.contains(t.backendName())) {
+                groupName = LEGACY_SHARD_GROUP_PSEUDO_NAME;
+            } else {
+                BackendRegistry.BackendGroupInfo info = registry.groupInfoFor(t.backendName());
+                groupName = info == null ? BackendRegistry.UNGROUPED_GROUP_NAME : info.name();
+            }
             byGroup.computeIfAbsent(groupName, k -> new ArrayList<>()).add(t);
         }
         if (byGroup.size() > 1) {
@@ -127,8 +203,13 @@ public final class BackendCatalogDiscovery {
                     + "not sharded copies of the same table");
         }
         String soleGroupName = byGroup.keySet().iterator().next();
-        BackendRegistry.BackendGroupInfo groupInfo = registry.groupInfoFor(hits.get(0).backendName());
-        boolean sharded = groupInfo != null && groupInfo.sharded();
+        boolean sharded;
+        if (soleGroupName.equals(LEGACY_SHARD_GROUP_PSEUDO_NAME)) {
+            sharded = true;
+        } else {
+            BackendRegistry.BackendGroupInfo groupInfo = registry.groupInfoFor(hits.get(0).backendName());
+            sharded = groupInfo != null && groupInfo.sharded();
+        }
         List<DiscoveredTable> groupHits = byGroup.get(soleGroupName);
         if (!sharded) {
             Set<String> distinctBackends = new LinkedHashSet<>();
