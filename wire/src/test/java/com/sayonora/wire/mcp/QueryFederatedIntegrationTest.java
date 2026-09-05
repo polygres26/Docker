@@ -123,4 +123,81 @@ class QueryFederatedIntegrationTest {
         assertTrue(response.body().contains("No shard group or schema-federation rule is configured"),
                 "with neither mechanism configured, the note must say so plainly -- got: " + response.body());
     }
+
+    /** No WARP_ROUTER_SCHEMA_RULES at all -- plain, bare table names, resolved purely by real
+     * schema auto-discovery across every registered backend (BackendCatalogDiscovery), per the
+     * gap raised directly: federation shouldn't require an operator to pre-declare schema aliases
+     * the way sharding does, especially for an MCP/NL-to-SQL caller that has no reason to know any
+     * such naming scheme. */
+    @Test
+    void autoDiscoversAndFederatesAcrossTwoBackendsWithNoSchemaRulesConfigured() throws Exception {
+        ordersDb = RealPostgres.start();
+        customersDb = RealPostgres.start();
+        try (Connection c = DriverManager.getConnection(ordersDb.jdbcUrl(), ordersDb.username(), ordersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, amount NUMERIC)");
+            st.execute("INSERT INTO orders VALUES (1, 100, 50), (2, 101, 75)");
+        }
+        try (Connection c = DriverManager.getConnection(customersDb.jdbcUrl(), customersDb.username(), customersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+            st.execute("INSERT INTO customers VALUES (100, 'alice'), (101, 'bob')");
+        }
+
+        String backends = "default=" + ordersDb.jdbcUrl() + "|" + ordersDb.username() + "|" + ordersDb.password()
+                + ";customers_backend=" + customersDb.jdbcUrl() + "|" + customersDb.username() + "|" + customersDb.password();
+        warp = WarpProcess.builder()
+                .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
+                .frontend("mcp", "WARP_MCP_PORT")
+                .env("WARP_BACKENDS", backends)
+                // Deliberately NO WARP_ROUTER_SCHEMA_RULES -- that's the entire point of this test.
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start();
+
+        HttpResponse<String> response = mcpCall(warp.port("mcp"), "query_federated",
+                "SELECT c.name, o.amount FROM orders o JOIN customers c ON o.customer_id = c.id ORDER BY o.id");
+        assertEquals(200, response.statusCode());
+        assertTrue(response.body().contains("alice") && response.body().contains("bob"),
+                "a real cross-backend JOIN via plain, unqualified table names must return rows from "
+                        + "BOTH real backends purely via auto-discovery -- got: " + response.body());
+        assertTrue(response.body().contains("Auto-discovered and federated"),
+                "the tool's note should say auto-discovery is what federated this query -- got: " + response.body());
+    }
+
+    /** A table name that exists on two different backends is a real ambiguity -- proves it's
+     * refused with a clear error rather than silently picking one. */
+    @Test
+    void refusesAnAmbiguousTableNameFoundOnTwoBackends() throws Exception {
+        ordersDb = RealPostgres.start();
+        customersDb = RealPostgres.start();
+        try (Connection c = DriverManager.getConnection(ordersDb.jdbcUrl(), ordersDb.username(), ordersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY)");
+        }
+        try (Connection c = DriverManager.getConnection(customersDb.jdbcUrl(), customersDb.username(), customersDb.password());
+                Statement st = c.createStatement()) {
+            // Same table name, a DIFFERENT real backend -- the real ambiguity this test proves is refused.
+            st.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY)");
+        }
+
+        String backends = "default=" + ordersDb.jdbcUrl() + "|" + ordersDb.username() + "|" + ordersDb.password()
+                + ";customers_backend=" + customersDb.jdbcUrl() + "|" + customersDb.username() + "|" + customersDb.password();
+        warp = WarpProcess.builder()
+                .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
+                .frontend("mcp", "WARP_MCP_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start();
+
+        HttpResponse<String> response = mcpCall(warp.port("mcp"), "query_federated", "SELECT * FROM widgets");
+        assertTrue(response.body().contains("more than one backend"),
+                "an ambiguous table name must be refused with a clear error, not silently resolved -- got: "
+                        + response.body());
+    }
 }
