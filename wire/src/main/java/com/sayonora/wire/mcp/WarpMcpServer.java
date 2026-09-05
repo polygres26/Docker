@@ -11,6 +11,7 @@ import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.core.ExecutionResult;
 import com.sayonora.wire.core.JdbcBackendExecutor;
 import com.sayonora.wire.core.PipelineStage;
+import com.sayonora.wire.core.RouterStage;
 import com.sayonora.wire.core.SourceDialect;
 import com.sayonora.wire.core.Statement;
 import com.sayonora.wire.mssqlwire.MssqlBackendConnections;
@@ -328,6 +329,17 @@ public final class WarpMcpServer {
             result.add("tools", tools);
             return result;
         }
+        tools.add(toolDef("query_federated",
+                "Execute a SQL statement that may span more than one of Warp's own configured "
+                        + "shards/backends -- e.g. a JOIN between a table sharded by schema/predicate rule "
+                        + "and one that isn't, or a query touching two different WARP_TABLE_SHARDS-declared "
+                        + "shard sets. Routed through the exact same router/cross-shard-JOIN planner "
+                        + "(Apache Calcite-based) a real Postgres/MySQL/SQL Server/Oracle client gets for the "
+                        + "same query -- an agent doesn't need to know which shard holds which table. "
+                        + "Identical to execute_sql for a query that only touches one shard; use this name "
+                        + "when the query is expected to cross shards, so the response can say whether it "
+                        + "actually did.",
+                objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
         tools.add(toolDef("document_schema",
                 "List every table/column in the database (excludes system schemas) and, when an LLM "
                         + "provider is configured, generate a short plain-English data dictionary describing "
@@ -406,19 +418,22 @@ public final class WarpMcpServer {
         McpBackendMode backendMode = options.mcpBackendMode();
         try (Connection backend = openBackendConnection()) {
             if ("query_natural_language".equals(toolName) || "explain_query".equals(toolName)
-                    || "document_schema".equals(toolName)) {
-                // All three hardcode Postgres-only SQL -- query_natural_language/document_schema
-                // draft against information_schema.columns text they then hand an LLM as if it
-                // were the ONLY schema shape that exists, and explain_query emits a literal
-                // EXPLAIN (FORMAT JSON ...) Postgres never shares syntax for with any of the other
-                // three dialects. Refusing cleanly here beats silently running SQL that's simply
-                // wrong for the configured backend.
+                    || "document_schema".equals(toolName) || "query_federated".equals(toolName)) {
+                // query_natural_language/document_schema/explain_query all hardcode Postgres-only
+                // SQL (see their own long-standing comment below); query_federated is Postgres-only
+                // for a different reason -- Warp's own shard/backend routing (RouterStage,
+                // SchemaFederationStage) only exists in that mode. Native mode is bound to exactly
+                // one real backend of one real engine, so "which shard did this touch" has no
+                // meaning there -- execute_sql already IS the right (and only) tool in that mode.
+                // Refusing cleanly here beats silently running SQL that's simply wrong for the
+                // configured backend.
                 ResultWithNote outcome = backendMode != McpBackendMode.POSTGRES
                         ? new ResultWithNote(notSupportedInNativeMode(toolName, backendMode), null)
                         : switch (toolName) {
                             case "query_natural_language" -> runNaturalLanguageQuery(backend, requireString(arguments, "question"), accessContext);
                             case "explain_query" -> runExplainQuery(backend, requireString(arguments, "sql"),
                                     arguments.has("analyze") && "true".equalsIgnoreCase(arguments.get("analyze").getAsString()), accessContext);
+                            case "query_federated" -> runFederatedQuery(backend, requireString(arguments, "sql"), accessContext);
                             default -> runDocumentSchema(backend, accessContext);
                         };
                 isError = !outcome.result().success();
@@ -525,6 +540,51 @@ public final class WarpMcpServer {
     private AdHocQueryRunner.Result runSql(Connection backend, String sql,
             com.sayonora.wire.core.AccessContext accessContext) {
         return runSql(backend, sql, List.of(), accessContext);
+    }
+
+    /**
+     * Same execution path {@code execute_sql}/{@code run_sql} already use -- {@link #runSql}
+     * calls {@link AdHocQueryRunner#run}, which builds a real {@link
+     * com.sayonora.wire.core.RoutingBackendExecutor} wired with {@code .withFederationSupport(...)}
+     * off the SAME {@code sharedStages}/{@code backendRegistry} every wire-protocol frontend's own
+     * session handler uses -- a cross-shard JOIN sent through {@code execute_sql} already gets
+     * planned by {@link com.sayonora.wire.core.SchemaFederationStage}'s Calcite planner today. This
+     * tool exists for a real, separate reason: naming and provenance, not new query capability. An
+     * agent calling generic {@code execute_sql} has no signal that federation is even a thing this
+     * gateway does, and the plain result carries no indication of whether cross-shard planning
+     * actually fired. {@code query_federated} makes the capability discoverable via {@code
+     * tools/list}'s own description, and its note tells the caller whether this deployment has any
+     * shard group configured at all -- so "why didn't federation happen" (no shards configured,
+     * most commonly) is visible instead of silently indistinguishable from "it happened and there
+     * was only one shard's worth of data anyway."
+     */
+    private ResultWithNote runFederatedQuery(Connection backend, String sql,
+            com.sayonora.wire.core.AccessContext accessContext) {
+        AdHocQueryRunner.Result result = runSql(backend, sql, accessContext);
+        List<String> shardGroup = backendRegistry.shardGroup();
+        // Two distinct, independent mechanisms can make a query cross backends -- see
+        // SchemaFederationStage's own javadoc distinguishing its heterogeneous "each backend holds
+        // a different, complete table" (schema rules) case from ShardJoinExecutor's homogeneous
+        // "same table, row-partitioned" (shard group) one. A query can be federated via either,
+        // both, or neither -- the note has to check both, not just shardGroup, or it wrongly claims
+        // "no federation configured" for a real schema-rule-based cross-backend JOIN.
+        List<RouterStage.SchemaRule> schemaRules = RouterStage.schemaRulesIn(sharedStages);
+        List<String> configured = new ArrayList<>();
+        if (!shardGroup.isEmpty()) {
+            configured.add(shardGroup.size() + " shard(s) in the scatter/shard group: " + String.join(", ", shardGroup));
+        }
+        if (!schemaRules.isEmpty()) {
+            List<String> schemaNames = schemaRules.stream().map(RouterStage.SchemaRule::schemaName).toList();
+            configured.add(schemaRules.size() + " schema-federation rule(s): " + String.join(", ", schemaNames));
+        }
+        String note = configured.isEmpty()
+                ? "No shard group or schema-federation rule is configured on this gateway "
+                        + "(WARP_SHARD_BACKENDS/WARP_TABLE_SHARDS or WARP_ROUTER_SCHEMA_RULES) -- this "
+                        + "query ran against the single default backend, the same as execute_sql would have."
+                : "Routed through Warp's router/federation planner. Configured: " + String.join("; ", configured)
+                        + ". Whether THIS particular query actually crossed backends depends on which "
+                        + "tables/schemas it touched.";
+        return new ResultWithNote(result, note);
     }
 
     private AdHocQueryRunner.Result runSql(Connection backend, String sql, List<Object> bindParams,
