@@ -192,6 +192,18 @@ public final class RouterStage implements PipelineStage {
         return List.of();
     }
 
+    /** As {@link #shardRulesIn}, for {@link SchemaRule}s -- the heterogeneous "each backend holds a
+     * different, complete table" federation mechanism {@link SchemaFederationStage} uses, distinct
+     * from {@link ShardRule}'s homogeneous "same table, row-partitioned across backends" one. */
+    public static List<SchemaRule> schemaRulesIn(List<PipelineStage> stages) {
+        for (PipelineStage stage : stages) {
+            if (stage instanceof RouterStage router) {
+                return router.schemaRules();
+            }
+        }
+        return List.of();
+    }
+
     /** As {@link #shardRulesIn}, for {@link TableShardRule}s. */
     public static List<TableShardRule> tableShardRulesIn(List<PipelineStage> stages) {
         for (PipelineStage stage : stages) {
