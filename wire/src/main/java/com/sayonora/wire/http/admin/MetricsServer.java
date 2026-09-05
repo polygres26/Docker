@@ -1331,7 +1331,8 @@ public final class MetricsServer {
                         field(body, "llmProvider", current.llmProvider()),
                         field(body, "llmApiKey", current.llmApiKey()),
                         field(body, "llmBaseUrl", current.llmBaseUrl()),
-                        field(body, "llmModel", current.llmModel()));
+                        field(body, "llmModel", current.llmModel()),
+                        field(body, "backendGroups", current.backendGroups()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.wire.acl.ClientAcl.parse(updated.aclRules());
@@ -1423,7 +1424,7 @@ public final class MetricsServer {
                         current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
                         current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
                         current.oauthRolesClaim(), current.awsIamCredentials(),
-                        newProvider, newApiKey, newBaseUrl, newModel);
+                        newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);

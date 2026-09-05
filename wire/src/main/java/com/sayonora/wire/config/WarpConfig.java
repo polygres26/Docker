@@ -31,7 +31,8 @@ public record WarpConfig(
         String llmProvider,
         String llmApiKey,
         String llmBaseUrl,
-        String llmModel) {
+        String llmModel,
+        String backendGroups) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -62,7 +63,8 @@ public record WarpConfig(
                 System.getenv("WARP_LLM_PROVIDER"),
                 System.getenv("WARP_LLM_API_KEY"),
                 System.getenv("WARP_LLM_BASE_URL"),
-                System.getenv("WARP_LLM_MODEL"));
+                System.getenv("WARP_LLM_MODEL"),
+                System.getenv("WARP_BACKEND_GROUPS"));
     }
 
     public String toJson() {
@@ -95,6 +97,7 @@ public record WarpConfig(
         fields.put("llmApiKey", llmApiKey);
         fields.put("llmBaseUrl", llmBaseUrl);
         fields.put("llmModel", llmModel);
+        fields.put("backendGroups", backendGroups);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -139,7 +142,8 @@ public record WarpConfig(
                 fields.get("llmProvider"),
                 fields.get("llmApiKey"),
                 fields.get("llmBaseUrl"),
-                fields.get("llmModel"));
+                fields.get("llmModel"),
+                fields.get("backendGroups"));
     }
 
     private static String quote(String value) {

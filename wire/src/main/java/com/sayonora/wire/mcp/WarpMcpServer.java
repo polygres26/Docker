@@ -602,27 +602,38 @@ public final class WarpMcpServer {
         Map<String, List<BackendCatalogDiscovery.DiscoveredTable>> byName = BackendCatalogDiscovery.byTableNameLowercase(discovered);
 
         Map<String, SchemaFederationStage.BackendMount> mounts = new LinkedHashMap<>();
+        // A table resolved to a SHARDED backend group is real, deliberate scope this method does
+        // NOT attempt to Calcite-mount -- its actual location depends on the query's own shard-key
+        // predicate (WARP_TABLE_SHARDS/ShardJoinExecutor's job, not this one), so picking any single
+        // "representative" backend for it here would silently drop every other shard's rows. Any
+        // sharded-group reference is left untouched in the rewrite and this whole call defers to
+        // plain execution instead -- mixing a sharded-group table with plain-group Calcite
+        // federation in the SAME statement isn't supported yet (a real, disclosed limitation, not a
+        // guess at which execution path should win).
+        boolean touchesShardedGroupTable = false;
         StringBuilder rewritten = new StringBuilder();
         Matcher m = BARE_TABLE_REF.matcher(sql);
         while (m.find()) {
             String tableName = m.group(2);
             List<BackendCatalogDiscovery.DiscoveredTable> matches = byName.get(tableName.toLowerCase(java.util.Locale.ROOT));
-            if (matches == null || matches.isEmpty()) {
+            BackendCatalogDiscovery.ResolvedTable resolved;
+            try {
+                resolved = BackendCatalogDiscovery.resolveUnambiguous(matches, backendRegistry);
+            } catch (IllegalStateException ambiguous) {
+                return new AutoDiscoveryOutcome(null, null, new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0,
+                        "42P09", "table \"" + tableName + "\" is ambiguous: " + ambiguous.getMessage()));
+            }
+            if (resolved == null) {
                 m.appendReplacement(rewritten, Matcher.quoteReplacement(m.group()));
                 continue;
             }
-            java.util.Set<String> distinctBackends = new java.util.LinkedHashSet<>();
-            for (BackendCatalogDiscovery.DiscoveredTable t : matches) {
-                distinctBackends.add(t.backendName());
+            if (resolved.sharded()) {
+                touchesShardedGroupTable = true;
+                m.appendReplacement(rewritten, Matcher.quoteReplacement(m.group()));
+                continue;
             }
-            if (distinctBackends.size() > 1) {
-                return new AutoDiscoveryOutcome(null, null, new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0,
-                        "42P09", "table \"" + tableName + "\" was auto-discovered on more than one backend ("
-                                + String.join(", ", distinctBackends) + ") -- qualify it explicitly (e.g. via a real "
-                                + "WARP_ROUTER_SCHEMA_RULES-declared schema alias) rather than leaving it ambiguous which one this query means."));
-            }
-            BackendCatalogDiscovery.DiscoveredTable table = matches.get(0);
-            mounts.putIfAbsent(table.backendName(), new SchemaFederationStage.BackendMount(table.backendName(), table.realSchemaName()));
+            mounts.putIfAbsent(resolved.backendName(),
+                    new SchemaFederationStage.BackendMount(resolved.backendName(), resolved.realSchemaName()));
             // The mount alias is double-quoted, not bare -- a real backend name can be a reserved
             // SQL keyword ("default", BackendRegistry.DEFAULT_BACKEND_NAME -- confirmed live, this
             // broke Calcite's parser outright) or contain characters an unquoted identifier can't
@@ -630,13 +641,16 @@ public final class WarpMcpServer {
             // accepts double-quoted identifiers (the Frameworks Planner's default), so this is a
             // real fix, not a workaround.
             m.appendReplacement(rewritten, Matcher.quoteReplacement(
-                    m.group(1) + " \"" + table.backendName() + "\"." + tableName));
+                    m.group(1) + " \"" + resolved.backendName() + "\"." + tableName));
         }
         m.appendTail(rewritten);
 
-        if (mounts.size() < 2) {
-            // 0 or 1 distinct backend touched -- nothing for auto-discovery to federate; the
-            // caller runs the ORIGINAL (unrewritten) sql on its single already-open connection.
+        if (touchesShardedGroupTable || mounts.size() < 2) {
+            // Either nothing to federate via Calcite-mount, or this query touches a sharded-group
+            // table -- the caller runs the ORIGINAL (unrewritten) sql on its single already-open
+            // connection, which itself still goes through the full pipeline (RouterStage/
+            // ShardJoinExecutor included) via plain runSql, so a sharded table alone still routes
+            // correctly; only the MIXED case is the disclosed gap.
             return new AutoDiscoveryOutcome(null, null, null);
         }
         try {
