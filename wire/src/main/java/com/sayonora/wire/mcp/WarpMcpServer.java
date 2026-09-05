@@ -7,11 +7,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sayonora.wire.acl.ConnectionGate;
 import com.sayonora.wire.core.AdHocQueryRunner;
+import com.sayonora.wire.core.BackendCatalogDiscovery;
 import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.core.ExecutionResult;
 import com.sayonora.wire.core.JdbcBackendExecutor;
 import com.sayonora.wire.core.PipelineStage;
 import com.sayonora.wire.core.RouterStage;
+import com.sayonora.wire.core.SchemaFederationStage;
 import com.sayonora.wire.core.SourceDialect;
 import com.sayonora.wire.core.Statement;
 import com.sayonora.wire.mssqlwire.MssqlBackendConnections;
@@ -30,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -330,15 +334,21 @@ public final class WarpMcpServer {
             return result;
         }
         tools.add(toolDef("query_federated",
-                "Execute a SQL statement that may span more than one of Warp's own configured "
-                        + "shards/backends -- e.g. a JOIN between a table sharded by schema/predicate rule "
-                        + "and one that isn't, or a query touching two different WARP_TABLE_SHARDS-declared "
-                        + "shard sets. Routed through the exact same router/cross-shard-JOIN planner "
-                        + "(Apache Calcite-based) a real Postgres/MySQL/SQL Server/Oracle client gets for the "
-                        + "same query -- an agent doesn't need to know which shard holds which table. "
-                        + "Identical to execute_sql for a query that only touches one shard; use this name "
-                        + "when the query is expected to cross shards, so the response can say whether it "
-                        + "actually did.",
+                "Execute a SQL statement that may span more than one of Warp's own backends, using "
+                        + "plain, unqualified table names -- e.g. \"SELECT * FROM orders JOIN customers ON "
+                        + "...\" where orders and customers live on two different real backends. No "
+                        + "WARP_ROUTER_SCHEMA_RULES configuration is needed: every registered backend is "
+                        + "auto-discovered (its real tables introspected) at call time, so an agent never "
+                        + "needs to know which backend holds which table or an operator's schema-alias "
+                        + "naming scheme. A table name found on more than one backend is refused with a "
+                        + "clear error rather than guessed at -- qualify it via a real schema-rule alias "
+                        + "in that case. Also honors any WARP_ROUTER_SCHEMA_RULES-declared federation and "
+                        + "WARP_TABLE_SHARDS/WARP_SHARD_BACKENDS scatter-gather sharding already configured "
+                        + "on this gateway. Routed through the same Apache Calcite-based planner a real "
+                        + "Postgres/MySQL/SQL Server/Oracle client gets for the same cross-backend query. "
+                        + "Identical to execute_sql for a query that only touches one backend; use this "
+                        + "name when the query might cross backends, so the response can say whether it "
+                        + "actually did and how.",
                 objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
         tools.add(toolDef("document_schema",
                 "List every table/column in the database (excludes system schemas) and, when an LLM "
@@ -558,16 +568,111 @@ public final class WarpMcpServer {
      * most commonly) is visible instead of silently indistinguishable from "it happened and there
      * was only one shard's worth of data anyway."
      */
+    // Bare (unqualified) FROM/JOIN table references only -- an already-qualified "schema.table"
+    // reference (the shape WARP_ROUTER_SCHEMA_RULES federation expects) is left untouched here;
+    // auto-discovery is specifically for the case an agent has no reason to know any schema-alias
+    // naming scheme and just writes plain table names. Regex over raw SQL, not a full parser --
+    // same posture as every other "table reference" scan in this codebase (e.g.
+    // MySqlBinaryProtocol#countPlaceholders); a CTE name or derived-table alias that happens to
+    // collide with a real discovered table name is a real, narrow, disclosed scope limit.
+    private static final Pattern BARE_TABLE_REF = Pattern.compile(
+            "\\b(FROM|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\.)", Pattern.CASE_INSENSITIVE);
+
+    private record AutoDiscoveryOutcome(AdHocQueryRunner.Result federatedResult, List<String> backendNames,
+            AdHocQueryRunner.Result ambiguityError) {
+        boolean federated() {
+            return federatedResult != null;
+        }
+    }
+
+    /**
+     * Real schema auto-discovery, per {@link BackendCatalogDiscovery}'s own javadoc: introspects
+     * every registered backend, resolves each bare table reference in {@code sql} to whichever
+     * backend(s) actually have it, and -- only when 2+ DISTINCT backends are actually touched --
+     * rewrites the SQL to qualify each reference with its backend's name as a Calcite mount alias
+     * and runs it through {@link SchemaFederationStage#executeWithMounts}, the SAME planning core
+     * {@code WARP_ROUTER_SCHEMA_RULES}-declared federation uses. Returns a "not federated" outcome
+     * (caller falls through to plain {@link #runSql}) when the query only touches one backend (or
+     * no discoverable table at all) -- the common case, and cheap to detect before paying for any
+     * Calcite connection setup. A table name found on more than one backend is a real ambiguity,
+     * surfaced as a clear error naming the colliding backends rather than guessed at.
+     */
+    private AutoDiscoveryOutcome tryAutoDiscoveredFederation(String sql, com.sayonora.wire.core.AccessContext accessContext) {
+        List<BackendCatalogDiscovery.DiscoveredTable> discovered = BackendCatalogDiscovery.discoverAll(backendRegistry);
+        Map<String, List<BackendCatalogDiscovery.DiscoveredTable>> byName = BackendCatalogDiscovery.byTableNameLowercase(discovered);
+
+        Map<String, SchemaFederationStage.BackendMount> mounts = new LinkedHashMap<>();
+        StringBuilder rewritten = new StringBuilder();
+        Matcher m = BARE_TABLE_REF.matcher(sql);
+        while (m.find()) {
+            String tableName = m.group(2);
+            List<BackendCatalogDiscovery.DiscoveredTable> matches = byName.get(tableName.toLowerCase(java.util.Locale.ROOT));
+            if (matches == null || matches.isEmpty()) {
+                m.appendReplacement(rewritten, Matcher.quoteReplacement(m.group()));
+                continue;
+            }
+            java.util.Set<String> distinctBackends = new java.util.LinkedHashSet<>();
+            for (BackendCatalogDiscovery.DiscoveredTable t : matches) {
+                distinctBackends.add(t.backendName());
+            }
+            if (distinctBackends.size() > 1) {
+                return new AutoDiscoveryOutcome(null, null, new AdHocQueryRunner.Result(false, false, List.of(), List.of(), 0,
+                        "42P09", "table \"" + tableName + "\" was auto-discovered on more than one backend ("
+                                + String.join(", ", distinctBackends) + ") -- qualify it explicitly (e.g. via a real "
+                                + "WARP_ROUTER_SCHEMA_RULES-declared schema alias) rather than leaving it ambiguous which one this query means."));
+            }
+            BackendCatalogDiscovery.DiscoveredTable table = matches.get(0);
+            mounts.putIfAbsent(table.backendName(), new SchemaFederationStage.BackendMount(table.backendName(), table.realSchemaName()));
+            // The mount alias is double-quoted, not bare -- a real backend name can be a reserved
+            // SQL keyword ("default", BackendRegistry.DEFAULT_BACKEND_NAME -- confirmed live, this
+            // broke Calcite's parser outright) or contain characters an unquoted identifier can't
+            // (a hyphen, e.g. "mysql-native-dual-port"). Calcite's own parser config here already
+            // accepts double-quoted identifiers (the Frameworks Planner's default), so this is a
+            // real fix, not a workaround.
+            m.appendReplacement(rewritten, Matcher.quoteReplacement(
+                    m.group(1) + " \"" + table.backendName() + "\"." + tableName));
+        }
+        m.appendTail(rewritten);
+
+        if (mounts.size() < 2) {
+            // 0 or 1 distinct backend touched -- nothing for auto-discovery to federate; the
+            // caller runs the ORIGINAL (unrewritten) sql on its single already-open connection.
+            return new AutoDiscoveryOutcome(null, null, null);
+        }
+        try {
+            Statement statement = new Statement("default", SourceDialect.MCP, rewritten.toString(), List.of(),
+                    "default", null, accessContext);
+            ExecutionResult result = new SchemaFederationStage(List.of(), backendRegistry).executeWithMounts(mounts, statement);
+            return new AutoDiscoveryOutcome(AdHocQueryRunner.Result.ofSuccess(result), List.copyOf(mounts.keySet()), null);
+        } catch (SQLException e) {
+            return new AutoDiscoveryOutcome(AdHocQueryRunner.Result.ofError(e), List.copyOf(mounts.keySet()), null);
+        }
+    }
+
     private ResultWithNote runFederatedQuery(Connection backend, String sql,
             com.sayonora.wire.core.AccessContext accessContext) {
-        AdHocQueryRunner.Result result = runSql(backend, sql, accessContext);
-        List<String> shardGroup = backendRegistry.shardGroup();
-        // Two distinct, independent mechanisms can make a query cross backends -- see
+        AutoDiscoveryOutcome auto = tryAutoDiscoveredFederation(sql, accessContext);
+        if (auto.ambiguityError() != null) {
+            return new ResultWithNote(auto.ambiguityError(), null);
+        }
+        AdHocQueryRunner.Result result;
+        String autoDiscoveryNote;
+        if (auto.federated()) {
+            result = auto.federatedResult();
+            autoDiscoveryNote = "Auto-discovered and federated across " + auto.backendNames().size()
+                    + " backend(s) with NO WARP_ROUTER_SCHEMA_RULES configuration needed: "
+                    + String.join(", ", auto.backendNames()) + ".";
+        } else {
+            result = runSql(backend, sql, accessContext);
+            autoDiscoveryNote = null;
+        }
+
+        // A SEPARATE, config-declared mechanism can also make a query cross backends -- see
         // SchemaFederationStage's own javadoc distinguishing its heterogeneous "each backend holds
         // a different, complete table" (schema rules) case from ShardJoinExecutor's homogeneous
-        // "same table, row-partitioned" (shard group) one. A query can be federated via either,
-        // both, or neither -- the note has to check both, not just shardGroup, or it wrongly claims
-        // "no federation configured" for a real schema-rule-based cross-backend JOIN.
+        // "same table, row-partitioned" (shard group) one. Reported here too so the note is honest
+        // about every mechanism in play, not just auto-discovery.
+        List<String> shardGroup = backendRegistry.shardGroup();
         List<RouterStage.SchemaRule> schemaRules = RouterStage.schemaRulesIn(sharedStages);
         List<String> configured = new ArrayList<>();
         if (!shardGroup.isEmpty()) {
@@ -577,14 +682,18 @@ public final class WarpMcpServer {
             List<String> schemaNames = schemaRules.stream().map(RouterStage.SchemaRule::schemaName).toList();
             configured.add(schemaRules.size() + " schema-federation rule(s): " + String.join(", ", schemaNames));
         }
-        String note = configured.isEmpty()
-                ? "No shard group or schema-federation rule is configured on this gateway "
-                        + "(WARP_SHARD_BACKENDS/WARP_TABLE_SHARDS or WARP_ROUTER_SCHEMA_RULES) -- this "
-                        + "query ran against the single default backend, the same as execute_sql would have."
-                : "Routed through Warp's router/federation planner. Configured: " + String.join("; ", configured)
-                        + ". Whether THIS particular query actually crossed backends depends on which "
-                        + "tables/schemas it touched.";
-        return new ResultWithNote(result, note);
+        String configuredNote = configured.isEmpty()
+                ? (autoDiscoveryNote == null
+                        ? "No shard group or schema-federation rule is configured on this gateway "
+                                + "(WARP_SHARD_BACKENDS/WARP_TABLE_SHARDS or WARP_ROUTER_SCHEMA_RULES), and "
+                                + "auto-discovery found this query touches at most one backend -- it ran against "
+                                + "the single default backend, the same as execute_sql would have."
+                        : null)
+                : "Also configured: " + String.join("; ", configured) + ".";
+        String note = java.util.stream.Stream.of(autoDiscoveryNote, configuredNote)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.joining(" "));
+        return new ResultWithNote(result, note.isBlank() ? null : note);
     }
 
     private AdHocQueryRunner.Result runSql(Connection backend, String sql, List<Object> bindParams,

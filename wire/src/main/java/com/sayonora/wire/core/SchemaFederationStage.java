@@ -138,39 +138,50 @@ public final class SchemaFederationStage implements PipelineStage {
         return execute(referencedSchemas, statement);
     }
 
-    private ExecutionResult execute(Map<String, String> schemaNameToBackendName, Statement statement) throws SQLException {
-        // Real bug, found live building ShardJoinExecutor (this class's sibling): Calcite's own SQL
-        // parser rejects a trailing ';' outright. Same fix, hit independently here since this class
-        // shares no code with ShardJoinExecutor -- see that class's own javadoc for the original
-        // finding (itself matching a gap Omnigate's FederationStage already had to work around).
+    /** {@code schemaName} (the mount alias a client's SQL text actually references, e.g. {@code
+     * "orders_db"} in {@code orders_db.orders}) and {@code realSchemaName} (the schema that alias
+     * actually resolves to inside the real backend, e.g. {@code "public"}) are two independent
+     * things this class's original {@code RouterStage.SchemaRule}-driven path derives one from the
+     * other via {@link BackendDriverRegistry#realCatalogSchemaName} (identity for Postgres,
+     * uppercased for Oracle) -- correct for a config-declared rule, where the operator picks a
+     * mount alias meant to equal the real schema name. {@link #executeWithMounts} decouples them,
+     * for a caller (MCP's own schema-auto-discovery path, see {@code BackendCatalogDiscovery}) that
+     * discovers a table's real backend/schema at query time rather than from a pre-declared rule,
+     * and wants to mount it under a stable alias (the backend's own name) regardless of what its
+     * real schema happens to be called. */
+    public record BackendMount(String backendName, String realSchemaName) {
+    }
+
+    /** Real entry point for a discovered (not config-declared) set of backend/schema mounts -- see
+     * {@link BackendMount}'s own javadoc for why this is a separate method rather than a variant
+     * derivation inside {@link #execute}. Delegates to the exact same Calcite planning/execution
+     * core {@link #execute} uses (that method is now a thin adapter over this one), so a discovered
+     * federation gets the identical real cross-backend JOIN planning a config-declared one does --
+     * semi-join pushdown and plan-history capture included when {@code statisticsStore}/{@code
+     * planStore} are configured, same as {@link #execute}. */
+    public ExecutionResult executeWithMounts(Map<String, BackendMount> mounts, Statement statement) throws SQLException {
         String sql = stripTrailingSemicolon(statement.sqlText());
-        // Kept around ONLY for plan-history display -- semi-join pushdown below may reassign `sql`
-        // itself to an internally-rewritten form; see ShardJoinExecutor's own matching comment.
         String originalSql = sql;
-        // See ShardJoinExecutor's own matching comment: dropping lex=JAVA keeps this connection's
-        // default identifier quoting (double-quote) consistent with the Frameworks Planner's own
-        // default, so EXPLAIN PLAN FOR (run through this raw connection, not the Planner) parses
-        // correctly.
         Connection calciteConnection = DriverManager.getConnection("jdbc:calcite:caseSensitive=false");
         List<Connection> statsConnections = new ArrayList<>();
         Map<String, Connection> schemaToStatsConnection = new java.util.LinkedHashMap<>();
+        Map<String, String> schemaNameToBackendName = new java.util.LinkedHashMap<>();
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new java.util.LinkedHashMap<>();
             SqlDialect dialect = null;
-            for (Map.Entry<String, String> entry : schemaNameToBackendName.entrySet()) {
+            for (Map.Entry<String, BackendMount> entry : mounts.entrySet()) {
                 String schemaName = entry.getKey();
-                String backendName = entry.getValue();
+                String backendName = entry.getValue().backendName();
+                String realSchemaName = entry.getValue().realSchemaName();
+                schemaNameToBackendName.put(schemaName, backendName);
                 BackendTarget target = backendRegistry.resolveForRouting(backendName);
                 if (target == null) {
                     throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", backendName);
                 }
                 mountToBackend.put(schemaName, new LeafScanProfiler.MountedBackend(target, backendName));
-                // Real driver-class lookup -- a federated backend can now genuinely be a
-                // non-Postgres engine (Oracle today; see BackendDriverRegistry's own javadoc),
-                // unlike this class's original Postgres-only assumption.
                 String driverClassName = BackendDriverRegistry.driverClassNameFor(target.jdbcUrl());
                 if (driverClassName == null) {
                     throw ErrorCatalog.sqlException("ERR_UNSUPPORTED_BACKEND_ENGINE", backendName, target.jdbcUrl());
@@ -181,16 +192,6 @@ public final class SchemaFederationStage implements PipelineStage {
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, schemaName, JdbcSchema.class);
                 JdbcConvention convention = JdbcConvention.of(dialect, expression, schemaName);
-                // Mounted (both the rootSchema.add key AND JdbcSchema's own 4th ctor arg) under
-                // schemaName -- the name the client's query actually references -- not backendName,
-                // which is only ever an internal routing detail (see this method's own caller).
-                // schemaName as the 4th arg (not null): a JDBC connection's own default visible
-                // schema depends on the connecting user/search_path, which isn't necessarily the
-                // schema this backend's tables actually live in -- the same real bug
-                // ShardJoinExecutor's own javadoc notes Omnigate found live against Postgres
-                // specifically (default search_path is "$user,public", not this backend's own
-                // schema).
-                String realSchemaName = BackendDriverRegistry.realCatalogSchemaName(target.jdbcUrl(), schemaName);
                 JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, realSchemaName);
                 if (statisticsStore != null) {
                     Connection statsConnection = target.open();
@@ -204,11 +205,7 @@ public final class SchemaFederationStage implements PipelineStage {
                 rules.addAll(JdbcRules.rules(convention));
             }
 
-            // Real semi-join pushdown -- see SemiJoinPushdown's own javadoc and ShardJoinExecutor's
-            // matching integration for the full reasoning. Scoped to exactly 2 federated backends
-            // here (today's common, demoed shape); 3+ backends in one statement falls through
-            // unfiltered, same as before this existed.
-            if (statisticsStore != null && schemaNameToBackendName.size() == 2) {
+            if (statisticsStore != null && mounts.size() == 2) {
                 sql = applySemiJoinPushdown(sql, schemaNameToBackendName, schemaToStatsConnection, statisticsStore, calciteConnection);
             }
 
@@ -231,12 +228,7 @@ public final class SchemaFederationStage implements PipelineStage {
                 throw ErrorCatalog.sqlExceptionWithCause("ERR_SHARD_JOIN_PLAN_FAILED", e, originalSql, e.getMessage());
             }
             String backendsLabel = String.join(",", schemaNameToBackendName.values());
-            // sql here (not originalSql) deliberately -- EXPLAIN PLAN FOR has to reflect the query
-            // that's actually about to run, semi-join filter included when pushdown applied.
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
-            // See ShardJoinExecutor's own matching comment: a real, separate re-execution of each
-            // backend's own leaf scan, skipped entirely (empty list) for a parameterized statement
-            // or when planStore itself isn't configured.
             List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null ? List.of()
                     : LeafScanProfiler.measure(optimized, dialect, mountToBackend, !statement.bindParams().isEmpty());
             long startNanos = System.nanoTime();
@@ -264,6 +256,23 @@ public final class SchemaFederationStage implements PipelineStage {
             }
             calciteConnection.close();
         }
+    }
+
+    /** Thin adapter over {@link #executeWithMounts}: derives each mount's real schema name from its
+     * mount alias via {@link BackendDriverRegistry#realCatalogSchemaName} -- correct for a real,
+     * operator-declared {@code RouterStage.SchemaRule}, where the mount alias (the name a client's
+     * SQL actually references) is meant to equal the real schema name it resolves to. */
+    private ExecutionResult execute(Map<String, String> schemaNameToBackendName, Statement statement) throws SQLException {
+        Map<String, BackendMount> mounts = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : schemaNameToBackendName.entrySet()) {
+            String schemaName = entry.getKey();
+            String backendName = entry.getValue();
+            BackendTarget target = backendRegistry.resolveForRouting(backendName);
+            String realSchemaName = target == null ? schemaName
+                    : BackendDriverRegistry.realCatalogSchemaName(target.jdbcUrl(), schemaName);
+            mounts.put(schemaName, new BackendMount(backendName, realSchemaName));
+        }
+        return executeWithMounts(mounts, statement);
     }
 
     private static long elapsedMillisSince(long startNanos) {
