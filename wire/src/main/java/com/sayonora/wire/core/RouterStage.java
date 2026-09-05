@@ -177,6 +177,19 @@ public final class RouterStage implements PipelineStage {
         return tableShardRules;
     }
 
+    /** Union of every {@code WARP_TABLE_SHARDS} rule's own {@code ShardingStrategy} backend list --
+     * for {@link BackendCatalogDiscovery#resolveUnambiguous}'s {@code extraShardedBackendNames}
+     * parameter: a declarative table-shard rule's backends are never required to also be members
+     * of the global {@code shardGroup()}, so schema auto-discovery needs this union to recognize
+     * them as implicitly sharded too (see that method's own javadoc for why this matters). */
+    public static java.util.Set<String> tableShardBackendNames(List<TableShardRule> rules) {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (TableShardRule rule : rules) {
+            names.addAll(ShardingStrategy.allBackends(rule.strategy()));
+        }
+        return names;
+    }
+
     /** Same "find the one instance of this stage in the shared pipeline stage list" convention as
      * {@link StatsCollectorStage#findIn} -- lets a session handler that only has {@code sharedStages}
      * (not a direct {@link RouterStage} reference) build a {@link RoutingBackendExecutor} that knows

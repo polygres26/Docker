@@ -377,6 +377,19 @@ public final class Main {
                     + "in one statement is federated via Calcite instead of routed to a single one)",
                     routerStage.schemaRules().size());
         }
+        // Same slot, same reasoning as schemaFederationStage above -- but for a statement with NO
+        // schema-rule qualification at all, resolved instead by live (TTL-cached) catalog
+        // discovery. See SchemaAutoDiscoveryStage's own javadoc: this is what makes a real
+        // Postgres/Oracle/MySQL/SQL Server client's plain, unqualified cross-backend query
+        // federate transparently, not just an MCP agent's.
+        com.sayonora.wire.core.SchemaAutoDiscoveryStage schemaAutoDiscoveryStage =
+                com.sayonora.wire.core.SchemaAutoDiscoveryStage.fromRegistryOrNull(backendRegistry, routerStage);
+        if (schemaAutoDiscoveryStage != null) {
+            stages.add(schemaAutoDiscoveryStage);
+            log.info("schema auto-discovery: enabled ({} backend(s) registered -- a query referencing "
+                    + "2+ of them by plain, unqualified table name is federated via Calcite too, no "
+                    + "WARP_ROUTER_SCHEMA_RULES needed)", backendRegistry.all().size());
+        }
         stages.add(routerStage);
         stages.add(qosStage);
         TranslationCacheStore translationCacheStore = new TranslationCacheStore(options);
@@ -640,6 +653,9 @@ public final class Main {
             // RouterStage#expandBackendSets) -- reconfiguring first would expand against the
             // sets from BEFORE this same config version, one version stale.
             backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
+            if (schemaAutoDiscoveryStage != null) {
+                schemaAutoDiscoveryStage.invalidateCatalogCache();
+            }
             routerStage.reconfigure(c.routerSchemaRules(), c.routerPredicateRules(),
                     c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards());
             if (cacheStage != null) {
