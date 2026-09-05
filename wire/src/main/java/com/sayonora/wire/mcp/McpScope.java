@@ -51,6 +51,70 @@ public record McpScope(Type type, String name) {
         return fromSpec(System.getenv("WARP_MCP_SCOPE"));
     }
 
+    /** {@code WARP_MCP_ROLE_SCOPES} grammar: {@code role1=spec1|role2=spec2}, {@code |}-separated
+     * (same delimiter convention {@code WARP_BACKEND_GROUPS} uses), each {@code spec} itself
+     * {@code db:<name>}/{@code group:<name>}/{@code all}. Lets a token's OWN role claim determine
+     * its scope, rather than every caller being stuck with whatever the endpoint defaults to --
+     * see {@link #resolveForCaller}. */
+    public static java.util.Map<String, McpScope> roleScopesFromEnv() {
+        return parseRoleScopes(System.getenv("WARP_MCP_ROLE_SCOPES"));
+    }
+
+    static java.util.Map<String, McpScope> parseRoleScopes(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, McpScope> result = new java.util.LinkedHashMap<>();
+        for (String entry : spec.split("\\|")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int eq = entry.indexOf('=');
+            if (eq <= 0) {
+                throw new IllegalArgumentException("WARP_MCP_ROLE_SCOPES entry \"" + entry
+                        + "\" is missing \"=\" -- expected role=db:<name>|group:<name>|all");
+            }
+            String role = entry.substring(0, eq).trim();
+            McpScope roleScope = fromSpec(entry.substring(eq + 1).trim());
+            result.put(role, roleScope);
+        }
+        return java.util.Map.copyOf(result);
+    }
+
+    /**
+     * The real per-request scope for one authenticated caller -- checked in priority order: (1) a
+     * direct {@code warp_scope} claim on the caller's OWN token (see {@code
+     * AccessContextResolver}'s own extraction of it into {@code AccessContext.attributes()}) wins
+     * outright, letting a token carry its scope regardless of which endpoint it happens to hit;
+     * (2) failing that, {@code roleScopes} (an ordered map, insertion order preserved from {@code
+     * WARP_MCP_ROLE_SCOPES}' own declaration order) is walked in THAT order, and the first entry
+     * whose role the caller actually has wins -- deterministic and operator-controlled (declare
+     * the higher-priority role mapping first), unlike iterating the caller's own {@code roles()}
+     * (a {@link java.util.Set}, whose iteration order is never a real priority order); (3) failing both, {@code
+     * fallback} -- the endpoint's own configured {@code WARP_MCP_SCOPE} (or {@link #all()} if that
+     * was never set either). A malformed {@code warp_scope} claim value (fails {@link #fromSpec})
+     * is treated as absent, falling through to (2)/(3), rather than failing the whole request.
+     */
+    public static McpScope resolveForCaller(com.sayonora.wire.core.AccessContext accessContext,
+            java.util.Map<String, McpScope> roleScopes, McpScope fallback) {
+        if (accessContext != null) {
+            String claim = accessContext.attributes().get("warp_scope");
+            if (claim != null && !claim.isBlank()) {
+                try {
+                    return fromSpec(claim);
+                } catch (IllegalArgumentException ignoredMalformedClaim) {
+                    // falls through to role-based/fallback resolution below
+                }
+            }
+            for (java.util.Map.Entry<String, McpScope> entry : roleScopes.entrySet()) {
+                if (accessContext.roles().contains(entry.getKey())) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return fallback;
+    }
+
     /** {@code spec} grammar: {@code db:<backendName>}, {@code group:<groupName>}, {@code all}, or
      * {@code null}/blank (also "all" -- today's default, unscoped behavior). Anything else is a
      * real config error, thrown loudly at startup rather than silently falling back to unscoped
