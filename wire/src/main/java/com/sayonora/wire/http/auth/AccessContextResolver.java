@@ -195,8 +195,22 @@ public final class AccessContextResolver {
             }
             String userId = claims.getStringClaim(userIdClaim);
             Set<String> roles = extractRoles(claims);
-            Map<String, String> attributes = Map.of();
-            return new Result.Valid(new AccessContext(userId, roles, attributes));
+            // "warp_scope" -- an optional, real per-token claim letting a token carry its own
+            // McpScope directly (see McpScope's own javadoc), rather than every caller being stuck
+            // with whatever scope the ENDPOINT itself defaults to. Not every issuer/token needs
+            // this -- absent, this is simply not in the map, same as any other unclaimed attribute.
+            Map<String, String> attributes = new java.util.HashMap<>();
+            try {
+                String warpScope = claims.getStringClaim("warp_scope");
+                if (warpScope != null && !warpScope.isBlank()) {
+                    attributes.put("warp_scope", warpScope);
+                }
+            } catch (Exception ignoredNotAStringClaim) {
+                // A non-string "warp_scope" claim is a real, malformed token as far as THIS
+                // feature is concerned -- treated as absent (falls back to the endpoint's own
+                // default scope) rather than failing the whole token's authentication over it.
+            }
+            return new Result.Valid(new AccessContext(userId, roles, Map.copyOf(attributes)));
         } catch (Exception e) {
             return new Result.Invalid("token parse/verify error: " + e.getMessage());
         }

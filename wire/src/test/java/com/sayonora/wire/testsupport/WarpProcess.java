@@ -134,7 +134,7 @@ public final class WarpProcess implements AutoCloseable {
             drain.setDaemon(true);
             drain.start();
 
-            waitForHttpReady(metricsPort, Duration.ofSeconds(30));
+            waitForHttpReady(metricsPort, Duration.ofSeconds(30), env.get("WARP_ADMIN_TOKEN"));
             // /metrics starts early in Main's setup, before every protocol listener thread has
             // necessarily started (each frontend binds on its own thread, in sequence) -- so it
             // alone isn't proof the frontend under test is actually accepting connections yet.
@@ -146,7 +146,12 @@ public final class WarpProcess implements AutoCloseable {
             return new WarpProcess(process, metricsPort, Map.copyOf(ports));
         }
 
-        private static void waitForHttpReady(int metricsPort, Duration timeout) throws InterruptedException {
+        /** {@code adminToken}, when the caller configured {@code WARP_ADMIN_TOKEN} (e.g. a test
+         * that also sets {@code WARP_OAUTH_ISSUER}), is sent as a Bearer credential on the
+         * readiness probe itself -- {@code /metrics} sits behind {@code AccessContextResolver}
+         * once an OAuth issuer is configured, and an unauthenticated probe would 401 forever
+         * rather than ever observing real readiness. Null/blank for every other test, unchanged. */
+        private static void waitForHttpReady(int metricsPort, Duration timeout, String adminToken) throws InterruptedException {
             Instant deadline = Instant.now().plus(timeout);
             while (Instant.now().isBefore(deadline)) {
                 try {
@@ -154,6 +159,9 @@ public final class WarpProcess implements AutoCloseable {
                             .toURL().openConnection();
                     conn.setConnectTimeout(500);
                     conn.setReadTimeout(500);
+                    if (adminToken != null && !adminToken.isBlank()) {
+                        conn.setRequestProperty("Authorization", "Bearer " + adminToken);
+                    }
                     if (conn.getResponseCode() == 200) {
                         return;
                     }

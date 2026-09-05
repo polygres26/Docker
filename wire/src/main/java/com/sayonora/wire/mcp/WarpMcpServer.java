@@ -55,6 +55,19 @@ public final class WarpMcpServer {
     private final com.sayonora.wire.audit.AuditLog auditLog;
     private final java.util.function.Supplier<com.sayonora.wire.core.TranslationLlmClient> llmClientSupplier;
     private final McpScope scope;
+    private final java.util.Map<String, McpScope> roleScopes;
+
+    // Ambient, request-scoped effective McpScope -- set once per HTTP request (see #handleRequest
+    // and #callNaturalLanguageQuery, its own non-HTTP entry point) and read by every enforcement
+    // primitive (openBackendConnection, runSql, scopedDiscoveredTables/Columns,
+    // buildToolsListResult) instead of the field default directly. A deliberate, narrow use of a
+    // ThreadLocal rather than threading an extra parameter through ~20 existing method signatures
+    // -- safe here specifically because this Jetty AbstractHandler processes one request
+    // synchronously start-to-finish on one thread, with no async/continuation hop mid-request (the
+    // same reasoning that makes frameworks like Spring's RequestContextHolder safe for the same
+    // "ambient per-request context without a signature rewrite" problem). Always cleared in a
+    // finally block -- never left set across requests on a pooled thread.
+    private static final ThreadLocal<McpScope> CURRENT_SCOPE = new ThreadLocal<>();
 
     public WarpMcpServer(int port, ServerOptions options, List<PipelineStage> sharedStages,
             BackendRegistry backendRegistry, ConnectionGate connectionGate, String toolsSpec) {
@@ -128,6 +141,7 @@ public final class WarpMcpServer {
         this.auditLog = auditLog;
         this.llmClientSupplier = llmClientSupplier;
         this.scope = scope;
+        this.roleScopes = McpScope.roleScopesFromEnv();
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -176,8 +190,13 @@ public final class WarpMcpServer {
         if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
             return notSupportedInNativeMode("query_natural_language", options.mcpBackendMode());
         }
+        // A2A doesn't go through #handleRequest -- CURRENT_SCOPE has to be set here directly,
+        // same resolution priority as every real MCP request gets.
+        CURRENT_SCOPE.set(McpScope.resolveForCaller(accessContext, roleScopes, scope));
         try (Connection backend = openBackendConnection()) {
             return runNaturalLanguageQuery(backend, question, accessContext).result();
+        } finally {
+            CURRENT_SCOPE.remove();
         }
     }
 
@@ -244,12 +263,28 @@ public final class WarpMcpServer {
         response.setHeader("Mcp-Session-Id", request.getHeader("Mcp-Session-Id") != null
                 ? request.getHeader("Mcp-Session-Id") : UUID.randomUUID().toString());
 
-        switch (method) {
-            case "initialize" -> writeResult(response, idElement, buildInitializeResult());
-            case "tools/list" -> writeResult(response, idElement, buildToolsListResult());
-            case "tools/call" -> handleToolsCall(response, idElement, params, accessContext);
-            default -> writeError(response, idElement, -32601, "Method not found: " + method);
+        // Resolved ONCE per request, from this caller's own authenticated identity -- see
+        // McpScope#resolveForCaller's own javadoc for the real priority order (a token's own
+        // "warp_scope" claim, then role-mapped scope, then this endpoint's configured default).
+        CURRENT_SCOPE.set(McpScope.resolveForCaller(accessContext, roleScopes, scope));
+        try {
+            switch (method) {
+                case "initialize" -> writeResult(response, idElement, buildInitializeResult());
+                case "tools/list" -> writeResult(response, idElement, buildToolsListResult());
+                case "tools/call" -> handleToolsCall(response, idElement, params, accessContext);
+                default -> writeError(response, idElement, -32601, "Method not found: " + method);
+            }
+        } finally {
+            CURRENT_SCOPE.remove();
         }
+    }
+
+    /** The effective scope for whatever request is CURRENTLY being handled on this thread -- see
+     * {@link #CURRENT_SCOPE}'s own javadoc. Falls back to this endpoint's own configured default
+     * if read outside a request (defensive; every real call site sets it first). */
+    private McpScope currentScope() {
+        McpScope current = CURRENT_SCOPE.get();
+        return current != null ? current : scope;
     }
 
     private JsonObject buildInitializeResult() {
@@ -290,11 +325,12 @@ public final class WarpMcpServer {
         tools.add(toolDef("run_sql", "Execute a SQL statement against the " + backendName
                         + " backend and return the results. Identical to execute_sql.",
                 objectSchema(Map.of("sql", stringSchema("The SQL statement to execute")), List.of("sql"))));
-        tools.add(scope.type() != McpScope.Type.ALL
+        McpScope effectiveScope = currentScope();
+        tools.add(effectiveScope.type() != McpScope.Type.ALL
                 ? toolDef("inspect_schema",
-                        "List every table and column this endpoint can see -- " + (scope.type() == McpScope.Type.DATABASE
-                                ? "this endpoint is pinned (WARP_MCP_SCOPE) to a single backend (\"" + scope.name() + "\")"
-                                : "this endpoint is pinned (WARP_MCP_SCOPE) to backend group \"" + scope.name() + "\"")
+                        "List every table and column this endpoint can see -- " + (effectiveScope.type() == McpScope.Type.DATABASE
+                                ? "this caller is scoped to a single backend (\"" + effectiveScope.name() + "\")"
+                                : "this caller is scoped to backend group \"" + effectiveScope.name() + "\"")
                                 + "; there is nothing to choose -- every call always returns exactly this fixed scope, "
                                 + "the same set of backends every other tool on this endpoint (execute_sql, "
                                 + "query_federated) is limited to.",
@@ -570,10 +606,13 @@ public final class WarpMcpServer {
         // see McpScope's own javadoc for why this is the one scope enforced with no gaps at all
         // (runSql below also forces every statement onto THIS SAME connection with no RouterStage
         // rerouting, so there is no path to any other backend regardless of what the SQL says).
-        if (scope.type() == McpScope.Type.DATABASE) {
-            com.sayonora.wire.core.BackendTarget target = backendRegistry.get(scope.name());
+        // currentScope(), not the field -- a per-token "warp_scope" claim or role mapping can make
+        // THIS caller's effective scope different from the endpoint's own configured default.
+        McpScope effectiveScope = currentScope();
+        if (effectiveScope.type() == McpScope.Type.DATABASE) {
+            com.sayonora.wire.core.BackendTarget target = backendRegistry.get(effectiveScope.name());
             if (target == null) {
-                throw new SQLException("WARP_MCP_SCOPE names backend \"" + scope.name()
+                throw new SQLException("WARP_MCP_SCOPE names backend \"" + effectiveScope.name()
                         + "\", which is not currently registered", "08001");
             }
             return target.open();
@@ -692,10 +731,10 @@ public final class WarpMcpServer {
         // operator's own WARP_ROUTER_* rule has no path off this one named backend, because
         // RouterStage never runs at all. See McpScope's own javadoc for why this is the one scope
         // enforced with no gaps, unlike GROUP scope's narrower (discovery-only) enforcement.
-        if (scope.type() == McpScope.Type.DATABASE) {
+        if (currentScope().type() == McpScope.Type.DATABASE) {
             try {
                 backend.setAutoCommit(true);
-                com.sayonora.wire.core.BackendTarget target = backendRegistry.get(scope.name());
+                com.sayonora.wire.core.BackendTarget target = backendRegistry.get(currentScope().name());
                 com.sayonora.wire.core.SourceDialect dialect = target != null && target.dialect() != null
                         ? target.dialect() : dialectFor(options.mcpBackendMode());
                 Statement statement = Statement.of(dialect, sql, bindParams, accessContext);
@@ -1025,7 +1064,7 @@ public final class WarpMcpServer {
      */
     private AdHocQueryRunner.Result runInspectSchema(Connection backend, JsonObject arguments,
             com.sayonora.wire.core.AccessContext accessContext) {
-        if (scope.type() == McpScope.Type.DATABASE || scope.type() == McpScope.Type.GROUP) {
+        if (currentScope().type() == McpScope.Type.DATABASE || currentScope().type() == McpScope.Type.GROUP) {
             return multiBackendInspectResult(scopedDiscoveredColumns());
         }
         String argScope = arguments.has("scope") ? arguments.get("scope").getAsString() : "current";
@@ -1053,12 +1092,13 @@ public final class WarpMcpServer {
      * branch and {@link #runFederatedQuery}'s auto-discovery (via {@link #scopedDiscoveredTables}
      * for the table-name-only shape that needs). {@code ALL} scope returns everything unfiltered. */
     private List<BackendCatalogDiscovery.DiscoveredColumn> scopedDiscoveredColumns() {
+        McpScope effectiveScope = currentScope();
         List<BackendCatalogDiscovery.DiscoveredColumn> all = BackendCatalogDiscovery.discoverAllColumns(backendRegistry);
-        return switch (scope.type()) {
-            case DATABASE -> all.stream().filter(c -> c.backendName().equals(scope.name())).toList();
+        return switch (effectiveScope.type()) {
+            case DATABASE -> all.stream().filter(c -> c.backendName().equals(effectiveScope.name())).toList();
             case GROUP -> all.stream().filter(c -> {
                 BackendRegistry.BackendGroupInfo info = backendRegistry.groupInfoFor(c.backendName());
-                return info != null && info.name().equals(scope.name());
+                return info != null && info.name().equals(effectiveScope.name());
             }).toList();
             case ALL -> all;
         };
@@ -1067,12 +1107,13 @@ public final class WarpMcpServer {
     /** As {@link #scopedDiscoveredColumns}, for {@link BackendCatalogDiscovery.DiscoveredTable}'s
      * table-name-only shape -- what {@link #runFederatedQuery}'s auto-discovery resolution needs. */
     private List<BackendCatalogDiscovery.DiscoveredTable> scopedDiscoveredTables() {
+        McpScope effectiveScope = currentScope();
         List<BackendCatalogDiscovery.DiscoveredTable> all = BackendCatalogDiscovery.discoverAll(backendRegistry);
-        return switch (scope.type()) {
-            case DATABASE -> all.stream().filter(t -> t.backendName().equals(scope.name())).toList();
+        return switch (effectiveScope.type()) {
+            case DATABASE -> all.stream().filter(t -> t.backendName().equals(effectiveScope.name())).toList();
             case GROUP -> all.stream().filter(t -> {
                 BackendRegistry.BackendGroupInfo info = backendRegistry.groupInfoFor(t.backendName());
-                return info != null && info.name().equals(scope.name());
+                return info != null && info.name().equals(effectiveScope.name());
             }).toList();
             case ALL -> all;
         };
