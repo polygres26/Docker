@@ -19,6 +19,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -73,6 +76,28 @@ import org.slf4j.LoggerFactory;
  * consistent with how the rest of the codebase already treats gRPC-carried values, not a new gap
  * specific to this feature, but it does mean a caller inspecting exact value types could observe a
  * difference between a locally-run and a remotely-run partition's rows for the same query.
+ *
+ * <p><b>Phase 2 additions</b>:
+ * <ul>
+ * <li><b>Retry/failover</b> -- {@link #dispatchRemotePartition} no longer gives up on the first
+ * failed peer. It walks every OTHER discovered live peer (in {@link #remotePeersOrEmpty()}'s own
+ * order, skipping the one already tried) before finally falling back to local execution -- a single
+ * peer's failure no longer costs that partition's parallelism if any other peer is reachable.</li>
+ * <li><b>Cost-based placement</b> ({@code WARP_PARALLEL_JOIN_REMOTE_MIN_ROWS}, default 50,000) --
+ * a partition whose combined build+probe row count doesn't clear this threshold is processed
+ * locally even though a peer was assigned to it; the network round trip (and the peer's own
+ * matching work) only pays off once a partition is genuinely large. This reuses rows already
+ * collected -- no new probing round trip.</li>
+ * <li><b>Bounded remote buffering</b> ({@code WARP_PARALLEL_JOIN_REMOTE_MAX_BUFFERED_ROWS}, default
+ * 200,000) -- practical backpressure/skew mitigation for a remote partition that turns out far
+ * larger than expected (a skewed key distribution routing an outsized share of rows to one
+ * partition): once a remote partition's buffered probe rows hit this cap, further rows for it
+ * spill into a SEPARATE, unbounded overflow list processed locally (not sent over the wire, not
+ * handed to the peer) -- protecting both the coordinator's own memory and the size of the single
+ * unary gRPC payload a peer would otherwise have to receive. This is a real, disclosed, narrower
+ * substitute for the harder problems (dynamic repartitioning, spill-to-disk) the parent design
+ * explicitly defers until real usage data justifies that larger investment.</li>
+ * </ul>
  */
 final class ParallelJoinExecutor {
 
@@ -147,10 +172,19 @@ final class ParallelJoinExecutor {
             });
         }
 
+        // Work stealing (Phase 2): local partitions are no longer each pinned to their OWN
+        // dedicated thread -- a skewed key distribution can leave one partition's thread as the
+        // bottleneck while every other partition's thread sits idle, having finished early. Instead
+        // every local partition's draining is a short-lived, self-resubmitting task on a shared
+        // ForkJoinPool-backed work-stealing executor (see #drainBatch) -- an idle worker thread can
+        // pick up a DIFFERENT, busier partition's next batch instead of blocking on its own.
+        int localPartitionCount = n - remoteCount;
+        ExecutorService stealPool = Executors.newWorkStealingPool(Math.max(1, localPartitionCount));
+        CountDownLatch localPartitionsDone = new CountDownLatch(Math.max(0, localPartitionCount));
+
         List<BlockingQueue<List<Object>>> queues = new ArrayList<>(n);
         List<List<List<Object>>> remoteProbeBuffers = new ArrayList<>(n);
         List<List<List<Object>>> partitionOutputs = new ArrayList<>(n);
-        List<Thread> workers = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             List<List<Object>> output = new ArrayList<>();
             partitionOutputs.add(output);
@@ -163,11 +197,17 @@ final class ParallelJoinExecutor {
             BlockingQueue<List<Object>> queue = new LinkedBlockingQueue<>(10_000);
             queues.add(queue);
             Map<Object, List<List<Object>>> table = partitionTables.get(i);
-            Thread worker = new Thread(() -> runPartitionWorker(queue, table, plan, output),
-                    "warp-parallel-join-" + i);
-            worker.setDaemon(true);
-            workers.add(worker);
-            worker.start();
+            stealPool.execute(() -> drainBatch(stealPool, queue, table, plan, output, localPartitionsDone));
+        }
+
+        // Bounded remote buffering (Phase 2) -- a remote partition that turns out far larger than
+        // expected (key skew) spills its EXCESS probe rows into a separate, unbounded overflow list
+        // processed locally instead of growing the remote buffer (and the eventual gRPC payload)
+        // without limit. See this class's own javadoc.
+        long remoteMaxBufferedRows = parseLongEnv("WARP_PARALLEL_JOIN_REMOTE_MAX_BUFFERED_ROWS", 200_000L);
+        List<List<List<Object>>> remoteOverflowBuffers = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            remoteOverflowBuffers.add(i < remoteCount ? new ArrayList<>() : null);
         }
 
         List<ColumnInfo> probeColumns = new ArrayList<>();
@@ -191,7 +231,12 @@ final class ParallelJoinExecutor {
                         return; // real, cheap reject -- this key provably isn't in the build side
                     }
                     if (partition < remoteCount) {
-                        remoteProbeBuffers.get(partition).add(logicalRow);
+                        List<List<Object>> remoteBuffer = remoteProbeBuffers.get(partition);
+                        if (remoteBuffer.size() < remoteMaxBufferedRows) {
+                            remoteBuffer.add(logicalRow);
+                        } else {
+                            remoteOverflowBuffers.get(partition).add(logicalRow);
+                        }
                     } else {
                         offer(queues.get(partition), logicalRow);
                     }
@@ -201,18 +246,28 @@ final class ParallelJoinExecutor {
             for (int i = remoteCount; i < n; i++) {
                 offer(queues.get(i), END_OF_STREAM);
             }
-            joinQuietly(workers);
+            awaitLocalPartitions(stealPool, localPartitionsDone);
             throw e;
         }
 
         for (int i = remoteCount; i < n; i++) {
             offer(queues.get(i), END_OF_STREAM);
         }
-        joinQuietly(workers);
+        awaitLocalPartitions(stealPool, localPartitionsDone);
 
         for (int i = 0; i < remoteCount; i++) {
-            dispatchRemotePartition(plan, peers.get(i), buildColumns, probeColumns,
+            dispatchRemotePartition(plan, peers, i, buildColumns, probeColumns,
                     partitionTables.get(i), remoteProbeBuffers.get(i), partitionOutputs.get(i));
+            // The overflow spill (if any) never went over the wire -- process it locally, merged
+            // into the same partition's output as the remotely (or locally-fallback) processed rows.
+            List<List<Object>> overflow = remoteOverflowBuffers.get(i);
+            if (!overflow.isEmpty()) {
+                log.info("parallel join: partition {} exceeded the {}-row remote buffer cap -- {} "
+                        + "overflow row(s) processed locally instead of sent to the peer",
+                        i, remoteMaxBufferedRows, overflow.size());
+                partitionOutputs.get(i).addAll(RemotePartitionJoin.probeAll(
+                        partitionTables.get(i), overflow, plan.probeKeyOrdinal(), plan.leftIsBuild()));
+            }
         }
 
         List<ColumnInfo> finalColumns = new ArrayList<>(buildColumns.size() + probeColumns.size());
@@ -249,24 +304,59 @@ final class ParallelJoinExecutor {
         return ExecutionResult.ofQuery(projectedColumns, projectedRows);
     }
 
-    private static void runPartitionWorker(BlockingQueue<List<Object>> queue, Map<Object, List<List<Object>>> table,
-            ParallelJoinPlanner.Plan plan, List<List<Object>> output) {
-        while (true) {
+    /** How many rows one task instance drains before voluntarily resubmitting itself -- small
+     * enough that a busy partition's work gets sliced into many independently-schedulable pieces
+     * (the actual mechanism that lets a work-stealing pool balance skewed partitions across idle
+     * threads), large enough that resubmission overhead doesn't dominate for a fast-moving queue. */
+    private static final int STEAL_BATCH_SIZE = 256;
+
+    /** How long a drain task waits for the NEXT row before giving up this turn and resubmitting --
+     * short enough that an idle-but-empty-right-now partition doesn't monopolize a pool thread
+     * that could be stealing work from a busier partition instead. */
+    private static final long STEAL_POLL_MILLIS = 5;
+
+    /** One local partition's draining, reshaped as a short-lived, SELF-RESUBMITTING task on a
+     * work-stealing {@link ExecutorService} rather than a thread permanently owning this queue --
+     * see this class's own javadoc on why. At most one instance of this task is ever active for a
+     * given partition at a time (each resubmission happens only after the current batch returns),
+     * so {@code output} (a plain {@code ArrayList}) never sees concurrent writers despite running
+     * on a shared thread pool -- work stealing happens ACROSS partitions' tasks, never within one
+     * partition's own sequential chain. */
+    private static void drainBatch(ExecutorService pool, BlockingQueue<List<Object>> queue,
+            Map<Object, List<List<Object>>> table, ParallelJoinPlanner.Plan plan, List<List<Object>> output,
+            CountDownLatch done) {
+        for (int processed = 0; processed < STEAL_BATCH_SIZE; processed++) {
             List<Object> probeRow;
             try {
-                probeRow = queue.take();
+                probeRow = queue.poll(STEAL_POLL_MILLIS, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                done.countDown();
                 return;
             }
+            if (probeRow == null) {
+                break; // nothing ready right now -- resubmit below, ceding this thread to other work
+            }
             if (probeRow == END_OF_STREAM) {
-                return;
+                done.countDown();
+                return; // this partition is fully drained -- stop resubmitting
             }
             // probeRow is already the LOGICAL row (plan.probeProjection() applied before it was
             // queued), so plan.probeKeyOrdinal() addresses it directly -- no further remap here.
             // Delegates to RemotePartitionJoin's own matching code (shared, byte-for-byte, with the
             // remote/Phase-1a path) rather than duplicating the match/emit logic inline here.
             RemotePartitionJoin.probeOne(table, probeRow, plan.probeKeyOrdinal(), plan.leftIsBuild(), output);
+        }
+        pool.execute(() -> drainBatch(pool, queue, table, plan, output, done));
+    }
+
+    private static void awaitLocalPartitions(ExecutorService pool, CountDownLatch done) {
+        try {
+            done.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdown();
         }
     }
 
@@ -278,15 +368,6 @@ final class ParallelJoinExecutor {
         }
     }
 
-    private static void joinQuietly(List<Thread> workers) {
-        for (Thread worker : workers) {
-            try {
-                worker.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
 
     private static Object keyOf(List<Object> row, int index) {
         return index >= 0 && index < row.size() ? row.get(index) : null;
@@ -369,7 +450,46 @@ final class ParallelJoinExecutor {
      * success=false} -- falls back to computing this ONE partition locally via {@link
      * RemotePartitionJoin#probeAll}, synchronously, in the coordinator's own thread: a transient
      * peer problem costs this one partition's parallelism, never the whole query. */
-    private static void dispatchRemotePartition(ParallelJoinPlanner.Plan plan, NodeRegistry.NodeRow peer,
+    private static void dispatchRemotePartition(ParallelJoinPlanner.Plan plan, List<NodeRegistry.NodeRow> peers,
+            int preferredIndex, List<ColumnInfo> buildColumns, List<ColumnInfo> probeColumns,
+            Map<Object, List<List<Object>>> table, List<List<Object>> probeRows, List<List<Object>> output) {
+        // Cost-based placement (Phase 2): a small partition isn't worth a network round trip and a
+        // peer's own matching work -- process it locally even though a peer was assigned, reusing
+        // rows already collected rather than a fresh probe. Real row counts, not an estimate.
+        long combinedRowCount = table.values().stream().mapToLong(List::size).sum() + probeRows.size();
+        long remoteMinRows = parseLongEnv("WARP_PARALLEL_JOIN_REMOTE_MIN_ROWS", 50_000L);
+        if (combinedRowCount < remoteMinRows) {
+            log.debug("parallel join: partition has only {} combined row(s), below the "
+                    + "WARP_PARALLEL_JOIN_REMOTE_MIN_ROWS threshold -- processing locally instead of "
+                    + "dispatching to a peer", combinedRowCount);
+            output.addAll(RemotePartitionJoin.probeAll(table, probeRows, plan.probeKeyOrdinal(), plan.leftIsBuild()));
+            return;
+        }
+
+        // Retry/failover (Phase 2): try the preferred peer first, then every OTHER discovered live
+        // peer (skipping the preferred one, already tried) before giving up on the network
+        // entirely -- a single peer's failure no longer costs this partition's parallelism if any
+        // other peer is reachable.
+        List<NodeRegistry.NodeRow> attemptedInOrder = new ArrayList<>();
+        for (int offset = 0; offset < peers.size(); offset++) {
+            NodeRegistry.NodeRow candidate = peers.get((preferredIndex + offset) % peers.size());
+            if (attemptedInOrder.contains(candidate)) {
+                continue;
+            }
+            attemptedInOrder.add(candidate);
+            if (tryDispatchOnce(plan, candidate, buildColumns, probeColumns, table, probeRows, output)) {
+                return;
+            }
+        }
+        log.warn("parallel join: every discovered live peer failed for this partition -- falling back "
+                + "to local execution ({} peer(s) tried)", attemptedInOrder.size());
+        output.addAll(RemotePartitionJoin.probeAll(table, probeRows, plan.probeKeyOrdinal(), plan.leftIsBuild()));
+    }
+
+    /** One dispatch attempt against ONE specific peer -- {@code true} on success (rows already
+     * appended to {@code output}), {@code false} on any failure (nothing appended, caller decides
+     * whether to try another peer or fall back to local). */
+    private static boolean tryDispatchOnce(ParallelJoinPlanner.Plan plan, NodeRegistry.NodeRow peer,
             List<ColumnInfo> buildColumns, List<ColumnInfo> probeColumns,
             Map<Object, List<List<Object>>> table, List<List<Object>> probeRows, List<List<Object>> output) {
         String keystorePath = System.getenv("WARP_PEER_TLS_KEYSTORE");
@@ -402,14 +522,15 @@ final class ParallelJoinExecutor {
             for (Row row : response.getRowsList()) {
                 output.add(fromRow(row));
             }
+            return true;
         } catch (RuntimeException | java.security.GeneralSecurityException | java.io.IOException e) {
-            log.warn("parallel join: remote partition dispatch to {}:{} failed -- falling back to local "
-                    + "execution for this one partition ({})", peer.host(), peer.peerGrpcPort(), e.toString());
+            log.warn("parallel join: remote partition dispatch to {}:{} failed -- will try another peer "
+                    + "if one is available ({})", peer.host(), peer.peerGrpcPort(), e.toString());
             // A real failure (not just this dispatch's own try/catch scope) means the cached
             // channel itself may be bad -- evict it so the NEXT dispatch to this peer builds a
             // fresh one rather than retrying against a connection already proven broken.
             PeerChannelPool.evict(peer.host(), peer.peerGrpcPort());
-            output.addAll(RemotePartitionJoin.probeAll(table, probeRows, plan.probeKeyOrdinal(), plan.leftIsBuild()));
+            return false;
         }
     }
 
@@ -450,6 +571,18 @@ final class ParallelJoinExecutor {
         }
         try {
             return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private static long parseLongEnv(String name, long defaultValue) {
+        String raw = System.getenv(name);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
             return defaultValue;
         }

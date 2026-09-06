@@ -200,6 +200,11 @@ class ParallelJoinRemoteDispatchIntegrationTest {
                 // can only mean the remote path genuinely ran.
                 .env("WARP_PARALLEL_JOIN_THREADS", "1")
                 .env("WARP_PARALLEL_JOIN_REMOTE_ENABLED", "true")
+                // This test's dataset (2 rows) is realistic for a fast test run but far under
+                // WARP_PARALLEL_JOIN_REMOTE_MIN_ROWS's own default (50,000) -- explicitly zero the
+                // threshold so the Phase 2 cost-based gate doesn't skip remote dispatch entirely,
+                // which would make this test pass without ever exercising the remote path.
+                .env("WARP_PARALLEL_JOIN_REMOTE_MIN_ROWS", "0")
                 .env("WARP_PEER_TLS_KEYSTORE", keystorePath.toString())
                 .env("WARP_PEER_TLS_KEYSTORE_PASSWORD", password))
                 .start();
