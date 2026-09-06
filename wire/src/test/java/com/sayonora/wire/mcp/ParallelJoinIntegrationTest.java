@@ -139,6 +139,11 @@ class ParallelJoinIntegrationTest {
                 .env("WARP_OTEL_ENDPOINT", "disabled")
                 .env("WARP_PARALLEL_JOIN_ENABLED", "true")
                 .env("WARP_PARALLEL_JOIN_THREADS", "4")
+                // This test's dataset (400 joined rows) is realistic for a fast test run but well
+                // under WARP_PARALLEL_JOIN_MIN_ROWS's own default (10,000) -- explicitly zero the
+                // threshold so the parallel path actually activates here rather than silently
+                // falling back, which would make this test pass without exercising anything.
+                .env("WARP_PARALLEL_JOIN_MIN_ROWS", "0")
                 .start();
         HttpResponse<String> parallelResponse = mcpCall(warp.port("mcp"), sql);
         assertEquals(200, parallelResponse.statusCode());
@@ -188,5 +193,46 @@ class ParallelJoinIntegrationTest {
         assertEquals(200, response.statusCode());
         assertTrue(response.body().contains("\"id\""), "a plain, non-federated query must still work "
                 + "unchanged with the flag on -- got: " + response.body());
+    }
+
+    /** {@code WARP_PARALLEL_JOIN_MIN_ROWS}'s own default (10,000) must gate a real, but small,
+     * federated join back to the sequential path even with the flag on -- correctness (not
+     * activation) is what's proven here, since a caller can't observe from the response alone
+     * which path actually ran. */
+    @Test
+    void aSmallJoinStaysCorrectUnderTheDefaultMinRowsThreshold() throws Exception {
+        ordersDb = RealPostgres.start();
+        customersDb = RealPostgres.start();
+        try (Connection c = DriverManager.getConnection(customersDb.jdbcUrl(), customersDb.username(), customersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR(50))");
+            st.execute("INSERT INTO customers VALUES (1, 'alice'), (2, 'bob')");
+        }
+        try (Connection c = DriverManager.getConnection(ordersDb.jdbcUrl(), ordersDb.username(), ordersDb.password());
+                Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, amount NUMERIC)");
+            st.execute("INSERT INTO orders VALUES (1, 1, 50), (2, 2, 75)");
+        }
+        String backends = "default=" + ordersDb.jdbcUrl() + "|" + ordersDb.username() + "|" + ordersDb.password()
+                + ";customers_backend=" + customersDb.jdbcUrl() + "|" + customersDb.username() + "|" + customersDb.password();
+        warp = WarpProcess.builder()
+                .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
+                .frontend("mcp", "WARP_MCP_PORT")
+                .env("WARP_BACKENDS", backends)
+                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
+                .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .env("WARP_PARALLEL_JOIN_ENABLED", "true")
+                // Deliberately NOT overriding WARP_PARALLEL_JOIN_MIN_ROWS -- its own real default
+                // (10,000) must gate this 2-row join back to the sequential path on its own.
+                .start();
+
+        HttpResponse<String> response = mcpCall(warp.port("mcp"),
+                "SELECT c.name, o.amount FROM orders o JOIN customers c ON o.customer_id = c.id");
+        assertEquals(200, response.statusCode());
+        assertTrue(response.body().contains("alice") && response.body().contains("bob"),
+                "a small federated join must still return correct results whichever path the "
+                        + "MIN_ROWS threshold routes it to -- got: " + response.body());
     }
 }
