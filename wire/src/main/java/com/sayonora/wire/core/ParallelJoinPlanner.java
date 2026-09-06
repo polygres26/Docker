@@ -159,6 +159,17 @@ final class ParallelJoinPlanner {
     private record SideExtraction(RelNode leaf, List<Integer> baseProjection, RexRowEvaluator.RowPredicate residualFilter) {
     }
 
+    /** The shared, structural result of peeling any leading {@code Sort}/{@code Limit}, {@code
+     * Aggregate}, and top-level {@code Project} off the optimized plan's root -- extracted so both
+     * {@link #tryPlan} (a single 2-way join) and {@link #tryChainPlan} (a left-deep chain of 3+
+     * leaves) share exactly one implementation of this peeling, rather than risk two copies drifting
+     * apart on a future fix. {@code root}, once returned, is exactly the join structure underneath --
+     * either the sole {@link Join} ({@link #tryPlan}'s own case) or the outermost {@link Join} of a
+     * left-deep chain ({@link #tryChainPlan}'s case). */
+    private record PeeledHead(RelNode root, List<SortKey> sortKeys, Integer fetchLimit,
+            AggregateSpec aggregateSpec, List<Integer> outputProjection) {
+    }
+
     /** Returns {@code null} (never throws) whenever the plan isn't eligible for Phase 0's parallel
      * path -- every failure mode here is a real, intentional "fall back to today's behavior", not
      * an error. {@code mountDialects} and {@code mountToBackend} are keyed by the same mount/schema
@@ -168,6 +179,82 @@ final class ParallelJoinPlanner {
         if (hasBindParams) {
             return null;
         }
+        PeeledHead head = peelSortAggregateProject(optimized);
+        if (head == null) {
+            return null;
+        }
+        Join join = findSoleInnerJoin(head.root());
+        if (join == null) {
+            log.debug("parallel join planner: no single top-level INNER join found in the optimized plan -- skipping");
+            return null;
+        }
+        return buildTwoWayPlan(join, mountDialects, mountToBackend, head.outputProjection(), head.sortKeys(),
+                head.fetchLimit(), head.aggregateSpec());
+    }
+
+    /** N-way (left-deep chain) counterpart to {@link #tryPlan}: only attempted when there are 3+
+     * federated backends at all (see {@link SchemaFederationStage}'s own call site) -- a genuine 2-way
+     * join is always {@link #tryPlan}'s job. Reuses the exact same {@link #buildTwoWayPlan} extraction
+     * for the chain's FIRST pairwise join (the two left-most leaves), which alone gets Phase 0-2's
+     * full partitioned/parallel/remote-capable treatment; {@link ChainedJoinExecutor} joins each
+     * subsequent leaf against the running, already-materialized result via a single, in-memory hash
+     * join -- a real, disclosed scope narrowing: only the chain's first pairwise join is parallelized.
+     * Only a LEFT-DEEP chain shape ({@code Join(Join(...,leaf),leaf)}, confirmed via a live diagnostic
+     * to be exactly what Calcite produces for {@code A JOIN B JOIN C}) is supported; a right-deep or
+     * bushy join tree falls back to the sequential path, same as every other real narrowing here. */
+    static ChainPlan tryChainPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams) {
+        if (hasBindParams) {
+            return null;
+        }
+        PeeledHead head = peelSortAggregateProject(optimized);
+        if (head == null) {
+            return null;
+        }
+        if (!(head.root() instanceof Join topJoin)) {
+            log.debug("parallel join planner: no top-level join found for a chain -- skipping");
+            return null;
+        }
+        JoinChain chain = findLeftDeepChain(topJoin);
+        if (chain == null || chain.leaves().size() < 3) {
+            log.debug("parallel join planner: no left-deep chain of 3+ backend leaves found -- skipping");
+            return null;
+        }
+        Join innermostJoin = findInnermostJoin(topJoin);
+        Plan firstStepPlan = buildTwoWayPlan(innermostJoin, mountDialects, mountToBackend, null, null, null, null);
+        if (firstStepPlan == null) {
+            return null;
+        }
+        List<ChainExtensionStep> extensionSteps = new ArrayList<>();
+        // chain.leaves()[0]/[1] (the first pair) are already fully covered by firstStepPlan above;
+        // chain.keyOrdinalPairs()[0] is that first pair's own join key (unused here, buildTwoWayPlan
+        // recomputed it independently from innermostJoin). Each subsequent pairs[i] (i>=1) is the
+        // join key between the RUNNING result-so-far and chain.leaves()[i+1].
+        for (int i = 1; i < chain.keyOrdinalPairs().size(); i++) {
+            SideExtraction leaf = chain.leaves().get(i + 1);
+            int[] pair = chain.keyOrdinalPairs().get(i);
+            String mount = mountNameOf(leaf.leaf());
+            LeafScanProfiler.MountedBackend backend = mount == null ? null : mountToBackend.get(mount);
+            SqlDialect dialect = mount == null ? null : mountDialects.get(mount);
+            if (backend == null || dialect == null) {
+                log.debug("parallel join planner: couldn't resolve a chain leaf's mount to a real backend -- skipping");
+                return null;
+            }
+            String sql;
+            try {
+                sql = toSql(leaf.leaf(), dialect);
+            } catch (RuntimeException e) {
+                log.debug("parallel join planner: failed to convert a chain leaf back to SQL -- skipping ({})", e.toString());
+                return null;
+            }
+            extensionSteps.add(new ChainExtensionStep(sql, leaf.baseProjection(), leaf.residualFilter(), backend,
+                    pair[0], pair[1]));
+        }
+        return new ChainPlan(firstStepPlan, extensionSteps, head.outputProjection(), head.sortKeys(),
+                head.fetchLimit(), head.aggregateSpec());
+    }
+
+    private static PeeledHead peelSortAggregateProject(RelNode optimized) {
         RelNode root = optimized;
         List<SortKey> sortKeys = null;
         Integer fetchLimit = null;
@@ -259,11 +346,17 @@ final class ParallelJoinPlanner {
             }
             root = project.getInput();
         }
-        Join join = findSoleInnerJoin(root);
-        if (join == null) {
-            log.debug("parallel join planner: no single top-level INNER join found in the optimized plan -- skipping");
-            return null;
-        }
+        return new PeeledHead(root, sortKeys, fetchLimit, aggregateSpec, outputProjection);
+    }
+
+    /** Resolves a single equi-join into a full {@link Plan} -- the extraction logic shared by {@link
+     * #tryPlan} (where {@code join} is the plan's sole join) and {@link #tryChainPlan} (where {@code
+     * join} is the left-deep chain's INNERMOST join, between its first two leaves; the outer-layer
+     * parameters are then {@code null}/{@code null}/{@code null}/{@code null} since those apply to
+     * the WHOLE chain's final result, not this intermediate pairwise step). */
+    private static Plan buildTwoWayPlan(Join join, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, List<Integer> outputProjection,
+            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec) {
         JoinInfo info = join.analyzeCondition();
         if (info.leftKeys.size() != 1) {
             log.debug("parallel join planner: join condition isn't a single equi-join key pair -- skipping");
@@ -631,6 +724,78 @@ final class ParallelJoinPlanner {
             }
         }
         return false;
+    }
+
+    /** One extension step of a left-deep join chain beyond its first pairwise join: joins the new
+     * leaf ({@code leafSql}/{@code leafProjection}/{@code leafFilter}/{@code leafBackend}, exactly
+     * like a {@link Plan}'s own build/probe side) against the RUNNING (already fully materialized)
+     * result of every prior step. {@code runningResultKeyOrdinal} is relative to the running result's
+     * own natural row (the concatenation of every leaf so far, in order -- exactly what {@link
+     * ChainedJoinExecutor} produces at each step); {@code leafKeyOrdinal} is relative to this leaf's
+     * own logical (post-{@code leafProjection}) row, same convention as {@link Plan#probeKeyOrdinal()}. */
+    record ChainExtensionStep(String leafSql, List<Integer> leafProjection, RexRowEvaluator.RowPredicate leafFilter,
+            LeafScanProfiler.MountedBackend leafBackend, int runningResultKeyOrdinal, int leafKeyOrdinal) {
+    }
+
+    /** A left-deep chain of 3+ backend leaves (see {@link #tryChainPlan}): {@code firstStepPlan} is a
+     * normal 2-way {@link Plan} for the two left-most leaves, with no outer projection/sort/aggregate
+     * of its own (those apply to the chain's FINAL result, carried here instead); {@code
+     * extensionSteps} then join each subsequent leaf against the running result, left to right. */
+    record ChainPlan(Plan firstStepPlan, List<ChainExtensionStep> extensionSteps,
+            List<Integer> outputProjection, List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec) {
+    }
+
+    /** A left-deep chain's own structural shape, before mount/backend/SQL resolution: {@code
+     * leaves()} are every backend leaf in left-to-right order; {@code keyOrdinalPairs()[i]} is
+     * {@code {leftKeyOrdinal, rightKeyOrdinal}} for the join that attaches {@code leaves[i+1]} --
+     * {@code leftKeyOrdinal} relative to the running combined row of {@code leaves[0..i]} (exactly
+     * what {@link JoinInfo#leftKeys} already reports, since Calcite's own left-deep row types are
+     * always the natural concatenation of every leaf so far), {@code rightKeyOrdinal} relative to
+     * {@code leaves[i+1]}'s own row. */
+    private record JoinChain(List<SideExtraction> leaves, List<int[]> keyOrdinalPairs) {
+    }
+
+    /** Walks a left-deep join tree bottom-up: {@code node} must be either another INNER {@link Join}
+     * (continuing the chain, with its own RIGHT input required to be a single {@link #extractSide}-
+     * compatible leaf -- this is exactly what excludes a bushy tree, since a leaf-only shape is the
+     * only one {@link #extractSide} ever accepts) or itself directly reducible to a single leaf (the
+     * chain's base case, an ordinary bare/{@code Project}/{@code Filter}-wrapped backend scan).
+     * {@code null} for anything else -- a right-deep or bushy join tree, more than one equi-join key
+     * pair per step, or a join input {@link #extractSide} can't confidently resolve. */
+    private static JoinChain findLeftDeepChain(RelNode node) {
+        if (node instanceof Join join) {
+            if (join.getJoinType() != JoinRelType.INNER) {
+                return null;
+            }
+            JoinInfo info = join.analyzeCondition();
+            if (info.leftKeys.size() != 1) {
+                return null;
+            }
+            SideExtraction rightLeaf = extractSide(join.getRight());
+            if (rightLeaf == null) {
+                return null;
+            }
+            JoinChain left = findLeftDeepChain(join.getLeft());
+            if (left == null) {
+                return null;
+            }
+            List<SideExtraction> leaves = new ArrayList<>(left.leaves());
+            leaves.add(rightLeaf);
+            List<int[]> pairs = new ArrayList<>(left.keyOrdinalPairs());
+            pairs.add(new int[] {info.leftKeys.getInt(0), info.rightKeys.getInt(0)});
+            return new JoinChain(leaves, pairs);
+        }
+        SideExtraction leaf = extractSide(node);
+        if (leaf == null) {
+            return null;
+        }
+        return new JoinChain(new ArrayList<>(List.of(leaf)), new ArrayList<>());
+    }
+
+    /** The chain's own innermost {@link Join} (between its first two leaves) -- {@code join}'s own
+     * left input keeps being another {@link Join} until it isn't. */
+    private static Join findInnermostJoin(Join join) {
+        return join.getLeft() instanceof Join leftJoin ? findInnermostJoin(leftJoin) : join;
     }
 
     /** As {@link LeafScanProfiler#measure}'s own private {@code collectJdbcLeaves} -- stops
