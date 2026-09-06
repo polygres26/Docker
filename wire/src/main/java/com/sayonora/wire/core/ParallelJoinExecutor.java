@@ -374,9 +374,11 @@ final class ParallelJoinExecutor {
             Map<Object, List<List<Object>>> table, List<List<Object>> probeRows, List<List<Object>> output) {
         String keystorePath = System.getenv("WARP_PEER_TLS_KEYSTORE");
         String keystorePassword = System.getenv("WARP_PEER_TLS_KEYSTORE_PASSWORD");
-        ManagedChannel channel = null;
         try {
-            channel = WarpPeerGrpcServer.openPeerChannel(peer.host(), peer.peerGrpcPort(), keystorePath, keystorePassword);
+            // Phase 2: a pooled, reused channel per peer -- amortizes the real mTLS handshake cost
+            // across every partition/query routed to this peer, instead of paying it fresh every
+            // single dispatch (Phase 1b's original behavior). Never torn down here on success.
+            ManagedChannel channel = PeerChannelPool.getOrCreate(peer.host(), peer.peerGrpcPort(), keystorePath, keystorePassword);
             WarpPeerServiceGrpc.WarpPeerServiceBlockingStub stub = WarpPeerServiceGrpc.newBlockingStub(channel)
                     .withDeadlineAfter(30, TimeUnit.SECONDS);
             JoinPartitionRequest.Builder request = JoinPartitionRequest.newBuilder()
@@ -403,11 +405,11 @@ final class ParallelJoinExecutor {
         } catch (RuntimeException | java.security.GeneralSecurityException | java.io.IOException e) {
             log.warn("parallel join: remote partition dispatch to {}:{} failed -- falling back to local "
                     + "execution for this one partition ({})", peer.host(), peer.peerGrpcPort(), e.toString());
+            // A real failure (not just this dispatch's own try/catch scope) means the cached
+            // channel itself may be bad -- evict it so the NEXT dispatch to this peer builds a
+            // fresh one rather than retrying against a connection already proven broken.
+            PeerChannelPool.evict(peer.host(), peer.peerGrpcPort());
             output.addAll(RemotePartitionJoin.probeAll(table, probeRows, plan.probeKeyOrdinal(), plan.leftIsBuild()));
-        } finally {
-            if (channel != null) {
-                channel.shutdownNow();
-            }
         }
     }
 
