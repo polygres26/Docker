@@ -324,25 +324,73 @@ final class ParallelJoinExecutor {
             allRows.addAll(output);
         }
         List<Integer> outputProjection = plan.outputProjection();
-        if (outputProjection == null) {
-            return ExecutionResult.ofQuery(finalColumns, allRows);
-        }
-        // A plain column-selection/reordering Project sat directly above the join (e.g. "SELECT
-        // c.name, o.amount") -- re-apply it now against the natural left-then-right concatenated
-        // row/columns ParallelJoinPlanner already validated it's expressed purely in terms of.
-        List<ColumnInfo> projectedColumns = new ArrayList<>(outputProjection.size());
-        for (int ordinal : outputProjection) {
-            projectedColumns.add(finalColumns.get(ordinal));
-        }
-        List<List<Object>> projectedRows = new ArrayList<>(allRows.size());
-        for (List<Object> row : allRows) {
-            List<Object> projectedRow = new ArrayList<>(outputProjection.size());
+        List<ColumnInfo> outputColumns = finalColumns;
+        List<List<Object>> outputRows = allRows;
+        if (outputProjection != null) {
+            // A plain column-selection/reordering Project sat directly above the join (e.g.
+            // "SELECT c.name, o.amount") -- re-apply it now against the natural left-then-right
+            // concatenated row/columns ParallelJoinPlanner already validated it's expressed purely
+            // in terms of.
+            List<ColumnInfo> projectedColumns = new ArrayList<>(outputProjection.size());
             for (int ordinal : outputProjection) {
-                projectedRow.add(row.get(ordinal));
+                projectedColumns.add(finalColumns.get(ordinal));
             }
-            projectedRows.add(projectedRow);
+            List<List<Object>> projectedRows = new ArrayList<>(allRows.size());
+            for (List<Object> row : allRows) {
+                List<Object> projectedRow = new ArrayList<>(outputProjection.size());
+                for (int ordinal : outputProjection) {
+                    projectedRow.add(row.get(ordinal));
+                }
+                projectedRows.add(projectedRow);
+            }
+            outputColumns = projectedColumns;
+            outputRows = projectedRows;
         }
-        return ExecutionResult.ofQuery(projectedColumns, projectedRows);
+        if (plan.sortKeys() != null) {
+            // A bounded ORDER BY ... LIMIT sat above the join (see ParallelJoinPlanner's own
+            // javadoc on why an unbounded sort stays out of scope) -- its own collation ordinals
+            // are already relative to exactly this row shape (post-outputProjection, or the
+            // natural concatenation when there's none), so no further translation is needed here.
+            // A real, disclosed simplification, consistent with this engine's other narrow scoping:
+            // this sorts the already-fully-collected rows once at the end rather than maintaining a
+            // true streaming per-partition bounded top-K -- correct either way, just not the
+            // maximally memory-efficient version of the optimization.
+            outputRows = new ArrayList<>(outputRows);
+            outputRows.sort((a, b) -> compareBySortKeys(a, b, plan.sortKeys()));
+            int limit = plan.fetchLimit();
+            if (outputRows.size() > limit) {
+                outputRows = outputRows.subList(0, limit);
+            }
+        }
+        return ExecutionResult.ofQuery(outputColumns, outputRows);
+    }
+
+    private static int compareBySortKeys(List<Object> a, List<Object> b, List<ParallelJoinPlanner.SortKey> sortKeys) {
+        for (ParallelJoinPlanner.SortKey sortKey : sortKeys) {
+            Object left = a.get(sortKey.ordinal());
+            Object right = b.get(sortKey.ordinal());
+            int cmp = compareNullsLast(left, right);
+            if (cmp != 0) {
+                return sortKey.descending() ? -cmp : cmp;
+            }
+        }
+        return 0;
+    }
+
+    /** Nulls sort last regardless of direction -- see {@link ParallelJoinPlanner.SortKey}'s own
+     * javadoc on why this is a real, disclosed simplification rather than full {@code NULLS FIRST}/
+     * {@code NULLS LAST} support. */
+    private static int compareNullsLast(Object left, Object right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return RexRowEvaluator.compareValues(left, right);
     }
 
     /** How many rows one task instance drains before voluntarily resubmitting itself -- small

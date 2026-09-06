@@ -149,7 +149,10 @@ final class RexRowEvaluator {
      * plain string comparison -- correct for equality on any type, and a reasonable, disclosed
      * approximation for ordering comparisons on non-numeric values (matching how the rest of this
      * engine already treats values as text once they cross a wire boundary). */
-    private static int compareValues(Object left, Object right) {
+    /** Package-visible (not just used internally) so {@link ParallelJoinPlanner}'s {@code ORDER BY}
+     * support can sort final output rows with the exact same numeric-else-string comparison
+     * semantics used for filter predicates -- one comparison implementation, not two. */
+    static int compareValues(Object left, Object right) {
         BigDecimal leftNumber = asBigDecimalOrNull(left);
         BigDecimal rightNumber = asBigDecimalOrNull(right);
         if (leftNumber != null && rightNumber != null) {

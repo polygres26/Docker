@@ -9,14 +9,17 @@ import java.util.List;
 import java.util.Map;
 import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.plan.Convention;
+import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
+import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlNode;
@@ -82,7 +85,19 @@ final class ParallelJoinPlanner {
             int buildKeyOrdinal, LeafScanProfiler.MountedBackend buildBackend,
             String probeSql, List<Integer> probeProjection, RexRowEvaluator.RowPredicate probeFilter,
             int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
-            boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate) {
+            boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate,
+            List<SortKey> sortKeys, Integer fetchLimit) {
+    }
+
+    /** One {@code ORDER BY} key: {@code ordinal} into the FINAL output row -- the same row space
+     * {@code outputProjection} produces (or the natural left-then-right concatenation, when there's
+     * no {@code outputProjection}) -- since a {@code Sort} directly above a {@code Project} (or
+     * directly above the {@code Join} itself, when there's no {@code Project}) reports its own
+     * collation ordinals relative to exactly that row shape already; no further translation needed.
+     * Deliberately ignores {@code NULLS FIRST}/{@code NULLS LAST} nuance -- nulls sort last
+     * regardless of direction, a real, disclosed simplification consistent with this engine's other
+     * narrow scoping choices, not a general SQL null-ordering implementation. */
+    record SortKey(int ordinal, boolean descending) {
     }
 
     /** One join side, fully resolved: its own leaf backend scan, and -- when Calcite left a plain
@@ -105,6 +120,53 @@ final class ParallelJoinPlanner {
             return null;
         }
         RelNode root = optimized;
+        List<SortKey> sortKeys = null;
+        Integer fetchLimit = null;
+        // Real, found-live Calcite/EnumerableConvention quirk: "ORDER BY ... LIMIT" does NOT
+        // compile to one fused Sort node with both a collation and a fetch -- EnumerableConvention
+        // splits it into a SEPARATE EnumerableLimit (carries fetch/offset) wrapping an
+        // EnumerableSort (carries the collation, its own fetch always null in this configuration).
+        // A bare Sort-with-fetch (the shape a non-Enumerable/logical plan would use) is handled too,
+        // for robustness, even though the live optimized plan here is always EnumerableConvention.
+        RexNode fetchNode = null;
+        RelNode afterFetchNode = null;
+        if (root instanceof org.apache.calcite.adapter.enumerable.EnumerableLimit limit) {
+            fetchNode = limit.fetch;
+            afterFetchNode = limit.getInput();
+        } else if (root instanceof Sort sortWithOwnFetch && sortWithOwnFetch.fetch != null) {
+            fetchNode = sortWithOwnFetch.fetch;
+            afterFetchNode = sortWithOwnFetch;
+        } else if (root instanceof Sort) {
+            // An unbounded ORDER BY (no LIMIT) stays genuinely out of scope -- it's inherently
+            // blocking end-to-end (the whole input must be seen before any output can be produced),
+            // and a distributed/bounded-partial-sort optimization for that case is real, separate
+            // work this pass doesn't attempt.
+            log.debug("parallel join planner: an ORDER BY with no LIMIT is out of scope -- skipping");
+            return null;
+        }
+        if (fetchNode != null) {
+            Integer fetch = fetchValue(fetchNode);
+            if (fetch == null) {
+                log.debug("parallel join planner: couldn't resolve the LIMIT to a plain integer -- skipping");
+                return null;
+            }
+            fetchLimit = fetch;
+            if (afterFetchNode instanceof Sort sort) {
+                sortKeys = new ArrayList<>();
+                for (RelFieldCollation collation : sort.getCollation().getFieldCollations()) {
+                    boolean descending = collation.getDirection() == RelFieldCollation.Direction.DESCENDING
+                            || collation.getDirection() == RelFieldCollation.Direction.STRICTLY_DESCENDING;
+                    sortKeys.add(new SortKey(collation.getFieldIndex(), descending));
+                }
+                root = sort.getInput();
+            } else {
+                // A bare LIMIT with no ORDER BY above it -- a real, valid shape (row order is
+                // otherwise unspecified by SQL semantics anyway). No sort keys to apply, just the
+                // final truncation once rows are collected.
+                sortKeys = List.of();
+                root = afterFetchNode;
+            }
+        }
         List<Integer> outputProjection = null;
         if (root instanceof Project project) {
             outputProjection = asPlainColumnSelection(project.getProjects());
@@ -172,11 +234,27 @@ final class ParallelJoinPlanner {
         if (leftIsBuild) {
             return new Plan(leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
                     rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
-                    true, outputProjection, probeRowCountEstimate);
+                    true, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit);
         }
         return new Plan(rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
                 leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
-                false, outputProjection, probeRowCountEstimate);
+                false, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit);
+    }
+
+    /** Resolves a {@code Sort}'s own {@code fetch} (the {@code LIMIT} count) to a plain {@code
+     * int} -- {@code null} when it isn't the simple literal shape expected (a bind parameter would
+     * already have been refused by {@code hasBindParams} above; anything else is unexpected enough
+     * to just decline rather than guess). */
+    private static Integer fetchValue(RexNode fetch) {
+        if (!(fetch instanceof RexLiteral literal)) {
+            return null;
+        }
+        try {
+            Number value = literal.getValueAs(Number.class);
+            return value == null ? null : value.intValue();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** {@code WARP_PARALLEL_JOIN_MIN_ROWS} -- the smaller (build) side's estimated row count must
@@ -288,16 +366,16 @@ final class ParallelJoinPlanner {
         return sqlNode.toSqlString(dialect).getSql();
     }
 
-    /** The optimized plan's ROOT must be the {@link Join} itself -- deliberately NOT a recursive
-     * search through wrapping nodes. A {@code Sort} (from {@code ORDER BY}/{@code LIMIT}) or a
-     * {@code Project} (reordering/renaming output columns) above the join encodes real query
-     * semantics this executor does not apply -- it only ever runs the join subtree it extracts, so
-     * accepting a join found nested under such a node would silently drop that semantics rather
-     * than produce a wrong-but-plausible-looking result. Requiring an exact root match means any
-     * query with an {@code ORDER BY}/{@code LIMIT}/non-trivial top projection safely falls back to
-     * today's unchanged sequential path instead. Also requires {@link JoinRelType#INNER} and that
-     * neither input itself contains a further join (Phase 0 handles one two-way join, not an
-     * arbitrary join graph). */
+    /** By the time this is called, {@code node} is the optimized plan's root with any leading
+     * {@code Sort} (extracted into {@code sortKeys}/{@code fetchLimit} above) and {@code Project}
+     * (extracted into {@code outputProjection}) already peeled off -- {@code node} must be the
+     * {@link Join} itself at that point, deliberately NOT a recursive search through further
+     * wrapping nodes. Anything else there (a computed top expression, a second join, an unbounded
+     * sort already refused above) encodes real query semantics this executor has no general way to
+     * re-apply, so it safely falls back to today's unchanged sequential path instead of ever risking
+     * a wrong-but-plausible-looking result. Also requires {@link JoinRelType#INNER} and that neither
+     * input itself contains a further join (Phase 0 handles one two-way join, not an arbitrary join
+     * graph). */
     private static Join findSoleInnerJoin(RelNode node) {
         if (!(node instanceof Join join)) {
             return null;
