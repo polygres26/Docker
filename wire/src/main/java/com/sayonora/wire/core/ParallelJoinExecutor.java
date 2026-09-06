@@ -209,25 +209,9 @@ final class ParallelJoinExecutor {
             }
             // probeRow is already the LOGICAL row (plan.probeProjection() applied before it was
             // queued), so plan.probeKeyOrdinal() addresses it directly -- no further remap here.
-            Object key = keyOf(probeRow, plan.probeKeyOrdinal());
-            if (key == null) {
-                continue;
-            }
-            List<List<Object>> matches = table.get(key);
-            if (matches == null) {
-                continue;
-            }
-            for (List<Object> buildRow : matches) {
-                List<Object> joined = new ArrayList<>(buildRow.size() + probeRow.size());
-                if (plan.leftIsBuild()) {
-                    joined.addAll(buildRow);
-                    joined.addAll(probeRow);
-                } else {
-                    joined.addAll(probeRow);
-                    joined.addAll(buildRow);
-                }
-                output.add(joined);
-            }
+            // Delegates to RemotePartitionJoin's own matching code (shared, byte-for-byte, with the
+            // remote/Phase-1a path) rather than duplicating the match/emit logic inline here.
+            RemotePartitionJoin.probeOne(table, probeRow, plan.probeKeyOrdinal(), plan.leftIsBuild(), output);
         }
     }
 

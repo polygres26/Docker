@@ -462,12 +462,27 @@ public final class Main {
         metricsServer.setAnomalyScheduler(anomalyScheduler);
         metricsServer.start();
 
+        // Phase 1a of the parallel execution engine's node-to-node peer service (see the
+        // "jazzy-wishing-balloon" design plan) -- opt-in, off by default, matching
+        // WARP_CLUSTER_ENABLED's own "absent means the feature doesn't exist" shape. Started
+        // BEFORE NodeRegistry so its real port (0 when disabled) can be heartbeated immediately,
+        // rather than every instance advertising 0 until a second heartbeat cycle.
+        com.sayonora.wire.grpc.WarpPeerGrpcServer peerGrpcServer = com.sayonora.wire.grpc.WarpPeerGrpcServer.fromEnvOrNull();
+        int peerGrpcPort = 0;
+        if (peerGrpcServer != null) {
+            peerGrpcServer.start();
+            peerGrpcPort = peerGrpcServer.port();
+        } else {
+            log.info("parallel join peer service: disabled (set WARP_PEER_TLS_KEYSTORE to enable "
+                    + "node-to-node remote-partition-join dispatch -- see the parallel execution engine design)");
+        }
+
         // Deployment-topology visibility: a ~10s heartbeat row on the config-primary Postgres,
         // read back via GET /api/nodes -- see NodeRegistry's javadoc. "dev" is a placeholder;
         // there's no existing warp release-version constant anywhere else in the codebase to
         // reuse (mongowire/MCP each stamp their own unrelated protocol-version strings).
         com.sayonora.wire.config.NodeRegistry nodeRegistry =
-                new com.sayonora.wire.config.NodeRegistry(options, metricsPort, "dev");
+                new com.sayonora.wire.config.NodeRegistry(options, metricsPort, "dev", peerGrpcPort);
         nodeRegistry.start();
 
         ExecutorService sessionExecutor = Executors.newCachedThreadPool();
