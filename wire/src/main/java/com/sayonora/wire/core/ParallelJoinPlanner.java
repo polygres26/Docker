@@ -11,6 +11,8 @@ import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
@@ -22,6 +24,7 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,7 +89,53 @@ final class ParallelJoinPlanner {
             String probeSql, List<Integer> probeProjection, RexRowEvaluator.RowPredicate probeFilter,
             int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
             boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate,
-            List<SortKey> sortKeys, Integer fetchLimit) {
+            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec) {
+    }
+
+    /** One supported aggregate call: {@code kind} is one of {@link SqlKind#SUM}, {@code COUNT},
+     * {@code MIN}, {@code MAX}, or {@code AVG}; {@code argOrdinal} is the input ordinal (relative
+     * to whatever sits directly below the aggregation -- the pre-aggregation projection's output,
+     * or the join's own natural row if there's no such projection) it operates over, or {@code
+     * null} only for {@code COUNT(*)}. */
+    record AggCall(SqlKind kind, Integer argOrdinal) {
+    }
+
+    /** A {@code GROUP BY} aggregation directly above the join (or its pre-aggregation projection).
+     * Deliberately narrow, in the same spirit as every other eligibility check in this class:
+     * exactly one grouping set (no {@code GROUPING SETS}/{@code ROLLUP}/{@code CUBE}), and every
+     * aggregate call must be non-{@code DISTINCT}, have no {@code FILTER} clause, take at most one
+     * argument, and be one of {@code SUM}/{@code COUNT}/{@code MIN}/{@code MAX}/{@code AVG} -- any
+     * other function ({@code STRING_AGG}, {@code ARRAY_AGG}, a user-defined aggregate, ...) refuses
+     * outright rather than risk misevaluating it. {@code groupKeyOrdinals} and each call's {@code
+     * argOrdinal} are relative to the aggregation's own INPUT row (the pre-aggregation projection's
+     * output, or the join's natural row when there's none).
+     *
+     * <p><b>Real, found-live Calcite decomposition to handle</b>: plain {@code SUM} doesn't compile
+     * to {@code EnumerableAggregate} directly -- it needs {@code AggregateReduceFunctionsRule},
+     * which rewrites it into {@code $SUM0} (an aggregate that returns 0, not {@code NULL}, for an
+     * all-null/empty input) plus a {@code CASE(count = 0, NULL, $SUM0_result)} null-guard in a NEW
+     * {@code Project} directly above the {@code Aggregate}; {@code AVG} is similarly rewritten into
+     * {@code SUM}/{@code COUNT} plus a division, also in that outer {@code Project}. Rather than
+     * leave SUM/AVG (extremely common) entirely unsupported, {@link #tryExtractReducedAggregateSpec}
+     * recognizes exactly these two known decomposition shapes and reconstructs the original
+     * user-facing {@code SUM}/{@code AVG} call -- {@link ParallelJoinExecutor}'s own accumulator
+     * already implements the correct null/empty-group semantics directly, so Calcite's own
+     * decomposed form is simply discarded once recognized, never re-executed.
+     *
+     * <p>{@code outputColumnNames} are Calcite's own real field names for the FINAL output row
+     * (preserving a query's real column alias, e.g. {@code SUM(amount) AS total}); {@code
+     * outputLayout} says, for each output position in order, which group key or aggregate result
+     * (by index into {@code groupKeyOrdinals}/{@code aggCalls}) belongs there -- needed because nothing
+     * requires a user's own {@code SELECT} list to list group keys before aggregates, or in the
+     * order {@code GROUP BY} declared them (e.g. {@code SELECT SUM(x), name FROM t GROUP BY name}
+     * puts the aggregate result first). */
+    record AggregateSpec(List<Integer> groupKeyOrdinals, List<AggCall> aggCalls, List<String> outputColumnNames,
+            List<OutputColumn> outputLayout) {
+    }
+
+    /** One output position: either the {@code groupKeyIndex}-th group key, or the {@code
+     * aggCallIndex}-th aggregate result -- see {@link AggregateSpec#outputLayout()}. */
+    record OutputColumn(boolean isGroupKey, int index) {
     }
 
     /** One {@code ORDER BY} key: {@code ordinal} into the FINAL output row -- the same row space
@@ -167,6 +216,39 @@ final class ParallelJoinPlanner {
                 root = afterFetchNode;
             }
         }
+        // A GROUP BY aggregation directly above the join's own (pre-aggregation) projection --
+        // see AggregateSpec's own javadoc for the exact supported shape and why it's this narrow.
+        // Two real shapes: a bare Aggregate (every call compiles to EnumerableAggregate directly),
+        // or a Project(Aggregate(...)) -- the shape Calcite ALWAYS uses once SUM or AVG is involved
+        // (AggregateReduceFunctionsRule's own null-guard/division rewrite lands in that outer
+        // Project), and also whenever the user's own SELECT list doesn't happen to list group keys
+        // before aggregates in GROUP BY's own order.
+        AggregateSpec aggregateSpec = null;
+        if (root instanceof Project outerAggProject && outerAggProject.getInput() instanceof Aggregate aggregate) {
+            aggregateSpec = tryExtractReducedAggregateSpec(outerAggProject, aggregate);
+            if (aggregateSpec == null) {
+                log.debug("parallel join planner: the aggregation above the join isn't a supported "
+                        + "shape (non-SUM/COUNT/MIN/MAX/AVG function, DISTINCT, a FILTER clause, "
+                        + "GROUPING SETS/ROLLUP/CUBE, a multi-argument call, or an unrecognized "
+                        + "computed expression above the aggregate) -- skipping");
+                return null;
+            }
+            root = aggregate.getInput();
+        } else if (root instanceof Aggregate aggregate) {
+            aggregateSpec = extractAggregateSpec(aggregate);
+            if (aggregateSpec == null) {
+                log.debug("parallel join planner: the aggregation above the join isn't a supported "
+                        + "shape (non-SUM/COUNT/MIN/MAX/AVG function, DISTINCT, a FILTER clause, "
+                        + "GROUPING SETS/ROLLUP/CUBE, or a multi-argument call) -- skipping");
+                return null;
+            }
+            root = aggregate.getInput();
+        }
+        // When aggregateSpec is present, this projection selects/reorders the join's own columns
+        // into what the aggregation above needs (group keys + aggregate arguments) -- otherwise
+        // it's the query's own final SELECT-list projection. Mechanically identical (a plain
+        // ordinal remap of the join's natural row); ParallelJoinExecutor applies it at the right
+        // point in the pipeline depending on which case it is.
         List<Integer> outputProjection = null;
         if (root instanceof Project project) {
             outputProjection = asPlainColumnSelection(project.getProjects());
@@ -234,11 +316,161 @@ final class ParallelJoinPlanner {
         if (leftIsBuild) {
             return new Plan(leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
                     rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
-                    true, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit);
+                    true, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec);
         }
         return new Plan(rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
                 leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
-                false, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit);
+                false, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec);
+    }
+
+    /** Extracts a supported {@link AggregateSpec} from a BARE {@code aggregate} with no wrapping
+     * {@code Project} above it -- every call must already compile to {@code EnumerableAggregate}
+     * directly (true for {@code COUNT}/{@code MIN}/{@code MAX}, never true for plain {@code SUM} or
+     * {@code AVG} -- see {@link #tryExtractReducedAggregateSpec} for that shape instead). Returns
+     * {@code null} when its shape isn't one this executor can confidently re-apply outside of
+     * Calcite -- see {@link AggregateSpec}'s own javadoc for exactly what's supported and why. The
+     * output layout here is always the identity (group keys, in order, then aggregate results, in
+     * order) -- Calcite's own row-type convention for a bare {@code Aggregate}, unchanged by any
+     * further reordering since there's no outer {@code Project} in this shape. */
+    private static AggregateSpec extractAggregateSpec(Aggregate aggregate) {
+        if (aggregate.getGroupSets().size() != 1) {
+            return null;
+        }
+        List<Integer> groupKeyOrdinals = aggregate.getGroupSet().asList();
+        List<AggCall> calls = new ArrayList<>();
+        for (AggregateCall call : aggregate.getAggCallList()) {
+            AggCall direct = asDirectAggCall(call);
+            if (direct == null) {
+                return null;
+            }
+            calls.add(direct);
+        }
+        List<String> outputColumnNames = new ArrayList<>();
+        for (org.apache.calcite.rel.type.RelDataTypeField field : aggregate.getRowType().getFieldList()) {
+            outputColumnNames.add(field.getName());
+        }
+        List<OutputColumn> outputLayout = new ArrayList<>();
+        for (int i = 0; i < groupKeyOrdinals.size(); i++) {
+            outputLayout.add(new OutputColumn(true, i));
+        }
+        for (int i = 0; i < calls.size(); i++) {
+            outputLayout.add(new OutputColumn(false, i));
+        }
+        return new AggregateSpec(groupKeyOrdinals, calls, outputColumnNames, outputLayout);
+    }
+
+    /** Extracts a supported {@link AggregateSpec} when {@code outerProject} sits directly above
+     * {@code aggregate} -- the shape Calcite always uses once {@code SUM}/{@code AVG} is involved
+     * (see {@link AggregateSpec}'s own javadoc), and also whenever the user's {@code SELECT} list
+     * doesn't list columns in the aggregate's own natural group-keys-then-aggregates order. Walks
+     * {@code outerProject}'s own expressions in order, classifying each as: a plain passthrough of
+     * a group key or an already-direct aggregate result; or (only when the expression is computed)
+     * one of the two known {@code AggregateReduceFunctionsRule} decomposition shapes -- a {@code
+     * CASE(count = 0, NULL, $SUM0result)} null-guard (reconstructs a plain {@code SUM}) or a {@code
+     * sum / count} division, optionally {@code CAST} (reconstructs {@code AVG}). Any expression
+     * matching neither refuses the whole plan outright ({@code null}) rather than risk silently
+     * misevaluating an aggregate this class doesn't actually understand. */
+    private static AggregateSpec tryExtractReducedAggregateSpec(Project outerProject, Aggregate aggregate) {
+        if (aggregate.getGroupSets().size() != 1) {
+            return null;
+        }
+        List<Integer> groupKeyOrdinals = aggregate.getGroupSet().asList();
+        int groupKeyCount = groupKeyOrdinals.size();
+        List<AggregateCall> underlyingCalls = aggregate.getAggCallList();
+        List<AggCall> aggCalls = new ArrayList<>();
+        List<OutputColumn> outputLayout = new ArrayList<>();
+        List<String> outputColumnNames = new ArrayList<>();
+        List<org.apache.calcite.rel.type.RelDataTypeField> outerFields = outerProject.getRowType().getFieldList();
+        List<RexNode> exprs = outerProject.getProjects();
+        for (int i = 0; i < exprs.size(); i++) {
+            RexNode expr = exprs.get(i);
+            outputColumnNames.add(outerFields.get(i).getName());
+            if (expr instanceof RexInputRef ref) {
+                int aggregateOutputOrdinal = ref.getIndex();
+                if (aggregateOutputOrdinal < groupKeyCount) {
+                    outputLayout.add(new OutputColumn(true, aggregateOutputOrdinal));
+                    continue;
+                }
+                AggCall direct = asDirectAggCall(underlyingCalls.get(aggregateOutputOrdinal - groupKeyCount));
+                if (direct == null) {
+                    return null;
+                }
+                aggCalls.add(direct);
+                outputLayout.add(new OutputColumn(false, aggCalls.size() - 1));
+                continue;
+            }
+            AggCall reconstructed = matchReducedAggExpression(expr, underlyingCalls, groupKeyCount);
+            if (reconstructed == null) {
+                return null;
+            }
+            aggCalls.add(reconstructed);
+            outputLayout.add(new OutputColumn(false, aggCalls.size() - 1));
+        }
+        return new AggregateSpec(groupKeyOrdinals, aggCalls, outputColumnNames, outputLayout);
+    }
+
+    /** Recognizes exactly the two shapes {@code AggregateReduceFunctionsRule} produces -- see
+     * {@link AggregateSpec}'s own javadoc -- against {@code underlyingCalls} (the {@code
+     * Aggregate}'s OWN, already-decomposed call list); {@code null} for anything else. */
+    private static AggCall matchReducedAggExpression(RexNode expr, List<AggregateCall> underlyingCalls, int groupKeyCount) {
+        if (!(expr instanceof org.apache.calcite.rex.RexCall call)) {
+            return null;
+        }
+        if (call.getKind() == SqlKind.CASE && call.getOperands().size() == 3
+                && call.getOperands().get(2) instanceof RexInputRef sumRef) {
+            int idx = sumRef.getIndex() - groupKeyCount;
+            if (idx >= 0 && idx < underlyingCalls.size()) {
+                AggregateCall underlying = underlyingCalls.get(idx);
+                if (underlying.getAggregation().getKind() == SqlKind.SUM0 && underlying.getArgList().size() == 1) {
+                    return new AggCall(SqlKind.SUM, underlying.getArgList().get(0));
+                }
+            }
+            return null;
+        }
+        RexNode divideExpr = call.getKind() == SqlKind.CAST && call.getOperands().size() == 1
+                ? call.getOperands().get(0) : expr;
+        if (divideExpr instanceof org.apache.calcite.rex.RexCall divCall && divCall.getKind() == SqlKind.DIVIDE
+                && divCall.getOperands().size() == 2
+                && divCall.getOperands().get(0) instanceof RexInputRef sumRef
+                && divCall.getOperands().get(1) instanceof RexInputRef countRef) {
+            int sumIdx = sumRef.getIndex() - groupKeyCount;
+            int countIdx = countRef.getIndex() - groupKeyCount;
+            if (sumIdx >= 0 && sumIdx < underlyingCalls.size() && countIdx >= 0 && countIdx < underlyingCalls.size()) {
+                AggregateCall sumCall = underlyingCalls.get(sumIdx);
+                AggregateCall countCall = underlyingCalls.get(countIdx);
+                boolean sumIsSummy = sumCall.getAggregation().getKind() == SqlKind.SUM
+                        || sumCall.getAggregation().getKind() == SqlKind.SUM0;
+                if (sumIsSummy && countCall.getAggregation().getKind() == SqlKind.COUNT
+                        && sumCall.getArgList().size() == 1 && sumCall.getArgList().equals(countCall.getArgList())) {
+                    return new AggCall(SqlKind.AVG, sumCall.getArgList().get(0));
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A directly-supported aggregate call (one of {@code SUM}/{@code COUNT}/{@code MIN}/{@code
+     * MAX}/{@code AVG}, non-{@code DISTINCT}, no {@code FILTER} clause, at most one argument) --
+     * {@code null} for anything else. Shared by both {@link #extractAggregateSpec} (a bare {@code
+     * Aggregate}, where every call must already be one of these) and {@link
+     * #tryExtractReducedAggregateSpec} (a plain passthrough of an already-direct call, as opposed
+     * to a decomposed one it reconstructs separately). */
+    private static AggCall asDirectAggCall(AggregateCall call) {
+        if (call.isDistinct() || call.hasFilter() || call.getArgList().size() > 1) {
+            return null;
+        }
+        SqlKind kind = call.getAggregation().getKind();
+        if (kind != SqlKind.SUM && kind != SqlKind.COUNT && kind != SqlKind.MIN
+                && kind != SqlKind.MAX && kind != SqlKind.AVG) {
+            return null;
+        }
+        Integer argOrdinal = call.getArgList().isEmpty() ? null : call.getArgList().get(0);
+        if (argOrdinal == null && kind != SqlKind.COUNT) {
+            // Only COUNT(*) is a real, valid zero-argument aggregate call -- SUM/MIN/MAX/AVG
+            // always need an argument.
+            return null;
+        }
+        return new AggCall(kind, argOrdinal);
     }
 
     /** Resolves a {@code Sort}'s own {@code fetch} (the {@code LIMIT} count) to a plain {@code

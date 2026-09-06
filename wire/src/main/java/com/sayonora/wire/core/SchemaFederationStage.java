@@ -170,6 +170,13 @@ public final class SchemaFederationStage implements PipelineStage {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
+            // Real, found-live gap: EnumerableRules.rules() alone can't plan ANY GROUP BY with an
+            // AVG over a federated join -- EnumerableAggregateRule doesn't decompose AVG into
+            // SUM/COUNT itself, and without this rule available the planner has no path at all
+            // ("Missing conversion is LogicalAggregate[convention: NONE -> ENUMERABLE]"), failing
+            // outright rather than falling back. Pre-existing gap, not specific to the parallel
+            // join engine's own aggregation support -- this fixes the sequential path too.
+            rules.add(org.apache.calcite.rel.rules.CoreRules.AGGREGATE_REDUCE_FUNCTIONS);
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new java.util.LinkedHashMap<>();
             Map<String, SqlDialect> mountDialects = new java.util.LinkedHashMap<>();
             SqlDialect dialect = null;
