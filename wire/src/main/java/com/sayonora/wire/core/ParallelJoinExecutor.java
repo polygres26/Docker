@@ -192,6 +192,12 @@ final class ParallelJoinExecutor {
 
                 @Override
                 public void onRow(List<Object> row) {
+                    // The residual filter (if any) is expressed against the RAW row, before the
+                    // projection remap -- see ParallelJoinPlanner.SideExtraction's own javadoc on
+                    // why a Filter directly on the leaf never changes row shape.
+                    if (plan.buildFilter() != null && !plan.buildFilter().test(row)) {
+                        return;
+                    }
                     List<Object> logicalRow = applyProjection(row, plan.buildProjection());
                     Object key = keyOf(logicalRow, plan.buildKeyOrdinal());
                     if (key == null) {
@@ -253,6 +259,9 @@ final class ParallelJoinExecutor {
 
                 @Override
                 public void onRow(List<Object> row) {
+                    if (plan.probeFilter() != null && !plan.probeFilter().test(row)) {
+                        return;
+                    }
                     List<Object> logicalRow = applyProjection(row, plan.probeProjection());
                     Object key = keyOf(logicalRow, plan.probeKeyOrdinal());
                     if (key == null) {
