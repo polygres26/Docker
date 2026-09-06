@@ -153,6 +153,58 @@ public final class JdbcBackendExecutor implements BackendExecutor {
         }
     }
 
+    /** Callback for {@link #streamOnPreparedStatement} -- {@code onColumns} fires exactly once,
+     * before any {@code onRow} call, matching {@link ExecutionResult#columns()}'s "known up front"
+     * shape; {@code onRow} fires once per result row, in cursor order, instead of the row being
+     * accumulated into an in-memory {@code List} the way {@link #readResultSet} does. Used by
+     * {@code core/parallel/}'s partitioned join executor to consume a leaf scan's rows as they
+     * arrive from the backend rather than waiting for the whole result set to materialize first --
+     * a genuine, separate streaming path, deliberately not a change to {@link #readResultSet}
+     * itself (every other caller of {@link #executeOnPreparedStatement} keeps its current,
+     * fully-materialized behavior unchanged). */
+    interface StreamingRowHandler {
+        void onColumns(List<ColumnInfo> columns) throws SQLException;
+
+        void onRow(List<Object> row) throws SQLException;
+    }
+
+    /** Streaming sibling of {@link #executeOnPreparedStatement} -- same bind-param coercion, same
+     * {@link ColumnInfo} construction, same {@link #materializeLob} per-value conversion, but each
+     * row is handed to {@code handler.onRow} as soon as it's read instead of being collected into
+     * an {@code ExecutionResult}. Only meaningful for statements that produce a result set; a
+     * caller that might pass an update/DDL statement must check {@code hasResultSet} independently
+     * before choosing this method, since it does not return an update count. */
+    static void streamOnPreparedStatement(PreparedStatement stmt, List<Object> binds, StreamingRowHandler handler)
+            throws SQLException {
+        for (int i = 0; i < binds.size(); i++) {
+            stmt.setObject(i + 1, coerce(binds.get(i)));
+        }
+        boolean hasResultSet = stmt.execute();
+        if (!hasResultSet) {
+            throw new SQLException("streamOnPreparedStatement: statement produced no result set "
+                    + "-- only meaningful for queries, not updates/DDL");
+        }
+        try (ResultSet rs = stmt.getResultSet()) {
+            ResultSetMetaData md = rs.getMetaData();
+            int columnCount = md.getColumnCount();
+            List<ColumnInfo> columns = new ArrayList<>(columnCount);
+            for (int i = 1; i <= columnCount; i++) {
+                columns.add(new ColumnInfo(md.getColumnLabel(i), md.getColumnType(i), md.getPrecision(i), md.getScale(i),
+                        md.getColumnDisplaySize(i), md.isNullable(i) != ResultSetMetaData.columnNoNulls,
+                        md.getColumnTypeName(i)));
+            }
+            handler.onColumns(columns);
+            while (rs.next()) {
+                List<Object> row = new ArrayList<>(columnCount);
+                for (int i = 1; i <= columnCount; i++) {
+                    Object value = rs.getObject(i);
+                    row.add(rs.wasNull() ? null : materializeLob(value));
+                }
+                handler.onRow(row);
+            }
+        }
+    }
+
     private static ExecutionResult readResultSet(ResultSet rs) throws SQLException {
         ResultSetMetaData md = rs.getMetaData();
         int columnCount = md.getColumnCount();
