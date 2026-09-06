@@ -19,6 +19,33 @@ import org.junit.jupiter.api.Test;
  */
 class ParallelJoinExecutorTest {
 
+    private static ParallelJoinPlanner.Plan planWithProbeRowCountEstimate(long estimate) {
+        return new ParallelJoinPlanner.Plan(null, null, 0, null, null, null, 0, null, true, null, estimate);
+    }
+
+    /** Assumes {@code WARP_PARALLEL_JOIN_THREADS} isn't set in the test environment -- an explicit
+     * override always wins outright over cost-based sizing, which is exactly what this test proves
+     * for the UNSET case; a set override is covered by {@link #threadCountFromEnvOrDefaultFallsBackToAvailableProcessorsWhenUnset}'s
+     * own sibling behavior already. */
+    @Test
+    void partitionCountForDerivesFromTheProbeRowCountEstimateWhenNoExplicitThreadCountIsSet() {
+        long targetRowsPerPartition = 25_000L; // WARP_PARALLEL_JOIN_TARGET_ROWS_PER_PARTITION's own default
+        int maxPartitions = Math.max(1, Runtime.getRuntime().availableProcessors());
+
+        // A small estimate -- well under one partition's worth -- must still get exactly 1, never
+        // fewer real parallelism than a plain sequential run already had.
+        assertEquals(1, ParallelJoinExecutor.partitionCountFor(planWithProbeRowCountEstimate(100)));
+
+        // A huge estimate must clamp to the core count, never exceed it (more partitions than cores
+        // adds handoff overhead with no real parallelism gain).
+        assertEquals(maxPartitions, ParallelJoinExecutor.partitionCountFor(
+                planWithProbeRowCountEstimate(targetRowsPerPartition * (maxPartitions + 10L))));
+
+        // An unknown estimate (-1, the "probe failed" sentinel) must fall back to the existing
+        // available-processors default, never crash or silently pick 0/negative partitions.
+        assertEquals(maxPartitions, ParallelJoinExecutor.partitionCountFor(planWithProbeRowCountEstimate(-1)));
+    }
+
     @Test
     void columnIndexFindsAColumnCaseInsensitively() throws Exception {
         List<ColumnInfo> columns = List.of(

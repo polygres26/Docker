@@ -117,6 +117,9 @@ final class ParallelJoinExecutor {
     private ParallelJoinExecutor() {
     }
 
+    /** {@code WARP_PARALLEL_JOIN_THREADS}, when explicitly set, is an outright OVERRIDE -- an
+     * operator who's pinned a specific value gets exactly that, no cost-based second-guessing.
+     * Left unset, the real fallback is available-core count -- unchanged Phase 0/1/2 behavior. */
     static int threadCountFromEnvOrDefault() {
         String raw = System.getenv("WARP_PARALLEL_JOIN_THREADS");
         if (raw != null && !raw.isBlank()) {
@@ -130,6 +133,35 @@ final class ParallelJoinExecutor {
             }
         }
         return Math.max(1, Runtime.getRuntime().availableProcessors());
+    }
+
+    /** Cost-based partition-count sizing: when {@code WARP_PARALLEL_JOIN_THREADS} is NOT explicitly
+     * set and a real probe-side row-count estimate is available ({@link
+     * ParallelJoinPlanner.Plan#probeRowCountEstimate()}, the larger side -- the one that actually
+     * drives per-partition work, not the build side), the partition count is derived from it: enough
+     * partitions that each gets roughly {@code WARP_PARALLEL_JOIN_TARGET_ROWS_PER_PARTITION} (default
+     * 25,000) rows, clamped to {@code [1, availableProcessors()]} -- more partitions than cores just
+     * adds handoff overhead with no real parallelism gain. A tiny partition (a handful of rows) still
+     * gets 1 partition, not zero; there is never less real parallelism than a plain sequential run
+     * would have provided, only less than the core count when it wouldn't help. Falls back to {@link
+     * #threadCountFromEnvOrDefault()} whenever the estimate is unknown (probe failed) or the operator
+     * explicitly pinned a thread count -- an explicit override always wins outright. */
+    static int partitionCountFor(ParallelJoinPlanner.Plan plan) {
+        String explicit = System.getenv("WARP_PARALLEL_JOIN_THREADS");
+        if (explicit != null && !explicit.isBlank()) {
+            return threadCountFromEnvOrDefault();
+        }
+        long probeRowCountEstimate = plan.probeRowCountEstimate();
+        if (probeRowCountEstimate < 0) {
+            return threadCountFromEnvOrDefault();
+        }
+        long targetRowsPerPartition = parseLongEnv("WARP_PARALLEL_JOIN_TARGET_ROWS_PER_PARTITION", 25_000L);
+        if (targetRowsPerPartition <= 0) {
+            return threadCountFromEnvOrDefault();
+        }
+        long suggested = (probeRowCountEstimate + targetRowsPerPartition - 1) / targetRowsPerPartition;
+        int maxPartitions = Math.max(1, Runtime.getRuntime().availableProcessors());
+        return (int) Math.max(1, Math.min(suggested, maxPartitions));
     }
 
     static ExecutionResult execute(ParallelJoinPlanner.Plan plan, int threadCount) throws SQLException {
