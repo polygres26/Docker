@@ -86,45 +86,38 @@ final class ParallelJoinExecutor {
         }
 
         List<ColumnInfo> buildColumns = new ArrayList<>();
-        int[] buildKeyIndex = {-1};
         try (Connection buildConnection = plan.buildBackend().target().open();
                 PreparedStatement buildPs = buildConnection.prepareStatement(plan.buildSql())) {
             JdbcBackendExecutor.streamOnPreparedStatement(buildPs, List.of(), new JdbcBackendExecutor.StreamingRowHandler() {
                 @Override
                 public void onColumns(List<ColumnInfo> columns) {
-                    buildColumns.addAll(columns);
-                    buildKeyIndex[0] = columnIndex(columns, plan.buildKeyColumn());
+                    buildColumns.addAll(applyColumnProjection(columns, plan.buildProjection()));
                 }
 
                 @Override
                 public void onRow(List<Object> row) {
-                    Object key = keyOf(row, buildKeyIndex[0]);
+                    List<Object> logicalRow = applyProjection(row, plan.buildProjection());
+                    Object key = keyOf(logicalRow, plan.buildKeyOrdinal());
                     if (key == null) {
                         return; // SQL join semantics: NULL never equals NULL, so it can never match
                     }
                     int partition = partitionOf(key, n);
-                    partitionTables.get(partition).computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+                    partitionTables.get(partition).computeIfAbsent(key, k -> new ArrayList<>()).add(logicalRow);
                     partitionFilters.get(partition).put(String.valueOf(key));
                 }
             });
-        }
-        if (buildKeyIndex[0] < 0) {
-            throw new SQLException("parallel join: build-side key column \"" + plan.buildKeyColumn()
-                    + "\" wasn't found in its own extracted result set -- this indicates a planner bug, "
-                    + "not a real backend/data problem");
         }
 
         List<BlockingQueue<List<Object>>> queues = new ArrayList<>(n);
         List<List<List<Object>>> partitionOutputs = new ArrayList<>(n);
         List<Thread> workers = new ArrayList<>(n);
-        int[] probeKeyIndex = {-1};
         for (int i = 0; i < n; i++) {
             BlockingQueue<List<Object>> queue = new LinkedBlockingQueue<>(10_000);
             queues.add(queue);
             List<List<Object>> output = new ArrayList<>();
             partitionOutputs.add(output);
             Map<Object, List<List<Object>>> table = partitionTables.get(i);
-            Thread worker = new Thread(() -> runPartitionWorker(queue, table, probeKeyIndex, plan, output),
+            Thread worker = new Thread(() -> runPartitionWorker(queue, table, plan, output),
                     "warp-parallel-join-" + i);
             worker.setDaemon(true);
             workers.add(worker);
@@ -137,13 +130,13 @@ final class ParallelJoinExecutor {
             JdbcBackendExecutor.streamOnPreparedStatement(probePs, List.of(), new JdbcBackendExecutor.StreamingRowHandler() {
                 @Override
                 public void onColumns(List<ColumnInfo> columns) {
-                    probeColumns.addAll(columns);
-                    probeKeyIndex[0] = columnIndex(columns, plan.probeKeyColumn());
+                    probeColumns.addAll(applyColumnProjection(columns, plan.probeProjection()));
                 }
 
                 @Override
                 public void onRow(List<Object> row) {
-                    Object key = keyOf(row, probeKeyIndex[0]);
+                    List<Object> logicalRow = applyProjection(row, plan.probeProjection());
+                    Object key = keyOf(logicalRow, plan.probeKeyOrdinal());
                     if (key == null) {
                         return;
                     }
@@ -151,7 +144,7 @@ final class ParallelJoinExecutor {
                     if (!partitionFilters.get(partition).mightContain(String.valueOf(key))) {
                         return; // real, cheap reject -- this key provably isn't in the build side
                     }
-                    offer(queues.get(partition), row);
+                    offer(queues.get(partition), logicalRow);
                 }
             });
         } catch (SQLException e) {
@@ -202,7 +195,7 @@ final class ParallelJoinExecutor {
     }
 
     private static void runPartitionWorker(BlockingQueue<List<Object>> queue, Map<Object, List<List<Object>>> table,
-            int[] probeKeyIndex, ParallelJoinPlanner.Plan plan, List<List<Object>> output) {
+            ParallelJoinPlanner.Plan plan, List<List<Object>> output) {
         while (true) {
             List<Object> probeRow;
             try {
@@ -214,7 +207,9 @@ final class ParallelJoinExecutor {
             if (probeRow == END_OF_STREAM) {
                 return;
             }
-            Object key = keyOf(probeRow, probeKeyIndex[0]);
+            // probeRow is already the LOGICAL row (plan.probeProjection() applied before it was
+            // queued), so plan.probeKeyOrdinal() addresses it directly -- no further remap here.
+            Object key = keyOf(probeRow, plan.probeKeyOrdinal());
             if (key == null) {
                 continue;
             }
@@ -256,6 +251,35 @@ final class ParallelJoinExecutor {
 
     private static Object keyOf(List<Object> row, int index) {
         return index >= 0 && index < row.size() ? row.get(index) : null;
+    }
+
+    /** Remaps a raw streamed row into a side's LOGICAL shape per {@link
+     * ParallelJoinPlanner.Plan}'s own {@code buildProjection}/{@code probeProjection} -- {@code
+     * null} projection means the raw row already IS the logical row, returned unchanged. */
+    private static List<Object> applyProjection(List<Object> row, List<Integer> projection) {
+        if (projection == null) {
+            return row;
+        }
+        List<Object> projected = new ArrayList<>(projection.size());
+        for (int ordinal : projection) {
+            projected.add(row.get(ordinal));
+        }
+        return projected;
+    }
+
+    /** As {@link #applyProjection(List, List)}, for a side's {@link ColumnInfo} list instead of a
+     * data row -- same ordinal remap, applied once per side rather than once per row. A separate
+     * name (rather than an overload) because the two {@code List<Object>}/{@code List<ColumnInfo>}
+     * signatures erase identically. */
+    private static List<ColumnInfo> applyColumnProjection(List<ColumnInfo> columns, List<Integer> projection) {
+        if (projection == null) {
+            return columns;
+        }
+        List<ColumnInfo> projected = new ArrayList<>(projection.size());
+        for (int ordinal : projection) {
+            projected.add(columns.get(ordinal));
+        }
+        return projected;
     }
 
     private static int columnIndex(List<ColumnInfo> columns, String name) {

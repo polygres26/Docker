@@ -59,17 +59,33 @@ final class ParallelJoinPlanner {
 
     /** {@code buildSql}/{@code probeSql} are each a complete, standalone SQL statement (no bind
      * parameters) ready to run through {@code buildBackend}/{@code probeBackend}'s own JDBC
-     * connection directly -- not through Calcite. {@code leftIsBuild} records which structural side
-     * of the original join (left vs. right) turned out to be the build side, purely so {@link
-     * ParallelJoinExecutor} can concatenate each output row's columns in the same left-then-right
-     * order the original join's own row type uses, regardless of which side was cheaper to build
-     * from. {@code outputProjection}, when non-null, is the ordinal (into the natural left-then-right
-     * concatenated row) of each output column in order -- from a plain column-selection/reordering
-     * {@code Project} Calcite placed directly above the join (e.g. {@code SELECT c.name, o.amount});
-     * {@code null} means the natural left-then-right concatenation IS the output, unchanged. */
-    record Plan(String buildSql, String buildKeyColumn, LeafScanProfiler.MountedBackend buildBackend,
-            String probeSql, String probeKeyColumn, LeafScanProfiler.MountedBackend probeBackend,
+     * connection directly -- not through Calcite; their columns are the RAW backend scan's own
+     * columns, in that backend's own natural order (unprojected). {@code buildProjection}/{@code
+     * probeProjection}, when non-null, remap a raw streamed row into that side's LOGICAL shape --
+     * from a plain column-selection/reordering {@code Project} Calcite left un-pushed-down directly
+     * above that side's own leaf scan (e.g. the {@code o} side of {@code SELECT o.customer_id,
+     * o.amount FROM (SELECT * FROM orders) o ...}); {@code null} means the raw row already IS the
+     * logical row. {@code buildKeyOrdinal}/{@code probeKeyOrdinal} are ordinals into that LOGICAL
+     * (post-{@code *Projection}) row -- i.e. the same ordinal {@link Join#analyzeCondition()}'s own
+     * {@code JoinInfo} already reports relative to that side's row type, usable directly with no
+     * further translation once the projection (if any) has been applied. {@code leftIsBuild}
+     * records which structural side of the original join (left vs. right) turned out to be the
+     * build side, purely so {@link ParallelJoinExecutor} can concatenate each output row's columns
+     * in the same left-then-right order the original join's own row type uses, regardless of which
+     * side was cheaper to build from. {@code outputProjection}, when non-null, is the ordinal (into
+     * the natural left-then-right concatenated LOGICAL row) of each output column in order -- from
+     * a plain column-selection/reordering {@code Project} Calcite placed directly above the join
+     * itself (e.g. {@code SELECT c.name, o.amount}); {@code null} means that concatenation IS the
+     * output, unchanged. */
+    record Plan(String buildSql, List<Integer> buildProjection, int buildKeyOrdinal, LeafScanProfiler.MountedBackend buildBackend,
+            String probeSql, List<Integer> probeProjection, int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
             boolean leftIsBuild, List<Integer> outputProjection) {
+    }
+
+    /** One join side, fully resolved: its own leaf backend scan, and -- when Calcite left a plain
+     * column-selection/reordering {@code Project} directly above that scan un-pushed-down -- the
+     * ordinal remap needed to turn a raw streamed row into this side's logical shape. */
+    private record SideExtraction(RelNode leaf, List<Integer> baseProjection) {
     }
 
     /** Returns {@code null} (never throws) whenever the plan isn't eligible for Phase 0's parallel
@@ -102,28 +118,15 @@ final class ParallelJoinPlanner {
             log.debug("parallel join planner: join condition isn't a single equi-join key pair -- skipping");
             return null;
         }
-        List<RelNode> leftLeaves = new ArrayList<>();
-        collectJdbcLeaves(join.getLeft(), leftLeaves);
-        List<RelNode> rightLeaves = new ArrayList<>();
-        collectJdbcLeaves(join.getRight(), rightLeaves);
-        if (leftLeaves.size() != 1 || rightLeaves.size() != 1) {
-            log.debug("parallel join planner: one side of the join isn't exactly one backend -- skipping");
+        SideExtraction leftSide = extractSide(join.getLeft());
+        SideExtraction rightSide = extractSide(join.getRight());
+        if (leftSide == null || rightSide == null) {
+            log.debug("parallel join planner: one side of the join isn't exactly one backend (with, at most, a "
+                    + "plain un-pushed-down column selection above it) -- skipping");
             return null;
         }
-        // Each side must BE its own JdbcToEnumerableConverter directly, not a residual local
-        // Project/Filter wrapping one -- RelToSqlConverter (below) only knows how to convert the
-        // real JDBC-convention subtree BELOW that boundary node (see LeafScanProfiler's own use of
-        // it, converting converter.getInput() rather than the converter itself); it has no visitor
-        // for the converter node -- or anything above it -- at all. A residual local Enumerable-side
-        // operator above the converter is a real, narrower case this Phase 0 implementation doesn't
-        // yet handle -- it falls back safely rather than risk converting the wrong subtree.
-        if (join.getLeft() != leftLeaves.get(0) || join.getRight() != rightLeaves.get(0)) {
-            log.debug("parallel join planner: a side has a residual local operator above its backend scan "
-                    + "that Calcite didn't push down -- skipping");
-            return null;
-        }
-        String leftMount = mountNameOf(leftLeaves.get(0));
-        String rightMount = mountNameOf(rightLeaves.get(0));
+        String leftMount = mountNameOf(leftSide.leaf());
+        String rightMount = mountNameOf(rightSide.leaf());
         LeafScanProfiler.MountedBackend leftBackend = leftMount == null ? null : mountToBackend.get(leftMount);
         LeafScanProfiler.MountedBackend rightBackend = rightMount == null ? null : mountToBackend.get(rightMount);
         SqlDialect leftDialect = leftMount == null ? null : mountDialects.get(leftMount);
@@ -132,22 +135,84 @@ final class ParallelJoinPlanner {
             log.debug("parallel join planner: couldn't resolve both sides' mount names back to a real backend -- skipping");
             return null;
         }
-        String leftKeyColumn = join.getLeft().getRowType().getFieldList().get(info.leftKeys.getInt(0)).getName();
-        String rightKeyColumn = join.getRight().getRowType().getFieldList().get(info.rightKeys.getInt(0)).getName();
+        // These ordinals are relative to join.getLeft()/getRight()'s own row type -- i.e. each
+        // side's LOGICAL (post-side-projection) shape, exactly what buildProjection/probeProjection
+        // (below) produce from the raw streamed row. No name-based lookup needed.
+        int leftKeyOrdinal = info.leftKeys.getInt(0);
+        int rightKeyOrdinal = info.rightKeys.getInt(0);
         String leftSql;
         String rightSql;
         try {
-            leftSql = toSql(join.getLeft(), leftDialect);
-            rightSql = toSql(join.getRight(), rightDialect);
+            leftSql = toSql(leftSide.leaf(), leftDialect);
+            rightSql = toSql(rightSide.leaf(), rightDialect);
         } catch (RuntimeException e) {
             log.debug("parallel join planner: failed to convert one side back to SQL -- skipping ({})", e.toString());
             return null;
         }
-        boolean leftIsBuild = chooseBuildSide(leftBackend, leftSql, rightBackend, rightSql);
-        if (leftIsBuild) {
-            return new Plan(leftSql, leftKeyColumn, leftBackend, rightSql, rightKeyColumn, rightBackend, true, outputProjection);
+        Long leftCount = countRows(leftBackend, leftSql);
+        Long rightCount = countRows(rightBackend, rightSql);
+        if (leftCount != null && rightCount != null && Math.min(leftCount, rightCount) < minRowsFromEnvOrDefault()) {
+            log.debug("parallel join planner: smaller side has only ~{} estimated row(s), below the "
+                    + "WARP_PARALLEL_JOIN_MIN_ROWS threshold -- partitioning overhead isn't worth it, skipping",
+                    Math.min(leftCount, rightCount));
+            return null;
         }
-        return new Plan(rightSql, rightKeyColumn, rightBackend, leftSql, leftKeyColumn, leftBackend, false, outputProjection);
+        boolean leftIsBuild = leftCount == null || rightCount == null || leftCount <= rightCount;
+        if (leftIsBuild) {
+            return new Plan(leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend,
+                    rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend, true, outputProjection);
+        }
+        return new Plan(rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend,
+                leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend, false, outputProjection);
+    }
+
+    /** {@code WARP_PARALLEL_JOIN_MIN_ROWS} -- the smaller (build) side's estimated row count must
+     * clear this before the parallel path is attempted at all; below it, partitioning/thread-handoff
+     * overhead isn't worth it. When either side's row-count probe itself failed, this check is
+     * skipped entirely (proceeds anyway) rather than blocking the feature on an unrelated probe
+     * failure -- the same "don't let a missing signal disable a real optimization" stance {@link
+     * #chooseBuildSide} historically took before this method absorbed its row-count reuse. */
+    private static long minRowsFromEnvOrDefault() {
+        String raw = System.getenv("WARP_PARALLEL_JOIN_MIN_ROWS");
+        if (raw != null && !raw.isBlank()) {
+            try {
+                long parsed = Long.parseLong(raw.trim());
+                if (parsed >= 0) {
+                    return parsed;
+                }
+            } catch (NumberFormatException ignoredNotANumber) {
+                // falls through to the default below
+            }
+        }
+        return 10_000L;
+    }
+
+    /** Resolves one join input to a leaf backend scan, optionally wrapped in a single plain
+     * column-selection/reordering {@code Project} Calcite left un-pushed-down directly above it --
+     * {@code null} for anything else (more than one leaf, a {@code Filter}, a nested combination, a
+     * projection with a computed expression, or a projection over anything other than the leaf
+     * itself). Real, disclosed narrowing: a residual {@code Filter} (as opposed to a {@code
+     * Project}) above a leaf scan isn't handled this pass -- expressing an arbitrary filter
+     * predicate as a portable remap (the way a plain column selection can be) isn't a simple ordinal
+     * operation, so that shape safely falls back instead. */
+    private static SideExtraction extractSide(RelNode sideInput) {
+        List<RelNode> leaves = new ArrayList<>();
+        collectJdbcLeaves(sideInput, leaves);
+        if (leaves.size() != 1) {
+            return null;
+        }
+        RelNode leaf = leaves.get(0);
+        if (sideInput == leaf) {
+            return new SideExtraction(leaf, null);
+        }
+        if (sideInput instanceof Project project && project.getInput() == leaf) {
+            List<Integer> ordinals = asPlainColumnSelection(project.getProjects());
+            if (ordinals == null) {
+                return null;
+            }
+            return new SideExtraction(leaf, ordinals);
+        }
+        return null;
     }
 
     /** Returns each expression's own input ordinal, IN ORDER, only when every one of {@code
@@ -167,24 +232,14 @@ final class ParallelJoinPlanner {
         return ordinals;
     }
 
-    /** Real, measured build-side selection -- a lightweight {@code COUNT(*)} against each side's
-     * own extracted SQL, run directly through that side's own backend connection (not through
-     * Calcite). Deliberately doesn't depend on {@link StatisticsStore} (unlike {@link
-     * SemiJoinPushdown}'s own build-side choice) so this path works whether or not statistics are
-     * configured -- the two extra round trips are real, small cost against a query already large
-     * enough that partitioning is worth attempting. On any failure, defaults to "left is build"
-     * (an arbitrary, still-correct choice -- picking the wrong side only costs some efficiency, it
-     * never produces a wrong join result). */
-    private static boolean chooseBuildSide(LeafScanProfiler.MountedBackend leftBackend, String leftSql,
-            LeafScanProfiler.MountedBackend rightBackend, String rightSql) {
-        Long leftCount = countRows(leftBackend, leftSql);
-        Long rightCount = countRows(rightBackend, rightSql);
-        if (leftCount == null || rightCount == null) {
-            return true;
-        }
-        return leftCount <= rightCount;
-    }
-
+    /** Real, measured row-count probe -- a lightweight {@code COUNT(*)} against a side's own
+     * extracted SQL, run directly through that side's own backend connection (not through Calcite).
+     * Feeds both build-side selection (the smaller side builds) and the {@code
+     * WARP_PARALLEL_JOIN_MIN_ROWS} threshold check above, from the SAME two round trips. Deliberately
+     * doesn't depend on {@link StatisticsStore} (unlike {@link SemiJoinPushdown}'s own build-side
+     * choice) so this path works whether or not statistics are configured. Returns {@code null} on
+     * any failure -- callers treat a missing count as "proceed anyway, just skip the size-based
+     * decision it would have fed," never as a reason to fail the query. */
     private static Long countRows(LeafScanProfiler.MountedBackend backend, String sql) {
         String countSql = "SELECT COUNT(*) FROM (" + sql + ") __warp_parallel_join_count";
         try (Connection connection = backend.target().open();
