@@ -202,10 +202,10 @@ public final class NodeRegistry {
     /** Every OTHER live node (excluding this instance's own row, matched by {@link #resolveHost()}
      * + admin port -- the same self-recognition {@code MetricsServer#fanOutToPeers} already uses)
      * that's actually running {@code WarpPeerGrpcServer} (a real, positive {@code peer_grpc_port})
-     * -- i.e. every real, currently-usable target for a Phase 1 remote-partition-join dispatch. Not
-     * yet called by any live query path (Phase 1a proves the RPC primitive in isolation; wiring
-     * this into {@code ParallelJoinExecutor}'s own scheduling is Phase 1b), but establishing this
-     * method now is what makes that follow-up "consult one existing method," not new plumbing. */
+     * -- i.e. every real, currently-usable target for a Phase 1 remote-partition-join dispatch. Kept
+     * for a caller that already knows its own admin port; {@link #listOtherLivePeerWorkers} is the
+     * overload {@code core.ParallelJoinExecutor} (Phase 1b) actually calls, since it self-excludes
+     * by peer-gRPC-port instead (what it actually has on hand). */
     public static List<NodeRow> listLivePeerWorkers(com.sayonora.wire.server.ServerOptions options, int selfAdminPort)
             throws SQLException {
         String selfHost = resolveHost();
@@ -213,6 +213,25 @@ public final class NodeRegistry {
         for (NodeRow row : listAll(options)) {
             if ("up".equals(row.status()) && row.peerGrpcPort() > 0
                     && !(row.host().equals(selfHost) && row.adminPort() == selfAdminPort)) {
+                peers.add(row);
+            }
+        }
+        return peers;
+    }
+
+    /** As {@link #listLivePeerWorkers(com.sayonora.wire.server.ServerOptions, int)}, self-excluding
+     * by {@code (host, peer_grpc_port)} instead of {@code (host, admin_port)} -- the identity {@link
+     * core.ParallelJoinExecutor}'s remote-dispatch scheduler actually has on hand (its own {@code
+     * WARP_PEER_GRPC_PORT}), rather than needing this process's admin port threaded through. A node
+     * that isn't running its own peer listener has {@code selfPeerGrpcPort <= 0} and this exclusion
+     * is then a no-op (nothing in the live list can match a non-positive port anyway, since every
+     * row here already has {@code peer_grpc_port > 0}) -- harmless, not a bug. */
+    public static List<NodeRow> listOtherLivePeerWorkers(com.sayonora.wire.server.ServerOptions options,
+            String selfHost, int selfPeerGrpcPort) throws SQLException {
+        List<NodeRow> peers = new ArrayList<>();
+        for (NodeRow row : listAll(options)) {
+            if ("up".equals(row.status()) && row.peerGrpcPort() > 0
+                    && !(row.host().equals(selfHost) && row.peerGrpcPort() == selfPeerGrpcPort)) {
                 peers.add(row);
             }
         }
