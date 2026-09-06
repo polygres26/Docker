@@ -244,11 +244,11 @@ public final class SchemaFederationStage implements PipelineStage {
                         optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
                 if (parallelPlan != null) {
                     long parallelStartNanos = System.nanoTime();
+                    int partitionCount = ParallelJoinExecutor.partitionCountFor(parallelPlan);
                     try {
-                        ExecutionResult result = ParallelJoinExecutor.execute(
-                                parallelPlan, ParallelJoinExecutor.threadCountFromEnvOrDefault());
-                        log.info("schema federation: executed via the parallel join engine ({} thread(s)) instead "
-                                + "of Calcite's own sequential join execution", ParallelJoinExecutor.threadCountFromEnvOrDefault());
+                        ExecutionResult result = ParallelJoinExecutor.execute(parallelPlan, partitionCount);
+                        log.info("schema federation: executed via the parallel join engine ({} partition(s)) instead "
+                                + "of Calcite's own sequential join execution", partitionCount);
                         if (planStore != null) {
                             planStore.record(backendsLabel, originalSql, planText,
                                     elapsedMillisSince(parallelStartNanos), result.rows().size(), true, null, leafScans);

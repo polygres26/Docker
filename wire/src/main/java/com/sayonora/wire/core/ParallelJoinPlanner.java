@@ -79,7 +79,7 @@ final class ParallelJoinPlanner {
      * output, unchanged. */
     record Plan(String buildSql, List<Integer> buildProjection, int buildKeyOrdinal, LeafScanProfiler.MountedBackend buildBackend,
             String probeSql, List<Integer> probeProjection, int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
-            boolean leftIsBuild, List<Integer> outputProjection) {
+            boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate) {
     }
 
     /** One join side, fully resolved: its own leaf backend scan, and -- when Calcite left a plain
@@ -158,12 +158,18 @@ final class ParallelJoinPlanner {
             return null;
         }
         boolean leftIsBuild = leftCount == null || rightCount == null || leftCount <= rightCount;
+        // The PROBE side (the larger one) is what actually drives how much per-partition work
+        // there is -- a real signal for sizing partition count, not just picking a build side.
+        // -1 (unknown) when either probe failed, same "don't guess" stance as everywhere else here.
+        long probeRowCountEstimate = (leftCount == null || rightCount == null) ? -1L : Math.max(leftCount, rightCount);
         if (leftIsBuild) {
             return new Plan(leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend,
-                    rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend, true, outputProjection);
+                    rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend, true, outputProjection,
+                    probeRowCountEstimate);
         }
         return new Plan(rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend,
-                leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend, false, outputProjection);
+                leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend, false, outputProjection,
+                probeRowCountEstimate);
     }
 
     /** {@code WARP_PARALLEL_JOIN_MIN_ROWS} -- the smaller (build) side's estimated row count must
