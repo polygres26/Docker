@@ -266,6 +266,30 @@ public final class SchemaFederationStage implements PipelineStage {
                                 + "path for this query ({})", e.toString());
                     }
                 }
+            } else if (mounts.size() >= 3 && parallelJoinEnabled()) {
+                // N-way (left-deep chain) extension of the same design -- only the confirmed
+                // left-deep join-tree shape is handled; anything else (right-deep/bushy) falls back
+                // to the sequential path exactly like every other real narrowing in this engine.
+                ParallelJoinPlanner.ChainPlan chainPlan = ParallelJoinPlanner.tryChainPlan(
+                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
+                if (chainPlan != null) {
+                    long parallelStartNanos = System.nanoTime();
+                    int partitionCount = ParallelJoinExecutor.partitionCountFor(chainPlan.firstStepPlan());
+                    try {
+                        ExecutionResult result = ChainedJoinExecutor.execute(chainPlan, partitionCount);
+                        log.info("schema federation: executed via the parallel join engine ({} partition(s), {}-way "
+                                + "chain) instead of Calcite's own sequential join execution",
+                                partitionCount, chainPlan.extensionSteps().size() + 2);
+                        if (planStore != null) {
+                            planStore.record(backendsLabel, originalSql, planText,
+                                    elapsedMillisSince(parallelStartNanos), result.rows().size(), true, null, leafScans);
+                        }
+                        return result;
+                    } catch (SQLException e) {
+                        log.warn("schema federation: parallel join engine (chain) failed -- falling back to the "
+                                + "sequential path for this query ({})", e.toString());
+                    }
+                }
             }
 
             long startNanos = System.nanoTime();

@@ -323,7 +323,18 @@ final class ParallelJoinExecutor {
         for (List<List<Object>> output : partitionOutputs) {
             allRows.addAll(output);
         }
-        List<Integer> outputProjection = plan.outputProjection();
+        return applyProjectionAggregateSortAndFinish(finalColumns, allRows, plan.outputProjection(),
+                plan.aggregateSpec(), plan.sortKeys(), plan.fetchLimit());
+    }
+
+    /** The final, shared tail of every parallel join execution -- re-applying an outer column
+     * selection/reordering, then a {@code GROUP BY} aggregation, then an {@code ORDER BY}/{@code
+     * LIMIT} -- against an already-fully-joined row set. Shared by {@link #execute} (Phase 0's own
+     * 2-way join) and {@link ChainedJoinExecutor#execute} (an N-way left-deep chain's own final,
+     * fully-concatenated result) so the two never risk drifting on this shared final-stage logic. */
+    static ExecutionResult applyProjectionAggregateSortAndFinish(List<ColumnInfo> finalColumns, List<List<Object>> allRows,
+            List<Integer> outputProjection, ParallelJoinPlanner.AggregateSpec aggregateSpec,
+            List<ParallelJoinPlanner.SortKey> sortKeys, Integer fetchLimit) {
         List<ColumnInfo> outputColumns = finalColumns;
         List<List<Object>> outputRows = allRows;
         if (outputProjection != null) {
@@ -346,13 +357,13 @@ final class ParallelJoinExecutor {
             outputColumns = projectedColumns;
             outputRows = projectedRows;
         }
-        if (plan.aggregateSpec() != null) {
+        if (aggregateSpec != null) {
             // A GROUP BY sat directly above the join (or its pre-aggregation projection, already
             // applied above if present) -- a real, disclosed simplification, consistent with this
             // engine's other narrow scoping: this aggregates the already-fully-collected joined
             // rows in ONE final pass rather than maintaining a true streaming partial-aggregate per
             // partition, correct either way, just not the maximally memory-efficient version.
-            ParallelJoinPlanner.AggregateSpec spec = plan.aggregateSpec();
+            ParallelJoinPlanner.AggregateSpec spec = aggregateSpec;
             // aggregateRows() always emits its OWN natural [group keys][agg results] order,
             // regardless of what the user's own SELECT list asked for -- outputLayout (built while
             // planning, see AggregateSpec's own javadoc) says which of THOSE internal columns each
@@ -380,7 +391,7 @@ final class ParallelJoinExecutor {
             outputRows = reorderedRows;
             outputColumns = aggregatedColumns;
         }
-        if (plan.sortKeys() != null) {
+        if (sortKeys != null) {
             // A bounded ORDER BY ... LIMIT sat above the join (see ParallelJoinPlanner's own
             // javadoc on why an unbounded sort stays out of scope) -- its own collation ordinals
             // are already relative to exactly this row shape (post-outputProjection, or the
@@ -390,8 +401,8 @@ final class ParallelJoinExecutor {
             // true streaming per-partition bounded top-K -- correct either way, just not the
             // maximally memory-efficient version of the optimization.
             outputRows = new ArrayList<>(outputRows);
-            outputRows.sort((a, b) -> compareBySortKeys(a, b, plan.sortKeys()));
-            int limit = plan.fetchLimit();
+            outputRows.sort((a, b) -> compareBySortKeys(a, b, sortKeys));
+            int limit = fetchLimit;
             if (outputRows.size() > limit) {
                 outputRows = outputRows.subList(0, limit);
             }
@@ -595,7 +606,7 @@ final class ParallelJoinExecutor {
     /** Remaps a raw streamed row into a side's LOGICAL shape per {@link
      * ParallelJoinPlanner.Plan}'s own {@code buildProjection}/{@code probeProjection} -- {@code
      * null} projection means the raw row already IS the logical row, returned unchanged. */
-    private static List<Object> applyProjection(List<Object> row, List<Integer> projection) {
+    static List<Object> applyProjection(List<Object> row, List<Integer> projection) {
         if (projection == null) {
             return row;
         }
@@ -610,7 +621,7 @@ final class ParallelJoinExecutor {
      * data row -- same ordinal remap, applied once per side rather than once per row. A separate
      * name (rather than an overload) because the two {@code List<Object>}/{@code List<ColumnInfo>}
      * signatures erase identically. */
-    private static List<ColumnInfo> applyColumnProjection(List<ColumnInfo> columns, List<Integer> projection) {
+    static List<ColumnInfo> applyColumnProjection(List<ColumnInfo> columns, List<Integer> projection) {
         if (projection == null) {
             return columns;
         }
