@@ -35,3 +35,33 @@ message Row {
   repeated string values = 1; // text-encoded, parallel to is_null
   repeated bool is_null = 2;
 }
+
+// Phase 1a of the parallel execution engine (see the "jazzy-wishing-balloon" design plan):
+// a NODE-TO-NODE service, deliberately separate from QueryService above -- that service
+// authenticates an END USER (username/password against CredentialStore) for ad-hoc SQL; this one
+// authenticates a PEER WARP NODE via mutual TLS (see server/TlsSupport#buildMutualSslContext and
+// grpc/WarpPeerGrpcServer), and only ever carries a single partition's already-collected rows for
+// one federated-join partition to be matched locally and returned -- never a SQL statement, never
+// a connection to an original backend. Deliberately unary (not streaming): this codebase has no
+// existing streaming RPC precedent, and a first version mirroring QueryService's own proven
+// unary shape is a smaller, safer step than inventing bidirectional streaming from scratch.
+service WarpPeerService {
+  rpc JoinPartition(JoinPartitionRequest) returns (JoinPartitionResponse);
+}
+
+message JoinPartitionRequest {
+  repeated string build_column_names = 1;
+  repeated Row build_rows = 2;
+  int32 build_key_ordinal = 3;
+  repeated string probe_column_names = 4;
+  repeated Row probe_rows = 5;
+  int32 probe_key_ordinal = 6;
+  bool left_is_build = 7; // which side's columns come first in the joined output row
+}
+
+message JoinPartitionResponse {
+  bool success = 1;
+  string error_message = 2;
+  repeated string column_names = 3;
+  repeated Row rows = 4;
+}

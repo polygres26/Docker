@@ -42,6 +42,24 @@ public final class TlsSupport {
 
     public static SSLContext buildMutualSslContext(String keystorePath, String keystorePassword)
             throws GeneralSecurityException, IOException {
+        MutualTlsManagers managers = loadMutualTlsManagers(keystorePath, keystorePassword);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(managers.keyManagerFactory().getKeyManagers(), managers.trustManagerFactory().getTrustManagers(), null);
+        return context;
+    }
+
+    /** A {@link KeyManagerFactory}/{@link TrustManagerFactory} pair loaded from the SAME PKCS12
+     * file used as both keystore and truststore -- the same "one file, one identity, trusted by
+     * anyone holding the matching CA" shape {@link #buildMutualSslContext} already uses for
+     * Ignite's peer TLS. Netty's gRPC {@code SslContextBuilder} (see {@code
+     * grpc/WarpPeerGrpcServer.java}) wants the managers directly rather than a JDK {@link
+     * SSLContext}, which is why this is exposed as a separate method instead of only the
+     * SSLContext-returning one above. */
+    public record MutualTlsManagers(KeyManagerFactory keyManagerFactory, TrustManagerFactory trustManagerFactory) {
+    }
+
+    public static MutualTlsManagers loadMutualTlsManagers(String keystorePath, String keystorePassword)
+            throws GeneralSecurityException, IOException {
         char[] password = keystorePassword == null ? new char[0] : keystorePassword.toCharArray();
         KeyStore keyStore = KeyStore.getInstance("PKCS12");
         try (FileInputStream in = new FileInputStream(keystorePath)) {
@@ -51,8 +69,6 @@ public final class TlsSupport {
         kmf.init(keyStore, password);
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         tmf.init(keyStore);
-        SSLContext context = SSLContext.getInstance("TLS");
-        context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
-        return context;
+        return new MutualTlsManagers(kmf, tmf);
     }
 }

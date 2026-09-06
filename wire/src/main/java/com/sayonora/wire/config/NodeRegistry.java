@@ -32,22 +32,35 @@ public final class NodeRegistry {
     private static final long HEARTBEAT_PERIOD_SECONDS = 10;
     private static final long STALE_ROW_MAX_AGE_SECONDS = 24 * 60 * 60;
 
+    /** {@code peerGrpcPort} -- 0 (or absent, on an older row before this migration) means this node
+     * isn't running {@code WarpPeerGrpcServer}, i.e. it's never a valid target for a Phase 1
+     * remote-partition-join dispatch. A real, positive port number IS the capability signal;
+     * no separate boolean flag is needed. */
     public record NodeRow(UUID nodeId, String host, int adminPort, String zone, String version,
-            Instant startedAt, Instant lastHeartbeat, String status) {
+            Instant startedAt, Instant lastHeartbeat, String status, int peerGrpcPort) {
     }
 
     private final com.sayonora.wire.server.ServerOptions options;
     private final UUID nodeId = UUID.randomUUID();
     private final String host;
     private final int adminPort;
+    private final int peerGrpcPort;
     private final String zone;
     private final String version;
     private final Instant startedAt = Instant.now();
     private ScheduledExecutorService scheduler;
 
     public NodeRegistry(com.sayonora.wire.server.ServerOptions options, int adminPort, String version) {
+        this(options, adminPort, version, 0);
+    }
+
+    /** @param peerGrpcPort this node's own {@code WarpPeerGrpcServer} port, or 0 when that Phase 1
+     *     service isn't running on this instance (the common case today -- opt-in, off by
+     *     default, matching {@code WARP_CLUSTER_ENABLED}'s own shape). */
+    public NodeRegistry(com.sayonora.wire.server.ServerOptions options, int adminPort, String version, int peerGrpcPort) {
         this.options = options;
         this.adminPort = adminPort;
+        this.peerGrpcPort = peerGrpcPort;
         this.host = resolveHost();
         this.zone = resolveZone(this.host);
         this.version = version;
@@ -92,6 +105,10 @@ public final class NodeRegistry {
                     + "version text, "
                     + "started_at timestamptz NOT NULL, "
                     + "last_heartbeat timestamptz NOT NULL)");
+            // Additive migration for Phase 1's remote-partition-join peer discovery -- see NodeRow's
+            // own javadoc. IF NOT EXISTS keeps this idempotent across every existing deployment's
+            // warp_nodes table, matching the CREATE TABLE above's own idempotency style.
+            st.execute("ALTER TABLE warp_nodes ADD COLUMN IF NOT EXISTS peer_grpc_port int NOT NULL DEFAULT 0");
         }
     }
 
@@ -120,17 +137,18 @@ public final class NodeRegistry {
     private void heartbeatOnce() throws SQLException {
         try (Connection conn = com.sayonora.wire.pgwire.PgConnections.open(options)) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO warp_nodes (node_id, host, admin_port, zone, version, started_at, last_heartbeat) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, now()) "
+                    "INSERT INTO warp_nodes (node_id, host, admin_port, zone, version, started_at, last_heartbeat, peer_grpc_port) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, now(), ?) "
                             + "ON CONFLICT (node_id) DO UPDATE SET "
                             + "host = EXCLUDED.host, admin_port = EXCLUDED.admin_port, zone = EXCLUDED.zone, "
-                            + "version = EXCLUDED.version, last_heartbeat = now()")) {
+                            + "version = EXCLUDED.version, last_heartbeat = now(), peer_grpc_port = EXCLUDED.peer_grpc_port")) {
                 ps.setObject(1, nodeId);
                 ps.setString(2, host);
                 ps.setInt(3, adminPort);
                 ps.setString(4, zone);
                 ps.setString(5, version);
                 ps.setTimestamp(6, Timestamp.from(startedAt));
+                ps.setInt(7, peerGrpcPort);
                 ps.executeUpdate();
             }
             try (PreparedStatement ps = conn.prepareStatement(
@@ -163,7 +181,7 @@ public final class NodeRegistry {
         List<NodeRow> rows = new ArrayList<>();
         try (Connection conn = com.sayonora.wire.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
-                        "SELECT node_id, host, admin_port, zone, version, started_at, last_heartbeat "
+                        "SELECT node_id, host, admin_port, zone, version, started_at, last_heartbeat, peer_grpc_port "
                                 + "FROM warp_nodes ORDER BY zone NULLS LAST, host")) {
             while (rs.next()) {
                 UUID id = (UUID) rs.getObject(1);
@@ -174,9 +192,30 @@ public final class NodeRegistry {
                 Instant startedAt = rs.getTimestamp(6).toInstant();
                 Instant lastHeartbeat = rs.getTimestamp(7).toInstant();
                 String status = lastHeartbeat.isAfter(Instant.now().minusSeconds(30)) ? "up" : "stale";
-                rows.add(new NodeRow(id, host, adminPort, zone, version, startedAt, lastHeartbeat, status));
+                int peerGrpcPort = rs.getInt(8);
+                rows.add(new NodeRow(id, host, adminPort, zone, version, startedAt, lastHeartbeat, status, peerGrpcPort));
             }
         }
         return rows;
+    }
+
+    /** Every OTHER live node (excluding this instance's own row, matched by {@link #resolveHost()}
+     * + admin port -- the same self-recognition {@code MetricsServer#fanOutToPeers} already uses)
+     * that's actually running {@code WarpPeerGrpcServer} (a real, positive {@code peer_grpc_port})
+     * -- i.e. every real, currently-usable target for a Phase 1 remote-partition-join dispatch. Not
+     * yet called by any live query path (Phase 1a proves the RPC primitive in isolation; wiring
+     * this into {@code ParallelJoinExecutor}'s own scheduling is Phase 1b), but establishing this
+     * method now is what makes that follow-up "consult one existing method," not new plumbing. */
+    public static List<NodeRow> listLivePeerWorkers(com.sayonora.wire.server.ServerOptions options, int selfAdminPort)
+            throws SQLException {
+        String selfHost = resolveHost();
+        List<NodeRow> peers = new ArrayList<>();
+        for (NodeRow row : listAll(options)) {
+            if ("up".equals(row.status()) && row.peerGrpcPort() > 0
+                    && !(row.host().equals(selfHost) && row.adminPort() == selfAdminPort)) {
+                peers.add(row);
+            }
+        }
+        return peers;
     }
 }
