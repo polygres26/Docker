@@ -10,6 +10,7 @@ import java.util.Map;
 import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -77,15 +78,21 @@ final class ParallelJoinPlanner {
      * a plain column-selection/reordering {@code Project} Calcite placed directly above the join
      * itself (e.g. {@code SELECT c.name, o.amount}); {@code null} means that concatenation IS the
      * output, unchanged. */
-    record Plan(String buildSql, List<Integer> buildProjection, int buildKeyOrdinal, LeafScanProfiler.MountedBackend buildBackend,
-            String probeSql, List<Integer> probeProjection, int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
+    record Plan(String buildSql, List<Integer> buildProjection, RexRowEvaluator.RowPredicate buildFilter,
+            int buildKeyOrdinal, LeafScanProfiler.MountedBackend buildBackend,
+            String probeSql, List<Integer> probeProjection, RexRowEvaluator.RowPredicate probeFilter,
+            int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
             boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate) {
     }
 
     /** One join side, fully resolved: its own leaf backend scan, and -- when Calcite left a plain
-     * column-selection/reordering {@code Project} directly above that scan un-pushed-down -- the
-     * ordinal remap needed to turn a raw streamed row into this side's logical shape. */
-    private record SideExtraction(RelNode leaf, List<Integer> baseProjection) {
+     * column-selection/reordering {@code Project} and/or a {@code Filter} directly above that scan
+     * un-pushed-down -- the ordinal remap and/or compiled row predicate needed to turn a raw
+     * streamed row into this side's logical, filtered shape. Both {@code baseProjection} and {@code
+     * residualFilter} (when the shape includes both) are expressed in terms of the LEAF's own raw
+     * row -- a {@code Filter} directly on the leaf, with an optional {@code Project} above it, never
+     * changes the row shape the filter's own ordinals refer to. */
+    private record SideExtraction(RelNode leaf, List<Integer> baseProjection, RexRowEvaluator.RowPredicate residualFilter) {
     }
 
     /** Returns {@code null} (never throws) whenever the plan isn't eligible for Phase 0's parallel
@@ -163,13 +170,13 @@ final class ParallelJoinPlanner {
         // -1 (unknown) when either probe failed, same "don't guess" stance as everywhere else here.
         long probeRowCountEstimate = (leftCount == null || rightCount == null) ? -1L : Math.max(leftCount, rightCount);
         if (leftIsBuild) {
-            return new Plan(leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend,
-                    rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend, true, outputProjection,
-                    probeRowCountEstimate);
+            return new Plan(leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
+                    rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
+                    true, outputProjection, probeRowCountEstimate);
         }
-        return new Plan(rightSql, rightSide.baseProjection(), rightKeyOrdinal, rightBackend,
-                leftSql, leftSide.baseProjection(), leftKeyOrdinal, leftBackend, false, outputProjection,
-                probeRowCountEstimate);
+        return new Plan(rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
+                leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
+                false, outputProjection, probeRowCountEstimate);
     }
 
     /** {@code WARP_PARALLEL_JOIN_MIN_ROWS} -- the smaller (build) side's estimated row count must
@@ -193,14 +200,16 @@ final class ParallelJoinPlanner {
         return 10_000L;
     }
 
-    /** Resolves one join input to a leaf backend scan, optionally wrapped in a single plain
-     * column-selection/reordering {@code Project} Calcite left un-pushed-down directly above it --
-     * {@code null} for anything else (more than one leaf, a {@code Filter}, a nested combination, a
-     * projection with a computed expression, or a projection over anything other than the leaf
-     * itself). Real, disclosed narrowing: a residual {@code Filter} (as opposed to a {@code
-     * Project}) above a leaf scan isn't handled this pass -- expressing an arbitrary filter
-     * predicate as a portable remap (the way a plain column selection can be) isn't a simple ordinal
-     * operation, so that shape safely falls back instead. */
+    /** Resolves one join input to a leaf backend scan, optionally wrapped in a plain
+     * column-selection/reordering {@code Project} and/or a residual {@code Filter} Calcite left
+     * un-pushed-down directly above it -- {@code null} for anything else (more than one leaf, a
+     * nested combination deeper than one {@code Project}/{@code Filter} layer each, a projection
+     * with a computed expression, or a filter condition {@link RexRowEvaluator#compile} can't
+     * confidently evaluate, e.g. a function call or subquery). Handles, specifically: the bare leaf;
+     * {@code Project(leaf)}; {@code Filter(leaf)}; and {@code Project(Filter(leaf))} -- in every
+     * shape that includes a {@code Filter} directly on the leaf, the filter's own ordinals (and, in
+     * the {@code Project(Filter(leaf))} case, the projection's too) are relative to the LEAF's raw
+     * row, since a {@code Filter} never changes row shape. */
     private static SideExtraction extractSide(RelNode sideInput) {
         List<RelNode> leaves = new ArrayList<>();
         collectJdbcLeaves(sideInput, leaves);
@@ -209,14 +218,23 @@ final class ParallelJoinPlanner {
         }
         RelNode leaf = leaves.get(0);
         if (sideInput == leaf) {
-            return new SideExtraction(leaf, null);
+            return new SideExtraction(leaf, null, null);
         }
         if (sideInput instanceof Project project && project.getInput() == leaf) {
+            List<Integer> ordinals = asPlainColumnSelection(project.getProjects());
+            return ordinals == null ? null : new SideExtraction(leaf, ordinals, null);
+        }
+        if (sideInput instanceof Filter filter && filter.getInput() == leaf) {
+            RexRowEvaluator.RowPredicate predicate = RexRowEvaluator.compile(filter.getCondition());
+            return predicate == null ? null : new SideExtraction(leaf, null, predicate);
+        }
+        if (sideInput instanceof Project project && project.getInput() instanceof Filter filter && filter.getInput() == leaf) {
             List<Integer> ordinals = asPlainColumnSelection(project.getProjects());
             if (ordinals == null) {
                 return null;
             }
-            return new SideExtraction(leaf, ordinals);
+            RexRowEvaluator.RowPredicate predicate = RexRowEvaluator.compile(filter.getCondition());
+            return predicate == null ? null : new SideExtraction(leaf, ordinals, predicate);
         }
         return null;
     }

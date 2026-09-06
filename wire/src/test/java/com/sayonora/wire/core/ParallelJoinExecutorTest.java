@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 class ParallelJoinExecutorTest {
 
     private static ParallelJoinPlanner.Plan planWithProbeRowCountEstimate(long estimate) {
-        return new ParallelJoinPlanner.Plan(null, null, 0, null, null, null, 0, null, true, null, estimate);
+        return new ParallelJoinPlanner.Plan(null, null, null, 0, null, null, null, null, 0, null, true, null, estimate);
     }
 
     /** Assumes {@code WARP_PARALLEL_JOIN_THREADS} isn't set in the test environment -- an explicit
