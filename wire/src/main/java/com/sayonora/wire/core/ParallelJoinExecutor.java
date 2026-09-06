@@ -346,6 +346,40 @@ final class ParallelJoinExecutor {
             outputColumns = projectedColumns;
             outputRows = projectedRows;
         }
+        if (plan.aggregateSpec() != null) {
+            // A GROUP BY sat directly above the join (or its pre-aggregation projection, already
+            // applied above if present) -- a real, disclosed simplification, consistent with this
+            // engine's other narrow scoping: this aggregates the already-fully-collected joined
+            // rows in ONE final pass rather than maintaining a true streaming partial-aggregate per
+            // partition, correct either way, just not the maximally memory-efficient version.
+            ParallelJoinPlanner.AggregateSpec spec = plan.aggregateSpec();
+            // aggregateRows() always emits its OWN natural [group keys][agg results] order,
+            // regardless of what the user's own SELECT list asked for -- outputLayout (built while
+            // planning, see AggregateSpec's own javadoc) says which of THOSE internal columns each
+            // FINAL output position actually is, since nothing requires a SELECT list to list group
+            // keys before aggregates, or in GROUP BY's own declared order.
+            List<List<Object>> internalRows = aggregateRows(outputRows, spec);
+            int groupKeyCount = spec.groupKeyOrdinals().size();
+            List<ColumnInfo> aggregatedColumns = new ArrayList<>(spec.outputLayout().size());
+            for (int i = 0; i < spec.outputLayout().size(); i++) {
+                ParallelJoinPlanner.OutputColumn col = spec.outputLayout().get(i);
+                int jdbcType = col.isGroupKey()
+                        ? outputColumns.get(spec.groupKeyOrdinals().get(col.index())).jdbcType()
+                        : spec.aggCalls().get(col.index()).kind() == org.apache.calcite.sql.SqlKind.COUNT
+                                ? java.sql.Types.BIGINT : java.sql.Types.NUMERIC;
+                aggregatedColumns.add(new ColumnInfo(spec.outputColumnNames().get(i), jdbcType, 0, 0, 0, true));
+            }
+            List<List<Object>> reorderedRows = new ArrayList<>(internalRows.size());
+            for (List<Object> internalRow : internalRows) {
+                List<Object> row = new ArrayList<>(spec.outputLayout().size());
+                for (ParallelJoinPlanner.OutputColumn col : spec.outputLayout()) {
+                    row.add(col.isGroupKey() ? internalRow.get(col.index()) : internalRow.get(groupKeyCount + col.index()));
+                }
+                reorderedRows.add(row);
+            }
+            outputRows = reorderedRows;
+            outputColumns = aggregatedColumns;
+        }
         if (plan.sortKeys() != null) {
             // A bounded ORDER BY ... LIMIT sat above the join (see ParallelJoinPlanner's own
             // javadoc on why an unbounded sort stays out of scope) -- its own collation ordinals
@@ -363,6 +397,102 @@ final class ParallelJoinExecutor {
             }
         }
         return ExecutionResult.ofQuery(outputColumns, outputRows);
+    }
+
+    /** A single group's running aggregate state, one slot per {@link
+     * ParallelJoinPlanner.AggCall}. {@code SUM}/{@code AVG} track a running {@link
+     * java.math.BigDecimal} sum; {@code AVG} additionally needs {@code nonNullCount} (a plain
+     * average-of-averages across partitions would be WRONG once partitions have different row
+     * counts, so this always tracks sum and count separately and divides only once, at the very
+     * end); {@code MIN}/{@code MAX} track a running comparison value via {@link
+     * RexRowEvaluator#compareValues}; {@code COUNT} tracks a plain counter ({@code COUNT(*)}
+     * increments unconditionally, {@code COUNT(col)} only on a non-null value). {@code sawAnyValue}
+     * distinguishes "every input was NULL/there were no rows" (real SQL result: {@code NULL} for
+     * every aggregate but {@code COUNT}, which is {@code 0}) from "the running value is genuinely
+     * this" -- both a real running value of {@code 0} and "no values seen" must never be conflated. */
+    private static final class AggAccumulator {
+        java.math.BigDecimal sum;
+        long nonNullCount;
+        Object minMax;
+        boolean sawAnyValue;
+    }
+
+    private static List<List<Object>> aggregateRows(List<List<Object>> rows, ParallelJoinPlanner.AggregateSpec spec) {
+        // LinkedHashMap: first-seen group order, for a deterministic (if arbitrary) output order --
+        // GROUP BY itself makes no ordering guarantee, so any stable order is correct.
+        Map<List<Object>, List<AggAccumulator>> groups = new java.util.LinkedHashMap<>();
+        for (List<Object> row : rows) {
+            List<Object> groupKey = new ArrayList<>(spec.groupKeyOrdinals().size());
+            for (int ordinal : spec.groupKeyOrdinals()) {
+                groupKey.add(row.get(ordinal));
+            }
+            List<AggAccumulator> accumulators = groups.computeIfAbsent(groupKey, k -> {
+                List<AggAccumulator> fresh = new ArrayList<>(spec.aggCalls().size());
+                for (int i = 0; i < spec.aggCalls().size(); i++) {
+                    fresh.add(new AggAccumulator());
+                }
+                return fresh;
+            });
+            for (int i = 0; i < spec.aggCalls().size(); i++) {
+                updateAccumulator(accumulators.get(i), spec.aggCalls().get(i), row);
+            }
+        }
+        List<List<Object>> result = new ArrayList<>(groups.size());
+        for (Map.Entry<List<Object>, List<AggAccumulator>> entry : groups.entrySet()) {
+            List<Object> outputRow = new ArrayList<>(spec.groupKeyOrdinals().size() + spec.aggCalls().size());
+            outputRow.addAll(entry.getKey());
+            for (int i = 0; i < spec.aggCalls().size(); i++) {
+                outputRow.add(finalizeAccumulator(entry.getValue().get(i), spec.aggCalls().get(i)));
+            }
+            result.add(outputRow);
+        }
+        return result;
+    }
+
+    private static void updateAccumulator(AggAccumulator acc, ParallelJoinPlanner.AggCall call, List<Object> row) {
+        Object value = call.argOrdinal() == null ? null : row.get(call.argOrdinal());
+        switch (call.kind()) {
+            case COUNT -> {
+                if (call.argOrdinal() == null || value != null) {
+                    acc.nonNullCount++;
+                }
+            }
+            case SUM, AVG -> {
+                if (value != null) {
+                    java.math.BigDecimal parsed = RexRowEvaluator.asBigDecimalOrNull(value);
+                    if (parsed != null) {
+                        acc.sum = acc.sum == null ? parsed : acc.sum.add(parsed);
+                        acc.nonNullCount++;
+                        acc.sawAnyValue = true;
+                    }
+                }
+            }
+            case MIN -> {
+                if (value != null && (!acc.sawAnyValue || RexRowEvaluator.compareValues(value, acc.minMax) < 0)) {
+                    acc.minMax = value;
+                    acc.sawAnyValue = true;
+                }
+            }
+            case MAX -> {
+                if (value != null && (!acc.sawAnyValue || RexRowEvaluator.compareValues(value, acc.minMax) > 0)) {
+                    acc.minMax = value;
+                    acc.sawAnyValue = true;
+                }
+            }
+            default -> throw new IllegalStateException("unsupported aggregate kind reached the executor: " + call.kind());
+        }
+    }
+
+    private static Object finalizeAccumulator(AggAccumulator acc, ParallelJoinPlanner.AggCall call) {
+        return switch (call.kind()) {
+            case COUNT -> acc.nonNullCount;
+            case SUM -> acc.sawAnyValue ? acc.sum : null;
+            case AVG -> acc.sawAnyValue && acc.nonNullCount > 0
+                    ? acc.sum.divide(java.math.BigDecimal.valueOf(acc.nonNullCount), 10, java.math.RoundingMode.HALF_UP)
+                    : null;
+            case MIN, MAX -> acc.sawAnyValue ? acc.minMax : null;
+            default -> null;
+        };
     }
 
     private static int compareBySortKeys(List<Object> a, List<Object> b, List<ParallelJoinPlanner.SortKey> sortKeys) {

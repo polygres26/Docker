@@ -183,6 +183,11 @@ final class ShardJoinExecutor {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
+            // Same real, found-live gap as SchemaFederationStage's own matching fix: without this
+            // rule, the planner has no path at all for a GROUP BY with AVG (or any aggregate
+            // EnumerableAggregateRule alone can't decompose) -- "Missing conversion is
+            // LogicalAggregate[convention: NONE -> ENUMERABLE]", failing outright.
+            rules.add(org.apache.calcite.rel.rules.CoreRules.AGGREGATE_REDUCE_FUNCTIONS);
             List<String> shardMountNames = new ArrayList<>();
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new LinkedHashMap<>();
             SqlDialect dialect = null;

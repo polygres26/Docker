@@ -161,7 +161,10 @@ final class RexRowEvaluator {
         return String.valueOf(left).compareTo(String.valueOf(right));
     }
 
-    private static BigDecimal asBigDecimalOrNull(Object value) {
+    /** Package-visible so {@link ParallelJoinPlanner}'s aggregation support ({@code SUM}/{@code
+     * AVG}) can parse a row value into a number using the exact same rule filter predicates and
+     * {@code ORDER BY} comparisons already use -- one numeric-coercion implementation, not three. */
+    static BigDecimal asBigDecimalOrNull(Object value) {
         if (value instanceof BigDecimal bd) {
             return bd;
         }
