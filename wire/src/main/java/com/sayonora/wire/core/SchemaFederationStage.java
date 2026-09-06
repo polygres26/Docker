@@ -171,6 +171,7 @@ public final class SchemaFederationStage implements PipelineStage {
             SchemaPlus rootSchema = cc.getRootSchema();
             List<RelOptRule> rules = new ArrayList<>(EnumerableRules.rules());
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend = new java.util.LinkedHashMap<>();
+            Map<String, SqlDialect> mountDialects = new java.util.LinkedHashMap<>();
             SqlDialect dialect = null;
             for (Map.Entry<String, BackendMount> entry : mounts.entrySet()) {
                 String schemaName = entry.getKey();
@@ -189,6 +190,7 @@ public final class SchemaFederationStage implements PipelineStage {
                 DataSource dataSource = JdbcSchema.dataSource(
                         target.jdbcUrl(), driverClassName, target.user(), target.password());
                 dialect = JdbcSchema.createDialect(dataSource);
+                mountDialects.put(schemaName, dialect);
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, schemaName, JdbcSchema.class);
                 JdbcConvention convention = JdbcConvention.of(dialect, expression, schemaName);
@@ -231,6 +233,34 @@ public final class SchemaFederationStage implements PipelineStage {
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
             List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null ? List.of()
                     : LeafScanProfiler.measure(optimized, dialect, mountToBackend, !statement.bindParams().isEmpty());
+
+            // Phase 0 of the Warp-native parallel execution engine (see the "jazzy-wishing-balloon"
+            // design plan): opt-in, flag-gated, and only ever attempted for the narrow shape
+            // ParallelJoinPlanner actually validates (a single two-backend INNER equi-join with no
+            // bind parameters) -- any other shape (or the flag being off) falls straight through to
+            // the unchanged sequential RelRunner path below, so this is purely additive.
+            if (mounts.size() == 2 && parallelJoinEnabled()) {
+                ParallelJoinPlanner.Plan parallelPlan = ParallelJoinPlanner.tryPlan(
+                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
+                if (parallelPlan != null) {
+                    long parallelStartNanos = System.nanoTime();
+                    try {
+                        ExecutionResult result = ParallelJoinExecutor.execute(
+                                parallelPlan, ParallelJoinExecutor.threadCountFromEnvOrDefault());
+                        log.info("schema federation: executed via the parallel join engine ({} thread(s)) instead "
+                                + "of Calcite's own sequential join execution", ParallelJoinExecutor.threadCountFromEnvOrDefault());
+                        if (planStore != null) {
+                            planStore.record(backendsLabel, originalSql, planText,
+                                    elapsedMillisSince(parallelStartNanos), result.rows().size(), true, null, leafScans);
+                        }
+                        return result;
+                    } catch (SQLException e) {
+                        log.warn("schema federation: parallel join engine failed -- falling back to the sequential "
+                                + "path for this query ({})", e.toString());
+                    }
+                }
+            }
+
             long startNanos = System.nanoTime();
             try (PreparedStatement ps = calciteConnection.unwrap(org.apache.calcite.tools.RelRunner.class)
                     .prepareStatement(optimized)) {
@@ -367,5 +397,12 @@ public final class SchemaFederationStage implements PipelineStage {
     private static String stripTrailingSemicolon(String sql) {
         String trimmed = sql.stripTrailing();
         return trimmed.endsWith(";") ? trimmed.substring(0, trimmed.length() - 1) : sql;
+    }
+
+    /** {@code WARP_PARALLEL_JOIN_ENABLED} -- opt-in, default off, per the parallel execution
+     * engine's own design plan ("not default on day one"). */
+    private static boolean parallelJoinEnabled() {
+        String raw = System.getenv("WARP_PARALLEL_JOIN_ENABLED");
+        return raw != null && (raw.equalsIgnoreCase("true") || raw.equals("1"));
     }
 }
