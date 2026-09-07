@@ -54,6 +54,13 @@ final class PartitionSpill implements Closeable {
         nextOffset += 4L + bytes.length;
     }
 
+    /** Every distinct key spilled for this partition -- used by {@link ParallelJoinExecutor}'s own
+     * dynamic-filter pushdown to build a complete build-side key set that includes keys which never
+     * made it into the in-memory table at all. */
+    synchronized java.util.Set<Object> spilledKeys() {
+        return java.util.Set.copyOf(offsetsByKey.keySet());
+    }
+
     /** Every spilled row sharing {@code key}, read back from disk -- empty (never {@code null}) when
      * this key was never spilled for this partition. */
     synchronized List<List<Object>> readMatches(Object key) throws IOException {

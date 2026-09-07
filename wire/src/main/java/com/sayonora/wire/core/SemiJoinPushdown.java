@@ -206,7 +206,10 @@ final class SemiJoinPushdown {
         return token.replace("\"", "");
     }
 
-    private static String literalList(List<Object> values) {
+    /** Package-visible (not just used internally) so {@link ParallelJoinExecutor}'s own dynamic
+     * (probe-side) filter pushdown reuses the exact same literal-formatting/escaping rules instead
+     * of a second, possibly-drifting copy. */
+    static String literalList(List<Object> values) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < values.size(); i++) {
             if (i > 0) {
