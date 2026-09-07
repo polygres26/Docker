@@ -109,6 +109,11 @@ final class ParallelJoinExecutor {
      * needing a row-count estimate before the build scan even starts. */
     private static final long DEFAULT_BLOOM_EXPECTED_INSERTIONS = 1_000_000L;
 
+    /** {@code WARP_PARALLEL_JOIN_DYNAMIC_FILTER_MAX_KEYS} default -- matches {@code
+     * SemiJoinPushdown}'s own {@code WARP_SEMIJOIN_MAX_KEYS} default, the same real cost tradeoff
+     * (an unbounded literal {@code IN (...)} list is its own expense) applied to the same idea. */
+    private static final long DYNAMIC_FILTER_MAX_KEYS = 20_000L;
+
     /** A single, privately-held instance used purely for reference-equality end-of-stream
      * signaling on each partition's queue -- deliberately not {@code List.of()} (whose empty-list
      * singleton isn't a safe identity to compare against) and never equal to any real row. */
@@ -304,9 +309,39 @@ final class ParallelJoinExecutor {
             remoteOverflowBuffers.add(i < remoteCount ? new ArrayList<>() : null);
         }
 
+        // Dynamic filtering (this session's own follow-up): now that the build side is fully known,
+        // push its own real, distinct join-key values into the PROBE side's own extracted SQL as a
+        // "WHERE <col> IN (...)" clause -- the exact-semi-join idea SemiJoinPushdown already applies
+        // to the sequential path, closing the gap where the parallel path only ever filtered rows
+        // AFTER fetching them (via each partition's own in-process Bloom filter), never cutting what
+        // the probe backend itself has to scan/ship in the first place. Deliberately conservative,
+        // same stance as SemiJoinPushdown's own: skipped outright (never a wrong answer, just a
+        // missed optimization) whenever the probe key's real column name couldn't be resolved, there
+        // turned out to be no build rows at all (an empty join -- the ordinary sequential/Bloom path
+        // already handles that correctly), or the distinct key COUNT exceeds
+        // WARP_PARALLEL_JOIN_DYNAMIC_FILTER_MAX_KEYS (default 20,000, matching SemiJoinPushdown's own
+        // WARP_SEMIJOIN_MAX_KEYS default -- an unbounded literal IN-list is its own real cost).
+        String probeSql = plan.probeSql();
+        if (plan.probeKeyColumnName() != null) {
+            java.util.Set<Object> distinctBuildKeys = new java.util.HashSet<>();
+            for (int i = 0; i < n && distinctBuildKeys.size() <= DYNAMIC_FILTER_MAX_KEYS; i++) {
+                distinctBuildKeys.addAll(partitionTables.get(i).keySet());
+                if (partitionSpills[i] != null) {
+                    distinctBuildKeys.addAll(partitionSpills[i].spilledKeys());
+                }
+            }
+            long maxKeys = parseLongEnv("WARP_PARALLEL_JOIN_DYNAMIC_FILTER_MAX_KEYS", DYNAMIC_FILTER_MAX_KEYS);
+            if (!distinctBuildKeys.isEmpty() && distinctBuildKeys.size() <= maxKeys) {
+                probeSql = "SELECT * FROM (" + probeSql + ") __warp_dynamic_filter WHERE " + plan.probeKeyColumnName()
+                        + " IN (" + SemiJoinPushdown.literalList(new ArrayList<>(distinctBuildKeys)) + ")";
+                log.info("parallel join: dynamic filter pushed {} build-side key(s) into the probe side's own SQL",
+                        distinctBuildKeys.size());
+            }
+        }
+
         List<ColumnInfo> probeColumns = new ArrayList<>();
         try (Connection probeConnection = plan.probeBackend().target().open();
-                PreparedStatement probePs = probeConnection.prepareStatement(plan.probeSql())) {
+                PreparedStatement probePs = probeConnection.prepareStatement(probeSql)) {
             JdbcBackendExecutor.streamOnPreparedStatement(probePs, List.of(), new JdbcBackendExecutor.StreamingRowHandler() {
                 @Override
                 public void onColumns(List<ColumnInfo> columns) {
@@ -392,40 +427,46 @@ final class ParallelJoinExecutor {
             List<Integer> outputProjection, ParallelJoinPlanner.AggregateSpec aggregateSpec,
             List<ParallelJoinPlanner.SortKey> sortKeys, Integer fetchLimit) {
         List<ColumnInfo> outputColumns = finalColumns;
-        List<List<Object>> outputRows = allRows;
         if (outputProjection != null) {
-            // A plain column-selection/reordering Project sat directly above the join (e.g.
-            // "SELECT c.name, o.amount") -- re-apply it now against the natural left-then-right
-            // concatenated row/columns ParallelJoinPlanner already validated it's expressed purely
-            // in terms of.
             List<ColumnInfo> projectedColumns = new ArrayList<>(outputProjection.size());
             for (int ordinal : outputProjection) {
                 projectedColumns.add(finalColumns.get(ordinal));
             }
-            List<List<Object>> projectedRows = new ArrayList<>(allRows.size());
-            for (List<Object> row : allRows) {
-                List<Object> projectedRow = new ArrayList<>(outputProjection.size());
-                for (int ordinal : outputProjection) {
-                    projectedRow.add(row.get(ordinal));
-                }
-                projectedRows.add(projectedRow);
-            }
             outputColumns = projectedColumns;
-            outputRows = projectedRows;
         }
+
+        // Skew mitigation follow-up: GROUP BY and a bounded ORDER BY/LIMIT are BOTH naturally
+        // single-pass, bounded-memory operations -- an accumulator map costs O(distinct groups),
+        // never O(rows), and a bounded top-K heap of size `fetchLimit` never grows past that
+        // regardless of how many rows flow through it. The PREVIOUS version of this method didn't
+        // take advantage of that: it built a full extra "projected rows" copy of the ALREADY fully
+        // materialized join output (see PartitionSpill's own javadoc for why the join output itself
+        // is still fully materialized upstream -- that remains a real, disclosed limitation this
+        // method alone can't remove), then a full O(n log n) sort-and-truncate for even a LIMIT 10.
+        // This version instead applies the projection lazily, per row, feeding directly into
+        // whichever bounded structure below actually needs it -- no additional full-size copy, and
+        // no full sort when only a small top-K is required.
+        if (aggregateSpec == null && sortKeys == null) {
+            // A plain passthrough SELECT -- every row must come back regardless, so there's no
+            // bounded structure to feed; this is the one case where a full-size copy is genuinely
+            // unavoidable (unchanged from before).
+            List<List<Object>> outputRows = allRows;
+            if (outputProjection != null) {
+                List<List<Object>> projectedRows = new ArrayList<>(allRows.size());
+                for (List<Object> row : allRows) {
+                    projectedRows.add(applyProjection(row, outputProjection));
+                }
+                outputRows = projectedRows;
+            }
+            return ExecutionResult.ofQuery(outputColumns, outputRows);
+        }
+
+        List<List<Object>> outputRows;
         if (aggregateSpec != null) {
-            // A GROUP BY sat directly above the join (or its pre-aggregation projection, already
-            // applied above if present) -- a real, disclosed simplification, consistent with this
-            // engine's other narrow scoping: this aggregates the already-fully-collected joined
-            // rows in ONE final pass rather than maintaining a true streaming partial-aggregate per
-            // partition, correct either way, just not the maximally memory-efficient version.
+            // aggregateRows() itself already only ever costs O(distinct groups), not O(rows) -- the
+            // projection is applied per row, right where each row is consumed, never pre-copied.
+            List<List<Object>> internalRows = aggregateRows(allRows, outputProjection, aggregateSpec);
             ParallelJoinPlanner.AggregateSpec spec = aggregateSpec;
-            // aggregateRows() always emits its OWN natural [group keys][agg results] order,
-            // regardless of what the user's own SELECT list asked for -- outputLayout (built while
-            // planning, see AggregateSpec's own javadoc) says which of THOSE internal columns each
-            // FINAL output position actually is, since nothing requires a SELECT list to list group
-            // keys before aggregates, or in GROUP BY's own declared order.
-            List<List<Object>> internalRows = aggregateRows(outputRows, spec);
             int groupKeyCount = spec.groupKeyOrdinals().size();
             List<ColumnInfo> aggregatedColumns = new ArrayList<>(spec.outputLayout().size());
             for (int i = 0; i < spec.outputLayout().size(); i++) {
@@ -436,6 +477,11 @@ final class ParallelJoinExecutor {
                                 ? java.sql.Types.BIGINT : java.sql.Types.NUMERIC;
                 aggregatedColumns.add(new ColumnInfo(spec.outputColumnNames().get(i), jdbcType, 0, 0, 0, true));
             }
+            // aggregateRows() always emits its OWN natural [group keys][agg results] order --
+            // outputLayout (built while planning) says which of THOSE internal columns each FINAL
+            // output position actually is, since nothing requires a SELECT list to list group keys
+            // before aggregates, or in GROUP BY's own declared order. This reorder step is O(distinct
+            // groups), never O(rows), so it's never the memory concern this refactor targets.
             List<List<Object>> reorderedRows = new ArrayList<>(internalRows.size());
             for (List<Object> internalRow : internalRows) {
                 List<Object> row = new ArrayList<>(spec.outputLayout().size());
@@ -446,24 +492,53 @@ final class ParallelJoinExecutor {
             }
             outputRows = reorderedRows;
             outputColumns = aggregatedColumns;
-        }
-        if (sortKeys != null) {
-            // A bounded ORDER BY ... LIMIT sat above the join (see ParallelJoinPlanner's own
-            // javadoc on why an unbounded sort stays out of scope) -- its own collation ordinals
-            // are already relative to exactly this row shape (post-outputProjection, or the
-            // natural concatenation when there's none), so no further translation is needed here.
-            // A real, disclosed simplification, consistent with this engine's other narrow scoping:
-            // this sorts the already-fully-collected rows once at the end rather than maintaining a
-            // true streaming per-partition bounded top-K -- correct either way, just not the
-            // maximally memory-efficient version of the optimization.
-            outputRows = new ArrayList<>(outputRows);
-            outputRows.sort((a, b) -> compareBySortKeys(a, b, sortKeys));
-            int limit = fetchLimit;
-            if (outputRows.size() > limit) {
-                outputRows = outputRows.subList(0, limit);
+            if (sortKeys != null) {
+                // ORDER BY above a GROUP BY sorts the (already small, O(distinct groups)) aggregated
+                // rows -- a full sort here is fine, there's no large row set left to bound against.
+                outputRows = boundedTopK(outputRows, sortKeys, fetchLimit);
             }
+        } else {
+            // A bounded ORDER BY ... LIMIT directly above the join, no aggregation -- the case this
+            // refactor targets most directly: stream every row through a bounded top-K heap of size
+            // `fetchLimit`, applying the projection lazily per row, instead of copying+sorting the
+            // entire (potentially huge) joined row set for what might be a LIMIT 10.
+            outputRows = boundedTopKWithProjection(allRows, outputProjection, sortKeys, fetchLimit);
         }
         return ExecutionResult.ofQuery(outputColumns, outputRows);
+    }
+
+    /** Streams {@code rows} through a bounded max-heap of size {@code fetchLimit}, applying {@code
+     * projection} to each row lazily as it's consumed -- the single-pass, bounded-memory
+     * replacement for "copy the whole projected row set, then sort it all, then truncate." Returns
+     * the kept rows in final sorted order (ascending per {@code sortKeys}' own semantics). */
+    private static List<List<Object>> boundedTopKWithProjection(List<List<Object>> rows, List<Integer> projection,
+            List<ParallelJoinPlanner.SortKey> sortKeys, int fetchLimit) {
+        int capacity = Math.max(1, fetchLimit);
+        // A max-heap ordered by the SAME comparator, reversed -- its peek is always the current
+        // worst-of-the-kept row, the one to evict the instant a better candidate arrives.
+        java.util.PriorityQueue<List<Object>> heap = new java.util.PriorityQueue<>(capacity,
+                (a, b) -> -compareBySortKeys(a, b, sortKeys));
+        for (List<Object> row : rows) {
+            List<Object> logical = projection == null ? row : applyProjection(row, projection);
+            if (heap.size() < capacity) {
+                heap.add(logical);
+            } else if (compareBySortKeys(logical, heap.peek(), sortKeys) < 0) {
+                heap.poll();
+                heap.add(logical);
+            }
+        }
+        List<List<Object>> result = new ArrayList<>(heap);
+        result.sort((a, b) -> compareBySortKeys(a, b, sortKeys));
+        return result;
+    }
+
+    /** As {@link #boundedTopKWithProjection}, but for the (always small, O(distinct groups)) already-
+     * aggregated row set -- a full sort is fine here, there's no large input to bound against, this
+     * just reuses the same heap so a {@code LIMIT} above a {@code GROUP BY} still truncates
+     * correctly. */
+    private static List<List<Object>> boundedTopK(List<List<Object>> rows, List<ParallelJoinPlanner.SortKey> sortKeys,
+            int fetchLimit) {
+        return boundedTopKWithProjection(rows, null, sortKeys, fetchLimit);
     }
 
     /** A single group's running aggregate state, one slot per {@link
@@ -484,11 +559,16 @@ final class ParallelJoinExecutor {
         boolean sawAnyValue;
     }
 
-    private static List<List<Object>> aggregateRows(List<List<Object>> rows, ParallelJoinPlanner.AggregateSpec spec) {
+    /** {@code projection}, when non-null, is applied to each RAW row lazily as it's consumed here --
+     * never pre-copied into a separate projected-rows list first, since this accumulation is already
+     * a single streaming pass costing O(distinct groups) in memory, never O(rows). */
+    private static List<List<Object>> aggregateRows(List<List<Object>> rawRows, List<Integer> projection,
+            ParallelJoinPlanner.AggregateSpec spec) {
         // LinkedHashMap: first-seen group order, for a deterministic (if arbitrary) output order --
         // GROUP BY itself makes no ordering guarantee, so any stable order is correct.
         Map<List<Object>, List<AggAccumulator>> groups = new java.util.LinkedHashMap<>();
-        for (List<Object> row : rows) {
+        for (List<Object> rawRow : rawRows) {
+            List<Object> row = projection == null ? rawRow : applyProjection(rawRow, projection);
             List<Object> groupKey = new ArrayList<>(spec.groupKeyOrdinals().size());
             for (int ordinal : spec.groupKeyOrdinals()) {
                 groupKey.add(row.get(ordinal));

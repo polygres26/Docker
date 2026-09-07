@@ -26,6 +26,20 @@ import java.util.Map;
  * matching Calcite's own left-deep row-type nesting exactly -- so {@link ParallelJoinPlanner}'s
  * {@code outputProjection}/{@code sortKeys}/{@code aggregateSpec} ordinal math (computed once, up
  * front, against the FULL optimized plan's own row type) applies unchanged to the final result here.
+ * The OUTPUT column order is always {@code [running..., leaf...]} regardless of which side the hash
+ * table is actually built from (see {@link #joinStep} below) -- {@code
+ * RemotePartitionJoin#probeAll}'s own {@code leftIsBuild} flag controls exactly that independently
+ * of which side is cheaper to build from.
+ *
+ * <p><b>Cost-based build-side selection (this session's own follow-up)</b>: unlike the chain's FIRST
+ * pairwise join (planned ahead of execution, via a real {@code COUNT(*)} probe against each leaf --
+ * see {@link ParallelJoinPlanner#buildTwoWayPlan}), the running result's own size for step 2+ is only
+ * known once prior steps have actually run, so this can't be decided at planning time. Instead each
+ * extension step streams the new leaf's rows (needed regardless) and then builds its in-memory hash
+ * table from whichever of {running result, new leaf} turns out smaller -- a real, if coarser, analog
+ * of the same "build from the smaller side" principle {@link ParallelJoinExecutor} already applies to
+ * the first pairwise join, closing the gap where a large running result was always hashed even when
+ * the new leaf was tiny.
  */
 final class ChainedJoinExecutor {
 
@@ -37,22 +51,34 @@ final class ChainedJoinExecutor {
         List<ColumnInfo> runningColumns = firstStep.columns();
         List<List<Object>> runningRows = firstStep.rows();
         for (ParallelJoinPlanner.ChainExtensionStep step : chainPlan.extensionSteps()) {
-            Map<Object, List<List<Object>>> table = RemotePartitionJoin.buildTable(runningRows, step.runningResultKeyOrdinal());
             List<ColumnInfo> leafColumns = new ArrayList<>();
             List<List<Object>> leafRows = new ArrayList<>();
             streamLeaf(step, leafColumns, leafRows);
-            // leftIsBuild=true: the running result (built into `table`) is always the structurally
-            // LEFT side of a left-deep chain's own row-type convention -- matches the
-            // [running..., leaf...] concatenation order this class's own javadoc promises.
-            List<List<Object>> joined = RemotePartitionJoin.probeAll(table, leafRows, step.leafKeyOrdinal(), true);
+            runningRows = joinStep(runningRows, step.runningResultKeyOrdinal(), leafRows, step.leafKeyOrdinal());
             List<ColumnInfo> combinedColumns = new ArrayList<>(runningColumns.size() + leafColumns.size());
             combinedColumns.addAll(runningColumns);
             combinedColumns.addAll(leafColumns);
             runningColumns = combinedColumns;
-            runningRows = joined;
         }
         return ParallelJoinExecutor.applyProjectionAggregateSortAndFinish(runningColumns, runningRows,
                 chainPlan.outputProjection(), chainPlan.aggregateSpec(), chainPlan.sortKeys(), chainPlan.fetchLimit());
+    }
+
+    /** Joins {@code runningRows} against {@code leafRows}, always returning rows in {@code
+     * [running..., leaf...]} column order -- building the in-memory hash table from whichever side
+     * has fewer rows (both are already fully materialized in memory at this point regardless, so
+     * there's no additional cost to checking), rather than always hashing the running result. */
+    private static List<List<Object>> joinStep(List<List<Object>> runningRows, int runningKeyOrdinal,
+            List<List<Object>> leafRows, int leafKeyOrdinal) {
+        if (runningRows.size() <= leafRows.size()) {
+            Map<Object, List<List<Object>>> table = RemotePartitionJoin.buildTable(runningRows, runningKeyOrdinal);
+            // leftIsBuild=true: build (running) then probe (leaf) -- exactly the [running..., leaf...]
+            // order this class's own javadoc promises.
+            return RemotePartitionJoin.probeAll(table, leafRows, leafKeyOrdinal, true);
+        }
+        Map<Object, List<List<Object>>> table = RemotePartitionJoin.buildTable(leafRows, leafKeyOrdinal);
+        // leftIsBuild=false: probe (running) then build (leaf) -- still [running..., leaf...].
+        return RemotePartitionJoin.probeAll(table, runningRows, runningKeyOrdinal, false);
     }
 
     /** Streams one chain-extension leaf's own extracted SQL directly through its own backend

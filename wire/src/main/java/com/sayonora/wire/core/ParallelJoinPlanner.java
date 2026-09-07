@@ -89,7 +89,8 @@ final class ParallelJoinPlanner {
             String probeSql, List<Integer> probeProjection, RexRowEvaluator.RowPredicate probeFilter,
             int probeKeyOrdinal, LeafScanProfiler.MountedBackend probeBackend,
             boolean leftIsBuild, List<Integer> outputProjection, long probeRowCountEstimate,
-            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec) {
+            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec,
+            String probeKeyColumnName) {
     }
 
     /** One supported aggregate call: {@code kind} is one of {@link SqlKind#SUM}, {@code COUNT},
@@ -409,11 +410,30 @@ final class ParallelJoinPlanner {
         if (leftIsBuild) {
             return new Plan(leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
                     rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
-                    true, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec);
+                    true, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec,
+                    rawColumnNameFor(rightSide, rightKeyOrdinal));
         }
         return new Plan(rightSql, rightSide.baseProjection(), rightSide.residualFilter(), rightKeyOrdinal, rightBackend,
                 leftSql, leftSide.baseProjection(), leftSide.residualFilter(), leftKeyOrdinal, leftBackend,
-                false, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec);
+                false, outputProjection, probeRowCountEstimate, sortKeys, fetchLimit, aggregateSpec,
+                rawColumnNameFor(leftSide, leftKeyOrdinal));
+    }
+
+    /** Dynamic filtering (this session's own follow-up): resolves the probe side's join-key ordinal
+     * (relative to its LOGICAL, post-{@code baseProjection} row -- see {@link Plan}'s own javadoc)
+     * back to the REAL underlying column name Calcite knows for the raw leaf scan -- exactly the name
+     * that appears in {@code toSql(leaf, dialect)}'s own generated {@code SELECT} list, so {@link
+     * ParallelJoinExecutor} can safely wrap that extracted SQL in a {@code WHERE <name> IN (...)}
+     * filter built from the build side's own real, already-collected keys once the build phase
+     * completes -- the same exact-semi-join idea {@link SemiJoinPushdown} already uses for the
+     * sequential path, now reaching the parallel path too. {@code null} when the ordinal can't be
+     * resolved (should not normally happen once {@link #extractSide} has already succeeded) -- the
+     * caller simply skips this optimization in that case, same as every other real, disclosed
+     * narrowing here. */
+    private static String rawColumnNameFor(SideExtraction side, int logicalKeyOrdinal) {
+        int rawOrdinal = side.baseProjection() == null ? logicalKeyOrdinal : side.baseProjection().get(logicalKeyOrdinal);
+        List<org.apache.calcite.rel.type.RelDataTypeField> fields = side.leaf().getRowType().getFieldList();
+        return rawOrdinal >= 0 && rawOrdinal < fields.size() ? fields.get(rawOrdinal).getName() : null;
     }
 
     /** Extracts a supported {@link AggregateSpec} from a BARE {@code aggregate} with no wrapping
