@@ -166,6 +166,23 @@ final class ParallelJoinExecutor {
 
     static ExecutionResult execute(ParallelJoinPlanner.Plan plan, int threadCount) throws SQLException {
         int n = Math.max(1, threadCount);
+        PartitionSpill[] partitionSpills = new PartitionSpill[n];
+        try {
+            return executeInternal(plan, n, partitionSpills);
+        } finally {
+            // Every spill file is per-EXECUTION, never reused across queries -- always cleaned up
+            // here regardless of success/failure/exception, so a query that spills never leaks a
+            // temp file even when it ultimately fails for an unrelated reason.
+            for (PartitionSpill spill : partitionSpills) {
+                if (spill != null) {
+                    spill.close();
+                }
+            }
+        }
+    }
+
+    private static ExecutionResult executeInternal(ParallelJoinPlanner.Plan plan, int n, PartitionSpill[] partitionSpills)
+            throws SQLException {
         List<Map<Object, List<List<Object>>>> partitionTables = new ArrayList<>(n);
         List<BloomFilter<CharSequence>> partitionFilters = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
@@ -179,7 +196,15 @@ final class ParallelJoinExecutor {
         // local partition. The build phase below is unaffected either way -- every partition's
         // hash table/Bloom filter is always built locally regardless of where it's PROBED.
         List<NodeRegistry.NodeRow> peers = remotePeersOrEmpty();
-        int remoteCount = Math.min(peers.size(), n);
+        int remoteCountBeforeSpillCheck = Math.min(peers.size(), n);
+
+        // Skew mitigation (Phase 2+): a partition whose build-side row count exceeds
+        // WARP_PARALLEL_JOIN_SPILL_THRESHOLD_ROWS (default 1,000,000; <=0 disables spilling
+        // entirely, today's unbounded-in-memory behavior unchanged) spills further rows to a
+        // per-partition PartitionSpill instead of growing its in-memory hash table without bound --
+        // see that class's own javadoc for exactly what this does and doesn't do.
+        long spillThresholdRows = parseLongEnv("WARP_PARALLEL_JOIN_SPILL_THRESHOLD_ROWS", 1_000_000L);
+        long[] partitionRowCounts = new long[n];
 
         List<ColumnInfo> buildColumns = new ArrayList<>();
         try (Connection buildConnection = plan.buildBackend().target().open();
@@ -204,11 +229,41 @@ final class ParallelJoinExecutor {
                         return; // SQL join semantics: NULL never equals NULL, so it can never match
                     }
                     int partition = partitionOf(key, n);
-                    partitionTables.get(partition).computeIfAbsent(key, k -> new ArrayList<>()).add(logicalRow);
                     partitionFilters.get(partition).put(String.valueOf(key));
+                    partitionRowCounts[partition]++;
+                    if (spillThresholdRows > 0 && partitionRowCounts[partition] > spillThresholdRows) {
+                        if (trySpill(partitionSpills, partition, key, logicalRow)) {
+                            return;
+                        }
+                        // Spill setup failed (e.g. temp dir unwritable) -- fall back to keeping this
+                        // row in memory rather than lose it; a real, disclosed narrowing (this
+                        // partition's memory bound isn't honored), never a wrong answer.
+                    }
+                    partitionTables.get(partition).computeIfAbsent(key, k -> new ArrayList<>()).add(logicalRow);
                 }
             });
         }
+        boolean anyPartitionSpilled = false;
+        for (PartitionSpill spill : partitionSpills) {
+            if (spill != null) {
+                anyPartitionSpilled = true;
+                break;
+            }
+        }
+        if (anyPartitionSpilled && remoteCountBeforeSpillCheck > 0) {
+            // A spilled partition's in-memory table is INCOMPLETE by design -- shipping it to a peer
+            // as-is would silently drop matches. Rather than thread per-partition spill awareness
+            // through the whole remote-dispatch path, this query runs fully local once any partition
+            // spills: a coarser, always-correct fallback, consistent with this engine's other real
+            // narrowings favoring correctness over maximal optimization.
+            log.info("parallel join: {} partition(s) exceeded the {}-row spill threshold -- running "
+                    + "this query fully local instead of dispatching any partition remotely",
+                    (int) java.util.Arrays.stream(partitionSpills).filter(java.util.Objects::nonNull).count(),
+                    spillThresholdRows);
+        }
+        // Effectively final from here on, so the probe phase's own anonymous StreamingRowHandler
+        // below can capture it directly.
+        final int remoteCount = anyPartitionSpilled ? 0 : remoteCountBeforeSpillCheck;
 
         // Work stealing (Phase 2): local partitions are no longer each pinned to their OWN
         // dedicated thread -- a skewed key distribution can leave one partition's thread as the
@@ -235,7 +290,8 @@ final class ParallelJoinExecutor {
             BlockingQueue<List<Object>> queue = new LinkedBlockingQueue<>(10_000);
             queues.add(queue);
             Map<Object, List<List<Object>>> table = partitionTables.get(i);
-            stealPool.execute(() -> drainBatch(stealPool, queue, table, plan, output, localPartitionsDone));
+            PartitionSpill spill = partitionSpills[i];
+            stealPool.execute(() -> drainBatch(stealPool, queue, table, spill, plan, output, localPartitionsDone));
         }
 
         // Bounded remote buffering (Phase 2) -- a remote partition that turns out far larger than
@@ -553,8 +609,8 @@ final class ParallelJoinExecutor {
      * on a shared thread pool -- work stealing happens ACROSS partitions' tasks, never within one
      * partition's own sequential chain. */
     private static void drainBatch(ExecutorService pool, BlockingQueue<List<Object>> queue,
-            Map<Object, List<List<Object>>> table, ParallelJoinPlanner.Plan plan, List<List<Object>> output,
-            CountDownLatch done) {
+            Map<Object, List<List<Object>>> table, PartitionSpill spill, ParallelJoinPlanner.Plan plan,
+            List<List<Object>> output, CountDownLatch done) {
         for (int processed = 0; processed < STEAL_BATCH_SIZE; processed++) {
             List<Object> probeRow;
             try {
@@ -576,8 +632,69 @@ final class ParallelJoinExecutor {
             // Delegates to RemotePartitionJoin's own matching code (shared, byte-for-byte, with the
             // remote/Phase-1a path) rather than duplicating the match/emit logic inline here.
             RemotePartitionJoin.probeOne(table, probeRow, plan.probeKeyOrdinal(), plan.leftIsBuild(), output);
+            if (spill != null) {
+                // This partition also spilled some of its build rows to disk (see PartitionSpill's
+                // own javadoc) -- a matching key may have rows in BOTH the in-memory table above and
+                // the spill file, so both are always consulted, never just one or the other.
+                emitSpillMatches(spill, probeRow, plan.probeKeyOrdinal(), plan.leftIsBuild(), output);
+            }
         }
-        pool.execute(() -> drainBatch(pool, queue, table, plan, output, done));
+        pool.execute(() -> drainBatch(pool, queue, table, spill, plan, output, done));
+    }
+
+    /** Spilled-partition counterpart to {@link RemotePartitionJoin#probeOne} -- reads any matches for
+     * {@code probeRow}'s own key back from {@code spill}'s disk file and emits them in the same
+     * left-then-right column order. A read failure here is logged and otherwise ignored (this probe
+     * row simply loses whatever matches were on disk) rather than failing the whole query -- the same
+     * "a degraded signal never fails the query" stance this engine takes everywhere else (a Bloom
+     * filter false positive, a failed row-count probe, a failed remote dispatch). */
+    private static void emitSpillMatches(PartitionSpill spill, List<Object> probeRow, int probeKeyOrdinal,
+            boolean leftIsBuild, List<List<Object>> output) {
+        Object key = keyOf(probeRow, probeKeyOrdinal);
+        if (key == null) {
+            return;
+        }
+        List<List<Object>> matches;
+        try {
+            matches = spill.readMatches(key);
+        } catch (java.io.IOException e) {
+            log.warn("parallel join: reading a spilled partition's build rows failed -- this probe row "
+                    + "may be missing some matches ({})", e.toString());
+            return;
+        }
+        for (List<Object> buildRow : matches) {
+            List<Object> joined = new ArrayList<>(buildRow.size() + probeRow.size());
+            if (leftIsBuild) {
+                joined.addAll(buildRow);
+                joined.addAll(probeRow);
+            } else {
+                joined.addAll(probeRow);
+                joined.addAll(buildRow);
+            }
+            output.add(joined);
+        }
+    }
+
+    /** Lazily creates (on first crossing the threshold) or reuses {@code partition}'s {@link
+     * PartitionSpill} and appends {@code row} under {@code key} to it -- {@code false} on any setup/
+     * write failure (caller falls back to keeping the row in memory instead, never losing it). */
+    private static boolean trySpill(PartitionSpill[] partitionSpills, int partition, Object key, List<Object> row) {
+        try {
+            PartitionSpill spill = partitionSpills[partition];
+            if (spill == null) {
+                spill = new PartitionSpill(partition);
+                partitionSpills[partition] = spill;
+                log.info("parallel join: partition {} exceeded the spill threshold -- further build rows for "
+                        + "it are spilling to disk instead of growing its in-memory hash table without bound",
+                        partition);
+            }
+            spill.append(key, row);
+            return true;
+        } catch (java.io.IOException e) {
+            log.warn("parallel join: spilling partition {} to disk failed -- keeping this row in memory "
+                    + "instead ({})", partition, e.toString());
+            return false;
+        }
     }
 
     private static void awaitLocalPartitions(ExecutorService pool, CountDownLatch done) {
