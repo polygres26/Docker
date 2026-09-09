@@ -267,9 +267,34 @@ public final class SchemaFederationStage implements PipelineStage {
                     }
                 }
             } else if (mounts.size() >= 3 && parallelJoinEnabled()) {
+                // Star-topology (hub + independent spokes) extension, ported from the sibling
+                // ThinkingSense project -- tried FIRST, since it's provably at least as good as the
+                // linear chain for the shape it handles (see ParallelJoinPlanner's own star-topology
+                // section header): every spoke's hash table builds CONCURRENTLY instead of the chain's
+                // sequential re-materialization. Any non-star tree falls through to null here, and
+                // tryChainPlan below handles it exactly as before.
+                ParallelJoinPlanner.StarPlan starPlan = ParallelJoinPlanner.tryStarPlan(
+                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
+                if (starPlan != null) {
+                    long starStartNanos = System.nanoTime();
+                    try {
+                        ExecutionResult result = StarJoinExecutor.execute(starPlan);
+                        log.info("schema federation: executed via the parallel join engine (star topology, {} "
+                                + "spoke(s)) instead of Calcite's own sequential join execution", starPlan.spokes().size());
+                        if (planStore != null) {
+                            planStore.record(backendsLabel, originalSql, planText,
+                                    elapsedMillisSince(starStartNanos), result.rows().size(), true, null, leafScans);
+                        }
+                        return result;
+                    } catch (SQLException e) {
+                        log.warn("schema federation: parallel join engine (star) failed -- falling back to the "
+                                + "sequential path for this query ({})", e.toString());
+                    }
+                }
                 // N-way (left-deep chain) extension of the same design -- only the confirmed
-                // left-deep join-tree shape is handled; anything else (right-deep/bushy) falls back
-                // to the sequential path exactly like every other real narrowing in this engine.
+                // left-deep join-tree shape is handled; anything else (right-deep/bushy, and any
+                // non-star shape the block above already declined) falls back to the sequential path
+                // exactly like every other real narrowing in this engine.
                 ParallelJoinPlanner.ChainPlan chainPlan = ParallelJoinPlanner.tryChainPlan(
                         optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
                 if (chainPlan != null) {
