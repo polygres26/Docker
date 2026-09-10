@@ -818,6 +818,306 @@ final class ParallelJoinPlanner {
         return join.getLeft() instanceof Join leftJoin ? findInnermostJoin(leftJoin) : join;
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Star-topology join support (ported from the sibling ThinkingSense project's own
+    // `com.omnigate.core.ParallelJoinPlanner`, which itself was originally ported FROM this class --
+    // see that project's own javadoc). A real BUSHY join shape: one HUB leaf (in practice, almost
+    // always the large fact table) joined directly to two or more independent SPOKES (in practice,
+    // small dimension tables) that never reference each other, only the hub. A left-deep chain
+    // handles this shape worst -- it must sequentially re-materialize a growing "running result"
+    // through N dimension joins one at a time -- when every spoke's hash table could instead be
+    // built CONCURRENTLY and matched against the hub in ONE pass. {@link StarJoinExecutor} does
+    // exactly that. {@link SchemaFederationStage}'s own call site tries this FIRST (for 3+ mounts);
+    // any non-star tree falls straight through to {@code null} here and {@link #tryChainPlan}'s
+    // linear engine handles it instead, unchanged.
+    // ---------------------------------------------------------------------------------------------
+
+    /** One real equi-join edge between two leaves, resolved down to real {@code (leaf index,
+     * column-within-that-leaf)} on both ends -- independent of any particular execution/accumulation
+     * order, unlike {@link JoinChain#keyOrdinalPairs()}'s own "relative to the running concatenation
+     * so far" ordinals, which only make sense for Calcite's own fixed left-to-right structural order. */
+    record LeafEdge(int leafIndexA, int colInA, int leafIndexB, int colInB) {
+    }
+
+    /** One leaf, fully resolved: its residual filter/projection (from {@link SideExtraction}), its
+     * real backend, its extracted standalone SQL, and a real, measured row count (the same {@link
+     * #countRows} probe {@link #buildTwoWayPlan} already uses). */
+    record LeafInfo(List<Integer> leafProjection, RexRowEvaluator.RowPredicate leafFilter,
+            LeafScanProfiler.MountedBackend backend, String sql, Long rowCount) {
+        /** A leaf whose count probe failed is treated as arbitrarily large -- never preferred over a
+         * leaf with a real, known-small count, matching {@link #buildTwoWayPlan}'s own "a missing
+         * signal never wins a size-based decision" stance. */
+        long rowCountOrLargeDefault() {
+            return rowCount == null ? Long.MAX_VALUE / 2 : rowCount;
+        }
+    }
+
+    /** One spoke of a {@link StarPlan}: {@code leaf} joins to the hub via {@code hubKeyOrdinal}
+     * (relative to the hub's own LOGICAL row) / {@code spokeKeyOrdinal} (relative to this spoke's
+     * own LOGICAL row). {@code spokeKeyColumnName} is the spoke's own raw join-key column name (same
+     * {@link #rawColumnNameFor} convention as {@link Plan#probeKeyColumnName()}), reserved for a
+     * future dynamic-filter extension into the hub's own scan -- {@link StarJoinExecutor} doesn't use
+     * it yet, a real, disclosed scope narrowing for this pass. */
+    record StarSpoke(LeafInfo leaf, int hubKeyOrdinal, int spokeKeyOrdinal, String spokeKeyColumnName) {
+    }
+
+    /** A real bushy join: one {@code hub} leaf, two or more independent {@code spokes} -- see this
+     * section's own header comment for the full design. No "first step" vs. "extension steps" split
+     * like {@link ChainPlan} -- the whole star executes as one real, multi-way operation, see {@link
+     * StarJoinExecutor}. */
+    record StarPlan(LeafInfo hub, List<StarSpoke> spokes, List<Integer> outputProjection, List<SortKey> sortKeys,
+            Integer fetchLimit, AggregateSpec aggregateSpec) {
+    }
+
+    /** The shared structural extraction both {@link #tryChainPlan} and {@link #tryStarPlan} need
+     * before deciding what to do with the join graph: the peeled outer Sort/Aggregate/Project, every
+     * backend leaf (in Calcite's own left-deep structural order), the real equi-join edges between
+     * them (order-independent), and each leaf fully resolved (backend/SQL/row count). */
+    private record ExtractedGraph(PeeledHead head, List<SideExtraction> leaves, List<LeafEdge> edges,
+            List<LeafInfo> leafInfos) {
+    }
+
+    private static ExtractedGraph extractGraph(RelNode optimized, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams) {
+        if (hasBindParams) {
+            return null;
+        }
+        PeeledHead head = peelSortAggregateProject(optimized);
+        if (head == null) {
+            return null;
+        }
+        if (!(head.root() instanceof Join topJoin)) {
+            log.debug("parallel join planner: no top-level join found -- skipping");
+            return null;
+        }
+        JoinChain chain = findLeftDeepChain(topJoin);
+        if (chain == null || chain.leaves().size() < 3) {
+            log.debug("parallel join planner: no left-deep chain of 3+ backend leaves found -- skipping");
+            return null;
+        }
+        List<SideExtraction> leaves = chain.leaves();
+        List<LeafEdge> edges = resolveEdges(chain);
+        if (edges == null) {
+            return null; // an ordinal couldn't be resolved back to a real leaf/column -- never guess
+        }
+        List<LeafInfo> leafInfos = new ArrayList<>(leaves.size());
+        for (SideExtraction leaf : leaves) {
+            LeafInfo info = resolveLeafInfo(leaf, mountDialects, mountToBackend);
+            if (info == null) {
+                log.debug("parallel join planner: couldn't resolve a leaf's mount/SQL/row-count -- skipping");
+                return null;
+            }
+            leafInfos.add(info);
+        }
+        return new ExtractedGraph(head, leaves, edges, leafInfos);
+    }
+
+    private static LeafInfo resolveLeafInfo(SideExtraction side, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend) {
+        String mount = mountNameOf(side.leaf());
+        LeafScanProfiler.MountedBackend backend = mount == null ? null : mountToBackend.get(mount);
+        SqlDialect dialect = mount == null ? null : mountDialects.get(mount);
+        if (backend == null || dialect == null) {
+            return null;
+        }
+        String sql;
+        try {
+            sql = toSql(side.leaf(), dialect);
+        } catch (RuntimeException e) {
+            log.debug("parallel join planner: failed to convert a leaf back to SQL -- skipping ({})", e.toString());
+            return null;
+        }
+        return new LeafInfo(side.baseProjection(), side.residualFilter(), backend, sql, countRows(backend, sql));
+    }
+
+    /** {@code null} unless exactly one leaf ("the hub") is an endpoint of EVERY edge in {@code edges}
+     * -- the real, structural definition of a star over a spanning tree (a tree with {@code
+     * leafCount - 1} edges is a star if and only if one node has degree {@code leafCount - 1}). */
+    /** Package-visible specifically so it's unit-testable in complete isolation from Calcite's own
+     * {@code RelNode} machinery -- this is pure graph/arithmetic logic with zero Calcite dependency,
+     * deliberately kept that way. */
+    static Integer findStarHub(int leafCount, List<LeafEdge> edges) {
+        int[] degree = new int[leafCount];
+        for (LeafEdge edge : edges) {
+            degree[edge.leafIndexA()]++;
+            degree[edge.leafIndexB()]++;
+        }
+        for (int i = 0; i < leafCount; i++) {
+            if (degree[i] == leafCount - 1) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    /** Detects and resolves a star-topology join -- see this section's own header comment. Returns
+     * {@code null} (never throws) for anything that isn't a real star, or fails any of the same
+     * eligibility checks {@link #tryChainPlan} already applies (min rows, resolvable mounts, etc.) --
+     * the caller falls back to {@link #tryChainPlan} in that case. */
+    static StarPlan tryStarPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams) {
+        ExtractedGraph graph = extractGraph(optimized, mountDialects, mountToBackend, hasBindParams);
+        if (graph == null) {
+            return null;
+        }
+        Integer hubIndex = findStarHub(graph.leaves().size(), graph.edges());
+        if (hubIndex == null) {
+            log.debug("parallel join planner: join graph isn't a star (no single hub leaf connects to every "
+                    + "other leaf) -- skipping, tryChainPlan will handle this shape instead");
+            return null;
+        }
+        LeafInfo hub = graph.leafInfos().get(hubIndex);
+        long minRows = minRowsFromEnvOrDefault();
+        if (hub.rowCount() != null && hub.rowCount() < minRows) {
+            log.debug("parallel join planner: star hub has only ~{} estimated row(s), below "
+                    + "WARP_PARALLEL_JOIN_MIN_ROWS -- skipping", hub.rowCount());
+            return null;
+        }
+        List<StarSpoke> spokes = new ArrayList<>();
+        // Execution/output concatenation order: hub first, then every spoke in original leaf-index
+        // order -- an arbitrary but fixed, deterministic choice; buildOrdinalRemapTable (below)
+        // makes the exact choice irrelevant to correctness.
+        int[] order = new int[graph.leaves().size()];
+        order[0] = hubIndex;
+        int nextSlot = 1;
+        for (int leafIndex = 0; leafIndex < graph.leaves().size(); leafIndex++) {
+            if (leafIndex == hubIndex) {
+                continue;
+            }
+            LeafInfo spokeInfo = graph.leafInfos().get(leafIndex);
+            LeafEdge edge = findEdgeBetween(graph.edges(), hubIndex, leafIndex);
+            if (edge == null) {
+                return null; // shouldn't happen given findStarHub's own check, but never guess
+            }
+            int hubKeyOrdinal = edge.leafIndexA() == hubIndex ? edge.colInA() : edge.colInB();
+            int spokeKeyOrdinal = edge.leafIndexA() == hubIndex ? edge.colInB() : edge.colInA();
+            spokes.add(new StarSpoke(spokeInfo, hubKeyOrdinal, spokeKeyOrdinal,
+                    rawColumnNameFor(graph.leaves().get(leafIndex), spokeKeyOrdinal)));
+            order[nextSlot++] = leafIndex;
+        }
+        List<Integer> widths = new ArrayList<>(order.length);
+        for (int idx : order) {
+            widths.add(logicalWidth(graph.leaves().get(idx)));
+        }
+        RemappedOrdinals remapped = remapOrdinalsForExecutionOrder(graph.head(), graph.leaves(), order, widths);
+        return new StarPlan(hub, spokes, remapped.outputProjection(), graph.head().sortKeys(),
+                graph.head().fetchLimit(), remapped.aggregateSpec());
+    }
+
+    /** See {@link #tryStarPlan}'s own comment at its call site for why this exists at all. {@code
+     * outputProjection}'s ordinals are ALWAYS relative to the raw natural (Calcite structural)
+     * concatenation -- remapped unconditionally when present. {@code aggregateSpec}'s own {@code
+     * groupKeyOrdinals}/{@code argOrdinal}s are relative to the raw natural concatenation ONLY when
+     * there's no separate pre-aggregation projection ({@code outputProjection == null} here); when
+     * one exists, {@code aggregateSpec} already reads from ITS output positions instead, which are
+     * fixed by the query's own {@code GROUP BY}/{@code SELECT} order and don't shift with leaf
+     * execution order, so no remap applies in that case. {@code sortKeys} are never remapped here --
+     * they're relative to the FINAL output row (after projection/aggregation), a position space this
+     * reordering never touches. */
+    private record RemappedOrdinals(List<Integer> outputProjection, AggregateSpec aggregateSpec) {
+    }
+
+    private static RemappedOrdinals remapOrdinalsForExecutionOrder(PeeledHead head, List<SideExtraction> leaves,
+            int[] order, List<Integer> executionOrderWidths) {
+        if (head.outputProjection() == null && head.aggregateSpec() == null) {
+            return new RemappedOrdinals(null, null); // nothing reads a raw-concatenation ordinal at all
+        }
+        int[] remapTable = buildOrdinalRemapTable(leaves, order, executionOrderWidths);
+        List<Integer> remappedOutputProjection = head.outputProjection() == null
+                ? null : head.outputProjection().stream().map(o -> remapTable[o]).toList();
+        AggregateSpec aggregateSpec = head.aggregateSpec();
+        if (aggregateSpec == null) {
+            return new RemappedOrdinals(remappedOutputProjection, null);
+        }
+        if (head.outputProjection() != null) {
+            return new RemappedOrdinals(remappedOutputProjection, aggregateSpec); // reads from outputProjection's own fixed output positions
+        }
+        List<Integer> remappedGroupKeys = aggregateSpec.groupKeyOrdinals().stream().map(o -> remapTable[o]).toList();
+        List<AggCall> remappedCalls = aggregateSpec.aggCalls().stream()
+                .map(c -> new AggCall(c.kind(), c.argOrdinal() == null ? null : remapTable[c.argOrdinal()]))
+                .toList();
+        return new RemappedOrdinals(null, new AggregateSpec(remappedGroupKeys, remappedCalls,
+                aggregateSpec.outputColumnNames(), aggregateSpec.outputLayout()));
+    }
+
+    /** {@code remapTable[originalOrdinal]} = the same logical column's ordinal in the EXECUTION-order
+     * concatenation instead. */
+    private static int[] buildOrdinalRemapTable(List<SideExtraction> leaves, int[] order, List<Integer> executionOrderWidths) {
+        int[] originalWidths = new int[leaves.size()];
+        int totalWidth = 0;
+        for (int i = 0; i < leaves.size(); i++) {
+            originalWidths[i] = logicalWidth(leaves.get(i));
+            totalWidth += originalWidths[i];
+        }
+        int[] positionInExecutionOrder = new int[leaves.size()];
+        for (int pos = 0; pos < order.length; pos++) {
+            positionInExecutionOrder[order[pos]] = pos;
+        }
+        int[] executionBase = new int[order.length];
+        int runningExecutionBase = 0;
+        for (int pos = 0; pos < order.length; pos++) {
+            executionBase[pos] = runningExecutionBase;
+            runningExecutionBase += executionOrderWidths.get(pos);
+        }
+        int[] remapTable = new int[totalWidth];
+        int leafIndex = 0;
+        int colInLeaf = 0;
+        for (int originalOrdinal = 0; originalOrdinal < totalWidth; originalOrdinal++) {
+            while (colInLeaf >= originalWidths[leafIndex]) {
+                leafIndex++;
+                colInLeaf = 0;
+            }
+            int pos = positionInExecutionOrder[leafIndex];
+            remapTable[originalOrdinal] = executionBase[pos] + colInLeaf;
+            colInLeaf++;
+        }
+        return remapTable;
+    }
+
+    /** Decomposes every one of {@link JoinChain#keyOrdinalPairs()}'s "relative to the running
+     * concatenation" ordinals down to real, order-independent {@code (leaf index, column)} pairs --
+     * {@code null} (never guessed) if any ordinal can't be resolved. */
+    private static List<LeafEdge> resolveEdges(JoinChain chain) {
+        List<LeafEdge> edges = new ArrayList<>(chain.keyOrdinalPairs().size());
+        for (int i = 0; i < chain.keyOrdinalPairs().size(); i++) {
+            int[] pair = chain.keyOrdinalPairs().get(i);
+            int[] resolved = decomposeOrdinal(pair[0], chain.leaves().subList(0, i + 1));
+            if (resolved == null) {
+                return null;
+            }
+            edges.add(new LeafEdge(resolved[0], resolved[1], i + 1, pair[1]));
+        }
+        return edges;
+    }
+
+    /** Resolves {@code ordinal} (relative to the natural concatenation of {@code leavesSoFar}, in
+     * order) down to {@code {leafIndex, columnWithinThatLeaf}} -- {@code null} if it falls outside
+     * every leaf's own width (shouldn't happen for a real Calcite-reported ordinal). */
+    private static int[] decomposeOrdinal(int ordinal, List<SideExtraction> leavesSoFar) {
+        int remaining = ordinal;
+        for (int i = 0; i < leavesSoFar.size(); i++) {
+            int width = logicalWidth(leavesSoFar.get(i));
+            if (remaining < width) {
+                return new int[] {i, remaining};
+            }
+            remaining -= width;
+        }
+        return null;
+    }
+
+    private static int logicalWidth(SideExtraction side) {
+        return side.baseProjection() != null ? side.baseProjection().size() : side.leaf().getRowType().getFieldList().size();
+    }
+
+    private static LeafEdge findEdgeBetween(List<LeafEdge> edges, int a, int b) {
+        for (LeafEdge edge : edges) {
+            if ((edge.leafIndexA() == a && edge.leafIndexB() == b) || (edge.leafIndexA() == b && edge.leafIndexB() == a)) {
+                return edge;
+            }
+        }
+        return null;
+    }
+
     /** As {@link LeafScanProfiler#measure}'s own private {@code collectJdbcLeaves} -- stops
      * recursing the instant a {@code JdbcToEnumerableConverter} is found. Duplicated here (rather
      * than shared) because that method is {@code private} on a class with no shared base -- both
