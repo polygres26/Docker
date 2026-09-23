@@ -38,12 +38,22 @@ public final class WarpGrpcServer {
                 .addService(new QueryServiceImpl(options, sharedStages, backendRegistry))
                 .intercept(new ConnectionLimitInterceptor())
                 .intercept(new AclInterceptor(connectionGate.acl()));
+        applyTune(builder);
         if (connectionGate.ppv2Enabled()) {
             builder.protocolNegotiator(new PpV2ProtocolNegotiator(
                     io.grpc.netty.shaded.io.grpc.netty.InternalProtocolNegotiators.serverPlaintext(),
                     connectionGate.acl(), connectionGate.trustedProxies()));
         }
         this.server = builder.build();
+    }
+
+    /** Opt-in: run RPC handlers directly on the Netty event loop instead of gRPC's cached thread
+     * pool. Saves one thread hop (~10-20us on loopback) but a blocking backend call then stalls
+     * every connection sharing that event loop, so it is off by default. */
+    private static void applyTune(NettyServerBuilder b) {
+        if ("true".equalsIgnoreCase(System.getenv("WARP_GRPC_DIRECT_EXECUTOR"))) {
+            b.directExecutor();
+        }
     }
 
     public void start() throws IOException {

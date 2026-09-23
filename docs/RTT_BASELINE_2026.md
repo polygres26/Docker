@@ -522,3 +522,135 @@ python -m grpc_tools.protoc -I<repo>/src/main/proto --python_out=. --grpc_python
 run from `tests/python/`, producing `warp_pb2.py` and `warp_pb2_grpc.py`, checked in alongside
 `test_grpc.py` rather than regenerated on every test run (avoids adding a `protoc` toolchain
 dependency to routine `pytest` runs -- regenerate them if `warp.proto` changes).
+
+## 2026-09-23: fair gRPC vs pgwire comparison (Java clients, microsecond server timing)
+
+The earlier "gRPC ~2.2ms vs pgwire ~1ms" comparison used a Python grpcio client against C-based
+psycopg2, and server `avgRttMs` is integer-rounded, so it could not support either "gRPC is slower"
+or "gRPC has no advantage". Redone with: a Java gRPC-stub client vs pgjdbc (same JVM, same real
+subprocess Warp, same real Postgres 16 container, single-row autocommit INSERT and single-row
+SELECT by PK, bind params, 3000 warmup + 2000 samples, legs interleaved with alternating order),
+plus temporary `System.nanoTime()` instrumentation (since removed) in `QueryServiceImpl`,
+`PgWireSessionHandler`, `StatementPipeline` and `JdbcBackendExecutor`. Harness (opt-in, run via its
+`main`): `src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java`. Note pgwire's own
+`recordRtt` only spans the Execute-message response write (the query runs at Bind), so pgwire
+server time here is measured from first message of the batch to the Sync/flush instead.
+
+**Server-side, microseconds (p50; each protocol run in isolation, no interleaving):**
+
+| Statement | gRPC total | pgwire total |
+|---|---|---|
+| INSERT | 308 | 292 |
+| SELECT by PK | 226 | 228 |
+
+Interleaved runs (both protocols alternating) showed gRPC INSERT ~336-342 vs pgwire ~295-301 and
+SELECT ~238-247 vs ~235-242; the interleaving perturbs the backend/CPU wake pattern and inflates the
+gap, so the isolated numbers are the fairer server-side figure. Either way the difference is
+0-40us on a 230-340us statement, and the whole gap sits inside the backend JDBC round trip, not in
+Warp code.
+
+**gRPC server-side breakdown (p50, us):** Hikari borrow ~1, StatementPipeline +
+RoutingBackendExecutor + JdbcBackendExecutor + XaRecoveryLog construction ~1, all pipeline stages
+combined ~5 (Firewall/Router/Qos/DialectTranslation/Rollup/Stats/QueryRepair), JDBC execute
+230-320 (dominant), protobuf response build 1-9, onNext 4-15, connection close ~1. **The suspected
+per-call construction cost is real code but measures ~2us of ~250-340 (<1%); it is not worth
+changing, and it was left as is.** Ruled out as the source of the INSERT gap (each tried and
+measured with no effect): holding one connection + pipeline + statement cache across calls (server-side
+prepare was already active on the same physical connection), running the RPC on Netty's event loop
+(no executor hop), avoiding NumberFormatException in `JdbcBackendExecutor.coerce`.
+
+**Client-observed with Java clients, us (min / p50 / p90; isolated runs):**
+
+| Statement | gRPC-java | pgjdbc |
+|---|---|---|
+| INSERT | 345 / 410 / 522 | 281 / 318 / 344 |
+| SELECT | 228 / 289 / 410 | 215 / 243 / 265 |
+
+Interleaved: INSERT 354/449/577 vs 267/325/391; SELECT 247/325/394 vs 215/252/291.
+
+**Verdict.** Server-side gRPC is equal to pgwire (SELECT identical, INSERT within ~16us in
+isolation). With a Java client removing the Python-client confound, gRPC is still SLOWER
+end-to-end: +45us (SELECT) to +90us (INSERT) p50 in isolation, more with tighter tails on pgjdbc. That
+residual is gRPC-java client + HTTP/2 framing + protobuf + Netty transport, not anything in
+`QueryServiceImpl`, and no server-side change closes it (direct executor tested: no gain). So the
+premise "gRPC exists for speed" does not hold for single-row unary autocommit statements on
+loopback: it offers no latency advantage over pgwire and is measurably worse client-side. Any
+remaining case for keeping it is not latency (e.g. typed-client ergonomics); a genuine speed case
+would have to be shown on different workloads (large result sets, concurrency) that this pass did
+not measure. Earlier "2x slower" (Python) was largely the client; the true Java-vs-Java gap is
+~1.2-1.3x, not 2.2x.
+
+No production code changed in this pass. Verification of the unchanged tree: `test_grpc.py` 3/3 runs
+passed (6 tests each) against a freshly packaged jar and real subprocess Warp; full `tests/python`:
+50 passed, 1 skipped, 3 xfailed. Pre-existing unrelated failure found: Java tests that build a real
+grpc `ManagedChannel` (`PeerChannelPoolTest`, `WarpPeerServiceIntegrationTest`) error with
+`ServiceConfigurationError: io.grpc.xds.XdsNameResolverProvider could not be instantiated`
+(`NoClassDefFoundError: io.grpc.NameResolver$Args$Key` -- grpc-xds 1.82.2 is version-skewed against
+the grpc-api on the classpath); it also means the `WarpDriver` JDBC client cannot open a channel on
+this classpath. Worth fixing separately.
+
+## 2026-09-23 (later): gRPC RTT optimization pass and grpc-xds fix
+
+**Result: goal (gRPC <= pgwire, Java clients both sides) was NOT met and cannot be met with stock
+grpc-java on this platform without an unsafe or architectural change.** Fixed the version skew;
+found the residual gap is the gRPC-java framework floor.
+
+**grpc-xds fix.** Cause: `google-cloud-spanner-jdbc` pulls grpc-xds/alts/googleapis/rls/services/
+opentelemetry 1.82.2 (and bigquery pulls grpc-grpclb) while pom pinned grpc-netty-shaded/protobuf/stub
+(hence grpc-api) at 1.68.1. Fix in `wire/pom.xml`: `grpc.version` 1.82.2 plus a `grpc-bom` import in
+`dependencyManagement` so every io.grpc artifact is aligned; `grpc.plugin.version` stays 1.68.1 for
+protoc-gen-grpc-java (only that version is available locally; generated stubs are compatible).
+Verified: PeerChannelPoolTest (2), WarpPeerServiceIntegrationTest (2),
+ParallelJoinRemoteDispatchIntegrationTest (1) all pass; shaded jar's
+`META-INF/services/io.grpc.NameResolverProvider` still merged (all providers listed); jar serves gRPC
+(test_grpc.py 6/6 x3 against fresh jar + real subprocess Warp; full tests/python 50 passed, 1 skipped,
+3 xfailed).
+
+**Candidates (client-observed p50 us, interleaved both-protocol runs, 3000 warmup + 2000 samples;
+baseline gRPC INSERT ~440 / SELECT ~328 vs pgjdbc ~323 / ~254):**
+
+| Candidate | gRPC INSERT / SELECT p50 | Effect |
+|---|---|---|
+| Client `directExecutor()` | 458 / 330 | none |
+| Client `disableRetry()` | 449 / 320 | none |
+| Client `disableServiceConfigLookUp()` | 448 / 323 | none |
+| Client flowControlWindow 1MB | 456 / 323 (worse tail) | none |
+| Server flowControlWindow 1MB | 462 / 338 | none/worse |
+| Server fixed 4-thread executor | 457 / 338 | none |
+| Server + client directExecutor | 461 / 327 | none |
+| Server directExecutor (isolated grpc-only, 3 runs each, base 410-425 / 303-313) | 392-411 / 270-308 | about -10us; KEPT as opt-in only |
+| Proto/wire shape | n/a | Server trace: response serialize+enqueue 1-3us, close 3us; not a factor, proto untouched |
+| Interceptors (ConnectionLimit, ACL) | n/a | ACL is no-op without rules; sub-us |
+| Native transport (kqueue/epoll) | n/a | not in grpc-netty-shaded on macOS (epoll not testable here) |
+| Equalized warmup | n/a | both legs 3000 warmup; pgjdbc not "warmer" |
+
+Server directExecutor is shipped as opt-in `WARP_GRPC_DIRECT_EXECUTOR=true` (default off): it runs the
+blocking JDBC call on the Netty event loop, so it can stall other connections; the ~10us gain
+(INSERT 418 / SELECT 286 vs pgjdbc 325 / 241) does not close the gap.
+
+**Evidence for the floor.** Per-phase server trace (temporary interceptor, removed): header to
+parsed message ~10us (thread hop), handler 232us (SELECT, JDBC), serialize 1-3us, close 3us, so
+~248us in Warp vs ~315us client-observed, leaving ~67us in client + transport. Pgwire has ~28us there.
+Isolated echo microbench (no Warp, no DB, loopback, 60-byte payload): raw blocking TCP 13us;
+grpc-java unary with default cached server executor 52us; server directExecutor 35us; server direct +
+spin-waiting client 26us. So the stock gRPC path costs ~40us more than a raw socket round trip
+(HEADERS and DATA frames, trailers, event-loop hop, executor hop, blocking-stub park/unpark), which is
+the entire observed gap of 70-115us once JDBC variance is included.
+
+**Minimum achievable gap:** roughly +25us (direct server executor + spinning client, both unsafe for
+a shared server / CPU-burning) to +40us (safe stock config) over pgwire on loopback; ~+70-100us as
+measured today. Reaching <= pgwire would need an architectural change: custom lean framing over a
+plain socket (one write per request, no HTTP/2), or unix domain sockets plus busy-poll client, or
+batching/pipelining several statements per RPC so the fixed ~40us amortizes.
+
+**Final numbers (p50 / p90 / p99 us, two default runs; before = start of this pass):**
+
+| Statement | gRPC before | gRPC after (default) | gRPC opt-in direct | pgjdbc |
+|---|---|---|---|---|
+| INSERT | 440 / 543 / 1035 | 450,448 / 551,549 / 1074,974 | 418 / 522 / 964 | 326,325 / 387,383 / 595,620 |
+| SELECT | 328 / 391 / 620 | 326,323 / 396,397 / 627,645 | 286 / 393 / 669 | 252,251 / 292,293 / 423,444 |
+
+Default gRPC is unchanged in performance (no safe change helped); only the classpath fix and the
+opt-in knob shipped. Files: `wire/pom.xml`, `wire/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
+`wire/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
+properties, p99, `-Dserver.direct`). The earlier "known bug" note above is resolved.
