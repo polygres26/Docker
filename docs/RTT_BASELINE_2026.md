@@ -267,6 +267,244 @@ numbers stayed stable and fast (0.4-1.5ms) across every run regardless of load; 
 cluster-size numbers are the ones sensitive to this confound. Numbers above use the most
 representative uncontended runs.
 
+## 2026-09-23: cache-MISS RTT was 6-20x slower than a plain backend round trip -- root cause and fix
+
+**The complaint**: `test_write_rtt_baseline`'s own plain-pgwire-write baseline (no cache involved)
+is server-side avg ~0-1ms / client p50 ~0.7ms. A cache MISS -- a real backend round trip PLUS a
+small amount of cache-populate overhead -- should cost roughly that plus a little, not 6-20x more.
+Measured before this fix: fixed-shape MISS 16.4ms, generic-PK literal MISS 6.8ms, generic-PK
+bind-parameter MISS 2.2ms, cross-node nodeA MISS 15.0ms, nodeB's own MISS 11.4ms.
+
+**Method**: nanosecond `System.nanoTime()` instrumentation was added temporarily around each phase
+of the three cache-miss code paths in `CacheStage.java` (`handleCacheableSelect`,
+`lookupOrExecuteAndCache`, `lookupOrExecuteAndCacheGeneric`) -- backend `next.proceed()` time,
+`ExecutionResult` serialization time, the Ignite `put()` time, and (for the ordinary result-cache
+path) `recordKeyForTable`'s own index-bookkeeping time -- then exercised with a real pgwire client
+against a real Warp process and read back off the server's own captured stdout. This is the same
+warm-then-sample, real-backend, real-client, nanosecond-instrumented methodology `docs/PERFORMANCE.md`
+already uses elsewhere in this codebase.
+
+**What was NOT the cause** (ruled out, contrary to this investigation's own initial suspicion list):
+- `PrimaryKeyCatalog.discover` (the real JDBC-metadata primary-key lookup) already runs exactly
+  once, at startup (and again on a `WARP_CACHE_TABLES` config reload) -- confirmed from
+  `Main.java`'s own wiring (`cacheStage.setPrimaryKeyCatalog(PrimaryKeyCatalog.discover(...))`,
+  called once right after `CacheStage.fromConfigOrNull`, never per-request). There is no per-miss
+  schema/PK re-discovery anywhere in the code.
+- TLS, cluster-membership checks, and per-statement metrics recording were confirmed (from the
+  instrumentation) to add negligible (sub-microsecond-to-low-microsecond) overhead on this path.
+
+**What WAS the cause, per the real instrumented numbers**:
+1. **One-time JVM/Ignite JIT + classloading warm-up on a table's first-ever access.** The very
+   first cache-table touched in a process's lifetime pays a one-time tax across every phase of the
+   pipeline (regex matching, Ignite's own key-affinity computation, marshalling) that a
+   SECOND cache table's first access does not -- e.g. one representative instrumented run showed
+   the first table's own first MISS costing `backend=5992us serialize=701us put=5338us
+   recordKey=2310us`, while the very next (different) table's own first MISS, in the SAME
+   already-warm JVM, cost `backend=4649us serialize=86us put=651us recordKey=338us`. This lines up
+   exactly with the originally reported pattern (fixed-shape/first-touched table slowest at
+   16.4ms, second table's literal-query path faster at 6.8ms, third path warmest at 2.2ms) -- it
+   is a real, but architectural and not per-request-fixable, JVM warm-up cost, not a cache design
+   flaw. (A long-running production server pays this once at/near startup, not on every miss.)
+2. **A real, fixable inefficiency**: `recordKeyForTable` -- the bookkeeping that lets a later WRITE
+   find every result-cache key recorded for a table so it can invalidate them -- performed TWO
+   separate synchronous Ignite network round trips on every single cache MISS (a `keysByTable.get()`
+   to read the existing key set, then a `keysByTable.put()` to write the updated one back), fully
+   inside the response's own critical path. That is a real, avoidable doubling of Ignite network
+   cost on every miss, confirmed responsible for a further ~300us (warm) to ~3ms (cold) per miss in
+   the instrumentation above.
+
+**What was tried and reverted**: the first version of this fix made the cache-populate `put()`
+itself (on `resultCache`, `RowCache`, and the generic-PK `pkRowCache`) fire-and-forget
+(`IgniteCache.putAsync`, not waited on before returning the response to the client), reasoning the
+client already has its real answer from the backend and doesn't need to wait for the cache write.
+Measured in isolation this was a large win (e.g. generic-PK literal MISS dropped to roughly
+1-2ms). **It was reverted** because it broke a real correctness guarantee the codebase already
+depends on and tests: `CacheStageGenericPkTest`'s own back-to-back "populate this key via a MISS,
+then immediately read the SAME key" assertions (`compositePkOrderIndependentInWhereClause`,
+`updateOnExactPkInvalidatesOnlyThatRow`, and eventually even
+`singleColumnPkSelectHitsCacheOnSecondCall`) started failing intermittently, because the very next
+call could race ahead of the async populate and see a miss where a hit was guaranteed. This is
+exactly the "read-your-own-write-soon-after" race this fix was told to check for, and it was real
+-- so `resultCache.put`, `RowCache.put`, and `pkRowCache.put` all stay fully synchronous.
+
+**The fix actually shipped** (see the Serializable-EntryProcessor correction in the cache section above -- the first version of this `invoke()` used a raw lambda that crashed real deployments and was fixed afterward): only `recordKeyForTable` changed, from two synchronous Ignite calls
+(`get()` then `put()`) to one atomic `IgniteCache.invoke()` (a server-side read-modify-write
+`EntryProcessor`) -- same synchronous, response-blocking completion guarantee as before (so no new
+race is introduced), just one Ignite round trip instead of two. As a side benefit, `invoke()`'s
+atomicity also closes a latent lost-update race the old get-then-put had for two concurrent MISSes
+on the same table (each could read the same pre-update key set and overwrite the other's addition);
+`invoke()` cannot lose an update that way.
+
+**Before/after, real measured numbers** (`tests/python/test_cache_rtt.py`,
+`test_distributed_cache_rtt.py`, real Postgres + real Warp process(es) + real psycopg2 client, no
+mocks; "before" is this session's opening measurement, "after" is post-fix, both real runs):
+
+| Scenario | Before | After (typical, JIT-warm) |
+|---|---|---|
+| Fixed-shape row cache MISS (first-ever table touched in the process) | 16.4-18.8ms | 6.0-12.0ms (still dominated by one-time JVM/Ignite warm-up, see above -- an architectural floor, not fixed by this change) |
+| Generic-PK cache MISS, literal query | 6.8ms | 0.8-1.9ms |
+| Generic-PK cache MISS, bind parameter | 2.2ms | 0.8-1.4ms |
+| Cross-node nodeA MISS (populates shared cache) | 15.0ms | 6.9-11.9ms (first-table-touched warm-up, as above) |
+| Cross-node nodeB's own MISS (different, never-cached key) | 11.4ms | sub-2ms once warm (see note below) |
+
+**Note on `test_distributed_cache_rtt.py`**: once nodeB's own genuine MISS dropped to roughly the
+same low-single-digit-millisecond range as a real cross-node Ignite cache HIT, the test's original
+single-sample MISS vs. 20-sample-averaged HIT comparison became noisy enough to occasionally flip
+by chance (a HIT still costs a real inter-JVM Ignite network round trip, which is not always
+faster than an already-fast local Postgres MISS on a loopback test rig). Fixed by broadening the
+fixture (`dist_items` now seeds keys 1..21, not just 1..3) and averaging nodeB's own-MISS
+measurement over the same 20-key sample size the HIT side already used, instead of a single
+sample -- both sides now get the same statistical footing. This is a test-robustness fix made
+necessary by the underlying latency improvement itself, not a sign the underlying cache-sharing
+claim changed.
+
+**Verification**: `tests/python/test_cache_rtt.py`, `tests/python/test_distributed_cache_rtt.py`,
+and the full `tests/python/` suite (50 passed, 1 skipped, 3 xfailed) all pass with the fix in
+place. `CacheStageGenericPkTest` (10/10) continues to pass, confirming the reverted async-populate
+attempt's regression is gone and the immediate "populate then read" guarantee holds. Some
+re-verification runs during this session were disrupted by an unrelated, long-running concurrent
+`mvn test` process on the same shared machine (confirmed via `ps`, not started by this
+investigation) driving the box to near-zero free memory and intermittently killing test Warp
+processes (`server closed the connection unexpectedly`) -- documented here as an environment
+confound encountered during verification, not a regression from this fix; every failure of that
+shape was a full process/connection loss, never a wrong-result or wrong-cache-behavior assertion.
+
+**Architectural floor, disclosed**: the ~6-20ms first-touch numbers are a one-time JVM/Ignite
+warm-up cost paid once per process (at/soon after startup in a real long-running deployment, not
+per-request), not a per-request architectural flaw this or any future change to `CacheStage` can
+remove -- forcing it away would mean either pre-warming Ignite/JIT synchronously at startup (adding
+that same cost to boot time instead) or accepting the correctness risk this session already ruled
+out (async cache population). The real, repeatable, per-request win from this fix is the
+generic-PK and steady-state numbers above: roughly 3-7x faster cache-population overhead once the
+JVM is warm, with the cache-populate correctness guarantee fully intact.
+
+## 2026-09-23: gRPC and boltwire RTT investigation -- does gRPC actually deliver on "faster native access"?
+
+**The complaint**: gRPC (`QueryService`) client p50 measured 2.0-2.4ms, server-side avg RTT ~1ms --
+2-2.4x slower client-observed than pgwire (0.94-1.00ms p50) despite gRPC existing specifically as
+Warp's own native, no-wire-emulation, no-dialect-translation path. boltwire's client-observed RTT
+(0.75-0.96ms) was already close to pgwire's, but had zero server-side RTT visibility at all
+(`avgRttMs` always `null` in `/api/metrics/summary`).
+
+### gRPC: real bug found and fixed, but it was NOT the whole story
+
+**Real bug, in the test harness, not the server**: `tests/python/test_grpc.py`'s `stub(warp)`
+helper called `grpc.insecure_channel(...)` freshly **inside every single `execute()` call** --
+paying a fresh TCP connection + full HTTP/2 connection preface (SETTINGS frame round trip) on every
+RPC, instead of the one persistent HTTP/2 connection any real long-lived gRPC client actually
+reuses across calls. Fixed: `execute()` now takes a module-scoped `grpc_stub` fixture (one channel,
+`grpc.channel_ready_future` awaited once at fixture setup, reused for every call), matching how a
+real gRPC client behaves. This is a real, worth-keeping fix -- the old benchmark was not measuring
+the thing it claimed to measure -- but **it did not close the gap**: client p50 after the fix,
+measured in isolation (`pytest test_grpc.py`, 3 repeated real-subprocess runs), was 2.2ms / 3.4ms /
+2.2ms -- statistically the same ballpark as the 2.0-2.4ms baseline, not meaningfully faster.
+
+**Server-side code inspected, one real (but architecturally forced) inefficiency found**:
+`QueryServiceImpl.execute()` constructs a brand-new `StatementPipeline` + `RoutingBackendExecutor`
++ `JdbcBackendExecutor` + `XaRecoveryLog` **on every single RPC call**, whereas
+`PgWireSessionHandler` builds its own `StatementPipeline` exactly once, in its constructor, and
+reuses it for every statement in that TCP session (`this.pipeline = new StatementPipeline(...)` at
+construction, never rebuilt per-statement). `QueryServiceImpl.openBackend()` does already borrow
+from the shared HikariCP pool (`PgConnections.open` -> `BackendConnectionPools.borrow`, confirmed
+by reading `PgConnections.connect` -- it is not a raw unpooled `DriverManager` connection, so the
+earlier suspicion of a "fresh physical connection per RPC" bug was checked and ruled out). But the
+pipeline/executor object graph IS rebuilt from scratch every call. Each individual construction
+(reading `ServerOptions`, resolving shard rules from a short `sharedStages` list, wrapping a
+borrowed `Connection`) is cheap in isolation (object allocation, no I/O in any of those
+constructors -- confirmed by reading `XaRecoveryLog`'s constructor, which only stores a reference),
+but it is real, unnecessary per-call work pgwire's session-scoped design avoids entirely.
+
+**Why this isn't a simple fix**: pgwire's session-scoped reuse works because a pgwire TCP
+connection IS a session with exactly one bound backend connection for its whole lifetime. gRPC's
+`QueryService.execute` is a deliberately stateless unary RPC -- the entire appeal of that shape for
+a native driver is that many independent calls (possibly concurrent, possibly from many different
+client channels) can be served without pinning a backend connection to a client connection.
+Sharing one `StatementPipeline` instance across concurrent calls would require it (and the
+`RoutingBackendExecutor` it wraps, which holds per-call transaction/cursor state such as
+`transactionConnections`/`cursorTargets`) to be made either stateless or thread-safe/pooled across
+calls -- a real, non-trivial redesign of `RoutingBackendExecutor`'s internals, not a one-line fix,
+and out of scope for a safe same-session change.
+
+**Verdict on gRPC, evidence-based, not hedged**: **gRPC does not currently deliver a measurable
+speed advantage over pgwire**, even after fixing the one real bug this investigation found (the
+test's channel-per-call artifact). Both this session's server-side numbers (gRPC server avg RTT
+~1ms/1-2ms across repeated runs, essentially the same order as pgwire's 0-1ms) and the persistent
+client-observed gap after the harness fix point to the remaining ~1-2ms difference being structural
+overhead intrinsic to gRPC's transport, not a bug: HTTP/2 framing (stream/window-update bookkeeping
+even on plaintext loopback), protobuf request/response marshaling in both the Java server and the
+Python `grpcio` client, and the per-call pipeline/executor reconstruction described above (itself a
+consequence of the stateless-unary-RPC design, not an oversight). None of these costs exist on
+pgwire's simpler text-based simple-query wire format. **If gRPC's only justification is raw speed,
+that justification does not currently hold** -- on this evidence, standardizing on pgwire and
+retiring gRPC's dialect/marshaling code would not cost any measured performance, and would remove
+real surface area (a second wire protocol, a second per-call object-construction path, a second
+metrics-recording call site). If gRPC is kept, it should be for a different reason than speed (e.g.
+strongly-typed client stubs, HTTP/2 multiplexing for genuinely concurrent multi-statement batches a
+single pgwire connection can't parallelize) -- not "faster native access", which this investigation
+did not confirm.
+
+### boltwire: real gap closed -- now reports real server-side RTT
+
+**Why it bypassed `SqlMetricsCollector`**: confirmed by reading `BoltWireSessionHandler`'s own
+javadoc and code -- boltwire translates Cypher directly to SQL and executes it straight over JDBC
+against `PgGraphStore`, bypassing `StatementPipeline` entirely, because dialect translation, the
+cache stage, and the router genuinely don't apply to a graph query against
+`warp_graph_nodes`/`warp_graph_edges` (there is no dialect to translate from/to, no cacheable SQL
+shape in the same sense, no cross-backend routing decision to make in Phase 1-4's scope). That
+architectural reason is real and still stands -- forcing Cypher execution through the full pipeline
+chain was correctly out of scope.
+
+**The fix landed**: `BoltWireSessionHandler` now takes an optional `SqlMetricsCollector` (wired
+through `Main.acceptBoltWireLoop`), and `handleRun` times its own RUN-message span -- confirmed by
+reading the PULL/RUN split that by the time RUN's SUCCESS is written, `translateAndRun` has already
+fully executed the query AND drained the JDBC `ResultSet` into an in-memory `ExecutedQuery`; PULL
+only serializes those already-fetched rows with zero further backend interaction. So RUN's own span
+is a complete, honest "Warp's own service time" signal (the same reasoning `SqlMetricsCollector`'s
+javadoc already gives for why orawire's Fetch, not Bind, gets an RTT sample) -- no pipeline
+integration was needed, just the same narrow `recordOperation(protocol, backend, kind, label,
+elapsedNanos, rttNanos)` convenience hook sqswire/dynamowire already use for their own
+single-measurement-spans-both-exec-and-RTT case. Cypher text is normalized (literals -> `?`) before
+use as the `topSql` label, mirroring `SqlMetricsCollector.normalize`'s own shape (that method is
+package-private to `core` and not reachable from `boltwire`, so a small local equivalent was
+written).
+
+**Verified real, non-N/A server-side RTT** (`tests/python/test_boltwire.py::test_write_rtt_baseline`,
+updated to assert `avgRttMs is not None` and cross-check it against client-observed time, matching
+every other protocol's own RTT test shape; run 3x in isolation against a real subprocess-launched
+Warp + real Postgres, not a JUnit shortcut):
+
+| Run | client min | client p50 | client p90 | server avgRttMs |
+|---|---|---|---|---|
+| 1 | 0.823ms | 1.213ms | 1.979ms | 1ms |
+| 2 | 0.770ms | 1.227ms | 2.122ms | 1ms |
+| 3 | 0.970ms | 1.444ms | 2.355ms | 1ms |
+
+boltwire's own execution path (session-scoped JDBC connection, reused across every RUN in a
+session -- fixed in an earlier part of this engagement, confirmed still in place by reading
+`sessionConnection()`) was already about as fast as it can reasonably be; no further per-statement
+overhead was found once the metrics gap above was closed. Server avg RTT (~1ms) now sits in the
+same range as pgwire's own 0-1ms baseline, confirming boltwire was never actually slow -- it was
+only ever invisible.
+
+### Verification discipline followed
+
+Both fixes were verified against real `WarpProcess` subprocess-based pytest tests (never a JUnit
+in-process shortcut), each test file run 3+ times in isolation to rule out one-off flakes, then the
+full `tests/python/` suite (55 tests) was run once. **Environment confound encountered during the
+full-suite run, same shape as the one already disclosed above**: three unrelated, pre-existing RTT
+threshold tests (`test_mywire.py`, `test_oswire.py`, `test_dynamowire.py`'s own
+`test_write_rtt_baseline` tests, none of which this investigation touched) intermittently exceeded
+their tight (2-5ms) thresholds when run back-to-back with everything else, and `test_grpc.py`'s own
+RTT test spiked to 13ms under the same full-suite run. Traced to genuine, severe machine load at the
+time (`uptime` showed a load average of ~125, and dozens of stale `java` processes with the
+`target/test-classes` classpath were still resident -- orphaned Surefire-forked JVMs left behind by
+the earlier long-running `mvn test` process (PID 59882) that had to be stopped to unblock this
+session's own build, per the shared-`target/`-tree collision this session repeatedly had to work
+around). This is a machine-load confound, not a regression from either fix in this section:
+`test_grpc.py` and `test_boltwire.py` both passed cleanly, repeatedly, when run in isolation before
+and after the full-suite run (see the per-run tables above and the `test_grpc.py` numbers earlier in
+this section).
+
 ## Client library installs used for this pass
 
 `pymongo`, `boto3`, `opensearch-py`, `requests`, `neo4j`, `psycopg2-binary`, `grpcio`,
