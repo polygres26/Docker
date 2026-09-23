@@ -57,6 +57,13 @@ public final class RollupStage implements PipelineStage {
         if (candidate == null || !store.isFresh(candidate)) {
             return next.proceed(statement);
         }
+        // A rollup substitution reads from the rollup definition's OWN backend (tryAccelerate
+        // below), not the statement's routed target -- so under a BackendScope it could serve
+        // rows off a backend the caller was never handed. Fall through to the real (scope-
+        // checked) route instead of substituting. No-op when the scope is null.
+        if (statement.backendScope() != null && !statement.backendScope().permits(candidate.backendName())) {
+            return next.proceed(statement);
+        }
         ExecutionResult accelerated;
         try {
             accelerated = tryAccelerate(candidate, statement);

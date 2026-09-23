@@ -9,6 +9,7 @@ import com.sayonora.wire.acl.ConnectionGate;
 import com.sayonora.wire.core.AdHocQueryRunner;
 import com.sayonora.wire.core.BackendCatalogDiscovery;
 import com.sayonora.wire.core.BackendRegistry;
+import com.sayonora.wire.core.BackendScope;
 import com.sayonora.wire.core.ExecutionResult;
 import com.sayonora.wire.core.JdbcBackendExecutor;
 import com.sayonora.wire.core.PipelineStage;
@@ -602,10 +603,9 @@ public final class WarpMcpServer {
      * javadoc for the full picture, including why MCP needs its own gateway-held Oracle credential
      * where orawire's native mode doesn't. */
     private Connection openBackendConnection() throws SQLException {
-        // McpScope.DATABASE: open the NAMED backend directly, not the gateway's own default --
-        // see McpScope's own javadoc for why this is the one scope enforced with no gaps at all
-        // (runSql below also forces every statement onto THIS SAME connection with no RouterStage
-        // rerouting, so there is no path to any other backend regardless of what the SQL says).
+        // McpScope.DATABASE: open the NAMED backend directly, not the gateway's own default.
+        // runSql then pins every statement to this same name (RoutingBackendExecutor runs it on
+        // THIS connection) and scopes it to that one backend -- see McpScope's own javadoc.
         // currentScope(), not the field -- a per-token "warp_scope" claim or role mapping can make
         // THIS caller's effective scope different from the endpoint's own configured default.
         McpScope effectiveScope = currentScope();
@@ -722,45 +722,73 @@ public final class WarpMcpServer {
         return new ResultWithNote(result, note.isBlank() ? null : note);
     }
 
+    /**
+     * Every tool-call SQL path runs through the FULL shared pipeline (firewall, workload capture,
+     * federation, router, QoS, translation, rollup, cache, stats, repair) -- including the two
+     * paths that used to bypass it entirely via a bare {@code JdbcBackendExecutor}: DATABASE scope
+     * and native (non-Postgres) backend mode. What changed is HOW those two are made safe/correct:
+     * instead of skipping the pipeline, the Statement is (a) pinned to the registered name of the
+     * backend {@code backend} actually is (so {@code RouterStage} honours it rather than applying
+     * a rule), (b) tagged with that target's REAL dialect (so {@code DialectTranslationStage}
+     * no-ops -- no wrong Postgres-ward translation of real Oracle/MySQL/SQL Server SQL), and
+     * (c) carries a {@link BackendScope} enforced at every backend-resolution point (router,
+     * terminal executor incl. cursor/scatter/shard-join targets, both federation stages). See
+     * {@link #executionTargetFor} for the per-scope/per-mode mapping and {@link McpScope}'s own
+     * javadoc for the enforcement picture. Postgres + ALL scope is byte-for-byte what it always
+     * was (no pin, {@code SourceDialect.MCP}, no scope).
+     *
+     * <p>Tenant is always {@code "default"} -- QoS buckets are keyed {@code tenantId:workloadClass},
+     * so MCP traffic (any scope/mode) shares them with pgwire's own; deliberately NOT a per-user
+     * tenant (unbounded bucket cardinality). Noted on {@link McpScope} too.
+     */
     private AdHocQueryRunner.Result runSql(Connection backend, String sql, List<Object> bindParams,
             com.sayonora.wire.core.AccessContext accessContext) {
-        // McpScope.DATABASE: run directly on THIS connection with no pipeline/routing involved at
-        // all -- the real enforcement point. Unlike native mode below (which bypasses the pipeline
-        // for a DIFFERENT reason -- avoiding a wrong Postgres-dialect translation), this is a
-        // deliberate SECURITY boundary: even a query that would otherwise route elsewhere via an
-        // operator's own WARP_ROUTER_* rule has no path off this one named backend, because
-        // RouterStage never runs at all. See McpScope's own javadoc for why this is the one scope
-        // enforced with no gaps, unlike GROUP scope's narrower (discovery-only) enforcement.
-        if (currentScope().type() == McpScope.Type.DATABASE) {
-            try {
-                backend.setAutoCommit(true);
-                com.sayonora.wire.core.BackendTarget target = backendRegistry.get(currentScope().name());
-                com.sayonora.wire.core.SourceDialect dialect = target != null && target.dialect() != null
-                        ? target.dialect() : dialectFor(options.mcpBackendMode());
-                Statement statement = Statement.of(dialect, sql, bindParams, accessContext);
-                ExecutionResult result = new JdbcBackendExecutor(backend).execute(statement);
-                return AdHocQueryRunner.Result.ofSuccess(result);
-            } catch (SQLException e) {
-                return AdHocQueryRunner.Result.ofError(e);
-            }
-        }
-        if (options.mcpBackendMode() == McpBackendMode.POSTGRES) {
-            return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, bindParams, accessContext);
-        }
-        // Native mode bypasses the whole shared pipeline (RouterStage/DialectTranslationStage/
-        // FirewallStage/QosControlStage/etc.), not just picks a different connection -- the exact
-        // same reasoning orawire/mywire/mssqlwire's own native-mode dispatch already documents:
-        // the pipeline's "default" backend target is always Postgres regardless of this frontend's
-        // own mode, so running the client's real Oracle/MySQL/SQL Server SQL through it would still
-        // translate toward Postgres and send the (wrong) translated SQL to the real backend.
+        ExecutionTarget target;
         try {
-            backend.setAutoCommit(true);
-            Statement statement = Statement.of(dialectFor(options.mcpBackendMode()), sql, bindParams, accessContext);
-            ExecutionResult result = new JdbcBackendExecutor(backend).execute(statement);
-            return AdHocQueryRunner.Result.ofSuccess(result);
+            target = executionTargetFor(currentScope());
         } catch (SQLException e) {
             return AdHocQueryRunner.Result.ofError(e);
         }
+        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, bindParams, accessContext,
+                null, target.pinnedBackend(), target.dialect(), target.scope());
+    }
+
+    /** How one {@link McpScope} (plus the endpoint's own {@code WARP_MCP_BACKEND} mode) maps onto
+     * the pipeline's routing pin, source dialect, and enforced {@link BackendScope} -- see
+     * {@link #runSql}. {@code pinnedBackend}/{@code scope} are nullable ("no pin"/"unconstrained"). */
+    private record ExecutionTarget(String pinnedBackend, SourceDialect dialect, BackendScope scope) {
+    }
+
+    private ExecutionTarget executionTargetFor(McpScope effectiveScope) throws SQLException {
+        if (effectiveScope.type() == McpScope.Type.DATABASE) {
+            // openBackendConnection opened THIS named backend directly; pin to it, speak its real
+            // dialect, and permit nothing else.
+            String name = effectiveScope.name();
+            com.sayonora.wire.core.BackendTarget target = backendRegistry.get(name);
+            SourceDialect dialect = target != null && target.dialect() != null
+                    ? target.dialect() : dialectFor(options.mcpBackendMode());
+            return new ExecutionTarget(name, dialect, BackendScope.single(name));
+        }
+        if (options.mcpBackendMode() != McpBackendMode.POSTGRES) {
+            // Native mode (any non-DATABASE scope): the connection is the gateway's own Oracle/
+            // MySQL/SQL Server one, registered by Main as MCP_NATIVE_DEFAULT_NAME (same URL, same
+            // pool). Pinned there so no WARP_ROUTER_* rule can send real native SQL to Postgres.
+            return new ExecutionTarget(BackendRegistry.MCP_NATIVE_DEFAULT_NAME, dialectFor(options.mcpBackendMode()),
+                    BackendScope.single(BackendRegistry.MCP_NATIVE_DEFAULT_NAME));
+        }
+        if (effectiveScope.type() == McpScope.Type.GROUP) {
+            // Not pinned -- routing rules still apply within the group -- but every resolved
+            // target (incl. the no-rule "default" fallback) must be a member.
+            List<String> members = backendRegistry.membersOfGroup(effectiveScope.name());
+            if (members.isEmpty()) {
+                throw new SQLException("WARP_MCP_SCOPE names group \"" + effectiveScope.name()
+                        + "\", which has no currently-registered member backends", "08001");
+            }
+            return new ExecutionTarget(null, SourceDialect.MCP,
+                    new BackendScope(new java.util.HashSet<>(members), "group:" + effectiveScope.name()));
+        }
+        // Postgres + ALL: exactly today's unpinned, unscoped Statement.
+        return new ExecutionTarget(null, SourceDialect.MCP, null);
     }
 
     private static AdHocQueryRunner.Result notSupportedInNativeMode(String toolName, McpBackendMode mode) {
@@ -1190,7 +1218,9 @@ public final class WarpMcpServer {
         String sql = tool.signature().isProcedure()
                 ? "CALL " + qualified + "(" + placeholders + ")"
                 : "SELECT * FROM " + qualified + "(" + placeholders + ")";
-        return AdHocQueryRunner.run(backend, sharedStages, backendRegistry, "default", sql, binds, accessContext);
+        // Through runSql (not AdHocQueryRunner directly) so a registered tool is pinned/scoped
+        // exactly like execute_sql -- under DATABASE scope it used to skip the pin entirely.
+        return runSql(backend, sql, binds, accessContext);
     }
 
     private static Object jsonToBindValue(JsonElement element, String pgType) {
@@ -1332,6 +1362,10 @@ public final class WarpMcpServer {
      * Must be turned back {@code OFF} before this connection returns to its pool (see
      * {@code BackendConnectionPools}) or every later borrower would silently get plan rows instead
      * of real query results -- the {@code finally} block is load-bearing, not defensive style. */
+    // TODO: this runs the caller's SQL directly on the raw connection -- un-governed by the
+    // shared pipeline (no firewall/QoS/scope check) -- in SQL Server native mode only; the other
+    // three modes go through runSql. Left as-is because SHOWPLAN_ALL needs session-state pairing
+    // JdbcBackendExecutor can't provide; a FirewallStage pre-check on the text would close most of it.
     private AdHocQueryRunner.Result runSqlServerExplain(Connection backend, String sql) throws SQLException {
         try (var setOn = backend.createStatement()) {
             setOn.execute("SET SHOWPLAN_ALL ON");

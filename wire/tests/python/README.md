@@ -29,13 +29,18 @@ rollback, and the `/metrics` admin endpoint reporting the statements just run.
 - **mssqlwire has no per-column TDS type mapping** -- every value comes back as a string
   regardless of its real Postgres type (unlike orawire's VARCHAR2/NUMBER/DATE mapping). Assertions
   in `test_mssqlwire.py` compare as strings to reflect this honestly.
-- **mssqlwire and mywire have no session-scoped connection** -- `MssqlWireSessionHandler` and
-  `MySqlWireSessionHandler` both open a fresh pooled Postgres connection per statement and close
-  it immediately after (unlike orawire's session-scoped `LazyPooledConnection`), so there is no
-  cross-statement transaction state for an explicit `COMMIT`/`ROLLBACK` to act on yet. The
+- **(Stale as of `docs/PERFORMANCE.md` §3.9/2026-09-23 -- kept here for history) mssqlwire and
+  mywire have no session-scoped connection.** This was true when this note was first written, but
+  both `MssqlWireSessionHandler.sessionConnection()` and `MySqlWireSessionHandler.sessionConnection()`
+  now give each session one reused pooled `Connection` for its whole lifetime (same shape as
+  orawire's own session-scoped `LazyPooledConnection`), specifically so `BEGIN`/`COMMIT`/
+  `ROLLBACK` (SQL-verb or `setAutoCommit`-driven) have real cross-statement transaction state to
+  act on. See `docs/PERFORMANCE.md` §3.9 for how this was reconfirmed live (a per-call
+  `sessionConnection()` checkpoint measuring 0.04-0.08us once warm -- a field read, not a fresh
+  borrow) while investigating a separate, still-real performance gap in the same call path. The
   rollback test is `skip`ped for mssqlwire (the client call itself hangs rather than erroring --
   a TDS response-shape mismatch, not yet root-caused) and `xfail(strict=True)` for mywire (fails
-  cleanly).
+  cleanly) -- neither of those is about session-scoping itself, which now works for both.
 
 ## Bugs this test suite found and fixed along the way
 

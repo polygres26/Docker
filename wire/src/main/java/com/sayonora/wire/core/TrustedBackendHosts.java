@@ -78,6 +78,24 @@ public final class TrustedBackendHosts {
         if (!isEnabled()) {
             return true;
         }
+        // DynamoDB is addressed by AWS region, not a host -- nothing to allowlist, so a
+        // dynamodb:// backend is exempt from this check entirely. (An explicit endpoint= override,
+        // e.g. dynamodb-local in tests, is not checked either -- a known, deliberate simplification
+        // for this first version: the design scopes the exemption to the whole dialect.)
+        // mongodb:// needs no special case here: MONGO_CONNECTION_STRING below already extracts
+        // its real host:port.
+        if (jdbcUrl != null && jdbcUrl.trim().regionMatches(true, 0, "dynamodb://", 0, "dynamodb://".length())) {
+            return true;
+        }
+        // S3 is addressed by bucket name (region/endpoint config), not a host allowlist-able the
+        // way a database server is -- same exemption reasoning as DynamoDB above. An explicit
+        // endpoint= override (MinIO/S3-compatible) is not checked either, same simplification.
+        if (jdbcUrl != null && jdbcUrl.trim().regionMatches(true, 0, "s3://", 0, "s3://".length())) {
+            return true;
+        }
+        // kafka:// and cassandra:// DO have a real host:port authority -- KAFKA_BROKER_LIST/
+        // CASSANDRA_CONTACT_POINT below extract it, same as Mongo's own pattern just below.
+        // splunk:// also has a real host:port authority, extracted by SPLUNK_ENDPOINT below.
         HostPort target = extractHostPort(jdbcUrl);
         if (target == null) {
             return false;
@@ -121,6 +139,9 @@ public final class TrustedBackendHosts {
     private static final Pattern JDBC_HOST_PORT_STYLE =
             Pattern.compile("(?i)^jdbc:(?:sqlserver|mysql|mariadb)://([^/;?]+)");
     private static final Pattern MONGO_CONNECTION_STRING = Pattern.compile("(?i)^mongodb(?:\\+srv)?://([^/?]+)");
+    private static final Pattern KAFKA_BROKER_LIST = Pattern.compile("(?i)^kafka://([^/?]+)");
+    private static final Pattern CASSANDRA_CONTACT_POINT = Pattern.compile("(?i)^cassandra://([^/?]+)");
+    private static final Pattern SPLUNK_ENDPOINT = Pattern.compile("(?i)^splunk://([^/?]+)");
 
     private static HostPort extractHostPort(String jdbcUrl) {
         if (jdbcUrl == null) {
@@ -148,6 +169,21 @@ public final class TrustedBackendHosts {
             // of the same real replica set to ever actually get used.
             String first = mongo.group(1).split(",", 2)[0];
             return parseHostPort("mongo", first, 27017);
+        }
+        Matcher kafka = KAFKA_BROKER_LIST.matcher(trimmed);
+        if (kafka.find()) {
+            // As Mongo's own seed-list handling above -- trusting the first broker in a
+            // comma-separated bootstrap list is the same documented simplification.
+            String first = kafka.group(1).split(",", 2)[0];
+            return parseHostPort("kafka", first, 9092);
+        }
+        Matcher cassandra = CASSANDRA_CONTACT_POINT.matcher(trimmed);
+        if (cassandra.find()) {
+            return parseHostPort("cassandra", cassandra.group(1), 9042);
+        }
+        Matcher splunk = SPLUNK_ENDPOINT.matcher(trimmed);
+        if (splunk.find()) {
+            return parseHostPort("splunk", splunk.group(1), 8089);
         }
         return null;
     }

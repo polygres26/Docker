@@ -387,6 +387,16 @@ public final class RouterStage implements PipelineStage {
                 ? classifyWorkload(statement.sqlText())
                 : statement.workloadClass();
         String targetBackend = statement.targetBackend() != null ? statement.targetBackend() : resolveBackend(statement);
+        // Early BackendScope enforcement (see BackendScope's own javadoc): a concrete target the
+        // caller's scope doesn't permit is refused HERE, before QosControlStage spends an
+        // admission token, before DialectTranslationStage/Rollup/Cache do any work. SCATTER_ALL
+        // is deliberately not checked here -- its real shard set is only known inside
+        // RoutingBackendExecutor#executeScatterGather, which checks every member itself. A null
+        // resolution (no rule matched, no unambiguous default) means "the caller-supplied
+        // default connection", checked as DEFAULT_BACKEND_NAME. No-op when scope is null.
+        if (statement.backendScope() != null && !RoutingBackendExecutor.SCATTER_ALL.equals(targetBackend)) {
+            BackendScope.check(statement.backendScope(), targetBackend);
+        }
         return next.proceed(statement.withRouting(workloadClass, targetBackend));
     }
 
@@ -427,11 +437,17 @@ public final class RouterStage implements PipelineStage {
         // for others in the same statement.
         for (ValueShardColumnRule rule : valueShardColumnRules) {
             String literal = ValueShardLiteralMatcher.findLiteralValue(statement.sqlText(), rule.columnName());
-            if (literal != null) {
-                String backend = rule.strategy().resolve(literal);
+            // An operator names THIS rule type by column, not bind index, precisely to avoid having
+            // to know a client's bind ordinal up front -- which means it should work for a
+            // prepared-statement client too, not only the literal-sending one the class javadoc
+            // originally called out. See findBindValue's own javadoc for the real gap this closes.
+            String value = literal != null ? literal
+                    : ValueShardLiteralMatcher.findBindValue(statement.sqlText(), rule.columnName(), statement.bindParams());
+            if (value != null) {
+                String backend = rule.strategy().resolve(value);
                 if (backend != null) {
-                    log.debug("router: value-shard literal rule matched ({}={}) -> backend={}",
-                            rule.columnName(), literal, backend);
+                    log.debug("router: value-shard rule matched ({}={}, viaBind={}) -> backend={}",
+                            rule.columnName(), value, literal == null, backend);
                     return backend;
                 }
             }
@@ -449,11 +465,18 @@ public final class RouterStage implements PipelineStage {
                 continue;
             }
             String literal = ValueShardLiteralMatcher.findLiteralValue(statement.sqlText(), rule.column());
-            if (literal != null) {
-                String backend = rule.strategy().resolve(literal);
+            // Real prepared-statement traffic (JDBC PreparedStatement, psycopg2 parameterized
+            // queries, any ORM) sends the shard key as a bind parameter, not a literal -- see
+            // findBindValue's own javadoc for the gap this closes. Tried only when no literal
+            // matched, so a client that DOES inline the value keeps taking the (marginally
+            // cheaper, no bind-list scan) literal path unchanged.
+            String shardValue = literal != null ? literal
+                    : ValueShardLiteralMatcher.findBindValue(statement.sqlText(), rule.column(), statement.bindParams());
+            if (shardValue != null) {
+                String backend = rule.strategy().resolve(shardValue);
                 if (backend != null) {
-                    log.debug("router: table-shard rule matched (table={}, {}={}) -> single-shard backend={}",
-                            rule.tableName(), rule.column(), literal, backend);
+                    log.debug("router: table-shard rule matched (table={}, {}={}, viaBind={}) -> single-shard backend={}",
+                            rule.tableName(), rule.column(), shardValue, literal == null, backend);
                     return backend;
                 }
             }

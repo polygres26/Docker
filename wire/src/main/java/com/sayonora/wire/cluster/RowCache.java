@@ -56,4 +56,36 @@ public final class RowCache {
         cache.remove(key);
         log.debug("row cache invalidated: {}", key);
     }
+
+    /**
+     * Batch form of {@link #invalidate} for {@link CacheInvalidationListener}'s rows-mode payloads:
+     * each entry of {@code keys} is {@code [pk]} or {@code [pk, sk]} (a {@code null}/absent sk
+     * becomes the same empty-string sk {@link #key} already produces), all against one physical
+     * table, removed in a single Ignite {@code removeAll} round trip rather than one per key.
+     */
+    public void invalidateRows(String physicalTable, java.util.List<String[]> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> cacheKeys = new java.util.HashSet<>();
+        for (String[] k : keys) {
+            if (k == null || k.length == 0 || k[0] == null) {
+                continue;
+            }
+            cacheKeys.add(key(physicalTable, k[0], k.length > 1 ? k[1] : null));
+        }
+        if (cacheKeys.isEmpty()) {
+            return;
+        }
+        cache.removeAll(cacheKeys);
+        log.debug("row cache invalidated {} key(s) on {}", cacheKeys.size(), physicalTable);
+    }
+
+    /** As {@link CacheStage#clearAll} -- the full clear a LISTEN (re)connect has to fall back
+     * to, since a notify dropped while disconnected can't be replayed. */
+    public void clearAll(String reason) {
+        int before = cache.size();
+        cache.clear();
+        log.info("row cache: cleared all entries ({}) -- {}", before, reason);
+    }
 }

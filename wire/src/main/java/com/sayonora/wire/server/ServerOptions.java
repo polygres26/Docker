@@ -51,7 +51,6 @@ public final class ServerOptions {
     private final boolean dualExecEnabled;
     private final DualExecAuthority dualExecAuthority;
     private final boolean dualExecRequireBoth;
-    private final boolean dualExecXaEnabled;
     private final boolean dualExecShadowEnabled;
     private final String oracleHost;
     private final int oraclePort;
@@ -95,7 +94,7 @@ public final class ServerOptions {
             String pgStandbyHost, int pgStandbyPort,
             boolean tlsEnabled, int tlsPort, int grpcTlsPort,
             String tlsKeystorePath, String tlsKeystorePassword,
-            boolean dualExecEnabled, DualExecAuthority dualExecAuthority, boolean dualExecRequireBoth, boolean dualExecXaEnabled,
+            boolean dualExecEnabled, DualExecAuthority dualExecAuthority, boolean dualExecRequireBoth,
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
             String oracleUser, String oraclePassword, McpBackendMode mcpBackendMode,
@@ -126,7 +125,6 @@ public final class ServerOptions {
         this.dualExecEnabled = dualExecEnabled;
         this.dualExecAuthority = dualExecAuthority;
         this.dualExecRequireBoth = dualExecRequireBoth;
-        this.dualExecXaEnabled = dualExecXaEnabled;
         this.dualExecShadowEnabled = dualExecShadowEnabled;
         this.oracleHost = oracleHost;
         this.oraclePort = oraclePort;
@@ -166,8 +164,6 @@ public final class ServerOptions {
                 System.getenv().getOrDefault("WARP_DUAL_EXEC_AUTHORITY", "postgres"))
                 ? DualExecAuthority.ORACLE : DualExecAuthority.POSTGRES;
         boolean dualExecRequireBoth = parseBoolEnv("WARP_DUAL_EXEC_REQUIRE_BOTH", false);
-        boolean dualExecXaEnabled = parseBoolEnv("WARP_DUAL_EXEC_XA_ENABLED", false);
-        
         boolean dualExecShadowEnabled = parseBoolEnv("WARP_DUAL_EXEC_SHADOW_ENABLED", true);
         String oracleHost = System.getenv().getOrDefault("WARP_ORACLE_HOST", "localhost");
         int oraclePort = parseIntEnv("WARP_ORACLE_PORT", 1521);
@@ -258,7 +254,7 @@ public final class ServerOptions {
                 pgSslMode, pgSslRootCert,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, grpcTlsPort, keystorePath, keystorePassword,
-                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,
@@ -285,7 +281,7 @@ public final class ServerOptions {
                 null, null,
                 null, pgPort,
                 false, 0, 0, null, null,
-                false, DualExecAuthority.POSTGRES, false, false,
+                false, DualExecAuthority.POSTGRES, false,
                 false,
                 "localhost", 1521, "orcl", OracleBackendMode.JDBC,
                 null, null, McpBackendMode.POSTGRES,
@@ -395,10 +391,6 @@ public final class ServerOptions {
 
     public boolean dualExecRequireBoth() {
         return dualExecRequireBoth;
-    }
-
-    public boolean dualExecXaEnabled() {
-        return dualExecXaEnabled;
     }
 
     public boolean dualExecShadowEnabled() {
@@ -521,7 +513,7 @@ public final class ServerOptions {
                 pgSslMode, pgSslRootCert,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
-                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, OracleBackendMode.NATIVE,
                 oracleUser, oraclePassword, mcpBackendMode,
@@ -540,7 +532,7 @@ public final class ServerOptions {
                 pgSslMode, pgSslRootCert,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
-                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,
@@ -560,7 +552,7 @@ public final class ServerOptions {
                 pgSslMode, pgSslRootCert,
                 pgStandbyHost, pgStandbyPort,
                 tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
-                dualExecEnabled, dualExecAuthority, dualExecRequireBoth, dualExecXaEnabled,
+                dualExecEnabled, dualExecAuthority, dualExecRequireBoth,
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,

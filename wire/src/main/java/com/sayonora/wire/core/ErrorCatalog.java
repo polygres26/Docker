@@ -74,6 +74,14 @@ public final class ErrorCatalog {
         return new SQLException(format(key, args), cause);
     }
 
+    /** As {@link #sqlException}, for a call site that isn't itself declared to throw {@link
+     * SQLException} -- e.g. a Calcite {@code Table} constructor (see {@code CassandraTable}'s own
+     * full-scan guard), which {@code SchemaFederationStage}'s {@code mountConnector} still surfaces
+     * as a normal, in-band SQL error via its own catch of {@link RuntimeException}. */
+    public static RuntimeException runtimeException(String key, Object... args) {
+        return new IllegalStateException(format(key, args));
+    }
+
     private ErrorCatalog() {
     }
 }

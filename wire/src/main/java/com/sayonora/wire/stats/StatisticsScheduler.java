@@ -62,7 +62,9 @@ public final class StatisticsScheduler implements AutoCloseable {
         int collected = 0;
         for (BackendTarget target : backendRegistry.all()) {
             SourceDialect dialect = target.dialect();
-            if (dialect == null || dialect == SourceDialect.GENERIC_REST) {
+            // DynamoDB/Mongo connector backends have no JDBC connection to collect pg_class-style
+            // row counts over (see BackendTarget#isFederationOnlyConnector).
+            if (dialect == null || dialect == SourceDialect.GENERIC_REST || target.isFederationOnlyConnector()) {
                 continue;
             }
             collected += collectForBackend(target, dialect);

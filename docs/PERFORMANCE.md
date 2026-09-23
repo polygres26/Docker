@@ -306,6 +306,142 @@ actually costing time here.
 
 ---
 
+## 5. 2026-09-23 follow-on: orawire/mssqlwire still ~1.3-1.7ms vs pgwire/mywire's ~0.7ms
+
+`docs/RTT_BASELINE_2026.md`'s controlled 11-protocol comparison (one `pytest` session, one
+Docker Postgres, same dev machine) found orawire and mssqlwire's plain single-row `INSERT`
+meaningfully slower than pgwire/mywire's — client p50 mssqlwire 1.659ms / orawire 1.289ms vs.
+pgwire 0.713ms / mywire 0.689ms, same run. This section is a direct continuation of §3's
+investigation, using the identical methodology (§ "5. Investigation methodology"'s own
+checkpoint/compare/verify discipline, referenced below by section number since this doc's own
+numbering restarts per top-level section).
+
+### 3.8 Confirming §3.2 and §3.6's existing orawire fixes are still intact
+
+Before looking for anything new, both of orawire's previously-fixed bottlenecks were re-verified
+directly against current code:
+
+- **§3.2** (`DialectTranslationStage`'s `recordAccess()` write): still backgrounded onto
+  `TranslationCacheStore`'s single daemon executor (`RECORD_ACCESS_EXECUTOR.submit(...)`,
+  `TranslationCacheStore.java:69`) — intact, unchanged.
+- **§3.6** (explicit `COMMIT` on autocommit): `RequestLoop.handleExecute` still toggles
+  `primaryConn.setAutoCommit(true)`/`(false)` around the one `pipeline.execute()` call exactly
+  when `EXEC_OPTION_COMMIT` is set (`RequestLoop.java` around line 1149) — intact. Confirmed
+  *live*, with temporary `System.nanoTime()` checkpoints (removed after use), that
+  `python-oracledb`'s `conn.autocommit = True` + `cur.execute(insert_sql, [i, i])` (the exact
+  shape `test_orawire.py::test_write_rtt_baseline` uses) DOES set `EXEC_OPTION_COMMIT` and DOES
+  take the fast native-autocommit path (`useNativeAutocommit=true` every call) — this fix was
+  never the problem for this test shape. `setAutoCommit(true)` itself measured 1-3µs once warm,
+  confirming the toggle really does cost nothing on an already-clean connection, as its own
+  comment claims.
+
+So the remaining ~0.6-0.9ms gap versus pgwire/mywire was a **third, previously-undiscovered
+bottleneck**, not a regression of either existing fix.
+
+### 3.9 mssqlwire is already session-scoped — `RTT_BASELINE_2026.md`'s "known gap" text is stale
+
+`tests/python/README.md` and `RTT_BASELINE_2026.md` both describe mssqlwire as opening "a fresh
+pooled Postgres connection per statement, clos[ing] it immediately after" (no session-scoped
+connection, unlike orawire's `LazyPooledConnection`). Reading `MssqlWireSessionHandler.java`
+directly shows this is no longer true — a real, already-landed fix (`sessionConnection()`,
+`MssqlWireSessionHandler.java:180`, plus its own in-code comment at the non-native execute call
+site) gives every mssqlwire session one reused `Connection` for its whole lifetime, exactly like
+pgwire/mywire, specifically so `BEGIN`/`COMMIT`/`ROLLBACK TRAN` have something real to apply to.
+Confirmed live with a temporary checkpoint around `sessionConnection()`: 0.04-0.08µs per call
+(a field read, not a borrow) once the session's first statement has run. **This was not the
+cause of mssqlwire's gap, and the per-statement-fresh-connection architecture gap this codebase's
+own docs describe no longer exists** — `tests/python/README.md`'s "known gap" note and
+`RTT_BASELINE_2026.md`'s text pointing at it are updated below to say so.
+
+### 3.10 The real cause: `PostgresRlsSessionInitializer`'s `set_config` re-issued on every statement
+
+**Symptom**: with §3.2/§3.6 confirmed intact and session-scoping confirmed already fixed, a
+per-pipeline-stage nanosecond breakdown (temporary instrumentation added to
+`StatementPipeline.buildChain`, removed after use) showed every stage before the actual backend
+call (`DialectTranslationStage`, `QosControlStage`, `RouterStage`, `FirewallStage`,
+`QueryRepairStage`, `StatsCollectorStage`, `RollupStage`) costing single-digit-to-low-double-digit
+microseconds — the entire gap was inside `JdbcBackendExecutor.execute()`'s own "terminal" call,
+the actual JDBC round trip. Splitting that call further (temporary checkpoints around the
+native-RLS initializer call, `setObject`, `stmt.execute()`, and `getGeneratedKeys()`) isolated it
+precisely:
+
+```
+mywire:     rlsInit=1.6-2.2us   execute=500-700us
+mssqlwire:  rlsInit=425-1034us  execute=1100-1750us
+```
+
+**Cause**: `JdbcBackendExecutor.execute()` calls `nativeRlsInitializer.initialize(connection,
+accessContext)` unconditionally on *every single statement* (`JdbcBackendExecutor.java`, top of
+`execute()`) — by design, since a real per-user RLS policy needs `warp.user_id` current for
+whichever statement is about to run. For mssqlwire and orawire, that initializer
+(`MssqlPgEmulationSessionInitializer`/`OraclePgEmulationSessionInitializer`) delegates to
+`PostgresRlsSessionInitializer.initialize()`, which ran a real, synchronous Postgres round trip —
+`SELECT set_config('warp.user_id', ?, false)` via a **freshly created** `PreparedStatement` (not
+even using `JdbcBackendExecutor`'s own statement cache) — every single call, then (mssqlwire only
+here, but orawire has the same shape one call later) a *second* real round trip,
+`SET db_emulation = 'sqlserver'`, also reissued unconditionally on every statement. mywire has no
+equivalent cost because `MySqlPgEmulationSessionInitializer` never had a
+`PostgresRlsSessionInitializer` delegate to begin with (see that class's own javadoc) — it is not
+that mywire is unusually fast, it's that orawire/mssqlwire were doing two extra real backend round
+trips per statement that mywire's initializer was never wired to do. This is the exact same
+"real, redundant, synchronous per-statement Postgres round trip for something that hasn't
+actually changed since the last statement" shape as §3.2's `recordAccess()` bug, just one layer
+over — a session's `AccessContext` and a session's chosen `db_emulation` value are both, in the
+overwhelming common case, invariant statement-to-statement on one physical connection.
+
+**Fix**: `PostgresRlsSessionInitializer` (one instance per session, confirmed — constructed once
+in `PgWireSessionHandler`'s/`OraclePgEmulationSessionInitializer`'s/
+`MssqlPgEmulationSessionInitializer`'s own constructors, never shared across sessions or threads)
+now caches the last `(Connection, AccessContext)` pair it successfully applied `set_config` for,
+and skips re-issuing it when both match — `Connection` compared by identity (`==`, not
+`equals()`), `AccessContext` by `equals()` (it's a `record`, so this is real value equality).
+Identical caching added to `MssqlPgEmulationSessionInitializer`'s and
+`OraclePgEmulationSessionInitializer`'s own `SET db_emulation` calls (plus orawire's
+`SYS_CONTEXT`/`set_identifier` forwarding, same block), and to `MySqlPgEmulationSessionInitializer`
+for consistency (currently a no-op in this environment since `pg_mysql` isn't installed and
+`PgMysqlSupport.isAvailable()` already short-circuits first, but a real cost the moment it is).
+Caching by connection *identity* means a `rebind()` to a different physical connection (a fresh
+pooled connection possibly last used by a different session/dialect, or a dual-exec/failover
+switch) is always a cache miss and reconciles for real — this does not weaken
+`OraclePgEmulationSessionInitializer`'s own documented caveat about pooled-connection reuse
+needing reconciliation, it only skips re-asserting something already asserted on *this exact*
+connection object.
+
+**Verified correctness before trusting the speed**:
+- `PostgresRolesRlsIntegrationTest`, `OracleRolesRlsIntegrationTest`, and
+  `FederatedNativeRlsIntegrationTest` (real Postgres RLS policies keyed off
+  `current_setting('warp.user_id')`, real role-switching between statements) all still pass —
+  5, 4, and 1 tests respectively, 0 failures — confirming a real access-context change between
+  statements still re-issues `set_config` correctly (a cache miss, not a false hit) and RLS
+  enforcement is unaffected.
+- Full `mvn test` re-run clean (see below) with no new failures.
+
+**Result** (client p50, `test_write_rtt_baseline`, same controlled harness, two runs):
+
+| protocol | before | after (run 1) | after (run 2) |
+|---|---|---|---|
+| mssqlwire | 1.472-1.774ms | 0.714ms | 1.115ms |
+| orawire | 1.174-1.469ms | 0.906ms | 0.723ms |
+| mywire (unaffected, for comparison) | 0.631-0.684ms | 0.520ms | 0.718ms |
+| pgwire (unaffected, for comparison) | 0.820-1.335ms | 0.645ms | 0.853ms |
+
+mssqlwire and orawire now land in the same 0.6-1.1ms band as pgwire/mywire in the same run,
+consistent with the ±0.3-0.5ms client-side run-to-run jitter this doc's own methodology note
+already documents — the previously consistent ~0.5-0.8ms gap above pgwire/mywire is gone. Direct
+instrumentation (removed after confirming) showed the mechanism: mssqlwire's `rlsInit` cost
+dropped from 425-1034us to 3.4-3.6us per statement (the cost of two `==`/`.equals()` checks
+instead of two Postgres round trips).
+
+### 3.11 Docs corrected
+
+- `tests/python/README.md`'s "mssqlwire and mywire have no session-scoped connection" note is
+  stale for mssqlwire (see §3.9) — updated to describe the current, already-fixed state.
+- `docs/RTT_BASELINE_2026.md`'s "worth a fresh investigation" line (end of its controlled-
+  comparison section) now points at this section instead of describing the investigation as
+  still open.
+
+---
+
 ## 5. Methodology, if reproducing any of this
 
 1. **Warm, then measure**: one throwaway call to populate any cache, then 30-50 timed calls,

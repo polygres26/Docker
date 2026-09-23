@@ -1157,9 +1157,37 @@ public final class RequestLoop {
         // non-batch Execute (request.bindRows always has exactly one entry then).
         ExecutionResult result = null;
         long totalUpdateCount = 0;
+        // Real bug, found live against a real Oracle JDBC thin driver client (ArrayIndexOutOfBounds
+        // in T4CMAREngineNIO.buffer2Value / T4CTTIdcb.receive, i.e. the driver choking on our own
+        // DESCRIBE response): when authoritativeIsOracle, primaryConn/terminalExecutor are rebound
+        // to the REAL Oracle backend above, but this Statement is still tagged sourceDialect=ORACLE
+        // while RouterStage's own dialect switch has no reserved native-default name registered for
+        // orawire (see Main's own javadoc on that -- "orawire's own native mode isn't wired in here
+        // yet"), so it always falls back to the registered "default" (Postgres) backend name.
+        // DialectTranslationStage then dutifully translates this genuine Oracle SQL into Postgres
+        // syntax (confirmed live: "select 1 from dual" -> "select 1", FROM DUAL stripped) purely to
+        // decide whether translation is needed for whatever "default" nominally means -- except
+        // RoutingBackendExecutor's "default" branch actually runs the statement through
+        // defaultExecutor, which is terminalExecutor, which was just rebound to primaryConn (the
+        // REAL ORACLE CONNECTION), not Postgres at all. The translated-for-Postgres text then runs
+        // against real Oracle: syntactically valid there in this case only because Oracle 23c
+        // happens to support FROM-less SELECT, but it describes differently on the wire than the
+        // real "select 1 from dual" would -- malformed enough that a strict client (ojdbc thin) hard
+        // crashes on it while a looser one (python-oracledb) tolerates it. Marking this ONE
+        // authoritative-Oracle Statement's dialect as already matching the pipeline's resolved
+        // "default" target dialect (Postgres) is exactly the same no-translate mechanism
+        // native-mode mywire/mssqlwire statements already rely on (see Main's own comment) -- it
+        // makes DialectTranslationStage's fromDialect==targetDialect check a no-op for this call
+        // without touching RoutingBackendExecutor's connection selection at all, so the REAL,
+        // untranslated Oracle SQL this method already built (primarySql/rewritten above) reaches the
+        // real Oracle connection completely unmodified. The (rare, error-path-only) tradeoff is
+        // that QueryRepairStage's LLM-repair hint and StatsCollectorStage's metrics dialect label
+        // see "Postgres" for this statement instead of "Oracle" -- acceptable next to a client-
+        // crashing malformed response.
+        SourceDialect pipelineDialect = authoritativeIsOracle ? SourceDialect.POSTGRES : SourceDialect.ORACLE;
         for (List<BindParam> bindRow : request.bindRows) {
             List<Object> binds = orderedBindValues(bindRow, rewritten.placeholderToBindIndex());
-            Statement statement = Statement.of(SourceDialect.ORACLE, rewritten.sql(), binds, accessContext);
+            Statement statement = Statement.of(pipelineDialect, rewritten.sql(), binds, accessContext);
             if (useNativeAutocommit) {
                 primaryConn.setAutoCommit(true);
                 try {
@@ -1507,6 +1535,26 @@ public final class RequestLoop {
             };
             int precision = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.precision() : 0;
             int scale = oraType == TtcConstants.ORA_TYPE_NUM_NUMBER ? col.scale() : 0;
+            // Real bug, found live against a real Oracle JDBC thin driver client (this exact query
+            // -- ArrayIndexOutOfBoundsException in T4CMAREngineNIO.buffer2Value / T4CTTIdcb.receive,
+            // i.e. the driver choking on our own DESCRIBE response): a column's ResultSetMetaData
+            // coming from a REAL Oracle backend (dual-exec authority=oracle's authoritative
+            // connection, confirmed live via DEBUGTRACE: "select 1 from dual" -> precision=0,
+            // scale=-127) uses Oracle's own JDBC convention for an unconstrained NUMBER (no declared
+            // precision/scale) -- -127, not 0. writeColumnMetadata's wire encoding below was only
+            // ever reverse-engineered against POSTGRES-sourced NUMERIC columns (every other backend
+            // this frontend has ever executed against until dual-exec's Oracle-authoritative path
+            // existed), where an equivalent unconstrained column reports scale=0, never a negative
+            // sentinel -- confirmed correct for JDBC/sqlplus/SQLcl only in that shape. Passing -127
+            // through unchanged sends a wire byte no real Oracle server would ever send for this
+            // case, malformed enough that a strict client's DESCRIBE parsing corrupts downstream.
+            // Normalizing Oracle's own sentinel to the SAME 0 this encoder already sends correctly
+            // for Postgres's equivalent unconstrained-NUMBER shape keeps this call site on the one
+            // wire encoding actually verified live, regardless of which backend the metadata came
+            // from.
+            if (scale < 0) {
+                scale = 0;
+            }
             long bufferSize = oraType == TtcConstants.ORA_TYPE_NUM_VARCHAR
                     ? Math.max(1, col.displaySize())
                     : (oraType == TtcConstants.ORA_TYPE_NUM_DATE ? 7 : 22);
@@ -1634,14 +1682,22 @@ public final class RequestLoop {
             BindVariableRewriter.Result rewritten = BindVariableRewriter.rewrite(shadowSql);
             try (PreparedStatement shadowStmt = shadowConn.prepareStatement(rewritten.sql())) {
                 bindParamsDirect(shadowStmt, request.bindParams, rewritten.placeholderToBindIndex());
-                if (request.isQuery()) {
-                    try (ResultSet rs = shadowStmt.executeQuery()) {
+                // Real bug, found live (matches the "A result was returned when none was expected"
+                // pgjdbc warning seen alongside the ArrayIndexOutOfBoundsException investigation):
+                // request.isQuery() reflects the wire's own EXEC_OPTION_FETCH bit, which a real
+                // ojdbc thin driver's combined describe/execute (OALL8) RPC for a plain SELECT does
+                // NOT always set -- so this used to call executeUpdate() on a genuine SELECT,
+                // and pgjdbc rightly refuses that once it sees a ResultSet come back. Using
+                // PreparedStatement.execute()'s own return value (whether THIS execution actually
+                // produced a ResultSet) instead of trusting the wire's options bit is the correct,
+                // JDBC-idiomatic way to tell -- it can never disagree with what the driver itself
+                // just did.
+                if (shadowStmt.execute()) {
+                    try (ResultSet rs = shadowStmt.getResultSet()) {
                         while (rs.next()) {
-                            
+
                         }
                     }
-                } else {
-                    shadowStmt.executeUpdate();
                 }
             }
         } catch (SQLException e) {

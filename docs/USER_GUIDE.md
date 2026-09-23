@@ -30,7 +30,7 @@ control, and caching are Postgres-pipeline features that don't apply in native m
 
 | If your app talks to... | Point it at Warp's... | And it behaves like... |
 |---|---|---|
-| Oracle | orawire | Oracle, same TNS connection your app already uses |
+| Oracle | orawire | Oracle, same TNS connection your app already uses ([compatibility details](ORACLE_COMPATIBILITY.md)) |
 | MySQL / MariaDB | mywire | MySQL, standard client/server protocol |
 | SQL Server | mssqlwire | SQL Server, standard TDS protocol |
 | Postgres | pgwire | Postgres, direct passthrough |

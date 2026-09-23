@@ -74,7 +74,10 @@ import org.slf4j.LoggerFactory;
  * {@code customers} table joined against an Oracle {@code orders} table, the same shape Omnigate's
  * own cross-dialect Oracle+Postgres federation proved out) -- see {@link BackendDriverRegistry}
  * for the currently-supported engine list; an unrecognized URL prefix is a real, clear error, not
- * a silent misconnection.
+ * a silent misconnection. A federated backend can also be a non-JDBC DynamoDB or MongoDB connector
+ * ({@code dynamodb://}/{@code mongodb://} WARP_BACKENDS entries, see {@code
+ * com.sayonora.wire.core.connector}) -- mounted as a plain full-scan Calcite schema instead of a
+ * {@code JdbcSchema}, so the JOIN and every filter run in Calcite, not in the source.
  */
 public final class SchemaFederationStage implements PipelineStage {
 
@@ -86,6 +89,17 @@ public final class SchemaFederationStage implements PipelineStage {
     private final BackendRegistry backendRegistry;
     private final StatisticsStore statisticsStore;
     private final SqlPlanStore planStore;
+    // Real native RLS/VPD session-context propagation into a federated backend connection -- empty
+    // by default (every existing constructor/caller), so zero behavior change for a deployment that
+    // hasn't configured WARP_ACCESS_NATIVE_RLS_DIALECTS. Keyed by dialect, not by mount/schema name,
+    // since one operator-declared initializer (e.g. the Postgres one) applies to EVERY Postgres
+    // mount in a federated query, not just one. See com.sayonora.wire.core.access's own classes for
+    // what "native RLS" means here (real SET/set_config/DBMS_SESSION.SET_CONTEXT calls against the
+    // real backend's own session, letting the BACKEND's own CREATE POLICY/DBMS_RLS engine enforce
+    // row security -- as opposed to AccessControlStage's SQL-rewrite fallback, which stays wired in
+    // upstream of this stage regardless and applies to every backend whether or not it also has a
+    // native initializer configured; the two compose, neither replaces the other).
+    private final Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers;
 
     public SchemaFederationStage(List<RouterStage.SchemaRule> schemaRules, BackendRegistry backendRegistry) {
         this(schemaRules, backendRegistry, null, null);
@@ -93,10 +107,17 @@ public final class SchemaFederationStage implements PipelineStage {
 
     public SchemaFederationStage(List<RouterStage.SchemaRule> schemaRules, BackendRegistry backendRegistry,
             StatisticsStore statisticsStore, SqlPlanStore planStore) {
+        this(schemaRules, backendRegistry, statisticsStore, planStore, Map.of());
+    }
+
+    public SchemaFederationStage(List<RouterStage.SchemaRule> schemaRules, BackendRegistry backendRegistry,
+            StatisticsStore statisticsStore, SqlPlanStore planStore,
+            Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers) {
         this.schemaRules = List.copyOf(schemaRules);
         this.backendRegistry = backendRegistry;
         this.statisticsStore = statisticsStore;
         this.planStore = planStore;
+        this.nativeRlsInitializers = nativeRlsInitializers == null ? Map.of() : Map.copyOf(nativeRlsInitializers);
     }
 
     /** {@code null} when fewer than 2 schema rules exist -- federation across a single named
@@ -106,10 +127,19 @@ public final class SchemaFederationStage implements PipelineStage {
      * {@code null} (neither configured). */
     public static SchemaFederationStage fromConfigOrNull(RouterStage routerStage, BackendRegistry backendRegistry,
             StatisticsStore statisticsStore, SqlPlanStore planStore) {
+        return fromConfigOrNull(routerStage, backendRegistry, statisticsStore, planStore, Map.of());
+    }
+
+    /** As the other {@code fromConfigOrNull}, plus {@code nativeRlsInitializers} (see this class's
+     * own field javadoc) -- {@code Main} wires this from {@code WARP_ACCESS_NATIVE_RLS_DIALECTS}. */
+    public static SchemaFederationStage fromConfigOrNull(RouterStage routerStage, BackendRegistry backendRegistry,
+            StatisticsStore statisticsStore, SqlPlanStore planStore,
+            Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers) {
         if (routerStage.schemaRules().size() < 2) {
             return null;
         }
-        return new SchemaFederationStage(routerStage.schemaRules(), backendRegistry, statisticsStore, planStore);
+        return new SchemaFederationStage(routerStage.schemaRules(), backendRegistry, statisticsStore, planStore,
+                nativeRlsInitializers);
     }
 
     @Override
@@ -132,6 +162,16 @@ public final class SchemaFederationStage implements PipelineStage {
         }
         if (referencedSchemas.size() < 2) {
             return next.proceed(statement);
+        }
+        // A federated execution never reaches RouterStage/RoutingBackendExecutor's own scope
+        // checks -- it opens every referenced backend right here -- so each mount is checked
+        // against the statement's BackendScope before any connection is opened. Guarded on the
+        // scope (not on targetBackend) so pinned-but-unscoped statements (mywire dual-port) are
+        // untouched. No-op when the scope is null (every wire frontend).
+        if (statement.backendScope() != null) {
+            for (String backendName : referencedSchemas.values()) {
+                BackendScope.check(statement.backendScope(), backendName);
+            }
         }
         log.info("schema federation: statement references {} schema(s) {} -- executing via a federated "
                 + "Calcite connection instead of routing to one", referencedSchemas.size(), referencedSchemas.keySet());
@@ -166,6 +206,9 @@ public final class SchemaFederationStage implements PipelineStage {
         List<Connection> statsConnections = new ArrayList<>();
         Map<String, Connection> schemaToStatsConnection = new java.util.LinkedHashMap<>();
         Map<String, String> schemaNameToBackendName = new java.util.LinkedHashMap<>();
+        // DynamoDB/Mongo connector schemas mounted for this one statement -- each owns a real
+        // client (HTTP pool / Mongo connection pool), closed in the finally below.
+        List<AutoCloseable> connectorSchemas = new ArrayList<>();
         try {
             CalciteConnection cc = calciteConnection.unwrap(CalciteConnection.class);
             SchemaPlus rootSchema = cc.getRootSchema();
@@ -189,14 +232,41 @@ public final class SchemaFederationStage implements PipelineStage {
                 if (target == null) {
                     throw ErrorCatalog.sqlException("ERR_ROUTER_UNKNOWN_BACKEND", backendName);
                 }
+                // Non-JDBC connector backend (DynamoDB/MongoDB): none of the JDBC path below
+                // applies -- no driver class, no JdbcSchema/DataSource, no JdbcConvention/JdbcRules
+                // (a plain ScannableTable plans via the EnumerableRules already registered above).
+                // Native RLS/VPD is skipped silently: it's a JDBC session-context mechanism with no
+                // equivalent here; AccessControlStage's SQL-rewrite enforcement upstream still
+                // applies to these tables like any other. Not wrapped in StatisticsAwareSchema
+                // either -- that class needs a live JDBC connection and a pg_class lookup. Also left
+                // out of mountToBackend/mountDialects on purpose: the parallel join planner and
+                // LeafScanProfiler only understand JDBC leaves, and a missing entry makes both
+                // decline cleanly (sequential Calcite execution) rather than misfire.
+                if (target.isFederationOnlyConnector()) {
+                    org.apache.calcite.schema.Schema connectorSchema = mountConnector(target, backendName);
+                    connectorSchemas.add((AutoCloseable) connectorSchema);
+                    rootSchema.add(schemaName, connectorSchema);
+                    continue;
+                }
                 mountToBackend.put(schemaName, new LeafScanProfiler.MountedBackend(target, backendName));
                 String driverClassName = BackendDriverRegistry.driverClassNameFor(target.jdbcUrl());
                 if (driverClassName == null) {
                     throw ErrorCatalog.sqlException("ERR_UNSUPPORTED_BACKEND_ENGINE", backendName, target.jdbcUrl());
                 }
-                DataSource dataSource = JdbcSchema.dataSource(
+                DataSource rawDataSource = JdbcSchema.dataSource(
                         target.jdbcUrl(), driverClassName, target.user(), target.password());
-                dialect = JdbcSchema.createDialect(dataSource);
+                // Wrap with the dialect-appropriate native RLS/VPD initializer, if one is
+                // configured for this mount's backend dialect -- a plain closure over `statement`
+                // (already a method parameter for this whole loop), not a ThreadLocal: Calcite
+                // calls DataSource#getConnection() arbitrarily deep inside planning/execution, with
+                // no direct parameter path back here, but the closure needs no thread-safety story
+                // since it only ever reads the one Statement this federated execution is for.
+                com.sayonora.wire.core.access.NativeRlsSessionInitializer rlsInitializer =
+                        nativeRlsInitializers.get(target.dialect());
+                DataSource dataSource = rlsInitializer == null ? rawDataSource
+                        : new com.sayonora.wire.core.access.NativeRlsAwareDataSource(
+                                rawDataSource, rlsInitializer, statement::accessContext);
+                dialect = JdbcSchema.createDialect(rawDataSource);
                 mountDialects.put(schemaName, dialect);
                 org.apache.calcite.linq4j.tree.Expression expression =
                         org.apache.calcite.schema.Schemas.subSchemaExpression(rootSchema, schemaName, JdbcSchema.class);
@@ -204,6 +274,19 @@ public final class SchemaFederationStage implements PipelineStage {
                 JdbcSchema jdbcSchema = new JdbcSchema(dataSource, dialect, convention, null, realSchemaName);
                 if (statisticsStore != null) {
                     Connection statsConnection = target.open();
+                    // Same initializer, applied directly to this plain Connection (not through the
+                    // DataSource wrapper above, since target.open() bypasses JdbcSchema.dataSource
+                    // entirely) -- without this, the planner's own row-count statistics for an
+                    // RLS/VPD-governed table would reflect the UNFILTERED row count regardless of
+                    // which caller's query is being planned, a real plan-quality gap (not a security
+                    // hole -- the actual query result is still correctly filtered by the DataSource
+                    // wrap above) that neither this stage nor the sibling project it was ported from
+                    // addressed before now.
+                    AccessContext statsContext = statement.accessContext();
+                    if (rlsInitializer != null && statsContext != null
+                            && (!statsContext.isAnonymous() || rlsInitializer.runEvenWhenAnonymous())) {
+                        rlsInitializer.initialize(statsConnection, statsContext);
+                    }
                     statsConnections.add(statsConnection);
                     schemaToStatsConnection.put(schemaName, statsConnection);
                     rootSchema.add(schemaName, new StatisticsAwareSchema(
@@ -238,7 +321,8 @@ public final class SchemaFederationStage implements PipelineStage {
             }
             String backendsLabel = String.join(",", schemaNameToBackendName.values());
             String planText = planStore == null ? null : capturePlanTextOrNull(calciteConnection, sql, backendsLabel);
-            List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null ? List.of()
+            // dialect stays null when every mount is a connector (no JDBC leaf to profile at all).
+            List<SqlPlanStore.LeafScanMetric> leafScans = planStore == null || dialect == null ? List.of()
                     : LeafScanProfiler.measure(optimized, dialect, mountToBackend, !statement.bindParams().isEmpty());
 
             // Phase 0 of the Warp-native parallel execution engine (see the "jazzy-wishing-balloon"
@@ -333,6 +417,13 @@ public final class SchemaFederationStage implements PipelineStage {
                 throw e;
             }
         } finally {
+            for (AutoCloseable connectorSchema : connectorSchemas) {
+                try {
+                    connectorSchema.close();
+                } catch (Exception ignoredOnCleanup) {
+                    // best-effort, same as the stats connections below
+                }
+            }
             for (Connection statsConnection : statsConnections) {
                 try {
                     statsConnection.close();
@@ -341,6 +432,30 @@ public final class SchemaFederationStage implements PipelineStage {
                 }
             }
             calciteConnection.close();
+        }
+    }
+
+    /** Builds the DynamoDB/Mongo schema for one connector mount directly (no Calcite model-file/
+     * reflection indirection) from the target's parsed {@link BackendTarget#connectorOperand()}.
+     * Secrets are resolved inside the factory on every call. A config problem (no {@code table.*}
+     * entries, no Mongo database) surfaces as a normal, in-band SQL error naming the backend. */
+    private static org.apache.calcite.schema.Schema mountConnector(BackendTarget target, String backendName)
+            throws SQLException {
+        Map<String, Object> operand = target.connectorOperand() != null ? target.connectorOperand()
+                : com.sayonora.wire.core.connector.ConnectorOperands.parse(target.jdbcUrl(), target.user(), target.password());
+        try {
+            return switch (target.dialect()) {
+                case DYNAMODB -> com.sayonora.wire.core.connector.dynamodb.DynamoSchemaFactory.createSchema(operand);
+                case MONGODB -> com.sayonora.wire.core.connector.mongo.MongoSchemaFactory.createSchema(operand);
+                case S3 -> com.sayonora.wire.core.connector.s3.S3SchemaFactory.createSchema(operand);
+                case KAFKA -> com.sayonora.wire.core.connector.kafka.KafkaSchemaFactory.createSchema(operand);
+                case CASSANDRA -> com.sayonora.wire.core.connector.cassandra.CassandraSchemaFactory.createSchema(operand);
+                case SPLUNK -> com.sayonora.wire.core.connector.splunk.SplunkSchemaFactory.createSchema(operand);
+                default -> throw new IllegalStateException("not a connector dialect: " + target.dialect());
+            };
+        } catch (RuntimeException e) {
+            throw ErrorCatalog.sqlExceptionWithCause("ERR_CONNECTOR_MOUNT_FAILED", e, backendName,
+                    target.dialect(), e.getMessage());
         }
     }
 

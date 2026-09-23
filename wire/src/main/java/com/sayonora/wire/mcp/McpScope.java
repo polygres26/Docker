@@ -14,16 +14,24 @@ package com.sayonora.wire.mcp;
  * shares -- the same "one fixed setting per instance" shape {@code WARP_MYWIRE_BACKEND}'s own
  * native-mode toggle already uses, not a runtime-selectable option.
  *
- * <p><b>Real, disclosed limitation</b>: {@link Type#DATABASE} scope is fully enforced -- it forces
- * ALL execution (not just discovery) onto one direct connection, bypassing {@code RouterStage}'s
- * general routing entirely (see {@code WarpMcpServer#runSql}), so there is no path to any other
- * backend at all. {@link Type#GROUP} scope is enforced for auto-discovery ({@code query_federated}
- * and {@code inspect_schema}'s multi-backend listing) -- both only ever see the named group's
- * members. It does NOT constrain a plain {@code execute_sql}/{@code run_sql} call that happens to
- * be routed elsewhere by an operator's OWN {@code WARP_ROUTER_*} rule -- those still resolve via
- * the normal shared pipeline, which isn't scope-aware. Closing that gap needs real per-statement
- * enforcement threaded through {@code RoutingBackendExecutor} itself, a larger, separate piece of
- * work not built here.
+ * <p><b>Enforcement</b> (see {@code WarpMcpServer#runSql}/{@code executionTargetFor}): every
+ * scope is enforced at EXECUTION time, per statement, by a {@code BackendScope} carried on the
+ * {@code Statement} and checked wherever the shared pipeline turns a statement into a backend
+ * connection -- {@code RouterStage} (early), {@code RoutingBackendExecutor} (terminal, incl.
+ * cursor-derived, scatter-gather and shard-join targets), and both federation stages' per-mount
+ * checks. {@link Type#DATABASE} additionally PINS every statement to the named backend (so no
+ * {@code WARP_ROUTER_*} rule is even consulted) and, unlike before, is now GOVERNED by the full
+ * pipeline (firewall, QoS, workload capture, stats, repair) instead of bypassing it on a bare
+ * connection. {@link Type#GROUP} leaves routing rules in force but refuses any resolved target --
+ * including the no-rule {@code "default"} fallback and every scatter/federation member -- that
+ * isn't a member of the group, with SQLSTATE 42501 ({@code ERR_SCOPE_BACKEND_DENIED}). Discovery
+ * ({@code query_federated}, {@code inspect_schema}'s multi-backend listing) is filtered to the
+ * group's members as before. {@link Type#ALL} on a Postgres endpoint is exactly the historical
+ * unscoped, unpinned behavior.
+ *
+ * <p>QoS note: all MCP traffic (any scope/mode) runs as tenant {@code "default"}, sharing
+ * {@code tenantId:workloadClass} admission buckets with pgwire -- deliberately not per-user
+ * (unbounded bucket cardinality).
  */
 public record McpScope(Type type, String name) {
 

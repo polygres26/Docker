@@ -16,8 +16,14 @@ public final class MySqlBackendConnections {
      * mismatch surfaced as HikariCP's pool failing to initialize ("Driver ... claims to not accept
      * jdbcUrl"), which in turn aborted the mywire session mid-query with a raw connection reset
      * rather than a real MySQL error packet -- confirmed live, not a hypothetical. */
+    /** The one JDBC URL both {@link #open} and {@code Main}'s registered native targets build
+     * from -- one source, so they can't drift (same URL + user => same pool key). */
+    public static String jdbcUrl(ServerOptions options) {
+        return "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase();
+    }
+
     public static Connection open(ServerOptions options) throws SQLException {
-        String url = "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase();
+        String url = jdbcUrl(options);
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.mysqlUser());
         return BackendConnectionPools.borrow(poolKey, url, options.mysqlUser(), options.mysqlPassword());
     }

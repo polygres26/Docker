@@ -2,6 +2,10 @@ package com.sayonora.wire.core;
 
 import java.util.List;
 
+/** {@code backendScope} is nullable ("unconstrained" -- what every wire frontend sends); see
+ * {@link BackendScope}'s own javadoc. It's a Statement component rather than an
+ * {@link AccessContext} attribute so it survives paths that deliberately pass
+ * {@link AccessContext#ANONYMOUS}. */
 public record Statement(
         String tenantId,
         SourceDialect sourceDialect,
@@ -9,7 +13,8 @@ public record Statement(
         List<Object> bindParams,
         String workloadClass,
         String targetBackend,
-        AccessContext accessContext) {
+        AccessContext accessContext,
+        BackendScope backendScope) {
 
     public Statement {
         if (tenantId == null || tenantId.isBlank()) {
@@ -24,12 +29,17 @@ public record Statement(
     }
 
     public Statement(String tenantId, SourceDialect sourceDialect, String sqlText, List<Object> bindParams,
+            String workloadClass, String targetBackend, AccessContext accessContext) {
+        this(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, accessContext, null);
+    }
+
+    public Statement(String tenantId, SourceDialect sourceDialect, String sqlText, List<Object> bindParams,
             String workloadClass, String targetBackend) {
-        this(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, AccessContext.ANONYMOUS);
+        this(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, AccessContext.ANONYMOUS, null);
     }
 
     public static Statement of(SourceDialect dialect, String sqlText, List<Object> bindParams) {
-        return new Statement("default", dialect, sqlText, bindParams, "default", null, AccessContext.ANONYMOUS);
+        return new Statement("default", dialect, sqlText, bindParams, "default", null, AccessContext.ANONYMOUS, null);
     }
 
     /** As {@link #of(SourceDialect, String, List)}, but carrying a real, non-anonymous
@@ -37,22 +47,31 @@ public record Statement(
      * authenticated as under {@code WARP_AUTH_MODE=postgres_roles}, propagated from here into
      * {@code JdbcBackendExecutor}'s native-RLS session-context call. */
     public static Statement of(SourceDialect dialect, String sqlText, List<Object> bindParams, AccessContext accessContext) {
-        return new Statement("default", dialect, sqlText, bindParams, "default", null, accessContext);
+        return new Statement("default", dialect, sqlText, bindParams, "default", null, accessContext, null);
     }
 
     public Statement withSqlText(String newSqlText) {
-        return new Statement(tenantId, sourceDialect, newSqlText, bindParams, workloadClass, targetBackend, accessContext);
+        return new Statement(tenantId, sourceDialect, newSqlText, bindParams, workloadClass, targetBackend, accessContext,
+                backendScope);
     }
 
     public Statement withSqlAndBinds(String newSqlText, List<Object> newBindParams) {
-        return new Statement(tenantId, sourceDialect, newSqlText, newBindParams, workloadClass, targetBackend, accessContext);
+        return new Statement(tenantId, sourceDialect, newSqlText, newBindParams, workloadClass, targetBackend,
+                accessContext, backendScope);
     }
 
     public Statement withRouting(String newWorkloadClass, String newTargetBackend) {
-        return new Statement(tenantId, sourceDialect, sqlText, bindParams, newWorkloadClass, newTargetBackend, accessContext);
+        return new Statement(tenantId, sourceDialect, sqlText, bindParams, newWorkloadClass, newTargetBackend,
+                accessContext, backendScope);
     }
 
     public Statement withAccessContext(AccessContext newAccessContext) {
-        return new Statement(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, newAccessContext);
+        return new Statement(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, newAccessContext,
+                backendScope);
+    }
+
+    public Statement withBackendScope(BackendScope newBackendScope) {
+        return new Statement(tenantId, sourceDialect, sqlText, bindParams, workloadClass, targetBackend, accessContext,
+                newBackendScope);
     }
 }

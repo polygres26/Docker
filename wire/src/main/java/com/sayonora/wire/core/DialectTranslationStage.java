@@ -70,7 +70,11 @@ public final class DialectTranslationStage implements PipelineStage {
         }
         SourceDialect targetDialect = target.dialect();
         SourceDialect fromDialect = statement.sourceDialect();
-        if (targetDialect == null || fromDialect == targetDialect) {
+        // DynamoDB/Mongo connector targets are never a SQL translation target (no SQL dialect of
+        // their own) -- pass through untouched, exactly as a Mongo URL did before it had a
+        // dialect (null), so RoutingBackendExecutor's clear federation-only error is what the
+        // client sees, not an attempted POSTGRES->DYNAMODB/MONGODB translation.
+        if (targetDialect == null || fromDialect == targetDialect || target.isFederationOnlyConnector()) {
             return next.proceed(statement);
         }
         if (fromDialect == SourceDialect.ORACLE && targetDialect == SourceDialect.POSTGRES) {

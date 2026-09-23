@@ -86,6 +86,11 @@ public final class BackendHealthChecker {
         if (current == BackendRegistry.BackendState.DRAINING) {
             return;
         }
+        // A DynamoDB/Mongo connector backend has no JDBC URL to probe -- a JDBC connectivity test
+        // would always "fail" and wrongly mark it DOWN. Not health-checked in this first version.
+        if (target.isFederationOnlyConnector()) {
+            return;
+        }
         var result = BackendConnectivityTest.test(target.jdbcUrl(), target.user(), target.password());
         if (result.ok() && current == BackendRegistry.BackendState.DOWN) {
             registry.setState(target.name(), BackendRegistry.BackendState.ACTIVE);

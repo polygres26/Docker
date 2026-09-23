@@ -63,6 +63,47 @@
          NoSuchMethodError (org.bson.ByteBuf.putInt(int)) at runtime, not a compile-time error,
          caught by MongoErrorMappingIntegrationTest actually running against a real driver. -->
     <bson.version>5.5.1</bson.version>
+    <!-- S3/Kafka/Cassandra/Splunk connector work (com.sayonora.wire.core.connector.{s3,kafka,
+         cassandra,splunk}), ported from the sibling ThinkingSense project's own real, tested
+         connectors, same versions ThinkingSense pinned, reconciled against Warp's own existing
+         pins where they already overlap (S3 reuses awssdk.version above, since the DynamoDB work
+         already established that AWS SDK v2 line on this classpath; Splunk needs no version
+         property at all, see the splunk dependency comment). -->
+    <parquet.version>1.17.1</parquet.version>
+    <hadoop.common.version>3.5.0</hadoop.common.version>
+    <commons.csv.version>1.14.1</commons.csv.version>
+    <commons.io.version>2.20.0</commons.io.version>
+    <kafka.clients.version>4.3.1</kafka.clients.version>
+    <cassandra.driver.version>4.17.0</cassandra.driver.version>
+    <!-- The broader JDBC-dialect catalog (BackendDriverRegistry#driverClassNameFor /
+         BackendTarget#dialect()) — real, bundled drivers, same versions the sibling ThinkingSense
+         project pinned and proved these load against. Reflectively loaded (Class.forName) only
+         when an operator actually registers a backend of that dialect, so these are real, needed
+         dependencies for the feature to WORK (not just compile) the moment WARP_BACKENDS names one
+         of these URL prefixes — unlike the connector work above, nothing here is test-scope only. -->
+    <snowflake.jdbc.version>3.24.2</snowflake.jdbc.version>
+    <redshift.jdbc.version>2.1.0.33</redshift.jdbc.version>
+    <bigquery.jdbc.version>0.3.0</bigquery.jdbc.version>
+    <!-- Databricks' own JDBC driver ships under Databricks' JDBC Driver License Agreement for
+         Non-Warranted Programs, not Apache-2.0/permissive like the others in this list — it's the
+         only way to reach Databricks over JDBC at all. Confirmed the same real deviation the
+         sibling ThinkingSense project already accepted for this same driver. -->
+    <databricks.jdbc.version>2.7.3</databricks.jdbc.version>
+    <clickhouse.jdbc.version>0.10.0</clickhouse.jdbc.version>
+    <pinot.jdbc.version>1.5.1</pinot.jdbc.version>
+    <!-- IBM's Db2 jcc driver, same non-Apache-license caveat as Databricks above — the only way
+         to reach Db2 over JDBC. -->
+    <db2.jcc.version>12.1.5.0</db2.jcc.version>
+    <vertica.jdbc.version>25.3.0-0</vertica.jdbc.version>
+    <singlestore.jdbc.version>1.2.12</singlestore.jdbc.version>
+    <hana.jdbc.version>2.29.11</hana.jdbc.version>
+    <teradata.jdbc.version>20.00.00.54</teradata.jdbc.version>
+    <spanner.jdbc.version>2.42.0</spanner.jdbc.version>
+    <!-- io.trino:trino-jdbc — Apache-2.0, a real Maven Central artifact with NO transitive
+         dependencies at all (a fully self-contained jar), so no exclusions/version-conflict risk
+         from adding it. -->
+    <trino.jdbc.version>483</trino.jdbc.version>
+    <sqlite.jdbc.version>3.53.4.0</sqlite.jdbc.version>
   </properties>
 
   <dependencies>
@@ -309,10 +350,14 @@
          decoder; see MssqlJdbcIntegrationTest/MySqlJdbcIntegrationTest) is covered by those same
          compile-scope dependencies now, no separate test-scope copies needed. -->
     <dependency>
+      <!-- Compile scope (was test-only): com.sayonora.wire.core.connector.dynamodb reads a real
+           DynamoDB table as a federated SchemaFederationStage mount. Same 2.46.7 version the
+           ported ThinkingSense connector was proven against, and the same awssdk.version property
+           sqs/dynamowire's own test clients already use, so there is exactly one AWS SDK v2
+           version on the classpath. -->
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>dynamodb</artifactId>
       <version>${awssdk.version}</version>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
@@ -320,6 +365,81 @@
       <version>${awssdk.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- Compile scope: com.sayonora.wire.core.connector.s3.S3CompatibleObjectFetcher needs real
+           S3 object download (SigV4 request signing), same AWS SDK v2 line/version the DynamoDB
+           connector above already established on this classpath (awssdk.version), reused verbatim
+           rather than introducing ThinkingSense's own separate aws.sdk.s3.version pin. -->
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>${awssdk.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Real Parquet reader (org.apache.parquet.hadoop.ParquetFileReader) via the InputFile SPI
+           over an in-memory byte buffer, exactly as ThinkingSense's S3Table does, no Hadoop
+           filesystem/Path abstraction needed since S3Table downloads one object fully into memory
+           first (see ByteArrayInputFile). Apache-2.0. -->
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-hadoop</artifactId>
+      <version>${parquet.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Real RFC 4180 CSV parsing for S3Table's csv format, not hand-rolled. Apache-2.0. -->
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-csv</artifactId>
+      <version>${commons.csv.version}</version>
+    </dependency>
+    <dependency>
+      <!-- commons-csv 1.14.1 needs commons-io 2.20.0's AbstractStreamBuilder.getReader(),
+           calcite-core transitively pulls an older commons-io that lacks it, a real
+           NoSuchMethodError the moment CSVParser.parse(...) runs (confirmed via ThinkingSense's own
+           pom.xml comment for the identical finding). Pinned explicitly, "nearest wins". -->
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <version>${commons.io.version}</version>
+    </dependency>
+    <dependency>
+      <!-- A real runtime dependency despite S3Table's Parquet path using only the non-Hadoop
+           InputFile/ParquetConfiguration SPI: parquet-hadoop's own ParquetReadOptions.Builder
+           constructor unconditionally reflection-probes for
+           org.apache.hadoop.mapreduce.lib.input.FileInputFormat and raises a hard
+           NoClassDefFoundError (not a caught ClassNotFoundException) when it's absent, found live
+           in ThinkingSense, ported here as the same required pair of minimal Hadoop jars. -->
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.common.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <version>${hadoop.common.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.sayonora.wire.core.connector.kafka.KafkaTable: real, bounded-snapshot Kafka topic
+           reads (see that package's javadoc for why this is bounded, not continuous-streaming
+           SQL). Apache Kafka's official Java client, no Scala/Spark dependency. Apache-2.0. -->
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>${kafka.clients.version}</version>
+    </dependency>
+    <dependency>
+      <!-- com.sayonora.wire.core.connector.cassandra: DataStax's official Cassandra Java driver,
+           real column-metadata introspection (see that package's javadoc for why Cassandra doesn't
+           need Mongo/DynamoDB's declared-field-list workaround). Apache-2.0. -->
+      <groupId>com.datastax.oss</groupId>
+      <artifactId>java-driver-core</artifactId>
+      <version>${cassandra.driver.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.datastax.oss</groupId>
+      <artifactId>java-driver-query-builder</artifactId>
+      <version>${cassandra.driver.version}</version>
+    </dependency>
+    <!-- com.sayonora.wire.core.connector.splunk needs no dependency of its own beyond Gson, which
+         is already a main-scope dependency above (TranslationCache's HTTP client); Splunk access
+         is plain java.net.http.HttpClient + Gson JSON parsing, same as ThinkingSense's own
+         SplunkTable. -->
+
     <dependency>
       <!-- Real opensearch-py-equivalent Java client, test scope only. oswire's existing tests
            used raw HttpURLConnection; this is the first real OpenSearch client library any
@@ -356,8 +476,19 @@
            code. -->
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
-      <version>5.5.1</version>
-      <scope>test</scope>
+      <version>${bson.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Compile scope again: com.sayonora.wire.core.connector.mongo is a real Mongo backend
+           connector (a plain ScannableTable over the sync driver's find(), NOT calcite-mongodb,
+           whose 4.10.2-driver binary incompatibility described above is exactly why that adapter
+           was reverted). Pinned to bson.version (5.5.1), not the 5.11.0 ThinkingSense's ported
+           connector used: bson/driver-core/driver-sync must stay in lockstep (see bson.version's
+           comment), and the connector only calls MongoClients.create/getCollection/find, all
+           stable across 5.x. driver-core pinned explicitly so it can't drift transitively. -->
+      <groupId>org.mongodb</groupId>
+      <artifactId>mongodb-driver-core</artifactId>
+      <version>${bson.version}</version>
     </dependency>
     <!-- Real Neo4j Bolt client, test only, per boltwire's own javadoc: Phase 1's Cypher support
          is deliberately narrow (RETURN literal only), but the wire protocol itself (handshake,
@@ -377,6 +508,92 @@
       <artifactId>influxdb-java</artifactId>
       <version>2.24</version>
       <scope>test</scope>
+    </dependency>
+    <!-- The broader JDBC-dialect catalog (BackendDriverRegistry#driverClassNameFor) — real,
+         compile-scope (not test-scope, unlike the drivers above this comment, which only exist to
+         validate a Warp-hosted wire protocol against a real client): these ARE the drivers Warp
+         itself loads via Class.forName the moment an operator registers a backend of that dialect,
+         so the feature genuinely works, not just compiles. See SourceDialect's own javadoc for the
+         two connectors (Athena, Dremio) deliberately NOT added here, and why. -->
+    <dependency>
+      <groupId>net.snowflake</groupId>
+      <artifactId>snowflake-jdbc</artifactId>
+      <version>${snowflake.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.amazon.redshift</groupId>
+      <artifactId>redshift-jdbc42</artifactId>
+      <version>${redshift.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-bigquery-jdbc</artifactId>
+      <version>${bigquery.jdbc.version}</version>
+    </dependency>
+    <!-- Ships under Databricks' own JDBC Driver License Agreement for Non-Warranted Programs, not
+         Apache-2.0 — the only way to reach Databricks over JDBC at all. -->
+    <dependency>
+      <groupId>com.databricks</groupId>
+      <artifactId>databricks-jdbc</artifactId>
+      <version>${databricks.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.clickhouse</groupId>
+      <artifactId>clickhouse-jdbc</artifactId>
+      <version>${clickhouse.jdbc.version}</version>
+      <classifier>all</classifier>
+    </dependency>
+    <!-- Druid connects over Avatica remote (jdbc:avatica:remote:...); avatica-core is already a
+         transitive dependency of calcite-core, so no dedicated Druid driver dependency is needed. -->
+    <dependency>
+      <groupId>org.apache.pinot</groupId>
+      <artifactId>pinot-jdbc-client</artifactId>
+      <version>${pinot.jdbc.version}</version>
+    </dependency>
+    <!-- Ships under IBM's Db2 jcc license, not Apache-2.0 — the only way to reach Db2 over JDBC. -->
+    <dependency>
+      <groupId>com.ibm.db2</groupId>
+      <artifactId>jcc</artifactId>
+      <version>${db2.jcc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.vertica.jdbc</groupId>
+      <artifactId>vertica-jdbc</artifactId>
+      <version>${vertica.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.singlestore</groupId>
+      <artifactId>singlestore-jdbc-client</artifactId>
+      <version>${singlestore.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.sap.cloud.db.jdbc</groupId>
+      <artifactId>ngdbc</artifactId>
+      <version>${hana.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.teradata.jdbc</groupId>
+      <artifactId>terajdbc</artifactId>
+      <version>${teradata.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-spanner-jdbc</artifactId>
+      <version>${spanner.jdbc.version}</version>
+    </dependency>
+    <!-- Apache-2.0, no transitive dependencies at all (a fully self-contained jar) — real Maven
+         Central artifact, unlike ThinkingSense's own pom.xml, which references this driver's class
+         name in code but never actually declared the dependency (confirmed absent there); added
+         properly here rather than porting that gap. -->
+    <dependency>
+      <groupId>io.trino</groupId>
+      <artifactId>trino-jdbc</artifactId>
+      <version>${trino.jdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>${sqlite.jdbc.version}</version>
     </dependency>
   </dependencies>
 
@@ -459,6 +676,19 @@
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>com.sayonora.wire.server.Main</mainClass>
+                  <!-- Real bug found via test harness instrumentation: dnsjava ships as a
+                       multi-release jar, with its java.net.spi.InetAddressResolverProvider impl
+                       under META-INF/versions/18/, but ManifestResourceTransformer doesn't carry
+                       forward "Multi-Release: true" on its own. Without it, the shaded jar's
+                       manifest omits that attribute, so on JDK 18+ the JVM only ever looks at the
+                       jar's base (unversioned) tree, where dnsjava's provider class does not
+                       exist, and every Warp startup that opens a Postgres/JDBC connection fails
+                       fast with "ServiceConfigurationError: ... DnsjavaInetAddressResolverProvider
+                       not found". Confirmed live: every WarpProcess launch in tests/python/ was
+                       exiting with code 1 on this exact error before this fix. -->
+                  <manifestEntries>
+                    <Multi-Release>true</Multi-Release>
+                  </manifestEntries>
                 </transformer>
                 <!-- Without this, shading collapses every dependency's META-INF/services/java.sql.Driver
                      file into a single last-jar-wins copy, silently dropping either the Postgres or

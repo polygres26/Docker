@@ -8,10 +8,17 @@ same as mssqlwire -- MySqlWireSessionHandler opens a fresh Postgres connection p
 connection like orawire's LazyPooledConnection. COMMIT/ROLLBACK therefore have nothing to act on;
 see test_transaction_rollback_discards_uncommitted_writes below.
 """
+import os
+import time
+
 import pymysql
 import pytest
+import requests
 
-from warp_support import WarpProcess, RealPostgres
+from polywire_support import WarpProcess, RealPostgres
+
+ADMIN_TOKEN = "warp-polywire-test-admin-token"
+os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 
 @pytest.fixture(scope="module")
@@ -26,6 +33,22 @@ def warp(postgres):
     proc = WarpProcess(postgres, "WARP_MYWIRE_PORT", frontend_name="mywire")
     yield proc
     proc.close()
+
+
+def metrics_summary(warp):
+    resp = requests.get(
+        f"http://localhost:{warp.metrics_port}/api/metrics/summary",
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"}, timeout=5,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def find_top_sql_entry(summary, needle):
+    for entry in summary.get("topSql", []):
+        if needle in entry.get("sql", ""):
+            return entry
+    return None
 
 
 def connect(warp):
@@ -103,3 +126,49 @@ def test_metrics_endpoint_reports_statements(warp):
         conn.close()
     body = warp.metrics_text()
     assert "warp_statements_total" in body
+
+
+def test_write_rtt_baseline(warp):
+    # Same methodology/harness as test_pgwire.py/test_orawire.py's own RTT tests -- see
+    # docs/RTT_BASELINE_2026.md's confound section for why this controlled re-run matters.
+    conn = connect(warp)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE mywire_rtt (id INT PRIMARY KEY, val INT)")
+
+        insert_sql = "INSERT INTO mywire_rtt (id, val) VALUES (%s, %s)"
+
+        with conn.cursor() as cur:
+            cur.execute(insert_sql, (0, 0))  # warm-up, not counted
+
+        n = 40
+        client_times_ms = []
+        with conn.cursor() as cur:
+            for i in range(1, n + 1):
+                t0 = time.perf_counter()
+                cur.execute(insert_sql, (i, i))
+                client_times_ms.append((time.perf_counter() - t0) * 1000.0)
+
+        client_times_ms.sort()
+        client_p50 = client_times_ms[len(client_times_ms) // 2]
+        client_min = client_times_ms[0]
+        client_p90 = client_times_ms[int(len(client_times_ms) * 0.9)]
+
+        summary = metrics_summary(warp)
+        entry = find_top_sql_entry(summary, "mywire_rtt")
+        assert entry is not None, f"no topSql entry found for mywire_rtt insert; topSql={summary.get('topSql')}"
+        server_avg_rtt_ms = entry["avgRttMs"]
+        assert server_avg_rtt_ms is not None
+
+        print(f"\n[mywire write RTT] client min={client_min:.3f}ms p50={client_p50:.3f}ms "
+              f"p90={client_p90:.3f}ms | server avgRttMs={server_avg_rtt_ms}")
+
+        assert server_avg_rtt_ms < 5.0, (
+            f"server-side avg RTT {server_avg_rtt_ms}ms for mywire write is well above the "
+            f"sub-millisecond-to-low-single-digit-ms range expected for a loopback Postgres call"
+        )
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS mywire_rtt")
+        conn.close()
