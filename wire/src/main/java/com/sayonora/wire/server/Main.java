@@ -187,6 +187,7 @@ public final class Main {
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
                 config.backends(), config.shardBackends(), config.backendSets(), config.backendGroups(),
                 defaultBackendTarget, nativeBackendTargets);
+        backendRegistry.applyDescriptions(config.backendDescriptions(), config.backendGroupDescriptions());
         logSchemaDiscoveryConflicts(backendRegistry);
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
@@ -630,10 +631,12 @@ public final class Main {
         // Wrapped so a dynamowire-only misconfiguration (e.g. its catalog backend unreachable)
         // logs loudly and leaves dynamowire off instead of taking down every other wire protocol
         // this process serves -- an unhandled exception here used to kill the whole main thread.
+        DynamoWireServer dynamoForMcp = null;
         try {
             DynamoWireServer dynamoWireServer = new DynamoWireServer(dynamoWirePort, backendRegistry, dynamoCache,
                     connectionGate, oauth, awsIamCredentials, sqlMetrics);
             dynamoWireServer.start();
+            dynamoForMcp = dynamoWireServer;
             log.info("warp listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
             // Cross-protocol row-cache sharing: CacheStage was built before dynamowire existed
             // (both need constructing before either can be wired to the other), so this closes
@@ -668,6 +671,26 @@ public final class Main {
             log.error("sqswire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring sqswire back.",
                     sqsWirePort, e);
+        }
+
+        // s3wire: Amazon S3 REST API frontend over one real S3-compatible backend bucket (MinIO in
+        // tests). Unlike the Postgres-backed frontends it has no default backend, so it only starts
+        // when WARP_S3WIRE_BACKEND_BUCKET is set -- see S3WireConfig for the full env var list.
+        // Wrapped the same way sqswire is: an s3wire-only misconfiguration logs loudly and leaves
+        // s3wire off without affecting any other wire protocol.
+        try {
+            com.sayonora.wire.s3wire.S3WireConfig s3Config = com.sayonora.wire.s3wire.S3WireConfig.fromEnv();
+            if (s3Config != null) {
+                int s3WirePort = parseIntEnv("WARP_S3WIRE_PORT", 18020);
+                com.sayonora.wire.s3wire.S3WireServer s3WireServer = new com.sayonora.wire.s3wire.S3WireServer(
+                        s3WirePort, s3Config, connectionGate, sqlMetrics);
+                s3WireServer.start();
+                log.info("warp listening for Amazon S3 REST API (s3wire) on port {}, backend bucket '{}'",
+                        s3WirePort, s3Config.backendBucket());
+            }
+        } catch (Exception e) {
+            log.error("s3wire failed to start -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring s3wire back.", e);
         }
 
         int osWirePort = parseIntEnv("WARP_OSWIRE_PORT", 9200);
@@ -709,6 +732,12 @@ public final class Main {
         com.sayonora.wire.mcp.WarpMcpServer mcpServer = new com.sayonora.wire.mcp.WarpMcpServer(
                 mcpPort, options, pipelineStages, backendRegistry, connectionGate, System.getenv("WARP_MCP_TOOLS"),
                 oauth, mcpMetrics, auditLog, dialectTranslationStage::llmClient);
+        // Backend-kind MCP tools (WARP_MCP_KIND): share the running dynamowire handlers and the
+        // mongowire row cache so MCP reads/writes see and invalidate exactly what wire clients do.
+        mcpServer.emulatedStores().setDynamo(dynamoForMcp);
+        mcpServer.emulatedStores().setMongo(new com.sayonora.wire.mongowire.MongoWireEmbedded(
+                backendRegistry, mongoCache, sqlMetrics));
+        mcpServer.endpoints().load(config.mcpEndpoints());
         mcpServer.start();
         com.sayonora.wire.mcp.McpScope mcpScope = com.sayonora.wire.mcp.McpScope.fromEnv();
         log.info("warp listening for MCP (Model Context Protocol) on port {} (scope: {}{})", mcpPort,
@@ -750,6 +779,8 @@ public final class Main {
             // RouterStage#expandBackendSets) -- reconfiguring first would expand against the
             // sets from BEFORE this same config version, one version stale.
             backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
+            backendRegistry.applyDescriptions(c.backendDescriptions(), c.backendGroupDescriptions());
+            mcpServer.endpoints().load(c.mcpEndpoints());
             if (schemaAutoDiscoveryStage != null) {
                 schemaAutoDiscoveryStage.invalidateCatalogCache();
             }

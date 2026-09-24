@@ -64,7 +64,8 @@ public final class DynamoSchemaFactory implements SchemaFactory {
         return new DynamoSchema(buildClient(operand), (Map<String, Map<String, Object>>) tablesObj);
     }
 
-    static DynamoDbClient buildClient(Map<String, Object> operand) {
+    /** Public so the MCP endpoint's DynamoDB tools build their client exactly as the federated mount does. */
+    public static DynamoDbClient buildClient(Map<String, Object> operand) {
         String region = stringOrNull(operand, "region");
         String endpoint = stringOrNull(operand, "endpoint");
         String accessKeyId = stringOrNull(operand, "accessKeyId");

@@ -40,24 +40,36 @@ def free_port():
         return s.getsockname()[1]
 
 
+def docker_run_on_free_port(name, port_args_builder, attempts=5):
+    """`docker run` with a freshly picked host port, retrying with a new port when docker cannot bind
+    it (another process can grab an ephemeral port between free_port() and `docker run`).
+    `port_args_builder(port)` returns the docker-run argument list AFTER `docker run -d --name <name>`.
+    Returns the port that worked."""
+    last = None
+    for _ in range(attempts):
+        port = free_port()
+        result = subprocess.run(["docker", "run", "-d", "--name", name, *port_args_builder(port)],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return port
+        last = result
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
+    raise subprocess.CalledProcessError(last.returncode, "docker run", last.stdout, last.stderr)
+
+
 class RealPostgres:
     """A real, disposable Postgres container -- plain `docker run`, not a test-library
     abstraction, so it needs nothing beyond Docker itself being installed."""
 
     def __init__(self):
         self.name = f"warp-pytest-pg-{uuid.uuid4().hex[:12]}"
-        self.port = free_port()
-        subprocess.run(
-            [
-                "docker", "run", "-d", "--name", self.name,
-                "-p", f"{self.port}:5432",
-                "-e", "POSTGRES_USER=postgres",
-                "-e", "POSTGRES_PASSWORD=postgres",
-                "-e", "POSTGRES_DB=postgres",
-                "postgres:16-alpine",
-            ],
-            check=True, capture_output=True, text=True,
-        )
+        self.port = docker_run_on_free_port(self.name, lambda port: [
+            "-p", f"{port}:5432",
+            "-e", "POSTGRES_USER=postgres",
+            "-e", "POSTGRES_PASSWORD=postgres",
+            "-e", "POSTGRES_DB=postgres",
+            "postgres:16-alpine",
+        ])
         self._wait_ready()
 
     def _wait_ready(self, timeout=30):
@@ -151,7 +163,12 @@ class WarpProcess:
         self._output_lines = []
         self._drain_thread = threading.Thread(target=self._drain_output, daemon=True)
         self._drain_thread.start()
-        self._wait_ready()
+        try:
+            self._wait_ready()
+        except BaseException:
+            # never leave a half-started JVM (it would hold ports and a license instance slot)
+            self.close()
+            raise
 
     def _drain_output(self):
         try:
@@ -201,3 +218,171 @@ class WarpProcess:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+
+
+class RealMinio:
+    """A real, disposable MinIO container (same quay.io image RealMinio.java uses) -- plain
+    `docker run`, cleaned up in close() like RealPostgres."""
+
+    IMAGE = "quay.io/minio/minio:latest"
+    ACCESS_KEY = "warptestkey"
+    SECRET_KEY = "warptestsecret"
+
+    def __init__(self):
+        self.name = f"warp-pytest-minio-{uuid.uuid4().hex[:12]}"
+        self.port = docker_run_on_free_port(self.name, lambda port: [
+            "-p", f"{port}:9000", "-e", f"MINIO_ROOT_USER={self.ACCESS_KEY}",
+            "-e", f"MINIO_ROOT_PASSWORD={self.SECRET_KEY}", self.IMAGE, "server", "/data"])
+        self._wait_ready()
+
+    @property
+    def endpoint(self):
+        return f"http://localhost:{self.port}"
+
+    def _wait_ready(self, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                conn = http.client.HTTPConnection("localhost", self.port, timeout=1)
+                conn.request("GET", "/minio/health/ready")
+                resp = conn.getresponse()
+                resp.read()
+                if resp.status == 200:
+                    return
+            except Exception:  # noqa: BLE001 -- retry until ready
+                pass
+            time.sleep(0.3)
+        raise TimeoutError(f"MinIO container {self.name} did not become ready in {timeout}s")
+
+    def close(self):
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+
+
+class RealMongo:
+    """A real, disposable MongoDB container (mongo:7.0, no auth) -- plain `docker run`."""
+
+    IMAGE = "mongo:7.0"
+
+    def __init__(self):
+        self.name = f"warp-pytest-mongo-{uuid.uuid4().hex[:12]}"
+        self.port = docker_run_on_free_port(self.name, lambda port: ["-p", f"{port}:27017", self.IMAGE])
+        self._wait_ready()
+
+    def _wait_ready(self, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            r = subprocess.run(["docker", "exec", self.name, "mongosh", "--quiet", "--eval",
+                                "db.adminCommand('ping').ok"], capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip().endswith("1"):
+                return
+            time.sleep(0.5)
+        raise TimeoutError(f"MongoDB container {self.name} did not become ready in {timeout}s")
+
+    def close(self):
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+
+
+class RealDynamoDb:
+    """A real, disposable DynamoDB Local container (amazon/dynamodb-local, in-memory)."""
+
+    IMAGE = "amazon/dynamodb-local:latest"
+    ACCESS_KEY = "fakeAccessKey"
+    SECRET_KEY = "fakeSecretKey"
+    REGION = "us-east-1"
+
+    def __init__(self):
+        self.name = f"warp-pytest-dynamo-{uuid.uuid4().hex[:12]}"
+        self.port = docker_run_on_free_port(self.name, lambda port: [
+            "-p", f"{port}:8000", self.IMAGE, "-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"])
+        self._wait_ready()
+
+    @property
+    def endpoint(self):
+        return f"http://localhost:{self.port}"
+
+    def _wait_ready(self, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                conn = http.client.HTTPConnection("localhost", self.port, timeout=1)
+                conn.request("GET", "/")
+                conn.getresponse().read()
+                return
+            except Exception:  # noqa: BLE001 -- retry until ready
+                time.sleep(0.3)
+        raise TimeoutError(f"DynamoDB Local container {self.name} did not become ready in {timeout}s")
+
+    def close(self):
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+
+
+class RealKafka:
+    """A real, disposable single-node Kafka broker (apache/kafka, KRaft) -- plain `docker run`."""
+
+    IMAGE = "apache/kafka:latest"
+
+    def __init__(self):
+        self.name = f"warp-pytest-kafka-{uuid.uuid4().hex[:12]}"
+        self.port = docker_run_on_free_port(self.name, lambda port: [
+            "-p", f"{port}:{port}",
+            "-e", "KAFKA_PROCESS_ROLES=broker,controller", "-e", "KAFKA_NODE_ID=1",
+            "-e", "KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093",
+            "-e", f"KAFKA_LISTENERS=PLAINTEXT://:{port},CONTROLLER://:9093",
+            "-e", f"KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:{port}",
+            "-e", "KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT", "-e", "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER",
+            self.IMAGE])
+        self._wait_ready()
+
+    @property
+    def bootstrap_servers(self):
+        return f"localhost:{self.port}"
+
+    def _topics(self, *args):
+        return subprocess.run(["docker", "exec", self.name, "/opt/kafka/bin/kafka-topics.sh",
+                               "--bootstrap-server", f"localhost:{self.port}", *args],
+                              capture_output=True, text=True)
+
+    def _wait_ready(self, timeout=90):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._topics("--list").returncode == 0:
+                return
+            time.sleep(1)
+        raise TimeoutError(f"Kafka container {self.name} did not become ready in {timeout}s")
+
+    def create_topic(self, topic):
+        r = self._topics("--create", "--topic", topic, "--partitions", "1", "--replication-factor", "1")
+        assert r.returncode == 0, r.stderr
+
+    def close(self):
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+
+
+class RealCassandra:
+    """A real, disposable single-node Cassandra 5 container (datacenter1) -- plain `docker run`."""
+
+    IMAGE = "cassandra:5"
+    LOCAL_DC = "datacenter1"
+
+    def __init__(self):
+        self.name = f"warp-pytest-cassandra-{uuid.uuid4().hex[:12]}"
+        self.port = docker_run_on_free_port(self.name, lambda port: ["-p", f"{port}:9042", self.IMAGE])
+        self._wait_ready()
+
+    @property
+    def contact_point(self):
+        return f"localhost:{self.port}"
+
+    def cql(self, statement):
+        return subprocess.run(["docker", "exec", self.name, "cqlsh", "-e", statement], capture_output=True, text=True)
+
+    def _wait_ready(self, timeout=240):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.cql("SELECT release_version FROM system.local").returncode == 0:
+                return
+            time.sleep(3)
+        raise TimeoutError(f"Cassandra container {self.name} did not become ready in {timeout}s")
+
+    def close(self):
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)

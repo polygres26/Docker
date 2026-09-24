@@ -63,6 +63,7 @@ below for pointing it at a real backend.
 | mongowire | MongoDB wire protocol | 27017 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 |
 | sqswire | Amazon SQS HTTP/JSON API | 9324 |
+| s3wire | Amazon S3 REST API (path-style, SigV4) over an S3-compatible backend bucket (MinIO); off unless `WARP_S3WIRE_BACKEND_BUCKET` is set | 18020 |
 | oswire | OpenSearch HTTP/JSON API (`_search`/documents/`_bulk`) | 9200 |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 |
@@ -89,7 +90,15 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_ACL_PPV2_ENABLED` / `WARP_ACL_TRUSTED_PROXIES` | PROXY protocol v2 / X-Forwarded-For support behind a load balancer |
 | `WARP_OAUTH_ISSUER` / `_AUDIENCE` | OAuth2/OIDC bearer-token auth (Okta, EntraID, any standard issuer) for HTTP frontends |
 | `WARP_AWS_IAM_CREDENTIALS` | AWS SigV4 request verification for dynamowire |
+| `WARP_S3WIRE_BACKEND_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_REGION` / `_PATH_STYLE` | s3wire backend: the one S3-compatible bucket (required to enable s3wire), its endpoint (unset = AWS), Warp's own credentials, region (default us-east-1), path-style (default true) |
+| `WARP_S3WIRE_CREDENTIALS` / `WARP_S3WIRE_PORT` | s3wire client SigV4 pairs `key=secret;key2=secret2` (required; falls back to `WARP_AWS_IAM_CREDENTIALS`) and port (default 18020) |
 | `WARP_MCP_TOOLS` | Postgres functions/procedures to expose as individually-named MCP tools |
+| `WARP_BACKEND_DESCRIPTIONS` / `WARP_BACKEND_GROUP_DESCRIPTIONS` | JSON objects `{"<backend>":"text"}` / `{"<group>":"text"}` describing backends and backend groups/sets; persisted in `warp_config` (`backendDescriptions`, `backendGroupDescriptions`, editable with `PUT /api/config`), hot-reloaded; shown by MCP `list_backends`/`describe_backend`, `inspect_schema` and `GET /api/backends` |
+| `WARP_MCP_EMULATED_STORES` | Opt the Warp-emulated stores into MCP as logical backends of `default` (`default.dynamodb`, `default.mongodb`, `default.influx`): comma list or `all` (default none) |
+| `WARP_MCP_READ_ONLY` | Hide and refuse every non-relational MCP write tool (`put_item`, `insert-many`, `put_object`, `write_line_protocol`, ...) |
+| `WARP_MCP_REQUIRE_ENDPOINT` | `true` = the MCP listener serves only user-created endpoints (`/e/<id>` + bearer token) |
+| `WARP_MCP_KIND` | **Legacy override/filter only** (tools are now associated automatically from the backend types in scope): restrict an endpoint to families (`relational`, `dynamodb`, `influx`, `mongodb`, `s3`, ...; comma list); several families → `<kind>_`-prefixed tools, `/kinds/<kind>` paths |
+| *(admin API)* `/api/mcp-endpoints` | Create/list/get/PATCH/DELETE MCP endpoints with optional expiry (`expiresAt` ISO-8601 with offset, or `ttlSeconds`; null = never); stored in `warp_config.mcpEndpoints`, hot-reloaded — see WARP_GUIDE §8.5.2 |
 | `WARP_ORACLE_BACKEND_MODE` / `WARP_MYWIRE_BACKEND` / `WARP_MSSQLWIRE_BACKEND` / `WARP_MCP_BACKEND` | Native-backend mode per frontend — proxy straight to a real Oracle/MySQL/SQL Server backend instead of dialect-translating into Postgres (§8.1.1) |
 | `WARP_TLS_KEYSTORE` | Shared keystore for orawire TCPS / gRPC TLS |
 

@@ -52,11 +52,32 @@ public final class MongoSchemaFactory implements SchemaFactory {
                         + "database -- put it in the connection string's path (mongodb://host:port/DATABASE_NAME)");
             }
         }
+        return new MongoSchema(openClient(operand), (Map<String, Map<String, Object>>) tablesObj);
+    }
+
+    /** A client for the backend an operand map describes -- same connection-string + credential
+     * (incl. vault:/cyberark: password resolution) handling the federated mount uses; also what the
+     * MCP endpoint's MongoDB tools connect with. The caller owns and must close it. */
+    public static MongoClient openClient(Map<String, Object> operand) {
+        return openClient(operand, 0);
+    }
+
+    /** As {@link #openClient(Map)}, with a bounded server-selection timeout (unless the URL sets
+     * its own {@code serverSelectionTimeoutMS}) so interactive callers fail fast on an unreachable
+     * server instead of waiting the driver's 30 s default. {@code 0} keeps the driver default. */
+    public static MongoClient openClient(Map<String, Object> operand, long serverSelectionTimeoutMs) {
         String connectionString = requireString(operand, "connectionString");
-        MongoClient client = MongoClients.create(withCredentials(connectionString,
+        String withCreds = withCredentials(connectionString,
                 operand.get("user") instanceof String u ? u : null,
-                com.sayonora.wire.secrets.SecretResolver.resolve(operand.get("password") instanceof String p ? p : null)));
-        return new MongoSchema(client, (Map<String, Map<String, Object>>) tablesObj);
+                com.sayonora.wire.secrets.SecretResolver.resolve(operand.get("password") instanceof String p ? p : null));
+        if (serverSelectionTimeoutMs <= 0 || withCreds.toLowerCase(java.util.Locale.ROOT).contains("serverselectiontimeoutms")) {
+            return MongoClients.create(withCreds);
+        }
+        return MongoClients.create(com.mongodb.MongoClientSettings.builder()
+                .applyConnectionString(new com.mongodb.ConnectionString(withCreds))
+                .applyToClusterSettings(b -> b.serverSelectionTimeout(serverSelectionTimeoutMs,
+                        java.util.concurrent.TimeUnit.MILLISECONDS))
+                .build());
     }
 
     /** Splices {@code user:password@} into the connection string (URL-encoded, per the Mongo

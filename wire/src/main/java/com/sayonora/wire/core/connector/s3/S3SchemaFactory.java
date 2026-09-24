@@ -60,6 +60,16 @@ public final class S3SchemaFactory implements SchemaFactory {
         return new S3Schema(fetcher, (Map<String, Map<String, String>>) tablesObj);
     }
 
+    /** An S3 client for the backend an operand map describes (same region/endpoint/path-style/
+     * credential handling as the federated mount); also what the MCP endpoint's S3 tools use. The
+     * caller owns and must close it. */
+    public static software.amazon.awssdk.services.s3.S3Client openClient(Map<String, Object> operand) {
+        return S3CompatibleObjectFetcher.buildClient(stringOrNull(operand, "region"),
+                stringOrNull(operand, "endpoint"), Boolean.TRUE.equals(operand.get("pathStyleAccess")),
+                stringOrNull(operand, "accessKeyId"),
+                com.sayonora.wire.secrets.SecretResolver.resolve(stringOrNull(operand, "secretAccessKey")));
+    }
+
     private static ObjectFetcher buildFetcher(String bucket, Map<String, Object> operand) {
         String provider = stringOrNull(operand, "provider");
         if (provider != null && !provider.equalsIgnoreCase("s3") && !provider.equalsIgnoreCase("s3-compatible")) {

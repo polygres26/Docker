@@ -175,7 +175,7 @@ public final class InfluxWireServer {
      * own column list already matches this shape directly -- this just wraps it and converts each
      * Java value (String/Number/Boolean/null/a parsed {@code JsonElement} for a jsonb column) to
      * its JSON form. */
-    private static JsonObject renderQueryResult(String measurement, PgTimeSeriesStore.QueryResult result) {
+    static JsonObject renderQueryResult(String measurement, PgTimeSeriesStore.QueryResult result) {
         JsonObject series = new JsonObject();
         series.addProperty("name", measurement);
         JsonArray columns = new JsonArray();
@@ -218,7 +218,7 @@ public final class InfluxWireServer {
         return new com.google.gson.JsonPrimitive(String.valueOf(cell));
     }
 
-    private static JsonObject renderShowMeasurements(List<String> measurements) {
+    static JsonObject renderShowMeasurements(List<String> measurements) {
         JsonObject series = new JsonObject();
         series.addProperty("name", "measurements");
         JsonArray columns = new JsonArray();

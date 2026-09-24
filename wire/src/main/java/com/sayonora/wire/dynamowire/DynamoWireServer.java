@@ -30,6 +30,14 @@ public final class DynamoWireServer {
     /** Lets {@code Main} wire this server's own table-schema knowledge (physical table name ->
      * primary/sort key columns) into CacheStage's SQL-side row-cache lookup, once this server has
      * actually been constructed -- see CacheStage#setDynamoTableLookup. */
+    /** Embedded entry point for the MCP gateway's DynamoDB-kind tools: runs one DynamoDB API
+     * operation through the SAME {@code OperationHandlers} (and therefore the same store, row-cache
+     * invalidation, and expression evaluators) the HTTP frontend uses. Throws
+     * {@link DynamoException}/RuntimeException exactly like the HTTP path would map to an error. */
+    public JsonObject invoke(String operation, JsonObject request) {
+        return handlers.dispatch(operation, request);
+    }
+
     public PgItemStore store() {
         return store;
     }

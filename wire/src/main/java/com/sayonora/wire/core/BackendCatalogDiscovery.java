@@ -96,6 +96,11 @@ public final class BackendCatalogDiscovery {
      * inspect_schema} scope, where {@link #discoverAll}'s table-name-only shape isn't enough to
      * answer "what columns does this table have." Same exclusions (reserved native targets) and
      * same "one unreachable backend doesn't block the others" tolerance. */
+    /** {@code true} for the gateway-internal native-mode target names (never real, user-visible backends). */
+    public static boolean isReservedNativeName(String name) {
+        return RESERVED_NATIVE_BACKEND_NAMES.contains(name);
+    }
+
     public static List<DiscoveredColumn> discoverAllColumns(BackendRegistry registry) {
         List<DiscoveredColumn> columns = new ArrayList<>();
         for (BackendTarget target : registry.all()) {

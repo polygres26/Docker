@@ -401,6 +401,66 @@ public final class BackendRegistry {
         this.backendToGroupName = fresh.backendToGroupName;
     }
 
+    // Operator-supplied, human-readable descriptions (WARP_BACKEND_DESCRIPTIONS /
+    // WARP_BACKEND_GROUP_DESCRIPTIONS -- a JSON object of name -> text, persisted in warp_config
+    // like every other backend setting). They surface in the MCP list_backends/describe_backend
+    // tools and the admin GET /api/backends. Deliberately NOT part of the reload() parse: a
+    // description never affects routing, so a malformed value must never fail a backend reload.
+    private volatile Map<String, String> backendDescriptions = Map.of();
+    private volatile Map<String, String> groupDescriptions = Map.of();
+
+    /** Replaces both description maps from their JSON-object config strings (null/blank = none).
+     * A malformed JSON value is logged and treated as empty, never thrown. */
+    public void applyDescriptions(String backendDescriptionsJson, String groupDescriptionsJson) {
+        this.backendDescriptions = parseDescriptionMap("WARP_BACKEND_DESCRIPTIONS", backendDescriptionsJson);
+        this.groupDescriptions = parseDescriptionMap("WARP_BACKEND_GROUP_DESCRIPTIONS", groupDescriptionsJson);
+    }
+
+    static Map<String, String> parseDescriptionMap(String label, String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            Map<String, String> out = new LinkedHashMap<>();
+            for (Map.Entry<String, com.google.gson.JsonElement> e : o.entrySet()) {
+                if (!e.getValue().isJsonNull()) {
+                    out.put(e.getKey(), e.getValue().getAsString());
+                }
+            }
+            return Map.copyOf(out);
+        } catch (RuntimeException e) {
+            log.warn("{} is not a valid JSON object of name -> description ({}); ignoring it", label, e.toString());
+            return Map.of();
+        }
+    }
+
+    /** The operator's description of backend {@code name}, or {@code null}. */
+    public String descriptionOf(String name) {
+        return backendDescriptions.get(name);
+    }
+
+    /** The operator's description of backend group/set {@code groupName}, or {@code null}. */
+    public String groupDescriptionOf(String groupName) {
+        return groupDescriptions.get(groupName);
+    }
+
+    /** Names of the {@code WARP_BACKEND_SETS} sets that contain {@code backendName}. */
+    public List<String> backendSetsContaining(String backendName) {
+        List<String> out = new ArrayList<>();
+        backendSets.forEach((set, members) -> {
+            if (members.contains(backendName)) {
+                out.add(set);
+            }
+        });
+        return out;
+    }
+
+    /** Names of every declared {@code WARP_BACKEND_GROUPS} group (excludes the synthetic ungrouped one). */
+    public List<String> groupNames() {
+        return List.copyOf(backendGroupSharded.keySet());
+    }
+
     /** Every backend's mandatory group membership -- see {@link BackendGroupInfo}'s own javadoc.
      * Never {@code null}: a backend not named in any declared {@code WARP_BACKEND_GROUPS} entry
      * still resolves here, to the synthetic {@link #UNGROUPED_GROUP_NAME} group (plain). Returns

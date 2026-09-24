@@ -32,7 +32,10 @@ public record WarpConfig(
         String llmApiKey,
         String llmBaseUrl,
         String llmModel,
-        String backendGroups) {
+        String backendGroups,
+        String backendDescriptions,
+        String backendGroupDescriptions,
+        String mcpEndpoints) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -64,7 +67,10 @@ public record WarpConfig(
                 System.getenv("WARP_LLM_API_KEY"),
                 System.getenv("WARP_LLM_BASE_URL"),
                 System.getenv("WARP_LLM_MODEL"),
-                System.getenv("WARP_BACKEND_GROUPS"));
+                System.getenv("WARP_BACKEND_GROUPS"),
+                System.getenv("WARP_BACKEND_DESCRIPTIONS"),
+                System.getenv("WARP_BACKEND_GROUP_DESCRIPTIONS"),
+                null);
     }
 
     public String toJson() {
@@ -98,6 +104,9 @@ public record WarpConfig(
         fields.put("llmBaseUrl", llmBaseUrl);
         fields.put("llmModel", llmModel);
         fields.put("backendGroups", backendGroups);
+        fields.put("backendDescriptions", backendDescriptions);
+        fields.put("backendGroupDescriptions", backendGroupDescriptions);
+        fields.put("mcpEndpoints", mcpEndpoints);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -143,7 +152,10 @@ public record WarpConfig(
                 fields.get("llmApiKey"),
                 fields.get("llmBaseUrl"),
                 fields.get("llmModel"),
-                fields.get("backendGroups"));
+                fields.get("backendGroups"),
+                fields.get("backendDescriptions"),
+                fields.get("backendGroupDescriptions"),
+                fields.get("mcpEndpoints"));
     }
 
     private static String quote(String value) {

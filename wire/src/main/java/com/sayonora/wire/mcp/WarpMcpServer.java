@@ -44,6 +44,7 @@ public final class WarpMcpServer {
     private static final Logger log = LoggerFactory.getLogger(WarpMcpServer.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final Gson GSON = new Gson();
+    private static final Gson GSON_NULLS = new com.google.gson.GsonBuilder().serializeNulls().create();
 
     private final ServerOptions options;
     private final List<PipelineStage> sharedStages;
@@ -57,6 +58,20 @@ public final class WarpMcpServer {
     private final java.util.function.Supplier<com.sayonora.wire.core.TranslationLlmClient> llmClientSupplier;
     private final McpScope scope;
     private final java.util.Map<String, McpScope> roleScopes;
+    // Backend-kind vocabulary (see BackendKind / BackendToolProvider): which kinds this endpoint
+    // advertises (WARP_MCP_KIND, default relational = unchanged behavior), the per-kind providers,
+    // and WARP_MCP_READ_ONLY (hides/refuses the providers' write tools).
+    private final java.util.Set<BackendKind> enabledKinds;
+    private final boolean legacyKinds;
+    private final EmulatedStores emulatedStores;
+    private final McpBackendCatalog catalog;
+    private final McpEndpoints endpoints = new McpEndpoints();
+    private final ExternalClients externalClients = new ExternalClients();
+    private final boolean requireEndpoint;
+    private final Map<BackendKind, BackendToolProvider> providers = new java.util.EnumMap<>(BackendKind.class);
+    private final boolean providerReadOnly;
+    private static final ThreadLocal<java.util.Set<BackendKind>> CURRENT_KINDS = new ThreadLocal<>();
+    private static final ThreadLocal<McpEndpoints.Endpoint> CURRENT_ENDPOINT = new ThreadLocal<>();
 
     // Ambient, request-scoped effective McpScope -- set once per HTTP request (see #handleRequest
     // and #callNaturalLanguageQuery, its own non-HTTP entry point) and read by every enforcement
@@ -143,6 +158,20 @@ public final class WarpMcpServer {
         this.llmClientSupplier = llmClientSupplier;
         this.scope = scope;
         this.roleScopes = McpScope.roleScopesFromEnv();
+        this.legacyKinds = BackendKind.explicitFromEnv();
+        this.enabledKinds = BackendKind.fromEnv();
+        this.requireEndpoint = "true".equalsIgnoreCase(System.getenv("WARP_MCP_REQUIRE_ENDPOINT"));
+        this.emulatedStores = new EmulatedStores(backendRegistry);
+        this.catalog = new McpBackendCatalog(backendRegistry, emulatedStores, emulatedKindsFromEnv(legacyKinds, enabledKinds),
+                options.mcpBackendMode());
+        this.providers.put(BackendKind.DYNAMODB, new DynamoDbToolProvider(emulatedStores, externalClients));
+        this.providers.put(BackendKind.INFLUX, new InfluxToolProvider(emulatedStores));
+        this.providers.put(BackendKind.MONGODB, new MongoToolProvider(emulatedStores, externalClients));
+        this.providers.put(BackendKind.S3, new S3ToolProvider(externalClients));
+        for (BackendKind describeOnly : new BackendKind[] {BackendKind.KAFKA, BackendKind.CASSANDRA, BackendKind.SPLUNK}) {
+            this.providers.put(describeOnly, new ConnectorDescribeProvider(describeOnly));
+        }
+        this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
         server.setHandler(new AbstractHandler() {
@@ -154,13 +183,74 @@ public final class WarpMcpServer {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     return;
                 }
-                com.sayonora.wire.core.AccessContext accessContext = oauth.enforce(request, response);
-                if (accessContext == null) {
+                String reqPath = request.getRequestURI();
+                com.sayonora.wire.core.AccessContext accessContext;
+                if (reqPath != null && reqPath.startsWith(McpEndpoints.PATH_PREFIX)) {
+                    // A user-created endpoint: its own bearer token authenticates it (SSO is not
+                    // consulted); expiry is evaluated against server time on EVERY request.
+                    McpEndpoints.Auth auth = endpoints.authenticate(reqPath, request.getHeader("Authorization"));
+                    if (!auth.ok()) {
+                        log.info("MCP endpoint request refused: {}", auth.reason());
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setHeader("WWW-Authenticate", "Bearer");
+                        writeError(response, null, -32001, McpEndpoints.CLIENT_MESSAGE);
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        return;
+                    }
+                    CURRENT_ENDPOINT.set(auth.endpoint());
+                    accessContext = com.sayonora.wire.core.AccessContext.ANONYMOUS;
+                } else if (requireEndpoint) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setHeader("WWW-Authenticate", "Bearer");
+                    writeError(response, null, -32001, "this MCP listener only serves user-created endpoints "
+                            + "(WARP_MCP_REQUIRE_ENDPOINT=true): use /e/<id> with its bearer token");
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     return;
+                } else {
+                    accessContext = oauth.enforce(request, response);
+                    if (accessContext == null) {
+                        return;
+                    }
                 }
-                handleRequest(request, response, accessContext);
+                try {
+                    handleRequest(request, response, accessContext);
+                } finally {
+                    CURRENT_ENDPOINT.remove();
+                }
             }
         });
+    }
+
+    /** Handles to the Warp-emulated stores (dynamowire/mongowire) that the kind-specific tools
+     * read and write; {@code Main} injects the running instances. */
+    public EmulatedStores emulatedStores() {
+        return emulatedStores;
+    }
+
+    /** The live user-created endpoint set; {@code Main} loads it from {@code warp_config} at startup
+     * and on every config reload. */
+    public McpEndpoints endpoints() {
+        return endpoints;
+    }
+
+    /** {@code WARP_MCP_EMULATED_STORES} = comma list of dynamodb/mongodb/influx, {@code all}, or
+     * empty (default: none). A non-relational kind named by the legacy {@code WARP_MCP_KIND} also
+     * opts its emulated store in. */
+    private static java.util.Set<BackendKind> emulatedKindsFromEnv(boolean legacy, java.util.Set<BackendKind> kinds) {
+        java.util.Set<BackendKind> out = new java.util.LinkedHashSet<>();
+        String spec = System.getenv("WARP_MCP_EMULATED_STORES");
+        if (spec != null && !spec.isBlank()) {
+            if (spec.trim().equalsIgnoreCase("all")) {
+                out.addAll(java.util.List.of(BackendKind.DYNAMODB, BackendKind.MONGODB, BackendKind.INFLUX));
+            } else if (!spec.trim().equalsIgnoreCase("none")) {
+                out.addAll(BackendKind.parseList(spec));
+            }
+        }
+        if (legacy) {
+            out.addAll(kinds);
+        }
+        out.remove(BackendKind.RELATIONAL);
+        return out;
     }
 
     public void start() throws Exception {
@@ -168,6 +258,7 @@ public final class WarpMcpServer {
     }
 
     public void stop() throws Exception {
+        externalClients.close();
         server.stop();
     }
 
@@ -267,7 +358,42 @@ public final class WarpMcpServer {
         // Resolved ONCE per request, from this caller's own authenticated identity -- see
         // McpScope#resolveForCaller's own javadoc for the real priority order (a token's own
         // "warp_scope" claim, then role-mapped scope, then this endpoint's configured default).
-        CURRENT_SCOPE.set(McpScope.resolveForCaller(accessContext, roleScopes, scope));
+        McpScope requestScope = McpScope.resolveForCaller(accessContext, roleScopes, scope);
+        McpEndpoints.Endpoint endpoint = CURRENT_ENDPOINT.get();
+        if (endpoint != null) {
+            // An endpoint can only NARROW what the listener/caller already allows, never widen it.
+            McpScope narrowed;
+            try {
+                narrowed = McpEndpoints.narrow(requestScope, endpoint.mcpScope(), backendRegistry::membersOfGroup);
+            } catch (IllegalArgumentException e) {
+                narrowed = null;
+            }
+            if (narrowed == null) {
+                writeError(response, idElement, -32001, "endpoint scope \"" + endpoint.scope()
+                        + "\" is outside what this MCP listener allows");
+                return;
+            }
+            requestScope = narrowed;
+        }
+        CURRENT_SCOPE.set(requestScope);
+        // "/kinds/<kind>" narrows this request to one enabled kind's own vocabulary.
+        String path = request.getRequestURI();
+        if (path != null && path.startsWith("/kinds/")) {
+            try {
+                BackendKind narrowed = BackendKind.parse(path.substring("/kinds/".length()).replaceAll("/+$", ""));
+                if (!enabledKinds.contains(narrowed)) {
+                    CURRENT_SCOPE.remove();
+                    writeError(response, idElement, -32602, "kind \"" + narrowed.id()
+                            + "\" is not enabled on this endpoint (WARP_MCP_KIND)");
+                    return;
+                }
+                CURRENT_KINDS.set(java.util.Set.of(narrowed));
+            } catch (IllegalArgumentException e) {
+                CURRENT_SCOPE.remove();
+                writeError(response, idElement, -32602, e.getMessage());
+                return;
+            }
+        }
         try {
             switch (method) {
                 case "initialize" -> writeResult(response, idElement, buildInitializeResult());
@@ -277,7 +403,600 @@ public final class WarpMcpServer {
             }
         } finally {
             CURRENT_SCOPE.remove();
+            CURRENT_KINDS.remove();
         }
+    }
+
+    private static final String LIST_BACKENDS = "list_backends";
+    private static final String DESCRIBE_BACKEND = "describe_backend";
+    /** SQL tools that accept an optional {@code backend} argument to pin the call to one relational
+     * backend in scope. Without it they behave exactly as before (the gateway's own routing). The
+     * gateway-wide tools (query_federated, inspect_schema, document_schema, query_natural_language,
+     * explain_query) span backends by design and take no {@code backend}. */
+    private static final java.util.Set<String> BACKEND_ARG_TOOLS = java.util.Set.of("execute_sql", "run_sql",
+            "list_tables", "describe_table", "column_stats", "compare_groups", "correlation", "sample_rows",
+            "find_outliers", "find_join_path", "explain_sql");
+
+    private java.util.Set<BackendKind> effectiveKinds() {
+        java.util.Set<BackendKind> k = CURRENT_KINDS.get();
+        return k != null ? k : enabledKinds;
+    }
+
+    /** Legacy {@code WARP_MCP_KIND=a,b} mode advertises non-relational tools "<kind>_"-prefixed. */
+    private boolean legacyPrefix() {
+        return CURRENT_KINDS.get() == null && legacyKinds && enabledKinds.size() > 1;
+    }
+
+    private List<McpBackend> backendsInScope() {
+        return catalog.inScope(currentScope(), effectiveKinds());
+    }
+
+    private record ProviderTool(BackendToolProvider provider, BackendToolProvider.Tool tool, String advertisedName,
+            BackendKind kind) {
+    }
+
+    /** Non-relational tools for the tool families present among {@code backends}. */
+    private List<ProviderTool> providerTools(List<McpBackend> backends) {
+        List<ProviderTool> out = new ArrayList<>();
+        boolean prefix = legacyPrefix();
+        java.util.Set<BackendKind> present = new java.util.LinkedHashSet<>();
+        for (McpBackend b : backends) {
+            if (b.kind() != BackendKind.RELATIONAL) {
+                present.add(b.kind());
+            }
+        }
+        for (BackendKind k : present) {
+            BackendToolProvider p = providers.get(k);
+            if (p == null) {
+                continue;
+            }
+            for (BackendToolProvider.Tool t : p.tools()) {
+                if (t.write() && providerReadOnly) {
+                    continue;
+                }
+                out.add(new ProviderTool(p, t, prefix ? k.prefix() + t.name() : t.name(), k));
+            }
+        }
+        return out;
+    }
+
+    /** One advertised tool name, possibly served by several backend types. */
+    private static final class Offer {
+        String name;
+        String description;
+        JsonObject properties = new JsonObject();
+        java.util.Set<String> required;
+        final List<McpBackend> candidates = new ArrayList<>();
+        final java.util.Set<BackendKind> kinds = new java.util.LinkedHashSet<>();
+        final java.util.Map<BackendKind, String> kindDescriptions = new LinkedHashMap<>();
+
+        void mergeSchema(JsonObject schema) {
+            if (schema.has("properties")) {
+                schema.getAsJsonObject("properties").entrySet()
+                        .forEach(e -> { if (!properties.has(e.getKey())) properties.add(e.getKey(), e.getValue()); });
+            }
+            java.util.Set<String> req = new java.util.LinkedHashSet<>();
+            if (schema.has("required")) {
+                schema.getAsJsonArray("required").forEach(e -> req.add(e.getAsString()));
+            }
+            if (required == null) {
+                required = req;
+            } else {
+                required.retainAll(req);
+            }
+        }
+    }
+
+    private JsonObject buildToolsListResult() {
+        List<McpBackend> backends = backendsInScope();
+        List<McpBackend> relational = backends.stream().filter(b -> b.kind() == BackendKind.RELATIONAL).toList();
+        Map<String, Offer> offers = new LinkedHashMap<>();
+        java.util.Set<String> relationalNames = new java.util.LinkedHashSet<>();
+        List<JsonObject> passthrough = new ArrayList<>();
+        if (!relational.isEmpty()) {
+            for (JsonElement el : buildRelationalToolsListResult().getAsJsonArray("tools")) {
+                JsonObject def = el.getAsJsonObject();
+                String name = def.get("name").getAsString();
+                relationalNames.add(name);
+                Offer o = new Offer();
+                o.name = name;
+                o.description = def.get("description").getAsString();
+                o.mergeSchema(def.getAsJsonObject("inputSchema"));
+                o.kinds.add(BackendKind.RELATIONAL);
+                if (BACKEND_ARG_TOOLS.contains(name)) {
+                    o.candidates.addAll(relational);
+                }
+                offers.put(name, o);
+            }
+        }
+        for (ProviderTool pt : providerTools(backends)) {
+            List<McpBackend> cands = backends.stream().filter(b -> b.kind() == pt.kind()).toList();
+            Offer o = offers.computeIfAbsent(pt.advertisedName(), n -> {
+                Offer fresh = new Offer();
+                fresh.name = n;
+                fresh.description = pt.tool().description();
+                return fresh;
+            });
+            if (o.kinds.contains(BackendKind.RELATIONAL) || !o.kinds.isEmpty()) {
+                o.kindDescriptions.put(pt.kind(), pt.tool().description());
+            }
+            o.kinds.add(pt.kind());
+            o.mergeSchema(pt.tool().inputSchema());
+            o.candidates.addAll(cands);
+        }
+        JsonArray tools = new JsonArray();
+        for (Offer o : offers.values()) {
+            String description = o.description;
+            if (!o.kindDescriptions.isEmpty()) {
+                StringBuilder sb = new StringBuilder(description);
+                for (var e : o.kindDescriptions.entrySet()) {
+                    sb.append(" For ").append(e.getKey().id()).append(" backends: ").append(e.getValue());
+                }
+                description = sb.toString();
+            }
+            JsonObject props = o.properties.deepCopy();
+            java.util.Set<String> required = new java.util.LinkedHashSet<>(o.required == null ? java.util.Set.of() : o.required);
+            if (o.candidates.size() > 1) {
+                StringBuilder names = new StringBuilder();
+                for (McpBackend b : o.candidates) {
+                    names.append(names.length() == 0 ? "" : ", ").append(b.name()).append(" (").append(b.type()).append(")");
+                }
+                boolean relationalDefault = o.kinds.contains(BackendKind.RELATIONAL);
+                props.add("backend", stringSchema("Backend to run this tool against -- one of: " + names
+                        + (relationalDefault ? ". Optional for relational backends (omitted = the gateway's own routing)."
+                                : ". Required.")));
+                if (!relationalDefault) {
+                    required.add("backend");
+                }
+                description = description + " Applies to backends: " + names + ".";
+            }
+            JsonObject schema = new JsonObject();
+            schema.addProperty("type", "object");
+            schema.add("properties", props);
+            if (!required.isEmpty()) {
+                JsonArray req = new JsonArray();
+                required.forEach(req::add);
+                schema.add("required", req);
+            }
+            tools.add(toolDef(o.name, description, schema));
+        }
+        if (CURRENT_KINDS.get() == null) {
+            tools.add(toolDef(LIST_BACKENDS, "List every backend this endpoint can reach: name, type "
+                    + "(postgres, mysql, mongodb, dynamodb, s3, ...), the operator's description, group/set "
+                    + "memberships, status, and which tools apply to it. Call this first to learn what is here.",
+                    objectSchema(Map.of(), List.of())));
+            tools.add(toolDef(DESCRIBE_BACKEND, "Describe one backend: its type, the operator's description and "
+                    + "its live contents (tables and columns, collections, measurements, buckets and prefixes, "
+                    + "topics ... whatever that type can list). \"backend\" may be omitted when the endpoint has "
+                    + "exactly one backend.",
+                    objectSchema(Map.of("backend", stringSchema("Backend name from list_backends")), List.of())));
+        }
+        JsonObject result = new JsonObject();
+        result.add("tools", tools);
+        return result;
+    }
+
+    private static String describeBackends(List<McpBackend> backends) {
+        StringBuilder names = new StringBuilder();
+        for (McpBackend b : backends) {
+            names.append(names.length() == 0 ? "" : ", ").append(b.name()).append(" (").append(b.type()).append(")");
+        }
+        return names.toString();
+    }
+
+    private boolean routingError(HttpServletResponse response, JsonElement id, String message, boolean[] isError,
+            String[] errorMessage) throws IOException {
+        isError[0] = true;
+        errorMessage[0] = message;
+        writeResult(response, id, providerResult(BackendToolProvider.Outcome.error(message)));
+        return true;
+    }
+
+    /**
+     * Routes a tool call to a backend by the tool name and the optional {@code backend} argument.
+     * Returns {@code true} when the response has been written (provider/discovery tools, routing
+     * errors); {@code false} to fall through to the relational handlers (possibly after narrowing
+     * the request scope to the one backend the caller named).
+     *
+     * <p>Rule: a tool call may carry {@code backend}. Relational tools never need it (omitted = the
+     * gateway's own routing, exactly as before); for every other type it is optional when exactly
+     * one in-scope backend supports the tool, and required (with an error listing the valid names)
+     * when several do. A single-backend endpoint never needs it.
+     */
+    private boolean handleProviderCall(HttpServletResponse response, JsonElement id, String toolName,
+            JsonObject arguments, com.sayonora.wire.core.AccessContext accessContext, boolean[] isError,
+            String[] errorMessage) throws IOException {
+        if (LIST_BACKENDS.equals(toolName) || DESCRIBE_BACKEND.equals(toolName)) {
+            BackendToolProvider.Outcome o;
+            try {
+                o = LIST_BACKENDS.equals(toolName) ? listBackends() : describeBackend(arguments, accessContext);
+            } catch (RuntimeException e) {
+                o = BackendToolProvider.Outcome.error(String.valueOf(e.getMessage()));
+            }
+            isError[0] = o.isError();
+            errorMessage[0] = o.isError() ? o.texts().get(0) : null;
+            writeResult(response, id, providerResult(o));
+            return true;
+        }
+        List<McpBackend> backends = backendsInScope();
+        List<McpBackend> relational = backends.stream().filter(b -> b.kind() == BackendKind.RELATIONAL).toList();
+        boolean relationalTool = !relational.isEmpty() && relationalToolNames().contains(toolName);
+
+        // provider-tool candidates: (backend kind, bare tool name)
+        BackendToolProvider provider = null;
+        String bare = null;
+        List<McpBackend> providerCands = new ArrayList<>();
+        java.util.Set<BackendKind> candKinds = new java.util.LinkedHashSet<>();
+        for (ProviderTool pt : providerTools(backends)) {
+            if (pt.advertisedName().equals(toolName)) {
+                provider = pt.provider();
+                bare = pt.tool().name();
+                candKinds.add(pt.kind());
+                backends.stream().filter(b -> b.kind() == pt.kind()).forEach(providerCands::add);
+            }
+        }
+        // a name offered by several families is dispatched by the chosen backend's family below
+        if (provider == null && !relationalTool) {
+            // known-unsupported names of a present kind get a clear tool error, not "unknown"
+            java.util.Set<BackendKind> present = new java.util.LinkedHashSet<>();
+            backends.forEach(b -> { if (b.kind() != BackendKind.RELATIONAL) present.add(b.kind()); });
+            for (BackendKind k : present) {
+                BackendToolProvider p = providers.get(k);
+                String b = legacyPrefix() ? (toolName.startsWith(k.prefix()) ? toolName.substring(k.prefix().length()) : null) : toolName;
+                McpBackend first = backends.stream().filter(x -> x.kind() == k).findFirst().orElse(null);
+                if (p == null || b == null || first == null || p.tools().isEmpty()
+                        || p.tools().stream().anyMatch(t -> t.name().equals(b))) {
+                    continue;
+                }
+                try {
+                    BackendToolProvider.Outcome o = p.call(b, arguments, unavailableCtx(first));
+                    if (o.isError() && o.texts().get(0).startsWith("UnsupportedOperation")) {
+                        isError[0] = true;
+                        errorMessage[0] = o.texts().get(0);
+                        writeResult(response, id, providerResult(o));
+                        return true;
+                    }
+                } catch (Exception ignored) {
+                    // not an unsupported-operation probe hit
+                }
+            }
+            if (relational.isEmpty() || !effectiveKinds().contains(BackendKind.RELATIONAL)
+                    || !relationalToolNames().contains(toolName) && !isRegisteredFunctionTool(toolName)) {
+                if (!relational.isEmpty() && isRegisteredFunctionTool(toolName)) {
+                    return false;
+                }
+                writeError(response, id, -32602, "Unknown tool: " + toolName);
+                isError[0] = true;
+                errorMessage[0] = "Unknown tool: " + toolName;
+                return true;
+            }
+            return false;
+        }
+
+        String requested = arguments.has("backend") && arguments.get("backend").isJsonPrimitive()
+                ? arguments.get("backend").getAsString() : null;
+        McpBackend chosen = null;
+        if (requested != null) {
+            chosen = backends.stream().filter(b -> b.name().equals(requested)).findFirst().orElse(null);
+            if (chosen == null) {
+                // same message for "unknown" and "outside this endpoint's scope": never reveal names
+                // of backends the endpoint cannot reach
+                return routingError(response, id, "ERROR [42501]: backend \"" + requested + "\" is not available on "
+                        + "this endpoint (unknown, or outside its scope). Valid backends: "
+                        + describeBackends(backends), isError, errorMessage);
+            }
+            boolean applies = chosen.kind() == BackendKind.RELATIONAL ? relationalTool : candKinds.contains(chosen.kind());
+            if (!applies) {
+                List<McpBackend> ok = new ArrayList<>(providerCands);
+                if (relationalTool) {
+                    ok.addAll(0, relational);
+                }
+                return routingError(response, id, "tool \"" + toolName + "\" does not apply to backend \""
+                        + requested + "\" (type " + chosen.type() + "). Backends this tool applies to: "
+                        + describeBackends(ok), isError, errorMessage);
+            }
+        } else if (!relationalTool) {
+            if (providerCands.size() == 1) {
+                chosen = providerCands.get(0);
+            } else {
+                return routingError(response, id, "argument \"backend\" is required: tool \"" + toolName
+                        + "\" applies to " + providerCands.size() + " backends in this endpoint's scope: "
+                        + describeBackends(providerCands) + ". Pass \"backend\": \"<name>\".", isError, errorMessage);
+            }
+        }
+        if (chosen == null || chosen.kind() == BackendKind.RELATIONAL) {
+            if (chosen != null && options.mcpBackendMode() == McpBackendMode.POSTGRES
+                    && currentScope().type() != McpScope.Type.DATABASE) {
+                // narrow this request to the one relational backend the caller named
+                CURRENT_SCOPE.set(McpScope.database(chosen.name()));
+            }
+            return false;
+        }
+        // provider tool on `chosen`
+        BackendToolProvider p = providers.get(chosen.kind());
+        String bareName = legacyPrefix() ? toolName.substring(chosen.kind().prefix().length()) : toolName;
+        BackendToolProvider.Tool tool = p.tools().stream().filter(t -> t.name().equals(bareName)).findFirst().orElse(null);
+        if (tool == null || tool.write() && providerReadOnly) {
+            writeError(response, id, -32602, "Unknown tool: " + toolName);
+            return true;
+        }
+        McpBackend target = chosen;
+        BackendToolProvider.Ctx ctx = new BackendToolProvider.Ctx() {
+            @Override
+            public McpBackend backend() {
+                return target;
+            }
+
+            @Override
+            public AdHocQueryRunner.Result sql(String sql) {
+                try (Connection c = openBackendConnection()) {
+                    return runSql(c, sql, accessContext);
+                } catch (SQLException e) {
+                    return AdHocQueryRunner.Result.ofError(e);
+                }
+            }
+        };
+        BackendToolProvider.Outcome outcome;
+        try {
+            outcome = p.call(bareName, arguments, ctx);
+        } catch (Exception e) {
+            outcome = BackendToolProvider.Outcome.error(String.valueOf(e.getMessage()));
+        }
+        isError[0] = outcome.isError();
+        if (outcome.isError()) {
+            errorMessage[0] = outcome.texts().get(0);
+        }
+        writeResult(response, id, providerResult(outcome));
+        return true;
+    }
+
+    private static BackendToolProvider.Ctx unavailableCtx(McpBackend b) {
+        return new BackendToolProvider.Ctx() {
+            @Override
+            public McpBackend backend() {
+                return b;
+            }
+
+            @Override
+            public AdHocQueryRunner.Result sql(String sql) {
+                return AdHocQueryRunner.Result.ofError(new SQLException("unavailable"));
+            }
+        };
+    }
+
+    private boolean isRegisteredFunctionTool(String name) {
+        return functionTools.stream().anyMatch(t -> t.toolName().equals(name));
+    }
+
+    private java.util.Set<String> relationalToolNames() {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>(java.util.List.of("query_federated",
+                "document_schema", "explain_query", "query_natural_language", "inspect_schema"));
+        for (JsonElement el : buildRelationalToolsListResult().getAsJsonArray("tools")) {
+            names.add(el.getAsJsonObject().get("name").getAsString());
+        }
+        return names;
+    }
+
+    // ---- list_backends / describe_backend ----
+
+    private static final int DESCRIBE_MAX_TABLES = 200;
+
+    private java.util.List<String> applicableTools(McpBackend b) {
+        java.util.List<String> names = new ArrayList<>();
+        if (b.kind() == BackendKind.RELATIONAL) {
+            names.addAll(relationalToolNames());
+        } else {
+            BackendToolProvider p = providers.get(b.kind());
+            if (p != null) {
+                for (BackendToolProvider.Tool t : p.tools()) {
+                    if (!(t.write() && providerReadOnly)) {
+                        names.add(legacyPrefix() ? b.kind().prefix() + t.name() : t.name());
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    private JsonObject backendJson(McpBackend b) {
+        JsonObject o = new JsonObject();
+        o.addProperty("name", b.name());
+        o.addProperty("type", b.type());
+        o.addProperty("family", b.kind().id());
+        o.addProperty("engine", b.emulated() ? "warp-emulated" : "real");
+        if (b.emulated()) {
+            o.addProperty("host", b.host());
+        }
+        String desc = backendRegistry.descriptionOf(b.name());
+        o.addProperty("description", desc);
+        String hostName = b.emulated() ? b.host() : b.name();
+        BackendRegistry.BackendGroupInfo gi = backendRegistry.groupInfoFor(hostName);
+        JsonArray groups = new JsonArray();
+        if (gi != null && !BackendRegistry.UNGROUPED_GROUP_NAME.equals(gi.name())) {
+            groups.add(gi.name());
+        }
+        o.add("groups", groups);
+        JsonArray sets = new JsonArray();
+        backendRegistry.backendSetsContaining(hostName).forEach(sets::add);
+        o.add("sets", sets);
+        o.addProperty("status", backendRegistry.stateOf(hostName).name());
+        JsonArray tools = new JsonArray();
+        applicableTools(b).forEach(tools::add);
+        o.add("tools", tools);
+        return o;
+    }
+
+    private BackendToolProvider.Outcome listBackends() {
+        List<McpBackend> backends = backendsInScope();
+        McpScope sc = currentScope();
+        JsonObject out = new JsonObject();
+        JsonObject scopeJson = new JsonObject();
+        scopeJson.addProperty("type", sc.type() == McpScope.Type.DATABASE ? "db"
+                : sc.type().name().toLowerCase(java.util.Locale.ROOT));
+        scopeJson.addProperty("name", sc.name());
+        if (sc.type() == McpScope.Type.GROUP) {
+            scopeJson.addProperty("description", backendRegistry.groupDescriptionOf(sc.name()));
+        }
+        out.add("scope", scopeJson);
+        McpEndpoints.Endpoint ep = CURRENT_ENDPOINT.get();
+        if (ep != null) {
+            JsonObject e = new JsonObject();
+            e.addProperty("name", ep.name());
+            e.addProperty("description", ep.description());
+            e.addProperty("expiresAt", ep.expiresAt() == null ? null : ep.expiresAt().toString());
+            out.add("endpoint", e);
+        }
+        JsonArray arr = new JsonArray();
+        java.util.Set<String> setNames = new java.util.LinkedHashSet<>();
+        for (McpBackend b : backends) {
+            JsonObject bj = backendJson(b);
+            arr.add(bj);
+            bj.getAsJsonArray("groups").forEach(g -> setNames.add("g:" + g.getAsString()));
+            bj.getAsJsonArray("sets").forEach(g -> setNames.add("s:" + g.getAsString()));
+        }
+        out.addProperty("backendCount", backends.size());
+        out.add("backends", arr);
+        JsonArray sets = new JsonArray();
+        for (String tagged : setNames) {
+            String name = tagged.substring(2);
+            JsonObject s = new JsonObject();
+            s.addProperty("name", name);
+            s.addProperty("kind", tagged.startsWith("g:") ? "group" : "set");
+            s.addProperty("description", backendRegistry.groupDescriptionOf(name));
+            JsonArray members = new JsonArray();
+            List<String> memberNames = tagged.startsWith("g:") ? backendRegistry.membersOfGroup(name)
+                    : backendRegistry.backendSets().getOrDefault(name, List.of());
+            for (String m : memberNames) {
+                if (backends.stream().anyMatch(b -> b.name().equals(m) || m.equals(b.host()))) {
+                    members.add(m);
+                }
+            }
+            s.add("members", members);
+            sets.add(s);
+        }
+        out.add("backendSets", sets);
+        return BackendToolProvider.Outcome.ok(GSON_NULLS.toJson(out));
+    }
+
+    private BackendToolProvider.Outcome describeBackend(JsonObject arguments,
+            com.sayonora.wire.core.AccessContext accessContext) {
+        List<McpBackend> backends = backendsInScope();
+        String requested = arguments.has("backend") && arguments.get("backend").isJsonPrimitive()
+                ? arguments.get("backend").getAsString()
+                : arguments.has("name") && arguments.get("name").isJsonPrimitive() ? arguments.get("name").getAsString() : null;
+        McpBackend b;
+        if (requested == null) {
+            if (backends.size() != 1) {
+                return BackendToolProvider.Outcome.error("argument \"backend\" is required: this endpoint has "
+                        + backends.size() + " backends: " + describeBackends(backends));
+            }
+            b = backends.get(0);
+        } else {
+            b = backends.stream().filter(x -> x.name().equals(requested)).findFirst().orElse(null);
+            if (b == null) {
+                return BackendToolProvider.Outcome.error("ERROR [42501]: backend \"" + requested + "\" is not "
+                        + "available on this endpoint (unknown, or outside its scope). Valid backends: "
+                        + describeBackends(backends));
+            }
+        }
+        JsonObject out = backendJson(b);
+        try {
+            JsonObject contents;
+            if (b.kind() == BackendKind.RELATIONAL) {
+                contents = describeRelational(b);
+            } else {
+                BackendToolProvider p = providers.get(b.kind());
+                if (p == null) {
+                    throw new UnsupportedOperationException("UnsupportedOperation: Warp cannot list the contents of "
+                            + b.type() + " backends yet");
+                }
+                McpBackend target = b;
+                contents = p.describe(new BackendToolProvider.Ctx() {
+                    @Override
+                    public McpBackend backend() {
+                        return target;
+                    }
+
+                    @Override
+                    public AdHocQueryRunner.Result sql(String sql) {
+                        try (Connection c = openBackendConnection()) {
+                            return runSql(c, sql, accessContext);
+                        } catch (SQLException e) {
+                            return AdHocQueryRunner.Result.ofError(e);
+                        }
+                    }
+                });
+            }
+            out.add("contents", contents);
+        } catch (Exception e) {
+            out.add("contents", com.google.gson.JsonNull.INSTANCE);
+            Throwable c = e.getCause() != null && e.getMessage() == null ? e.getCause() : e;
+            out.addProperty("contentsNote", "contents could not be listed (" + (e instanceof UnsupportedOperationException
+                    ? "" : "backend unreachable or access failed: ") + c.getMessage() + ")");
+        }
+        return BackendToolProvider.Outcome.ok(GSON_NULLS.toJson(out));
+    }
+
+    private static final java.util.Set<String> SYSTEM_SCHEMAS = java.util.Set.of("pg_catalog", "information_schema",
+            "sys", "pg_toast", "mysql", "performance_schema", "INFORMATION_SCHEMA", "SYS", "SYSTEM");
+
+    /** Tables and columns of one relational backend from its own JDBC metadata (system schemas
+     * excluded, capped at {@value #DESCRIBE_MAX_TABLES} tables). */
+    private JsonObject describeRelational(McpBackend b) throws SQLException {
+        Map<String, JsonArray> tables = new LinkedHashMap<>();
+        try (Connection conn = b.target().open()) {
+            java.sql.DatabaseMetaData md = conn.getMetaData();
+            List<String[]> names = new ArrayList<>();
+            try (java.sql.ResultSet rs = md.getTables(null, null, "%", new String[] {"TABLE", "VIEW"})) {
+                while (rs.next()) {
+                    String schema = rs.getString("TABLE_SCHEM");
+                    if (schema != null && SYSTEM_SCHEMAS.contains(schema)) {
+                        continue;
+                    }
+                    names.add(new String[] {schema, rs.getString("TABLE_NAME")});
+                }
+            }
+            boolean truncated = names.size() > DESCRIBE_MAX_TABLES;
+            for (String[] n : names.subList(0, Math.min(names.size(), DESCRIBE_MAX_TABLES))) {
+                JsonArray cols = new JsonArray();
+                try (java.sql.ResultSet rs = md.getColumns(null, n[0], n[1], "%")) {
+                    while (rs.next()) {
+                        JsonObject c = new JsonObject();
+                        c.addProperty("name", rs.getString("COLUMN_NAME"));
+                        c.addProperty("type", rs.getString("TYPE_NAME"));
+                        c.addProperty("nullable", "YES".equals(rs.getString("IS_NULLABLE")));
+                        cols.add(c);
+                    }
+                }
+                tables.put((n[0] == null || n[0].isEmpty() ? "" : n[0] + ".") + n[1], cols);
+            }
+            JsonObject out = new JsonObject();
+            out.addProperty("tableCount", names.size());
+            out.addProperty("truncated", truncated);
+            JsonArray arr = new JsonArray();
+            tables.forEach((name, cols) -> {
+                JsonObject t = new JsonObject();
+                t.addProperty("table", name);
+                t.add("columns", cols);
+                arr.add(t);
+            });
+            out.add("tables", arr);
+            return out;
+        }
+    }
+
+    private static JsonObject providerResult(BackendToolProvider.Outcome outcome) {
+        JsonObject callResult = new JsonObject();
+        JsonArray content = new JsonArray();
+        for (String text : outcome.texts()) {
+            JsonObject item = new JsonObject();
+            item.addProperty("type", "text");
+            item.addProperty("text", text);
+            content.add(item);
+        }
+        callResult.add("content", content);
+        callResult.addProperty("isError", outcome.isError());
+        return callResult;
     }
 
     /** The effective scope for whatever request is CURRENTLY being handled on this thread -- see
@@ -298,10 +1017,13 @@ public final class WarpMcpServer {
         serverInfo.addProperty("name", "warp");
         serverInfo.addProperty("version", "1.0");
         result.add("serverInfo", serverInfo);
+        result.addProperty("instructions", "Call list_backends to see which backends (and of which type) this "
+                + "endpoint reaches and what each contains; describe_backend shows one backend's live contents. "
+                + "Tools apply to backends by type; pass \"backend\" when several backends support a tool.");
         return result;
     }
 
-    private JsonObject buildToolsListResult() {
+    private JsonObject buildRelationalToolsListResult() {
         String backendName = options.mcpBackendMode().name().charAt(0)
                 + options.mcpBackendMode().name().substring(1).toLowerCase(java.util.Locale.ROOT);
         if (options.mcpBackendMode() == McpBackendMode.SQLSERVER) {
@@ -499,6 +1221,22 @@ public final class WarpMcpServer {
         boolean isError = true;
         String errorMessage = null;
         McpBackendMode backendMode = options.mcpBackendMode();
+        boolean[] providerError = {true};
+        String[] providerMessage = {null};
+        try {
+            if (handleProviderCall(response, id, toolName, arguments, accessContext, providerError, providerMessage)) {
+                metrics.record(toolName, System.nanoTime() - startNanos, providerError[0]);
+                if (auditLog != null) {
+                    recordToolCallAudit(toolName, arguments, accessContext, providerError[0], providerMessage[0],
+                            System.nanoTime() - startNanos);
+                }
+                return;
+            }
+        } catch (RuntimeException e) {
+            metrics.record(toolName, System.nanoTime() - startNanos, true);
+            writeError(response, id, -32602, e.getMessage());
+            return;
+        }
         try (Connection backend = openBackendConnection()) {
             if ("query_natural_language".equals(toolName) || "explain_query".equals(toolName)
                     || "document_schema".equals(toolName) || "query_federated".equals(toolName)) {
@@ -585,6 +1323,10 @@ public final class WarpMcpServer {
         }
         Map<String, String> details = new java.util.LinkedHashMap<>();
         details.put("tool", toolName);
+        McpEndpoints.Endpoint auditEndpoint = CURRENT_ENDPOINT.get();
+        if (auditEndpoint != null) {
+            details.put("endpoint", auditEndpoint.name());
+        }
         details.put("arguments", argsText);
         details.put("success", String.valueOf(!isError));
         details.put("elapsedMs", String.valueOf(elapsedNanos / 1_000_000));
@@ -1147,11 +1889,15 @@ public final class WarpMcpServer {
         };
     }
 
-    private static AdHocQueryRunner.Result multiBackendInspectResult(List<BackendCatalogDiscovery.DiscoveredColumn> discovered) {
-        List<String> columns = List.of("backend", "schema", "table", "column", "data_type", "is_nullable");
+    private AdHocQueryRunner.Result multiBackendInspectResult(List<BackendCatalogDiscovery.DiscoveredColumn> discovered) {
+        List<String> columns = List.of("backend", "backend_type", "backend_description", "schema", "table", "column",
+                "data_type", "is_nullable");
         List<List<Object>> rows = new ArrayList<>();
         for (BackendCatalogDiscovery.DiscoveredColumn c : discovered) {
-            rows.add(List.of(c.backendName(), c.realSchemaName() == null ? "" : c.realSchemaName(),
+            com.sayonora.wire.core.BackendTarget t = backendRegistry.get(c.backendName());
+            String desc = backendRegistry.descriptionOf(c.backendName());
+            rows.add(List.of(c.backendName(), t == null ? "" : BackendTypes.typeOf(t), desc == null ? "" : desc,
+                    c.realSchemaName() == null ? "" : c.realSchemaName(),
                     c.tableName(), c.columnName(), c.dataTypeName(), c.nullable() ? "YES" : "NO"));
         }
         return new AdHocQueryRunner.Result(true, true, columns, rows, 0, null, null);

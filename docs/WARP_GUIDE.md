@@ -733,6 +733,7 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | mongowire | MongoDB wire protocol | 27017 | document ops mapped to SQL |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
 | sqswire | Amazon SQS HTTP/JSON API | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); FIFO queues, DLQ/redrive, both JSON-1.1 and legacy XML protocols; sharded by queue name |
+| s3wire | Amazon S3 REST API | 18020 | opt-in via `WARP_S3WIRE_BACKEND_BUCKET`; buckets are key prefixes in one backend S3/MinIO bucket; SigV4 verified against `WARP_S3WIRE_CREDENTIALS`; streaming PUT/GET/Range, list, copy, batch delete, multipart. Not Postgres-backed |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` switches to native mode — see §8.1.1 and §8.5 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
@@ -864,6 +865,156 @@ Table/column/group-by identifiers arrive as free-form tool arguments and get int
 directly into SQL text (bind parameters can't stand in for identifiers) — every tool validates
 each one against a plain-identifier pattern first, the one guard against a caller closing a
 string and injecting arbitrary SQL through what's supposed to be a bare name.
+
+#### 8.5.2 MCP endpoints, backend types and automatic tool association
+
+An MCP endpoint reaches **one backend or a whole backend set**, each backend has a **type derived
+automatically from its own definition**, and the tools `tools/list` advertises follow the types
+present in the endpoint's scope. An agent learns what is behind an endpoint with `list_backends` /
+`describe_backend`; the operator supplies the human descriptions.
+
+**Terms used by Warp today** (unchanged): a *backend* is one `WARP_BACKENDS` entry
+(`name=URL|user|password[|fallback]`, `;`-separated; persisted in the `warp_config` table and
+hot-reloaded); a *backend group* (`WARP_BACKEND_GROUPS`, `name[:sharded|:plain]=a,b|...`; every
+backend is in exactly one) is the "backend set" an MCP scope can name (`group:<name>`); the older
+`WARP_BACKEND_SETS` (named routing lists, a backend may be in several) are also reported. Scope
+grammar is unchanged: `WARP_MCP_SCOPE` = `db:<backend>` / `group:<name>` / `all`, plus per-token
+`warp_scope` claims and `WARP_MCP_ROLE_SCOPES`.
+
+**Types (never configured).** `BackendTypes` reads the type off the URL: `jdbc:postgresql:` →
+`postgres`, `jdbc:mysql:` → `mysql`, `jdbc:mariadb:` → `mariadb`, `jdbc:oracle:` → `oracle`,
+`jdbc:sqlserver:` → `sqlserver`, every other bundled JDBC dialect is its lower-cased name
+(`snowflake`, `redshift`, `bigquery`, `clickhouse`, `trino`, ...; unknown `jdbc:` prefix → `jdbc`), and
+`mongodb://` → `mongodb`, `dynamodb://` → `dynamodb`, `s3://` → `s3`, `kafka://` → `kafka`,
+`cassandra://` → `cassandra`, `splunk://` → `splunk`. Each type belongs to a tool *family*:
+**relational** (every JDBC type: today's SQL tools, unchanged), `dynamodb`, `mongodb`, `s3`, and
+the emulated `influx`; `kafka`/`cassandra`/`splunk` have no MCP data tools (they are federated SQL
+sources) but are listed and described.
+
+**Warp-emulated stores** (dynamowire / mongowire / influxwire, data in Postgres tables) appear as
+*logical backends of the default backend*: `default.dynamodb`, `default.mongodb`, `default.influx`
+(type `dynamodb`/`mongodb`/`influx`, `engine: warp-emulated`, `host: default`). They show up only when
+(a) the `default` backend is inside the scope, (b) the wire frontend is running, and (c) the operator
+opted in with `WARP_MCP_EMULATED_STORES=dynamodb,mongodb,influx` (or `all`; default none, so a plain
+gateway's tool list does not change).
+
+**Descriptions (operator-supplied).** Two more fields in the same `warp_config` document as the
+backends, settable by env var at bootstrap or `PUT /api/config` afterwards (hot-reloaded, persisted,
+cluster-wide like every other backend setting). Both are JSON objects of name → text:
+`WARP_BACKEND_DESCRIPTIONS='{"default":"Gateway Postgres: people","pg2":"Orders (finance)","default.dynamodb":"Sessions"}'`
+(config key `backendDescriptions`; emulated stores are keyed by their `default.<kind>` name) and
+`WARP_BACKEND_GROUP_DESCRIPTIONS='{"sales":"Everything sales may query"}'` (`backendGroupDescriptions`;
+group names, and `WARP_BACKEND_SETS` names). A malformed value is logged and ignored (never fails a
+reload). `GET /api/backends` returns `type`, `family`, `description`, `group`, `sets` per backend.
+
+**Tool association and routing.**
+
+| Scope contains | `tools/list` advertises |
+|---|---|
+| relational backend(s) | today's SQL tools, unchanged |
+| dynamodb / mongodb / s3 / influx backend(s) | that family's tools (tables below) |
+| any scope | `list_backends`, `describe_backend` |
+
+The advertised list is the **union** over the backends in scope. Names are bare. Where several
+families use the same name (`list_tables`, `describe_table` for relational/dynamodb/influx) there is
+**one** entry: its description lists the backends it applies to ("Applies to backends: pg2
+(postgres), default.dynamodb (dynamodb)") and its schema is the union of the properties. The
+routing argument is `backend`:
+
+* single-backend endpoint (e.g. `db:pg2`): only that type's tools, never needs `backend`;
+* a tool call may carry `backend`: it must name an in-scope backend of a type that supports the tool,
+  else a tool error (`ERROR [42501]` for unknown/out-of-scope names -- the same text for both, so
+  names outside the scope are not revealed -- or "does not apply to backend ..." listing the valid ones);
+* omitted: if exactly one in-scope backend of the non-relational types supports the tool it is used;
+  if several do, the call errors with `argument "backend" is required ... applies to N backends: a
+  (mongodb), b (mongodb)` and the schema marks `backend` required;
+* **relational exception:** SQL tools (`execute_sql`, `run_sql`, `list_tables`, `describe_table`,
+  `column_stats`, `compare_groups`, `correlation`, `sample_rows`, `find_outliers`, `find_join_path`,
+  `explain_sql`) treat `backend` as an *optional pin*: omitted = the gateway's own routing/federation
+  exactly as before (Warp's SQL pipeline already spans relational backends by design; requiring it
+  would regress every existing client); `query_federated`, `inspect_schema`, `document_schema`,
+  `query_natural_language`, `explain_query` are gateway-wide and take none. A bare `list_tables` with
+  no `backend` therefore stays the relational one.
+
+Rationale for bare names + `backend` over kind-prefixed names: agents already know each system's
+official tool names; the routing argument is the same for every type and the single-type case stays
+bare. (The legacy prefixed form is still available with `WARP_MCP_KIND=a,b`.)
+
+**Enforcement is unchanged.** `McpScope` still applies per statement/tool call: an endpoint scoped
+to one backend cannot reach another (SQLSTATE 42501 / `Unknown tool` / tool error), including via
+the new non-SQL tools; group scope still refuses non-members; emulated stores need `default` in
+scope; `WARP_MCP_READ_ONLY=true` hides and refuses every non-relational write tool (`put_item`,
+`insert-many`, `put_object`, `write_line_protocol`, ...); SQL types keep going through the full
+pipeline (firewall, QoS, RLS, stats). Real backends are bound to what the operator registered: a
+`mongodb://host/appdb` backend refuses other databases, an `s3://bucket` backend refuses other buckets.
+
+**list_backends / describe_backend.** `list_backends` → `{scope{type,name,description}, endpoint?,
+backends:[{name, type, family, engine, host?, description, groups, sets, status, tools}], backendSets:
+[{name, kind, description, members}]}` (`status` = the registry state, ACTIVE/DRAINING/DOWN).
+`describe_backend {backend}` (name optional when the endpoint has one backend) adds `contents`, listed
+live: relational → tables + columns (JDBC metadata, ≤200 tables); dynamodb → tables + key schema;
+mongodb → databases + collections; influx → measurements; s3 → bucket, top-level prefixes, root
+objects; kafka → topics; cassandra → keyspaces → tables; splunk → the searches declared on the
+URL. An unreachable backend degrades to `contents: null` + `contentsNote` (relational waits the
+connection-pool timeout, ~30 s; Mongo 8 s). `inspect_schema`'s multi-backend listing gains
+`backend_type` and `backend_description` columns.
+
+**Real external backends.** The tools also operate on backends registered with `mongodb://`,
+`dynamodb://`, `s3://` URLs, through the same client construction/credential handling the federated
+connectors use (`MongoSchemaFactory`, `DynamoSchemaFactory`, `S3SchemaFactory`; `vault:`/`cyberark:`
+passwords resolve as usual). One client per backend, rebuilt on config change. The `table.<name>=...`
+federation declarations are not needed for MCP (it lists what the credentials can see).
+
+**Endpoints (`/e/<id>`) with optional expiry.** A user-created *endpoint* is a scoped, credentialed
+handle served by the existing MCP listener (no port per endpoint): name, scope (`db:`/`group:`/`all`),
+description, `createdAt`/`createdBy`, and `expiresAt` (null = never). It authenticates with
+`Authorization: Bearer wmcp_...` at `POST /e/<id>`, and can only **narrow** the listener/caller scope
+(an endpoint wider than `WARP_MCP_SCOPE` / the caller's `warp_scope` is refused). Admin API (admin
+token, same surface as backends; stored as the `mcpEndpoints` JSON array inside `warp_config`, so it
+persists and hot-reloads on every instance sharing the config DB via LISTEN/NOTIFY):
+
+| Call | Body / result |
+|---|---|
+| `POST /api/mcp-endpoints` | `{name, scope, description?, expiresAt? \| ttlSeconds?}` → 201 `{id, name, scope, path:"/e/<id>", expiresAt, status, token, mcpPort}`; the token is shown **once** |
+| `GET /api/mcp-endpoints`, `GET /api/mcp-endpoints/<id>` | endpoint views (never token or hash); `status` active/expired |
+| `PATCH /api/mcp-endpoints/<id>` | `{expiresAt \| ttlSeconds \| null, description?}` -- extend, shorten, revive an expired one, or `expiresAt: null` = never expires |
+| `DELETE /api/mcp-endpoints/<id>` | revoke (hot-reloaded, no restart) |
+
+`expiresAt` is ISO-8601 **with** an offset (`2026-12-31T23:59:00Z`, `...-05:00`); zone-less,
+unparseable, non-future, both-given, duplicate-name, unknown backend/group are 400/409 with a clear
+message. Expiry is compared with server time on **every** request (`initialize`, `tools/list`,
+`tools/call`); an expired, revoked, unknown or wrong-token endpoint gets the same HTTP 401 +
+JSON-RPC error -32001 ("MCP endpoint is not valid (unknown, expired or revoked)"), so ids are not
+enumerable. `WARP_MCP_REQUIRE_ENDPOINT=true` makes the listener refuse everything except `/e/<id>`.
+Security notes: tokens are 256-bit random, only their SHA-256 is stored, compared in constant time;
+`warp_config` is readable by anyone with DB access (hashes only, but so are backend passwords
+unless `SAYONORA_ENCRYPTION_KEY` is set); create/patch/delete are read-modify-write of the config
+document (two admins editing at once on different instances can lose an update); there is no
+rate limit or audit-of-denials beyond the server log; tool calls through an endpoint carry its name
+in the `MCP_TOOL_CALLED` audit event. Revocation/expiry reach other instances at NOTIFY latency
+(milliseconds).
+
+**Legacy `WARP_MCP_KIND`** is now only a backward-compatible override/filter: unset (default) =
+automatic association as above. Set = restrict the endpoint to those families; with more than one
+family the non-relational tools are `<kind>_`-prefixed (`dynamodb_query_table`, `mongodb_find`), a
+request to `/kinds/<kind>` returns one family's bare vocabulary (without `list_backends`), and the
+named non-relational families' emulated stores are opted in implicitly. `/kinds/<kind>` also works in
+automatic mode.
+
+| Family | Tools (arguments) | Notes |
+|---|---|---|
+| dynamodb | `list_tables`{limit, exclusiveStartTableName}, `describe_table`{tableName}, `create_table`{tableName, partitionKey, partitionKeyType, sortKey, sortKeyType}, `put_item`{tableName, item}, `get_item`{tableName, key}, `update_item`{tableName, key, updateExpression, expressionAttributeNames/Values, conditionExpression, returnValues}, `query_table`{tableName, keyConditionExpression, expressionAttributeValues/Names, filterExpression, limit}, `scan_table`{tableName, filterExpression, expressionAttributeValues/Names, limit}, `delete_item` | Names/args from imankamyabi/dynamodb-mcp-server. Items/keys accept DynamoDB typed JSON or plain JSON; results are typed JSON. Real DynamoDB enforces its own rules (e.g. reserved words need `expressionAttributeNames`). Unsupported: `create_gsi`, `update_gsi`, `create_lsi`, `update_capacity`. |
+| mongodb | `list-databases`, `list-collections`{database}, `find`{database, collection, filter, projection, sort, limit, skip}, `aggregate`{database, collection, pipeline}, `count`{database, collection, query}, `collection-schema`{database, collection}, `insert-many`{...documents}, `update-many`{...filter, update}, `delete-many`{...filter} | Follows mongodb-js/mongodb-mcp-server. Emulated store: mongowire's command subset. Real: full server semantics. Unsupported: `create/drop-collection`, `drop-database`, `rename-collection`, index tools, `explain`, `db-stats`, `collection-storage-size`, upsert. |
+| s3 (real only) | `list_buckets`, `list_objects`{prefix, delimiter, maxKeys, continuationToken}, `head_object`{key}, `get_object`{key, maxBytes ≤1 MiB; UTF-8 or base64}, `put_object`{key, content \| contentBase64, contentType}, `delete_object`{key} | Bound to the backend's one bucket. `s3wire` (the S3 wire frontend) is not exposed as an emulated MCP store. |
+| influx (emulated only) | `health_check`, `list_databases`, `get_measurements`, `list_tables`, `get_measurement_schema`, `describe_table`, `query_sql`, `query_influxql`, `write_line_protocol` | Follows influxdata/influxdb3_mcp_server; `db` accepted and ignored. No real InfluxDB backend type. |
+| relational | `execute_sql`, `list_tables`, `describe_table`, `run_sql`, `inspect_schema`, `column_stats`, `compare_groups`, `correlation`, `sample_rows`, `find_outliers`, `find_join_path`, `explain_sql`, `query_federated`, `document_schema`, `explain_query`, `query_natural_language` (+ `WARP_MCP_TOOLS`) | unchanged (optional `backend` pin on the SQL ones) |
+| kafka / cassandra / splunk | none | `list_backends`/`describe_backend` only; query them with `query_federated` |
+
+**Not supported / limits:** real InfluxDB backends; real-backend *write governance* beyond the
+credentials the operator registered (the firewall/QoS pipeline governs SQL types only); Kafka/
+Cassandra/Splunk data tools; `describe_backend` of Splunk lists only declared searches; a
+Developer-edition process registers at most 3 `WARP_BACKENDS` (the license cap), so `default` + two
+more; descriptions/endpoints are not yet editable in the admin web UI (API/config only).
 
 ---
 
