@@ -16,7 +16,7 @@ import time
 import psycopg2
 import pytest
 
-from polywire_support import RealPostgres
+from warp_test_support import RealPostgres
 from cluster_support import start_cluster_node
 
 WARMUP = 1

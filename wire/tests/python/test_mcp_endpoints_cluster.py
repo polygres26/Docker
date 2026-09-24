@@ -9,7 +9,7 @@ import time
 import pytest
 import requests
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 from mcp_support import ADMIN_TOKEN
 
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN

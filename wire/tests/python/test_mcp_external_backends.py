@@ -13,7 +13,7 @@ import boto3
 import pytest
 from botocore.config import Config
 
-from polywire_support import WarpProcess, RealPostgres, RealDynamoDb, RealMinio, free_port
+from warp_test_support import WarpProcess, RealPostgres, RealDynamoDb, RealMinio, free_port
 from mcp_support import ADMIN_TOKEN, call, call_json, create_endpoint, tool_defs, tool_names
 
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN

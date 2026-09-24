@@ -17,9 +17,9 @@ from botocore.client import Config
 from botocore.exceptions import ClientError
 from boto3.s3.transfer import TransferConfig
 
-from polywire_support import WarpProcess, RealPostgres, RealMinio
+from warp_test_support import WarpProcess, RealPostgres, RealMinio
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 BACKEND_BUCKET = "warp-backend"

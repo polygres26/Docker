@@ -33,7 +33,7 @@ mongowire and dynamowire's client-observed numbers particularly so (0.741ms→1.
 section doesn't state whether its Postgres backend was bare-metal/native-host or a Docker
 container, but its numbers (sub-0.5ms server-side for a real JDBC round trip) are consistent with a
 bare-metal or already-warm local Postgres process. This pass's harness (`RealPostgres` in
-`polywire_support.py`) deliberately uses a real, freshly-started `docker run -p <port>:5432`
+`warp_test_support.py`) deliberately uses a real, freshly-started `docker run -p <port>:5432`
 container per test module — correct for test isolation, but Docker Desktop's loopback port-
 forwarding (a userland proxy hop on macOS) is a real, known source of extra sub-millisecond-to-low-
 millisecond latency that has nothing to do with Warp's own code. **This means the numbers above
@@ -122,7 +122,7 @@ Postgres backend over a loopback docker-published port.
 While chasing why a full `pytest -v` run across every protocol tripped Warp's own
 Developer-license "instance cap" (`"Developer edition is capped at 3 Warp instance(s), and 3 are
 already live"`) after only 2 test modules had run, I found a genuine, pre-existing correctness bug
-in `tests/python/polywire_support.py`'s `WarpProcess`, not a flake:
+in `tests/python/warp_test_support.py`'s `WarpProcess`, not a flake:
 
 **Before**: `WarpProcess.__init__` set `WARP_PG_HOST` / `WARP_PG_PORT` / `WARP_PG_DATABASE` /
 `WARP_PG_USER` / `WARP_PG_PASSWORD` on the subprocess's environment, pointing at each test's own
@@ -150,7 +150,7 @@ Postgres's `warp_nodes` table, their live-instance rows piled up across test fil
 `pytest` session until the Developer license's 3-instance cap tripped and refused to start a
 4th instance -- the actual failure symptom that surfaced the bug.
 
-**Fix** (`tests/python/polywire_support.py`, `WarpProcess.__init__`): renamed the five env vars to
+**Fix** (`tests/python/warp_test_support.py`, `WarpProcess.__init__`): renamed the five env vars to
 the names `ServerOptions.java` actually reads: `WARP_HOST`, `WARP_PORT`, `WARP_DATABASE`,
 `WARP_USER`, `WARP_PASSWORD`.
 

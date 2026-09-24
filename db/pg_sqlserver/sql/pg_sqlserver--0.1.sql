@@ -1,5 +1,5 @@
 -- pg_sqlserver -- SQL Server compatibility for Postgres (part of the
--- Polygres extension collection). Companion to db/pg_oracle and
+-- Shim extension collection). Companion to db/pg_oracle and
 -- db/pg_mysql, activated the same way: `SET db_emulation = 'sqlserver'`
 -- appends `sys` onto search_path so unqualified SQL Server-shaped
 -- references (sys.tables, OBJECT_ID(...), SCOPE_IDENTITY(), ...) resolve
@@ -36,7 +36,7 @@
 -- sys.scope_identity() below, since Postgres has no way to declare a
 -- function or view literally named with a leading @@).
 CREATE SCHEMA sys;
-COMMENT ON SCHEMA sys IS 'SQL Server compatibility (pg_sqlserver, part of Polygres) -- sys.* catalog views and T-SQL system functions. See this extension''s own header comment in sql/pg_sqlserver--0.1.sql for real scope/limits.';
+COMMENT ON SCHEMA sys IS 'SQL Server compatibility (pg_sqlserver, part of Shim) -- sys.* catalog views and T-SQL system functions. See this extension''s own header comment in sql/pg_sqlserver--0.1.sql for real scope/limits.';
 
 CREATE FUNCTION sys.emulation_active() RETURNS boolean
   AS '$libdir/pg_oracle', 'pg_sqlserver_emulation_active' LANGUAGE C STABLE;

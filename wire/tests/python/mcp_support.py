@@ -5,7 +5,7 @@ import time
 
 import requests
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 _ids = itertools.count(1)
 
 

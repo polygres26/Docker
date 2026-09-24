@@ -12,7 +12,7 @@ import psycopg2
 import pytest
 import requests
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 from mcp_support import ADMIN_TOKEN, admin, call, call_json, create_endpoint, tool_names
 
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN

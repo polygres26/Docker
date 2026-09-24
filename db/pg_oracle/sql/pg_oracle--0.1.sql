@@ -1,4 +1,4 @@
--- pg_oracle 0.1 -- Oracle compatibility for Postgres. Part of the Polygres
+-- pg_oracle 0.1 -- Oracle compatibility for Postgres. Part of the Shim
 -- extension collection (see db/pg_oracle/README.md for scope and phasing).
 --
 -- Layout: one schema per "thing a real Oracle client expects to find
@@ -23,7 +23,7 @@
 
 CREATE SCHEMA oracle_catalog;
 COMMENT ON SCHEMA oracle_catalog IS
-  'Oracle-compatible V$/GV$/DBA_*/USER_*/ALL_* catalog views (pg_oracle, part of Polygres).';
+  'Oracle-compatible V$/GV$/DBA_*/USER_*/ALL_* catalog views (pg_oracle, part of Shim).';
 
 CREATE VIEW oracle_catalog."v$version" AS
 SELECT 'PostgreSQL (pg_oracle emulation) ' || current_setting('server_version') AS banner,
@@ -269,7 +269,7 @@ COMMENT ON VIEW oracle_catalog."dba_users" IS 'Oracle DBA_USERS over pg_user.';
 -- ================================================================
 
 CREATE SCHEMA dbms_output;
-COMMENT ON SCHEMA dbms_output IS 'Oracle DBMS_OUTPUT package (pg_oracle, part of Polygres).';
+COMMENT ON SCHEMA dbms_output IS 'Oracle DBMS_OUTPUT package (pg_oracle, part of Shim).';
 
 CREATE FUNCTION dbms_output.enable(buffer_size int DEFAULT 20000) RETURNS void
   AS 'MODULE_PATHNAME', 'dbms_output_enable' LANGUAGE C VOLATILE;
@@ -354,7 +354,7 @@ $$;
 COMMENT ON FUNCTION oracle_catalog.create_context(text, text) IS 'Oracle CREATE CONTEXT, as a function call rather than new DDL syntax -- see this section''s header comment. SECURITY DEFINER + owner-only EXECUTE (see grants), matching Oracle''s own CREATE ANY CONTEXT privilege.';
 
 CREATE SCHEMA dbms_session;
-COMMENT ON SCHEMA dbms_session IS 'Oracle DBMS_SESSION package (pg_oracle, part of Polygres) -- SET_CONTEXT/CLEAR_CONTEXT/SET_IDENTIFIER, the write side of SYS_CONTEXT. See the SYS_CONTEXT section above.';
+COMMENT ON SCHEMA dbms_session IS 'Oracle DBMS_SESSION package (pg_oracle, part of Shim) -- SET_CONTEXT/CLEAR_CONTEXT/SET_IDENTIFIER, the write side of SYS_CONTEXT. See the SYS_CONTEXT section above.';
 
 CREATE FUNCTION dbms_session.set_context(
   p_namespace text, p_attribute text, p_value text,
@@ -678,7 +678,7 @@ COMMENT ON FUNCTION oracle_catalog.to_date(text, text) IS 'Oracle TO_DATE -- ret
 -- ================================================================
 
 CREATE SCHEMA dbms_random;
-COMMENT ON SCHEMA dbms_random IS 'Oracle DBMS_RANDOM package (pg_oracle, part of Polygres).';
+COMMENT ON SCHEMA dbms_random IS 'Oracle DBMS_RANDOM package (pg_oracle, part of Shim).';
 
 CREATE FUNCTION dbms_random.value() RETURNS double precision
   AS $$ SELECT random(); $$ LANGUAGE sql VOLATILE;
@@ -735,7 +735,7 @@ $$;
 COMMENT ON FUNCTION dbms_random.string(text, int) IS 'Oracle DBMS_RANDOM.STRING.';
 
 CREATE SCHEMA dbms_utility;
-COMMENT ON SCHEMA dbms_utility IS 'Oracle DBMS_UTILITY package (pg_oracle, part of Polygres) -- partial: see README.md for what''s not here yet and why.';
+COMMENT ON SCHEMA dbms_utility IS 'Oracle DBMS_UTILITY package (pg_oracle, part of Shim) -- partial: see README.md for what''s not here yet and why.';
 
 -- Oracle's GET_TIME returns hundredths of a second since an arbitrary
 -- epoch -- callers only ever diff two calls, never read it as a real
@@ -764,7 +764,7 @@ COMMENT ON FUNCTION dbms_utility.db_version() IS 'Oracle DBMS_UTILITY.DB_VERSION
 -- use of this pair is almost always inside one.
 
 CREATE SCHEMA dbms_assert;
-COMMENT ON SCHEMA dbms_assert IS 'Oracle DBMS_ASSERT package (pg_oracle, part of Polygres) -- SQL-injection-defense helpers for dynamic SQL.';
+COMMENT ON SCHEMA dbms_assert IS 'Oracle DBMS_ASSERT package (pg_oracle, part of Shim) -- SQL-injection-defense helpers for dynamic SQL.';
 
 CREATE FUNCTION dbms_assert.simple_sql_name(str text) RETURNS text
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -824,7 +824,7 @@ COMMENT ON FUNCTION dbms_assert.noop(text) IS 'Oracle DBMS_ASSERT.NOOP -- passth
 -- ================================================================
 
 CREATE SCHEMA utl_file;
-COMMENT ON SCHEMA utl_file IS 'Oracle UTL_FILE package (pg_oracle, part of Polygres). See create_directory() for the privilege model.';
+COMMENT ON SCHEMA utl_file IS 'Oracle UTL_FILE package (pg_oracle, part of Shim). See create_directory() for the privilege model.';
 
 CREATE TABLE utl_file.directories(
   directory_name text PRIMARY KEY,
@@ -911,7 +911,7 @@ CREATE FUNCTION utl_file.fclose_all() RETURNS void
 -- ================================================================
 
 CREATE SCHEMA dbms_network_acl_admin;
-COMMENT ON SCHEMA dbms_network_acl_admin IS 'Oracle DBMS_NETWORK_ACL_ADMIN package (pg_oracle, part of Polygres) -- the only way to permit UTL_HTTP network access.';
+COMMENT ON SCHEMA dbms_network_acl_admin IS 'Oracle DBMS_NETWORK_ACL_ADMIN package (pg_oracle, part of Shim) -- the only way to permit UTL_HTTP network access.';
 
 CREATE TABLE dbms_network_acl_admin.acls(
   acl_name    text PRIMARY KEY,
@@ -1104,7 +1104,7 @@ $$;
 COMMENT ON FUNCTION dbms_network_acl_admin.check_privilege_for_host(text, integer, text, text) IS 'Internal: the single function UTL_HTTP calls via SPI before ever opening a socket -- see src/utl_http.c.';
 
 CREATE SCHEMA utl_http;
-COMMENT ON SCHEMA utl_http IS 'Oracle UTL_HTTP package (pg_oracle, part of Polygres) -- gated by DBMS_NETWORK_ACL_ADMIN, see that schema''s comment.';
+COMMENT ON SCHEMA utl_http IS 'Oracle UTL_HTTP package (pg_oracle, part of Shim) -- gated by DBMS_NETWORK_ACL_ADMIN, see that schema''s comment.';
 
 CREATE FUNCTION utl_http.request(url text, http_method text DEFAULT 'GET') RETURNS text
   AS 'MODULE_PATHNAME', 'utl_http_request' LANGUAGE C VOLATILE;
@@ -1134,7 +1134,7 @@ COMMENT ON FUNCTION utl_http.last_status() IS 'HTTP status code of the most rece
 -- ================================================================
 
 CREATE SCHEMA dbms_crypto;
-COMMENT ON SCHEMA dbms_crypto IS 'Oracle DBMS_CRYPTO package (pg_oracle, part of Polygres) -- thin adapter over pgcrypto.';
+COMMENT ON SCHEMA dbms_crypto IS 'Oracle DBMS_CRYPTO package (pg_oracle, part of Shim) -- thin adapter over pgcrypto.';
 
 -- HASH_* values match Oracle's own documented, stable-since-10g
 -- constants. HMAC_* likewise match Oracle's documented values -- both
@@ -1322,7 +1322,7 @@ COMMENT ON FUNCTION dbms_crypto.decrypt(bytea, integer, bytea, bytea) IS 'Oracle
 -- ================================================================
 
 CREATE SCHEMA dbms_scheduler;
-COMMENT ON SCHEMA dbms_scheduler IS 'Oracle DBMS_SCHEDULER package (pg_oracle, part of Polygres) -- thin adapter over pg_cron. See this schema''s header comment above for scope.';
+COMMENT ON SCHEMA dbms_scheduler IS 'Oracle DBMS_SCHEDULER package (pg_oracle, part of Shim) -- thin adapter over pg_cron. See this schema''s header comment above for scope.';
 
 CREATE TABLE dbms_scheduler.jobs(
   job_name        text PRIMARY KEY,
@@ -1536,9 +1536,9 @@ COMMENT ON FUNCTION dbms_scheduler.run_job(text) IS 'Oracle DBMS_SCHEDULER.RUN_J
 -- ================================================================
 
 CREATE SCHEMA dbms_aqadm;
-COMMENT ON SCHEMA dbms_aqadm IS 'Oracle DBMS_AQADM package (pg_oracle, part of Polygres) -- queue administration. See dbms_aq for ENQUEUE/DEQUEUE.';
+COMMENT ON SCHEMA dbms_aqadm IS 'Oracle DBMS_AQADM package (pg_oracle, part of Shim) -- queue administration. See dbms_aq for ENQUEUE/DEQUEUE.';
 CREATE SCHEMA dbms_aq;
-COMMENT ON SCHEMA dbms_aq IS 'Oracle DBMS_AQ package (pg_oracle, part of Polygres) -- ENQUEUE/DEQUEUE. See dbms_aqadm for queue administration, and this schema''s header comment above for scope.';
+COMMENT ON SCHEMA dbms_aq IS 'Oracle DBMS_AQ package (pg_oracle, part of Shim) -- ENQUEUE/DEQUEUE. See dbms_aqadm for queue administration, and this schema''s header comment above for scope.';
 
 CREATE TABLE dbms_aqadm.queue_tables(
   queue_table  text PRIMARY KEY,
@@ -1767,7 +1767,7 @@ COMMENT ON FUNCTION dbms_aq.dequeue(text, text, text, integer) IS 'Oracle DBMS_A
 -- ================================================================
 
 CREATE SCHEMA dbms_stats;
-COMMENT ON SCHEMA dbms_stats IS 'Oracle DBMS_STATS package (pg_oracle, part of Polygres) -- a shim over Postgres''s own ANALYZE/pg_class stats, not Oracle''s optimizer internals. See this schema''s header comment.';
+COMMENT ON SCHEMA dbms_stats IS 'Oracle DBMS_STATS package (pg_oracle, part of Shim) -- a shim over Postgres''s own ANALYZE/pg_class stats, not Oracle''s optimizer internals. See this schema''s header comment.';
 
 CREATE TABLE dbms_stats.locked_tables(
   schema_name text NOT NULL,
@@ -2115,7 +2115,7 @@ GRANT SELECT, INSERT, DELETE ON dbms_stats.locked_tables TO PUBLIC;
 -- ================================================================
 
 CREATE SCHEMA dbms_sql;
-COMMENT ON SCHEMA dbms_sql IS 'Oracle DBMS_SQL package (pg_oracle, part of Polygres) -- dynamic SQL: OPEN_CURSOR/PARSE/BIND_VARIABLE/EXECUTE/FETCH_ROWS/COLUMN_VALUE/CLOSE_CURSOR. See this section''s header comment for real scope/limits.';
+COMMENT ON SCHEMA dbms_sql IS 'Oracle DBMS_SQL package (pg_oracle, part of Shim) -- dynamic SQL: OPEN_CURSOR/PARSE/BIND_VARIABLE/EXECUTE/FETCH_ROWS/COLUMN_VALUE/CLOSE_CURSOR. See this section''s header comment for real scope/limits.';
 
 CREATE FUNCTION dbms_sql.ensure_cursor_table() RETURNS void
 LANGUAGE plpgsql AS $$
@@ -2348,7 +2348,7 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA dbms_sql TO PUBLIC;
 -- is fully usable through the other, matching real Oracle (where
 -- DBMS_SQL is documented to be built on top of DBMS_SYS_SQL internally).
 CREATE SCHEMA dbms_sys_sql;
-COMMENT ON SCHEMA dbms_sys_sql IS 'Oracle DBMS_SYS_SQL package (pg_oracle, part of Polygres) -- thin wrapper over dbms_sql, sharing the same cursor state. See dbms_sql''s own header comment for real scope/limits.';
+COMMENT ON SCHEMA dbms_sys_sql IS 'Oracle DBMS_SYS_SQL package (pg_oracle, part of Shim) -- thin wrapper over dbms_sql, sharing the same cursor state. See dbms_sql''s own header comment for real scope/limits.';
 
 CREATE FUNCTION dbms_sys_sql.open_cursor() RETURNS integer
 LANGUAGE sql AS $$ SELECT dbms_sql.open_cursor(); $$;

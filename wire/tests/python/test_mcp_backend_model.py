@@ -20,7 +20,7 @@ from botocore.config import Config
 
 from pymongo import MongoClient
 
-from polywire_support import WarpProcess, RealPostgres, RealMongo, free_port
+from warp_test_support import WarpProcess, RealPostgres, RealMongo, free_port
 from mcp_support import (ADMIN_TOKEN, admin, call, call_json, create_endpoint, rpc, tool_defs,
                          tool_names)
 

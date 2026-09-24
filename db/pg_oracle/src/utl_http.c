@@ -200,7 +200,7 @@ utl_http_request(PG_FUNCTION_ARGS)
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-	curl_easy_setopt(curl, CURLOPT_USERAGENT, "pg_oracle-utl_http/0.1 (Polygres)");
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "pg_oracle-utl_http/0.1 (Shim)");
 	if (strcasecmp(method, "POST") == 0)
 		curl_easy_setopt(curl, CURLOPT_POST, 1L);
 	else if (strcasecmp(method, "HEAD") == 0)

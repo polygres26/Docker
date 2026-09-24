@@ -14,7 +14,7 @@ test, just real env vars).
 """
 import os
 
-from polywire_support import WarpProcess, RealPostgres, free_port  # noqa: F401
+from warp_test_support import WarpProcess, RealPostgres, free_port  # noqa: F401
 
 CLUSTER_SEED_RANGE = "127.0.0.1:47500..47600"
 

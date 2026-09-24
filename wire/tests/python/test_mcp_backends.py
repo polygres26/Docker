@@ -16,9 +16,9 @@ import requests
 from botocore.config import Config
 from pymongo import MongoClient
 
-from polywire_support import WarpProcess, RealPostgres, free_port
+from warp_test_support import WarpProcess, RealPostgres, free_port
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 RELATIONAL_TOOLS = {"execute_sql", "list_tables", "describe_table", "run_sql", "inspect_schema",

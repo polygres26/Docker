@@ -1,7 +1,7 @@
 # pg_oracle
 
 Oracle compatibility for stock Postgres -- the first extension in the
-**Polygres** collection (`db/pg_oracle`, `db/pg_mysql`, `db/pg_sqlserver`
+**Shim** collection (`db/pg_oracle`, `db/pg_mysql`, `db/pg_sqlserver`
 planned; see the top-level plan discussion for why MongoDB is out for now
 and why this is a plain `CREATE EXTENSION`, not a forked Postgres
 binary).

@@ -1,4 +1,4 @@
--- pg_mysql -- MySQL compatibility for Postgres (part of the Polygres
+-- pg_mysql -- MySQL compatibility for Postgres (part of the Shim
 -- extension collection). Companion to db/pg_oracle, activated the same
 -- way: `SET db_emulation = 'mysql'` appends mysql_catalog onto
 -- search_path so unqualified MySQL-shaped function calls (LAST_INSERT_ID(),
@@ -26,7 +26,7 @@
 -- pg_oracle's own DECODE()/NVL() calls get rewritten in Java rather than
 -- left as pure SQL-side overloads.
 CREATE SCHEMA mysql_catalog;
-COMMENT ON SCHEMA mysql_catalog IS 'MySQL compatibility functions (pg_mysql, part of Polygres). See this extension''s own header comment in sql/pg_mysql--0.1.sql for scope.';
+COMMENT ON SCHEMA mysql_catalog IS 'MySQL compatibility functions (pg_mysql, part of Shim). See this extension''s own header comment in sql/pg_mysql--0.1.sql for scope.';
 
 CREATE FUNCTION mysql_catalog.emulation_active() RETURNS boolean
   AS '$libdir/pg_oracle', 'pg_mysql_emulation_active' LANGUAGE C STABLE;
