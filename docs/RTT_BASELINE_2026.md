@@ -654,3 +654,48 @@ Default gRPC is unchanged in performance (no safe change helped); only the class
 opt-in knob shipped. Files: `wire/pom.xml`, `wire/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
 `wire/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
 properties, p99, `-Dserver.direct`). The earlier "known bug" note above is resolved.
+
+## 2026-09-23: s3wire (S3 frontend over a MinIO backend bucket)
+
+**What it is.** `s3wire` (port 18020, enabled by `WARP_S3WIRE_BACKEND_BUCKET`) speaks the S3 REST API
+(path-style, SigV4) to stock clients (boto3 verified) and stores objects in one real S3-compatible
+backend bucket using Warp's own backend credentials (AWS SDK v2). Client-visible buckets are key
+prefixes: bucket `b`, key `k` lives at backend key `b/k` (CreateBucket writes a hidden
+`b/.s3wire-bucket` marker). Every operation is recorded in `SqlMetricsCollector` as protocol
+`s3wire`, so `/api/metrics/summary` shows per-operation `avgRttMs`.
+
+**Write RTT** (`tests/python/test_write_rtt_baseline` in `test_s3wire.py`; real Warp jar subprocess, real
+MinIO container, boto3, same machine, loopback, 256-byte PutObject, 1 warm-up + 40 measured, 3 runs):
+
+| Path | client p50 (ms) | client min (ms) |
+|---|---|---|
+| boto3 direct to MinIO | 2.05 / 2.12 / 2.12 | 1.78 / 1.84 / 1.92 |
+| boto3 via s3wire -> MinIO | 2.80 / 2.82 / 2.86 | 2.57 / 2.59 / 2.51 |
+| **Gateway overhead (p50)** | **+0.70 to +0.75** | |
+
+Server-side `avgRttMs` for PutObject reads 3 in all runs. Caveats: `avgRttMs` is the collector's
+integer-millisecond truncated mean (a sub-ms figure cannot be shown) and includes the JIT-cold
+warm-up request, so it overstates steady state; the client-side delta above is the honest overhead
+number. The overhead is one extra HTTP hop (client -> Warp -> MinIO), SigV4 verification, and Warp's
+own SDK call; it is not a cache story -- there is no object cache (the RowCache stretch was not done).
+GET was not baselined; large-object throughput was not benchmarked (20 MB multipart verified for
+correctness only).
+
+**Auth, exactly.** Validated: access key is one of `WARP_S3WIRE_CREDENTIALS`; SigV4 signature over
+method, path, query, signed headers and the claimed `x-amz-content-sha256`; 15-minute clock skew;
+presigned URL signature/expiry; a claimed hex payload hash is compared after streaming (a mismatched
+PUT is rolled back and rejected). NOT validated: per-chunk signatures of `STREAMING-*` uploads (only
+the seed signature), any per-key/bucket authorization (every valid key reaches every bucket).
+s3wire refuses to start with no credentials configured.
+
+**Supported:** ListBuckets, CreateBucket, HeadBucket, DeleteBucket, GetBucketLocation, PutObject,
+GetObject (Range, If-Match/If-None-Match), HeadObject, DeleteObject, DeleteObjects, CopyObject
+(server-side, single request), ListObjects v1/v2 (prefix, delimiter, continuation-token, start-after,
+max-keys, encoding-type=url), multipart Create/UploadPart/Complete/Abort (proxied to backend
+multipart; boto3 `upload_file` of 20 MB verified), presigned GET.
+
+**Not supported (501 NotImplemented):** ListParts, ListMultipartUploads, UploadPartCopy, versioning,
+ACLs, tagging, policies/lifecycle/CORS/encryption, SelectObjectContent, virtual-hosted-style
+addressing, CopyObject over 5 GB. Also: objects written straight into the backend bucket without a
+`bucket/` prefix are invisible; a listing page can hold one fewer key than max-keys if it contained
+the hidden bucket marker.
