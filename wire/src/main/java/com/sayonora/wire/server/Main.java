@@ -1,6 +1,7 @@
 package com.sayonora.wire.server;
 
 import com.sayonora.wire.capture.WorkloadCaptureStage;
+import com.sayonora.wire.core.SourceDialect;
 import com.sayonora.wire.cluster.CacheStage;
 import com.sayonora.wire.cluster.WarpCluster;
 import com.sayonora.wire.config.ConfigStore;
@@ -130,14 +131,13 @@ public final class Main {
         if (options.mywireNativeBackend()) {
             nativeBackendTargets.put(BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME, new BackendTarget(
                     BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME,
-                    "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase(),
+                    com.sayonora.wire.mywire.MySqlBackendConnections.jdbcUrl(options),
                     options.mysqlUser(), options.mysqlPassword()));
         }
         if (options.mssqlwireNativeBackend()) {
             nativeBackendTargets.put(BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME, new BackendTarget(
                     BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME,
-                    "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
-                            + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
+                    com.sayonora.wire.mssqlwire.MssqlBackendConnections.jdbcUrl(options),
                     options.mssqlUser(), options.mssqlPassword()));
         }
         // Dual-port mode's OWN target, under a DIFFERENT reserved name than the block above --
@@ -153,15 +153,36 @@ public final class Main {
         if (options.mywireNativeListenPort() != 0) {
             nativeBackendTargets.put(BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME, new BackendTarget(
                     BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME,
-                    "jdbc:mysql://" + options.mysqlHost() + ":" + options.mysqlPort() + "/" + options.mysqlDatabase(),
+                    com.sayonora.wire.mywire.MySqlBackendConnections.jdbcUrl(options),
                     options.mysqlUser(), options.mysqlPassword()));
         }
         if (options.mssqlwireNativeListenPort() != 0) {
             nativeBackendTargets.put(BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME, new BackendTarget(
                     BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME,
-                    "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
-                            + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true",
+                    com.sayonora.wire.mssqlwire.MssqlBackendConnections.jdbcUrl(options),
                     options.mssqlUser(), options.mssqlPassword()));
+        }
+        // The MCP gateway's own native-backend-mode target (WARP_MCP_BACKEND=oracle|mysql|
+        // sqlserver) -- see BackendRegistry#MCP_NATIVE_DEFAULT_NAME's javadoc. The URL comes from
+        // the SAME jdbcUrl(...) helper WarpMcpServer#openBackendConnection opens through, so the
+        // registered target and the directly-opened connection share one HikariCP pool
+        // (BackendConnectionPools.poolKeyFor is url+user) and can never drift apart.
+        switch (options.mcpBackendMode()) {
+            case ORACLE -> nativeBackendTargets.put(BackendRegistry.MCP_NATIVE_DEFAULT_NAME, new BackendTarget(
+                    BackendRegistry.MCP_NATIVE_DEFAULT_NAME,
+                    com.sayonora.wire.mcp.OracleJdbcConnections.jdbcUrl(options),
+                    options.oracleUser(), options.oraclePassword()));
+            case MYSQL -> nativeBackendTargets.put(BackendRegistry.MCP_NATIVE_DEFAULT_NAME, new BackendTarget(
+                    BackendRegistry.MCP_NATIVE_DEFAULT_NAME,
+                    com.sayonora.wire.mywire.MySqlBackendConnections.jdbcUrl(options),
+                    options.mysqlUser(), options.mysqlPassword()));
+            case SQLSERVER -> nativeBackendTargets.put(BackendRegistry.MCP_NATIVE_DEFAULT_NAME, new BackendTarget(
+                    BackendRegistry.MCP_NATIVE_DEFAULT_NAME,
+                    com.sayonora.wire.mssqlwire.MssqlBackendConnections.jdbcUrl(options),
+                    options.mssqlUser(), options.mssqlPassword()));
+            case POSTGRES -> {
+                // nothing registered: MCP runs unpinned against the default Postgres target
+            }
         }
         BackendRegistry backendRegistry = BackendRegistry.fromConfig(
                 config.backends(), config.shardBackends(), config.backendSets(), config.backendGroups(),
@@ -228,6 +249,22 @@ public final class Main {
                     cacheTtlMs == null ? "30000" : cacheTtlMs);
         } else {
             log.info("result cache disabled (set WARP_CACHE_TABLES to enable)");
+        }
+        if (cacheStage != null) {
+            // Real, any-column-name primary-key row-cache precision for ORDINARY tables -- the
+            // generalization of dynamowire/mongowire's own fixed-shape row cache to any table any
+            // backend serves through the shared pipeline (translated mode against any backend, or
+            // a same-dialect native-pinned target -- see PrimaryKeyCatalog's own javadoc for the
+            // one architectural exception, orawire's true native NativeSessionRelay bypass, which
+            // this can never reach). Runs once here (startup) and again on a config reload that
+            // changes WARP_CACHE_TABLES (see the reload callback below) -- real JDBC metadata
+            // queries against every registered backend, so it never runs per-request.
+            java.util.Map<String, java.util.List<String>> primaryKeys =
+                    com.sayonora.wire.cluster.PrimaryKeyCatalog.discover(backendRegistry,
+                            java.util.Arrays.asList((cacheTables == null ? "" : cacheTables).split(",")));
+            cacheStage.setPrimaryKeyCatalog(primaryKeys);
+            log.info("generic primary-key row cache: {} of the cached table(s) have a discoverable real PK: {}",
+                    primaryKeys.size(), primaryKeys.keySet());
         }
 
         // One shared, cross-protocol RowCache (see its own javadoc) for BOTH dynamowire's GetItem
@@ -366,11 +403,42 @@ public final class Main {
                 statisticsScheduler == null ? "on-demand only (set WARP_STATS_REFRESH_INTERVAL_MINUTES for a background refresh)"
                         : "background refresh enabled");
 
+        // Real native RLS/VPD session-context propagation into federated backend connections --
+        // WARP_ACCESS_NATIVE_RLS_DIALECTS is a comma list (not ThinkingSense/Omnigate's single
+        // boolean this was ported from), since Warp's own federation already spans 3+ simultaneous
+        // backend dialects in one statement (the star/chain parallel-join engine), unlike the
+        // single-boolean design's implicit 2-dialect assumption. Empty/unset means every existing
+        // deployment sees zero behavior change -- SchemaFederationStage/SchemaAutoDiscoveryStage's
+        // own nativeRlsInitializers map defaults to empty regardless of this.
+        Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers =
+                new java.util.LinkedHashMap<>();
+        String nativeRlsDialectsSpec = System.getenv("WARP_ACCESS_NATIVE_RLS_DIALECTS");
+        if (nativeRlsDialectsSpec != null && !nativeRlsDialectsSpec.isBlank()) {
+            for (String entry : nativeRlsDialectsSpec.split(",")) {
+                switch (entry.trim().toLowerCase(java.util.Locale.ROOT)) {
+                    case "postgres" -> nativeRlsInitializers.put(SourceDialect.POSTGRES,
+                            new com.sayonora.wire.core.access.PostgresRlsSessionInitializer());
+                    case "oracle" -> nativeRlsInitializers.put(SourceDialect.ORACLE,
+                            new com.sayonora.wire.core.access.OracleVpdSessionInitializer());
+                    case "" -> { }
+                    default -> log.warn("WARP_ACCESS_NATIVE_RLS_DIALECTS: unknown dialect \"{}\" -- "
+                            + "only \"postgres\"/\"oracle\" have a native session-context initializer "
+                            + "today, ignoring", entry.trim());
+                }
+            }
+        }
+        if (!nativeRlsInitializers.isEmpty()) {
+            log.info("native RLS/VPD: enabled for federated mounts on dialect(s) {} -- a mounted "
+                    + "backend's real CREATE POLICY/DBMS_RLS now sees the calling AccessContext's own "
+                    + "session context, on top of (not instead of) AccessControlStage's SQL-rewrite fallback",
+                    nativeRlsInitializers.keySet());
+        }
+
         // Before routerStage, not after -- see SchemaFederationStage's own javadoc: a statement
         // that references two different WARP_ROUTER_SCHEMA_RULES-routed backends has to be
         // federated BEFORE RouterStage.resolveBackend ever narrows it down to just one of them.
         SchemaFederationStage schemaFederationStage = SchemaFederationStage.fromConfigOrNull(
-                routerStage, backendRegistry, federationStatisticsStore, federationPlanStore);
+                routerStage, backendRegistry, federationStatisticsStore, federationPlanStore, nativeRlsInitializers);
         if (schemaFederationStage != null) {
             stages.add(schemaFederationStage);
             log.info("schema federation: enabled ({} schema rule(s) -- a query referencing 2+ of their backends "
@@ -383,7 +451,8 @@ public final class Main {
         // Postgres/Oracle/MySQL/SQL Server client's plain, unqualified cross-backend query
         // federate transparently, not just an MCP agent's.
         com.sayonora.wire.core.SchemaAutoDiscoveryStage schemaAutoDiscoveryStage =
-                com.sayonora.wire.core.SchemaAutoDiscoveryStage.fromRegistryOrNull(backendRegistry, routerStage);
+                com.sayonora.wire.core.SchemaAutoDiscoveryStage.fromRegistryOrNull(backendRegistry, routerStage,
+                        nativeRlsInitializers);
         if (schemaAutoDiscoveryStage != null) {
             stages.add(schemaAutoDiscoveryStage);
             log.info("schema auto-discovery: enabled ({} backend(s) registered -- a query referencing "
@@ -548,7 +617,7 @@ public final class Main {
             log.info("cross-protocol row cache: SQL SELECT-by-id against a mongowire collection now shares its cache entry");
         }
         int boltWirePort = parseIntEnv("WARP_BOLTWIRE_PORT", 7687);
-        listenerExecutor.submit(() -> acceptBoltWireLoop(boltWirePort, backendRegistry, sessionExecutor, connectionGate));
+        listenerExecutor.submit(() -> acceptBoltWireLoop(boltWirePort, backendRegistry, sessionExecutor, connectionGate, sqlMetrics));
 
         int dynamoWirePort = parseIntEnv("WARP_DYNAMOWIRE_PORT", 18000);
 
@@ -652,11 +721,21 @@ public final class Main {
         // synchronous), delegating to the SAME governed natural-language-to-SQL pipeline MCP's
         // own query_natural_language tool already uses -- not a separate, less-governed path.
         int a2aPort = parseIntEnv("WARP_A2A_PORT", 18020);
-        String a2aPublicUrl = System.getenv().getOrDefault("WARP_A2A_PUBLIC_URL", "http://localhost:" + a2aPort + "/");
-        com.sayonora.wire.a2a.A2AServer a2aServer = new com.sayonora.wire.a2a.A2AServer(
-                a2aPort, a2aPublicUrl, mcpServer, connectionGate, oauth);
-        a2aServer.start();
-        log.info("warp listening for A2A (Agent2Agent Protocol) on port {}", a2aPort);
+        // Wrapped the same way dynamowire/sqswire/oswire/influxwire are: an a2a-only bind failure
+        // (e.g. port already in use by another local Warp instance) used to kill the whole main
+        // thread before it ever reached orawire/pgwire/etc. below -- now it just logs and leaves
+        // A2A off, matching every other optional wire protocol's failure behavior.
+        try {
+            String a2aPublicUrl = System.getenv().getOrDefault("WARP_A2A_PUBLIC_URL", "http://localhost:" + a2aPort + "/");
+            com.sayonora.wire.a2a.A2AServer a2aServer = new com.sayonora.wire.a2a.A2AServer(
+                    a2aPort, a2aPublicUrl, mcpServer, connectionGate, oauth);
+            a2aServer.start();
+            log.info("warp listening for A2A (Agent2Agent Protocol) on port {}", a2aPort);
+        } catch (Exception e) {
+            log.error("A2A failed to start on port {} -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring A2A back.",
+                    a2aPort, e);
+        }
 
         configStore.listen(newVersion -> {
             currentConfigVersion.set(newVersion);
@@ -678,6 +757,13 @@ public final class Main {
                     c.routerValueShardRules(), c.routerShardTables(), c.routerTableShards());
             if (cacheStage != null) {
                 cacheStage.reconfigure(c.cacheTables(), c.cacheTtlMs());
+                // Re-discover against the (possibly just-reloaded) backend registry and the
+                // (possibly just-changed) table list -- same call as startup's, just re-run here
+                // so a table added to WARP_CACHE_TABLES via a config reload gets its PK picked up
+                // without a restart.
+                cacheStage.setPrimaryKeyCatalog(com.sayonora.wire.cluster.PrimaryKeyCatalog.discover(
+                        backendRegistry,
+                        java.util.Arrays.asList((c.cacheTables() == null ? "" : c.cacheTables()).split(","))));
             }
             List<RollupDefinition> newRollups = RollupConfig.parse(c.rollupDefinitionsYaml());
             rollupStore.reload(newRollups);
@@ -814,7 +900,8 @@ public final class Main {
     // TCP-accept-loop shape as pgwire/mywire/mssqlwire/mongowire above, not the Jetty HTTP pattern
     // oswire/dynamowire/sqswire/influxwire use, since Bolt is a real binary protocol, not HTTP/JSON.
     private static void acceptBoltWireLoop(int port, BackendRegistry backendRegistry,
-            ExecutorService sessionExecutor, com.sayonora.wire.acl.ConnectionGate connectionGate) {
+            ExecutorService sessionExecutor, com.sayonora.wire.acl.ConnectionGate connectionGate,
+            com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             log.info("warp listening for Bolt (Neo4j wire) on port {}", port);
             while (true) {
@@ -824,7 +911,7 @@ public final class Main {
                     continue;
                 }
                 submitSession(sessionExecutor, connectionGate,
-                        new com.sayonora.wire.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry));
+                        new com.sayonora.wire.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry, sqlMetrics));
             }
         } catch (IOException e) {
             log.error("Bolt (boltwire) listener on port {} failed -- every other wire protocol is still up. "

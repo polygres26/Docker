@@ -5,6 +5,7 @@ import {
   getRememberPreference, getRequestTimeoutMs, getStoredConnection, setRequestTimeoutMs,
   storeConnection, testConnection,
 } from '../api/client'
+import logo from '../assets/logo.png'
 
 /**
  * Entry screen for this SPA. Warp's admin API is bearer-token protected and deliberately has
@@ -45,13 +46,7 @@ export default function Connect() {
   return (
     <div style={{ maxWidth: 480, margin: '80px auto', padding: '0 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10, background: 'var(--accent)', color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800,
-          fontFamily: 'ui-monospace, monospace',
-        }}>
-          W
-        </div>
+        <img src={logo} alt="" style={{ width: 36, height: 36, objectFit: 'contain' }} />
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>Warp</div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>Admin console</div>
@@ -59,14 +54,6 @@ export default function Connect() {
       </div>
 
       <div className="panel">
-        <h1 style={{ fontSize: 18, marginTop: 0, marginBottom: 6 }}>Connect</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-          Enter the admin URL and bearer token for a running Warp process
-          (<code>WARP_ADMIN_TOKEN</code>). This browser talks to Warp's admin API directly
-          -- nothing is sent anywhere else. By default the token is kept only in this tab's session
-          storage and is cleared when the tab closes (see Advanced options to change that).
-        </p>
-
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="adminUrl">Admin URL</label>

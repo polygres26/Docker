@@ -26,6 +26,18 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
 
     private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer();
 
+    // Same redundant-per-statement-round-trip shape PostgresRlsSessionInitializer's own javadoc
+    // now documents -- this instance is constructed exactly once per mssqlwire session
+    // (MssqlWireSessionHandler's ctor), and `SET db_emulation` only ever needs re-asserting when
+    // THIS executor's connection actually changes (a fresh pooled physical connection, or a
+    // failover rebind) -- never on every statement against the same connection it was already set
+    // on. Cached by connection IDENTITY so a rebind (new pooled connection, possibly last used by
+    // a completely different dialect's session) is always a cache miss and re-asserts for real,
+    // matching OraclePgEmulationSessionInitializer's own db_emulation_assign_hook-reconciliation
+    // caveat (see its javadoc) -- this cache never assumes correctness across a connection swap,
+    // only across repeated statements on the SAME already-initialized connection.
+    private Connection lastEmulationConnection;
+
     @Override
     public boolean runEvenWhenAnonymous() {
         // See NativeRlsSessionInitializer's own comment, and OraclePgEmulationSessionInitializer's
@@ -39,6 +51,10 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
         delegate.initialize(connection, accessContext);
 
+        if (connection == lastEmulationConnection) {
+            return;
+        }
+
         if (!com.sayonora.wire.core.PgSqlServerSupport.isAvailable(connection)) {
             return;
         }
@@ -51,5 +67,6 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET db_emulation = 'sqlserver'");
         }
+        lastEmulationConnection = connection;
     }
 }

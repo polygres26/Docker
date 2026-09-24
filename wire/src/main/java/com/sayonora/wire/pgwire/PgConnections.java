@@ -33,6 +33,13 @@ public final class PgConnections {
         return openWithFailover(options, PgConnections::connectRaw);
     }
 
+    /** As {@link #openRaw(ServerOptions)}, with extra pgjdbc driver properties (e.g. {@code
+     * tcpKeepAlive=true} for a connection parked in {@code LISTEN} for the process's lifetime --
+     * see {@code CacheInvalidationListener}) layered over the user/password ones. */
+    public static Connection openRaw(ServerOptions options, Properties extraProps) throws SQLException {
+        return openWithFailover(options, (host, port, o) -> connectRaw(host, port, o, extraProps));
+    }
+
     /**
      * For read-only statements a caller has already decided are safe to serve from a replica
      * (see {@code WARP_READ_ROUTING_ENABLED} in {@code RoutingBackendExecutor}): tries the
@@ -114,8 +121,15 @@ public final class PgConnections {
     }
 
     private static Connection connectRaw(String host, int port, ServerOptions options) throws SQLException {
+        return connectRaw(host, port, options, null);
+    }
+
+    private static Connection connectRaw(String host, int port, ServerOptions options, Properties extraProps) throws SQLException {
         String url = baseUrl(host, port, options);
         Properties props = new Properties();
+        if (extraProps != null) {
+            props.putAll(extraProps);
+        }
         if (options.pgUser() != null) {
             props.setProperty("user", options.pgUser());
         }

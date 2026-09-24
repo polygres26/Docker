@@ -28,6 +28,14 @@ import java.sql.Statement;
  */
 public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessionInitializer {
 
+    // Same redundant-per-statement-round-trip fix as OraclePgEmulationSessionInitializer/
+    // MssqlPgEmulationSessionInitializer's own (see their javadoc) -- currently a no-op saving in
+    // the default test/dev setup (no pg_mysql extension installed, so PgMysqlSupport.isAvailable()
+    // already short-circuits cheaply before ever reaching the SET below), but a real, non-trivial
+    // per-statement Postgres round trip the moment pg_mysql IS installed and this SET actually
+    // runs -- caching by connection identity, one per session instance, same as the other two.
+    private Connection lastEmulationConnection;
+
     @Override
     public boolean runEvenWhenAnonymous() {
         // See NativeRlsSessionInitializer's own comment, and
@@ -50,8 +58,12 @@ public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessio
         if (!com.sayonora.wire.license.DbCompatLicensing.dbEmulationAllowed()) {
             return;
         }
+        if (connection == lastEmulationConnection) {
+            return;
+        }
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET db_emulation = 'mysql'");
         }
+        lastEmulationConnection = connection;
     }
 }

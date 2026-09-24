@@ -65,7 +65,7 @@ public final class BackendCatalogDiscovery {
     private static final java.util.Set<String> RESERVED_NATIVE_BACKEND_NAMES = java.util.Set.of(
             BackendRegistry.MYSQL_NATIVE_DEFAULT_NAME, BackendRegistry.MSSQL_NATIVE_DEFAULT_NAME,
             BackendRegistry.ORACLE_NATIVE_DEFAULT_NAME, BackendRegistry.MYSQL_NATIVE_DUAL_PORT_NAME,
-            BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME);
+            BackendRegistry.MSSQL_NATIVE_DUAL_PORT_NAME, BackendRegistry.MCP_NATIVE_DEFAULT_NAME);
 
     // Real JDBC metadata (getTables/getColumns) has no engine-agnostic way to ask "exclude system
     // schemas" the way each dialect's own information_schema/pg_tables query already does (see

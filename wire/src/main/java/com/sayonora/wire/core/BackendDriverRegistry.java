@@ -35,6 +35,60 @@ final class BackendDriverRegistry {
         if (url.startsWith("jdbc:mysql:") || url.startsWith("jdbc:mariadb:")) {
             return "com.mysql.cj.jdbc.Driver";
         }
+        // Broader JDBC-dialect catalog -- mirrors BackendTarget#dialect()'s own prefix list
+        // exactly (same ordering, same set), ported from the sibling Omnigate project. Each class
+        // name confirmed there via the driver jar's own bundled META-INF/services/java.sql.Driver
+        // entry, not guessed -- see SourceDialect's own javadoc for the per-dialect dependency and
+        // license notes (Databricks/Db2 in particular ship under a non-Apache license, the only
+        // way to reach either engine over JDBC at all).
+        if (url.startsWith("jdbc:snowflake:")) {
+            return "net.snowflake.client.jdbc.SnowflakeDriver";
+        }
+        if (url.startsWith("jdbc:redshift:")) {
+            // Not com.amazon.redshift.jdbc42.Driver (a thin legacy wrapper class).
+            return "com.amazon.redshift.Driver";
+        }
+        if (url.startsWith("jdbc:bigquery:")) {
+            return "com.google.cloud.bigquery.jdbc.BigQueryDriver";
+        }
+        if (url.startsWith("jdbc:databricks:")) {
+            return "com.databricks.client.jdbc.Driver";
+        }
+        if (url.startsWith("jdbc:clickhouse:")) {
+            return "com.clickhouse.jdbc.ClickHouseDriver";
+        }
+        if (url.startsWith("jdbc:avatica:remote:")) {
+            // Druid's own SQL access is over the Avatica remote protocol -- avatica-core is
+            // already a transitive dependency of calcite-core itself, no extra driver needed.
+            return "org.apache.calcite.avatica.remote.Driver";
+        }
+        if (url.startsWith("jdbc:pinot:")) {
+            return "org.apache.pinot.client.PinotDriver";
+        }
+        if (url.startsWith("jdbc:db2:")) {
+            return "com.ibm.db2.jcc.DB2Driver";
+        }
+        if (url.startsWith("jdbc:vertica:")) {
+            return "com.vertica.jdbc.Driver";
+        }
+        if (url.startsWith("jdbc:singlestore:")) {
+            return "com.singlestore.jdbc.Driver";
+        }
+        if (url.startsWith("jdbc:sap:")) {
+            return "com.sap.db.jdbc.Driver";
+        }
+        if (url.startsWith("jdbc:teradata:")) {
+            return "com.teradata.jdbc.TeraDriver";
+        }
+        if (url.startsWith("jdbc:cloudspanner:")) {
+            return "com.google.cloud.spanner.jdbc.JdbcDriver";
+        }
+        if (url.startsWith("jdbc:trino:")) {
+            return "io.trino.jdbc.TrinoDriver";
+        }
+        if (url.startsWith("jdbc:sqlite:")) {
+            return "org.sqlite.JDBC";
+        }
         return null;
     }
 

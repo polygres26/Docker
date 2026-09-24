@@ -14,9 +14,15 @@ import java.sql.SQLException;
  * WARP_PG_SSLROOTCERT} already make explicit for the Postgres side. */
 public final class MssqlBackendConnections {
 
-    public static Connection open(ServerOptions options) throws SQLException {
-        String url = "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
+    /** The one JDBC URL both {@link #open} and {@code Main}'s registered native targets build
+     * from -- one source, so they can't drift (same URL + user => same pool key). */
+    public static String jdbcUrl(ServerOptions options) {
+        return "jdbc:sqlserver://" + options.mssqlHost() + ":" + options.mssqlPort()
                 + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true";
+    }
+
+    public static Connection open(ServerOptions options) throws SQLException {
+        String url = jdbcUrl(options);
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.mssqlUser());
         return BackendConnectionPools.borrow(poolKey, url, options.mssqlUser(), options.mssqlPassword());
     }

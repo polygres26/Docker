@@ -137,8 +137,17 @@ class ParallelJoinChainIntegrationTest {
         String log = captured.toString(StandardCharsets.UTF_8);
 
         assertEquals(200, response.statusCode());
-        assertTrue(log.contains("executed via the parallel join engine") && log.contains("3-way chain"),
-                "the chain executor must have actually engaged -- captured log: " + log);
+        // NOTE: this query's join graph -- orders (hub) joined independently to customers and to
+        // products, which never reference each other -- is topologically a STAR (see
+        // ParallelJoinPlanner's own star-topology section), which SchemaFederationStage now tries
+        // BEFORE the linear chain engine since it's provably at least as good for this exact shape.
+        // For exactly 3 leaves a star and a "chain" are the same underlying tree (there's only one
+        // possible 2-edge spanning tree over 3 nodes), so the star engine correctly wins here --
+        // ParallelJoinChainFourWayIntegrationTest below proves the genuinely non-star (4-leaf path)
+        // case still falls through to the chain engine instead.
+        assertTrue(log.contains("executed via the parallel join engine") && log.contains("star topology"),
+                "the star join executor must have actually engaged for this hub-and-2-spokes shape -- "
+                        + "captured log: " + log);
 
         JsonArray rows = rows(response.body());
         assertEquals(3, rows.size());

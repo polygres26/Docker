@@ -66,6 +66,11 @@ public final class BoltWireSessionHandler implements Runnable {
     private final Socket clientSocket;
     private final BackendRegistry backendRegistry;
     private final PgGraphStore graphStore;
+    // Wired in so boltwire stops being the one protocol with zero server-side RTT visibility --
+    // see handleRun's own comment for exactly what span gets reported and why RUN (not PULL) is
+    // the honest boundary for it. Nullable the same way every other optional-metrics constructor
+    // param in this codebase is (tests that don't care about metrics can omit it).
+    private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
     // Lazily opened on this session's first RUN, reused for every RUN after that, returned to the
     // pool on GOODBYE/EOF/error -- real bug, found live comparing boltwire's own measured latency
@@ -91,9 +96,15 @@ public final class BoltWireSessionHandler implements Runnable {
     private static final Pattern MATCH_PREFIX = Pattern.compile("(?i)^\\s*MATCH\\b");
 
     public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry) {
+        this(clientSocket, backendRegistry, null);
+    }
+
+    public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry,
+            com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         this.backendRegistry = backendRegistry;
         this.graphStore = new PgGraphStore(backendRegistry);
+        this.sqlMetrics = sqlMetrics;
     }
 
     @Override
@@ -229,12 +240,25 @@ public final class BoltWireSessionHandler implements Runnable {
 
     private void handleRun(DataOutputStream out, PackStream.Struct msg) throws IOException {
         String cypher = (String) msg.fields().get(0);
+        // RTT: from here (RUN's own real backend execution, including the full result-set fetch --
+        // translateAndRun/runMatch/runCreate already drain the JDBC ResultSet into ExecutedQuery
+        // before returning) through the SUCCESS write just below. Unlike pgwire's extended query
+        // protocol -- where Bind executes but Execute is the separate, client-paced message that
+        // actually streams results, so only Execute's own span is honest (see SqlMetricsCollector's
+        // class javadoc) -- Bolt's RUN already does 100% of the backend round trip: the later PULL
+        // just serializes already-fetched, already-in-memory rows with zero further backend
+        // interaction. So RUN's span here is the complete, honest "Warp's own service time" signal,
+        // the same way orawire's Fetch is -- reporting it on PULL instead would only add pure
+        // in-process serialization time that has nothing to do with the backend round trip this
+        // metric exists to surface.
+        long rttStart = System.nanoTime();
         try {
             ExecutedQuery result = translateAndRun(cypher);
             pendingQuery = result;
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("fields", result.columns());
             writeSuccess(out, metadata);
+            recordMetrics(cypher, rttStart);
         } catch (UnsupportedCypherException e) {
             pendingQuery = null;
             writeFailure(out, "Neo.ClientError.Statement.SyntaxError", e.getMessage());
@@ -243,6 +267,51 @@ public final class BoltWireSessionHandler implements Runnable {
             log.warn("boltwire: Postgres error running translated query for \"{}\": {}", cypher, e.getMessage());
             writeFailure(out, "Neo.ClientError.Statement.ExecutionFailed", e.getMessage());
         }
+    }
+
+    /**
+     * Feeds the same shared {@link com.sayonora.wire.core.SqlMetricsCollector} every other wire
+     * protocol reports into, under {@code protocol="boltwire"} -- see this class's own javadoc:
+     * boltwire deliberately bypasses {@code StatementPipeline} entirely for its Cypher-to-SQL
+     * execution (no dialect translation, no cache stage, no router -- none of those apply to a
+     * graph query against {@code warp_graph_nodes}/{@code warp_graph_edges}), but that's an
+     * execution-path decision, not a reason to leave boltwire as the one protocol with zero
+     * server-side RTT visibility in {@code /api/metrics/summary} and the Prometheus
+     * {@code warp_rtt_calls_total} series. This is the narrow fix: wrap just this one call site
+     * with the same {@code recordOperation(..., elapsedNanos, rttNanos)} convenience method
+     * sqswire/dynamowire use (their own single measurement already spans the full
+     * request-to-response window the same way RUN's does here), rather than forcing Cypher
+     * execution through the full pipeline chain.
+     */
+    private void recordMetrics(String cypher, long rttStart) {
+        if (sqlMetrics == null) {
+            return;
+        }
+        long elapsedNanos = System.nanoTime() - rttStart;
+        com.sayonora.wire.core.SqlMetricsCollector.StatementKind kind;
+        if (CREATE_PREFIX.matcher(cypher).find()) {
+            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.WRITE;
+        } else if (MATCH_PREFIX.matcher(cypher).find() || RETURN_LITERAL.matcher(cypher).matches()) {
+            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.READ;
+        } else {
+            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.OTHER;
+        }
+        String label = normalizeCypherForLabel(cypher);
+        sqlMetrics.recordOperation("boltwire", null, kind, label, elapsedNanos, elapsedNanos);
+    }
+
+    private static final Pattern STRING_LITERAL_LABEL = Pattern.compile("'[^']*'|\"[^\"]*\"");
+    private static final Pattern NUMBER_LITERAL_LABEL = Pattern.compile("\\b\\d+(?:\\.\\d+)?\\b");
+
+    /** Same shape as {@code SqlMetricsCollector.normalize} (that method is package-private to
+     * {@code core}, not reachable from here) -- collapses literal values out of the Cypher text so
+     * e.g. every {@code RETURN 1}, {@code RETURN 2}, ... {@code RETURN <n>} call lands in one
+     * {@code topSql} bucket instead of a fresh one per distinct literal value. */
+    private static String normalizeCypherForLabel(String cypher) {
+        String normalized = STRING_LITERAL_LABEL.matcher(cypher).replaceAll("?");
+        normalized = NUMBER_LITERAL_LABEL.matcher(normalized).replaceAll("?");
+        normalized = normalized.strip().replaceAll("\\s+", " ");
+        return normalized.isEmpty() ? "(empty)" : normalized;
     }
 
     private void handlePull(DataOutputStream out) throws IOException {

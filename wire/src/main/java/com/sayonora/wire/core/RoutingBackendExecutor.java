@@ -32,6 +32,13 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     private StatisticsStore statisticsStore;
     private SqlPlanStore planStore;
 
+    // The registered backend name that {@code defaultExecutor} (the caller-supplied, already-open
+    // connection) IS. "default" for every wire session (the Postgres default target); the MCP
+    // gateway sets it to whatever it opened its connection against (a DATABASE-scope backend name,
+    // or MCP_NATIVE_DEFAULT_NAME) so a statement pinned to that name runs on the supplied
+    // connection instead of opening a second, pooled one -- see withDefaultExecutorBackendName.
+    private String defaultExecutorBackendName = BackendRegistry.DEFAULT_BACKEND_NAME;
+
     private Map<String, Connection> transactionConnections;
 
     private Map<String, String> cursorTargets;
@@ -87,6 +94,17 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     public RoutingBackendExecutor withFederationSupport(StatisticsStore statisticsStore, SqlPlanStore planStore) {
         this.statisticsStore = statisticsStore;
         this.planStore = planStore;
+        return this;
+    }
+
+    /** Fluent. Names the registered backend {@code defaultExecutor}'s connection actually belongs
+     * to (default {@link BackendRegistry#DEFAULT_BACKEND_NAME}, i.e. unchanged behavior for every
+     * existing caller). A statement whose target equals this name is executed on
+     * {@code defaultExecutor} exactly as a null/"default" target is -- the generalisation of the
+     * old hardcoded "default"-means-supplied-connection special case in {@link #execute}. */
+    public RoutingBackendExecutor withDefaultExecutorBackendName(String backendName) {
+        this.defaultExecutorBackendName = backendName == null || backendName.isBlank()
+                ? BackendRegistry.DEFAULT_BACKEND_NAME : backendName;
         return this;
     }
 
@@ -146,8 +164,17 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (targetName == null && transactionConnections != null) {
             targetName = cursorTargets.get(cursorNameReferenced(statement.sqlText()));
         }
-        
-        if (targetName == null || registry.isEmpty() || BackendRegistry.DEFAULT_BACKEND_NAME.equals(targetName)) {
+        // Terminal BackendScope enforcement, before anything else -- defense in depth behind
+        // RouterStage's own early check, and the ONLY check covering a cursor-derived target
+        // (above) that RouterStage never saw. A null target means the caller-supplied default
+        // connection, which is defaultExecutorBackendName. SCATTER_ALL's members are each
+        // checked inside executeScatterGather/scatterAcross. No-op when the scope is null.
+        if (statement.backendScope() != null && !SCATTER_ALL.equals(targetName)) {
+            BackendScope.check(statement.backendScope(), targetName == null ? defaultExecutorBackendName : targetName);
+        }
+
+        if (targetName == null || registry.isEmpty() || BackendRegistry.DEFAULT_BACKEND_NAME.equals(targetName)
+                || defaultExecutorBackendName.equals(targetName)) {
             // The common case -- no WARP_ROUTER_* rule matched -- normally always uses
             // defaultExecutor, a connection borrowed once for the whole client session. That's
             // correct and cheapest for the vast majority of statements, but it structurally can't
@@ -158,7 +185,10 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             // exists to route against).
             if (READ_ROUTING_ENABLED && transactionConnections == null && !registry.isEmpty()
                     && SqlMetricsCollector.classify(statement.sqlText()) == SqlMetricsCollector.StatementKind.READ) {
-                BackendTarget defaultTarget = registry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+                // defaultExecutorBackendName (== "default" for every wire session, so unchanged
+                // there) -- a read routed off the supplied connection must land on the SAME
+                // backend that connection belongs to, never unconditionally on Postgres.
+                BackendTarget defaultTarget = registry.resolveForRouting(defaultExecutorBackendName);
                 if (defaultTarget != null) {
                     return executeOnFreshConnection(defaultTarget, statement);
                 }
@@ -178,8 +208,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // error), silently disconnecting the client instead of returning a clear error. A Mongo
         // backend today only participates via SchemaFederationStage's own two-schema SELECT JOIN
         // path (see that class's own javadoc) -- a real, clear, caught error here instead.
-        if (isMongoConnectionString(target.jdbcUrl())) {
-            throw ErrorCatalog.sqlException("ERR_MONGO_ROUTING_UNSUPPORTED", targetName);
+        // Same for DynamoDB -- both are federation-only connector backends (see
+        // BackendTarget#isFederationOnlyConnector); direct single-backend routing to either is out
+        // of scope, so the error points the client at the federated path instead.
+        if (target.isFederationOnlyConnector()) {
+            throw ErrorCatalog.sqlException(BackendTarget.routingUnsupportedErrorKey(target.dialect()), targetName);
         }
         if (transactionConnections == null) {
             return executeOnFreshConnection(target, statement);
@@ -217,6 +250,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         List<RouterStage.TableShardRule> matchedTableRules = matchedTableShardRules(statement.sqlText());
         if (!matchedTableRules.isEmpty()) {
             List<String> tableShardNames = unionOfAllBackends(matchedTableRules);
+            checkScope(statement, tableShardNames);
             List<RouterStage.TableShardRule> joinRules =
                     ShardJoinExecutor.matchedTableShardRules(matchedTableRules, statement.sqlText());
             if (!joinRules.isEmpty()) {
@@ -234,6 +268,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (shardNames.isEmpty()) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_NOT_CONFIGURED");
         }
+        checkScope(statement, shardNames);
 
         // A genuine cross-shard JOIN (two shard-qualified tables, each independently horizontally
         // partitioned across shardNames -- a row's match may live on a DIFFERENT physical shard,
@@ -261,6 +296,15 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // rather than threading dialect-awareness through DialectTranslationStage (which this
         // scatter path bypasses entirely -- see executeOnFreshConnection's own javadoc).
         return scatterAcross(shardNames, statement.withSqlText(stripShardSchemaQualifiers(statement.sqlText())));
+    }
+
+    private static void checkScope(Statement statement, List<String> backendNames) throws SQLException {
+        if (statement.backendScope() == null) {
+            return;
+        }
+        for (String name : backendNames) {
+            BackendScope.check(statement.backendScope(), name);
+        }
     }
 
     private String stripShardSchemaQualifiers(String sql) {
@@ -299,6 +343,10 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      * set) can share it unchanged; neither the ORDER BY/LIMIT rewriting nor the aggregate-vs-plain
      * dispatch below cares which path produced {@code shardNames}. */
     private ExecutionResult scatterAcross(List<String> shardNames, Statement statement) throws SQLException {
+        // Every shard is checked against the statement's BackendScope before ANY shard connection
+        // is opened -- both executeScatterGather entry paths call this too, so a ShardJoinExecutor
+        // dispatch (which never reaches here) is covered as well. No-op when the scope is null.
+        checkScope(statement, shardNames);
 
         // Real bug fixed here, flagged by a competitive comparison against ShardingSphere: this
         // used to always append raw per-shard rows unchanged, which is correct for a plain SELECT
@@ -390,11 +438,5 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             transactionFailed = true;
             throw e;
         }
-    }
-
-    /** As {@link SchemaFederationStage}'s own matching method -- see its javadoc. Duplicated
-     * rather than shared: a tiny, self-contained check, not worth a cross-class dependency for. */
-    private static boolean isMongoConnectionString(String jdbcUrl) {
-        return jdbcUrl != null && (jdbcUrl.startsWith("mongodb://") || jdbcUrl.startsWith("mongodb+srv://"));
     }
 }

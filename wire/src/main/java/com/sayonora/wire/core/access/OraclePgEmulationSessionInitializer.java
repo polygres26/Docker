@@ -48,6 +48,17 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
 
     private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer();
 
+    // Same redundant-per-statement-round-trip fix as PostgresRlsSessionInitializer/
+    // MssqlPgEmulationSessionInitializer's own (see their javadoc) -- this instance is one per
+    // orawire session, and SET db_emulation plus the SYS_CONTEXT forwarding below only need
+    // re-asserting when the connection this executor is bound to actually changes, not on every
+    // statement against the connection it was already set on. Cached by connection IDENTITY, so a
+    // rebind (dual-exec authority switch, failover, or a fresh pooled connection) is always a
+    // cache miss and reconciles for real -- consistent with this class's own javadoc note above
+    // about db_emulation_assign_hook needing to reconcile on a genuinely new bind, not with
+    // trusting a stale enum value forever.
+    private Connection lastEmulationConnection;
+
     @Override
     public boolean runEvenWhenAnonymous() {
         // See NativeRlsSessionInitializer's own comment -- db_emulation is a protocol-level
@@ -79,6 +90,10 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
             return;
         }
         delegate.initialize(connection, accessContext);
+
+        if (connection == lastEmulationConnection) {
+            return;
+        }
 
         // Warp can be deployed against a plain, unmodified Postgres backend with no pg_oracle
         // extension installed at all -- `SET db_emulation` on such a backend used to fail loudly
@@ -120,6 +135,7 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
             // See comment above -- expected and harmless when 'warp_ctx' hasn't been
             // created via pg_oracle's oracle_catalog.create_context() in this database.
         }
+        lastEmulationConnection = connection;
     }
 
     private static boolean isRealOracleConnection(Connection connection) throws SQLException {

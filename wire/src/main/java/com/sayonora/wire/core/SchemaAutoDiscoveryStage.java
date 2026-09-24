@@ -1,6 +1,7 @@
 package com.sayonora.wire.core;
 
 import java.sql.SQLException;
+import java.util.Map;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,12 +34,26 @@ public final class SchemaAutoDiscoveryStage implements PipelineStage {
     private final BackendRegistry backendRegistry;
     private final BackendCatalogCache catalogCache;
     private final RouterStage routerStage;
+    // Threaded into the throwaway SchemaFederationStage this stage builds per statement (see
+    // handle()'s own executeWithMounts call) -- without this, a plain wire-protocol client's
+    // unqualified cross-backend query (or MCP's own query_federated auto-discovery) would silently
+    // get NO native RLS/VPD enforcement even when WARP_ACCESS_NATIVE_RLS_DIALECTS is configured,
+    // since this stage never reused the shared, config-declared SchemaFederationStage instance Main
+    // builds -- a real gap found while wiring the config-declared path, not present there.
+    private final Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers;
 
     public SchemaAutoDiscoveryStage(BackendRegistry backendRegistry, BackendCatalogCache catalogCache,
             RouterStage routerStage) {
+        this(backendRegistry, catalogCache, routerStage, Map.of());
+    }
+
+    public SchemaAutoDiscoveryStage(BackendRegistry backendRegistry, BackendCatalogCache catalogCache,
+            RouterStage routerStage,
+            Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers) {
         this.backendRegistry = backendRegistry;
         this.catalogCache = catalogCache;
         this.routerStage = routerStage;
+        this.nativeRlsInitializers = nativeRlsInitializers == null ? Map.of() : Map.copyOf(nativeRlsInitializers);
     }
 
     /** {@code null} when fewer than 2 real backends are registered -- same "absent means the
@@ -56,10 +71,21 @@ public final class SchemaAutoDiscoveryStage implements PipelineStage {
     }
 
     public static SchemaAutoDiscoveryStage fromRegistryOrNull(BackendRegistry backendRegistry, RouterStage routerStage) {
+        return fromRegistryOrNull(backendRegistry, routerStage, Map.of());
+    }
+
+    /** As the other {@code fromRegistryOrNull}, plus {@code nativeRlsInitializers} (see this
+     * class's own field javadoc) -- {@code Main} wires this from the same
+     * {@code WARP_ACCESS_NATIVE_RLS_DIALECTS} config the schema-rule-declared federation path
+     * uses, so a client relying on auto-discovery instead of a declared schema rule gets identical
+     * RLS/VPD coverage. */
+    public static SchemaAutoDiscoveryStage fromRegistryOrNull(BackendRegistry backendRegistry, RouterStage routerStage,
+            Map<SourceDialect, com.sayonora.wire.core.access.NativeRlsSessionInitializer> nativeRlsInitializers) {
         if (backendRegistry.all().size() < 2) {
             return null;
         }
-        return new SchemaAutoDiscoveryStage(backendRegistry, new BackendCatalogCache(backendRegistry), routerStage);
+        return new SchemaAutoDiscoveryStage(backendRegistry, new BackendCatalogCache(backendRegistry), routerStage,
+                nativeRlsInitializers);
     }
 
     @Override
@@ -78,12 +104,21 @@ public final class SchemaAutoDiscoveryStage implements PipelineStage {
         if (!resolution.federated()) {
             return next.proceed(statement);
         }
+        // Same per-mount BackendScope check as SchemaFederationStage#handle, same reasoning: a
+        // federated execution opens every mounted backend here, never via RouterStage/
+        // RoutingBackendExecutor. No-op when the scope is null.
+        if (statement.backendScope() != null) {
+            for (SchemaFederationStage.BackendMount mount : resolution.mounts().values()) {
+                BackendScope.check(statement.backendScope(), mount.backendName());
+            }
+        }
         log.info("schema auto-discovery: statement references {} backend(s) with no schema-rule "
                 + "configured -- executing via a federated Calcite connection instead of routing to one: {}",
                 resolution.mounts().size(), resolution.mounts().keySet());
-        Statement rewritten = new Statement(statement.tenantId(), statement.sourceDialect(),
-                resolution.rewrittenSql(), statement.bindParams(), statement.workloadClass(),
-                statement.targetBackend(), statement.accessContext());
-        return new SchemaFederationStage(java.util.List.of(), backendRegistry).executeWithMounts(resolution.mounts(), rewritten);
+        // withSqlText (not a positional re-construction) so every other component -- including
+        // backendScope -- is carried through unchanged.
+        Statement rewritten = statement.withSqlText(resolution.rewrittenSql());
+        return new SchemaFederationStage(java.util.List.of(), backendRegistry, null, null, nativeRlsInitializers)
+                .executeWithMounts(resolution.mounts(), rewritten);
     }
 }

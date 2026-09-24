@@ -34,7 +34,12 @@ public final class NativeRlsAwareDataSource implements DataSource {
 
     private Connection initializeAndReturn(Connection connection) throws SQLException {
         AccessContext context = contextSupplier.get();
-        if (context != null && !context.isAnonymous()) {
+        // Same anonymous-session guard JdbcBackendExecutor#execute already applies (see
+        // NativeRlsSessionInitializer#runEvenWhenAnonymous's own javadoc for why the override
+        // exists) -- without it, this class was the one caller that would silently skip a
+        // db-emulation-style initializer (runEvenWhenAnonymous=true) for a federated mount opened
+        // under an anonymous AccessContext, inconsistent with the single-backend executor path.
+        if (context != null && (!context.isAnonymous() || initializer.runEvenWhenAnonymous())) {
             initializer.initialize(connection, context);
         }
         return connection;

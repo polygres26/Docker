@@ -46,6 +46,20 @@ public final class BackendRegistry {
     public static final String MYSQL_NATIVE_DUAL_PORT_NAME = "mysql-native-dual-port";
     public static final String MSSQL_NATIVE_DUAL_PORT_NAME = "mssql-native-dual-port";
 
+    /** The MCP gateway's own native-backend-mode target ({@code WARP_MCP_BACKEND=oracle|mysql|
+     * sqlserver}), registered by {@code Main.java} only in that mode, under its OWN reserved name
+     * (never one of the per-protocol names above -- those are what {@link RouterStage}'s own
+     * same-dialect fallback resolves a mywire/mssqlwire/orawire native session to, and MCP must
+     * not become an ambiguous second claimant). {@code WarpMcpServer#runSql} pins every MCP
+     * statement to this name explicitly (like the dual-port names, not the fallback), with the
+     * Statement's {@code sourceDialect} set to the target's real dialect so
+     * {@code DialectTranslationStage} no-ops, and {@code RoutingBackendExecutor} treats this name
+     * as "the caller-supplied connection" -- which is how the shared pipeline (firewall, QoS,
+     * capture, stats, repair) now governs MCP native-mode traffic that used to bypass it entirely.
+     * Excluded from catalog auto-discovery like every other reserved name (see
+     * {@code BackendCatalogDiscovery}). */
+    public static final String MCP_NATIVE_DEFAULT_NAME = "mcp-native";
+
     /** A backend's operational state for routing purposes -- see {@link #resolveForRouting}.
      * {@code ACTIVE} is the default for every backend that's never had its state touched.
      * {@code DRAINING} is set explicitly via the admin drain API ahead of planned maintenance;
@@ -224,13 +238,21 @@ public final class BackendRegistry {
                 // as the trusted-host check just above.
                 int maxBackends = com.sayonora.wire.license.License.current().maxBackends();
                 if (targets.size() >= maxBackends && !targets.containsKey(name)) {
+                    // Counts EVERY engine, DynamoDB/MongoDB connector backends included -- a
+                    // federated source is a backend like any other for licensing purposes.
                     log.warn("license: REFUSING to register backend '{}' -- Developer edition is capped at {} "
-                            + "Postgres backends (see the Pricing section of the docs for Enterprise, which has "
+                            + "backends of any engine (see the Pricing section of the docs for Enterprise, which has "
                             + "no backend limit). This entry is skipped, not fatal; every other configured "
                             + "backend up to the cap is unaffected.", name, maxBackends);
                     continue;
                 }
-                targets.put(name, new BackendTarget(name, url, user, password, null, fallbackName));
+                // DynamoDB/MongoDB connector backends: parse the pseudo-URL's table/field config
+                // into the operand map SchemaFederationStage hands the connector at mount time (see
+                // ConnectorOperands for the grammar). Credentials stay unresolved references here.
+                BackendTarget probe = new BackendTarget(name, url, user, password);
+                java.util.Map<String, Object> connectorOperand = probe.isFederationOnlyConnector()
+                        ? com.sayonora.wire.core.connector.ConnectorOperands.parse(url, user, password) : null;
+                targets.put(name, new BackendTarget(name, url, user, password, null, fallbackName, connectorOperand));
             }
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
@@ -452,5 +474,20 @@ public final class BackendRegistry {
 
     public java.util.Collection<BackendTarget> all() {
         return targets.values();
+    }
+
+    /** Every registered backend whose {@link #groupInfoFor} group is {@code groupName} -- the
+     * same membership walk {@code WarpMcpServer}'s scoped discovery does, exposed so a GROUP
+     * {@code McpScope} can be turned into a concrete {@link BackendScope}. Empty (never null)
+     * for an unknown group name. Registration order. */
+    public List<String> membersOfGroup(String groupName) {
+        List<String> members = new ArrayList<>();
+        for (BackendTarget target : targets.values()) {
+            BackendGroupInfo info = groupInfoFor(target.name());
+            if (info != null && info.name().equals(groupName)) {
+                members.add(target.name());
+            }
+        }
+        return List.copyOf(members);
     }
 }

@@ -19,9 +19,16 @@ import java.sql.SQLException;
  * orawire's native mode doesn't). */
 public final class OracleJdbcConnections {
 
-    public static Connection open(ServerOptions options) throws SQLException {
-        String url = "jdbc:oracle:thin:@" + options.oracleHost() + ":" + options.oraclePort()
+    /** The one JDBC URL both {@link #open} and {@code Main}'s registered
+     * {@code BackendRegistry#MCP_NATIVE_DEFAULT_NAME} target build from -- one source, so the
+     * two can't drift (same URL + user => same {@code BackendConnectionPools} pool key). */
+    public static String jdbcUrl(ServerOptions options) {
+        return "jdbc:oracle:thin:@" + options.oracleHost() + ":" + options.oraclePort()
                 + "/" + options.oracleServiceName();
+    }
+
+    public static Connection open(ServerOptions options) throws SQLException {
+        String url = jdbcUrl(options);
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.oracleUser());
         return BackendConnectionPools.borrow(poolKey, url, options.oracleUser(), options.oraclePassword());
     }

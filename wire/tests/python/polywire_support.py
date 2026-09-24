@@ -79,25 +79,51 @@ class RealPostgres:
 class WarpProcess:
     """A real Warp process (the shaded jar), pointed at a real Postgres backend."""
 
-    def __init__(self, postgres: RealPostgres, frontend_env_var: str, frontend_name="frontend"):
+    def __init__(self, postgres: RealPostgres, frontend_env_var: str, frontend_name="frontend",
+                 extra_env=None):
         if not os.path.exists(JAR_PATH):
             raise RuntimeError(
                 f"{JAR_PATH} not found -- run `mvn -DskipTests package` in wire/ before these tests")
 
         self.frontend_port = free_port()
         self.metrics_port = free_port()
+        # Real gap found on this dev machine: Main/ServerOptions always stands up the native gRPC
+        # QueryService too (ServerOptions.java parses WARP_GRPC_PORT, default 7070), even for tests
+        # that only care about one wire frontend. A long-running, unrelated process on this box
+        # holds 7070, so every WarpProcess startup raced "Failed to bind to address 0.0.0.0:7070"
+        # -- confirmed live, not hypothetical. Always give gRPC its own free ephemeral port so no
+        # test using this harness (old or new) can collide with whatever else is on the machine.
+        self.grpc_port = free_port()
         self._frontend_name = frontend_name
 
         env = dict(os.environ)
         env.update({
-            "WARP_PG_HOST": "localhost",
-            "WARP_PG_PORT": str(postgres.port),
-            "WARP_PG_DATABASE": "postgres",
-            "WARP_PG_USER": "postgres",
-            "WARP_PG_PASSWORD": "postgres",
+            # Real bug, found live while chasing a Developer-license "instance cap" failure during
+            # a full-suite pytest run (`liveElsewhere + 1 > max`, capped at 3): ServerOptions.java
+            # actually reads WARP_HOST/WARP_PORT/WARP_DATABASE/WARP_USER/WARP_PASSWORD for its
+            # config-primary/backend Postgres connection (see README.md's own env var table and
+            # ServerOptions.parse) -- WARP_PG_HOST/WARP_PG_PORT/etc, the names previously set here,
+            # are never read anywhere in the Java source (confirmed by grepping
+            # src/main/java/com/sayonora/wire for them -- zero hits). Every WarpProcess launched by
+            # this harness was therefore silently ignoring its own disposable RealPostgres
+            # container and falling back to ServerOptions' own default (localhost:5432, i.e.
+            # whatever real Postgres happens to be listening on the dev machine's default port) --
+            # confirmed live: a stray HikariDataSource log line read
+            # "jdbc:postgresql://localhost:5432/postgres" for a WarpProcess whose RealPostgres
+            # container was actually bound to a different, randomly-chosen port. Every test in this
+            # suite (old and new) was consequently sharing ONE uncontrolled external Postgres
+            # instance instead of getting real per-test isolation, and their warp_nodes heartbeat
+            # rows piled up in it across test files until the Developer license's instance cap
+            # tripped. Fixed by using the real env var names.
+            "WARP_HOST": "localhost",
+            "WARP_PORT": str(postgres.port),
+            "WARP_DATABASE": "postgres",
+            "WARP_USER": "postgres",
+            "WARP_PASSWORD": "postgres",
             "WARP_AUTH_USER": "postgres",
             "WARP_AUTH_PASSWORD": "postgres",
             "WARP_METRICS_PORT": str(self.metrics_port),
+            "WARP_GRPC_PORT": str(self.grpc_port),
             # Default QoS admission control (rate=5/s burst=5, maxWaitMs=0 -- no queueing) is tuned
             # for production traffic shaping, not a test client's rapid connection-setup handshake;
             # without this a driver's own setup queries alone can trip "rate limit exceeded".
@@ -105,6 +131,10 @@ class WarpProcess:
             "WARP_QOS_BURST": "1000",
             frontend_env_var: str(self.frontend_port),
         })
+        # Additive hook for callers that need extra env vars on the Warp process (e.g. cache /
+        # cluster config) without every existing caller having to know about them.
+        if extra_env:
+            env.update({k: str(v) for k, v in extra_env.items()})
 
         java_bin = os.path.join(os.environ.get("JAVA_HOME", ""), "bin", "java") if os.environ.get("JAVA_HOME") else "java"
         cmd = [java_bin, *ADD_OPENS, "-jar", JAR_PATH]
