@@ -11,7 +11,6 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Property-graph storage for boltwire, backed by plain Postgres -- same "real SQL underneath, no
@@ -40,14 +39,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class PgGraphStore {
 
     private final BackendRegistry backendRegistry;
-    private final AtomicBoolean schemaEnsured = new AtomicBoolean(false);
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> schemaEnsured =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     PgGraphStore(BackendRegistry backendRegistry) {
         this.backendRegistry = backendRegistry;
     }
 
     BackendTarget defaultTarget() {
-        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        // Neo4j enabled on a backend of the frontend's set: the graph lives there (one host only --
+        // the admin API rejects a second; graph traversals are not shardable). Otherwise `default`.
+        String home = backendRegistry.storeHome(com.sayonora.wire.core.StoreType.NEO4J);
+        BackendTarget target = backendRegistry.resolveForRouting(
+                home != null ? home : BackendRegistry.DEFAULT_BACKEND_NAME);
         if (target == null) {
             throw new IllegalStateException("boltwire: no default backend configured");
         }
@@ -59,13 +63,38 @@ final class PgGraphStore {
      * per session" javadoc for why this replaced opening (and immediately returning) a fresh
      * pooled connection on every single query. */
     Connection connect() throws SQLException {
-        BackendTarget target = defaultTarget();
+        return connect(defaultTarget());
+    }
+
+    /** As {@link #connect()} but against an explicit backend (connect-time routing). */
+    Connection connect(BackendTarget target) throws SQLException {
         ensureSchema(target);
         return target.open();
     }
 
+    /** The graph host for a connect-time route: the one backend of a DATABASE route; for a set, its
+     * member with the Neo4j store enabled, else its first Postgres member. {@code null} when the
+     * route names nothing that can host a graph. */
+    BackendTarget targetFor(com.sayonora.wire.core.ConnectionRoute route) {
+        List<String> hosts = backendRegistry.connectionRouter().storeBackends(route);
+        if (hosts == null) {
+            return defaultTarget();
+        }
+        String chosen = null;
+        for (String h : hosts) {
+            if (backendRegistry.enabledStores(h).contains(com.sayonora.wire.core.StoreType.NEO4J)) {
+                chosen = h;
+                break;
+            }
+        }
+        if (chosen == null && !hosts.isEmpty()) {
+            chosen = hosts.get(0);
+        }
+        return chosen == null ? null : backendRegistry.resolveForRouting(chosen);
+    }
+
     private void ensureSchema(BackendTarget target) throws SQLException {
-        if (!schemaEnsured.compareAndSet(false, true)) {
+        if (schemaEnsured.putIfAbsent(target.jdbcUrl(), Boolean.TRUE) != null) {
             return;
         }
         // Real DDL, loaded from ddl/postgres/boltwire_graph_schema.sql -- see that file's own

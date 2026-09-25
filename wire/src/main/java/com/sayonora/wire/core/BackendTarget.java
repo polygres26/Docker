@@ -192,7 +192,9 @@ public record BackendTarget(String name, String jdbcUrl, String user, String pas
         // connection attempt rather than requiring a restart. A literal password round-trips
         // through SecretRef.parse/SecretResolver.resolve as a no-op.
         String resolvedPassword = com.sayonora.wire.secrets.SecretResolver.resolve(password);
-        return BackendConnectionPools.borrow(BackendConnectionPools.poolKeyFor(jdbcUrl, user), jdbcUrl, user, resolvedPassword);
+        String poolKey = BackendConnectionPools.poolKeyFor(jdbcUrl, user);
+        BackendConnectionPools.registerBackendAlias(name, poolKey);
+        return BackendConnectionPools.borrow(poolKey, jdbcUrl, user, resolvedPassword);
     }
 
     /** The {@code ERR_*_ROUTING_UNSUPPORTED} catalog key for a given federation-only dialect --

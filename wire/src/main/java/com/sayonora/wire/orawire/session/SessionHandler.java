@@ -74,7 +74,24 @@ public final class SessionHandler implements Runnable {
 
             new ProtocolNegotiation().perform(reader, out);
 
-            O5LogonHandler.AuthResult auth = new O5LogonHandler().authenticate(reader, out);
+            // Connect-time backend routing: the TNS service name (and the verified login user) select a
+            // backend or backend set. Resolved inside authentication, after the password is verified.
+            final com.sayonora.wire.core.ConnectionRoute[] routed = {com.sayonora.wire.core.ConnectionRoute.UNROUTED};
+            O5LogonHandler.AuthResult auth = new O5LogonHandler().authenticate(reader, out, user -> {
+                if (backendRegistry == null) {
+                    return null;
+                }
+                routed[0] = backendRegistry.connectionRouter().resolve(
+                        com.sayonora.wire.core.ConnectionRouter.PROTO_ORACLE, descriptor.serviceName(), user);
+                return routed[0].isRejected()
+                        ? "ORA-12514: TNS:listener does not currently know of service requested in connect descriptor"
+                        : null;
+            });
+            if (routed[0].isRejected()) {
+                log.warn("connection refused: service {} is not routable ({})", descriptor.serviceName(),
+                        routed[0].description());
+                return;
+            }
             if (!auth.success()) {
                 log.warn("authentication failed for user={}", auth.username());
                 if (auditLog != null) {
@@ -101,10 +118,10 @@ public final class SessionHandler implements Runnable {
 
             String replicationBackends = System.getenv("WARP_REPLICATION_BACKENDS");
             if (replicationBackends != null && !replicationBackends.isBlank()) {
-                runReplicated(reader, out, descriptor, auth, replicationBackends, accessContext);
+                runReplicated(reader, out, descriptor, auth, replicationBackends, accessContext, routed[0]);
             } else {
 
-                runPlain(reader, out, descriptor, auth, accessContext);
+                runPlain(reader, out, descriptor, auth, accessContext, routed[0]);
             }
         } catch (Exception e) {
             log.warn("session terminated: {}", e.getMessage(), e);
@@ -112,11 +129,14 @@ public final class SessionHandler implements Runnable {
     }
 
     private void runPlain(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,
-            O5LogonHandler.AuthResult auth, com.sayonora.wire.core.AccessContext accessContext) throws Exception {
+            O5LogonHandler.AuthResult auth, com.sayonora.wire.core.AccessContext accessContext,
+            com.sayonora.wire.core.ConnectionRoute route) throws Exception {
         try (com.sayonora.wire.core.LazyPooledConnection pgConnection = backendPool.borrowConnection(descriptor, auth.username());
                 com.sayonora.wire.core.LazyPooledConnection oracleConnection = openDualExecOracleConnection()) {
-            new RequestLoop(reader, out, pgConnection, oracleConnection, null, null, options, sharedStages, backendRegistry,
-                    null, null, accessContext).run();
+            RequestLoop loop = new RequestLoop(reader, out, pgConnection, oracleConnection, null, null, options,
+                    sharedStages, backendRegistry, null, null, accessContext);
+            loop.setConnectionRoute(route);
+            loop.run();
         }
     }
 
@@ -149,7 +169,8 @@ public final class SessionHandler implements Runnable {
 
     private void runReplicated(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,
             O5LogonHandler.AuthResult auth, String replicationBackendsSpec,
-            com.sayonora.wire.core.AccessContext accessContext) throws Exception {
+            com.sayonora.wire.core.AccessContext accessContext,
+            com.sayonora.wire.core.ConnectionRoute route) throws Exception {
         List<String> names = List.of(replicationBackendsSpec.split(",")).stream()
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
 
@@ -159,8 +180,10 @@ public final class SessionHandler implements Runnable {
                 for (String name : names) {
                     replicaConnections.add(requireBackend(name).openManualCommit());
                 }
-                new RequestLoop(reader, out, pgConnection, null, replicaConnections, null, options, sharedStages,
-                        backendRegistry, null, null, accessContext).run();
+                RequestLoop loop = new RequestLoop(reader, out, pgConnection, null, replicaConnections, null, options,
+                        sharedStages, backendRegistry, null, null, accessContext);
+                loop.setConnectionRoute(route);
+                loop.run();
             } finally {
                 for (Connection replica : replicaConnections) {
                     closeQuietly(replica);

@@ -16,9 +16,9 @@ import pytest
 import requests
 from opensearchpy import OpenSearch
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 

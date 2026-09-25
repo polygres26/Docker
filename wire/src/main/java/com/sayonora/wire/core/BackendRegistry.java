@@ -148,6 +148,7 @@ public final class BackendRegistry {
             Map<String, BackendTarget> staticExtraTargets, Map<String, List<String>> backendSets,
             Map<String, Boolean> backendGroupSharded, Map<String, String> backendToGroupName) {
         this.targets = Map.copyOf(targets);
+        this.declarationOrder = List.copyOf(targets.keySet());
         this.shardGroup = List.copyOf(shardGroup);
         this.defaultTarget = defaultTarget;
         this.staticExtraTargets = Map.copyOf(staticExtraTargets);
@@ -261,13 +262,16 @@ public final class BackendRegistry {
                     DEFAULT_BACKEND_NAME);
         }
         targets.putAll(staticExtraTargets);
+        List<String> declarationOrder = List.copyOf(targets.keySet());
         List<String> shardGroup = shardGroupSpec == null || shardGroupSpec.isBlank()
                 ? List.of()
                 : List.of(shardGroupSpec.split(",")).stream().map(String::trim).toList();
         Map<String, List<String>> backendSets = parseBackendSets(backendSetsSpec, targets.keySet());
         ParsedBackendGroups parsedGroups = parseBackendGroups(backendGroupsSpec, targets.keySet());
-        return new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets,
+        BackendRegistry built = new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets,
                 backendSets, parsedGroups.sharded(), parsedGroups.backendToGroupName());
+        built.declarationOrder = declarationOrder;
+        return built;
     }
 
     private static Map<String, List<String>> parseBackendSets(String spec, java.util.Set<String> registeredNames) {
@@ -399,6 +403,305 @@ public final class BackendRegistry {
         this.backendSets = fresh.backendSets;
         this.backendGroupSharded = fresh.backendGroupSharded;
         this.backendToGroupName = fresh.backendToGroupName;
+        this.declarationOrder = fresh.declarationOrder;
+        this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
+        touch();
+    }
+
+    // Operator-supplied, human-readable descriptions (WARP_BACKEND_DESCRIPTIONS /
+    // WARP_BACKEND_GROUP_DESCRIPTIONS -- a JSON object of name -> text, persisted in warp_config
+    // like every other backend setting). They surface in the MCP list_backends/describe_backend
+    // tools and the admin GET /api/backends. Deliberately NOT part of the reload() parse: a
+    // description never affects routing, so a malformed value must never fail a backend reload.
+    private volatile Map<String, String> backendDescriptions = Map.of();
+    private volatile Map<String, String> groupDescriptions = Map.of();
+
+    /** Replaces both description maps from their JSON-object config strings (null/blank = none).
+     * A malformed JSON value is logged and treated as empty, never thrown. */
+    public void applyDescriptions(String backendDescriptionsJson, String groupDescriptionsJson) {
+        this.backendDescriptions = parseDescriptionMap("WARP_BACKEND_DESCRIPTIONS", backendDescriptionsJson);
+        this.groupDescriptions = parseDescriptionMap("WARP_BACKEND_GROUP_DESCRIPTIONS", groupDescriptionsJson);
+    }
+
+    static Map<String, String> parseDescriptionMap(String label, String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            Map<String, String> out = new LinkedHashMap<>();
+            for (Map.Entry<String, com.google.gson.JsonElement> e : o.entrySet()) {
+                if (!e.getValue().isJsonNull()) {
+                    out.put(e.getKey(), e.getValue().getAsString());
+                }
+            }
+            return Map.copyOf(out);
+        } catch (RuntimeException e) {
+            log.warn("{} is not a valid JSON object of name -> description ({}); ignoring it", label, e.toString());
+            return Map.of();
+        }
+    }
+
+    /** The operator's description of backend {@code name}, or {@code null}. */
+    public String descriptionOf(String name) {
+        return backendDescriptions.get(name);
+    }
+
+    /** The operator's description of backend group/set {@code groupName}, or {@code null}. */
+    public String groupDescriptionOf(String groupName) {
+        return groupDescriptions.get(groupName);
+    }
+
+    /** Names of the {@code WARP_BACKEND_SETS} sets that contain {@code backendName}. */
+    // ---- Backend sets (the one user-facing grouping concept) and enabled stores ---------------
+    //
+    // User-facing "backend set" == the mandatory-partition WARP_BACKEND_GROUPS concept: every
+    // backend belongs to exactly one set. A backend with no declared group lives in the implicit
+    // set named DEFAULT_SET_NAME, so existing configs need no migration. The older multi-membership
+    // WARP_BACKEND_SETS is unchanged and remains what router rules can reference by name; it is
+    // an advanced router alias and not a "backend set" in the user-facing sense (see docs).
+
+    public static final String DEFAULT_SET_NAME = "default";
+
+    // Bumped after every mutation of the backend/set model (reload, applyStoreConfig) and of the
+    // connect-time route table, so ConnectionRouter's immutable lookup snapshot rebuilds lazily.
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+    private final ConnectionRouter connectionRouter = new ConnectionRouter(this, ConnectionRouter.modeFromEnv());
+
+    public long generation() {
+        return generation.get();
+    }
+
+    void touch() {
+        generation.incrementAndGet();
+    }
+
+    /** Connect-time routing (database/service name -> backend or set); see {@link ConnectionRouter}. */
+    public ConnectionRouter connectionRouter() {
+        return connectionRouter;
+    }
+
+    private volatile List<String> declarationOrder = List.of();
+    private volatile Map<String, List<StoreType>> enabledStores = Map.of();
+    private volatile List<String> declaredSetNames = List.of();
+
+    /** Backend names in the order they were declared in WARP_BACKENDS (implicit default first). */
+    public List<String> orderedNames() {
+        return declarationOrder;
+    }
+
+    /**
+     * Applies the enabled-store and declared-set configuration ({@code warp_config.backendStores},
+     * {@code backendSetNames}). Grammar: stores {@code backend=store1,store2|backend2=store3};
+     * set names {@code a,b,c}. Never throws -- a malformed entry is logged and skipped so a bad
+     * value cannot break a config reload (the admin API validates strictly before writing).
+     */
+    public void applyStoreConfig(String storesSpec, String setNamesSpec) {
+        this.enabledStores = parseStoreSpec(storesSpec);
+        List<String> names = new ArrayList<>();
+        if (setNamesSpec != null) {
+            for (String n : setNamesSpec.split(",")) {
+                if (!n.isBlank() && !names.contains(n.trim())) {
+                    names.add(n.trim());
+                }
+            }
+        }
+        this.declaredSetNames = List.copyOf(names);
+        this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
+        touch();
+    }
+
+    public static Map<String, List<StoreType>> parseStoreSpec(String spec) {
+        Map<String, List<StoreType>> out = new LinkedHashMap<>();
+        if (spec == null || spec.isBlank()) {
+            return out;
+        }
+        for (String entry : spec.split("\\|")) {
+            int eq = entry.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String backend = entry.substring(0, eq).trim();
+            List<StoreType> stores = new ArrayList<>();
+            for (String s : entry.substring(eq + 1).split(",")) {
+                if (s.isBlank()) {
+                    continue;
+                }
+                try {
+                    StoreType t = StoreType.parse(s);
+                    if (!stores.contains(t)) {
+                        stores.add(t);
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("backend registry: ignoring unknown store \"{}\" for backend '{}'", s, backend);
+                }
+            }
+            if (!stores.isEmpty()) {
+                out.put(backend, List.copyOf(stores));
+            }
+        }
+        return out;
+    }
+
+    public static String renderStoreSpec(Map<String, List<StoreType>> stores) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, List<StoreType>> e : stores.entrySet()) {
+            if (e.getValue().isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('|');
+            }
+            sb.append(e.getKey()).append('=');
+            for (int i = 0; i < e.getValue().size(); i++) {
+                sb.append(i == 0 ? "" : ",").append(e.getValue().get(i).id());
+            }
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /** The backend set {@code backendName} belongs to, or {@code null} for an unknown backend. */
+    public String setOf(String backendName) {
+        BackendGroupInfo info = groupInfoFor(backendName);
+        if (info == null) {
+            return null;
+        }
+        return UNGROUPED_GROUP_NAME.equals(info.name()) ? DEFAULT_SET_NAME : info.name();
+    }
+
+    /** Member backends of a set, in declaration order, excluding Warp's own reserved native targets. */
+    public List<String> membersOfSet(String setName) {
+        List<String> out = new ArrayList<>();
+        for (String name : declarationOrder) {
+            if (targets.containsKey(name) && !BackendCatalogDiscovery.isReservedNativeName(name)
+                    && setName.equals(setOf(name))) {
+                out.add(name);
+            }
+        }
+        return out;
+    }
+
+    /** All set names: the implicit "default" set first (when it has members or is declared), then
+     * declared and group-derived sets in order. */
+    public List<String> setNames() {
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        boolean defaultUsed = declaredSetNames.contains(DEFAULT_SET_NAME);
+        for (String n : declarationOrder) {
+            if (targets.containsKey(n) && !BackendCatalogDiscovery.isReservedNativeName(n)
+                    && DEFAULT_SET_NAME.equals(setOf(n))) {
+                defaultUsed = true;
+            }
+        }
+        if (defaultUsed) {
+            names.add(DEFAULT_SET_NAME);
+        }
+        names.addAll(declaredSetNames);
+        names.addAll(backendGroupSharded.keySet());
+        return List.copyOf(names);
+    }
+
+    public List<StoreType> enabledStores(String backendName) {
+        return enabledStores.getOrDefault(backendName, List.of());
+    }
+
+    /**
+     * The set a protocol frontend serves: its {@code WARP_<PROTO>_SET} env var when that names an
+     * existing set, otherwise the set holding the {@code default} backend (or the first set).
+     */
+    public String frontendSet(StoreType store) {
+        String configured = System.getenv(store.setEnvVar());
+        List<String> sets = setNames();
+        if (configured != null && !configured.isBlank()) {
+            if (sets.contains(configured.trim())) {
+                return configured.trim();
+            }
+            log.warn("backend registry: {}='{}' is not an existing backend set ({}); using the default set",
+                    store.setEnvVar(), configured, sets);
+        }
+        String defaultBackendSet = setOf(DEFAULT_BACKEND_NAME);
+        if (defaultBackendSet != null) {
+            return defaultBackendSet;
+        }
+        return sets.isEmpty() ? null : sets.get(0);
+    }
+
+    /**
+     * The backends HOSTING {@code store}: Postgres backends of the frontend's set that enable it,
+     * in declaration order (the hash order -- stable as long as the host list is unchanged).
+     * Empty when the store is enabled nowhere, in which case frontends keep their legacy behavior
+     * (WARP_SHARD_BACKENDS group where that existed, otherwise the {@code default} backend).
+     */
+    public List<String> storeHosts(StoreType store) {
+        if (enabledStores.isEmpty()) {
+            return List.of();
+        }
+        // hot path (every DynamoDB/SQS/... call): computed once per config version, dropped on reload
+        java.util.concurrent.ConcurrentHashMap<StoreType, List<String>> cache = hostsCache;
+        List<String> cached = cache.get(store);
+        if (cached != null) {
+            return cached;
+        }
+        List<String> computed = computeStoreHosts(store);
+        cache.put(store, computed);
+        return computed;
+    }
+
+    private volatile java.util.concurrent.ConcurrentHashMap<StoreType, List<String>> hostsCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private List<String> computeStoreHosts(StoreType store) {
+        String set = frontendSet(store);
+        if (set == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String name : membersOfSet(set)) {
+            BackendTarget t = targets.get(name);
+            if (t != null && t.dialect() == SourceDialect.POSTGRES && enabledStores(name).contains(store)) {
+                out.add(name);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /** {@link #storeHosts} when the store is enabled somewhere, else the legacy {@link #shardGroup()}. */
+    public List<String> storeShardGroup(StoreType store) {
+        List<String> hosts = storeHosts(store);
+        return hosts.isEmpty() ? shardGroup : hosts;
+    }
+
+    /** First host of an enabled store (home of its catalog), or {@code null} when not enabled. */
+    public String storeHome(StoreType store) {
+        List<String> hosts = storeHosts(store);
+        return hosts.isEmpty() ? null : hosts.get(0);
+    }
+
+    /** Every (backend, stores) pair currently enabled on a registered Postgres backend. */
+    public Map<String, List<StoreType>> allEnabledStores() {
+        Map<String, List<StoreType>> out = new LinkedHashMap<>();
+        for (String name : declarationOrder) {
+            BackendTarget t = targets.get(name);
+            List<StoreType> s = enabledStores.get(name);
+            if (t != null && s != null && !s.isEmpty() && t.dialect() == SourceDialect.POSTGRES) {
+                out.put(name, s);
+            }
+        }
+        return out;
+    }
+
+    public List<String> backendSetsContaining(String backendName) {
+        List<String> out = new ArrayList<>();
+        backendSets.forEach((set, members) -> {
+            if (members.contains(backendName)) {
+                out.add(set);
+            }
+        });
+        return out;
+    }
+
+    /** Names of every declared {@code WARP_BACKEND_GROUPS} group (excludes the synthetic ungrouped one). */
+    public List<String> groupNames() {
+        return List.copyOf(backendGroupSharded.keySet());
     }
 
     /** Every backend's mandatory group membership -- see {@link BackendGroupInfo}'s own javadoc.

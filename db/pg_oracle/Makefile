@@ -1,4 +1,4 @@
-# pg_oracle -- Oracle compatibility extension for Postgres (part of the Polygres collection).
+# pg_oracle -- Oracle compatibility extension for Postgres (part of the Shim collection).
 # Standard PGXS build -- installs against whatever `pg_config` on PATH resolves to.
 
 EXTENSION = pg_oracle

@@ -124,7 +124,7 @@ class OpenSearchWireIntegrationTest {
     @Test
     void boolQueryCombinesMustAndMustNot() throws IOException {
         JsonObject result = search("{\"query\":{\"bool\":{\"must\":[{\"term\":{\"category\":\"electronics\"}}],"
-                + "\"must_not\":[{\"term\":{\"name\":\"Mechanical Keyboard\"}}]}}}");
+                + "\"must_not\":[{\"term\":{\"name.keyword\":\"Mechanical Keyboard\"}}]}}}");
         JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
         assertEquals(1, hits.size());
         assertEquals("1", hits.get(0).getAsJsonObject().get("_id").getAsString());
@@ -142,7 +142,7 @@ class OpenSearchWireIntegrationTest {
 
     @Test
     void sortAndPaginationRespectOffsetAndSize() throws IOException {
-        JsonObject result = search("{\"size\":1,\"from\":1,\"sort\":[{\"name\":{\"order\":\"asc\"}}]}");
+        JsonObject result = search("{\"size\":1,\"from\":1,\"sort\":[{\"name.keyword\":{\"order\":\"asc\"}}]}");
         JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
         assertEquals(1, hits.size());
         // Alphabetical: Garden Hose, Mechanical Keyboard, Wireless Mouse -- from=1 skips the first.
@@ -160,23 +160,23 @@ class OpenSearchWireIntegrationTest {
         JsonObject doc4 = send("GET", "/products/_doc/4", null);
         assertEquals(true, doc4.get("found").getAsBoolean());
 
-        // Real OpenSearch's GET returns HTTP 200 with found=false for a missing document, not a
-        // 404 -- see OpenSearchWireServer#handleGetDoc's javadoc for why this matters live.
+        // Real OpenSearch answers GET of a missing document with HTTP 404 and {"found": false}.
         JsonObject doc3 = send("GET", "/products/_doc/3", null);
-        assertEquals(200, doc3.get("__status").getAsInt());
+        assertEquals(404, doc3.get("__status").getAsInt());
         assertEquals(false, doc3.get("found").getAsBoolean());
     }
 
     @Test
     void unrecognizedQueryClauseFailsLoudlyInsteadOfMatchingEverything() throws IOException {
-        JsonObject result = search("{\"query\":{\"wildcard\":{\"name\":\"*mouse*\"}}}");
+        JsonObject result = search("{\"query\":{\"span_term\":{\"name\":\"mouse\"}}}");
         assertEquals(400, result.get("__status").getAsInt());
         assertEquals("parsing_exception", result.getAsJsonObject("error").get("type").getAsString());
+        assertTrue(result.getAsJsonObject("error").get("reason").getAsString().contains("not supported"));
     }
 
     @Test
     void termsAggregationGroupsWithNestedAvgMetric() throws IOException {
-        JsonObject result = search("{\"size\":0,\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category\",\"size\":10},"
+        JsonObject result = search("{\"size\":0,\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category.keyword\",\"size\":10},"
                 + "\"aggs\":{\"avg_price\":{\"avg\":{\"field\":\"price\"}}}}}}");
         assertEquals(0, result.getAsJsonObject("hits").getAsJsonArray("hits").size());
         JsonArray buckets = result.getAsJsonObject("aggregations").getAsJsonObject("by_category").getAsJsonArray("buckets");
@@ -202,9 +202,9 @@ class OpenSearchWireIntegrationTest {
         JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
         assertEquals(1, hits.size());
         double score = hits.get(0).getAsJsonObject().get("_score").getAsDouble();
-        // A real ts_rank value for a single-term match against a short description is well under
-        // 1.0 -- V1 always returned a flat 1.0 here regardless of the actual text.
-        assertTrue(score > 0.0 && score < 1.0, "expected a real ts_rank score in (0, 1), got " + score);
+        // Lucene BM25 for one matching term in a 3-document index (idf = ln(1 + (3 - 1 + 0.5) / (1 + 0.5)) ...): a real
+        // relevance value, not the flat 1.0 the first version returned.
+        assertTrue(score > 0.0 && Math.abs(score - 1.0) > 1e-6, "expected a real BM25 score, got " + score);
     }
 
     @Test
@@ -240,11 +240,16 @@ class OpenSearchWireIntegrationTest {
     }
 
     @Test
-    void aggregationsWithVectorSearchFailsLoudlyInsteadOfSilentlyDroppingAggs() throws IOException {
-        JsonObject result = search("{\"query\":{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":3}}},"
-                + "\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category\"}}}}");
-        assertEquals(400, result.get("__status").getAsInt());
-        assertEquals("action_request_validation_exception", result.getAsJsonObject("error").get("type").getAsString());
+    void aggregationsRunOverTheVectorSearchResult() throws IOException {
+        JsonObject result = search("{\"size\":0,\"query\":{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":2}}},"
+                + "\"aggs\":{\"by_category\":{\"terms\":{\"field\":\"category.keyword\"}}}}");
+        assertEquals(200, result.get("__status").getAsInt());
+        JsonArray buckets = result.getAsJsonObject("aggregations").getAsJsonObject("by_category").getAsJsonArray("buckets");
+        long total = 0;
+        for (var b : buckets) {
+            total += b.getAsJsonObject().get("doc_count").getAsLong();
+        }
+        assertEquals(2, total, "the aggregation sees exactly the k=2 nearest documents");
     }
 
     @Test

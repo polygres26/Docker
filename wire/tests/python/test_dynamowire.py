@@ -18,9 +18,9 @@ import pytest
 import requests
 from botocore.config import Config
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 
@@ -133,7 +133,7 @@ def test_write_rtt_baseline(warp):
     # such file) -- there is no prior ~0.82ms-class documented baseline to defer to here. This run
     # establishes a first-ever baseline instead (see docs/RTT_BASELINE_2026.md). Observed
     # avgRttMs rounds to 1ms once the harness's real backend-isolation bug (see
-    # polywire_support.py's own comment on WARP_HOST/WARP_PORT) was fixed and RTT started being
+    # warp_test_support.py's own comment on WARP_HOST/WARP_PORT) was fixed and RTT started being
     # measured against the actual per-test disposable Postgres container over its real
     # docker-published loopback port, not the faster native-host path this test originally (and
     # wrongly) exercised. <2ms is the reasoned bar for dynamowire's real JSON-marshaling cost plus

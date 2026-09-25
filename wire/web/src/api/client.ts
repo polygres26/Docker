@@ -226,14 +226,6 @@ export async function getWireConfig(): Promise<WireConfig> {
   return api('/api/config')
 }
 
-/** Names of the backend sets in a `backendSets` spec ({@code name=b1,b2,...|name2=...}), without
- * pulling in the full row-editing logic `BackendSets.tsx` has -- shared by any page (Dashboard,
- * Metrics) that just wants a count/list, not the editor itself. */
-export function parseBackendSetNames(spec: string | null): string[] {
-  if (!spec || !spec.trim()) return []
-  return spec.split('|').map((entry) => entry.slice(0, entry.indexOf('=')).trim()).filter(Boolean)
-}
-
 export async function saveWireConfig(partial: Partial<WireConfig>): Promise<{ ok: boolean; version: number }> {
   return api('/api/config', { method: 'PUT', body: JSON.stringify(partial) })
 }
@@ -353,6 +345,9 @@ export interface BackendInfo {
   name: string
   jdbcUrl: string
   dialect: string | null
+  type?: string
+  backendSet?: string | null
+  enabledStores?: string[]
 }
 
 export interface TableInfo {
@@ -404,6 +399,139 @@ export async function testBackendConnection(params: { jdbcUrl: string; user: str
 
 export async function testConfiguredBackend(name: string): Promise<BackendTestResult> {
   return api(`/api/backends/${encodeURIComponent(name)}/test`, { method: 'POST' })
+}
+
+// --- Backend sets: /api/backend-sets (the one place backends are added, edited and removed) ---
+
+export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb' | 's3'
+
+export interface StoreInfo {
+  id: StoreId
+  label: string
+  description: string
+  shardable: boolean
+  setEnvVar: string
+}
+
+export interface SetBackend {
+  name: string
+  set: string
+  type: string
+  family: string
+  dialect: string | null
+  url: string
+  user: string | null
+  description: string | null
+  fallback: string | null
+  isDefault: boolean
+  /** The exact database / service name a client connects with to reach ONLY this backend. */
+  connectAs: string
+  enabledStores: StoreId[]
+  canHostStores: boolean
+  state: string
+  health?: { ok: boolean; message: string; tookMs: number; serverVersion: string | null }
+}
+
+export interface SetStoreHosting {
+  hosts: string[]
+  sharded: boolean
+  servedFromThisSet: boolean
+  frontendSetEnvVar: string
+}
+
+export interface BackendSetInfo {
+  name: string
+  description: string | null
+  isDefaultSet: boolean
+  /** The database / service name that selects this whole set; null when a backend of the same name shadows it. */
+  connectAs: string | null
+  backends: SetBackend[]
+  stores: Partial<Record<StoreId, SetStoreHosting>>
+}
+
+export interface ConnectionRoute {
+  id: string
+  protocol?: string
+  database: string
+  user?: string
+  target: string
+  targetKind: 'backend' | 'set'
+  defaultBackend?: string
+}
+
+export interface ConnectionRouting {
+  /** implicit (default) | strict | off -- WARP_CONNECT_ROUTING */
+  mode: 'implicit' | 'strict' | 'off'
+  routes: ConnectionRoute[]
+}
+
+export type ConnectionRouteDraft = Pick<ConnectionRoute, 'database' | 'target'>
+  & Partial<Pick<ConnectionRoute, 'protocol' | 'user' | 'defaultBackend'>>
+
+export interface BackendSetsResponse {
+  connectionRouting: ConnectionRouting
+  sets: BackendSetInfo[]
+  maxBackends: number
+  backendCount: number
+  stores: StoreInfo[]
+}
+
+export interface RebalanceNotice { store: StoreId; before: string[]; after: string[]; message: string }
+
+export interface BackendWriteResult {
+  ok: boolean
+  version: number
+  rebalanceRequired: RebalanceNotice[]
+  warnings: string[]
+}
+
+export interface BackendDraft {
+  name: string
+  url: string
+  user: string
+  password: string
+  description: string
+  enabledStores: StoreId[]
+}
+
+const setPath = (set: string) => `/api/backend-sets/${encodeURIComponent(set)}`
+const backendPath = (set: string, name: string) => `${setPath(set)}/backends/${encodeURIComponent(name)}`
+
+export async function listBackendSets(health = false): Promise<BackendSetsResponse> {
+  return api(`/api/backend-sets${health ? '?health=true' : ''}`)
+}
+
+export async function createBackendSet(name: string, description: string): Promise<BackendWriteResult> {
+  return api('/api/backend-sets', { method: 'POST', body: JSON.stringify({ name, description: description || null }) })
+}
+
+export async function deleteBackendSet(set: string): Promise<BackendWriteResult> {
+  return api(setPath(set), { method: 'DELETE' })
+}
+
+export async function addBackendToSet(set: string, draft: BackendDraft): Promise<BackendWriteResult> {
+  return api(`${setPath(set)}/backends`, { method: 'POST', body: JSON.stringify(draft) })
+}
+
+/** Blank `password` keeps the stored one (the API never returns it). */
+export async function updateSetBackend(set: string, name: string, draft: Partial<Omit<BackendDraft, 'name'>>): Promise<BackendWriteResult> {
+  return api(backendPath(set, name), { method: 'PATCH', body: JSON.stringify(draft) })
+}
+
+export async function deleteSetBackend(set: string, name: string): Promise<BackendWriteResult> {
+  return api(backendPath(set, name), { method: 'DELETE' })
+}
+
+export async function addConnectionRoute(draft: ConnectionRouteDraft): Promise<ConnectionRoute> {
+  return api('/api/connection-routes', { method: 'POST', body: JSON.stringify(draft) })
+}
+
+export async function deleteConnectionRoute(id: string): Promise<{ ok: boolean; version: number }> {
+  return api(`/api/connection-routes/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function testSetBackend(set: string, name: string): Promise<BackendTestResult> {
+  return api(`${backendPath(set, name)}/test`, { method: 'POST' })
 }
 
 // --- Federation plan history: /api/federation/plans (ShardJoinExecutor/SchemaFederationStage's

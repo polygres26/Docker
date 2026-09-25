@@ -46,18 +46,15 @@ import java.sql.Statement;
  */
 public final class OraclePgEmulationSessionInitializer implements NativeRlsSessionInitializer {
 
-    private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer();
+    private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer(false, true);
 
-    // Same redundant-per-statement-round-trip fix as PostgresRlsSessionInitializer/
-    // MssqlPgEmulationSessionInitializer's own (see their javadoc) -- this instance is one per
-    // orawire session, and SET db_emulation plus the SYS_CONTEXT forwarding below only need
-    // re-asserting when the connection this executor is bound to actually changes, not on every
-    // statement against the connection it was already set on. Cached by connection IDENTITY, so a
-    // rebind (dual-exec authority switch, failover, or a fresh pooled connection) is always a
-    // cache miss and reconciles for real -- consistent with this class's own javadoc note above
-    // about db_emulation_assign_hook needing to reconcile on a genuinely new bind, not with
-    // trusting a stale enum value forever.
-    private Connection lastEmulationConnection;
+    // What db_emulation / SYS_CONTEXT / warp.* state a physical connection already carries is recorded on the
+    // connection itself (PhysicalSessionState), never on this per-session instance: with connection
+    // multiplexing (SessionConnectionLease / LazyPooledConnection release) a session's next statement can land
+    // on a different physical connection, and other sessions take turns on each one. A connection whose
+    // recorded state already matches costs zero round trips; a different or unknown one is reconciled for
+    // real -- consistent with this class's own javadoc note above about db_emulation_assign_hook needing to
+    // reconcile on a genuinely new bind, not with trusting a stale enum value.
 
     @Override
     public boolean runEvenWhenAnonymous() {
@@ -91,7 +88,9 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
         }
         delegate.initialize(connection, accessContext);
 
-        if (connection == lastEmulationConnection) {
+        PhysicalSessionState.State st = PhysicalSessionState.of(connection);
+        boolean emulationCurrent = !st.emulationUnknown && "oracle".equals(st.emulation);
+        if (emulationCurrent && accessContext.equals(st.sysContext)) {
             return;
         }
 
@@ -113,9 +112,7 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
             return;
         }
 
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("SET db_emulation = 'oracle'");
-        }
+        SessionStateReconciler.ensureEmulation(connection, st, "oracle");
 
         // Best-effort SYS_CONTEXT propagation -- pg_oracle's own create_context() is owner-only
         // (see db/pg_oracle/README.md's DBMS_NETWORK_ACL_ADMIN-pattern privilege model), so the
@@ -135,7 +132,7 @@ public final class OraclePgEmulationSessionInitializer implements NativeRlsSessi
             // See comment above -- expected and harmless when 'warp_ctx' hasn't been
             // created via pg_oracle's oracle_catalog.create_context() in this database.
         }
-        lastEmulationConnection = connection;
+        st.sysContext = accessContext;
     }
 
     private static boolean isRealOracleConnection(Connection connection) throws SQLException {

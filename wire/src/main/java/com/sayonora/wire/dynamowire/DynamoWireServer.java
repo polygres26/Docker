@@ -26,10 +26,24 @@ public final class DynamoWireServer {
     private final PgItemStore store;
     private final OperationHandlers handlers;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
+    private final TtlSweeper ttlSweeper;
+
+    /** Runs one TTL expiry pass now (also what the background sweeper does on its timer); returns the number of expired items removed. */
+    public int sweepExpiredNow() {
+        return ttlSweeper.sweepOnce();
+    }
 
     /** Lets {@code Main} wire this server's own table-schema knowledge (physical table name ->
      * primary/sort key columns) into CacheStage's SQL-side row-cache lookup, once this server has
      * actually been constructed -- see CacheStage#setDynamoTableLookup. */
+    /** Embedded entry point for the MCP gateway's DynamoDB-kind tools: runs one DynamoDB API
+     * operation through the SAME {@code OperationHandlers} (and therefore the same store, row-cache
+     * invalidation, and expression evaluators) the HTTP frontend uses. Throws
+     * {@link DynamoException}/RuntimeException exactly like the HTTP path would map to an error. */
+    public JsonObject invoke(String operation, JsonObject request) {
+        return handlers.dispatch(operation, request);
+    }
+
     public PgItemStore store() {
         return store;
     }
@@ -95,6 +109,7 @@ public final class DynamoWireServer {
             com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.handlers = new OperationHandlers(store, cache, sqlMetrics);
+        this.ttlSweeper = new TtlSweeper(store, cache, TtlSweeper.configuredIntervalMs());
         this.sqlMetrics = sqlMetrics;
         com.sayonora.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
                 new com.sayonora.wire.dynamowire.auth.SigV4Verifier(awsIamCredentials);
@@ -126,6 +141,11 @@ public final class DynamoWireServer {
     private void handleRequest(HttpServletRequest request, HttpServletResponse response, String body) throws IOException {
         response.setContentType("application/x-amz-json-1.0");
         String amzTarget = request.getHeader("X-Amz-Target");
+        if (amzTarget != null && amzTarget.startsWith("DynamoDBStreams_20120810.")) {
+            writeError(response, 400, "UnsupportedOperationException",
+                    "DynamoDB Streams is not supported by Warp's dynamowire: " + amzTarget.substring(amzTarget.indexOf('.') + 1));
+            return;
+        }
         if (amzTarget == null || !amzTarget.startsWith(TARGET_PREFIX)) {
             writeError(response, 400, "UnknownOperationException", "Missing or unrecognized X-Amz-Target header: " + amzTarget);
             return;
@@ -144,8 +164,19 @@ public final class DynamoWireServer {
             response.setStatus(HttpServletResponse.SC_OK);
             response.getWriter().write(responseJson.toString());
         } catch (DynamoException e) {
-            writeError(response, statusForError(e.dynamoErrorType), e.dynamoErrorType, e.getMessage());
+            writeError(response, statusForError(e.dynamoErrorType), e.dynamoErrorType, e.getMessage(), e.extraBody);
         } catch (RuntimeException e) {
+            if (isRequestShapeError(e)) {
+                // A request member of the wrong JSON type or a missing required member: the client's mistake.
+                if (e instanceof NullPointerException) {
+                    log.warn("dynamowire operation {}: request missing a required member (or a bug)", operation, e);
+                } else {
+                    log.debug("dynamowire operation {}: malformed request", operation, e);
+                }
+                writeError(response, 400, "SerializationException", "The request body does not match the operation's shape ("
+                        + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()) + ")");
+                return;
+            }
             log.error("dynamowire operation {} failed", operation, e);
             // PgItemStore wraps every real backend SQLException in a plain RuntimeException (e.g.
             // "CreateTable failed for foo", cause = the real SQLException) rather than letting it
@@ -205,36 +236,54 @@ public final class DynamoWireServer {
                 return "default";
             }
             AttributeValue pk = PgItemStore.jsonToItem(keySource).get(schema.partitionKeyName());
-            return pk == null ? "default" : store.resolveBackendFor(pk.scalar);
+            return pk == null ? "default" : store.resolveBackendFor(KeyCodec.token(pk));
         } catch (RuntimeException e) {
             return "default";
         }
     }
 
+    private static boolean isRequestShapeError(RuntimeException e) {
+        if (e.getCause() instanceof java.sql.SQLException) {
+            return false;
+        }
+        return e instanceof com.google.gson.JsonParseException || e instanceof ClassCastException
+                || e instanceof UnsupportedOperationException || e instanceof NumberFormatException
+                || e instanceof NullPointerException
+                || (e instanceof IllegalStateException && e.getMessage() != null && e.getMessage().startsWith("Not a JSON"));
+    }
+
     private static int statusForError(String type) {
         return switch (type) {
-            case "ResourceNotFoundException", "TableNotFoundException" -> 400;
-            case "ResourceInUseException", "ConditionalCheckFailedException", "ValidationException",
-                    "TransactionCanceledException" -> 400;
+            case "InternalServerError", "InternalFailure" -> 500;
+            case "AccessDeniedException" -> 400;
             default -> 400;
         };
     }
 
     private void writeError(HttpServletResponse response, int status, String errorType, String message) throws IOException {
+        writeError(response, status, errorType, message, null);
+    }
+
+    private void writeError(HttpServletResponse response, int status, String errorType, String message, JsonObject extra) throws IOException {
         JsonObject err = new JsonObject();
         err.addProperty("__type", "com.amazonaws.dynamodb.v20120810#" + errorType);
         err.addProperty("message", message);
+        if (extra != null) {
+            for (var e : extra.entrySet()) err.add(e.getKey(), e.getValue());
+        }
         response.setStatus(status);
         response.getWriter().write(err.toString());
     }
 
     public void start() throws Exception {
         server.start();
+        ttlSweeper.start();
         log.info("warp dynamowire (DynamoDB HTTP/JSON) listening on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());
     }
 
     public void stop() throws Exception {
+        ttlSweeper.close();
         server.stop();
         store.close();
     }

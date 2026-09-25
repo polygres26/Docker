@@ -1,0 +1,98 @@
+{
+ "service": "dynamodb",
+ "suite": "python",
+ "endpoint": "http://localhost:50817",
+ "tag": "warp",
+ "date": "2026-09-25 13:34",
+ "runner_rc": 1,
+ "seconds": 0.7,
+ "counts": {
+  "pass": 13,
+  "fail": 9,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_dynamodb.py": {
+   "pass": 13,
+   "fail": 9,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_dynamodb.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-dynamodb-python.junit.xml --timeout=30",
+ "failures": [
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_update_table",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the UpdateTable operation: Operation not implemented by dynamowire: UpdateTable",
+   "time": 0.01,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_describe_time_to_live",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the DescribeTimeToLive operation: Operation not implemented by dynamowire: DescribeTimeToLive",
+   "time": 0.011,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_update_and_describe_continuous_backups",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the DescribeContinuousBackups operation: Operation not implemented by dynamowire: DescribeContinuousBackups",
+   "time": 0.009,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_tag_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagResource operation: Operation not implemented by dynamowire: TagResource",
+   "time": 0.02,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_list_tags_of_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagResource operation: Operation not implemented by dynamowire: TagResource",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_untag_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagResource operation: Operation not implemented by dynamowire: TagResource",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_create_table_with_gsi_and_lsi",
+   "status": "fail",
+   "message": "assert 0 == 1",
+   "time": 0.009,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_query_gsi_sparse_index",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (ValidationException) when calling the Query operation: KeyConditionExpression references non-key attribute: gsiPk",
+   "time": 0.014,
+   "class": "a"
+  },
+  {
+   "file": "test_dynamodb.py",
+   "test": "test_query_lsi",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (ValidationException) when calling the Query operation: KeyConditionExpression references non-key attribute: lsiSk",
+   "time": 0.013,
+   "class": "a"
+  }
+ ]
+}

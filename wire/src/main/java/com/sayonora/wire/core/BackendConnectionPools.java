@@ -10,9 +10,76 @@ public final class BackendConnectionPools {
 
     private static final ConcurrentHashMap<String, HikariDataSource> pools = new ConcurrentHashMap<>();
 
+    /** Reserved alias for the default (config-primary Postgres) pool -- what a statement with no
+     * {@code targetBackend} runs on. Registered by {@code PgConnections.connect}. */
+    public static final String DEFAULT_ALIAS = "default";
+
+    private static final ConcurrentHashMap<String, String> backendAliases = new ConcurrentHashMap<>();
+
+    /** Borrow for a caller with no session-state handling of its own (internal statements, HTTP frontends,
+     * MCP, ...): anything a wire session applied to the physical connection -- RLS identity, db_emulation,
+     * tenant search_path -- is stripped first ({@link com.sayonora.wire.core.access.SessionStateReconciler#cleanse}). */
     public static Connection borrow(String poolKey, String jdbcUrl, String user, String password) throws SQLException {
+        Connection connection = borrowForSession(poolKey, jdbcUrl, user, password);
+        try {
+            com.sayonora.wire.core.access.SessionStateReconciler.cleanse(connection);
+        } catch (SQLException | RuntimeException e) {
+            // a connection whose Warp-applied state could not be stripped must not go back to the pool as is
+            evict(poolKey, connection);
+            try {
+                connection.close();
+            } catch (SQLException ignored) {
+                // already evicted
+            }
+            throw e;
+        }
+        return connection;
+    }
+
+    /** Borrow for a {@link SessionConnectionLease}: the session reconciles Warp-applied state itself, per
+     * statement, so nothing is stripped here (that would cost a round trip on every borrow). */
+    public static Connection borrowForSession(String poolKey, String jdbcUrl, String user, String password)
+            throws SQLException {
         HikariDataSource dataSource = pools.computeIfAbsent(poolKey, k -> create(k, jdbcUrl, user, password));
-        return dataSource.getConnection();
+        try {
+            return dataSource.getConnection();
+        } catch (java.sql.SQLTransientConnectionException e) {
+            // Hikari reports pure exhaustion (every connection checked out, nothing failed to connect) as
+            // a timeout with no cause; a timeout that carries a cause is a real connect failure and must
+            // keep its own (08001) error.
+            if (e.getCause() == null && e.getMessage() != null && e.getMessage().contains("request timed out")) {
+                var pool = dataSource.getHikariPoolMXBean();
+                throw new BackendPoolExhaustedException(poolKey, dataSource.getConnectionTimeout(),
+                        dataSource.getMaximumPoolSize(), pool.getActiveConnections(),
+                        Math.max(0, pool.getThreadsAwaitingConnection()), e);
+            }
+            throw e;
+        }
+    }
+
+    /** Removes {@code connection} (currently checked out of pool {@code poolKey}) from the pool instead of
+     * returning it -- for a connection whose session state could not be reset. */
+    public static void evict(String poolKey, Connection connection) {
+        HikariDataSource dataSource = pools.get(poolKey);
+        if (dataSource != null) {
+            dataSource.evictConnection(connection);
+        }
+    }
+
+    /** Remembers that backend {@code backendName} (or {@link #DEFAULT_ALIAS}) is served by pool
+     * {@code poolKey}, so callers that only know the backend name -- {@code QosControlStage}'s pool-wait
+     * threshold -- can find the pool's stats. Idempotent and cheap (called on every borrow). */
+    public static void registerBackendAlias(String backendName, String poolKey) {
+        if (backendName != null && !poolKey.equals(backendAliases.get(backendName))) {
+            backendAliases.put(backendName, poolKey);
+        }
+    }
+
+    /** Stats of the pool serving {@code backendName} ({@code null} or "default" = the default pool),
+     * or {@code null} if no connection has been borrowed for it yet. */
+    public static PoolStats statsForBackend(String backendName) {
+        String key = backendAliases.get(backendName == null ? DEFAULT_ALIAS : backendName);
+        return key == null ? null : statsFor(key);
     }
 
     /** Result of {@link #drain}: {@code drainedCleanly} is true when every in-flight connection
@@ -104,15 +171,14 @@ public final class BackendConnectionPools {
             config.setPassword(password);
         }
         config.setMinimumIdle(0);
-        // Default must comfortably exceed License.DEVELOPER_MAX_CONNECTIONS (25): each pgwire/
-        // mywire/mssqlwire/orawire/mongowire session holds one backend connection for its whole
-        // lifetime (not just per-query), so a Hikari pool sized below the license's own connection
-        // cap would starve before a Developer-tier install ever reaches that cap -- the license
-        // limit would be unreachable in practice, not just unenforced. 30 leaves headroom above 25
-        // for warp's own internal connections (the config-primary LISTEN connection, schema
-        // checks like FailedStatementLog/NodeRegistry) that also borrow from this same pool. An
-        // Enterprise deployment with no connection ceiling should size this explicitly via the env
-        // var for its real backend capacity, not rely on this default.
+        // Sizing (see docs/WARP_GUIDE.md "Connection multiplexing"): wire sessions (pgwire, mywire, mssqlwire,
+        // orawire, boltwire) no longer hold a backend connection per client -- they borrow per statement and pin
+        // one only while a transaction or backend session state is open (SessionConnectionLease), so this pool
+        // only has to cover peak CONCURRENT WORK, not the number of connected clients. The default of 30 stays
+        // generous on purpose: with WARP_MULTIPLEX_SESSIONS=false every session holds one for its whole life
+        // again (then it must exceed License.DEVELOPER_MAX_CONNECTIONS, 25), and Warp's own internal borrowers
+        // (schema checks, failed-statement log, node registry) draw from the same pool. An Enterprise
+        // deployment with no connection ceiling should size it to its real backend capacity.
         config.setMaximumPoolSize(intEnv("WARP_POOL_MAX_SIZE", 30));
 
         config.setConnectionTimeout(longEnv("WARP_POOL_CONNECT_TIMEOUT_MS", 5_000));

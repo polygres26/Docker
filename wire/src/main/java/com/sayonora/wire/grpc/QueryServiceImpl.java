@@ -53,6 +53,22 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
             return;
         }
 
+        // Connect-time backend routing: ExecuteRequest.database (optional) -> a backend or backend set.
+        // After authentication, so an unauthenticated caller cannot probe which names exist.
+        com.sayonora.wire.core.ConnectionRoute route = backendRegistry == null
+                ? com.sayonora.wire.core.ConnectionRoute.UNROUTED
+                : backendRegistry.connectionRouter().resolve(com.sayonora.wire.core.ConnectionRouter.PROTO_GRPC,
+                        request.getDatabase(), request.getUsername());
+        if (route.isRejected()) {
+            responseObserver.onNext(ExecuteResponse.newBuilder()
+                    .setSuccess(false)
+                    .setSqlState("3D000")
+                    .setErrorMessage("database \"" + route.requestedName() + "\" does not exist")
+                    .build());
+            responseObserver.onCompleted();
+            return;
+        }
+
         // RTT: from here (request already deserialized by gRPC) through onNext() below --
         // the one request-in, response-out boundary this unary RPC has.
         long rttStart = System.nanoTime();
@@ -64,7 +80,7 @@ public final class QueryServiceImpl extends QueryServiceGrpc.QueryServiceImplBas
                             .withFederationSupport(com.sayonora.wire.core.RouterStage.statisticsStoreIn(sharedStages),
                                     com.sayonora.wire.core.RouterStage.planStoreIn(sharedStages)));
             List<Object> binds = new ArrayList<>(request.getParamsList());
-            Statement statement = Statement.of(SourceDialect.WARP_NATIVE, request.getSql(), binds);
+            Statement statement = route.apply(Statement.of(SourceDialect.WARP_NATIVE, request.getSql(), binds));
             ExecutionResult result = pipeline.execute(statement);
             responseObserver.onNext(toResponse(result));
         } catch (SQLException e) {

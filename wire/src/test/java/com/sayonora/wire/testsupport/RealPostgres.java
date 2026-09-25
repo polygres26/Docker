@@ -21,10 +21,51 @@ public final class RealPostgres implements AutoCloseable {
 
     private final String containerName;
     private final int port;
+    // Set only in local-process mode (WARP_TEST_PG_LOCAL=1): a real Postgres server process from the host's own
+    // initdb/postgres binaries instead of a container, for machines whose Docker VM is out of disk.
+    private Process localProcess;
+    private java.nio.file.Path localDir;
 
     private RealPostgres(String containerName, int port) {
         this.containerName = containerName;
         this.port = port;
+    }
+
+    private static boolean localMode() {
+        return "1".equals(System.getenv("WARP_TEST_PG_LOCAL"));
+    }
+
+    private static RealPostgres startLocal(java.util.List<String> overrides) throws IOException, InterruptedException {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("warp-localpg-");
+        int port = findFreePort();
+        java.nio.file.Files.writeString(dir.resolve("pw"), "postgres\n");
+        String bin = System.getenv().getOrDefault("WARP_TEST_PG_BIN", "");
+        String initdb = bin.isEmpty() ? "initdb" : bin + "/initdb";
+        String postgres = bin.isEmpty() ? "postgres" : bin + "/postgres";
+        ProcessBuilder init = new ProcessBuilder(initdb, "-D", dir.resolve("data").toString(), "-U", "postgres",
+                "--pwfile", dir.resolve("pw").toString(), "-A", "scram-sha-256", "-E", "UTF8", "--locale=C")
+                .redirectErrorStream(true);
+        init.environment().put("LC_ALL", "en_US.UTF-8");
+        Process ip = init.start();
+        ip.getInputStream().readAllBytes();
+        if (ip.waitFor() != 0) {
+            throw new IllegalStateException("initdb failed");
+        }
+        List<String> cmd = new java.util.ArrayList<>(List.of(postgres, "-D", dir.resolve("data").toString(), "-p",
+                String.valueOf(port), "-k", dir.toString(), "-c", "listen_addresses=127.0.0.1", "-c",
+                "max_connections=200", "-c", "max_prepared_transactions=10"));
+        for (String o : overrides) {
+            cmd.add("-c");
+            cmd.add(o);
+        }
+        ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        pb.environment().put("LC_ALL", "en_US.UTF-8");
+        RealPostgres pg = new RealPostgres("local-" + dir.getFileName(), port);
+        pg.localProcess = pb.start();
+        pg.localDir = dir;
+        pg.waitUntilReady(Duration.ofSeconds(30));
+        return pg;
     }
 
     private static final String DEFAULT_IMAGE = "postgres:16-alpine";
@@ -47,6 +88,9 @@ public final class RealPostgres implements AutoCloseable {
      * different test mechanisms. */
     public static RealPostgres start(String image, java.util.List<String> postgresConfOverrides)
             throws IOException, InterruptedException {
+        if (localMode()) {
+            return startLocal(postgresConfOverrides);
+        }
         String containerName = "warp-test-pg-" + System.nanoTime();
         int port = findFreePort();
         List<String> args = new java.util.ArrayList<>(List.of("docker", "run", "-d", "--name", containerName,
@@ -135,8 +179,28 @@ public final class RealPostgres implements AutoCloseable {
 
     @Override
     public void close() {
+        if (localProcess != null) {
+            try {
+                // SIGINT = "fast shutdown" (disconnects clients); destroy()'s SIGTERM would wait for every client
+                new ProcessBuilder("kill", "-INT", String.valueOf(localProcess.pid())).start().waitFor();
+                if (!localProcess.waitFor(15, TimeUnit.SECONDS)) {
+                    localProcess.destroyForcibly();
+                }
+            } catch (IOException | InterruptedException e) {
+                localProcess.destroyForcibly();
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            try (var walk = java.nio.file.Files.walk(localDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            } catch (IOException ignored) {
+                // best-effort cleanup
+            }
+            return;
+        }
         try {
-            run("docker", "rm", "-f", containerName);
+            run("docker", "rm", "-f", "-v", containerName);
         } catch (Exception ignored) {
             // best-effort cleanup
         }

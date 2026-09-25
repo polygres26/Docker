@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nwarp.proto\x12\x04warp\"Q\n\x0e\x45xecuteRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\x12\x0b\n\x03sql\x18\x03 \x01(\t\x12\x0e\n\x06params\x18\x04 \x03(\t\"\xa3\x01\n\x0f\x45xecuteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x11\n\tsql_state\x18\x03 \x01(\t\x12\x10\n\x08is_query\x18\x04 \x01(\x08\x12\x14\n\x0c\x63olumn_names\x18\x05 \x03(\t\x12\x17\n\x04rows\x18\x06 \x03(\x0b\x32\t.warp.Row\x12\x14\n\x0cupdate_count\x18\x07 \x01(\x03\"&\n\x03Row\x12\x0e\n\x06values\x18\x01 \x03(\t\x12\x0f\n\x07is_null\x18\x02 \x03(\x08\"\xd9\x01\n\x14JoinPartitionRequest\x12\x1a\n\x12\x62uild_column_names\x18\x01 \x03(\t\x12\x1d\n\nbuild_rows\x18\x02 \x03(\x0b\x32\t.warp.Row\x12\x19\n\x11\x62uild_key_ordinal\x18\x03 \x01(\x05\x12\x1a\n\x12probe_column_names\x18\x04 \x03(\t\x12\x1d\n\nprobe_rows\x18\x05 \x03(\x0b\x32\t.warp.Row\x12\x19\n\x11probe_key_ordinal\x18\x06 \x01(\x05\x12\x15\n\rleft_is_build\x18\x07 \x01(\x08\"n\n\x15JoinPartitionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x14\n\x0c\x63olumn_names\x18\x03 \x03(\t\x12\x17\n\x04rows\x18\x04 \x03(\x0b\x32\t.warp.Row2F\n\x0cQueryService\x12\x36\n\x07\x45xecute\x12\x14.warp.ExecuteRequest\x1a\x15.warp.ExecuteResponse2[\n\x0fWarpPeerService\x12H\n\rJoinPartition\x12\x1a.warp.JoinPartitionRequest\x1a\x1b.warp.JoinPartitionResponseB \n\x1c\x63om.sayonora.wire.grpc.protoP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nwarp.proto\x12\x04warp\"c\n\x0e\x45xecuteRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\x12\x0b\n\x03sql\x18\x03 \x01(\t\x12\x0e\n\x06params\x18\x04 \x03(\t\x12\x10\n\x08\x64\x61tabase\x18\x05 \x01(\t\"\xa3\x01\n\x0f\x45xecuteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x11\n\tsql_state\x18\x03 \x01(\t\x12\x10\n\x08is_query\x18\x04 \x01(\x08\x12\x14\n\x0c\x63olumn_names\x18\x05 \x03(\t\x12\x17\n\x04rows\x18\x06 \x03(\x0b\x32\t.warp.Row\x12\x14\n\x0cupdate_count\x18\x07 \x01(\x03\"&\n\x03Row\x12\x0e\n\x06values\x18\x01 \x03(\t\x12\x0f\n\x07is_null\x18\x02 \x03(\x08\"\xd9\x01\n\x14JoinPartitionRequest\x12\x1a\n\x12\x62uild_column_names\x18\x01 \x03(\t\x12\x1d\n\nbuild_rows\x18\x02 \x03(\x0b\x32\t.warp.Row\x12\x19\n\x11\x62uild_key_ordinal\x18\x03 \x01(\x05\x12\x1a\n\x12probe_column_names\x18\x04 \x03(\t\x12\x1d\n\nprobe_rows\x18\x05 \x03(\x0b\x32\t.warp.Row\x12\x19\n\x11probe_key_ordinal\x18\x06 \x01(\x05\x12\x15\n\rleft_is_build\x18\x07 \x01(\x08\"n\n\x15JoinPartitionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x14\n\x0c\x63olumn_names\x18\x03 \x03(\t\x12\x17\n\x04rows\x18\x04 \x03(\x0b\x32\t.warp.Row2F\n\x0cQueryService\x12\x36\n\x07\x45xecute\x12\x14.warp.ExecuteRequest\x1a\x15.warp.ExecuteResponse2[\n\x0fWarpPeerService\x12H\n\rJoinPartition\x12\x1a.warp.JoinPartitionRequest\x1a\x1b.warp.JoinPartitionResponseB \n\x1c\x63om.sayonora.wire.grpc.protoP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,17 +33,17 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\034com.sayonora.wire.grpc.protoP\001'
   _globals['_EXECUTEREQUEST']._serialized_start=20
-  _globals['_EXECUTEREQUEST']._serialized_end=101
-  _globals['_EXECUTERESPONSE']._serialized_start=104
-  _globals['_EXECUTERESPONSE']._serialized_end=267
-  _globals['_ROW']._serialized_start=269
-  _globals['_ROW']._serialized_end=307
-  _globals['_JOINPARTITIONREQUEST']._serialized_start=310
-  _globals['_JOINPARTITIONREQUEST']._serialized_end=527
-  _globals['_JOINPARTITIONRESPONSE']._serialized_start=529
-  _globals['_JOINPARTITIONRESPONSE']._serialized_end=639
-  _globals['_QUERYSERVICE']._serialized_start=641
-  _globals['_QUERYSERVICE']._serialized_end=711
-  _globals['_WARPPEERSERVICE']._serialized_start=713
-  _globals['_WARPPEERSERVICE']._serialized_end=804
+  _globals['_EXECUTEREQUEST']._serialized_end=119
+  _globals['_EXECUTERESPONSE']._serialized_start=122
+  _globals['_EXECUTERESPONSE']._serialized_end=285
+  _globals['_ROW']._serialized_start=287
+  _globals['_ROW']._serialized_end=325
+  _globals['_JOINPARTITIONREQUEST']._serialized_start=328
+  _globals['_JOINPARTITIONREQUEST']._serialized_end=545
+  _globals['_JOINPARTITIONRESPONSE']._serialized_start=547
+  _globals['_JOINPARTITIONRESPONSE']._serialized_end=657
+  _globals['_QUERYSERVICE']._serialized_start=659
+  _globals['_QUERYSERVICE']._serialized_end=729
+  _globals['_WARPPEERSERVICE']._serialized_start=731
+  _globals['_WARPPEERSERVICE']._serialized_end=822
 # @@protoc_insertion_point(module_scope)

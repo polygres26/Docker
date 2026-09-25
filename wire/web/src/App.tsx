@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { getStoredConnection } from './api/client'
-import Layout from './Layout'
+import { AppShell } from './components/ui'
 import Connect from './pages/Connect'
 import Dashboard from './pages/Dashboard'
 import Metrics from './pages/Metrics'
@@ -8,7 +8,6 @@ import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
 import OAuth from './pages/OAuth'
-import Backends from './pages/Backends'
 import BackendSets from './pages/BackendSets'
 import Queues from './pages/Queues'
 import DataExplorer from './pages/DataExplorer'
@@ -25,7 +24,7 @@ import FederationPlans from './pages/FederationPlans'
  * which clears storage and bounces back here (see src/api/client.ts). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getStoredConnection()) return <Navigate to="/connect" replace />
-  return <Layout>{children}</Layout>
+  return <AppShell>{children}</AppShell>
 }
 
 export default function App() {
@@ -38,7 +37,8 @@ export default function App() {
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />
       <Route path="/oauth" element={<RequireAuth><OAuth /></RequireAuth>} />
-      <Route path="/backends" element={<RequireAuth><Backends /></RequireAuth>} />
+      {/* Backends now live inside backend sets; the old page is gone, old links keep working */}
+      <Route path="/backends" element={<Navigate to="/backend-sets" replace />} />
       <Route path="/backend-sets" element={<RequireAuth><BackendSets /></RequireAuth>} />
       <Route path="/queues" element={<RequireAuth><Queues /></RequireAuth>} />
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />

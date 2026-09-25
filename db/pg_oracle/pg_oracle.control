@@ -1,4 +1,4 @@
-comment = 'pg_oracle -- Oracle compatibility for Postgres (V$/GV$/DBA_* views, DBMS_* packages, PL/SQL). Part of the Polygres extension collection.'
+comment = 'pg_oracle -- Oracle compatibility for Postgres (V$/GV$/DBA_* views, DBMS_* packages, PL/SQL). Part of the Shim extension collection.'
 default_version = '0.1'
 module_pathname = '$libdir/pg_oracle'
 relocatable = false

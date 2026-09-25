@@ -1,4 +1,4 @@
-comment = 'pg_sqlserver -- SQL Server compatibility for Postgres (sys.* catalog views, T-SQL system functions: OBJECT_ID, SCOPE_IDENTITY, CHARINDEX, ...). Part of the Polygres extension collection.'
+comment = 'pg_sqlserver -- SQL Server compatibility for Postgres (sys.* catalog views, T-SQL system functions: OBJECT_ID, SCOPE_IDENTITY, CHARINDEX, ...). Part of the Shim extension collection.'
 default_version = '0.1'
 module_pathname = '$libdir/pg_oracle'
 relocatable = false

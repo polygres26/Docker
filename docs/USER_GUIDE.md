@@ -37,6 +37,7 @@ control, and caching are Postgres-pipeline features that don't apply in native m
 | MongoDB | mongowire | MongoDB, same driver and queries |
 | DynamoDB | dynamowire | DynamoDB's HTTP API |
 | Amazon SQS | sqswire | Amazon SQS's HTTP API — queues, messages, DLQs, FIFO |
+| Amazon S3 | s3wire | S3's REST API (path-style, SigV4) — objects stored in an S3-compatible backend bucket such as MinIO |
 
 Whichever protocol your app speaks, the request ends up as real data in Postgres. You don't
 need to touch your application's code, only its connection string.

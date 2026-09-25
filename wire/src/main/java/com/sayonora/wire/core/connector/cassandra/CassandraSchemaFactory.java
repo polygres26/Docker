@@ -63,7 +63,8 @@ public final class CassandraSchemaFactory implements SchemaFactory {
     }
 
     @SuppressWarnings("unchecked")
-    private static CqlSession buildSession(Map<String, Object> operand) {
+    /** Public so the MCP describe_backend tool opens a session exactly as the federated mount does. */
+    public static CqlSession buildSession(Map<String, Object> operand) {
         Object contactPointsObj = operand.get("contactPoints");
         if (!(contactPointsObj instanceof List)) {
             throw new IllegalArgumentException("CassandraSchemaFactory requires list operand 'contactPoints'");

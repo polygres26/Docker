@@ -528,6 +528,51 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && target.startsWith("/api/mcp-endpoints")) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleMcpEndpoints(target, request, response, configStore, backendRegistry,
+                            accessContext.isAnonymous() ? "shared-admin-token" : accessContext.userId());
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (configStore != null && backendRegistry != null && options != null
+                        && BackendSetsApi.handles(target)) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    BackendSetsApi.handle(target, request, response, configStore, backendRegistry, options);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (configStore != null && backendRegistry != null && options != null
+                        && "/api/backends".equals(target) && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    BackendSetsApi.addViaLegacyPath(request, response, configStore, backendRegistry, options);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (backendRegistry != null && target.startsWith("/api/backends")) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -1332,10 +1377,20 @@ public final class MetricsServer {
                         field(body, "llmApiKey", current.llmApiKey()),
                         field(body, "llmBaseUrl", current.llmBaseUrl()),
                         field(body, "llmModel", current.llmModel()),
-                        field(body, "backendGroups", current.backendGroups()));
+                        field(body, "backendGroups", current.backendGroups()),
+                        field(body, "backendDescriptions", current.backendDescriptions()),
+                        field(body, "backendGroupDescriptions", current.backendGroupDescriptions()),
+                        field(body, "mcpEndpoints", current.mcpEndpoints()),
+                        field(body, "backendStores", current.backendStores()),
+                        field(body, "backendSetNames", current.backendSetNames()),
+                        field(body, "connectionRoutes", current.connectionRoutes()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.wire.acl.ClientAcl.parse(updated.aclRules());
+                com.sayonora.wire.core.ConnectionRouter.parse(updated.connectionRoutes());
+                // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
+                // the backend-set admin API, so the raw config route cannot bypass them
+                com.sayonora.wire.core.BackendSetModel.from(updated, null).validateStores();
                 // backendSets' member names are validated against the backends spec this same
                 // PUT is about to apply (not the currently-live registry) -- a request that
                 // changes both fields together (a new backend plus a set naming it) must not be
@@ -1424,7 +1479,9 @@ public final class MetricsServer {
                         current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
                         current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
                         current.oauthRolesClaim(), current.awsIamCredentials(),
-                        newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups());
+                        newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
+                        current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
+                        current.backendStores(), current.backendSetNames(), current.connectionRoutes());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -1442,6 +1499,181 @@ public final class MetricsServer {
         } catch (IllegalArgumentException e) {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+        }
+    }
+
+    private static String groupOrNull(com.sayonora.wire.core.BackendRegistry registry, String backendName) {
+        var info = registry.groupInfoFor(backendName);
+        return info == null || com.sayonora.wire.core.BackendRegistry.UNGROUPED_GROUP_NAME.equals(info.name())
+                ? null : info.name();
+    }
+
+    private static final Object MCP_ENDPOINT_LOCK = new Object();
+
+    /**
+     * {@code /api/mcp-endpoints}: create/list/get/update/revoke user-created MCP endpoints (see
+     * {@link com.sayonora.wire.mcp.McpEndpoints}). They persist as the {@code mcpEndpoints} field of
+     * the versioned {@code warp_config} document, so every Warp instance sharing the config
+     * database hot-reloads a create/patch/revoke through the same LISTEN/NOTIFY path as backends.
+     * The token is returned exactly once (POST); only its SHA-256 hash is stored.
+     */
+    private static void handleMcpEndpoints(String target, HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore, com.sayonora.wire.core.BackendRegistry backendRegistry, String createdBy)
+            throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        java.time.Clock clock = java.time.Clock.systemUTC();
+        String rest = target.substring("/api/mcp-endpoints".length());
+        String id = rest.startsWith("/") && rest.length() > 1 ? rest.substring(1).replaceAll("/+$", "") : null;
+        String method = request.getMethod();
+        try {
+            synchronized (MCP_ENDPOINT_LOCK) {
+                WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                        .orElseGet(WarpConfig::fromEnvDefaults);
+                java.util.List<com.sayonora.wire.mcp.McpEndpoints.Endpoint> all =
+                        new java.util.ArrayList<>(com.sayonora.wire.mcp.McpEndpoints.parse(current.mcpEndpoints()));
+                java.time.Instant now = clock.instant();
+                if (id == null && "GET".equals(method)) {
+                    com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+                    all.forEach(e -> arr.add(com.sayonora.wire.mcp.McpEndpoints.view(e, now)));
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.getWriter().write(arr.toString());
+                    return;
+                }
+                if (id == null && "POST".equals(method)) {
+                    JsonObject body = readJsonBody(request);
+                    String name = optionalString(body, "name");
+                    if (name == null || name.isBlank()) {
+                        throw new IllegalArgumentException("name is required");
+                    }
+                    if (all.stream().anyMatch(e -> e.name().equals(name))) {
+                        response.setStatus(HttpServletResponse.SC_CONFLICT);
+                        response.getWriter().write("{\"error\":" + jsonString("an endpoint named \"" + name
+                                + "\" already exists") + "}");
+                        return;
+                    }
+                    String scopeSpec = optionalString(body, "scope");
+                    if (scopeSpec == null || scopeSpec.isBlank()) {
+                        throw new IllegalArgumentException("scope is required: \"db:<backend>\", \"group:<name>\" or \"all\"");
+                    }
+                    com.sayonora.wire.mcp.McpScope scope = com.sayonora.wire.mcp.McpScope.fromSpec(scopeSpec);
+                    if (backendRegistry != null) {
+                        if (scope.type() == com.sayonora.wire.mcp.McpScope.Type.DATABASE
+                                && backendRegistry.get(scope.name()) == null) {
+                            throw new IllegalArgumentException("scope names backend \"" + scope.name()
+                                    + "\", which is not a registered backend");
+                        }
+                        if (scope.type() == com.sayonora.wire.mcp.McpScope.Type.GROUP
+                                && backendRegistry.membersOfGroup(scope.name()).isEmpty()) {
+                            throw new IllegalArgumentException("scope names group \"" + scope.name()
+                                    + "\", which has no registered member backends");
+                        }
+                    }
+                    Long ttl = body.has("ttlSeconds") && !body.get("ttlSeconds").isJsonNull()
+                            ? body.get("ttlSeconds").getAsLong() : null;
+                    java.time.Instant expiresAt = com.sayonora.wire.mcp.McpEndpoints
+                            .resolveExpiry(optionalString(body, "expiresAt"), ttl, clock).orElse(null);
+                    String token = com.sayonora.wire.mcp.McpEndpoints.newToken();
+                    com.sayonora.wire.mcp.McpEndpoints.Endpoint created = new com.sayonora.wire.mcp.McpEndpoints.Endpoint(
+                            com.sayonora.wire.mcp.McpEndpoints.newId(), name, scope.type() == com.sayonora.wire.mcp.McpScope.Type.ALL
+                                    ? "all" : (scope.type() == com.sayonora.wire.mcp.McpScope.Type.DATABASE ? "db:" : "group:") + scope.name(),
+                            optionalString(body, "description"), now, createdBy, expiresAt,
+                            com.sayonora.wire.mcp.McpEndpoints.hash(token));
+                    all.add(created);
+                    writeMcpEndpoints(configStore, current, all);
+                    JsonObject out = com.sayonora.wire.mcp.McpEndpoints.view(created, now);
+                    out.addProperty("token", token);
+                    out.addProperty("mcpPort", parseIntEnvOr("WARP_MCP_PORT", 18010));
+                    out.addProperty("note", "Connect with POST <host>:<mcpPort>" + com.sayonora.wire.mcp.McpEndpoints.PATH_PREFIX
+                            + created.id() + " and header Authorization: Bearer <token>. The token is shown only now.");
+                    response.setStatus(HttpServletResponse.SC_CREATED);
+                    response.getWriter().write(out.toString());
+                    return;
+                }
+                if (id != null) {
+                    int idx = -1;
+                    for (int i = 0; i < all.size(); i++) {
+                        if (all.get(i).id().equals(id)) {
+                            idx = i;
+                        }
+                    }
+                    if (idx < 0) {
+                        response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                        response.getWriter().write("{\"error\":\"no such endpoint\"}");
+                        return;
+                    }
+                    com.sayonora.wire.mcp.McpEndpoints.Endpoint e = all.get(idx);
+                    if ("GET".equals(method)) {
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(com.sayonora.wire.mcp.McpEndpoints.view(e, now).toString());
+                        return;
+                    }
+                    if ("DELETE".equals(method)) {
+                        all.remove(idx);
+                        writeMcpEndpoints(configStore, current, all);
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write("{\"revoked\":true,\"id\":" + jsonString(id) + "}");
+                        return;
+                    }
+                    if ("PATCH".equals(method) || "PUT".equals(method)) {
+                        JsonObject body = readJsonBody(request);
+                        if (body.has("expiresAt") && body.get("expiresAt").isJsonNull()
+                                || body.has("neverExpires") && body.get("neverExpires").getAsBoolean()) {
+                            e = e.withExpiresAt(null);
+                        } else if (body.has("expiresAt") || body.has("ttlSeconds")) {
+                            Long ttl = body.has("ttlSeconds") && !body.get("ttlSeconds").isJsonNull()
+                                    ? body.get("ttlSeconds").getAsLong() : null;
+                            e = e.withExpiresAt(com.sayonora.wire.mcp.McpEndpoints
+                                    .resolveExpiry(optionalString(body, "expiresAt"), ttl, clock).orElse(null));
+                        }
+                        if (body.has("description")) {
+                            e = e.withDescription(optionalString(body, "description"));
+                        }
+                        all.set(idx, e);
+                        writeMcpEndpoints(configStore, current, all);
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(com.sayonora.wire.mcp.McpEndpoints.view(e, now).toString());
+                        return;
+                    }
+                }
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("mcp-endpoints admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        } catch (IllegalArgumentException | com.google.gson.JsonParseException | IllegalStateException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    private static void writeMcpEndpoints(ConfigStore configStore, WarpConfig current,
+            java.util.List<com.sayonora.wire.mcp.McpEndpoints.Endpoint> all) throws java.sql.SQLException {
+        WarpConfig updated = new WarpConfig(
+                current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
+                current.qosClassLimits(), current.qosPoolWaitThreshold(),
+                current.cacheTables(), current.cacheTtlMs(),
+                current.backends(), current.shardBackends(), current.backendSets(),
+                current.routerSchemaRules(), current.routerPredicateRules(),
+                current.routerValueShardRules(), current.routerShardTables(), current.routerTableShards(),
+                current.rollupDefinitionsYaml(),
+                current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
+                current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
+                current.oauthRolesClaim(), current.awsIamCredentials(),
+                current.llmProvider(), current.llmApiKey(), current.llmBaseUrl(), current.llmModel(),
+                current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
+                all.isEmpty() ? null : com.sayonora.wire.mcp.McpEndpoints.serialize(all),
+                current.backendStores(), current.backendSetNames(), current.connectionRoutes());
+        configStore.write(updated);
+    }
+
+    private static int parseIntEnvOr(String name, int fallback) {
+        try {
+            String v = System.getenv(name);
+            return v == null || v.isBlank() ? fallback : Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 
@@ -1501,6 +1733,14 @@ public final class MetricsServer {
                             .append(",\"dialect\":").append(jsonString(t.dialect() == null ? null : t.dialect().name()))
                             .append(",\"state\":").append(jsonString(backendRegistry.stateOf(t.name()).name()))
                             .append(",\"fallback\":").append(jsonString(t.fallbackName()))
+                            .append(",\"type\":").append(jsonString(com.sayonora.wire.mcp.BackendTypes.typeOf(t)))
+                            .append(",\"family\":").append(jsonString(com.sayonora.wire.mcp.BackendTypes.kindOf(t).id()))
+                            .append(",\"description\":").append(jsonString(backendRegistry.descriptionOf(t.name())))
+                            .append(",\"group\":").append(jsonString(groupOrNull(backendRegistry, t.name())))
+                            .append(",\"sets\":").append(jsonStringArray(backendRegistry.backendSetsContaining(t.name())))
+                            .append(",\"backendSet\":").append(jsonString(backendRegistry.setOf(t.name())))
+                            .append(",\"enabledStores\":").append(jsonStringArray(backendRegistry.enabledStores(t.name())
+                                    .stream().map(com.sayonora.wire.core.StoreType::id).toList()))
                             .append('}');
                 }
                 json.append(']');

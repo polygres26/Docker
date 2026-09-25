@@ -28,6 +28,11 @@ final class S3CompatibleObjectFetcher implements ObjectFetcher, AutoCloseable {
     S3CompatibleObjectFetcher(String bucket, String region, String endpoint, boolean pathStyleAccess,
             String accessKeyId, String secretAccessKey) {
         this.bucket = bucket;
+        this.client = buildClient(region, endpoint, pathStyleAccess, accessKeyId, secretAccessKey);
+    }
+
+    static S3Client buildClient(String region, String endpoint, boolean pathStyleAccess, String accessKeyId,
+            String secretAccessKey) {
         S3ClientBuilder builder = S3Client.builder()
                 .region(Region.of(region == null || region.isBlank() ? "us-east-1" : region))
                 .credentialsProvider(credentialsProvider(accessKeyId, secretAccessKey));
@@ -37,7 +42,7 @@ final class S3CompatibleObjectFetcher implements ObjectFetcher, AutoCloseable {
         if (pathStyleAccess) {
             builder.forcePathStyle(true);
         }
-        this.client = builder.build();
+        return builder.build();
     }
 
     private static AwsCredentialsProvider credentialsProvider(String accessKeyId, String secretAccessKey) {

@@ -47,6 +47,20 @@ final class PgMessages {
         out.writeByte(status);
     }
 
+    /** A startup-phase FATAL ErrorResponse (no ReadyForQuery: the server closes the connection). */
+    static void writeFatal(DataOutputStream out, String sqlState, String message) throws IOException {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write('S'); body.write(cstring("FATAL"));
+        body.write('V'); body.write(cstring("FATAL"));
+        body.write('C'); body.write(cstring(sqlState));
+        body.write('M'); body.write(cstring(message));
+        body.write(0);
+        out.writeByte('E');
+        out.writeInt(4 + body.size());
+        out.write(body.toByteArray());
+        out.flush();
+    }
+
     static void writeErrorAndReady(DataOutputStream out, String sqlState, String message) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write('S'); body.write(cstring("ERROR"));

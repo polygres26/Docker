@@ -164,6 +164,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         if (targetName == null && transactionConnections != null) {
             targetName = cursorTargets.get(cursorNameReferenced(statement.sqlText()));
         }
+        // A statement with no target that reached here under a SET-scoped connection (RouterStage
+        // not in the chain): the set's own default, not the caller-supplied default connection.
+        if (targetName == null && statement.backendScope() != null && statement.backendScope().defaultBackend() != null) {
+            targetName = statement.backendScope().defaultBackend();
+        }
         // Terminal BackendScope enforcement, before anything else -- defense in depth behind
         // RouterStage's own early check, and the ONLY check covering a cursor-derived target
         // (above) that RouterStage never saw. A null target means the caller-supplied default

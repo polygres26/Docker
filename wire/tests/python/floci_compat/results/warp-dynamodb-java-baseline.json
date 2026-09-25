@@ -1,0 +1,724 @@
+{
+ "service": "dynamodb",
+ "suite": "java",
+ "endpoint": "http://localhost:50817",
+ "tag": "warp",
+ "date": "2026-09-25 13:38",
+ "runner_rc": 1,
+ "seconds": 33.9,
+ "counts": {
+  "pass": 38,
+  "fail": 51,
+  "error": 31,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.DynamoDbAccessPathValidationTest": {
+   "pass": 3,
+   "fail": 8,
+   "error": 1,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbExpressionTests": {
+   "pass": 7,
+   "fail": 3,
+   "error": 5,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbEnhancedClientTest": {
+   "pass": 2,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbPartiQLTest": {
+   "pass": 2,
+   "fail": 6,
+   "error": 12,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbTest": {
+   "pass": 13,
+   "fail": 0,
+   "error": 7,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbConformanceChangesTest": {
+   "pass": 8,
+   "fail": 27,
+   "error": 6,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbScanConditionTests": {
+   "pass": 1,
+   "fail": 5,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.DynamoDbConcurrencyTest": {
+   "pass": 2,
+   "fail": 2,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=DynamoDbTest,DynamoDbExpressionTests,DynamoDbConformanceChangesTest,DynamoDbAccessPathValidationTest,DynamoDbPartiQLTest,DynamoDbEnhancedClientTest,DynamoDbScanConditionTests,DynamoDbConcurrencyTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "lsiRejectsBaseTableSortKeyCondition",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "gsiStillRejectsConsistentReads",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.017,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "queryRejectsInvalidCompositeSortKeyConditions",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 1.378,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "legacyKeyConditionsUseSelectedGsiSchema",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 5.086,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "acceptsProjectedGsiAttributesAndLsiTableFetch",
+   "status": "error",
+   "message": "KeyConditionExpression references non-key attribute: status (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "queryAndScanRejectNonProjectedGsiAttribute",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "queryAndScanRejectUnknownIndexOnEmptyTable",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "queryRejectsKeyConditionValuesWithWrongSchemaTypes",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbAccessPathValidationTest",
+   "test": "queryAndScanRejectWrongExclusiveStartKeyTypes",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "filterBoolNotEqual",
+   "status": "error",
+   "message": "Type BOOL is not comparable (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "filterBoolEqual",
+   "status": "error",
+   "message": "Type BOOL is not comparable (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "filterNot",
+   "status": "error",
+   "message": "Type BOOL is not comparable (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "consumedCapacityTotal",
+   "status": "fail",
+   "message": "Expecting actual not to be null",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "consumedCapacityGetItem",
+   "status": "fail",
+   "message": "Expecting actual not to be null",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "consumedCapacityPutItem",
+   "status": "fail",
+   "message": "Expecting actual not to be null",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "queryParenthesizedBetween",
+   "status": "error",
+   "message": "KeyConditionExpression references non-key attribute:  (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbExpressionTests",
+   "test": "queryCompactBetween",
+   "status": "error",
+   "message": "KeyConditionExpression references non-key attribute:  (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "selectByPkOnly",
+   "status": "error",
+   "message": "Expected a value placeholder, got 'pk1' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "selectWithProjection",
+   "status": "error",
+   "message": "Expected a value placeholder, got 'pk1' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "insertDuplicateThrows",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "updateSetAttribute",
+   "status": "error",
+   "message": "Referenced path does not exist in the item: 'Charlie' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "updateRemoveAttribute",
+   "status": "error",
+   "message": "dynamowire's PartiQL support covers single-table SELECT/INSERT/UPDATE/DELETE with a plain key-equality WHERE clause -- could not parse: UPDATE \"partiql-test-table\" REMOVE age WHERE pk = 'pk1' AND sk = 'sk1' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.0,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "insertMultipleItemsAndQueryRange",
+   "status": "error",
+   "message": "Expected a value placeholder, got 'pk2' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "selectWithBeginsWith",
+   "status": "error",
+   "message": "KeyConditionExpression references non-key attribute: begins_with (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "deleteItem",
+   "status": "error",
+   "message": "Expected a value placeholder, got 'pk1' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeTransactionInsertAndDelete",
+   "status": "error",
+   "message": "dynamowire's PartiQL support covers ExecuteStatement and BatchExecuteStatement today, not ExecuteTransaction -- a disclosed gap, not a silent one. (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeTransactionDuplicateInsertThrows",
+   "status": "fail",
+   "message": "Expecting actual throwable to be an instance of:",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "batchExecuteStatementMixedResults",
+   "status": "fail",
+   "message": "Expecting actual:",
+   "time": 0.006,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementOnGsiRejectsConsistentRead",
+   "status": "fail",
+   "message": "Expecting throwable message:",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementReadsThroughGsi",
+   "status": "error",
+   "message": "dynamowire's PartiQL support covers single-table SELECT/INSERT/UPDATE/DELETE with a plain key-equality WHERE clause -- could not parse: SELECT * FROM \"partiql-index-table\".\"status-index\" WHERE status = 'active' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementOnLsiAcceptsConsistentRead",
+   "status": "error",
+   "message": "dynamowire's PartiQL support covers single-table SELECT/INSERT/UPDATE/DELETE with a plain key-equality WHERE clause -- could not parse: SELECT * FROM \"partiql-index-table\".\"alternate-index\" WHERE pk = 'idxpk' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementOnUnknownIndexFailsWithoutIndexName",
+   "status": "fail",
+   "message": "expected: \"The table does not have the specified index\"",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "batchExecuteStatementRejectsIndexQualifiedSelectPerSlot",
+   "status": "fail",
+   "message": "expected: \"ValidationError\"",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementRejectsForeignNextToken",
+   "status": "error",
+   "message": "Expected a value placeholder, got 'idxpk' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbPartiQLTest",
+   "test": "executeStatementReadsEveryAttributeThroughAllProjectionIndex",
+   "status": "error",
+   "message": "dynamowire's PartiQL support covers single-table SELECT/INSERT/UPDATE/DELETE with a plain key-equality WHERE clause -- could not parse: SELECT * FROM \"partiql-index-table\".\"status-index\" WHERE status = 'active' (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.0,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "updateTable",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: UpdateTable (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "updateTableReplicaLifecycle",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: UpdateTable (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "c"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "describeTimeToLive",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: DescribeTimeToLive (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "tagResource",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: TagResource (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "listTagsOfResource",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: ListTagsOfResource (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "untagResource",
+   "status": "error",
+   "message": "Operation not implemented by dynamowire: UntagResource (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbTest",
+   "test": "searchVectors",
+   "status": "error",
+   "message": "Index: 0",
+   "time": 0.006,
+   "class": "c"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "listTablesWithLimit",
+   "status": "fail",
+   "message": "Expected size: 1 but was: 4 in:",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "listTablesLimitZeroThrowsValidationException",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "listTablesLimitOver100ThrowsValidationException",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "putItemInvalidTableNameThrowsValidationException",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "batchWriteItemRejectsMoreThan25Items",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.006,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "batchGetItemRejectsMoreThan100Keys",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "putItemRejectsEmptyStringPrimaryKey",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "transactWriteItemsRejectsDuplicateKeys",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "transactWriteItemsIdempotencyTokenRejectsConflict",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "returnItemCollectionMetricsOnLsiTable",
+   "status": "fail",
+   "message": "Expecting actual not to be null",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "querySelectCountReturnsCountNotItems",
+   "status": "fail",
+   "message": "Expecting empty but was: [{\"count\"=AttributeValue(N=0), \"name\"=AttributeValue(S=Item-0), \"pk\"=AttributeValue(S=p1), \"sk\"=AttributeValue(S=s0), \"status\"=AttributeValue(S=active)},",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "scanSelectCountReturnsCountNotItems",
+   "status": "fail",
+   "message": "Expecting empty but was: [{\"count\"=AttributeValue(N=0), \"name\"=AttributeValue(S=Item-0), \"pk\"=AttributeValue(S=p1), \"sk\"=AttributeValue(S=s0), \"status\"=AttributeValue(S=active)},",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "parallelScanPartitionsResultsCorrectly",
+   "status": "fail",
+   "message": "Expecting",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "parallelScanRequiresBothSegmentAndTotalSegments",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "queryWithAttributeTypeFunction",
+   "status": "error",
+   "message": "Unsupported function: attribute_type (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "queryWithParenthesizedKeyCondition",
+   "status": "error",
+   "message": "KeyConditionExpression references non-key attribute:  (Service: DynamoDb, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "queryRequiresKeyCondition",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 3.414,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "tagResourceWithInvalidArnThrowsValidationException",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 0.004,
+   "class": "c"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "listTagsOfResourceWithValidFormatNonExistentArnThrowsAccessDeniedException",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 0.003,
+   "class": "c"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "getItemAttributesToGet",
+   "status": "fail",
+   "message": "Expecting actual:",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "attributesToGetAndProjectionExpressionAreMutuallyExclusive",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "updateItemWithAttributeUpdates",
+   "status": "error",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null (Service: DynamoDb, Status Code: 500, Request ID: null) (SDK Attempt Count: 9)",
+   "time": 2.74,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "queryWithQueryFilter",
+   "status": "error",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null (Service: DynamoDb, Status Code: 500, Request ID: null) (SDK Attempt Count: 9)",
+   "time": 2.714,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "scanWithScanFilter",
+   "status": "fail",
+   "message": "Expected size: 1 but was: 38 in:",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "updateItemLegacyExpectedAttributeMissing",
+   "status": "fail",
+   "message": "Expecting actual throwable to be an instance of:",
+   "time": 5.035,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "updateItemLegacyExpectedValueMismatch",
+   "status": "fail",
+   "message": "Expecting actual throwable to be an instance of:",
+   "time": 2.66,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "updateItemLegacyExpectedMatchSucceeds",
+   "status": "error",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null (Service: DynamoDb, Status Code: 500, Request ID: null) (SDK Attempt Count: 9)",
+   "time": 3.041,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "legacyExpectedExistsTrueComparesValue",
+   "status": "error",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null (Service: DynamoDb, Status Code: 500, Request ID: null) (SDK Attempt Count: 9)",
+   "time": 1.564,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "legacyExpectedRejectsInvalidExistsCombinations",
+   "status": "fail",
+   "message": "expected: \"ValidationException\"",
+   "time": 3.899,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "enumValidationFiresBeforeTableLookupOnPutItem",
+   "status": "fail",
+   "message": "expected: \"ValidationException\"",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "enumValidationFiresBeforeTableLookupOnDeleteItem",
+   "status": "fail",
+   "message": "expected: \"ValidationException\"",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "reservedWordAsAttributeNameInConditionThrowsValidationException",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConformanceChangesTest",
+   "test": "transactWriteCancellationReasonNullMessageForNonFailedItems",
+   "status": "fail",
+   "message": "Expected size: 2 but was: 0 in:",
+   "time": 0.005,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbScanConditionTests",
+   "test": "scanFilterEq",
+   "status": "fail",
+   "message": "expected: 1",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbScanConditionTests",
+   "test": "scanFilterGt",
+   "status": "fail",
+   "message": "expected: 2",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbScanConditionTests",
+   "test": "scanFilterLe",
+   "status": "fail",
+   "message": "expected: 3",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbScanConditionTests",
+   "test": "scanFilterBetween",
+   "status": "fail",
+   "message": "expected: 3",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbScanConditionTests",
+   "test": "scanFilterMultipleConditions",
+   "status": "fail",
+   "message": "expected: 1",
+   "time": 0.001,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConcurrencyTest",
+   "test": "concurrentPutItemAttributeNotExists",
+   "status": "fail",
+   "message": "[exactly one concurrent PutItem(attribute_not_exists) must succeed]",
+   "time": 0.021,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.DynamoDbConcurrencyTest",
+   "test": "concurrentUpdateItemArithmetic",
+   "status": "fail",
+   "message": "[each UpdateItem should return a distinct cnt under contention]",
+   "time": 0.016,
+   "class": "b"
+  }
+ ]
+}

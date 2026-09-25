@@ -13,6 +13,9 @@ public final class ConnectDescriptor {
     public static ConnectDescriptor parse(String connectString) {
         
         String serviceName = extractValue(connectString, "SERVICE_NAME");
+        if (serviceName == null) {
+            serviceName = extractValue(connectString, "SID");
+        }
         return new ConnectDescriptor(serviceName, connectString);
     }
 

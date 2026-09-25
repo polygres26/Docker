@@ -106,6 +106,13 @@ public final class DialectErrorMessages {
         if (sqlState == null || postgresMessage == null) {
             return postgresMessage;
         }
+        // Warp's own backend-pool errors (pool exhausted / QoS saturation, SQLSTATE 53300) carry the
+        // actionable text -- which pool, how long the client waited, which knob to turn -- and must not be
+        // replaced by the vendor's fixed "too many connections" line; Oracle clients still get the ORA- code.
+        if (postgresMessage.contains(BackendPoolExhaustedException.WARP_BACKEND_MARKER)) {
+            return dialect == SourceDialect.ORACLE ? "ORA-00018: maximum number of sessions exceeded: " + postgresMessage
+                    : postgresMessage;
+        }
         // foreign_key_violation (23503) is the one SQLSTATE covering two really-different native
         // errors (see SqlStateErrorMapper.isForeignKeyDeleteSide's javadoc) -- if the real message
         // is the delete-side shape, render from the "23503_DELETE" template/extractor instead of

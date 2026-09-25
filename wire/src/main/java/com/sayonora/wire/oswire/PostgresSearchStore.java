@@ -1,137 +1,166 @@
 package com.sayonora.wire.oswire;
 
-import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.core.BackendTarget;
 import com.sayonora.wire.core.ShardingStrategy;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Document storage and search execution for oswire, backed by plain Postgres -- same shape as
- * mongowire's {@code PostgresDocumentStore}/dynamowire's {@code PgItemStore}: no OpenSearch (or
- * Qdrant) needs to actually be running, this table shape simulates the storage a search engine
- * would own.
+ * Index catalog + document storage for oswire, backed by plain Postgres (no OpenSearch, no extension).
  *
- * <p>One physical table per collection, {@code warp_search_<collection>}:
+ * <p><b>Storage.</b> One table per index, {@code warp_search_<index>} (names that are not plain lower-case
+ * identifiers are sanitised and suffixed with a hash), on EVERY host of the backend set that has the
+ * {@code opensearch} store enabled:
  * <pre>
- *   doc_id     TEXT PRIMARY KEY,
- *   source     JSONB NOT NULL,   -- the document body, returned verbatim as _source
- *   embedding  JSONB,            -- optional float array for k-NN, e.g. [0.12, -0.4, ...]
- *   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ *   doc_id TEXT PRIMARY KEY, source JSONB NOT NULL, embedding JSONB (legacy, unused),
+ *   updated_at TIMESTAMPTZ, seq_no BIGINT (per-index sequence, like a shard's seq_no), version BIGINT
  * </pre>
+ * Index metadata (settings, mappings, aliases, uuid, creation date) lives in {@code warp_os_catalog} on the first
+ * host; index/composable/component templates in {@code warp_os_templates}. A document lives on exactly one host,
+ * chosen by hashing its {@code _id} (point operations touch one host; searches read every host).
  *
- * <p><b>k-NN without pgvector, on purpose:</b> this deployment's Postgres has no {@code vector}
- * extension installed (checked live: {@code SELECT * FROM pg_available_extensions WHERE
- * name='vector'} returns zero rows on the stock {@code postgres:16} image Warp ships against),
- * and requiring one would contradict every other store in this codebase's "no extension, no
- * external service required" design (dynamowire/mongowire/sqswire all reimplement their target
- * system's semantics in plain SQL for the same reason). So vector distance is computed in Java,
- * not SQL: {@link #search} pulls every row matching the non-vector filters (or every row in the
- * collection, if there are none) with a non-null {@code embedding}, computes
- * {@link #distance(float[], float[], SearchRequest.DistanceMetric)} for each, sorts, and takes
- * {@code topK}. That is a correct, honest linear scan -- no ANN index, no sub-linear search. Fine
- * for the collection sizes this is realistically used at today; genuinely large vector collections
- * are exactly the case a real pgvector-backed index (or Qdrant, once V3 exists) would be for.
+ * <p><b>Search</b> is executed by {@link SearchEngine} in the JVM over the documents of every host ({@link #scan}):
+ * that gives Lucene-faithful analysis, BM25 scoring (per host, like per-shard scoring) and OpenSearch aggregation
+ * semantics that Postgres text search cannot reproduce. The price is that a search reads the whole index (or the
+ * subset an optional SQL pre-filter narrows it to) -- see docs/WARP_GUIDE.md.
  *
- * <p><b>V2 relevance scoring:</b> a plain structured search's {@code _score} is now a real
- * Postgres {@code ts_rank} value (summed across every {@code match} clause anywhere in the filter
- * tree, {@code must}/{@code filter}/{@code should} all counted, {@code must_not} contributing
- * nothing), not V1's flat {@code 1.0} -- see {@link #compileScore}. This is an honest
- * simplification of real BM25/TF-IDF relevance (it doesn't distinguish {@code must} from
- * {@code should} weight, and a {@code bool} with no {@code match} clauses anywhere still scores a
- * flat {@code 1.0}), not a claim of matching OpenSearch's own Lucene-based scoring bit-for-bit.
- * k-NN {@code _score} is now a real similarity transform of the underlying distance (higher is
- * better, matching real OpenSearch's k-NN plugin space-type formulas) instead of V1's raw
- * distance value -- see {@link #similarityScore}.
- *
- * <p><b>Hybrid search</b> ({@link #searchHybrid}): OpenSearch's neural-search hybrid query runs
- * every sub-query independently, min-max normalizes each sub-query's scores to [0, 1], and
- * combines normalized scores per document (the default "arithmetic mean" combination technique) --
- * this reimplements exactly that algorithm, not an approximation of it. Each sub-query is executed
- * as a genuine, independent {@link #search} call (typically one text/filter sub-query and one
- * k-NN sub-query), so a hybrid query combining {@code match} and {@code knn} gets real full-text
- * relevance fused with real vector similarity.
- *
- * <p><b>Sharding</b> (V3): {@code doc_id} hashes across {@code backendRegistry.shardGroup()} for
- * {@link #indexDocument}/{@link #getDocument}/{@link #deleteDocument} -- the same
- * {@link ShardingStrategy#hash} every other sharded store (dynamowire/mongowire/sqswire) already
- * uses, applied to the one key a document lookup always has. Structured search (not vector, not
- * hybrid -- see below) fans out to every shard and merges centrally via
- * {@link SearchScatterMerge}: hits are globally re-sorted/re-paginated, {@code total} is summed,
- * and aggregations are merged per {@link Aggregation.MetricType} (including a real weighted merge
- * for {@code AVG}, not an average-of-averages -- see {@link SearchScatterMerge}'s javadoc).
- * {@code ensureCollection} creates the table on every shard backend (plus, unlike
- * dynamowire/sqswire, no separate always-default catalog table is needed here -- there's no
- * search-side metadata to keep off the shard group).
- *
- * <p><b>Not yet sharded, deliberately refused rather than silently wrong when a shard group is
- * configured:</b> vector (k-NN) search and hybrid search. Both are real, separate design problems
- * -- k-NN's linear scan would need per-shard candidate gathering with the same correctness-over-
- * pushdown care structured search's merge already takes, and hybrid search's score fusion runs
- * over an already-limited per-sub-query candidate pool that interacts with sharding in a way that
- * needs its own pass, not a quick extension of this one. Both throw a clear
- * {@link OpenSearchException} rather than quietly returning only the default backend's rows.
- *
- * <p><b>Real, disclosed scope: oswire is genuinely Postgres-only, unlike dynamowire/influxwire/
- * sqswire.</b> Those three externalize their DDL to {@code src/main/resources/ddl/<engine>/} (see
- * {@link com.sayonora.wire.core.DdlTemplates}) with real Oracle/SQL Server/MySQL variants; oswire
- * has none, and this class's own query logic -- not just its {@code CREATE TABLE} -- is the reason
- * a straightforward DDL port wouldn't be enough on its own. Every {@code source}/{@code embedding}
- * column is real Postgres {@code JSONB}, and the query logic throughout this class leans on
- * Postgres-only JSONB operators to read it back (an unqualified {@code ->>} field extraction) and
- * write it ({@code ::jsonb} casts on insert) -- Oracle's nearest equivalent is JSON stored as
- * {@code CLOB}/native {@code JSON} with its own {@code JSON_VALUE}/{@code JSON_QUERY} functions,
- * SQL Server's is native {@code JSON}-typed columns with {@code JSON_VALUE}, and MySQL's own
- * {@code JSON} type has yet another accessor shape (path-string {@code ->}/{@code ->>} operators
- * that look similar to Postgres's but aren't the same functions) -- a real per-engine query
- * rewrite throughout this class, not a schema-only change the way boltwire's own genuinely-
- * Postgres-only gap is (see {@code DdlTemplates}'s own javadoc for that one). Not started here.
+ * <p>Optimistic concurrency ({@code if_seq_no}/{@code if_primary_term}, {@code version}/{@code version_type}) and
+ * {@code op_type=create} are single conditional SQL statements, so they are atomic across concurrent writers.
  */
 public final class PostgresSearchStore {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresSearchStore.class);
     private static final String TABLE_PREFIX = "warp_search_";
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    /** Each hybrid sub-query pulls this many top candidates before score fusion -- real OpenSearch
-     * hybrid search likewise fuses each sub-retriever's own top-N, not its full result set. Fixed
-     * rather than derived from the outer request's requested page size, so pagination (paging
-     * further into an already-fused, already-sorted result) doesn't silently shrink the candidate
-     * pool a later page is drawn from. */
-    private static final int HYBRID_CANDIDATE_POOL = 500;
+    private static final Pattern IDENTIFIER = Pattern.compile("[a-z_][a-z0-9_]*");
+    private static final long META_TTL_NANOS = 2_000_000_000L;
 
     private final BackendRegistry backendRegistry;
-    private final ConcurrentHashMap<String, Boolean> ensuredCollections = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> ensured = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, IndexMeta> metaCache = new ConcurrentHashMap<>();
+    private volatile List<IndexMeta> allCache;
+    private volatile long allCacheAt;
 
     public PostgresSearchStore(BackendRegistry backendRegistry) {
         this.backendRegistry = backendRegistry;
     }
 
-    private Connection open() throws SQLException {
-        return open(defaultTarget());
+    // ------------------------------------------------------------------ types
+
+    static final class IndexMeta {
+        final String name;
+        final String uuid;
+        final String table;
+        final long created;
+        final JsonObject settings;
+        final JsonObject aliases;
+        final Mappings mappings;
+        final boolean closed;
+        final JsonObject refreshState;
+        private final boolean gated;
+        final long loadedAt = System.nanoTime();
+
+        IndexMeta(String name, String uuid, String table, long created, JsonObject settings, JsonObject mappings,
+                JsonObject aliases, boolean closed) {
+            this(name, uuid, table, created, settings, mappings, aliases, closed, new JsonObject());
+        }
+
+        IndexMeta(String name, String uuid, String table, long created, JsonObject settings, JsonObject mappings,
+                JsonObject aliases, boolean closed, JsonObject refreshState) {
+            this.refreshState = refreshState;
+            this.gated = computeGated(settings);
+            this.name = name;
+            this.uuid = uuid;
+            this.table = table;
+            this.created = created;
+            this.settings = settings;
+            this.aliases = aliases;
+            this.mappings = new Mappings(mappings);
+            this.closed = closed;
+        }
+
+        IndexMeta withMappings(JsonObject m) {
+            return new IndexMeta(name, uuid, table, created, settings, m, aliases, closed, refreshState);
+        }
+
+        IndexMeta withRefreshState(JsonObject st) {
+            return new IndexMeta(name, uuid, table, created, settings, mappings.raw, aliases, closed, st);
+        }
+
+        /** Searches only see documents up to the last explicit refresh when index.refresh_interval is -1. */
+        boolean gated() {
+            return gated;
+        }
+
+        private static boolean computeGated(JsonObject settings) {
+            JsonElement idx = settings.get("index");
+            if (idx == null || !idx.isJsonObject()) {
+                return false;
+            }
+            JsonElement ri = idx.getAsJsonObject().get("refresh_interval");
+            return ri != null && ri.isJsonPrimitive() && "-1".equals(ri.getAsString());
+        }
+
+        boolean hasAlias(String a) {
+            return aliases.has(a);
+        }
     }
 
-    private Connection open(BackendTarget target) throws SQLException {
-        return target.open();
+    static final class Doc {
+        final String index;
+        final String id;
+        final JsonObject source;
+        final long seqNo;
+        final long version;
+        final int shard;
+
+        Doc(String index, String id, JsonObject source, long seqNo, long version, int shard) {
+            this.index = index;
+            this.id = id;
+            this.source = source;
+            this.seqNo = seqNo;
+            this.version = version;
+            this.shard = shard;
+        }
     }
+
+    record WriteResult(long seqNo, long version, boolean created, boolean noop) {
+    }
+
+    /** Conditions of a write (all optional). */
+    static final class WriteOpts {
+        boolean create;
+        Long ifSeqNo;
+        Long ifPrimaryTerm;
+        Long version;
+        String versionType = "internal";
+    }
+
+    // ------------------------------------------------------------------ targets / sharding
 
     private BackendTarget defaultTarget() {
-        // resolveForRouting, not get -- see BackendRegistry.resolveForRouting's javadoc.
-        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        List<String> group = shardGroup();
+        BackendTarget target = backendRegistry.resolveForRouting(
+                group.isEmpty() ? BackendRegistry.DEFAULT_BACKEND_NAME : group.get(0));
         if (target == null) {
             throw new IllegalStateException("oswire: no default backend configured");
         }
@@ -139,14 +168,11 @@ public final class PostgresSearchStore {
     }
 
     private List<String> shardGroup() {
-        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+        return backendRegistry == null ? List.of()
+                : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.OPENSEARCH);
     }
 
-    /** Every shard target, resolved fresh from the registry -- live-reloadable, matching
-     * dynamowire/sqswire's own "re-read on every call" convention. Falls back to
-     * {@code [defaultTarget()]} when no shard group is configured, so callers can always iterate
-     * "the shards this collection lives on" without a separate unsharded branch. */
-    private List<BackendTarget> allShardTargets() {
+    List<BackendTarget> allShardTargets() {
         List<String> group = shardGroup();
         if (group.isEmpty()) {
             return List.of(defaultTarget());
@@ -162,6 +188,18 @@ public final class PostgresSearchStore {
         return targets;
     }
 
+    int shardCount() {
+        return Math.max(1, shardGroup().size());
+    }
+
+    private int shardOf(String docId) {
+        List<String> group = shardGroup();
+        if (group.size() <= 1) {
+            return 0;
+        }
+        return group.indexOf(ShardingStrategy.hash(group).resolve(docId));
+    }
+
     private BackendTarget targetForDoc(String docId) {
         List<String> group = shardGroup();
         if (group.isEmpty()) {
@@ -175,644 +213,941 @@ public final class PostgresSearchStore {
         return target;
     }
 
-    static String pgTableName(String collection) {
-        if (!IDENTIFIER.matcher(collection).matches()) {
-            throw new IllegalArgumentException(
-                    "oswire: collection/index name must match [A-Za-z_][A-Za-z0-9_]* -- got \"" + collection + "\"");
+    // ------------------------------------------------------------------ names
+
+    static String pgTableName(String index) {
+        String lower = index.toLowerCase(Locale.ROOT);
+        if (IDENTIFIER.matcher(lower).matches() && lower.length() <= 50) {
+            return TABLE_PREFIX + lower;
         }
-        return TABLE_PREFIX + collection.toLowerCase(Locale.ROOT);
+        String sane = lower.replaceAll("[^a-z0-9_]", "_");
+        if (sane.length() > 40) {
+            sane = sane.substring(0, 40);
+        }
+        return TABLE_PREFIX + sane + "_" + hash8(index);
     }
 
-    /** Idempotent; called on every write and on explicit {@code PUT /<index>} so a collection
-     * never has to be pre-declared. Cached per-process so a hot write path isn't re-issuing
-     * {@code CREATE TABLE IF NOT EXISTS} every call. Cached per (collection, physical backend
-     * jdbcUrl) pair, not per collection alone -- a flat per-collection cache would mean a backend
-     * that only starts receiving this collection's writes LATER (a switchover's fallback taking
-     * over after this collection was already ensured against its primary, or a shard added to an
-     * existing group) never gets the table created on it at all. */
-    public void ensureCollection(String collection) throws SQLException {
-        String table = pgTableName(collection);
-        // Created on every shard target (matching dynamowire/sqswire's createTable) -- a document
-        // can hash to any shard, so every shard needs the table before any write to it can land.
+    private static String hash8(String s) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(d, 0, 4);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    static void validateIndexName(String name) {
+        String reason = null;
+        if (name.equals(".") || name.equals("..")) {
+            reason = "must not be '.' or '..'";
+        } else if (name.startsWith("_") || name.startsWith("-") || name.startsWith("+")) {
+            reason = "must not start with '_', '-', or '+'";
+        } else if (!name.equals(name.toLowerCase(Locale.ROOT))) {
+            reason = "must be lowercase";
+        } else if (name.chars().anyMatch(c -> " \",*\\<|>/?#:".indexOf(c) >= 0)) {
+            reason = "must not contain the following characters [ , \", *, \\, <, |, ,, >, /, ?]";
+        } else if (name.getBytes(StandardCharsets.UTF_8).length > 255) {
+            throw new OpenSearchException("invalid_index_name_exception", "Invalid index name [" + name
+                    + "], index name is too long, (" + name.getBytes(StandardCharsets.UTF_8).length + " > 255)")
+                    .with("index", name).with("index_uuid", "_na_");
+        }
+        if (reason != null) {
+            throw new OpenSearchException("invalid_index_name_exception", "Invalid index name [" + name + "], " + reason)
+                    .with("index", name).with("index_uuid", "_na_");
+        }
+    }
+
+    // ------------------------------------------------------------------ catalog
+
+    private void ensureCatalog() throws SQLException {
+        BackendTarget t = defaultTarget();
+        String key = "catalog@" + t.jdbcUrl();
+        if (ensured.putIfAbsent(key, Boolean.TRUE) != null) {
+            return;
+        }
+        try (Connection c = t.open(); var st = c.createStatement()) {
+            st.execute("CREATE TABLE IF NOT EXISTS warp_os_catalog (name TEXT PRIMARY KEY, uuid TEXT NOT NULL, "
+                    + "table_name TEXT NOT NULL, settings JSONB NOT NULL, mappings JSONB NOT NULL, "
+                    + "aliases JSONB NOT NULL DEFAULT '{}', created BIGINT NOT NULL, closed BOOLEAN NOT NULL DEFAULT FALSE)");
+            st.execute("ALTER TABLE warp_os_catalog ADD COLUMN IF NOT EXISTS refresh_state JSONB NOT NULL DEFAULT '{}'");
+            st.execute("CREATE TABLE IF NOT EXISTS warp_os_templates (kind TEXT NOT NULL, name TEXT NOT NULL, "
+                    + "body JSONB NOT NULL, PRIMARY KEY (kind, name))");
+        } catch (SQLException e) {
+            ensured.remove(key);
+            throw e;
+        }
+    }
+
+    private IndexMeta readMeta(ResultSet rs) throws SQLException {
+        return new IndexMeta(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(7),
+                JsonParser.parseString(rs.getString(4)).getAsJsonObject(),
+                JsonParser.parseString(rs.getString(5)).getAsJsonObject(),
+                JsonParser.parseString(rs.getString(6)).getAsJsonObject(), rs.getBoolean(8),
+                JsonParser.parseString(rs.getString(9)).getAsJsonObject());
+    }
+
+    private static final String META_COLS = "name, uuid, table_name, settings::text, mappings::text, aliases::text, created, closed, refresh_state::text";
+
+    /** Every index in the catalog (short TTL cache). */
+    List<IndexMeta> allMetas() throws SQLException {
+        List<IndexMeta> cached = allCache;
+        if (cached != null && System.nanoTime() - allCacheAt < META_TTL_NANOS) {
+            return cached;
+        }
+        ensureCatalog();
+        List<IndexMeta> out = new ArrayList<>();
+        try (Connection c = defaultTarget().open(); var st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT " + META_COLS + " FROM warp_os_catalog ORDER BY name")) {
+            while (rs.next()) {
+                IndexMeta m = readMeta(rs);
+                out.add(m);
+                metaCache.put(m.name, m);
+            }
+        }
+        allCache = out;
+        allCacheAt = System.nanoTime();
+        return out;
+    }
+
+    private void invalidate() {
+        allCache = null;
+    }
+
+    /** Index by exact name (no alias resolution); null when missing. Legacy tables with no catalog row are adopted. */
+    IndexMeta meta(String name) throws SQLException {
+        IndexMeta cached = metaCache.get(name);
+        if (cached != null && System.nanoTime() - cached.loadedAt < META_TTL_NANOS) {
+            return cached;
+        }
+        ensureCatalog();
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("SELECT " + META_COLS + " FROM warp_os_catalog WHERE name = ?")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    IndexMeta m = readMeta(rs);
+                    metaCache.put(name, m);
+                    return m;
+                }
+            }
+        }
+        metaCache.remove(name);
+        return adoptLegacy(name);
+    }
+
+    /** A table created by an older oswire (no catalog row): register it and infer its mapping from the documents. */
+    private IndexMeta adoptLegacy(String name) throws SQLException {
+        if (!IDENTIFIER.matcher(name).matches()) {
+            return null;
+        }
+        String table = pgTableName(name);
+        boolean exists;
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("SELECT 1 FROM information_schema.tables WHERE table_name = ?")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                exists = rs.next();
+            }
+        }
+        if (!exists) {
+            return null;
+        }
+        IndexMeta created = insertCatalog(name, new JsonObject(), new JsonObject(), new JsonObject());
+        upgradeTables(created);
+        // rows written by an older oswire have no sequence numbers: number them in insertion order and continue after them
         for (BackendTarget target : allShardTargets()) {
-            String key = table + "@" + target.jdbcUrl();
-            if (ensuredCollections.putIfAbsent(key, Boolean.TRUE) != null) {
-                continue;
+            try (Connection c = target.open(); var st = c.createStatement()) {
+                st.execute("UPDATE " + created.table + " t SET seq_no = r.rn - 1 FROM (SELECT doc_id, row_number() OVER "
+                        + "(ORDER BY updated_at, doc_id) AS rn FROM " + created.table + ") r WHERE t.doc_id = r.doc_id");
+                st.execute("SELECT setval('" + created.table + "_seq', greatest((SELECT count(*) FROM " + created.table
+                        + ") - 1, 0), (SELECT count(*) > 0 FROM " + created.table + "))");
+            } catch (SQLException e) {
+                log.warn("oswire: could not renumber adopted table {}: {}", created.table, e.getMessage());
             }
-            try (Connection c = open(target); var st = c.createStatement()) {
-                st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
-                        + "doc_id TEXT PRIMARY KEY, "
-                        + "source JSONB NOT NULL, "
-                        + "embedding JSONB, "
-                        + "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
-            }
+        }
+        Mappings m = new Mappings(new JsonObject());
+        for (Doc d : scan(created, null)) {
+            m = m.applyDocument(d.source, d.id, created.settings);
+        }
+        if (m.raw.size() > 0) {
+            created = persistMappings(created, m.raw);
+        }
+        return created;
+    }
+
+    private JsonObject defaultSettings(String name, String uuid, long created, JsonObject requested) {
+        JsonObject index = new JsonObject();
+        JsonObject req = requested.has("index") && requested.get("index").isJsonObject() ? requested.getAsJsonObject("index") : new JsonObject();
+        for (var e : req.entrySet()) {
+            index.add(e.getKey(), e.getValue());
+        }
+        setIfAbsent(index, "number_of_shards", "1");
+        setIfAbsent(index, "number_of_replicas", "1");
+        index.addProperty("provided_name", name);
+        index.addProperty("creation_date", Long.toString(created));
+        index.addProperty("uuid", uuid);
+        JsonObject version = new JsonObject();
+        version.addProperty("created", "136408427");
+        index.add("version", version);
+        JsonObject out = new JsonObject();
+        out.add("index", index);
+        return out;
+    }
+
+    private static void setIfAbsent(JsonObject o, String k, String v) {
+        if (!o.has(k)) {
+            o.addProperty(k, v);
         }
     }
 
-    public void indexDocument(String collection, String docId, JsonObject source, float[] vector) throws SQLException {
-        ensureCollection(collection);
-        String table = pgTableName(collection);
-        try (Connection c = open(targetForDoc(docId));
-                var ps = c.prepareStatement("INSERT INTO " + table + " (doc_id, source, embedding, updated_at) "
-                        + "VALUES (?, ?::jsonb, ?::jsonb, now()) "
-                        + "ON CONFLICT (doc_id) DO UPDATE SET source = EXCLUDED.source, "
-                        + "embedding = EXCLUDED.embedding, updated_at = now()")) {
-            ps.setString(1, docId);
-            ps.setString(2, source.toString());
-            ps.setString(3, vector == null ? null : vectorToJson(vector));
+    /** Normalises create-index / put-settings bodies to {"index": {k: "string"}} with nested objects kept. */
+    static JsonObject normalizeSettings(JsonObject body) {
+        JsonObject index = new JsonObject();
+        if (body == null) {
+            JsonObject o = new JsonObject();
+            o.add("index", index);
+            return o;
+        }
+        for (var e : body.entrySet()) {
+            String k = e.getKey();
+            JsonElement v = e.getValue();
+            if (k.equals("index") && v.isJsonObject()) {
+                for (var ie : v.getAsJsonObject().entrySet()) {
+                    putNested(index, ie.getKey(), ie.getValue());
+                }
+            } else if (k.startsWith("index.")) {
+                putNested(index, k.substring(6), v);
+            } else {
+                putNested(index, k, v);
+            }
+        }
+        JsonObject o = new JsonObject();
+        o.add("index", index);
+        return o;
+    }
+
+    private static void putNested(JsonObject root, String dottedKey, JsonElement v) {
+        String[] parts = dottedKey.split("\\.");
+        JsonObject cur = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (!cur.has(parts[i]) || !cur.get(parts[i]).isJsonObject()) {
+                cur.add(parts[i], new JsonObject());
+            }
+            cur = cur.getAsJsonObject(parts[i]);
+        }
+        String last = parts[parts.length - 1];
+        if (v.isJsonObject()) {
+            JsonObject target = cur.has(last) && cur.get(last).isJsonObject() ? cur.getAsJsonObject(last) : new JsonObject();
+            for (var e : v.getAsJsonObject().entrySet()) {
+                putNested(target, e.getKey(), e.getValue());
+            }
+            cur.add(last, target);
+        } else if (v.isJsonPrimitive()) {
+            cur.addProperty(last, v.getAsString());
+        } else if (v.isJsonArray()) {
+            com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+            for (JsonElement el : v.getAsJsonArray()) {
+                arr.add(el.isJsonPrimitive() ? new com.google.gson.JsonPrimitive(el.getAsString()) : el);
+            }
+            cur.add(last, arr);
+        } else {
+            cur.add(last, v);
+        }
+    }
+
+    private IndexMeta insertCatalog(String name, JsonObject settings, JsonObject mappings, JsonObject aliases) throws SQLException {
+        ensureCatalog();
+        String uuid = newUuid();
+        long created = System.currentTimeMillis();
+        JsonObject full = defaultSettings(name, uuid, created, settings);
+        String table = pgTableName(name);
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("INSERT INTO warp_os_catalog (name, uuid, table_name, settings, mappings, aliases, created) "
+                        + "VALUES (?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?)")) {
+            ps.setString(1, name);
+            ps.setString(2, uuid);
+            ps.setString(3, table);
+            ps.setString(4, full.toString());
+            ps.setString(5, mappings.toString());
+            ps.setString(6, aliases.toString());
+            ps.setLong(7, created);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            if ("23505".equals(e.getSQLState())) {
+                throw new OpenSearchException("resource_already_exists_exception", "index [" + name + "/" + uuid + "] already exists")
+                        .with("index", name).with("index_uuid", uuid);
+            }
+            throw e;
+        }
+        invalidate();
+        IndexMeta m = new IndexMeta(name, uuid, table, created, full, mappings, aliases, false);
+        metaCache.put(name, m);
+        return m;
+    }
+
+    private static String newUuid() {
+        UUID u = UUID.randomUUID();
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(16);
+        b.putLong(u.getMostSignificantBits()).putLong(u.getLeastSignificantBits());
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b.array()).substring(0, 22);
+    }
+
+    /** Creates the index (catalog row + a table on every host). {@code resource_already_exists_exception} if present. */
+    IndexMeta createIndex(String name, JsonObject settings, JsonObject mappings, JsonObject aliases) throws SQLException {
+        validateIndexName(name);
+        for (IndexMeta m : allMetas()) {
+            if (m.hasAlias(name)) {
+                throw new OpenSearchException("invalid_index_name_exception", "Invalid index name [" + name
+                        + "], already exists as alias").with("index", name).with("index_uuid", "_na_");
+            }
+        }
+        IndexMeta m = insertCatalog(name, settings, mappings, aliases);
+        try {
+            upgradeTables(m);
+        } catch (SQLException e) {
+            deleteCatalog(name);
+            throw e;
+        }
+        return m;
+    }
+
+    IndexMeta ensureIndex(String name) throws SQLException {
+        IndexMeta m = meta(name);
+        if (m != null) {
+            return m;
+        }
+        Templates.Applied t = Templates.forNewIndex(this, name);
+        try {
+            return createIndex(name, t.settings, t.mappings, t.aliases);
+        } catch (OpenSearchException e) {
+            if (e.errorType.equals("resource_already_exists_exception")) {
+                IndexMeta again = meta(name);
+                if (again != null) {
+                    return again;
+                }
+            }
+            throw e;
+        }
+    }
+
+    private void deleteCatalog(String name) throws SQLException {
+        try (Connection c = defaultTarget().open(); var ps = c.prepareStatement("DELETE FROM warp_os_catalog WHERE name = ?")) {
+            ps.setString(1, name);
             ps.executeUpdate();
         }
+        metaCache.remove(name);
+        invalidate();
     }
 
-    public JsonObject getDocument(String collection, String docId) throws SQLException {
-        ensureCollection(collection);
-        String table = pgTableName(collection);
-        try (Connection c = open(targetForDoc(docId));
-                var ps = c.prepareStatement("SELECT source FROM " + table + " WHERE doc_id = ?")) {
-            ps.setString(1, docId);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? JsonParser.parseString(rs.getString(1)).getAsJsonObject() : null;
+    void deleteIndex(IndexMeta m) throws SQLException {
+        deleteCatalog(m.name);
+        for (BackendTarget t : allShardTargets()) {
+            try (Connection c = t.open(); var st = c.createStatement()) {
+                st.execute("DROP TABLE IF EXISTS " + m.table);
+                st.execute("DROP SEQUENCE IF EXISTS " + m.table + "_seq");
             }
-        }
-    }
-
-    /** @return true if a row was actually deleted */
-    public boolean deleteDocument(String collection, String docId) throws SQLException {
-        ensureCollection(collection);
-        String table = pgTableName(collection);
-        try (Connection c = open(targetForDoc(docId));
-                var ps = c.prepareStatement("DELETE FROM " + table + " WHERE doc_id = ?")) {
-            ps.setString(1, docId);
-            return ps.executeUpdate() > 0;
+            ensured.remove(m.table + "@" + t.jdbcUrl());
         }
     }
 
-    public SearchResult search(SearchRequest request) throws SQLException {
-        ensureCollection(request.collection());
-        String table = pgTableName(request.collection());
-        boolean sharded = !shardGroup().isEmpty();
-
-        if (request.isHybrid()) {
-            if (sharded) {
-                throw new OpenSearchException("action_request_validation_exception",
-                        "oswire: hybrid search across a sharded collection is not supported yet -- see "
-                                + "PostgresSearchStore's class javadoc");
+    private void upgradeTables(IndexMeta m) throws SQLException {
+        for (BackendTarget target : allShardTargets()) {
+            String key = m.table + "@" + target.jdbcUrl();
+            if (ensured.putIfAbsent(key, Boolean.TRUE) != null) {
+                continue;
             }
-            if (!request.aggregations().isEmpty()) {
-                throw new OpenSearchException("action_request_validation_exception",
-                        "oswire V2 doesn't support aggregations on a hybrid query -- run the aggregation as its "
-                                + "own separate _search request");
+            try (Connection c = target.open(); var st = c.createStatement()) {
+                st.execute("CREATE SEQUENCE IF NOT EXISTS " + m.table + "_seq MINVALUE 0 START 0");
+                st.execute("CREATE TABLE IF NOT EXISTS " + m.table + " (doc_id TEXT PRIMARY KEY, source JSONB NOT NULL, "
+                        + "embedding JSONB, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+                        + "seq_no BIGINT NOT NULL DEFAULT 0, version BIGINT NOT NULL DEFAULT 1)");
+                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS seq_no BIGINT NOT NULL DEFAULT 0");
+                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1");
+                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS ins_seq BIGINT");
+            } catch (SQLException e) {
+                ensured.remove(key);
+                throw e;
             }
-            return searchHybrid(request);
-        }
-        if (request.isVectorSearch()) {
-            if (sharded) {
-                throw new OpenSearchException("action_request_validation_exception",
-                        "oswire: k-NN (vector) search across a sharded collection is not supported yet -- see "
-                                + "PostgresSearchStore's class javadoc");
-            }
-            if (!request.aggregations().isEmpty()) {
-                throw new OpenSearchException("action_request_validation_exception",
-                        "oswire V2 doesn't support aggregations on a k-NN query -- run the aggregation as its own "
-                                + "separate _search request");
-            }
-            SqlFragment where = compileFilter(request.filter());
-            return searchByVector(table, request, where);
-        }
-        SqlFragment where = compileFilter(request.filter());
-        if (sharded) {
-            return searchStructuredSharded(table, request, where);
-        }
-        SearchResult result = searchStructured(table, request, where);
-        if (request.aggregations().isEmpty()) {
-            return result;
-        }
-        List<AggregationResult> aggs = runAggregations(table, where, request.aggregations());
-        return new SearchResult(result.hits(), result.total(), aggs);
-    }
-
-    /** Fans out a structured (non-vector, non-hybrid) search across every shard and merges
-     * centrally via {@link SearchScatterMerge} -- see this class's javadoc for the trade-offs
-     * (fetch-everything-then-merge, real weighted AVG). Each shard's own hit fetch is unpaginated
-     * (no LIMIT/OFFSET) since the global top-K can only be known after every shard's candidates
-     * are gathered; each shard's aggregation request runs the {@link SearchScatterMerge#expandForSharding}
-     * expanded shape so AVG can be merged correctly afterward. */
-    private SearchResult searchStructuredSharded(String table, SearchRequest request, SqlFragment where) throws SQLException {
-        List<BackendTarget> shards = allShardTargets();
-        List<SearchResult> perShardHits = new ArrayList<>();
-        List<List<AggregationResult>> perShardAggs = new ArrayList<>();
-        List<Aggregation> expandedAggs = SearchScatterMerge.expandForSharding(request.aggregations());
-        for (BackendTarget target : shards) {
-            perShardHits.add(searchStructuredForShard(target, table, request, where));
-            if (!expandedAggs.isEmpty()) {
-                perShardAggs.add(runAggregations(target, table, where, expandedAggs));
-            }
-        }
-        Comparator<SearchHit> comparator = SearchScatterMerge.comparatorFor(request.sort());
-        SearchResult merged = SearchScatterMerge.mergeHits(perShardHits, comparator, request.offset(), request.topK());
-        if (request.aggregations().isEmpty()) {
-            return merged;
-        }
-        List<AggregationResult> mergedAggs = SearchScatterMerge.mergeAcrossShards(request.aggregations(), perShardAggs);
-        return new SearchResult(merged.hits(), merged.total(), mergedAggs);
-    }
-
-    /** As {@link #searchStructured}, but against one specific shard and with no LIMIT/OFFSET --
-     * every matching row on this shard, for the caller to merge across all shards. */
-    private SearchResult searchStructuredForShard(BackendTarget target, String table, SearchRequest request,
-            SqlFragment where) throws SQLException {
-        ScoreFragment score = compileScore(request.filter());
-        String selectSql = "SELECT doc_id, source, (" + score.expr() + ") AS score FROM " + table + " WHERE " + where.sql();
-        try (Connection c = open(target)) {
-            long total;
-            try (var ps = prepare(c, "SELECT count(*) FROM " + table + " WHERE " + where.sql(), where.params());
-                    ResultSet rs = ps.executeQuery()) {
-                rs.next();
-                total = rs.getLong(1);
-            }
-            List<SearchHit> hits = new ArrayList<>();
-            List<Object> params = new ArrayList<>(score.params());
-            params.addAll(where.params());
-            try (var ps = prepare(c, selectSql, params); ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    hits.add(new SearchHit(rs.getString(1), rs.getDouble(3),
-                            JsonParser.parseString(rs.getString(2)).getAsJsonObject()));
-                }
-            }
-            return new SearchResult(hits, total);
         }
     }
 
-    private SearchResult searchStructured(String table, SearchRequest request, SqlFragment where) throws SQLException {
-        ScoreFragment score = compileScore(request.filter());
-        boolean hasRealScore = !"1.0".equals(score.expr());
-        String orderBy = !request.sort().isEmpty()
-                ? request.sort().stream()
-                        .map(s -> jsonPath(s.field()) + (s.ascending() ? " ASC" : " DESC"))
-                        .reduce((a, b) -> a + ", " + b).orElseThrow()
-                : hasRealScore ? "score DESC" : "updated_at DESC";
+    /** Ensures the tables exist on every host (a host added later, or a table dropped underneath). */
+    private void ensureTables(IndexMeta m) throws SQLException {
+        upgradeTables(m);
+    }
 
-        String countSql = "SELECT count(*) FROM " + table + " WHERE " + where.sql();
-        String selectSql = "SELECT doc_id, source, (" + score.expr() + ") AS score FROM " + table
-                + " WHERE " + where.sql() + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?";
-
-        try (Connection c = open()) {
-            long total;
-            try (var ps = prepare(c, countSql, where.params())) {
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    total = rs.getLong(1);
-                }
-            }
-            List<SearchHit> hits = new ArrayList<>();
-            List<Object> params = new ArrayList<>(score.params());
-            params.addAll(where.params());
-            params.add(request.topK());
-            params.add(request.offset());
-            try (var ps = prepare(c, selectSql, params)) {
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        hits.add(new SearchHit(rs.getString(1), rs.getDouble(3),
-                                JsonParser.parseString(rs.getString(2)).getAsJsonObject()));
+    IndexMeta persistMappings(IndexMeta m, JsonObject newRaw) throws SQLException {
+        try (Connection c = defaultTarget().open()) {
+            c.setAutoCommit(false);
+            try (var sel = c.prepareStatement("SELECT mappings::text FROM warp_os_catalog WHERE name = ? FOR UPDATE")) {
+                sel.setString(1, m.name);
+                JsonObject stored = null;
+                try (ResultSet rs = sel.executeQuery()) {
+                    if (rs.next()) {
+                        stored = JsonParser.parseString(rs.getString(1)).getAsJsonObject();
                     }
                 }
+                if (stored == null) {
+                    c.rollback();
+                    throw OpenSearchException.indexNotFound(m.name);
+                }
+                JsonObject merged = stored.deepCopy();
+                // fields another writer added concurrently are kept; ours win for fields present in both
+                Mappings.merge(merged, newRaw, "");
+                try (var up = c.prepareStatement("UPDATE warp_os_catalog SET mappings = ?::jsonb WHERE name = ?")) {
+                    up.setString(1, merged.toString());
+                    up.setString(2, m.name);
+                    up.executeUpdate();
+                }
+                c.commit();
+                IndexMeta nm = m.withMappings(merged);
+                metaCache.put(m.name, nm);
+                invalidate();
+                return nm;
+            } catch (SQLException | RuntimeException e) {
+                try {
+                    c.rollback();
+                } catch (SQLException ignored) {
+                    // connection is going back to the pool anyway
+                }
+                throw e;
+            } finally {
+                c.setAutoCommit(true);
             }
-            return new SearchResult(hits, total);
         }
     }
 
-    /** See the class javadoc's "k-NN without pgvector" section -- this is a real, correct linear
-     * scan over every row whose non-vector filters match, not an ANN index lookup. */
-    private SearchResult searchByVector(String table, SearchRequest request, SqlFragment where) throws SQLException {
-        String selectSql = "SELECT doc_id, source, embedding FROM " + table
-                + " WHERE embedding IS NOT NULL AND (" + where.sql() + ")";
-        List<ScoredCandidate> candidates = new ArrayList<>();
-        try (Connection c = open(); var ps = prepare(c, selectSql, where.params())) {
+    void updateCatalogColumn(IndexMeta m, String column, JsonObject value) throws SQLException {
+        if (!column.equals("settings") && !column.equals("aliases") && !column.equals("mappings")) {
+            throw new IllegalArgumentException(column);
+        }
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("UPDATE warp_os_catalog SET " + column + " = ?::jsonb WHERE name = ?")) {
+            ps.setString(1, value.toString());
+            ps.setString(2, m.name);
+            ps.executeUpdate();
+        }
+        metaCache.remove(m.name);
+        invalidate();
+    }
+
+    /** Makes everything written so far visible to search (only meaningful when {@code index.refresh_interval} is -1). */
+    IndexMeta refresh(IndexMeta m) throws SQLException {
+        if (!m.gated()) {
+            return m;
+        }
+        JsonObject st = new JsonObject();
+        List<BackendTarget> targets = allShardTargets();
+        for (int s = 0; s < targets.size(); s++) {
+            try (Connection c = targets.get(s).open(); var stmt = c.createStatement();
+                    ResultSet rs = stmt.executeQuery("SELECT CASE WHEN is_called THEN last_value ELSE -1 END FROM " + m.table + "_seq")) {
+                rs.next();
+                st.addProperty(String.valueOf(s), rs.getLong(1));
+            } catch (SQLException e) {
+                // no sequence yet: nothing written on this host
+            }
+        }
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("UPDATE warp_os_catalog SET refresh_state = ?::jsonb WHERE name = ?")) {
+            ps.setString(1, st.toString());
+            ps.setString(2, m.name);
+            ps.executeUpdate();
+        }
+        IndexMeta nm = m.withRefreshState(st);
+        metaCache.put(m.name, nm);
+        invalidate();
+        return nm;
+    }
+
+    void setClosed(IndexMeta m, boolean closed) throws SQLException {
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("UPDATE warp_os_catalog SET closed = ? WHERE name = ?")) {
+            ps.setBoolean(1, closed);
+            ps.setString(2, m.name);
+            ps.executeUpdate();
+        }
+        metaCache.remove(m.name);
+        invalidate();
+    }
+
+    // ------------------------------------------------------------------ templates
+
+    Map<String, JsonObject> templates(String kind) throws SQLException {
+        ensureCatalog();
+        Map<String, JsonObject> out = new LinkedHashMap<>();
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("SELECT name, body::text FROM warp_os_templates WHERE kind = ? ORDER BY name")) {
+            ps.setString(1, kind);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    float[] stored = jsonToVector(rs.getString(3));
-                    double dist = distance(request.vector(), stored, request.distanceMetric());
-                    candidates.add(new ScoredCandidate(rs.getString(1),
-                            JsonParser.parseString(rs.getString(2)).getAsJsonObject(), dist));
+                    out.put(rs.getString(1), JsonParser.parseString(rs.getString(2)).getAsJsonObject());
                 }
             }
-        }
-        // Lower distance is a better match for every metric here (L2 and 1-cosine-similarity and
-        // negated dot product are all "smaller is closer") -- see distance()'s javadoc. Sorting
-        // uses the raw distance; the _score reported to the caller is a separate, real similarity
-        // transform (see similarityScore()) -- these two are deliberately not the same number.
-        candidates.sort(Comparator.comparingDouble(ScoredCandidate::distance));
-        long total = candidates.size();
-        List<SearchHit> hits = new ArrayList<>();
-        int end = Math.min(candidates.size(), request.offset() + request.topK());
-        for (int i = request.offset(); i < end; i++) {
-            ScoredCandidate cand = candidates.get(i);
-            hits.add(new SearchHit(cand.docId(), similarityScore(cand.distance(), request.distanceMetric()), cand.source()));
-        }
-        return new SearchResult(hits, total);
-    }
-
-    /**
-     * Fuses N independently-executed sub-queries into one ranked result -- real OpenSearch hybrid
-     * search's own algorithm (min-max normalize each sub-query's scores to [0, 1], then combine
-     * per document by arithmetic mean, the default "normalization processor" configuration),
-     * reimplemented exactly, not approximated. Each sub-request runs through the ordinary
-     * {@link #search} path (recursively -- a sub-request is a complete, independent
-     * {@link SearchRequest}), so a {@code match} sub-query gets real {@code ts_rank} relevance and
-     * a {@code knn} sub-query gets a real similarity score, each already in a sub-query-appropriate
-     * scale before normalization ever runs.
-     */
-    private SearchResult searchHybrid(SearchRequest request) throws SQLException {
-        List<Map<String, Double>> normalizedPerSubQuery = new ArrayList<>();
-        Map<String, JsonObject> sourceById = new LinkedHashMap<>();
-
-        for (SearchRequest sub : request.hybridSubRequests()) {
-            SearchRequest candidatePool = new SearchRequest(sub.collection(), sub.projection(), sub.filter(),
-                    sub.textQuery(), sub.vector(), sub.vectorField(), sub.distanceMetric(),
-                    HYBRID_CANDIDATE_POOL, 0, List.of(), List.of(), List.of());
-            SearchResult subResult = search(candidatePool);
-
-            Map<String, Double> raw = new LinkedHashMap<>();
-            for (SearchHit hit : subResult.hits()) {
-                raw.put(hit.id(), hit.score());
-                sourceById.putIfAbsent(hit.id(), hit.source());
-            }
-            normalizedPerSubQuery.add(minMaxNormalize(raw));
-        }
-
-        Map<String, Double> combined = new LinkedHashMap<>();
-        for (Map<String, Double> normalized : normalizedPerSubQuery) {
-            for (var entry : normalized.entrySet()) {
-                combined.merge(entry.getKey(), entry.getValue(), Double::sum);
-            }
-        }
-        int subQueryCount = Math.max(1, normalizedPerSubQuery.size());
-        List<Map.Entry<String, Double>> ranked = new ArrayList<>(combined.entrySet());
-        ranked.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
-
-        long total = ranked.size();
-        List<SearchHit> hits = new ArrayList<>();
-        int end = Math.min(ranked.size(), request.offset() + request.topK());
-        for (int i = request.offset(); i < end; i++) {
-            var entry = ranked.get(i);
-            hits.add(new SearchHit(entry.getKey(), entry.getValue() / subQueryCount, sourceById.get(entry.getKey())));
-        }
-        return new SearchResult(hits, total);
-    }
-
-    /** Min-max normalizes a raw score map to [0, 1] -- real OpenSearch's default hybrid
-     * normalization technique. When every score is identical (including the single-document or
-     * empty-result case, where min == max trivially), everything present normalizes to 1.0 rather
-     * than dividing by zero -- consistent with "this document is exactly as relevant as the most
-     * relevant one" being vacuously true when there's nothing to distinguish it from. */
-    private static Map<String, Double> minMaxNormalize(Map<String, Double> raw) {
-        if (raw.isEmpty()) {
-            return raw;
-        }
-        double min = raw.values().stream().mapToDouble(Double::doubleValue).min().orElseThrow();
-        double max = raw.values().stream().mapToDouble(Double::doubleValue).max().orElseThrow();
-        Map<String, Double> normalized = new LinkedHashMap<>();
-        for (var entry : raw.entrySet()) {
-            normalized.put(entry.getKey(), max == min ? 1.0 : (entry.getValue() - min) / (max - min));
-        }
-        return normalized;
-    }
-
-    private record ScoredCandidate(String docId, JsonObject source, double distance) {
-    }
-
-    /** Smaller return value = closer match, for every metric -- callers sort ascending regardless
-     * of which metric was requested, so this deliberately returns a "distance", not a
-     * "similarity" (cosine similarity and dot product are negated/inverted here for that reason).
-     * {@link #similarityScore} is the separate transform that turns this into the higher-is-better
-     * number actually shown to a caller as {@code _score}. */
-    static double distance(float[] a, float[] b, SearchRequest.DistanceMetric metric) {
-        if (a.length != b.length) {
-            throw new IllegalArgumentException(
-                    "oswire: query vector has " + a.length + " dimensions, stored vector has " + b.length);
-        }
-        return switch (metric) {
-            case L2 -> {
-                double sum = 0;
-                for (int i = 0; i < a.length; i++) {
-                    double d = a[i] - b[i];
-                    sum += d * d;
-                }
-                yield Math.sqrt(sum);
-            }
-            case DOT_PRODUCT -> {
-                double dot = 0;
-                for (int i = 0; i < a.length; i++) {
-                    dot += a[i] * b[i];
-                }
-                yield -dot;
-            }
-            case COSINE -> {
-                double dot = 0, normA = 0, normB = 0;
-                for (int i = 0; i < a.length; i++) {
-                    dot += a[i] * b[i];
-                    normA += a[i] * a[i];
-                    normB += b[i] * b[i];
-                }
-                double denom = Math.sqrt(normA) * Math.sqrt(normB);
-                yield denom == 0 ? 1.0 : 1.0 - (dot / denom);
-            }
-        };
-    }
-
-    /**
-     * Converts {@link #distance}'s internal "smaller is closer" value into the higher-is-better
-     * {@code _score} a real client expects, using the exact space-type formulas real OpenSearch's
-     * k-NN plugin documents: {@code l2 -> 1 / (1 + distance)}, {@code cosinesimil -> (1 +
-     * similarity) / 2} (similarity recovered as {@code 1 - storedCosineDistance}, since
-     * {@link #distance}'s COSINE case stores {@code 1 - cosineSimilarity}), and
-     * {@code innerproduct -> rawDot >= 0 ? rawDot + 1 : 1 / (1 - rawDot)} (raw dot product
-     * recovered as {@code -storedDotDistance}, since {@link #distance}'s DOT_PRODUCT case negates
-     * it). Every formula maps onto (0, 1] with 1.0 being an exact match, matching real OpenSearch's
-     * own convention -- V1 returned the raw, metric-dependent distance value directly, which
-     * wasn't comparable across metrics and read backwards for cosine/dot (a "better" match showed
-     * as a *smaller* number).
-     */
-    static double similarityScore(double dist, SearchRequest.DistanceMetric metric) {
-        return switch (metric) {
-            case L2 -> 1.0 / (1.0 + dist);
-            case COSINE -> (1.0 + (1.0 - dist)) / 2.0;
-            case DOT_PRODUCT -> {
-                double rawDot = -dist;
-                yield rawDot >= 0 ? rawDot + 1.0 : 1.0 / (1.0 - rawDot);
-            }
-        };
-    }
-
-    private static String vectorToJson(float[] vector) {
-        JsonArray arr = new JsonArray();
-        for (float v : vector) {
-            arr.add(v);
-        }
-        return arr.toString();
-    }
-
-    private static float[] jsonToVector(String json) {
-        if (json == null) {
-            return new float[0];
-        }
-        JsonArray arr = JsonParser.parseString(json).getAsJsonArray();
-        float[] out = new float[arr.size()];
-        for (int i = 0; i < out.length; i++) {
-            out[i] = arr.get(i).getAsFloat();
         }
         return out;
     }
 
-    // --- aggregation -> SQL compilation/execution ---
-
-    /**
-     * Runs each top-level {@link Aggregation} as its own SQL query against the already-filtered
-     * document set ({@code where}) -- a {@link Aggregation.Terms} becomes a real
-     * {@code GROUP BY ... ORDER BY count(*) DESC LIMIT size}, with each of its {@code subAggs} run
-     * again per bucket (one additional query per bucket, since a bucket's own filter -- "this
-     * group's key" -- has to be added to {@code where} first; real OpenSearch pays a similar
-     * per-bucket cost internally, just amortized differently). A bare {@link Aggregation.Metric}
-     * at the top level runs once over the whole filtered set.
-     */
-    private List<AggregationResult> runAggregations(String table, SqlFragment where, List<Aggregation> aggregations)
-            throws SQLException {
-        return runAggregations(defaultTarget(), table, where, aggregations);
-    }
-
-    private List<AggregationResult> runAggregations(BackendTarget target, String table, SqlFragment where,
-            List<Aggregation> aggregations) throws SQLException {
-        try (Connection c = open(target)) {
-            List<AggregationResult> results = new ArrayList<>();
-            for (Aggregation agg : aggregations) {
-                results.add(runOneAggregation(c, table, where, agg));
-            }
-            return results;
+    void putTemplate(String kind, String name, JsonObject body) throws SQLException {
+        ensureCatalog();
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("INSERT INTO warp_os_templates (kind, name, body) VALUES (?, ?, ?::jsonb) "
+                        + "ON CONFLICT (kind, name) DO UPDATE SET body = EXCLUDED.body")) {
+            ps.setString(1, kind);
+            ps.setString(2, name);
+            ps.setString(3, body.toString());
+            ps.executeUpdate();
         }
     }
 
-    private AggregationResult runOneAggregation(Connection c, String table, SqlFragment where, Aggregation agg)
-            throws SQLException {
-        return switch (agg) {
-            case Aggregation.Metric(String name, Aggregation.MetricType type, String field) -> {
-                String metricSql = "SELECT " + metricExpr(type, field) + " FROM " + table + " WHERE " + where.sql();
-                try (var ps = prepare(c, metricSql, where.params()); ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    double value = rs.getDouble(1);
-                    yield new AggregationResult.SingleValue(name, rs.wasNull() ? null : value, openSearchMetricType(type));
+    boolean deleteTemplate(String kind, String name) throws SQLException {
+        ensureCatalog();
+        try (Connection c = defaultTarget().open();
+                var ps = c.prepareStatement("DELETE FROM warp_os_templates WHERE kind = ? AND name = ?")) {
+            ps.setString(1, kind);
+            ps.setString(2, name);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    // ------------------------------------------------------------------ resolution
+
+    /** A concrete index plus the alias filters (if it was reached through filtered aliases). */
+    record Resolved(IndexMeta index, List<JsonObject> aliasFilters) {
+    }
+
+    static final class ResolveOpts {
+        boolean allowNoIndices = true;
+        boolean ignoreUnavailable;
+        boolean expandOpen = true;
+        boolean expandClosed;
+        boolean requireAlias;
+    }
+
+    /** Resolves an index expression (comma list, wildcards, {@code _all}, aliases, {@code -exclusion}). */
+    List<Resolved> resolve(String expr, ResolveOpts opts) throws SQLException {
+        List<IndexMeta> all = allMetas();
+        Map<String, Resolved> out = new LinkedHashMap<>();
+        boolean wildcardOnly = true;
+        boolean any = false;
+        String[] parts = expr == null || expr.isBlank() || expr.equals("_all") ? new String[] {"*"} : expr.split(",");
+        for (String raw : parts) {
+            String p = raw.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            boolean exclude = p.startsWith("-") && any;
+            if (exclude) {
+                p = p.substring(1);
+            }
+            boolean wildcard = p.contains("*") || p.equals("_all");
+            if (!wildcard) {
+                wildcardOnly = false;
+                if (p.startsWith("_") || p.startsWith("+")) {
+                    throw new OpenSearchException("invalid_index_name_exception", "Invalid index name [" + p + "], must not start with '_', '-', or '+'")
+                            .with("index", p).with("index_uuid", "_na_");
                 }
             }
-            case Aggregation.Terms(String name, String field, int size, List<Aggregation> subAggs) -> {
-                String bucketSql = "SELECT " + jsonPath(field) + " AS bucket_key, count(*) AS doc_count FROM " + table
-                        + " WHERE " + where.sql() + " GROUP BY bucket_key ORDER BY doc_count DESC LIMIT ?";
-                List<AggregationResult.Bucket> buckets = new ArrayList<>();
-                List<Object> params = new ArrayList<>(where.params());
-                params.add(size);
-                try (var ps = prepare(c, bucketSql, params); ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        String key = rs.getString(1);
-                        long docCount = rs.getLong(2);
-                        List<AggregationResult> subResults = new ArrayList<>();
-                        if (!subAggs.isEmpty()) {
-                            SqlFragment bucketWhere = new SqlFragment(
-                                    "(" + where.sql() + ") AND " + jsonPath(field) + " = ?",
-                                    append(where.params(), key));
-                            for (Aggregation subAgg : subAggs) {
-                                subResults.add(runOneAggregation(c, table, bucketWhere, subAgg));
+            List<Resolved> found = new ArrayList<>();
+            if (wildcard && !opts.expandOpen && !opts.expandClosed) {
+                continue; // expand_wildcards=none
+            }
+            for (IndexMeta m : all) {
+                if (p.equals("_all") || (wildcard ? Mappings.wildcardMatch(p, m.name) : m.name.equals(p))) {
+                    found.add(new Resolved(m, new ArrayList<>()));
+                }
+            }
+            for (IndexMeta m : all) {
+                for (var a : m.aliases.entrySet()) {
+                    if (wildcard ? Mappings.wildcardMatch(p, a.getKey()) : a.getKey().equals(p)) {
+                        List<JsonObject> f = new ArrayList<>();
+                        JsonObject def = a.getValue().isJsonObject() ? a.getValue().getAsJsonObject() : new JsonObject();
+                        if (def.has("filter")) {
+                            f.add(def.getAsJsonObject("filter"));
+                        }
+                        boolean dup = false;
+                        for (Resolved r : found) {
+                            if (r.index().name.equals(m.name)) {
+                                dup = true;
                             }
                         }
-                        buckets.add(new AggregationResult.Bucket(key, docCount, subResults));
+                        if (!dup) {
+                            found.add(new Resolved(m, f));
+                        }
                     }
                 }
-                long returnedDocCount = buckets.stream().mapToLong(AggregationResult.Bucket::docCount).sum();
-                long totalMatching;
-                try (var ps = prepare(c, "SELECT count(*) FROM " + table + " WHERE " + where.sql(), where.params());
-                        ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    totalMatching = rs.getLong(1);
+            }
+            if (!wildcard && found.isEmpty()) {
+                // legacy table without a catalog row?
+                IndexMeta adopted = meta(p);
+                if (adopted != null) {
+                    found.add(new Resolved(adopted, new ArrayList<>()));
                 }
-                yield new AggregationResult.Buckets(name, buckets, totalMatching - returnedDocCount);
             }
-        };
-    }
-
-    /** Real OpenSearch's own aggregation-type tag for each {@link Aggregation.MetricType} --
-     * see {@link AggregationResult}'s javadoc for why this has to be threaded through to the
-     * response at all (the {@code typed_keys} response format official clients require). */
-    private static String openSearchMetricType(Aggregation.MetricType type) {
-        return switch (type) {
-            case AVG -> "avg";
-            case SUM -> "sum";
-            case MIN -> "min";
-            case MAX -> "max";
-            case COUNT -> "value_count";
-        };
-    }
-
-    private static String metricExpr(Aggregation.MetricType type, String field) {
-        String numericPath = typedPath(field, 0.0);
-        return switch (type) {
-            case AVG -> "avg(" + numericPath + ")";
-            case SUM -> "sum(" + numericPath + ")";
-            case MIN -> "min(" + numericPath + ")";
-            case MAX -> "max(" + numericPath + ")";
-            case COUNT -> "count(" + jsonPath(field) + ")";
-        };
-    }
-
-    private static List<Object> append(List<Object> params, Object extra) {
-        List<Object> copy = new ArrayList<>(params);
-        copy.add(extra);
-        return copy;
-    }
-
-    // --- filter -> SQL compilation ---
-
-    private record SqlFragment(String sql, List<Object> params) {
-    }
-
-    private static SqlFragment compileFilter(SearchFilter filter) {
-        List<Object> params = new ArrayList<>();
-        String sql = compile(filter, params);
-        return new SqlFragment(sql, params);
-    }
-
-    private static String compile(SearchFilter filter, List<Object> params) {
-        return switch (filter) {
-            case SearchFilter.MatchAll ignored -> "TRUE";
-            case SearchFilter.Term(String field, Object value) -> {
-                params.add(value);
-                yield typedPath(field, value) + " = ?";
+            if (found.isEmpty() && !wildcard && !opts.ignoreUnavailable) {
+                throw OpenSearchException.indexNotFound(p);
             }
-            case SearchFilter.Range(String field, Object gte, Object lte, Object gt, Object lt) -> {
-                List<String> clauses = new ArrayList<>();
-                Object sample = gte != null ? gte : lte != null ? lte : gt != null ? gt : lt;
-                String path = typedPath(field, sample);
-                if (gte != null) { clauses.add(path + " >= ?"); params.add(gte); }
-                if (lte != null) { clauses.add(path + " <= ?"); params.add(lte); }
-                if (gt != null) { clauses.add(path + " > ?"); params.add(gt); }
-                if (lt != null) { clauses.add(path + " < ?"); params.add(lt); }
-                yield clauses.isEmpty() ? "TRUE" : "(" + String.join(" AND ", clauses) + ")";
-            }
-            case SearchFilter.Match(String field, String text) -> {
-                params.add(text);
-                yield "to_tsvector('english', coalesce(" + jsonPath(field, true) + ", '')) "
-                        + "@@ plainto_tsquery('english', ?)";
-            }
-            case SearchFilter.Bool(List<SearchFilter> must, List<SearchFilter> filterList,
-                    List<SearchFilter> should, List<SearchFilter> mustNot) -> {
-                List<String> clauses = new ArrayList<>();
-                for (SearchFilter f : must) clauses.add(compile(f, params));
-                for (SearchFilter f : filterList) clauses.add(compile(f, params));
-                if (!should.isEmpty()) {
-                    List<String> orClauses = new ArrayList<>();
-                    for (SearchFilter f : should) orClauses.add(compile(f, params));
-                    clauses.add("(" + String.join(" OR ", orClauses) + ")");
+            for (Resolved r : found) {
+                if (r.index().closed && !opts.expandClosed) {
+                    if (!wildcard && !opts.ignoreUnavailable) {
+                        throw new OpenSearchException("index_closed_exception", "closed").with("index", r.index().name).with("index_uuid", r.index().uuid);
+                    }
+                    continue;
                 }
-                for (SearchFilter f : mustNot) clauses.add("NOT (" + compile(f, params) + ")");
-                yield clauses.isEmpty() ? "TRUE" : "(" + String.join(" AND ", clauses) + ")";
+                if (exclude) {
+                    out.remove(r.index().name);
+                } else {
+                    Resolved prev = out.get(r.index().name);
+                    if (prev == null) {
+                        out.put(r.index().name, r);
+                    } else if (r.aliasFilters().isEmpty()) {
+                        out.put(r.index().name, r);
+                    } else if (!prev.aliasFilters().isEmpty()) {
+                        List<JsonObject> merged = new ArrayList<>(prev.aliasFilters());
+                        merged.addAll(r.aliasFilters());
+                        out.put(r.index().name, new Resolved(r.index(), merged));
+                    }
+                }
             }
-        };
+            any = true;
+        }
+        if (out.isEmpty() && !opts.allowNoIndices) {
+            throw OpenSearchException.indexNotFound(expr == null ? "_all" : expr);
+        }
+        return new ArrayList<>(out.values());
     }
 
-    private record ScoreFragment(String expr, List<Object> params) {
-    }
-
-    /**
-     * Builds a real relevance-score SQL expression for a structured (non-vector, non-hybrid)
-     * search -- the sum of {@code ts_rank(...)} across every {@link SearchFilter.Match} clause
-     * found anywhere in the filter tree ({@code must}/{@code filter}/{@code should} clauses all
-     * contribute; {@code must_not} contributes nothing, since a document that matched a negated
-     * clause was already excluded by the WHERE clause). A filter tree with no {@code Match}
-     * clause anywhere (pure term/range/bool-of-those) has nothing to rank by, so it falls back to
-     * a flat {@code 1.0} -- V1's behavior, unchanged for the case V1 already handled correctly.
-     * This is a deliberate simplification of real BM25/TF-IDF scoring (no per-clause weighting,
-     * no must-vs-should distinction in the summed contribution), not an attempt to bit-for-bit
-     * match OpenSearch's own Lucene-based relevance score -- see the class javadoc.
-     */
-    private static ScoreFragment compileScore(SearchFilter filter) {
-        List<Object> params = new ArrayList<>();
-        List<String> rankExprs = new ArrayList<>();
-        collectMatchRankExprs(filter, rankExprs, params);
-        String expr = rankExprs.isEmpty() ? "1.0" : String.join(" + ", rankExprs);
-        return new ScoreFragment(expr, params);
-    }
-
-    private static void collectMatchRankExprs(SearchFilter filter, List<String> exprs, List<Object> params) {
-        switch (filter) {
-            case SearchFilter.Match(String field, String text) -> {
-                params.add(text);
-                exprs.add("ts_rank(to_tsvector('english', coalesce(" + jsonPath(field, true) + ", '')), "
-                        + "plainto_tsquery('english', ?))");
+    /** The single concrete index a write addresses: an index name, or an alias with exactly one (or a write) index. */
+    IndexMeta resolveWriteTarget(String name, boolean autoCreate) throws SQLException {
+        IndexMeta direct = meta(name);
+        if (direct != null) {
+            if (direct.closed) {
+                throw new OpenSearchException("index_closed_exception", "closed").with("index", name).with("index_uuid", direct.uuid);
             }
-            case SearchFilter.Bool(List<SearchFilter> must, List<SearchFilter> filterList,
-                    List<SearchFilter> should, List<SearchFilter> ignoredMustNot) -> {
-                for (SearchFilter f : must) collectMatchRankExprs(f, exprs, params);
-                for (SearchFilter f : filterList) collectMatchRankExprs(f, exprs, params);
-                for (SearchFilter f : should) collectMatchRankExprs(f, exprs, params);
-                // must_not deliberately contributes nothing -- see compileScore's javadoc.
-            }
-            case SearchFilter.Term ignored -> { }
-            case SearchFilter.Range ignored -> { }
-            case SearchFilter.MatchAll ignored -> { }
+            return direct;
         }
-    }
-
-    /** {@code field} may be dotted ({@code "user.name"}) for a nested JSON path. {@code asText}
-     * requests {@code #>>} (text extraction, for full-text match); the default {@code ->>} form
-     * is used for direct equality/range comparisons -- both are the text-extraction operators
-     * (there's no numeric-typed JSONB accessor), callers rely on Postgres's implicit cast from
-     * the bind parameter's own type when comparing. Field names are validated against
-     * {@link #IDENTIFIER} per path segment before being concatenated into SQL text -- never
-     * derived from anything other than a validated identifier, so this isn't a SQL-injection
-     * surface despite not being a bind parameter. */
-    private static String jsonPath(String field) {
-        return jsonPath(field, false);
-    }
-
-    /** {@code source ->> 'field'} is always text -- JSONB has no numeric/boolean-typed accessor
-     * -- so a comparison against a number or boolean bind parameter needs an explicit cast or
-     * Postgres rejects it outright ({@code operator does not exist: text >= double precision}),
-     * it does not implicitly coerce. Cast is chosen from the bind value's own Java type, which
-     * {@code OpenSearchAdapter} already derived from the JSON value's own type
-     * ({@link OpenSearchAdapter#parseQuery}'s {@code scalar()}), so this stays correct for
-     * whatever type a client's query actually sent -- string fields (the common case) are left
-     * as plain text with no cast. */
-    private static String typedPath(String field, Object sampleValue) {
-        String path = jsonPath(field);
-        if (sampleValue instanceof Double || sampleValue instanceof Number) {
-            return path + "::numeric";
-        }
-        if (sampleValue instanceof Boolean) {
-            return path + "::boolean";
-        }
-        return path;
-    }
-
-    private static String jsonPath(String field, boolean asText) {
-        String[] parts = field.split("\\.");
-        for (String part : parts) {
-            if (!IDENTIFIER.matcher(part).matches()) {
-                throw new IllegalArgumentException("oswire: invalid field name \"" + field + "\"");
+        List<IndexMeta> viaAlias = new ArrayList<>();
+        IndexMeta writeIndex = null;
+        for (IndexMeta m : allMetas()) {
+            if (m.aliases.has(name)) {
+                viaAlias.add(m);
+                JsonElement def = m.aliases.get(name);
+                if (def.isJsonObject() && def.getAsJsonObject().has("is_write_index")
+                        && def.getAsJsonObject().get("is_write_index").getAsBoolean()) {
+                    writeIndex = m;
+                }
             }
         }
-        if (parts.length == 1) {
-            return "(source ->> '" + parts[0] + "')";
+        if (writeIndex != null) {
+            return writeIndex;
         }
-        StringBuilder path = new StringBuilder("'{");
-        for (int i = 0; i < parts.length; i++) {
-            if (i > 0) path.append(',');
-            path.append(parts[i]);
+        if (viaAlias.size() == 1) {
+            return viaAlias.get(0);
         }
-        path.append("}'");
-        return "(source #>> " + path + ")";
+        if (viaAlias.size() > 1) {
+            throw OpenSearchException.illegalArgument("no write index is defined for alias [" + name
+                    + "]. The write index may be explicitly disabled using is_write_index=false or the alias points to multiple indices without one being designated as a write index");
+        }
+        if (!autoCreate) {
+            throw OpenSearchException.indexNotFound(name);
+        }
+        return ensureIndex(name);
     }
 
-    private static PreparedStatement prepare(Connection c, String sql, List<Object> params) throws SQLException {
-        PreparedStatement ps = c.prepareStatement(sql);
-        for (int i = 0; i < params.size(); i++) {
-            ps.setObject(i + 1, params.get(i));
+    // ------------------------------------------------------------------ documents
+
+    static void validateId(String id) {
+        if (id.getBytes(StandardCharsets.UTF_8).length > 512) {
+            throw OpenSearchException.validation("id [" + id + "] is too long, must be no longer than 512 bytes but was: "
+                    + id.getBytes(StandardCharsets.UTF_8).length);
         }
-        return ps;
+    }
+
+    static String autoId() {
+        byte[] b = new byte[15];
+        new java.security.SecureRandom().nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    /** Compatibility entry point (id + optional legacy vector). */
+    public void indexDocument(String collection, String docId, JsonObject source, float[] vector) throws SQLException {
+        IndexMeta m = resolveWriteTarget(collection, true);
+        write(m, docId, source, new WriteOpts());
+    }
+
+    /** Indexes (or, with {@code opts.create}, creates) one document; applies dynamic mapping first. */
+    WriteResult write(IndexMeta meta, String id, JsonObject source, WriteOpts opts) throws SQLException {
+        validateId(id);
+        Mappings updated = meta.mappings.applyDocument(source, id, meta.settings);
+        if (updated != meta.mappings) {
+            meta = persistMappings(meta, updated.raw);
+        }
+        String t = meta.table;
+        String seq = "nextval('" + t + "_seq')";
+        BackendTarget target = targetForDoc(id);
+        String src = source.toString();
+        if (opts.ifPrimaryTerm != null && opts.ifPrimaryTerm != 1L) {
+            try (Connection c = target.open()) {
+                throw conflict(c, t, id, opts);
+            }
+        }
+        for (int attempt = 0; ; attempt++) {
+            try (Connection c = target.open()) {
+                if (opts.ifSeqNo != null || (opts.version != null && opts.versionType.equals("internal"))) {
+                    String cond = opts.ifSeqNo != null ? "seq_no = ?" : "version = ?";
+                    long condVal = opts.ifSeqNo != null ? opts.ifSeqNo : opts.version;
+                    try (var ps = c.prepareStatement("UPDATE " + t + " SET source = ?::jsonb, updated_at = now(), seq_no = " + seq
+                            + ", version = version + 1 WHERE doc_id = ? AND " + cond + " RETURNING seq_no, version")) {
+                        ps.setString(1, src);
+                        ps.setString(2, id);
+                        ps.setLong(3, condVal);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                return new WriteResult(rs.getLong(1), rs.getLong(2), false, false);
+                            }
+                        }
+                    }
+                    throw conflict(c, t, id, opts);
+                }
+                if (opts.version != null) {
+                    boolean gte = opts.versionType.equals("external_gte");
+                    try (var ps = c.prepareStatement("" + insertHead(t, seq, meta.gated(), "?") + " ON CONFLICT (doc_id) DO UPDATE SET source = EXCLUDED.source, updated_at = now(), seq_no = EXCLUDED.seq_no, "
+                            + "version = EXCLUDED.version WHERE x.version " + (gte ? "<=" : "<") + " EXCLUDED.version RETURNING seq_no, version, (xmax = 0)")) {
+                        ps.setString(1, id);
+                        ps.setString(2, src);
+                        ps.setLong(3, opts.version);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                return new WriteResult(rs.getLong(1), rs.getLong(2), rs.getBoolean(3), false);
+                            }
+                        }
+                    }
+                    throw conflict(c, t, id, opts);
+                }
+                if (opts.create) {
+                    try (var ps = c.prepareStatement("" + insertHead(t, seq, meta.gated(), "1") + " ON CONFLICT (doc_id) DO NOTHING RETURNING seq_no, version")) {
+                        ps.setString(1, id);
+                        ps.setString(2, src);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                return new WriteResult(rs.getLong(1), rs.getLong(2), true, false);
+                            }
+                        }
+                    }
+                    throw conflict(c, t, id, opts);
+                }
+                try (var ps = c.prepareStatement("" + insertHead(t, seq, meta.gated(), "1") + " ON CONFLICT (doc_id) DO UPDATE SET source = EXCLUDED.source, updated_at = now(), "
+                        + "seq_no = EXCLUDED.seq_no, version = x.version + 1 RETURNING seq_no, version, (xmax = 0)")) {
+                    ps.setString(1, id);
+                    ps.setString(2, src);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        rs.next();
+                        return new WriteResult(rs.getLong(1), rs.getLong(2), rs.getBoolean(3), false);
+                    }
+                }
+            } catch (SQLException e) {
+                if (attempt == 0 && "42P01".equals(e.getSQLState())) {
+                    ensured.remove(t + "@" + target.jdbcUrl());
+                    ensureTables(meta);
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    /** The INSERT head (binds doc_id, source[, version]). Gated indexes (refresh_interval -1) also record the first sequence
+     * number of the row ({@code ins_seq}) so an update does not hide a document that was already visible. */
+    private static String insertHead(String t, String seq, boolean gated, String version) {
+        if (gated) {
+            return "WITH n AS (SELECT " + seq + " AS s) INSERT INTO " + t + " AS x (doc_id, source, updated_at, seq_no, version, ins_seq) "
+                    + "SELECT ?, ?::jsonb, now(), n.s, " + version + ", n.s FROM n";
+        }
+        return "INSERT INTO " + t + " AS x (doc_id, source, updated_at, seq_no, version) VALUES (?, ?::jsonb, now(), " + seq + ", " + version + ")";
+    }
+
+    private OpenSearchException conflict(Connection c, String table, String id, WriteOpts opts) throws SQLException {
+        long curSeq = -2;
+        long curVer = -1;
+        try (var ps = c.prepareStatement("SELECT seq_no, version FROM " + table + " WHERE doc_id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    curSeq = rs.getLong(1);
+                    curVer = rs.getLong(2);
+                }
+            }
+        }
+        String msg;
+        if (opts.ifSeqNo != null) {
+            msg = "[" + id + "]: version conflict, required seqNo [" + opts.ifSeqNo + "], primary term [" + opts.ifPrimaryTerm
+                    + "]. " + (curVer < 0 ? "document does not exist (expected)" : "current document has seqNo [" + curSeq + "] and primary term [1]");
+        } else if (opts.create) {
+            msg = "[" + id + "]: version conflict, document already exists (current version [" + curVer + "])";
+        } else if (opts.version != null && opts.versionType.equals("internal")) {
+            msg = "[" + id + "]: version conflict, current version [" + curVer + "] is different than the one provided [" + opts.version + "]";
+        } else {
+            msg = "[" + id + "]: version conflict, current version [" + curVer + "] is higher or equal to the one provided [" + opts.version + "]";
+        }
+        return new OpenSearchException("version_conflict_engine_exception", msg);
+    }
+
+    Doc get(IndexMeta meta, String id) throws SQLException {
+        try (Connection c = targetForDoc(id).open();
+                var ps = c.prepareStatement("SELECT source::text, seq_no, version FROM " + meta.table + " WHERE doc_id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new Doc(meta.name, id, JsonParser.parseString(rs.getString(1)).getAsJsonObject(),
+                        rs.getLong(2), rs.getLong(3), shardOf(id)) : null;
+            }
+        }
+    }
+
+    /** Compatibility (older callers). */
+    public JsonObject getDocument(String collection, String docId) throws SQLException {
+        IndexMeta m = meta(collection);
+        if (m == null) {
+            return null;
+        }
+        Doc d = get(m, docId);
+        return d == null ? null : d.source;
+    }
+
+    /** @return version/seq_no of the delete, or {@code null} when the document did not exist. */
+    WriteResult delete(IndexMeta meta, String id, WriteOpts opts) throws SQLException {
+        String seq = "nextval('" + meta.table + "_seq')";
+        if (opts != null && opts.ifPrimaryTerm != null && opts.ifPrimaryTerm != 1L) {
+            try (Connection c = targetForDoc(id).open()) {
+                throw conflict(c, meta.table, id, opts);
+            }
+        }
+        try (Connection c = targetForDoc(id).open()) {
+            String cond = "";
+            List<Object> args = new ArrayList<>();
+            boolean external = opts != null && opts.version != null && opts.versionType.startsWith("external");
+            if (opts != null && opts.ifSeqNo != null) {
+                cond = " AND seq_no = ?";
+                args.add(opts.ifSeqNo);
+            } else if (opts != null && opts.version != null) {
+                cond = external ? (opts.versionType.equals("external_gte") ? " AND version <= ?" : " AND version < ?") : " AND version = ?";
+                args.add(opts.version);
+            }
+            try (var ps = c.prepareStatement("DELETE FROM " + meta.table + " WHERE doc_id = ?" + cond + " RETURNING version, " + seq)) {
+                ps.setString(1, id);
+                for (int i = 0; i < args.size(); i++) {
+                    ps.setObject(i + 2, args.get(i));
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return new WriteResult(rs.getLong(2), external ? opts.version : rs.getLong(1) + 1, false, false);
+                    }
+                }
+            }
+            if (!cond.isEmpty()) {
+                try (var ps = c.prepareStatement("SELECT 1 FROM " + meta.table + " WHERE doc_id = ?")) {
+                    ps.setString(1, id);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            throw conflict(c, meta.table, id, opts);
+                        }
+                    }
+                }
+                if (opts.ifSeqNo != null) {
+                    throw conflict(c, meta.table, id, opts);
+                }
+            }
+            return null;
+        }
+    }
+
+    /** Compatibility. */
+    public boolean deleteDocument(String collection, String docId) throws SQLException {
+        IndexMeta m = meta(collection);
+        return m != null && delete(m, docId, null) != null;
+    }
+
+    // ------------------------------------------------------------------ scans
+
+    /** Reads every document of the index on every host (optionally narrowed by a SQL predicate over {@code source}/{@code doc_id}). */
+    List<Doc> scan(IndexMeta meta, SqlFilter filter) throws SQLException {
+        List<Doc> out = new ArrayList<>();
+        List<BackendTarget> targets = allShardTargets();
+        for (int s = 0; s < targets.size(); s++) {
+            try (Connection c = targets.get(s).open()) {
+                List<Object> params = new ArrayList<>();
+                StringBuilder where = new StringBuilder();
+                if (filter != null) {
+                    where.append('(').append(filter.sql()).append(')');
+                    params.addAll(filter.params());
+                }
+                if (meta.gated()) {
+                    if (where.length() > 0) {
+                        where.append(" AND ");
+                    }
+                    where.append("COALESCE(ins_seq, seq_no) <= ?");
+                    params.add(meta.refreshState.has(String.valueOf(s)) ? meta.refreshState.get(String.valueOf(s)).getAsLong() : -1L);
+                }
+                String sql = "SELECT doc_id, source::text, seq_no, version FROM " + meta.table
+                        + (where.length() == 0 ? "" : " WHERE " + where) + " ORDER BY seq_no";
+                try (var ps = c.prepareStatement(sql)) {
+                    for (int i = 0; i < params.size(); i++) {
+                        ps.setObject(i + 1, params.get(i));
+                    }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.add(new Doc(meta.name, rs.getString(1), JsonParser.parseString(rs.getString(2)).getAsJsonObject(),
+                                    rs.getLong(3), rs.getLong(4), s));
+                        }
+                    }
+                }
+            } catch (SQLException e) {
+                if ("42P01".equals(e.getSQLState()) && meta(meta.name) != null && s > 0) {
+                    ensured.remove(meta.table + "@" + targets.get(s).jdbcUrl());
+                    ensureTables(meta);
+                    continue;
+                }
+                throw e;
+            }
+        }
+        return out;
+    }
+
+    /** A SQL predicate that is a SUPERSET of the documents a query can match (never drops a real match). */
+    record SqlFilter(String sql, List<Object> params) {
+    }
+
+    long count(IndexMeta meta) throws SQLException {
+        long n = 0;
+        for (BackendTarget t : allShardTargets()) {
+            try (Connection c = t.open(); var st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT count(*) FROM " + meta.table)) {
+                rs.next();
+                n += rs.getLong(1);
+            } catch (SQLException e) {
+                if (!"42P01".equals(e.getSQLState())) {
+                    throw e;
+                }
+            }
+        }
+        return n;
+    }
+
+    long storeSizeBytes(IndexMeta meta) throws SQLException {
+        long n = 0;
+        for (BackendTarget t : allShardTargets()) {
+            try (Connection c = t.open(); var st = c.createStatement();
+                    ResultSet rs = st.executeQuery("SELECT pg_total_relation_size('" + meta.table + "')")) {
+                rs.next();
+                n += rs.getLong(1);
+            } catch (SQLException e) {
+                // table not on this host yet
+            }
+        }
+        return n;
+    }
+
+    /** Test/diagnostic hook: forget every cached decision (used after the tables are dropped underneath). */
+    void clearCaches() {
+        ensured.clear();
+        metaCache.clear();
+        invalidate();
     }
 }

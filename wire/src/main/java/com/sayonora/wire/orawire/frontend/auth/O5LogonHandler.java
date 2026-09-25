@@ -26,6 +26,17 @@ public final class O5LogonHandler {
     private final CredentialStore credentials = new CredentialStore();
 
     public AuthResult authenticate(TnsPacketReader reader, OutputStream out) throws IOException {
+        return authenticate(reader, out, null);
+    }
+
+    /**
+     * @param loginGate consulted only after the password has been VERIFIED, with the authenticated
+     *     username: a non-null return is a denial message (connect-time routing rejecting the
+     *     requested service, sent as ORA-12514) and the login is refused instead of accepted. Doing it
+     *     after authentication means an unauthenticated client cannot probe which service names exist.
+     */
+    public AuthResult authenticate(TnsPacketReader reader, OutputStream out,
+            java.util.function.Function<String, String> loginGate) throws IOException {
         boolean largeSdu = reader.isLargeSdu();
 
         boolean richAuth = reader.isAnoEligible();
@@ -78,6 +89,13 @@ public final class O5LogonHandler {
             success = false;
         }
 
+        if (success && loginGate != null) {
+            String denial = loginGate.apply(username);
+            if (denial != null) {
+                sendRejection(out, largeSdu, 12514, denial);
+                return new AuthResult(username, false, credentials.isMultiUser());
+            }
+        }
         if (success) {
             byte[] comboKey = deriveComboKey(pairs, passwordHash, sessionKeyPartA, cskSalt);
             if (richAuth && dblinkClient) {
@@ -775,6 +793,23 @@ public final class O5LogonHandler {
             "ORA-01017: invalid credential or not authorized; logon denied\n";
 
     private void sendRejection(OutputStream out, boolean largeSdu) throws IOException {
+        sendRejection(out, largeSdu, 1017, LOGIN_REJECTION_MESSAGE);
+    }
+
+    /** As the captured ORA-01017 rejection, with the error number (both places the frame carries it)
+     * and the message text substituted -- the frame layout is otherwise identical. */
+    private void sendRejection(OutputStream out, boolean largeSdu, int errorNumber, String message)
+            throws IOException {
+        byte[] prefix = LOGIN_REJECTION_PREFIX.clone();
+        if (errorNumber != 1017) {
+            for (int i = 0; i + 2 < prefix.length; i++) {
+                if (prefix[i] == 0x02 && prefix[i + 1] == 0x03 && (prefix[i + 2] & 0xFF) == 0xf9) {
+                    prefix[i + 1] = (byte) (errorNumber >> 8);
+                    prefix[i + 2] = (byte) errorNumber;
+                    i += 2;
+                }
+            }
+        }
         sendMarker(out, MARKER_PAYLOAD_1, largeSdu);
         sendMarker(out, MARKER_PAYLOAD_2, largeSdu);
         // The real capture showed the client's marker-echo reply and the server's final error
@@ -792,11 +827,11 @@ public final class O5LogonHandler {
         // (see TtcWriter.writeBytesWithLength), but the real capture shows this specific field
         // uses a flat 4-byte big-endian length instead (0000003e for the real 62-byte message),
         // a different convention than the general-purpose TTC string encoding uses elsewhere.
-        byte[] messageBytes = LOGIN_REJECTION_MESSAGE.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] messageBytes = message.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         TtcWriter messageWriter = new TtcWriter();
         messageWriter.writeUint32BE(messageBytes.length);
         messageWriter.writeRaw(messageBytes);
-        byte[] payload = concat(LOGIN_REJECTION_PREFIX, messageWriter.toByteArray());
+        byte[] payload = concat(prefix, messageWriter.toByteArray());
         TnsPacket errPacket = new TnsPacket(TnsPacketType.DATA, 0, payload);
         out.write(errPacket.encode(largeSdu, false));
         out.flush();

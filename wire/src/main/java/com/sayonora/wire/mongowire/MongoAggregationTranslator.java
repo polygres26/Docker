@@ -89,7 +89,79 @@ final class MongoAggregationTranslator {
         if (groupSpec == null) {
             return translateWithoutGroup(table, matchSql, params, sortSpec, limit, projectSpec);
         }
-        return translateWithGroup(table, matchSql, params, groupSpec, sortSpec, limit);
+        return translateWithGroup(table, matchSql, params, groupSpec, sortSpec, limit, false);
+    }
+
+    /** What {@link #translateForShards} needs merged afterwards: group output fields and their accumulators. */
+    record ShardMerge(List<String> fields, List<String> ops, BsonDocument sortSpec, Integer limit) {
+    }
+
+    record ShardedAggregate(AggregateQuery query, ShardMerge merge) {
+    }
+
+    /**
+     * Translates a pipeline into the query EACH shard runs plus the recipe that merges the shards'
+     * answers exactly: {@code $group} with {@code $sum}/{@code $min}/{@code $max} merges by group key,
+     * {@code $avg} is run as a partial (sum, count) pair and recombined, and {@code $sort}/{@code $limit}
+     * are applied after the merge. A pipeline with no {@code $group} must have no {@code $sort}/
+     * {@code $limit} (per-shard top-n cannot be merged without re-sorting on jsonb order); any other
+     * shape is refused with a clear message rather than answered wrongly.
+     */
+    static ShardedAggregate translateForShards(String table, BsonArray pipeline) {
+        int idx = 0;
+        BsonDocument matchFilter = null;
+        if (idx < pipeline.size() && hasStage(pipeline, idx, "$match")) {
+            matchFilter = stageValue(pipeline, idx, "$match").asDocument();
+            idx++;
+        }
+        BsonDocument groupSpec = null;
+        if (idx < pipeline.size() && hasStage(pipeline, idx, "$group")) {
+            groupSpec = stageValue(pipeline, idx, "$group").asDocument();
+            idx++;
+        }
+        BsonDocument sortSpec = null;
+        if (idx < pipeline.size() && hasStage(pipeline, idx, "$sort")) {
+            sortSpec = stageValue(pipeline, idx, "$sort").asDocument();
+            idx++;
+        }
+        Integer limit = null;
+        if (idx < pipeline.size() && hasStage(pipeline, idx, "$limit")) {
+            limit = stageValue(pipeline, idx, "$limit").asNumber().intValue();
+            idx++;
+        }
+        if (groupSpec == null && (sortSpec != null || limit != null)) {
+            throw new IllegalArgumentException("aggregate with $sort/$limit but no $group is not supported on a "
+                    + "collection stored on several backends: each backend's top-n cannot be merged exactly. "
+                    + "Use find, or keep this collection on one backend");
+        }
+        if (groupSpec == null) {
+            return new ShardedAggregate(translate(table, pipeline), null);
+        }
+        if (idx < pipeline.size()) {
+            translate(table, pipeline); // raises the standard "unsupported stage" message
+        }
+        List<String> params = new ArrayList<>();
+        String matchSql = "";
+        if (matchFilter != null) {
+            MongoQueryTranslator.Where where = MongoQueryTranslator.translate(matchFilter);
+            matchSql = where.sql();
+            params.addAll(where.jsonbParams());
+        }
+        List<String> fields = new ArrayList<>();
+        List<String> ops = new ArrayList<>();
+        for (Map.Entry<String, BsonValue> e : groupSpec.entrySet()) {
+            if ("_id".equals(e.getKey())) {
+                continue;
+            }
+            String op = e.getValue().asDocument().getFirstKey();
+            if (!List.of("$sum", "$avg", "$min", "$max").contains(op)) {
+                throw unsupported("$group accumulator \"" + op + "\" on a collection stored on several backends");
+            }
+            fields.add(e.getKey());
+            ops.add(op);
+        }
+        AggregateQuery q = translateWithGroup(table, matchSql, params, groupSpec, null, null, true);
+        return new ShardedAggregate(q, new ShardMerge(fields, ops, sortSpec, limit));
     }
 
     private static AggregateQuery translateWithoutGroup(String table, String matchSql, List<String> params,
@@ -103,7 +175,7 @@ final class MongoAggregationTranslator {
     }
 
     private static AggregateQuery translateWithGroup(String table, String matchSql, List<String> params,
-            BsonDocument groupSpec, BsonDocument sortSpec, Integer limit) {
+            BsonDocument groupSpec, BsonDocument sortSpec, Integer limit, boolean partial) {
         if (!groupSpec.containsKey("_id")) {
             throw unsupported("$group with no _id field");
         }
@@ -141,6 +213,16 @@ final class MongoAggregationTranslator {
                 throw unsupported("$group accumulator for \"" + outputField + "\" (exactly one operator expected)");
             }
             Map.Entry<String, BsonValue> accEntry = accumulator.entrySet().iterator().next();
+            if (partial && "$avg".equals(accEntry.getKey())) {
+                // multi-shard: an average cannot be merged, its (sum, count) parts can
+                String field = requireFieldRef(accEntry.getValue(), "$group.\"" + outputField + "\"'s $avg");
+                innerColumns.add("sum((doc->>" + quoteLiteral(field) + ")::numeric) AS "
+                        + quoteIdent(outputField + "__sum"));
+                innerColumns.add("count(doc->" + quoteLiteral(field) + ") AS " + quoteIdent(outputField + "__cnt"));
+                outerFields.add(outputField + "__sum");
+                outerFields.add(outputField + "__cnt");
+                continue;
+            }
             innerColumns.add(accumulatorSql(accEntry.getKey(), accEntry.getValue(), outputField) + " AS "
                     + quoteIdent(outputField));
             outerFields.add(outputField);

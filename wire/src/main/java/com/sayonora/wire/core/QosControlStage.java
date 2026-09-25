@@ -119,13 +119,18 @@ public final class QosControlStage implements PipelineStage {
         }
 
         String targetBackend = statement.targetBackend();
-        if (poolWaitThreshold >= 0 && targetBackend != null && !RoutingBackendExecutor.SCATTER_ALL.equals(targetBackend)) {
-            BackendConnectionPools.PoolStats poolStats = BackendConnectionPools.statsFor(targetBackend);
+        if (poolWaitThreshold >= 0 && !RoutingBackendExecutor.SCATTER_ALL.equals(targetBackend)) {
+            // Pools are keyed by "jdbcUrl|user", not by backend name: resolve the pool that serves this
+            // statement's backend (null = the default pool) through the alias table BackendTarget /
+            // PgConnections fill in on every borrow. 53300 = too_many_connections, so a client sees the
+            // same "backend busy" family of error as a genuine pool-timeout, just immediately.
+            BackendConnectionPools.PoolStats poolStats = BackendConnectionPools.statsForBackend(targetBackend);
             if (poolStats != null && poolStats.threadsAwaitingConnection() >= poolWaitThreshold) {
                 counters.rejected().increment();
                 record(statement.tenantId(), workloadClass, false);
-                throw ErrorCatalog.sqlExceptionWithState("ERR_QOS_POOL_SATURATED", "57014",
-                        targetBackend, poolStats.threadsAwaitingConnection());
+                throw ErrorCatalog.sqlExceptionWithState("ERR_QOS_POOL_SATURATED", "53300",
+                        targetBackend == null ? BackendConnectionPools.DEFAULT_ALIAS : targetBackend,
+                        poolStats.threadsAwaitingConnection());
             }
         }
 

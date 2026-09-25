@@ -1,0 +1,232 @@
+{
+ "service": "s3",
+ "suite": "python",
+ "endpoint": "http://localhost:53213",
+ "tag": "warp-baseline",
+ "date": "2026-09-25 14:37",
+ "runner_rc": 1,
+ "seconds": 1.6,
+ "counts": {
+  "pass": 17,
+  "fail": 25,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_s3.py": {
+   "pass": 16,
+   "fail": 13,
+   "error": 0,
+   "skip": 0
+  },
+  "test_s3_cors.py": {
+   "pass": 1,
+   "fail": 12,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_s3.py tests/test_s3_cors.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-baseline-s3-python.junit.xml --timeout=60",
+ "failures": [
+  {
+   "file": "test_s3.py",
+   "test": "test_create_bucket_with_location_constraint",
+   "status": "fail",
+   "message": "AssertionError: assert None == 'eu-central-1'",
+   "time": 0.01,
+   "class": "b"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_put_object_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutObjectTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.015,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_get_object_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutObjectTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.014,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_delete_object_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutObjectTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.015,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_put_bucket_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.011,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_get_bucket_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.01,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_delete_bucket_tagging",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketTagging operation: s3wire does not implement this operation (PUT [tagging])",
+   "time": 0.011,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_multipart_upload_sha256_reports_composite_checksum",
+   "status": "fail",
+   "message": "KeyError: 'ChecksumSHA256'",
+   "time": 0.107,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_multipart_upload_default_checksum_is_composite_crc32",
+   "status": "fail",
+   "message": "KeyError: 'ChecksumType'",
+   "time": 0.087,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_single_part_upload_keeps_full_object_checksum",
+   "status": "fail",
+   "message": "KeyError: 'ChecksumSHA256'",
+   "time": 0.019,
+   "class": "b"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_copy_of_multipart_object_is_a_single_full_object",
+   "status": "fail",
+   "message": "KeyError: 'ChecksumType'",
+   "time": 0.088,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_get_object_attributes_etag_has_no_quotes",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the GetObjectAttributes operation: s3wire does not implement this operation (GET [attributes])",
+   "time": 0.082,
+   "class": "a"
+  },
+  {
+   "file": "test_s3.py",
+   "test": "test_download_with_checksum_mode_works_for_composite_and_full_object",
+   "status": "fail",
+   "message": "KeyError: 'ChecksumSHA256'",
+   "time": 0.1,
+   "class": "b"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_put_bucket_cors_wildcard",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.02,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_wildcard_preflight_returns_200",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.028,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_wildcard_actual_get_returns_cors_headers",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.022,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_get_without_origin_has_no_cors_headers",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.013,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_options_without_origin_has_no_cors_headers",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.031,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_specific_origin_echoes_origin",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.013,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_non_matching_origin_returns_403",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_non_matching_method_returns_403",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_delete_bucket_cors",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_subdomain_wildcard_matches",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_subdomain_wildcard_rejects_wrong_scheme",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "test_s3_cors.py",
+   "test": "test_subdomain_wildcard_rejects_different_domain",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (NotImplemented) when calling the PutBucketCors operation: s3wire does not implement this operation (PUT [cors])",
+   "time": 0.012,
+   "class": "a"
+  }
+ ]
+}

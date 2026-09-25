@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
+import { Activity } from 'lucide-react'
 import { type Connection, type MigrationSourceStatus, listConnections, getMigrationStatus } from '../api/client'
 import DmsTabs from '../components/DmsTabs'
 import { getLastTargetConnectionId, setLastTargetConnectionId } from '../lib/lastTargetConnection'
 import {
-  MIGRATION_SERVICE_TABS, inputStyle, labelStyle, formatTimestamp, formatLag, lagColor, progressPct,
+  DataTable, EmptyState, Field, Loading, Notice, PageHeader, ProgressBar, Section, Select, StatusPill,
+} from '../ui'
+import { table } from '../ui/styles'
+import {
+  MIGRATION_SERVICE_TABS, formatTimestamp, formatLag, lagTone, progressPct,
 } from './migrationServiceShared'
+import styles from './MigrationServiceStatus.module.css'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -61,76 +67,72 @@ export default function MigrationServiceStatus() {
   }, [selectedConnection])
 
   return (
-    <div style={{ maxWidth: 1080 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Migration Service</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 16 }}>
-        Live initial-sync progress and change-feed activity for every source checkpointed against
-        a target Postgres connection.
-      </p>
+    <>
       <DmsTabs tabs={MIGRATION_SERVICE_TABS} />
+      <PageHeader
+        title="Data sync status"
+        subtitle="Live initial-sync progress and change-feed activity for every source checkpointed against a target Postgres connection."
+      />
 
-      <div className="panel" style={{ margin: '16px 0 20px' }}>
-        <label style={labelStyle}>Target Postgres connection</label>
-        <select
-          value={selectedConnection}
-          onChange={(e) => handleSelect(e.target.value)}
-          style={{ ...inputStyle, maxWidth: 360 }}
-        >
-          <option value="">Select the target Postgres connection…</option>
-          {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
+      <Section>
+        <div className={styles.picker}>
+          <Field label="Target Postgres connection" htmlFor="status-target">
+            <Select id="status-target" value={selectedConnection} onChange={(e) => handleSelect(e.target.value)}>
+              <option value="">Select the target Postgres connection…</option>
+              {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </Field>
+        </div>
+      </Section>
 
-      {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
 
-      {selectedConnection && !error && loading && statuses.length === 0 && (
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>
-      )}
+      {selectedConnection && !error && loading && statuses.length === 0 && <Section><Loading /></Section>}
 
       {selectedConnection && !error && !loading && statuses.length === 0 && (
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-          No migration has written to this target yet — start one on the Launch tab, or run the
-          migration module's CLI directly against it.
-        </p>
+        <Section flush>
+          <EmptyState icon={Activity} title="Nothing synced to this target yet">
+            No migration has written to this target yet — start one on the Launch tab, or run the
+            migration module's CLI directly against it.
+          </EmptyState>
+        </Section>
       )}
 
       {statuses.length > 0 && (
-        <div className="panel" style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+        <Section title="Sources" meta={`Refreshes every ${POLL_INTERVAL_MS / 1000}s`} flush>
+          <DataTable caption="Sync status by source">
             <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                <th style={{ padding: '8px 10px' }}>Source</th>
-                <th style={{ padding: '8px 10px' }}>Initial sync</th>
-                <th style={{ padding: '8px 10px' }}>Events applied (change feed)</th>
-                <th style={{ padding: '8px 10px' }}>Lag</th>
-                <th style={{ padding: '8px 10px' }}>Last checkpoint</th>
-                <th style={{ padding: '8px 10px' }}>Change-feed leader</th>
+              <tr>
+                <th scope="col">Source</th>
+                <th scope="col">Initial sync</th>
+                <th scope="col" className={table.num}>Events applied (change feed)</th>
+                <th scope="col">Lag</th>
+                <th scope="col">Last checkpoint</th>
+                <th scope="col">Change-feed leader</th>
               </tr>
             </thead>
             <tbody>
               {statuses.map((s) => (
-                <tr key={s.sourceKey} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '10px', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{s.sourceKey}</td>
-                  <td style={{ padding: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ flex: 1, minWidth: 80, height: 6, borderRadius: 3, background: 'var(--bg)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-                        <div style={{ width: `${progressPct(s)}%`, height: '100%', background: progressPct(s) === 100 ? 'var(--accent-strong)' : 'var(--medium)' }} />
-                      </div>
-                      <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                <tr key={s.sourceKey}>
+                  <td className={table.mono}>{s.sourceKey}</td>
+                  <td>
+                    <div className={styles.progress}>
+                      <ProgressBar pct={progressPct(s)} label={`Initial sync for ${s.sourceKey}`} />
+                      <span className={styles.progressText}>
                         {s.partitionsTotal > 0 ? `${s.partitionsDone}/${s.partitionsTotal} partitions` : `${progressPct(s)}%`}
                       </span>
                     </div>
                   </td>
-                  <td style={{ padding: '10px', fontVariantNumeric: 'tabular-nums' }}>{s.eventsApplied.toLocaleString()}</td>
-                  <td style={{ padding: '10px', fontVariantNumeric: 'tabular-nums', color: lagColor(s.lagSeconds), fontWeight: 600 }}>{formatLag(s.lagSeconds)}</td>
-                  <td style={{ padding: '10px', color: 'var(--muted)' }}>{formatTimestamp(s.lastCheckpointAt)}</td>
-                  <td style={{ padding: '10px', color: 'var(--muted)' }}>{s.leaderWorkerId ?? '—'}</td>
+                  <td className={table.num}>{s.eventsApplied.toLocaleString()}</td>
+                  <td><StatusPill tone={lagTone(s.lagSeconds)}>{formatLag(s.lagSeconds)}</StatusPill></td>
+                  <td className={styles.muted}>{formatTimestamp(s.lastCheckpointAt)}</td>
+                  <td className={styles.muted}>{s.leaderWorkerId ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </DataTable>
+        </Section>
       )}
-    </div>
+    </>
   )
 }

@@ -19,9 +19,9 @@ import pymssql
 import pytest
 import requests
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 
@@ -69,6 +69,20 @@ def test_simple_select(warp):
         cur.execute("SELECT 21 * 2 AS answer")
         (answer,) = cur.fetchone()
         assert str(answer) == "42"  # see module docstring: no per-column type mapping yet
+    finally:
+        conn.close()
+
+
+def test_use_database_statement_is_accepted_as_a_noop(warp):
+    # pymssql/FreeTDS and many T-SQL tools send "USE <db>" after login; the backend Postgres rejected it
+    # (syntax error at or near "use") before mssqlwire acknowledged it like SET.
+    conn = connect(warp)
+    try:
+        cur = conn.cursor()
+        cur.execute("USE postgres")
+        cur.execute("USE [postgres];")
+        cur.execute("SELECT 1")
+        assert str(cur.fetchone()[0]) == "1"  # see test_simple_select: no per-column type mapping yet
     finally:
         conn.close()
 

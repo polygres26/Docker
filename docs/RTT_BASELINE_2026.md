@@ -33,7 +33,7 @@ mongowire and dynamowire's client-observed numbers particularly so (0.741ms→1.
 section doesn't state whether its Postgres backend was bare-metal/native-host or a Docker
 container, but its numbers (sub-0.5ms server-side for a real JDBC round trip) are consistent with a
 bare-metal or already-warm local Postgres process. This pass's harness (`RealPostgres` in
-`polywire_support.py`) deliberately uses a real, freshly-started `docker run -p <port>:5432`
+`warp_test_support.py`) deliberately uses a real, freshly-started `docker run -p <port>:5432`
 container per test module — correct for test isolation, but Docker Desktop's loopback port-
 forwarding (a userland proxy hop on macOS) is a real, known source of extra sub-millisecond-to-low-
 millisecond latency that has nothing to do with Warp's own code. **This means the numbers above
@@ -122,7 +122,7 @@ Postgres backend over a loopback docker-published port.
 While chasing why a full `pytest -v` run across every protocol tripped Warp's own
 Developer-license "instance cap" (`"Developer edition is capped at 3 Warp instance(s), and 3 are
 already live"`) after only 2 test modules had run, I found a genuine, pre-existing correctness bug
-in `tests/python/polywire_support.py`'s `WarpProcess`, not a flake:
+in `tests/python/warp_test_support.py`'s `WarpProcess`, not a flake:
 
 **Before**: `WarpProcess.__init__` set `WARP_PG_HOST` / `WARP_PG_PORT` / `WARP_PG_DATABASE` /
 `WARP_PG_USER` / `WARP_PG_PASSWORD` on the subprocess's environment, pointing at each test's own
@@ -150,7 +150,7 @@ Postgres's `warp_nodes` table, their live-instance rows piled up across test fil
 `pytest` session until the Developer license's 3-instance cap tripped and refused to start a
 4th instance -- the actual failure symptom that surfaced the bug.
 
-**Fix** (`tests/python/polywire_support.py`, `WarpProcess.__init__`): renamed the five env vars to
+**Fix** (`tests/python/warp_test_support.py`, `WarpProcess.__init__`): renamed the five env vars to
 the names `ServerOptions.java` actually reads: `WARP_HOST`, `WARP_PORT`, `WARP_DATABASE`,
 `WARP_USER`, `WARP_PASSWORD`.
 
@@ -654,3 +654,560 @@ Default gRPC is unchanged in performance (no safe change helped); only the class
 opt-in knob shipped. Files: `wire/pom.xml`, `wire/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
 `wire/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
 properties, p99, `-Dserver.direct`). The earlier "known bug" note above is resolved.
+
+## 2026-09-23: s3wire (S3 frontend over a MinIO backend bucket)
+
+**What it is.** `s3wire` (port 18020, enabled by `WARP_S3WIRE_BACKEND_BUCKET`) speaks the S3 REST API
+(path-style, SigV4) to stock clients (boto3 verified) and stores objects in one real S3-compatible
+backend bucket using Warp's own backend credentials (AWS SDK v2). Client-visible buckets are key
+prefixes: bucket `b`, key `k` lives at backend key `b/k` (CreateBucket writes a hidden
+`b/.s3wire-bucket` marker). Every operation is recorded in `SqlMetricsCollector` as protocol
+`s3wire`, so `/api/metrics/summary` shows per-operation `avgRttMs`.
+
+**Write RTT** (`tests/python/test_write_rtt_baseline` in `test_s3wire.py`; real Warp jar subprocess, real
+MinIO container, boto3, same machine, loopback, 256-byte PutObject, 1 warm-up + 40 measured, 3 runs):
+
+| Path | client p50 (ms) | client min (ms) |
+|---|---|---|
+| boto3 direct to MinIO | 2.05 / 2.12 / 2.12 | 1.78 / 1.84 / 1.92 |
+| boto3 via s3wire -> MinIO | 2.80 / 2.82 / 2.86 | 2.57 / 2.59 / 2.51 |
+| **Gateway overhead (p50)** | **+0.70 to +0.75** | |
+
+Server-side `avgRttMs` for PutObject reads 3 in all runs. Caveats: `avgRttMs` is the collector's
+integer-millisecond truncated mean (a sub-ms figure cannot be shown) and includes the JIT-cold
+warm-up request, so it overstates steady state; the client-side delta above is the honest overhead
+number. The overhead is one extra HTTP hop (client -> Warp -> MinIO), SigV4 verification, and Warp's
+own SDK call; it is not a cache story -- there is no object cache (the RowCache stretch was not done).
+GET was not baselined; large-object throughput was not benchmarked (20 MB multipart verified for
+correctness only).
+
+**Auth, exactly.** Validated: access key is one of `WARP_S3WIRE_CREDENTIALS`; SigV4 signature over
+method, path, query, signed headers and the claimed `x-amz-content-sha256`; 15-minute clock skew;
+presigned URL signature/expiry; a claimed hex payload hash is compared after streaming (a mismatched
+PUT is rolled back and rejected). NOT validated: per-chunk signatures of `STREAMING-*` uploads (only
+the seed signature), any per-key/bucket authorization (every valid key reaches every bucket).
+s3wire refuses to start with no credentials configured.
+
+**Supported:** ListBuckets, CreateBucket, HeadBucket, DeleteBucket, GetBucketLocation, PutObject,
+GetObject (Range, If-Match/If-None-Match), HeadObject, DeleteObject, DeleteObjects, CopyObject
+(server-side, single request), ListObjects v1/v2 (prefix, delimiter, continuation-token, start-after,
+max-keys, encoding-type=url), multipart Create/UploadPart/Complete/Abort (proxied to backend
+multipart; boto3 `upload_file` of 20 MB verified), presigned GET.
+
+**Not supported (501 NotImplemented):** ListParts, ListMultipartUploads, UploadPartCopy, versioning,
+ACLs, tagging, policies/lifecycle/CORS/encryption, SelectObjectContent, virtual-hosted-style
+addressing, CopyObject over 5 GB. Also: objects written straight into the backend bucket without a
+`bucket/` prefix are invisible; a listing page can hold one fewer key than max-keys if it contained
+the hidden bucket marker.
+
+## 2026-09-25: many client connections vs a 10-connection backend pool (wait or error?)
+
+> **Superseded for the SQL/graph wire frontends:** this section measures the hold-for-session model. pgwire, mywire,
+> mssqlwire, orawire and boltwire now multiplex sessions onto the pool; see "Connection multiplexing ... before/after"
+> at the end of this file for the same tests re-run, and the fixes for bugs 1-5 below. The HTTP frontends/gRPC results
+> here are unchanged.
+
+Question: N client connections against a Warp whose pool to Postgres is `WARP_POOL_MAX_SIZE=10`; when
+all 10 are in use, does the client WAIT or get an ERROR? Real Postgres 16 container, real Warp jar
+(`target/sayonora-wire.jar`, built 2026-09-24 22:50), real drivers, no mocks. Harness:
+`wire/tests/python/test_connection_pooling.py` (opt-in: `WARP_RUN_POOL_TESTS=1`, run as a script,
+`--help` lists `--protocols/--n/--mode/--env/--fresh/--idle-holders/--release-probe`). Fresh Postgres and
+Warp per case, Ignite discovery pinned to one seed port, QoS `RATE/BURST=100000` so only the pool is
+measured. Server-side truth is sampled every 50 ms from `pg_stat_activity` (direct connection) and
+Warp's own `/metrics` (`warp_pool_connections`, `warp_pool_waiting`). Slow operations: `pg_sleep(0.1)` for
+SQL/gRPC; for protocols with no SQL a `BEFORE INSERT OR UPDATE` trigger on the protocol's data table that
+sleeps 100 ms (mongo, dynamo, sqs, os, influx, bolt). Latency below = client time from start until the
+workload finished (connect + 2-3 statements, one of them 100 ms).
+
+### Headline answers
+
+1. **The pool is never exceeded.** Hikari `active` peaked at exactly 10 in every saturated run; total
+   Postgres client backends peaked at 12 (13 transient twice) = 10 pooled + 2 dedicated `LISTEN`
+   connections (`warp_config_changed`, `warp_firewall_rules_changed`) that live outside the pool.
+2. **Wait or error: it WAITS up to `WARP_POOL_CONNECT_TIMEOUT_MS` (default 5000 ms), then ERRORS**
+   (`Connection is not available, request timed out after 500Xms (total=10, active=10, idle=0, waiting=N)`,
+   Hikari `SQLTransientConnectionException`). Whether a client ever hits the error depends on when the
+   backend connection is BORROWED and RELEASED, and that differs sharply by frontend (next table).
+3. **Not what the design intent says: pgwire, mywire, mssqlwire, orawire and boltwire ALL pin one pooled
+   backend connection per client session, even when the client is idle** (proved in the idle-holder test
+   below). Only mongowire, dynamowire, sqswire, oswire, influxwire and gRPC borrow per operation. So with
+   10 idle-but-connected SQL/Bolt clients the 11th client cannot run a single statement: the "many client
+   connections -> few Postgres connections" multiplexing does not exist for those frontends today.
+4. **Developer license caps CONCURRENT CLIENT TCP CONNECTIONS at 25 per instance**
+   (`License.DEVELOPER_MAX_CONNECTIONS`, `ConnectionGate.acceptTcp`, one shared counter across pgwire,
+   mywire, mssqlwire, orawire, mongowire, boltwire). 1000 client connections cannot be held under the
+   default license: the surplus are closed at accept. HTTP frontends (dynamo/sqs/os/influx/s3/MCP) and
+   gRPC are not counted (gRPC has its own `Edition` limiter: COMMERCIAL unlimited by default, FREE = 100 in
+   flight); those were tested with a true 1000.
+5. **No legitimate test-only license mechanism exists**, so no Enterprise key was used. `License.java` has
+   the Ed25519 public key as a hard-coded constant and reads only `WARP_LICENSE_KEY`; there is no public-key
+   override. `LicenseIntegrationTest` mints keys with the real signing private key committed inside that
+   test file; using it to run the experiment would be forging a production-valid license, so it was NOT
+   done and `src/main` was not touched. Full 1000-session tests of the five TCP SQL/Bolt frontends
+   therefore need a real `WARP_LICENSE_KEY` (Enterprise) or a test-only key-override hook added to
+   `License.java`.
+
+### When each frontend borrows and releases (source + measured)
+
+| Frontend | Driver | Borrows | Releases | Verified how |
+|---|---|---|---|---|
+| pgwire | psycopg2 | lazily on 1st statement (`sessionConnection()`), plus one pooled borrow in the session constructor (`FailedStatementLog.ensureSchema()`, on the ACCEPT thread) | session end only; autocommit, COMMIT, idle: never | idle test: 10 idle holders => Hikari active 10 |
+| mywire | pymysql | same (`MySqlWireSessionHandler.sessionConnection()`) | session end only | idle test + release probe |
+| mssqlwire | pymssql | same (`MssqlWireSessionHandler.sessionConnection()`) | session end only | idle test + release probe |
+| orawire | python-oracledb thin | `LazyPooledConnection.get()` on first statement | on client COMMIT/ROLLBACK or session end. NOT on a plain SELECT, NOT on autocommit | see orawire subsection |
+| boltwire | neo4j driver | 1st RUN (`sessionConnection()`) | session end only | idle test |
+| mongowire | pymongo | per operation (`try (Connection ...)`) | end of operation | idle: active 0 |
+| dynamowire / sqswire / oswire / influxwire | boto3 / requests | per request | end of request | idle: active 0 |
+| gRPC | grpcio | per RPC | end of RPC | idle: active 0 |
+
+Not run: s3wire (its data path is MinIO, not the Postgres pool; needs a MinIO image) and the MCP server.
+
+### Idle-holder test (10 clients each run one `SELECT`-class request then sit idle, no open transaction; then an 11th and a 12th run one request), default timeout 5000 ms
+
+| Frontend | Hikari active with 10 idle holders | 11th client | 12th client |
+|---|---|---|---|
+| pgwire | 10 | ERROR after 15.03 s (`Connection is not available, request timed out after 5006ms`) | ERROR after 15.01 s |
+| mywire | 10 | ERROR after 10.02 s (`1105 ... request timed out after 5003ms`) | ERROR after 10.02 s |
+| mssqlwire | 10 | ERROR after 10.01 s (`InterfaceError: Could not set connection properties`, pool timeout hidden) | ERROR after 10.01 s |
+| orawire, plain (autocommit off, no COMMIT) | 10 | ERROR after 15.03 s (login OK in 0.01 s, the first statement times out) | ERROR after 15.02 s |
+| orawire, client `COMMIT` after each statement | **0** | OK, connect 0.009 s + statement 0.005 s | OK, 0.007 s + 0.004 s |
+| orawire, `connection.autocommit = True` | 10 (autocommit does NOT release) | ERROR after 15.03 s | ERROR after 15.02 s |
+| boltwire | 10 | ERROR after 5.01 s (`Neo.ClientError.Statement.ExecutionFailed`, pool timeout) | ERROR after 5.01 s |
+| mongowire, dynamowire, sqswire, oswire, influxwire, gRPC | 0 | OK, 1-7 ms | OK, 1-7 ms |
+
+Release probe (one client, Hikari active minus baseline after 1 s idle; 0 = released, 1 = pinned):
+pgwire A(select)=1, B(autocommit INSERT)=1, C(INSERT+COMMIT)=1, D(open txn)=1; mywire 1/1/1/1; mssqlwire
+1/1/1/1; orawire A=1, B(autocommit INSERT)=1, C(INSERT+COMMIT)=**0**, D(open txn)=1.
+
+**orawire autocommit, exactly:** the "`setAutoCommit(true)` around one statement" path
+(`RequestLoop.handleExecute`, PERFORMANCE.md 3.6) flips the flag on the SAME pooled connection and back
+to false; it never calls `LazyPooledConnection.release()`, so the connection stays pinned after an
+autocommit statement. Only an explicit COMMIT/ROLLBACK from the client (or disconnect) returns it.
+A driver that autocommits (`autocommit=True`) or a client that only SELECTs and never commits pins a slot
+for the whole session.
+
+### Saturation runs (default: pool 10, timeout 5000 ms)
+
+`hold` = each client keeps its connection open after its workload until all clients finished (long-lived
+application connections). `quick` = each client closes right after its own workload. TCP frontends use a
+fresh Warp per row. "err@" is seconds from the start of the run.
+
+Session-pinning frontends, N=25 (under the license cap), hold:
+
+| Frontend | ok / fail | Error the 15 losers see | First..last error | ok latency p50/p99/max (s) | max PG backends / Hikari active |
+|---|---|---|---|---|---|
+| pgwire | 10 / 15 | `SystemError: Connection is not available, request timed out after 500Xms` at CONNECT | 10.4 s .. 95.5 s (about one every 5-6 s, see bug 1) | 0.25 / 0.49 / 0.49 | 12 / 10 |
+| mywire | 10 / 15 | `OperationalError (1105, 'Connection is not available ...')` | 5.4 s .. 75.5 s | 0.28 / 0.49 / 0.49 | 12 / 10 |
+| mssqlwire | 10 / 15 | 8x `Could not set connection properties` (6 .. 56 s), 7x connection reset at 71 s (listener died, bug 2) | 6.0 s .. 71.1 s | 0.36 / 1.11 / 1.11 | 13 / 10 |
+| orawire | 10 / 15 | login succeeds, first statement: `DatabaseError: Connection is not available ...` | all at 10.2 s | 0.30 / 0.50 / 0.50 | 12 / 10 |
+| boltwire | 10 / 15 | `ClientError Neo.ClientError.Statement.ExecutionFailed: Connection is not available ...` | 5.0 .. 5.5 s | 0.35 / 0.60 / 0.60 | 12 / 10 |
+
+Same frontends, N=25 quick: 25/25 ok for all five, latency p50 0.36-0.57 s, p99 0.49-0.90 s (clients
+queue for a slot for at most ~one 0.15 s session, so they WAIT and succeed).
+
+Per-operation frontends, hold, N=25: 25/25 ok for mongo (N=22), dynamo, sqs, os, influx, gRPC, p50 0.35-0.63 s.
+N=1000 (all connections genuinely open at once; HTTP via one keep-alive client with a 1000-connection
+pool, gRPC via 1000 channels):
+
+| Frontend | ok / fail | Error text | First error at | ok latency p50/p99/max (s) | Hikari max waiting / max PG |
+|---|---|---|---|---|---|
+| dynamowire (boto3) | 999 / 1 | `InternalFailure ... PutItem failed` | 9.0 s | 10.6 / 12.0 / 12.0 | 184 / 12 |
+| sqswire (boto3) | 898 / 102 | `InternalError: Postgres error: Connection is not available ...` | 7.5 s | 15.5 / 20.7 / 21.1 | 185 / 12 |
+| oswire (requests) | 1000 / 0 | | | 9.1 / 11.9 / 11.9 | 184 / 12 |
+| influxwire (requests) | 1000 / 0 | | | 8.4 / 11.5 / 11.5 | 185 / 12 |
+| gRPC (grpcio) | 682 / 318 | `RuntimeError: Connection is not available, request timed out after 500Xms` | 9.4 s | 7.3 / 11.2 / 11.4 | 960 / 12 |
+| mongowire (pymongo, N=22, the cap-limited maximum) | 22 / 0 | | | 0.37 / 0.45 / 0.45 | 20 / 12 |
+
+Reading these: per-request frontends WAIT (queue) for the pool; a request errors only if ITS OWN borrow
+waits more than 5 s. One client does two requests (slow write + read), so success latency is the sum
+of two waits and can exceed 5 s (e.g. oswire p99 11.9 s) with zero errors. At 100 ms per slow op and 10
+connections the pool serves about 100 ops/s, so 1000 clients need about 10 s of work: that is why
+throughput-bound frontends (dynamo, sqs, gRPC) fail their slowest borrowers and lighter ones (os, influx)
+do not.
+
+### The 1000-connection question under the default (Developer) license
+
+What a client sees when the gate closes its surplus connection (hold, N=1000; the first 25 are accepted,
+of which 10 get a pool slot):
+
+| Frontend | Surplus clients see | Count / time |
+|---|---|---|
+| mywire | `OperationalError: Lost connection to MySQL server during query` | 975 rejected (first at 4.5 s, p50 4.9 s), plus 15 pool errors at 10.7 s |
+| orawire | `DPY-xxxx: cannot connect to database ... the database or network closed the connection` | 975 rejected at about 4.2 s, plus 15 pool errors at 14.8-19.7 s |
+| boltwire | `ServiceUnavailable: Failed to read four byte Bolt handshake response` | 972 (0.2-4.8 s), plus 15 pool errors at 5.6-8.0 s |
+| mongowire | `AutoReconnect: [Errno 54] Connection reset by peer` / `connection closed` | 946 fail at 0.17-0.66 s, 54 ok (pymongo opens N op sockets + 2-3 monitor sockets against the cap, so N=22 is the largest clean run) |
+| pgwire / mssqlwire | not measurable at 1000: the listener died or stalled first (bugs 1 and 2); clients saw `connection ... timed out` / `Connection refused` / `Adaptive Server is unavailable` after 15.7-120 s | 990 fail |
+
+The gate rejects (`license: rejecting connection ... capped at 25`) are visible in the Warp log. In `quick`
+mode the cap often does not trip because clients disconnect faster than 25 accumulate: pgwire N=1000 quick
+= 724 ok / 276 `connection ... Operation timed out` at 15.7 s (kernel accept backlog, no gate rejects);
+mssqlwire N=1000 quick = 1000/1000 ok but p50 14.8 s, max 35.5 s (serialised accept); mywire N=1000
+quick = 179 ok / 821 `Lost connection` at 5.3-6.8 s; orawire 83 ok / 917 closed; boltwire 44 ok / 956.
+So even where nothing is refused, 1000 simultaneous connects mostly WAIT in the accept path (pg/mssql), and
+where the gate fires the client sees an abrupt close with a driver-specific message, never a
+"license limit" message.
+
+### Knobs: what turns error into wait and back
+
+| Knob | Default | Effect measured |
+|---|---|---|
+| `WARP_POOL_CONNECT_TIMEOUT_MS` | 5000 | THE wait-vs-error boundary. 60000: gRPC N=1000 682 ok -> **1000 ok, 0 errors** (p50 5.6 s, max 10.9 s); dynamo 999 -> 1000; sqs 898 -> 1000 (max 23.8 s). pgwire hold N=12: the 2 waiters still never got in (holders never release): error moved from 10-15 s to 120 s (two 60 s borrows) - a longer timeout only helps when slots are actually freed. pg/my quick N=25 unchanged (all ok). |
+| `WARP_POOL_MAX_SIZE` | 30 | Must be >= concurrent sessions for pgwire/mywire/mssqlwire/boltwire/orawire, since each pins a slot; for per-request frontends it sets throughput (10 slots x 100 ms = ~100 ops/s). |
+| `WARP_LICENSE_KEY` (Enterprise) | none | Only way past 25 concurrent TCP connections. Not exercised (no test key mechanism, see above). |
+| `WARP_QOS_POOL_WAIT_THRESHOLD` | unset | **Inert.** Set to 1: grpc N=1000 still 771 ok / 229 pool-timeout errors with 945 threads waiting, dynamo 999/1, pgwire hold N=12 identical to baseline; no `ERR_QOS_POOL_SATURATED` was ever raised. It was designed to turn saturation into a fast reject instead of a 5 s wait, but it does not fire (bug 3). |
+| `WARP_QOS_RATE_PER_SEC` / `BURST` (5 / 5) / `WARP_QOS_MAX_WAIT_MS` (0) | | Not measured at defaults (kept at 100000 so only the pool is measured). From the code: with maxWait 0 an over-rate statement is rejected immediately with `ERR_QOS_RATE_LIMIT`; a positive maxWait converts that reject into a wait. |
+| `WARP_POOL_IDLE_TIMEOUT_MS` | 60000 | Not exercised; irrelevant to saturation. |
+
+### Bugs found while measuring (report-first: production code was NOT changed)
+
+1. **Session constructors block the ACCEPT thread on the pool.** `PgWireSessionHandler` (line 165),
+   `MssqlWireSessionHandler` (115) and `MySqlWireSessionHandler` (113) call
+   `FailedStatementLog.ensureSchema()` in their constructors, and `Main.acceptPgWireLoop` etc. construct
+   the handler on the listener thread. `ensureSchema` borrows a pooled connection and runs `CREATE TABLE IF
+   NOT EXISTS` on EVERY new connection. When the pool is full each new connection stalls the whole listener for
+   up to `WARP_POOL_CONNECT_TIMEOUT_MS`, so pgwire/mywire/mssqlwire accept one connection per 5 s (the 5-6 s
+   spacing of the errors above; 41 pool timeouts for 15 failed pgwire clients), even clients that need no backend
+   connection are stuck behind it. Stack captured in the Warp log: `HikariPool.getConnection <-
+   PgConnections.open <- FailedStatementLog.ensureSchema <- PgWireSessionHandler.<init> <-
+   Main.acceptPgWireLoop`.
+2. **One aborted connection kills a listener for good.** In `Main.accept*Loop` the
+   `clientSocket.setTcpNoDelay(true)` call sits inside the `while(true)` loop whose only `catch (IOException)`
+   is outside it, so a `SocketException: Invalid argument` from a client that already reset (macOS) ends the
+   accept thread: `Postgres wire listener on port N failed` / `SQL Server TDS wire listener ... failed`
+   (seen in pgwire N=50/1000 hold and mssqlwire N=25/30/50/1000 hold), after which every connect times out or is
+   refused until Warp restarts. Triggered by the accept backlog overflowing / clients giving up while the
+   accept thread is blocked (bug 1).
+3. **`WARP_QOS_POOL_WAIT_THRESHOLD` never triggers.** `QosControlStage` calls
+   `BackendConnectionPools.statsFor(statement.targetBackend())`, but pools are keyed by `jdbcUrl|user`
+   (`poolKeyFor`), while `targetBackend` is a backend name (or null before routing), so `statsFor` returns
+   null and the check is skipped.
+4. (Unrelated to pooling, seen in passing) orawire returns a null `ExecutionResult`
+   (`Cannot invoke "ExecutionResult.isQuery()" because "result" is null`) for `SELECT pg_sleep(0.1) FROM dual`,
+   `INSERT INTO t VALUES (1)` (no column list) and some `DELETE`s, and the session then hangs; the harness uses
+   `SELECT 1 FROM dual WHERE pg_sleep(0.1) IS NOT NULL` and column-listed INSERTs.
+5. mssqlwire: pymssql with `database=` sends `USE postgres`, which the Postgres backend rejects
+   (`syntax error at or near "use"`); the harness omits `database`. Pool timeouts surface as the opaque
+   `Could not set connection properties`.
+
+### Recommendation
+
+- Treat the pool as a hard ceiling with a 5 s wait; that default is sensible for per-request frontends
+  (dynamo/sqs/os/influx/gRPC/mongo): raise `WARP_POOL_MAX_SIZE` to the Postgres connection budget and keep the
+  timeout at 5-10 s so overload shows up as bounded latency then a retryable error, not an unbounded queue.
+  Only raise the timeout to 30-60 s for batch/bursty per-request workloads that prefer waiting to failing.
+- For pgwire, mywire, mssqlwire, boltwire (and orawire clients that do not commit), size
+  `WARP_POOL_MAX_SIZE` >= peak concurrent sessions, or expect the 11th client to fail even with every other
+  session idle. A long timeout does NOT help here (idle holders never release). Until session connections are
+  released per statement/transaction, use a pooling client (HikariCP, pgbouncer in front of the client side)
+  to bound concurrent sessions, and make orawire clients COMMIT after reads.
+- Go Enterprise (or set the real `WARP_LICENSE_KEY`) for more than 25 concurrent TCP sessions per instance;
+  the surplus otherwise see an unexplained connection close.
+- Fix bugs 1-3 before relying on saturation behavior in production; bug 1 in particular makes one saturated
+  pool freeze new-connection acceptance for the SQL frontends.
+
+Reproduce: `ulimit -n 8192; WARP_RUN_POOL_TESTS=1 python3 wire/tests/python/test_connection_pooling.py
+--protocols pg --mode hold --n 25 --fresh` (also `--idle-holders`, `--release-probe`,
+`--env WARP_POOL_CONNECT_TIMEOUT_MS=60000`). Raw JSON per run is not committed.
+
+## Connection multiplexing (many clients -> few backend connections): before/after (2026-09-25)
+
+Everything above measured the **hold-for-session** model: pgwire, mywire, mssqlwire and boltwire borrowed one pooled
+Postgres connection at the client's first statement and kept it until disconnect; orawire released only on
+COMMIT/ROLLBACK. That is what made idle clients starve the pool. The dialect-translating frontends now borrow per
+statement/transaction and pin only for an open transaction or backend session state
+(`core/SessionConnectionLease`, `core/LazyPooledConnection` for orawire; see WARP_GUIDE.md "Connection
+multiplexing"; `WARP_MULTIPLEX_SESSIONS=false` restores the old behaviour). Same-day A/B: the pre-change jar
+(`baseline.jar`, built from HEAD) against the new jar, same machine, same harness, same Postgres.
+
+**Environment caveat.** The Docker VM's disk was full while these were measured (`postgres:16-alpine` exited with
+`No space left on device`), so both sides ran against a native Postgres 17 (Homebrew `initdb`/`postgres`, scram
+auth, same client drivers) started by the harness (`WARP_TEST_PG_LOCAL=1` in `warp_test_support.py`). Absolute
+latencies are therefore much lower than the Docker-port-forward figures earlier in this file (the one Docker round
+that ran first: pgwire p50 0.75 ms, mywire 0.71, mssqlwire 1.14, boltwire 1.00 ms); only before-vs-after is
+comparable.
+
+### 1. Idle holders (`--idle-holders`, `WARP_POOL_MAX_SIZE=10`): 10 clients connect, run one statement, then idle; clients 11 and 12 connect and run one statement
+
+| Protocol (driver) | Hikari active with 10 idle holders (before -> after) | Client 11 / 12 before | Client 11 / 12 after |
+|---|---|---|---|
+| pgwire (psycopg2) | 10 -> **0** | fail after 15.0 s: pool timeout | ok, connect 4 ms + stmt <1 ms |
+| mywire (pymysql) | 10 -> **0** | fail after 10.0 s | ok, 6 ms + 1 ms |
+| mssqlwire (pymssql) | 10 -> **0** | fail after 10.0 s (`Could not set connection properties`) | ok, 1 ms + 1 ms |
+| orawire (python-oracledb, default non-autocommit, plain SELECT) | 10 -> **0** | fail after 15.0 s | ok, 9 ms + 1 ms |
+| boltwire (neo4j driver) | 10 -> **0** | fail after 5.0 s (`ExecutionFailed`) | ok, 4 ms + 1 ms |
+
+### 2. Saturation (`--mode hold --n 25`, pool 10, workload: `SELECT 1`, `pg_sleep(0.1)` / a 100 ms-trigger write, `SELECT 1`; clients stay connected until all are done)
+
+| Protocol | Before: ok / failed, wall | Before: error | After: ok / failed, wall | After: latency p50 / p90 / max |
+|---|---|---|---|---|
+| pgwire | 10 / 15, 96.4 s | 41 pool timeouts, clients waited 10-65 s | **25 / 0, 1.5 s** | 0.37 / 0.43 / 0.44 s |
+| mywire | 10 / 15, 76.4 s | 36 pool timeouts | **25 / 0, 1.5 s** | 0.40 / 0.47 / 0.47 s |
+| mssqlwire | 10 / 15, 61.2 s | `Could not set connection properties` | **25 / 0, 1.5 s** | 0.38 / 0.45 / 0.45 s |
+| orawire | 10 / 15, 11.4 s | first statement fails after 10 s | **25 / 0, 1.5 s** | 0.41 / 0.48 / 0.48 s |
+| boltwire | 10 / 15, 6.6 s | `ExecutionFailed` after 5 s | **25 / 0, 1.8 s** | 0.54 / 0.75 / 0.75 s |
+
+After: server side peaked at 10 active pooled connections (never above the pool), 0 pool timeouts, 0 license rejects,
+0 dead listeners; the extra client latency is the queue for 10 connections. (`peak backends` seen by Postgres: 12
+including the harness's own monitor sessions.)
+
+### 3. 25 concurrent clients sharing a pool of TWO (new `test_25_concurrent_clients_share_pool_of_two`, `WARP_POOL_MAX_SIZE=2`, `WARP_POOL_CONNECT_TIMEOUT_MS=1500`, 4 statements + 4 writes + think time each)
+
+Before: pgwire ok 25 (p50 2.20 s, p90 3.76 s, max 4.06 s: clients serialised two at a time behind each other's whole
+session), mssqlwire ok 25 (2.21 / 3.78 / 4.09 s), mywire 12 of 25 failed, orawire 11 and 5 of 25 failed (autocommit and
+not), boltwire 9 of 25 failed. After: **25/25 ok on every protocol, p50 0.31-0.37 s, p90 0.31-0.38 s, max <= 0.40 s**
+(the 0.3 s think time inside each client dominates; hikari active never above 2).
+
+### 4. Write RTT (the `test_write_rtt_baseline` statement: autocommit single-row INSERT), client p50 in ms
+
+The 40-sample pytest RTT tests swing +-0.15 ms run to run on this loaded machine (e.g. pgwire 0.26-0.48 for the
+same jar), too noisy to resolve the few-microsecond cost of a borrow/return, so this used a high-sample harness
+(`wire/tests/python/rtt_bench.py`: 300 warm-up + 1500 timed statements per run, jars alternated before/after, 4 rounds, median of
+the per-run p50):
+
+| Protocol | before p50 (p90) | after p50 (p90) | delta p50 |
+|---|---|---|---|
+| pgwire | 0.105 (0.153) | 0.117 (0.167) | +0.011 |
+| mywire | 0.139 (0.200) | 0.143 (0.205) | +0.004 |
+| mssqlwire | 0.129 (0.181) | 0.138 (0.192) | +0.009 |
+| orawire | 0.115 (0.176) | 0.117 (0.181) | +0.002 |
+| boltwire | 0.182 (0.227) | 0.183 (0.230) | +0.001 |
+
+The cost of multiplexing on the hot path is +1 to +11 microseconds per statement (Hikari borrow + return, one
+map lookup of the per-physical-connection state, the pin/replay classification): **no regression, far inside the
++-0.3 ms budget**. A direct probe measured Hikari borrow+return at 0.06-0.2 us and a `SELECT 1` through a lease at
+17.0 us versus 17.1 us on a held connection. The earlier per-statement `set_config` caching gains hold: the
+identity/`db_emulation`/tenant-search_path cache used to be keyed by (session, Connection *proxy*) -- a pool hands
+out a new proxy per borrow -- and is now keyed by the *physical* connection (`PhysicalSessionState`), so getting the
+same physical connection back costs zero extra round trips, and a different physical connection is a (correct)
+cache miss that re-applies the context. Where it is a miss (first use of a connection, a different client's state
+left on it) the whole `warp.*` identity is now applied in ONE round trip instead of one per attribute.
+
+### Bugs found by the baseline, fixed here
+
+1. Session constructors ran `CREATE TABLE IF NOT EXISTS warp_failed_statements` on the accept thread for every new
+   connection: a full pool froze accepting for the whole listener. Now once per process, off-thread; handler
+   construction borrows nothing.
+2. `setTcpNoDelay` sat outside the per-connection try/catch, so one aborted connection killed the listener until
+   restart. All TCP accept loops in `Main` share one resilient `acceptLoop` (log, drop that connection, continue).
+3. `WARP_QOS_POOL_WAIT_THRESHOLD` never fired (pools are keyed `jdbcUrl|user`, `targetBackend` is a name or null).
+   Backend name -> pool key is now recorded on every borrow; the threshold rejects immediately with SQLSTATE 53300.
+4. Pool exhaustion now gives every protocol a clear native error naming Warp's pool, the wait and the knobs
+   (`Warp backend connection pool exhausted: waited 1500ms for one of 2 pooled backend connections ...`): Postgres
+   `53300`, MySQL 1040, `ORA-00018`, mssqlwire error 50000-class, Bolt `Neo.TransientError.General.DatabaseUnavailable`.
+5. mssqlwire accepts `USE <db>` as a no-op; orawire no longer NPEs (session hang) on a statement that arrives with no
+   bind rows (`SELECT pg_sleep(0.1) FROM dual` now reaches the backend and returns a clear "unsupported column type
+   void" error; an INSERT without a column list already worked). mywire `SET autocommit=0` is now a session mode: a
+   COMMIT/ROLLBACK no longer silently drops the session back into autocommit (the strict-xfail
+   `test_transaction_rollback_discards_uncommitted_writes` in `test_mywire.py` had been documenting that bug; its
+   marker is removed).
+
+### Not covered / honest limits
+
+* orawire with `WARP_DUAL_EXEC_*`, replication or XA keeps the old behaviour (it needs a connection kept open).
+* Session-state pins are permanent for the session; SQL-level `PREPARE` names and pg_oracle's DBMS_OUTPUT buffer are
+  not wiped when a pinned session ends. Native-proxy modes were not touched.
+* The Java integration tests that spawn a Warp JVM or need Docker images (Oracle/SQL Server containers) could not run
+  on this machine (Docker VM disk full; a stray-Warp Ignite discovery hang for the spawned JVMs).
+
+Reproduce: `WARP_TEST_PG_LOCAL=1` (only if Docker is unavailable), then from `wire/tests/python`:
+`python3 -m pytest -q test_connection_pooling.py` (the multiplexing tests: idle holders, 25 clients / pool 2,
+transaction isolation, extended-protocol prepared statements and partial-fetch portals, SET/temp-table pinning,
+RLS identity isolation, pool exhaustion errors, QoS threshold, listener resilience, kill switch), and
+`WARP_RUN_POOL_TESTS=1 python3 test_connection_pooling.py --protocols pg,my,mssql,ora,bolt --idle-holders` /
+`--mode hold --n 25 --fresh` and `python3 rtt_bench.py <jar> <pg|my|mssql|ora|bolt>` (alternate two jars) for the numbers above.
+
+
+## 2026-09-25: s3wire Postgres mode (the `s3` store) vs proxy mode vs MinIO direct
+
+**What was measured.** The same boto3 client (path-style, SigV4, one thread, `retries=0`), same machine, loopback:
+`minio-direct` = boto3 straight to a MinIO container; `warp-proxy->minio` = s3wire proxy mode in front of
+that MinIO; `warp-postgres-1-host` / `-2-host` = s3wire Postgres mode over one / two native Homebrew Postgres 17
+servers (default settings, fsync on, local disk), objects sharded across the two in the second row. Small
+operations: 256-byte PutObject over 50 rotating keys, GetObject of one key, `ListObjectsV2(Prefix, MaxKeys=20)`
+on that prefix; 20 warm-up + 150 measured each. Large: one `put_object` of a 100 MiB in-memory body and one
+`get_object` streamed in 1 MiB reads. Numbers are client-side milliseconds (p50, with the minimum in brackets)
+and MB/s; one run of a throwaway benchmark script (the MinIO/proxy rows were measured in four runs, the 1-host Postgres row in two, the 2-host row once; repeated rows agreed within ~15%).
+
+| Path | PUT 256 B p50 (min) | GET 256 B p50 (min) | List 20 keys p50 (min) | 100 MiB PUT | 100 MiB GET |
+|---|---|---|---|---|---|
+| boto3 direct to MinIO (Docker) | 6.9 (3.8) | 3.7 (2.3) | 5.4 (3.6) | 308 MB/s | 495 MB/s |
+| s3wire proxy -> MinIO | 5.6 (4.1) | 2.6 (2.0) | 4.2 (3.2) | 253 MB/s | 432 MB/s |
+| **s3wire Postgres, 1 host** | **1.4 (1.1)** | **0.8 (0.7)** | **1.4 (1.3)** | **246 MB/s** | **1691 MB/s** |
+| **s3wire Postgres, 2 hosts** | **1.7 (1.1)** | **0.9 (0.8)** | **1.9 (1.5)** | **226 MB/s** | **1204 MB/s** |
+
+Reading it honestly: the small-operation gap is mostly *where the backend runs* -- MinIO sits in the Docker
+VM (an extra hop and fsync-heavy erasure-coded writes), the native Postgres is on the host -- so it says the
+Postgres path adds no meaningful overhead per operation (one transaction of a handful of statements for a
+small PUT; one indexed lookup for a small GET), not that Postgres is "faster than an object store". A
+containerised Postgres would land closer to MinIO. The list gets slightly slower with two hosts (two
+sequential shard queries plus a merge); GET is also slower there (not investigated), and 100 MiB PUT stays at
+~220-250 MB/s, the same order as the proxy (not profiled; consistent with being bound by Postgres write throughput). Read throughput out
+of Postgres is high here because the just-written chunks are in the shared buffer/page cache; a cold read is
+bounded by disk. The server-side `avgRttMs` for `s3wire` in `/api/metrics/summary` is a millisecond-truncated mean
+across all operations of the run, so it is not broken out here. Caveats: single client thread, loopback, Postgres
+untuned, warm cache, one 100 MiB object per mode, macOS. Not measured: concurrent throughput, objects above
+100 MiB, a Postgres on another host.
+
+## 2026-09-25: sqswire SQS conformance work -- Floci SQS results and RTT before/after
+
+**Conformance.** Floci's SQS compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native
+Postgres 17 per run, credentials test/test) before -> after: **python 7/16 -> 16/16, node 6/8 -> 8/8, java 8/27 -> 27/27**
+(pass/total; baseline files kept as `wire/tests/python/floci_compat/results/warp-sqs-*-baseline.md`). Nothing is left
+failing, so no test is classified Floci-specific. Warp's own `tests/python/test_sqswire_conformance.py` adds 31 scenarios
+run against one and against two sharded Postgres backends (62 cases), with both the JSON protocol (boto3) and the Query/XML
+protocol (raw SigV4-signed requests), and passes; `test_sqswire.py`, the SQS cases in `test_backend_set_stores.py` and
+`test_mcp_backend_set_stores.py` still pass.
+
+**RTT must not regress.** Same machine, native Postgres 17, boto3 with keep-alive, one thread, loopback, 400 iterations of
+send / receive / delete / receive-on-empty per run (`tests/python/sqswire_rtt_compare.py`), client-observed p50 in ms, two
+alternating runs per jar. Baseline = the jar built before this work; after = same jar with the new sqswire classes.
+
+| operation | before (run 1 / run 2) | after (run 1 / run 2) |
+|---|---|---|
+| SendMessage | 0.573 / 0.613 | 0.593 / 0.599 |
+| ReceiveMessage (one message) | 0.589 / 0.630 | 0.606 / 0.625 |
+| ReceiveMessage (empty queue) | 0.532 / 0.562 | 0.542 / 0.548 |
+| DeleteMessage | 0.557 / 0.589 | 0.571 / 0.577 |
+
+The differences are inside run-to-run noise (about 0.03 ms; mean +0.01 to +0.06 ms on send/receive in the first pair, none in the
+second). `test_sqswire.py::test_write_rtt_baseline` client p50 is 0.88-0.97 ms both before and after, and the server-side
+`avgRttMs` is 0 (the metric is whole milliseconds) in both. Why it stays flat: a standard-queue send is still one
+`INSERT ... RETURNING` and a receive is still one `UPDATE ... RETURNING` (now batched for up to 10 messages), queue
+attributes come from a per-process cache (5 s TTL), and FIFO queues, which use a transaction and an advisory lock, are the only
+path that got more expensive. **Long-poll caveat:** a `ReceiveMessage` with `WaitTimeSeconds` now really waits (up to 20 s); the
+time parked is excluded from the reported RTT and no backend connection is held while parked.
+
+## 2026-09-25: dynamowire DynamoDB conformance work -- Floci results and RTT before/after
+
+**Conformance.** Floci's DynamoDB SDK compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native
+Postgres 17 per run, credentials test/test) before -> after, pass/total: **python 13/22 -> 22/22, node 23/59 -> 59/59, java
+38/120 -> 118/120** (baseline files kept as `wire/tests/python/floci_compat/results/warp-dynamodb-*-baseline.md`). The two remaining java
+failures are Floci-specific: `DynamoDbTest::updateTableReplicaLifecycle` (adds a replica region to a stream-less table through UpdateTable
+`ReplicaUpdates`; global tables are documented as unsupported and answer a ValidationException) and `DynamoDbTest::searchVectors` (`SearchVectors`
+is a Floci extension, not a DynamoDB API). Warp's own `tests/python/test_dynamowire_conformance.py` adds 17 scenarios (33 cases: 16 run
+against one and against two sharded Postgres backends, plus one for a backend added after a table exists) -- secondary indexes, parallel
+scan, TTL expiry, atomic conditional writes and transactions under concurrency (also across shards), PartiQL, legacy parameters,
+validation, ConsumedCapacity -- and passes, as do `test_dynamowire.py`, the DynamoDB cases in `test_backend_set_stores.py` (the
+cross-shard-transaction case now asserts atomic commit instead of a refusal) and `test_mcp_backends.py`; 22 Java unit tests cover the
+expression engine, validation, key planning and the PartiQL parser. Behaviour checked case by case against Amazon's DynamoDB Local
+(about 400 request/response pairs; the remaining differences are documented in `docs/WARP_GUIDE.md`, *The DynamoDB store*).
+
+**RTT must not regress.** Same machine, native Postgres 17, raw DynamoDB-protocol requests over one keep-alive connection
+(`tests/python/dynamowire_rtt_bench.py`, no SDK, no signing), one thread, loopback, 300 warm-up + 1000 timed requests per operation,
+client-observed **p50 in ms, median of 3 alternating runs per jar**. Before = the jar built from the tree without the new dynamowire
+classes; after = the same tree with them.
+
+| operation | before | after |
+|---|---|---|
+| PutItem | 0.233 | 0.238 |
+| PutItem with `attribute_not_exists` | 0.190 | 0.202 |
+| UpdateItem (`SET v = if_not_exists(v, :z) + :o`) | 0.169 | 0.172 |
+| GetItem, Postgres read | 0.146 | 0.149 |
+| GetItem, row-cache hit | 0.080 | 0.082 |
+| Query (one item) | 0.100 | 0.126 |
+
+The plain write and read paths move by less than the run-to-run spread (about 0.01 ms). Two paths cost a little: a conditional write
+now locks the item (`pg_advisory_xact_lock` plus `SELECT ... FOR UPDATE`, sent as two pipelined statements in one round trip -- a first
+version that ran them as separate round trips cost +0.11 ms and was rewritten), which is what makes `attribute_not_exists` puts atomic,
+and a Query goes through the new planner (+0.025 ms); a Query that can return only a few rows (a small `Limit`, or the whole primary
+key given) still runs as a single autocommit statement, while larger reads stream through a cursor. `test_dynamowire.py::
+test_write_rtt_baseline` (boto3, 40 samples) still reports a client p50 of about 1.07 ms and a server-side `avgRttMs` of 0 (whole
+milliseconds) after the change.
+
+## 2026-09-25 -- influxwire behaves like InfluxDB (differential conformance) and RTT
+
+influxwire was made to behave like a real InfluxDB 1.8.10 (measured differentially: `wire/tests/python/influx_conformance/`, 290 cases /
+1,821 requests replayed against the real server and against Warp). Result before -> after:
+
+| | identical | documented divergence | clock/server-state dependent | message-only | different | cases fully identical |
+|---|---|---|---|---|---|---|
+| before (one Postgres backend) | 208 of 1,821 ignoring Content-Type (0 strict) | 19 | 8 | 196 | 1,598 | 2 / 290 |
+| after, one Postgres backend | 1,794 | 19 | 8 | 0 | 0 | 290 / 290 |
+| after, two sharded Postgres backends | 1,794 | 19 | 8 | 0 | 0 | 290 / 290 |
+
+Warp-side, `tests/python/test_influxwire_conformance.py` replays the same corpus (InfluxDB's answers recorded as a golden file) on one and on two
+sharded backends, plus the 2.x write endpoint, credentials, the `influxdb` python client and shard-exactness checks: 588 tests pass; `test_influxwire.py`,
+the InfluxDB case of `test_backend_set_stores.py`, `test_mcp_backends.py -k influx` and `test_mcp_backend_set_stores.py` pass; 17 Java unit tests
+(line-protocol parser, InfluxQL parser, engine over an in-memory backend) pass.
+
+**RTT.** Same machine, native Postgres, one keep-alive connection, loopback, one thread, 300 single-point writes of a new series
+(`POST /write`) and 100 filtered point queries (`SELECT value FROM temp WHERE host = 'h<i>'`) per run, client-observed **p50 in ms, median of 3 runs
+alternating between the jars** (`tests/python/influx_conformance/rtt_bench.py`); server-side `avgRttMs` reads 0 (whole milliseconds) for both.
+
+| operation | before | after |
+|---|---|---|
+| single-point write | 0.818 | 0.877 |
+| filtered point query | 0.831 | 0.938 |
+
+A write is one `INSERT ... ON CONFLICT` (the same one round trip; the catalog is only touched for a field or tag key not seen before, and databases,
+retention policies and schemas are cached), +0.06 ms for the wider row and the unique-index probe. A query now needs the measurement's schema
+(cached for 2 s) and the points: +0.1 ms. `test_influxwire.py::test_write_rtt_baseline` (40 samples) reports a client p50 of about 1.2 ms and a
+server-side `avgRttMs` of 1, inside its 3 ms bar. Throughput sanity check on 200,000 points (50 series): 2.5 s to write in 5,000-point batches
+(80k points/s), 30-500 ms for aggregate and windowed queries over all of them.
+
+## 2026-09-25 -- oswire behaves like OpenSearch (differential + REST-spec conformance) and RTT
+
+oswire (OpenSearch REST/JSON over Postgres) was made to behave like a real OpenSearch 2.19.6, measured two ways
+(`wire/tests/python/os_conformance/`, README there): OpenSearch's own REST API YAML tests and a 321-case differential corpus replayed against the
+real server and against Warp. Result before -> after:
+
+| | before | after, one Postgres backend | after, index sharded over two Postgres backends |
+|---|---|---|---|
+| OpenSearch REST-spec tests valid on real OpenSearch 2.19.6 that Warp passes (42 test directories) | 21 / 936 | 693 / 936 | 690 / 936 (3 order-of-tied-hits) |
+| differential corpus, cases matching the real server | 18 / 321 | 313 / 321 | 310 / 321 |
+| differential corpus, differing only in a documented way (`os_conformance/known.py`) | - | 8 | 11 (per-host scores/tie order) |
+| Lucene BM25 `_score` equal to OpenSearch's (6 digits) | flat 1.0 / ts_rank | yes (term, match, phrase, bool, multi_match, fuzzy, query_string) | per host (like a shard) |
+
+The 243 remaining spec failures are classified in `os_conformance/results/spec_failures.tsv`: 117 features not implemented (intervals, span, more_like_this,
+profile, significant_terms, unsigned_long, range field types, scripted aggregations, geo shapes, terms lookup, ...) that fail with a clear OpenSearch-style
+error, 48 that cannot exist on Postgres or are deliberately different (custom routing, refresh/realtime visibility, hdr precision, shard internals such as
+request-cache/batched reduce, cluster/node detail), 78 details (error-message texts, limits, corner cases). Warp-side, `tests/python/test_oswire_conformance.py`
+replays the corpus against Warp (one and two sharded backends, using the recorded OpenSearch answers) and adds opensearch-py end-to-end, sharding, k-NN/hybrid
+across hosts, refresh gating and legacy-table adoption checks: 14 tests pass; `test_oswire.py`, the OpenSearch case of `test_backend_set_stores.py` and
+`test_mcp_backend_set_stores.py` pass; 17 Java unit tests (analysis, dates, mapping, BM25 numbers recorded from OpenSearch, query/aggregation engine,
+scripts, pre-filter) pass.
+
+**RTT.** Same machine, native Postgres, one keep-alive connection, loopback, one thread, opensearch-py, 400 requests per operation, client-observed
+**p50 in ms, 3 runs alternating between the jars** (baseline jar built from the tree before this work / this work):
+
+| operation | before | after |
+|---|---|---|
+| `PUT /idx/_doc/<new id>` (index a new document) | 0.306-0.313 | 0.332-0.345 |
+| `GET /idx/_doc/<id>` | 0.225-0.228 | 0.220-0.226 |
+| `PUT /idx/_doc/<existing id>` (overwrite) | 0.193-0.199 | 0.207-0.210 |
+
+A write is still one SQL statement (`INSERT ... ON CONFLICT ... RETURNING seq_no, version`); the +0.02-0.03 ms is the returned row (created/updated, `_seq_no`,
+`_version`) and the per-index sequence, plus a dynamic-mapping check of the document against the cached mapping (the catalog row is re-read at most every 2 s).
+A get is unchanged. `test_oswire.py::test_write_rtt_baseline` (40 samples) reports a client p50 of 0.5-0.7 ms before and after, server-side `avgRttMs` 0
+(whole milliseconds), inside its 2 ms bar. Search cost is now O(documents read): a 20,000-document index answers term/range/match/aggregation requests in
+10-110 ms (`_bulk` of 20,000 documents: 1.2 s).
+
+## 2026-09-25: s3wire S3 conformance work (Postgres mode) -- Floci S3 results and RTT before/after
+
+**Conformance.** Floci's S3 compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native Postgres 17 per run, s3 store enabled on the
+default backend, credentials test/test) before -> after, pass / total: **python 17/42 -> 42/42, node 20/35 -> 35/35, java 30/75 -> 74/75** (baseline files:
+`wire/tests/python/floci_compat/results/warp-baseline-s3-*.md`; current: `warp-s3-*.md`). The one remaining failure, `S3Test::deleteBucketTagging`, is class c
+(Floci-specific): it expects an empty tag set from GetBucketTagging after DeleteBucketTagging, real S3 answers `404 NoSuchTagSet`, and s3wire answers like S3. The baseline
+failures were tagging, versioning + ListObjectVersions, GetObjectAttributes and multipart checksum types (COMPOSITE / FULL_OBJECT), CORS, PublicAccessBlock, UploadPartCopy,
+LocationConstraint, virtual-hosted addressing and object annotations. Floci classes beyond those suites, run against the same Warp: S3LifecycleTest 2/2, S3PresignTest 1/1,
+S3BlockPublicAccessTest 6/6, S3SelectTest 19/19, S3PresignedUrlSigV4VerificationTest 11/13 (2 class c: Floci IAM; S3 answers 400 rather than 403 for a malformed presigned credential).
+Warp's own `tests/python/test_s3wire_conformance.py` runs 47 scenarios against one and against two sharded Postgres backends (versioning, tagging, ACLs/PAB/ownership/policy,
+CORS, checksums incl. signed and unsigned streaming trailers, multipart extras, conditional requests, presigned + POST-policy uploads, virtual-hosted addressing, Select,
+annotations, error parity; 91 passed, 3 skipped for optional dependencies) and passes; `test_s3wire_postgres.py` (36), `test_s3wire.py` (proxy mode with MinIO, 14),
+`test_backend_set_stores.py`, `test_mcp_backend_set_stores.py`, `S3StoreUnitTest` (13), `S3WireUnitTest` (5) and the new `S3ConformanceUnitTest` (22) pass. A MinIO oracle
+(same boto3 calls against MinIO and Warp, ~110 probes) showed differences only where MinIO lacks the operation or differs from S3 documentation; the ones acted on were the
+combined `If-None-Match` + `If-Modified-Since` order (both are evaluated, 304 if either says not modified).
+
+**RTT (small operations, Postgres mode).** Same machine and method as the 2026-09-25 s3wire row above (boto3, path-style, SigV4, one thread, 256 B PutObject over 50 keys,
+GetObject of one key, ListObjectsV2 of 20 keys; 150 measured requests after 20 warm-up; native Postgres 17), client p50 in ms, jar before this work (the s3 store as first delivered)
+against this work, two runs each alternating:
+
+| | PUT 256 B | GET 256 B | LIST 20 keys |
+|---|---|---|---|
+| before, 1 host / 2 hosts | 1.35 / 1.38, 1.44 / 1.42 | 0.84 / 0.83, 0.87 / 0.88 | 1.43 / 1.48, 1.55 / 1.63 |
+| after, 1 host / 2 hosts | 1.46 / 1.47, 1.41 / 1.43 | 0.87 / 0.85, 0.83 / 0.84 | 1.52 / 1.60, 1.48 / 1.62 |
+
+No regression beyond noise (about +0.03 ms on PUT, GET and LIST unchanged). A first version measured +0.1 ms on PUT (1.46-1.50): the commit path re-read every column of the current
+row and stored a default `AES256` marker in every object; the commit now locks a narrow row (blob ids, annotation flag) when the bucket is unversioned and the implicit SSE-S3
+default is not stored. The new work adds per-object CRC64NVME (slicing-by-8) when the client names no checksum, the additional-checksum columns and the bucket row fetch (one
+query, cached 2 s, joined with the encryption default), all inside the same transaction shape (lock / insert / upsert). 100 MiB PUT stayed 200-250 MB/s, GET 1250-1500 MB/s.

@@ -27,7 +27,7 @@ import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
 /**
  * End-to-end proof that dynamowire's PartiQL subset (ExecuteStatement, BatchExecuteStatement --
- * see {@link PartiQlParser}'s own javadoc for exactly what shape is and isn't supported) actually
+ * see {@link PartiQl}'s own javadoc for exactly what shape is and isn't supported) actually
  * works against a real Postgres backend, driven by the real AWS SDK v2 {@code DynamoDbClient} --
  * not a hand-written HTTP/JSON check, so a passing test here means the SDK's own PartiQL request
  * builders and response parsers agree this is a real, well-formed DynamoDB service response.
@@ -61,6 +61,7 @@ class PartiQlIntegrationTest {
                         .attributeDefinitions(AttributeDefinition.builder()
                                 .attributeName("id").attributeType(ScalarAttributeType.S).build())
                         .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
+                        .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
                         .build());
 
                 // INSERT ... VALUE ? -- the real, common shape: a whole item bound as one Map
@@ -82,12 +83,12 @@ class PartiQlIntegrationTest {
                         .build());
                 assertEquals(1, selected.items().size(), "expected exactly one item for id=p-1");
                 assertEquals("pending", selected.items().get(0).get("status").s());
-                assertEquals("42.50", selected.items().get(0).get("amount").n());
+                assertEquals("42.5", selected.items().get(0).get("amount").n(), "DynamoDB normalises numbers");
 
                 // UPDATE ... SET status = ? WHERE id = ? -- PartiQL's SET clause is the same
                 // grammar as UpdateExpression's own SET clause, reused unchanged.
                 dynamo.executeStatement(ExecuteStatementRequest.builder()
-                        .statement("UPDATE \"partiql_orders\" SET status = ? WHERE id = ?")
+                        .statement("UPDATE \"partiql_orders\" SET \"status\" = ? WHERE id = ?")
                         .parameters(
                                 AttributeValue.builder().s("shipped").build(),
                                 AttributeValue.builder().s("p-1").build())
@@ -101,7 +102,7 @@ class PartiQlIntegrationTest {
                         "PartiQL UPDATE must actually persist against the real Postgres backend");
                 // The amount attribute PartiQL's UPDATE never touched must survive the
                 // read-modify-write untouched -- proves this isn't overwriting the whole item.
-                assertEquals("42.50", afterUpdate.items().get(0).get("amount").n());
+                assertEquals("42.5", afterUpdate.items().get(0).get("amount").n());
 
                 // DELETE FROM ... WHERE id = ?
                 dynamo.executeStatement(ExecuteStatementRequest.builder()
@@ -134,6 +135,7 @@ class PartiQlIntegrationTest {
                         .attributeDefinitions(AttributeDefinition.builder()
                                 .attributeName("id").attributeType(ScalarAttributeType.S).build())
                         .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
+                        .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
                         .build());
                 dynamo.executeStatement(ExecuteStatementRequest.builder()
                         .statement("INSERT INTO \"partiql_batch\" VALUE ?")
@@ -159,13 +161,13 @@ class PartiQlIntegrationTest {
 
                 assertEquals(2, resp.responses().size());
                 assertEquals("b-1", resp.responses().get(0).item().get("id").s());
-                assertEquals("ValidationException", resp.responses().get(1).error().codeAsString());
+                assertEquals("ValidationError", resp.responses().get(1).error().codeAsString());
             }
         }
     }
 
     @Test
-    void executeTransactionIsADisclosedGapNotASilentOne() throws Exception {
+    void executeTransactionValidatesItsStatements() throws Exception {
         try (RealPostgres postgres = RealPostgres.start();
                 WarpProcess warp = WarpProcess.builder()
                         .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())

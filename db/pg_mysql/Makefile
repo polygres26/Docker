@@ -1,5 +1,5 @@
 # pg_mysql -- MySQL compatibility extension for Postgres (part of the
-# Polygres collection). Pure SQL/plpgsql, no C module of its own -- see
+# Shim collection). Pure SQL/plpgsql, no C module of its own -- see
 # README.md and pg_mysql.control for why (the one C symbol this extension
 # needs, mysql_catalog.emulation_active(), binds directly against
 # pg_oracle's already-built shared library by path).

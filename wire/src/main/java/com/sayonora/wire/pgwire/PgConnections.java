@@ -29,6 +29,32 @@ public final class PgConnections {
         return openWithFailover(options, PgConnections::connect);
     }
 
+    /** A lease over the default backend for one wire session (pgwire/mywire/mssqlwire): borrows per statement
+     * or transaction, per {@code WARP_MULTIPLEX_SESSIONS}. See {@link com.sayonora.wire.core.SessionConnectionLease}. */
+    public static com.sayonora.wire.core.SessionConnectionLease newSessionLease(ServerOptions options) {
+        return new com.sayonora.wire.core.SessionConnectionLease(() -> openForSession(options),
+                evictor(options), com.sayonora.wire.core.SessionConnectionLease.multiplexingEnabledByEnv());
+    }
+
+    /** Removes a checked-out default-backend connection from the pool instead of returning it. */
+    public static java.util.function.Consumer<Connection> evictor(ServerOptions options) {
+        return connection -> {
+            // With a standby configured the pool the connection came from is ambiguous; evicting from
+            // the wrong one would corrupt its bookkeeping, so only the unambiguous case evicts.
+            if (options.pgStandbyHost() == null || options.pgStandbyHost().isBlank()) {
+                String primary = baseUrl(options.pgHost(), options.pgPort(), options);
+                BackendConnectionPools.evict(BackendConnectionPools.poolKeyFor(primary, options.pgUser()), connection);
+            }
+        };
+    }
+
+    /** As {@link #open}, for a wire session's {@code SessionConnectionLease}: the session reconciles the
+     * identity / db_emulation / search_path it needs on every statement, so leftovers from the previous
+     * borrower are not stripped on borrow. */
+    public static Connection openForSession(ServerOptions options) throws SQLException {
+        return openWithFailover(options, PgConnections::connectForSession);
+    }
+
     public static Connection openRaw(ServerOptions options) throws SQLException {
         return openWithFailover(options, PgConnections::connectRaw);
     }
@@ -117,7 +143,15 @@ public final class PgConnections {
         String url = baseUrl(host, port, options);
 
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.pgUser());
+        BackendConnectionPools.registerBackendAlias(BackendConnectionPools.DEFAULT_ALIAS, poolKey);
         return BackendConnectionPools.borrow(poolKey, url, options.pgUser(), options.pgPassword());
+    }
+
+    private static Connection connectForSession(String host, int port, ServerOptions options) throws SQLException {
+        String url = baseUrl(host, port, options);
+        String poolKey = BackendConnectionPools.poolKeyFor(url, options.pgUser());
+        BackendConnectionPools.registerBackendAlias(BackendConnectionPools.DEFAULT_ALIAS, poolKey);
+        return BackendConnectionPools.borrowForSession(poolKey, url, options.pgUser(), options.pgPassword());
     }
 
     private static Connection connectRaw(String host, int port, ServerOptions options) throws SQLException {

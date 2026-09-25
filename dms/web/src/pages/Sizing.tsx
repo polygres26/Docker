@@ -4,12 +4,12 @@ import {
   listConnections, listReports, runConnectionSizing, runReportsSizing,
 } from '../api/client'
 import DmsTabs from '../components/DmsTabs'
-
-function tierStyle(tier: string): { bg: string; fg: string } {
-  if (tier === 'SMALL') return { bg: 'var(--easy-soft)', fg: 'var(--accent-strong)' }
-  if (tier === 'MEDIUM') return { bg: 'var(--medium-soft)', fg: 'var(--medium)' }
-  return { bg: 'var(--hard-soft)', fg: 'var(--hard)' }
-}
+import { tierTone } from '../lib/tone'
+import {
+  Bullets, Button, Check, KpiStrip, Notice, PageHeader, Section, Select, Split, Stack, StatusPill,
+} from '../ui'
+import { ui } from '../ui/styles'
+import styles from './Sizing.module.css'
 
 export default function Sizing() {
   const [connections, setConnections] = useState<Connection[]>([])
@@ -62,98 +62,75 @@ export default function Sizing() {
   }
 
   return (
-    <div style={{ maxWidth: 780 }}>
+    <>
       <DmsTabs />
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Sizing</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 20 }}>
-        A starting-point Postgres instance shape (vCPUs, memory, storage, IOPS, connections) built
-        from whatever signal is available: schema size and captured workload from a live
-        connection, or CPU/memory/data-size hints pulled from an uploaded report. This is a
-        rules-of-thumb calculator, not a substitute for real load testing before go-live — every
-        number below comes with the reasoning that produced it.
-      </p>
+      <PageHeader
+        title="Sizing"
+        subtitle="A starting-point Postgres instance shape (vCPUs, memory, storage, IOPS, connections) built from whatever signal is available: schema size and captured workload from a live connection, or CPU/memory/data-size hints pulled from an uploaded report. This is a rules-of-thumb calculator, not a substitute for real load testing before go-live — every number below comes with the reasoning that produced it."
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-        <div className="panel">
-          <h3 style={{ marginTop: 0 }}>From a connection</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>Uses a fresh schema-size scan + workload capture.</p>
-          <select
-            value={selectedConnection}
-            onChange={(e) => setSelectedConnection(e.target.value)}
-            style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', color: 'var(--text)', fontSize: 14, marginBottom: 12 }}
-          >
-            <option value="">Select a connection…</option>
-            {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <button className="primary" onClick={handleConnectionSizing} disabled={!selectedConnection || loading}>
-            {loading ? 'Calculating…' : 'Calculate sizing'}
-          </button>
-        </div>
-
-        <div className="panel">
-          <h3 style={{ marginTop: 0 }}>From uploaded reports</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>Select one or more; combined if several.</p>
-          <div style={{ maxHeight: 130, overflowY: 'auto', marginBottom: 12 }}>
-            {reports.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>No reports uploaded yet.</p>}
-            {reports.map((r) => (
-              <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0' }}>
-                <input type="checkbox" checked={selectedReports.has(r.id)} onChange={() => toggleReport(r.id)} />
-                {r.name}
-              </label>
-            ))}
-          </div>
-          <button className="primary" onClick={handleReportSizing} disabled={selectedReports.size === 0 || loading}>
-            {loading ? 'Calculating…' : 'Calculate sizing'}
-          </button>
-        </div>
-      </div>
-
-      {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
-
-      {result && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <div className="panel">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <span className="tier-badge" style={{ background: tierStyle(result.tier).bg, color: tierStyle(result.tier).fg }}>
-                  {result.tier}
-                </span>
-                {resultSource && <span style={{ color: 'var(--muted)', fontSize: 13, marginLeft: 10 }}>from {resultSource}</span>}
-              </div>
+      <Split>
+        <Section title="From a connection" meta="Uses a fresh schema-size scan + workload capture.">
+          <div className={styles.body}>
+            <label className="sr-only" htmlFor="sizing-connection">Connection</label>
+            <Select id="sizing-connection" value={selectedConnection} onChange={(e) => setSelectedConnection(e.target.value)}>
+              <option value="">Select a connection…</option>
+              {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+            <div>
+              <Button variant="primary" onClick={handleConnectionSizing} disabled={!selectedConnection || loading}>
+                {loading ? 'Calculating…' : 'Calculate sizing'}
+              </Button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginTop: 16 }}>
-              {[
-                ['vCPUs', result.vCpus],
-                ['Memory', `${result.memoryGB} GB`],
-                ['Storage', `${result.storageGB} GB`],
-                ['Storage IOPS', result.storageIops.toLocaleString()],
-                ['max_connections', result.maxConnections],
-              ].map(([label, value]) => (
-                <div key={label as string} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
-                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{value}</div>
-                  <div style={{ color: 'var(--muted)', fontSize: 12 }}>{label}</div>
-                </div>
+          </div>
+        </Section>
+
+        <Section title="From uploaded reports" meta="Select one or more; combined if several.">
+          <div className={styles.body}>
+            <div className={styles.reportList}>
+              {reports.length === 0 && <span className={ui.muted}>No reports uploaded yet.</span>}
+              {reports.map((r) => (
+                <Check key={r.id} checked={selectedReports.has(r.id)} onChange={() => toggleReport(r.id)}>{r.name}</Check>
               ))}
             </div>
+            <div>
+              <Button variant="primary" onClick={handleReportSizing} disabled={selectedReports.size === 0 || loading}>
+                {loading ? 'Calculating…' : 'Calculate sizing'}
+              </Button>
+            </div>
           </div>
+        </Section>
+      </Split>
+
+      {error && <Notice tone="error">{error}</Notice>}
+
+      {result && (
+        <Stack>
+          <KpiStrip
+            label="Recommended instance"
+            items={[
+              { label: 'Tier', value: <StatusPill tone={tierTone(result.tier)}>{result.tier}</StatusPill>, hint: resultSource ? `from ${resultSource}` : undefined },
+              { label: 'vCPUs', value: result.vCpus },
+              { label: 'Memory', value: `${result.memoryGB} GB` },
+              { label: 'Storage', value: `${result.storageGB} GB` },
+              { label: 'Storage IOPS', value: result.storageIops.toLocaleString() },
+              { label: 'max_connections', value: result.maxConnections },
+            ]}
+          />
 
           {result.caveats.length > 0 && (
-            <div className="panel" style={{ borderColor: 'var(--medium)' }}>
-              <strong style={{ color: 'var(--medium)' }}>Caveats</strong>
-              <ul style={{ marginBottom: 0, fontSize: 13, color: 'var(--muted)' }}>
-                {result.caveats.map((c, i) => <li key={i}>{c}</li>)}
-              </ul>
-            </div>
+            <Section title="Caveats" warn>
+              <Bullets>{result.caveats.map((c, i) => <li key={i}>{c}</li>)}</Bullets>
+            </Section>
           )}
 
-          <div className="panel">
-            <h3 style={{ marginTop: 0 }}>Rationale</h3>
-            <ul style={{ marginBottom: 0, fontSize: 13.5, lineHeight: 1.7 }}>
+          <Section title="Rationale">
+            <ul className={ui.bullets}>
               {result.rationale.map((r, i) => <li key={i}>{r}</li>)}
             </ul>
-          </div>
-        </div>
+          </Section>
+        </Stack>
       )}
-    </div>
+    </>
   )
 }

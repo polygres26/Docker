@@ -94,8 +94,20 @@ public final class SchemaAutoDiscoveryStage implements PipelineStage {
         if (!SELECT_PREFIX.matcher(sql).find()) {
             return next.proceed(statement);
         }
+        BackendScope scope = statement.backendScope();
+        // A connection routed to ONE backend has nothing to discover or federate: the statement is pinned
+        // to it. (Without this, a same-named table on an out-of-scope backend would be reported as an
+        // "ambiguous table" for a client that can only ever see its own backend.)
+        if (scope != null && scope.allowedBackends().size() == 1) {
+            return next.proceed(statement);
+        }
+        Map<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>> catalog = catalogCache.byTableNameLowercase();
+        if (scope != null) {
+            // A set-routed connection resolves table names among ITS members only.
+            catalog = new ScopedCatalog(catalog, scope);
+        }
         SchemaAutoDiscovery.Resolution resolution = SchemaAutoDiscovery.resolve(
-                sql, backendRegistry, catalogCache.byTableNameLowercase(),
+                sql, backendRegistry, catalog,
                 RouterStage.tableShardBackendNames(routerStage.tableShardRules()));
         if (resolution.ambiguous()) {
             throw new SQLException("table \"" + resolution.ambiguousTable() + "\" is ambiguous: "
@@ -120,5 +132,46 @@ public final class SchemaAutoDiscoveryStage implements PipelineStage {
         Statement rewritten = statement.withSqlText(resolution.rewrittenSql());
         return new SchemaFederationStage(java.util.List.of(), backendRegistry, null, null, nativeRlsInitializers)
                 .executeWithMounts(resolution.mounts(), rewritten);
+    }
+
+    /** A read-only view of the discovered catalog restricted to the backends a scope permits. Built per
+     * statement, so it filters lazily on {@code get} (all {@link SchemaAutoDiscovery#resolve} uses)
+     * instead of copying the whole catalog. */
+    private static final class ScopedCatalog
+            extends java.util.AbstractMap<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>> {
+        private final Map<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>> all;
+        private final BackendScope scope;
+
+        ScopedCatalog(Map<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>> all, BackendScope scope) {
+            this.all = all;
+            this.scope = scope;
+        }
+
+        @Override
+        public java.util.List<BackendCatalogDiscovery.DiscoveredTable> get(Object key) {
+            java.util.List<BackendCatalogDiscovery.DiscoveredTable> hits = all.get(key);
+            if (hits == null) {
+                return null;
+            }
+            java.util.List<BackendCatalogDiscovery.DiscoveredTable> inScope = new java.util.ArrayList<>(hits.size());
+            for (BackendCatalogDiscovery.DiscoveredTable t : hits) {
+                if (scope.permits(t.backendName())) {
+                    inScope.add(t);
+                }
+            }
+            return inScope.isEmpty() ? null : inScope;
+        }
+
+        @Override
+        public java.util.Set<Entry<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>>> entrySet() {
+            Map<String, java.util.List<BackendCatalogDiscovery.DiscoveredTable>> filtered = new java.util.LinkedHashMap<>();
+            for (String name : all.keySet()) {
+                java.util.List<BackendCatalogDiscovery.DiscoveredTable> hits = get(name);
+                if (hits != null) {
+                    filtered.put(name, hits);
+                }
+            }
+            return filtered.entrySet();
+        }
     }
 }

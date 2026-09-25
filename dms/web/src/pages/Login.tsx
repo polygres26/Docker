@@ -2,7 +2,9 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
-import styles from '../Login.module.css'
+import logo from '../assets/logo.png'
+import { Button, Field, Input, Notice } from '../ui'
+import styles from './Login.module.css'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -27,56 +29,57 @@ export default function Login() {
   }
 
   return (
-    <div className={styles.page}>
-      <div>
-        <form className={styles.box} onSubmit={handleSubmit}>
-          <div className={styles.brand}>
-            <div className={styles.brandMark} />
-            <div>
-              <p className={styles.title}>Sayonora Ferry</p>
-              <p className={styles.subtitle}>Database Migration Service</p>
+    <div className={styles.screen}>
+      <section className={styles.context} aria-label="About Sayonora Ferry">
+        <div className={styles.brand}>
+          <span className={styles.markTile}><img src={logo} alt="" /></span>
+          Sayonora Ferry
+        </div>
+        <div className={styles.message}>
+          <h2>Assess, size and move your databases to Postgres.</h2>
+          <p>Score migration difficulty from a live connection or an uploaded report, size the target, and run data sync jobs from one console.</p>
+        </div>
+      </section>
+
+      <div className={styles.formWrap}>
+        <form className={styles.form} onSubmit={handleSubmit}>
+          <p className={styles.eyebrow}>Database Migration Service</p>
+          <h1>Sign in</h1>
+          <p className={styles.copy}>Use your admin account to continue.</p>
+
+          {error && <Notice tone="error">{error}</Notice>}
+
+          <Field label="Username" htmlFor="login-username">
+            <Input id="login-username" large value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+          </Field>
+          <Field label="Password" htmlFor="login-password">
+            <div className={styles.fieldWrap}>
+              <Input
+                id="login-password" large
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                style={{ paddingRight: 44 }}
+              />
+              <button
+                type="button" className={styles.reveal}
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={17} strokeWidth={1.8} /> : <Eye size={17} strokeWidth={1.8} />}
+              </button>
             </div>
-          </div>
-
-          {error && <div className={styles.error}>{error}</div>}
-
-          <input
-            className={styles.field}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username"
-          />
-          <div style={{ position: 'relative' }}>
-            <input
-              className={styles.field}
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              style={{ paddingRight: 40, width: '100%', boxSizing: 'border-box' }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-              title={showPassword ? 'Hide password' : 'Show password'}
-              style={{
-                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                background: 'none', border: 'none', padding: 4, cursor: 'pointer',
-                color: 'var(--muted)', display: 'flex', alignItems: 'center',
-              }}
-            >
-              {showPassword ? <EyeOff size={17} strokeWidth={1.8} /> : <Eye size={17} strokeWidth={1.8} />}
-            </button>
-          </div>
-          <button className={styles.submit} type="submit" disabled={loading}>
+          </Field>
+          <Button type="submit" variant="primary" full disabled={loading} style={{ minHeight: 44 }}>
             {loading ? 'Signing in…' : 'Sign in'}
-          </button>
+          </Button>
+          <p className={styles.help}>
+            Default admin credentials are printed to the server log on first startup if
+            SAYONORA_ADMIN_PASSWORD isn't set.
+          </p>
         </form>
-        <p className={styles.note}>
-          Default admin credentials are printed to the server log on first startup if
-          SAYONORA_ADMIN_PASSWORD isn't set.
-        </p>
       </div>
     </div>
   )

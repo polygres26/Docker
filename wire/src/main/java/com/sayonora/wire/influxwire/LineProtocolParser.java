@@ -1,138 +1,441 @@
 package com.sayonora.wire.influxwire;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.TreeMap;
 
 /**
- * Parses InfluxDB line protocol -- the real wire format every real InfluxDB client SDK sends to
- * {@code POST /write}, independent of whether the server speaks the v1 or v2 HTTP API (both use
- * this same point-encoding). One line is one point:
- * <pre>
- *   measurement[,tag_key=tag_value[,tag_key2=tag_value2...]] field_key=field_value[,field_key2=field_value2...] [timestamp]
- * </pre>
- * e.g. {@code weather,station=NYC temperature=72.5,humidity=45i 1717171717000000000}.
+ * Parses InfluxDB line protocol. A faithful port of the scanning rules of InfluxDB 1.x's
+ * {@code models.ParsePointsWithPrecision} (same accepted syntax, same error texts, e.g.
+ * {@code unable to parse 'm v=1u 1': invalid number}), so a client sees the same accept/reject behaviour and
+ * error messages as against real InfluxDB.
  *
- * <p><b>Field value types</b> (real line protocol's own suffix rules, not something this codebase
- * invented): a bare number is a float ({@code Double}); a number with a trailing {@code i} is a
- * signed integer ({@code Long}, the {@code i} stripped); {@code t}/{@code T}/{@code true}/
- * {@code True}/{@code TRUE} or {@code f}/{@code F}/{@code false}/{@code False}/{@code FALSE} is a
- * boolean; anything double-quoted is a string. Unsigned integers ({@code u} suffix) are parsed as
- * {@code Long} too -- V1 doesn't distinguish signed/unsigned, matching every other real InfluxDB-
- * compatible reimplementation's usual first-pass scope.
- *
- * <p><b>Escaping</b> handled: backslash-escaped commas, spaces, and equals signs in measurement
- * names, tag keys/values, and field keys (real line protocol's own escaping rules), and
- * backslash-escaped double quotes/backslashes inside a double-quoted string field value. Not
- * handled (V1 scope): line-protocol comments, or malformed input recovery -- a bad line throws
- * {@link InfluxException} with the offending line included, matching {@code OpenSearchAdapter}'s
- * "unrecognized clause fails loudly" policy rather than silently dropping or guessing.
+ * <p>Field types: bare number = float; {@code i} suffix = integer; {@code t T true True TRUE f F false False FALSE}
+ * = boolean; double-quoted = string. The unsigned {@code u} suffix is rejected ({@code invalid number}), exactly as
+ * the stock InfluxDB 1.x binary does. CRLF is not accepted (the {@code \r} makes the timestamp bad), as in InfluxDB.
  */
 public final class LineProtocolParser {
+
+    static final long MIN_TIME = Long.MIN_VALUE + 2;
+    static final long MAX_TIME = Long.MAX_VALUE - 1;
 
     private LineProtocolParser() {
     }
 
-    /**
-     * @param precision the {@code /write?precision=} query param ({@code ns}/{@code us}/
-     *     {@code ms}/{@code s}, real InfluxDB's own accepted values; {@code null} or anything else
-     *     defaults to {@code ns}, matching real InfluxDB's own default) -- every point's timestamp
-     *     is scaled up to nanoseconds so {@link InfluxPoint#timestampNanos()} is always
-     *     precision-agnostic for callers.
-     */
-    public static List<InfluxPoint> parse(String body, String precision) {
-        long nanosPerUnit = nanosPerUnit(precision);
-        List<InfluxPoint> points = new java.util.ArrayList<>();
-        for (String rawLine : body.split("\n")) {
-            String line = rawLine.strip();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
-            points.add(parseLine(line, nanosPerUnit));
-        }
-        return points;
+    /** Result of parsing a whole body: the valid points and one message per rejected line. */
+    public record Parsed(List<InfluxPoint> points, List<String> errors) {
     }
 
-    private static long nanosPerUnit(String precision) {
+    /** Whether {@code precision} is one InfluxDB's /write accepts. */
+    public static boolean validPrecision(String precision) {
+        return precision == null || switch (precision) {
+            case "", "n", "ns", "u", "ms", "s", "m", "h" -> true;
+            default -> false;
+        };
+    }
+
+    static long multiplier(String precision) {
         if (precision == null) {
             return 1;
         }
         return switch (precision) {
-            case "us" -> TimeUnit.MICROSECONDS.toNanos(1);
-            case "ms" -> TimeUnit.MILLISECONDS.toNanos(1);
-            case "s" -> TimeUnit.SECONDS.toNanos(1);
-            default -> 1; // "ns" or unrecognized -- real InfluxDB's own default is ns.
+            case "u" -> 1_000L;
+            case "ms" -> 1_000_000L;
+            case "s" -> 1_000_000_000L;
+            case "m" -> 60_000_000_000L;
+            case "h" -> 3_600_000_000_000L;
+            default -> 1L;
         };
     }
 
-    private static InfluxPoint parseLine(String line, long nanosPerUnit) {
-        // Three whitespace-separated sections, but only the boundaries OUTSIDE a quoted string
-        // count -- a string field value can itself contain a space ("hello world"). Walk the line
-        // once, tracking quote state, to find the two real (unquoted) space boundaries.
-        int firstSpace = unquotedIndexOf(line, ' ', 0);
-        if (firstSpace < 0) {
-            throw new InfluxException("line protocol point has no field set: \"" + line + "\"");
+    /** Strict variant for in-process callers (MCP): any bad line throws. */
+    public static List<InfluxPoint> parse(String body, String precision) {
+        Parsed p = parseLenient(body, precision);
+        if (!p.errors().isEmpty()) {
+            throw new InfluxException(String.join("\n", p.errors()));
         }
-        int secondSpace = unquotedIndexOf(line, ' ', firstSpace + 1);
-        String measurementAndTags = line.substring(0, firstSpace);
-        String fieldSet = secondSpace < 0 ? line.substring(firstSpace + 1) : line.substring(firstSpace + 1, secondSpace);
-        String timestampPart = secondSpace < 0 ? null : line.substring(secondSpace + 1).strip();
-
-        List<String> mtParts = splitUnescaped(measurementAndTags, ',');
-        String measurement = unescape(mtParts.get(0));
-        Map<String, String> tags = new LinkedHashMap<>();
-        for (int i = 1; i < mtParts.size(); i++) {
-            String[] kv = splitOneUnescaped(mtParts.get(i), '=');
-            tags.put(unescape(kv[0]), unescape(kv[1]));
-        }
-
-        Map<String, Object> fields = new LinkedHashMap<>();
-        for (String fieldPair : splitUnescaped(fieldSet, ',')) {
-            String[] kv = splitOneUnescaped(fieldPair, '=');
-            fields.put(unescape(kv[0]), parseFieldValue(kv[1]));
-        }
-        if (fields.isEmpty()) {
-            throw new InfluxException("line protocol point has an empty field set: \"" + line + "\"");
-        }
-
-        long timestampNanos = timestampPart == null || timestampPart.isEmpty()
-                ? TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis())
-                : Long.parseLong(timestampPart) * nanosPerUnit;
-        return new InfluxPoint(measurement, tags, fields, timestampNanos);
+        return p.points();
     }
 
-    private static Object parseFieldValue(String raw) {
-        if (raw.length() >= 2 && raw.charAt(0) == '"' && raw.charAt(raw.length() - 1) == '"') {
+    public static Parsed parseLenient(String body, String precision) {
+        long mult = multiplier(precision);
+        long now = System.currentTimeMillis() * 1_000_000L + (System.nanoTime() % 1_000_000L + 1_000_000L) % 1_000_000L;
+        now = now - Math.floorMod(now, mult);
+        List<InfluxPoint> points = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        int n = body.length();
+        int pos = 0;
+        while (pos < n) {
+            int end = scanLine(body, pos);
+            String block = body.substring(pos, end);
+            pos = end + 1;
+            if (block.isEmpty()) {
+                continue;
+            }
+            int start = skipWs(block, 0);
+            if (start >= block.length() || block.charAt(start) == '#') {
+                continue;
+            }
+            String line = block.substring(start);
+            try {
+                points.add(parsePoint(line, now, mult));
+            } catch (LineError e) {
+                failed.add("unable to parse '" + line + "': " + e.getMessage());
+            }
+        }
+        return new Parsed(points, failed);
+    }
+
+    private static final class LineError extends RuntimeException {
+        LineError(String m) {
+            super(m, null, false, false);
+        }
+    }
+
+    private static int scanLine(String s, int i) {
+        boolean quoted = false;
+        for (; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\n' && !quoted) {
+                break;
+            }
+            if (c == '\\' && i + 1 < s.length()) {
+                i++;
+                continue;
+            }
+            if (c == '"') {
+                quoted = !quoted;
+            }
+        }
+        return i;
+    }
+
+    private static int skipWs(String s, int i) {
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c != ' ' && c != '\t' && c != 0) {
+                break;
+            }
+            i++;
+        }
+        return i;
+    }
+
+    private static InfluxPoint parsePoint(String buf, long now, long mult) {
+        int[] pos = {0};
+        String key = scanKey(buf, pos);
+        if (key.isEmpty()) {
+            throw new LineError("missing measurement");
+        }
+        if (key.length() > 65535) {
+            throw new LineError("max key length exceeded: " + key.length() + " > 65535");
+        }
+        if (pos[0] >= buf.length()) {
+            throw new LineError("missing fields");
+        }
+        String fieldBlock = scanFields(buf, pos);
+        String ts = scanTime(buf, pos);
+        int rest = skipWs(buf, pos[0]);
+        if (rest < buf.length()) {
+            throw new LineError("point is invalid");
+        }
+        // measurement + tags
+        List<String> parts = splitUnescaped(key, ',');
+        String measurement = unescapeMeasurement(parts.get(0));
+        if (measurement.isEmpty()) {
+            throw new LineError("missing measurement");
+        }
+        TreeMap<String, String> tags = new TreeMap<>();
+        for (int i = 1; i < parts.size(); i++) {
+            String kv = parts.get(i);
+            int eq = indexOfUnescaped(kv, '=');
+            if (eq < 0) {
+                throw new LineError("missing tag value");
+            }
+            String k = unescapeTag(kv.substring(0, eq));
+            String v = unescapeTag(kv.substring(eq + 1));
+            if (tags.containsKey(k)) {
+                throw new LineError("duplicate tags");
+            }
+            tags.put(k, v);
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (String f : splitFields(fieldBlock)) {
+            int eq = indexOfUnescaped(f, '=');
+            String k = unescapeTag(f.substring(0, eq));
+            fields.put(k, fieldValue(f.substring(eq + 1)));
+        }
+        long time;
+        if (ts.isEmpty()) {
+            time = now;
+        } else {
+            long v;
+            try {
+                v = Long.parseLong(ts);
+            } catch (NumberFormatException e) {
+                throw new LineError("strconv.ParseInt: parsing \"" + ts + "\": "
+                        + (ts.equals("-") ? "invalid syntax" : "value out of range"));
+            }
+            time = v * mult;
+        }
+        if (time < MIN_TIME || time > MAX_TIME) {
+            throw new LineError("time outside range " + MIN_TIME + " - " + MAX_TIME);
+        }
+        return new InfluxPoint(measurement, tags, fields, time);
+    }
+
+    private static String scanKey(String buf, int[] posRef) {
+        int start = skipWs(buf, posRef[0]);
+        int i = start;
+        int commas = 0;
+        int equals = 0;
+        while (i < buf.length()) {
+            char c = buf.charAt(i);
+            if (c == '=' && commas > 0) {
+                if (i - 1 < 0 || i - 2 < 0) {
+                    throw new LineError("missing tag key");
+                }
+                if (buf.charAt(i - 1) == ',' && buf.charAt(i - 2) != '\\') {
+                    throw new LineError("missing tag key");
+                }
+                if (buf.charAt(i - 1) == ' ' && buf.charAt(i - 2) != '\\') {
+                    throw new LineError("missing tag key");
+                }
+                i++;
+                equals++;
+                if (i < buf.length() && (buf.charAt(i) == ',' || buf.charAt(i) == ' ') && buf.charAt(i - 1) != '\\') {
+                    throw new LineError("missing tag value");
+                }
+                continue;
+            }
+            if (c == '\\') {
+                i += 2;
+                continue;
+            }
+            if (c == ' ' && i > 0 && buf.charAt(i - 1) != '\\') {
+                break;
+            }
+            if (c == ',' && i > 0 && buf.charAt(i - 1) != '\\') {
+                commas++;
+            }
+            i++;
+        }
+        if (i > buf.length()) {
+            i = buf.length();
+        }
+        if (commas != equals) {
+            throw new LineError("missing tag value");
+        }
+        posRef[0] = i;
+        return buf.substring(start, i);
+    }
+
+    private static String scanFields(String buf, int[] posRef) {
+        int start = skipWs(buf, posRef[0]);
+        int i = start;
+        boolean quoted = false;
+        int equals = 0;
+        int commas = 0;
+        while (i < buf.length()) {
+            char c = buf.charAt(i);
+            if (c == '\\' && i + 1 < buf.length()) {
+                i += 2;
+                continue;
+            }
+            if (c == '"' && equals > commas) {
+                quoted = !quoted;
+                i++;
+                continue;
+            }
+            if (c == '=' && !quoted) {
+                equals++;
+                if (i - 1 >= 0 && buf.charAt(i - 1) == ' ' && (i - 2 < 0 || buf.charAt(i - 2) != '\\')) {
+                    throw new LineError("missing field key");
+                }
+                if (i - 1 >= 0 && buf.charAt(i - 1) == ',' && (i - 2 < 0 || buf.charAt(i - 2) != '\\')) {
+                    throw new LineError("missing field key");
+                }
+                if (i + 1 >= buf.length()) {
+                    throw new LineError("missing field value");
+                }
+                char nx = buf.charAt(i + 1);
+                if (nx == ',' || nx == ' ') {
+                    throw new LineError("missing field value");
+                }
+                if ((nx >= '0' && nx <= '9') || nx == '.' || nx == '-' || nx == 'N' || nx == 'n') {
+                    i = scanNumber(buf, i + 1);
+                    continue;
+                }
+                if (nx != '"') {
+                    i = scanBoolean(buf, i + 1);
+                    continue;
+                }
+            }
+            if (c == ',' && !quoted) {
+                commas++;
+            }
+            if (c == ' ' && !quoted) {
+                break;
+            }
+            i++;
+        }
+        if (quoted) {
+            throw new LineError("unbalanced quotes");
+        }
+        if (equals == 0 || commas != equals - 1) {
+            throw new LineError("invalid field format");
+        }
+        posRef[0] = Math.min(i, buf.length());
+        return buf.substring(start, Math.min(i, buf.length()));
+    }
+
+    private static int scanNumber(String buf, int i) {
+        int start = i;
+        boolean isInt = false;
+        boolean isUnsigned = false;
+        if (i < buf.length() && buf.charAt(i) == '-') {
+            i++;
+            if (i == buf.length()) {
+                throw new LineError("invalid number");
+            }
+        }
+        boolean decimal = false;
+        boolean scientific = false;
+        while (i < buf.length()) {
+            char c = buf.charAt(i);
+            if (c == ',' || c == ' ') {
+                break;
+            }
+            if (c == 'i' && i > start && !(isInt || isUnsigned)) {
+                isInt = true;
+                i++;
+                continue;
+            } else if (c == 'u' && i > start && !(isInt || isUnsigned)) {
+                isUnsigned = true;
+                i++;
+                continue;
+            }
+            if (c == '.') {
+                if (decimal) {
+                    throw new LineError("invalid number");
+                }
+                decimal = true;
+            }
+            if (i > start && (c == 'e' || c == 'E')) {
+                scientific = true;
+                i++;
+                continue;
+            }
+            if ((c == '+' || c == '-') && (buf.charAt(i - 1) == 'e' || buf.charAt(i - 1) == 'E')) {
+                i++;
+                continue;
+            }
+            if (i + 2 < buf.length() && (c == 'N' || c == 'n')) {
+                throw new LineError("invalid number");
+            }
+            if (!((c >= '0' && c <= '9') || c == '.')) {
+                throw new LineError("invalid number");
+            }
+            i++;
+        }
+        if ((isInt || isUnsigned) && (decimal || scientific)) {
+            throw new LineError("invalid number");
+        }
+        if (isUnsigned) {
+            throw new LineError("invalid number");
+        }
+        String txt = buf.substring(start, i);
+        int digits = 0;
+        for (int k = 0; k < txt.length(); k++) {
+            if (Character.isDigit(txt.charAt(k))) {
+                digits++;
+            }
+        }
+        if (digits == 0) {
+            throw new LineError("invalid number");
+        }
+        if (isInt) {
+            String num = txt.substring(0, txt.length() - 1);
+            try {
+                Long.parseLong(num);
+            } catch (NumberFormatException e) {
+                throw new LineError("unable to parse integer " + num + ": strconv.ParseInt: parsing \"" + num + "\": value out of range");
+            }
+        } else {
+            try {
+                double d = Double.parseDouble(txt);
+                if (Double.isInfinite(d) || Double.isNaN(d)) {
+                    throw new LineError("invalid float");
+                }
+            } catch (NumberFormatException e) {
+                throw new LineError("invalid float");
+            }
+        }
+        return i;
+    }
+
+    private static int scanBoolean(String buf, int i) {
+        int start = i;
+        while (i < buf.length() && buf.charAt(i) != ',' && buf.charAt(i) != ' ') {
+            i++;
+        }
+        switch (buf.substring(start, i)) {
+            case "t", "T", "true", "True", "TRUE", "f", "F", "false", "False", "FALSE":
+                return i;
+            default:
+                throw new LineError("invalid boolean");
+        }
+    }
+
+    private static String scanTime(String buf, int[] posRef) {
+        int start = skipWs(buf, posRef[0]);
+        int i = start;
+        while (i < buf.length()) {
+            char c = buf.charAt(i);
+            if (c == '\n' || c == ' ') {
+                break;
+            }
+            if (c < '0' || c > '9') {
+                if (i == start && c == '-') {
+                    i++;
+                    continue;
+                }
+                throw new LineError("bad timestamp");
+            }
+            i++;
+        }
+        posRef[0] = i;
+        return buf.substring(start, i);
+    }
+
+    private static Object fieldValue(String raw) {
+        if (raw.length() >= 2 && raw.charAt(0) == '"') {
+            // like InfluxDB: strip the first and last byte without checking the closing quote
             return unescapeQuoted(raw.substring(1, raw.length() - 1));
         }
-        if (raw.equalsIgnoreCase("true") || raw.equals("t") || raw.equals("T")) {
-            return Boolean.TRUE;
+        switch (raw) {
+            case "t", "T", "true", "True", "TRUE":
+                return Boolean.TRUE;
+            case "f", "F", "false", "False", "FALSE":
+                return Boolean.FALSE;
+            default:
         }
-        if (raw.equalsIgnoreCase("false") || raw.equals("f") || raw.equals("F")) {
-            return Boolean.FALSE;
-        }
-        if (raw.endsWith("i") || raw.endsWith("u")) {
+        if (raw.endsWith("i")) {
             return Long.parseLong(raw.substring(0, raw.length() - 1));
         }
         return Double.parseDouble(raw);
     }
 
-    /** Splits on an unescaped delimiter, leaving {@code \<delim>} sequences intact for
-     * {@link #unescape} to resolve afterward -- so a tag value like {@code a\,b} survives as one
-     * token, not two. */
     private static List<String> splitUnescaped(String s, char delim) {
-        List<String> parts = new java.util.ArrayList<>();
+        List<String> parts = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
-        boolean inQuotes = false;
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c == '"') {
-                inQuotes = !inQuotes;
-                cur.append(c);
-            } else if (c == '\\' && i + 1 < s.length()) {
+            if (c == '\\' && i + 1 < s.length()) {
                 cur.append(c).append(s.charAt(++i));
-            } else if (c == delim && !inQuotes) {
+            } else if (c == delim) {
                 parts.add(cur.toString());
                 cur.setLength(0);
             } else {
@@ -143,37 +446,66 @@ public final class LineProtocolParser {
         return parts;
     }
 
-    private static String[] splitOneUnescaped(String s, char delim) {
-        List<String> parts = splitUnescaped(s, delim);
-        if (parts.size() < 2) {
-            throw new InfluxException("expected \"key" + delim + "value\", got \"" + s + "\"");
-        }
-        // A field/tag value may itself validly contain '=' once unescaped is applied elsewhere
-        // (e.g. a quoted string field), so only the FIRST delimiter splits key from value; any
-        // remaining delimiters belong to the value.
-        return new String[] {parts.get(0), s.substring(parts.get(0).length() + 1)};
-    }
-
-    private static String unescape(String s) {
-        return s.replace("\\,", ",").replace("\\ ", " ").replace("\\=", "=");
-    }
-
-    private static String unescapeQuoted(String s) {
-        return s.replace("\\\"", "\"").replace("\\\\", "\\");
-    }
-
-    private static int unquotedIndexOf(String s, char target, int from) {
-        boolean inQuotes = false;
-        for (int i = from; i < s.length(); i++) {
+    /** Field pairs split on commas outside double-quoted values. */
+    private static List<String> splitFields(String s) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean quoted = false;
+        int equals = 0;
+        int commas = 0;
+        for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c == '"') {
-                inQuotes = !inQuotes;
-            } else if (c == '\\' && i + 1 < s.length()) {
+            if (c == '\\' && i + 1 < s.length()) {
+                cur.append(c).append(s.charAt(++i));
+                continue;
+            }
+            if (c == '"' && equals > commas) {
+                quoted = !quoted;
+            } else if (c == '=' && !quoted) {
+                equals++;
+            }
+            if (c == ',' && !quoted) {
+                commas++;
+                parts.add(cur.toString());
+                cur.setLength(0);
+                continue;
+            }
+            cur.append(c);
+        }
+        parts.add(cur.toString());
+        return parts;
+    }
+
+    private static int indexOfUnescaped(String s, char target) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 1 < s.length()) {
                 i++;
-            } else if (c == target && !inQuotes) {
+            } else if (c == target) {
                 return i;
             }
         }
         return -1;
+    }
+
+    private static String unescapeMeasurement(String s) {
+        return s.replace("\\,", ",").replace("\\ ", " ");
+    }
+
+    private static String unescapeTag(String s) {
+        return s.replace("\\,", ",").replace("\\=", "=").replace("\\ ", " ");
+    }
+
+    private static String unescapeQuoted(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 1 < s.length() && (s.charAt(i + 1) == '"' || s.charAt(i + 1) == '\\')) {
+                sb.append(s.charAt(++i));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 }

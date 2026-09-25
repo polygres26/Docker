@@ -185,7 +185,7 @@ class OpenSearchWireShardingIntegrationTest {
 
         JsonObject result = send("POST", "/products/_search",
                 "{\"query\":{\"term\":{\"category\":\"terms-test\"}},\"size\":0,"
-                        + "\"aggs\":{\"byRegion\":{\"terms\":{\"field\":\"region\",\"size\":10}}}}");
+                        + "\"aggs\":{\"byRegion\":{\"terms\":{\"field\":\"region.keyword\",\"size\":10}}}}");
 
         JsonObject aggs = result.getAsJsonObject("aggregations");
         JsonObject byRegion = aggs.getAsJsonObject(aggs.keySet().stream()
@@ -202,13 +202,17 @@ class OpenSearchWireShardingIntegrationTest {
     }
 
     @Test
-    void vectorSearchOnAShardedCollectionIsRefusedNotSilentlyWrong() throws Exception {
-        put("/products/_doc/vdoc1", "{\"name\":\"v\",\"vector\":[0.1,0.2,0.3,0.4]}");
+    void vectorSearchOnAShardedCollectionSearchesEveryShard() throws Exception {
+        for (int i = 1; i <= 6; i++) {
+            put("/products/_doc/vdoc" + i, "{\"name\":\"v\",\"vector\":[" + i + ",0.2,0.3,0.4]}");
+        }
 
         JsonObject result = send("POST", "/products/_search",
-                "{\"query\":{\"knn\":{\"vector\":{\"vector\":[0.1,0.2,0.3,0.4],\"k\":5}}}}");
+                "{\"query\":{\"knn\":{\"vector\":{\"vector\":[1,0.2,0.3,0.4],\"k\":3}}}}");
 
-        assertTrue(result.get("__status").getAsInt() >= 400,
-                "k-NN search on a sharded collection must fail loudly, not silently search only one shard");
+        assertEquals(200, result.get("__status").getAsInt());
+        JsonArray hits = result.getAsJsonObject("hits").getAsJsonArray("hits");
+        assertEquals(3, hits.size(), "the global top-3 across both shards");
+        assertEquals("vdoc1", hits.get(0).getAsJsonObject().get("_id").getAsString());
     }
 }

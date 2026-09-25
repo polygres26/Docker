@@ -9,12 +9,12 @@ import oracledb
 import pytest
 import requests
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 
 # Set here (not just in test_pgwire.py) so this file's own RTT test can hit /api/metrics/summary
 # without depending on another test module having already exported it -- pytest files run
 # independently, including via `pytest tests/python/test_orawire.py` alone.
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 

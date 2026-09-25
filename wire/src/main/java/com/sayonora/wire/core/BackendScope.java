@@ -16,13 +16,22 @@ import java.util.Set;
  * every check below starts with a null short-circuit and the pgwire/mywire/... paths are
  * byte-for-byte unchanged. Only the MCP gateway sets it today, from its {@code McpScope}.
  *
+ * <p>{@code defaultBackend} (nullable) is where a statement that no routing rule claims goes when the
+ * pipeline's own fallback ({@code default} / a native-mode default) is outside the scope -- set for
+ * connect-time routing to a backend SET (see {@link ConnectionRouter}); see
+ * {@link RouterStage#handle}. Never consulted for permission, only for choosing a target.
+ *
  * <p>{@code label} is purely for the error message ({@code "db:backend_b"}, {@code
  * "group:team_alpha"}), never compared.
  */
-public record BackendScope(Set<String> allowedBackends, String label) {
+public record BackendScope(Set<String> allowedBackends, String label, String defaultBackend) {
 
     public BackendScope {
         allowedBackends = Set.copyOf(allowedBackends);
+    }
+
+    public BackendScope(Set<String> allowedBackends, String label) {
+        this(allowedBackends, label, null);
     }
 
     public static BackendScope single(String backendName) {

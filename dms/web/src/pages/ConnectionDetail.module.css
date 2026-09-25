@@ -1,0 +1,43 @@
+.url { font-family: var(--sy-mono); font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.muted { color: var(--sy-muted); font-size: 12.5px; margin: 0; }
+.warnText { color: var(--sy-amber); font-size: 13px; margin: 0 0 8px; }
+.row { display: flex; gap: 9px; flex-wrap: wrap; }
+.hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.tierDetail { margin: 10px 0 4px; max-width: 560px; font-size: 13px; }
+.score { text-align: right; }
+.scoreValue { font-size: 36px; font-weight: 500; line-height: 1; }
+.plainList { margin: 4px 0 0; padding-left: 18px; }
+.finding { display: flex; align-items: center; gap: 12px; }
+.finding > span:first-child { flex: none; width: 64px; text-align: center; }
+.findingBody { flex: 1; min-width: 0; }
+.findingName { font-weight: 500; }
+.count { color: var(--sy-muted); font-weight: 400; }
+.points { font-weight: 500; flex: none; font-variant-numeric: tabular-nums; }
+.summaryFoot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: -6px; }
+.facts { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--sy-muted); }
+.facts strong { color: var(--sy-ink); font-weight: 500; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { background: var(--sy-accent-soft); color: var(--sy-accent-strong); border-radius: 4px; padding: 4px 9px; font-size: 12px; font-weight: 500; }
+.chipCount { font-weight: 400; }
+.filter { width: 260px; max-width: 100%; min-height: 34px; }
+.sorts { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 15px; }
+.sort { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--sy-line); background: var(--sy-surface); color: var(--sy-muted); }
+.sort:hover { border-color: var(--sy-muted); }
+.sortOn { border-color: var(--sy-accent); background: var(--sy-accent-soft); color: var(--sy-accent-strong); font-weight: 500; }
+.sqlText { max-width: 360px; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
+.objects { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.objects > section { margin-bottom: 0; }
+.objectList { max-height: 620px; overflow-y: auto; }
+.objectGroup { margin-bottom: 12px; }
+.objectType { color: var(--sy-muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.objectNames { list-style: none; margin: 0; padding: 0; }
+.objectBtn { display: block; width: 100%; text-align: left; padding: 5px 8px; border-radius: 6px; border: 0; background: none; font-size: 12.5px; overflow-wrap: anywhere; }
+.objectBtn:hover { background: var(--sy-paper); }
+.objectBtnOn, .objectBtnOn:hover { background: var(--sy-accent-soft); color: var(--sy-accent-strong); font-weight: 500; }
+.objectDetail > div:last-child { min-width: 0; }
+.summarize { margin-top: 12px; }
+.summary { margin-top: 16px; }
+.judge { margin-bottom: 10px; }
+.summaryText { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: var(--sy-paper); border: 1px solid var(--sy-line); border-radius: var(--sy-radius); padding: 14px; }
+@media (max-width: 760px) { .objects { grid-template-columns: minmax(0, 1fr); } .objectList { max-height: 320px; } .score { text-align: left; } }
+.sqlId { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }

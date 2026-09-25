@@ -1,0 +1,31 @@
+{
+ "service": "sqs",
+ "suite": "java",
+ "endpoint": "http://localhost:62525",
+ "tag": "warp",
+ "date": "2026-09-25 14:27",
+ "runner_rc": 0,
+ "seconds": 4.5,
+ "counts": {
+  "pass": 27,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.SqsTest": {
+   "pass": 21,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.SqsMd5Test": {
+   "pass": 6,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=SqsTest,SqsMd5Test -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": []
+}

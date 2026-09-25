@@ -1,0 +1,59 @@
+# Steps whose answer is not byte-identical to InfluxDB 1.8.10, with the reason (class a = not implemented, b = wrong behaviour [none left],
+# c = InfluxDB-specific / infeasible, d = harness / server-state / clock).
+
+[a/c] ep_flux_query: ["raw", "POST", "/api/v2/query", {"org": "o"}, "from(bucket:\"b\") |> range(start:-1h)", {"Content-Type": "app
+      Flux is out of scope: real 1.8 answers 403 (flux disabled), Warp answers 501 with a clear 'not supported' JSON error
+[a/c] ep_debug_vars: ["raw", "GET", "/debug/requests", {}, null, {}]
+      InfluxDB /debug endpoints (pprof, vars, requests) are not implemented
+[a/c] show_misc: ["q", "SHOW USERS", {}]
+      server-global state (users survive across cases in the oracle)
+[d] show_misc: ["q", "SHOW QUERIES", {}]
+      clock/server-state dependent output (SHOW QUERIES)
+[d] show_misc: ["q", "SHOW STATS", {}]
+      clock/server-state dependent output (SHOW STATS)
+[d] show_misc: ["q", "SHOW DIAGNOSTICS", {}]
+      clock/server-state dependent output (SHOW DIAGNOSTICS)
+[a/c] show_misc: ["q", "SHOW CONTINUOUS QUERIES", {}]
+      lists every database of the server
+[d] show_misc: ["q", "SHOW SHARDS", {}]
+      clock/server-state dependent output (SHOW SHARDS)
+[d] show_misc: ["q", "SHOW SHARD GROUPS", {}]
+      clock/server-state dependent output (SHOW SHARD GROUPS)
+[c] delete_from: ["q", "DELETE FROM cpu WHERE usage > 1", {}, "POST"]
+      deletion errors carry an InfluxDB-internal shard id
+[c] agg_integral: ["q", "SELECT integral(usage) FROM cpu GROUP BY host", {}]
+      the series order of integral() is not deterministic in InfluxDB itself
+[c] agg_integral: ["q", "SELECT integral(usage) FROM cpu WHERE time >= 1577836800000000000 AND time < 1577836860000000000 GROUP 
+      integral() with GROUP BY time+tag ending exactly on a bucket boundary drops the last window in InfluxDB
+[c] agg_integral_units: ["q", "SELECT integral(usage) FROM cpu GROUP BY host", {}]
+      the series order of integral() is not deterministic in InfluxDB itself
+[d] gbt_offset: ["q", "SELECT count(usage) FROM cpu WHERE time >= '2020-01-01T00:00:00Z' AND time < '2020-01-01T00:01:00Z' GRO
+      clock/server-state dependent output (now()))
+[a/c] math_funcs: ["q", "SELECT acos(v), acos(w), acos(i) FROM m", {}]
+      Go vs Java libm differ in the last digit
+[a/c] math_funcs: ["q", "SELECT atan(v), atan(w), atan(i) FROM m", {}]
+      Go vs Java libm differ in the last digit
+[a/c] math_funcs: ["q", "SELECT exp(v), exp(w), exp(i) FROM m", {}]
+      Go vs Java libm differ in the last digit
+[a/c] math_funcs: ["q", "SELECT tan(v), tan(w), tan(i) FROM m", {}]
+      Go vs Java libm differ in the last digit
+[a/c] math_funcs: ["q", "SELECT atan2(v, w) FROM m", {}]
+      Go vs Java libm differ in the last digit
+[a/c] fmt_csv: ["qh", "SELECT usage FROM cpu WHERE host = 'a' LIMIT 1", {}, {"Accept": "application/x-msgpack"}]
+      msgpack responses are not implemented (JSON is returned)
+[c] fmt_params_binding: ["q", "SELECT usage FROM cpu WHERE host = $h", {"params": "notjson"}]
+      the text of Go's JSON decoder error for a malformed params value
+[c] syntax_errors: ["q", "select v:: from m", {}]
+      rare parse-error position/list variant for a dangling ::
+[c] syntax_errors: ["q", "select v from m order by time desc,", {}]
+      InfluxQL reports a different column for a trailing comma in ORDER BY
+[a/c] syntax_errors: ["q", "explain analyze select * from m", {}]
+      EXPLAIN ANALYZE timings/plan text are engine-specific
+[d] semantic_errors: ["q", "SELECT sample(usage, 2) FROM cpu", {}]
+      clock/server-state dependent output (SELECT sample(usage, 2) FROM cpu)
+[d] semantic_errors: ["q", "SELECT sample(usage, 2) FROM cpu GROUP BY host", {}]
+      clock/server-state dependent output (SELECT sample(usage, 2) FROM cpu GROUP BY host)
+[a/c] semantic_errors: ["q", "SELECT holt_winters(mean(usage), 3, 1) FROM cpu WHERE time >= '2020-01-01T00:00:00Z' AND time < '2020-0
+      HOLT_WINTERS (Nelder-Mead fit) is not implemented: Warp returns a clear error
+
+27 step(s) listed.

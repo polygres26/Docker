@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 /**
  * OAuth / OIDC token verification -- edits the four `warp_config.oauth*` fields
@@ -49,21 +50,17 @@ export default function OAuth() {
   }
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>OAuth / OIDC</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Bearer-token verification for Warp's HTTP-facing surfaces. Leave the issuer blank to
-        keep OAuth disabled.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="OAuth / OIDC" description="Bearer-token verification for Warp's HTTP-facing surfaces. Leave the issuer blank to keep OAuth disabled." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Issuer</div>
             <input type="text" value={issuer} onChange={(e) => setIssuer(e.target.value)}
@@ -85,7 +82,7 @@ export default function OAuth() {
               placeholder="https://warp/roles" style={{ width: '100%', padding: '8px 10px', fontSize: 14 }} />
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

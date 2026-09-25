@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react'
+import { Shield, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   type FirewallRule,
@@ -8,6 +8,7 @@ import {
   listFirewallRules,
   updateFirewallRule,
 } from '../api/client'
+import { DataTable, EmptyState, Loading, Notice, PageHeader, Section, StatusPill } from '../components/ui'
 
 /** A drafted-but-never-saved rule: same fields as a real one, minus the `id`/`createdAt` a row
  * only gets once it's actually inserted. Distinguishing on `'id' in x` (rather than a separate
@@ -43,18 +44,15 @@ export default function FirewallRules() {
   }
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>SQL Firewall</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Rules are checked in priority order (lowest first); the first match wins.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="SQL Firewall" description="Rules are checked in priority order (lowest first); the first match wins." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button onClick={() => setEditing('new')}>+ Add rule</button>
+        <button className="primary" onClick={() => setEditing('new')}>+ Add rule</button>
         <button onClick={() => setSuggesting(true)}>✦ Suggest with AI</button>
       </div>
 
@@ -74,41 +72,45 @@ export default function FirewallRules() {
       )}
 
       {rules === null ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : rules.length === 0 ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>No rules yet — everything is allowed by default.</div>
+        <Section>
+          <EmptyState icon={<Shield size={18} aria-hidden="true" />} title="No rules yet">
+            Everything is allowed by default.
+          </EmptyState>
+        </Section>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border, #ddd)' }}>
-              <th style={{ padding: '6px 8px' }}>Priority</th>
-              <th style={{ padding: '6px 8px' }}>Action</th>
-              <th style={{ padding: '6px 8px' }}>Statement</th>
-              <th style={{ padding: '6px 8px' }}>Table pattern</th>
-              <th style={{ padding: '6px 8px' }}>Description</th>
-              <th style={{ padding: '6px 8px' }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((r) => (
-              <tr key={r.id} style={{ borderBottom: '1px solid var(--border, #eee)', opacity: r.enabled ? 1 : 0.5 }}>
-                <td style={{ padding: '6px 8px' }}>{r.priority}</td>
-                <td style={{ padding: '6px 8px', textTransform: 'uppercase', color: r.action === 'deny' ? 'var(--error, crimson)' : 'inherit' }}>
-                  {r.action}
-                </td>
-                <td style={{ padding: '6px 8px' }}>{r.statementType ?? '*'}</td>
-                <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{r.tablePattern ?? '*'}</td>
-                <td style={{ padding: '6px 8px' }}>{r.description ?? ''}</td>
-                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                  <button onClick={() => setEditing(r)} style={{ marginRight: 8 }}>Edit</button>
-                  <button onClick={() => handleDelete(r.id)} title="Delete" style={{ padding: 4 }}>
-                    <Trash2 size={14} />
-                  </button>
-                </td>
+        <Section flush title="Rules" meta={`${rules.length} rule${rules.length === 1 ? '' : 's'} · lowest priority first`}>
+          <DataTable caption="SQL firewall rules" minWidth={720}>
+            <thead>
+              <tr>
+                <th>Priority</th>
+                <th>Action</th>
+                <th>Statement</th>
+                <th>Table pattern</th>
+                <th>Description</th>
+                <th aria-label="Actions"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rules.map((r) => (
+                <tr key={r.id} style={{ opacity: r.enabled ? 1 : 0.55 }}>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{r.priority}</td>
+                  <td><StatusPill tone={r.action === 'deny' ? 'bad' : 'ok'}>{r.action === 'deny' ? 'Deny' : 'Allow'}</StatusPill>{!r.enabled && <span style={{ color: 'var(--sy-muted)' }}> · off</span>}</td>
+                  <td>{r.statementType ?? '*'}</td>
+                  <td className="mono">{r.tablePattern ?? '*'}</td>
+                  <td>{r.description ?? ''}</td>
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button onClick={() => setEditing(r)} style={{ marginRight: 8 }}>Edit</button>
+                    <button onClick={() => handleDelete(r.id)} title="Delete rule" aria-label={`Delete rule ${r.id}`} style={{ padding: 6 }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Section>
       )}
     </div>
   )
@@ -152,9 +154,7 @@ function RuleForm({ initial, onCancel, onSaved }: {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{
-      border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20,
-    }}>
+    <form onSubmit={handleSubmit} className="card">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <label>
           <div style={{ fontSize: 13, marginBottom: 4 }}>Priority (lower runs first)</div>
@@ -196,7 +196,7 @@ function RuleForm({ initial, onCancel, onSaved }: {
       </label>
       <button type="submit" disabled={saving} style={{ marginRight: 8 }}>{saving ? 'Saving…' : 'Save'}</button>
       <button type="button" onClick={onCancel}>Cancel</button>
-      {error && <div style={{ marginTop: 12, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>}
+      {error && <Notice tone="bad">{error}</Notice>}
     </form>
   )
 }
@@ -239,9 +239,7 @@ function AiSuggestPanel({ onCancel, onDrafted }: {
   }
 
   return (
-    <form onSubmit={handleDraft} style={{
-      border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20,
-    }}>
+    <form onSubmit={handleDraft} className="card">
       <div style={{ fontSize: 13, marginBottom: 8 }}>
         Describe the rule in plain English — e.g. "block any DELETE against orders without a
         WHERE clause". Nothing is created yet; you'll review and edit the proposed rule below
@@ -254,7 +252,7 @@ function AiSuggestPanel({ onCancel, onDrafted }: {
         {drafting ? 'Drafting…' : 'Draft rule'}
       </button>
       <button type="button" onClick={onCancel}>Cancel</button>
-      {error && <div style={{ marginTop: 12, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>}
+      {error && <Notice tone="bad">{error}</Notice>}
     </form>
   )
 }

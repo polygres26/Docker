@@ -18,3 +18,26 @@ CREATE TABLE IF NOT EXISTS ${table} (
 CREATE INDEX IF NOT EXISTS ${table}_vt_idx ON ${table} (vt)
 -- ### index_dedup
 CREATE INDEX IF NOT EXISTS ${table}_dedup_idx ON ${table} (dedup_id, enqueued_at)
+-- ### col_message_id
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS message_id TEXT
+-- ### col_attrs
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS attrs TEXT
+-- ### col_trace_header
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS trace_header TEXT
+-- ### col_first_receive_at
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS first_receive_at TIMESTAMPTZ
+-- ### col_dlq_source_arn
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS dlq_source_arn TEXT
+-- ### col_attempt_id
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS attempt_id TEXT
+-- ### col_attempt_at
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS attempt_at TIMESTAMPTZ
+-- ### index_group
+CREATE INDEX IF NOT EXISTS ${table}_grp_idx ON ${table} (message_group_id, vt)
+-- ### dedup_table
+CREATE TABLE IF NOT EXISTS ${table}_dd (
+    dedup_key TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)

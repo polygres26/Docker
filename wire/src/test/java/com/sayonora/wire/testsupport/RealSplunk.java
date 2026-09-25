@@ -183,7 +183,7 @@ public final class RealSplunk implements AutoCloseable {
     @Override
     public void close() {
         try {
-            run("docker", "rm", "-f", containerName);
+            run("docker", "rm", "-f", "-v", containerName);
         } catch (Exception ignored) {
             // best-effort cleanup
         }

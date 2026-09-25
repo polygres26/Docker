@@ -60,7 +60,12 @@ public final class PgWireSessionHandler implements Runnable {
 
     private final FailedStatementLog failedStatementLog;
 
-    private Connection sessionConnection;
+    // Backend connection lease (connection multiplexing, WARP_MULTIPLEX_SESSIONS): borrowed per statement /
+    // transaction and returned to the pool as soon as the response is computed, unless the session is pinned
+    // (open transaction, SQL-level cursor, session state) -- see SessionConnectionLease for the pin list.
+    // Named prepared statements and portals need no pin: Parse only records the SQL text on the Warp side, and
+    // Bind executes it fully and materialises the rows, so nothing of either lives on a backend connection.
+    private final com.sayonora.wire.core.SessionConnectionLease lease;
     /** @param sql the prepared statement's original {@code $n}-placeholder SQL text
      *  @param paramTypeOids the real Postgres type OIDs the client declared in its own Parse
      *      message, one per {@code $n} placeholder, in order -- 0 for a slot the client left
@@ -75,6 +80,12 @@ public final class PgWireSessionHandler implements Runnable {
     private final Map<String, PreparedStatementInfo> preparedStatements = new LinkedHashMap<>();
     private final Map<String, Portal> portals = new LinkedHashMap<>();
     private boolean skipUntilSync;
+
+    // Connect-time backend routing (startup "database" parameter -> a backend or backend set); see
+    // core/ConnectionRouter. UNROUTED (today's behavior) unless the name selects one. Every Statement
+    // this session builds passes through route.apply().
+    private final com.sayonora.wire.core.BackendRegistry backendRegistry;
+    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
 
     private volatile String lastExtendedSql;
 
@@ -147,6 +158,7 @@ public final class PgWireSessionHandler implements Runnable {
             com.sayonora.wire.auth.PgRoleAuthCache roleAuthCache, com.sayonora.wire.audit.AuditLog auditLog) {
         this.clientSocket = clientSocket;
         this.options = options;
+        this.backendRegistry = backendRegistry;
         // Real, per-connection identity for whichever login actually verified a distinct Postgres
         // role (roleAuthCache != null) -- propagated into every Statement this session executes,
         // and from there into JdbcBackendExecutor's native-RLS session-context call (see
@@ -154,6 +166,8 @@ public final class PgWireSessionHandler implements Runnable {
         // current_setting('warp.user_id'). Stays AccessContext.ANONYMOUS for the
         // shared-credential fallback -- that path has no real distinguishable identity to assert.
         this.terminalExecutor = new JdbcBackendExecutor(null, new com.sayonora.wire.core.access.PostgresRlsSessionInitializer());
+        this.lease = PgConnections.newSessionLease(options);
+        this.terminalExecutor.bindLease(lease);
         this.routingExecutor = new com.sayonora.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
                 new com.sayonora.wire.xa.XaRecoveryLog(options),
                 com.sayonora.wire.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.wire.core.RouterStage.tableShardRulesIn(sharedStages))
@@ -194,25 +208,55 @@ public final class PgWireSessionHandler implements Runnable {
             } catch (SQLException ignoredOnSessionTeardown) {
                 
             }
-            if (sessionConnection != null) {
-                try {
-                    sessionConnection.close();
-                } catch (SQLException ignoredOnSessionTeardown) {
-                    
-                }
+            lease.close();
+        }
+    }
+
+    /** Classifies {@code sql} for connection multiplexing before it runs. Returns an effect to apply once it
+     * SUCCEEDED (while the connection is still held), or null.
+     * <ul>
+     *   <li>a plain session {@code SET name = value} / {@code RESET name|ALL} outside a transaction is recorded on
+     *       the lease and replayed on whichever connection the session gets next -- it does NOT pin (this is what
+     *       drivers send at connect time, e.g. psycopg2's {@code SET DATESTYLE TO 'ISO'});</li>
+     *   <li>anything else that creates backend session state (SET ROLE, temp table, advisory lock, LISTEN, ...,
+     *       or a SET inside a transaction) pins the session for good; a SQL-level cursor pins until CLOSE.</li>
+     * </ul> */
+    private Runnable prepareStateEffects(String sql) {
+        if (!lease.inTransaction()) {
+            com.sayonora.wire.core.SessionStatePins.ReplayableSetting setting =
+                    com.sayonora.wire.core.SessionStatePins.replayableSetting(sql);
+            if (setting != null) {
+                return () -> lease.recordSetting(setting.name(), setting.sql());
+            }
+            String reset = com.sayonora.wire.core.SessionStatePins.resetTarget(sql);
+            if (reset != null) {
+                return () -> lease.forgetSetting(reset);
             }
         }
-    }
-
-    private Connection sessionConnection() throws SQLException {
-        if (sessionConnection == null) {
-            sessionConnection = PgConnections.open(options);
-            sessionConnection.setAutoCommit(true);
+        String reason = com.sayonora.wire.core.SessionStatePins.sessionStateReason(SourceDialect.POSTGRES, sql);
+        if (reason != null) {
+            lease.pinSessionState(reason);
+        } else if (com.sayonora.wire.core.SessionStatePins.isDeclareCursor(sql)) {
+            lease.pinCursor();
+        } else if (com.sayonora.wire.core.SessionStatePins.isCloseCursor(sql)) {
+            lease.unpinCursor();
         }
-        return sessionConnection;
+        return null;
     }
 
-    private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
+    private ExecutionResult executeReleasing(Statement statement, Runnable afterSuccess) throws SQLException {
+        try {
+            ExecutionResult result = pipeline.execute(statement);
+            if (afterSuccess != null) {
+                afterSuccess.run();
+            }
+            return result;
+        } finally {
+            lease.releaseIfIdle();
+        }
+    }
+
+    private boolean handleTransactionControl(String sql) throws SQLException {
         Matcher prefix = TXN_CONTROL_PREFIX.matcher(sql);
         if (!prefix.find()) {
             return false;
@@ -220,20 +264,28 @@ public final class PgWireSessionHandler implements Runnable {
         String verb = prefix.group(1).toUpperCase(java.util.Locale.ROOT);
         switch (verb) {
             case "BEGIN", "START" -> {
-                connection.setAutoCommit(false);
+                if (route.permitsDefault()) {
+                    lease.begin();
+                }
                 inTransaction = true;
                 routingExecutor.beginTransaction();
             }
             case "COMMIT", "END" -> {
-                connection.commit();
-                connection.setAutoCommit(true);
-                inTransaction = false;
+                try {
+                    lease.commit();
+                } finally {
+                    inTransaction = false;
+                    lease.releaseIfIdle();
+                }
                 routingExecutor.endTransaction(true);
             }
             case "ROLLBACK" -> {
-                connection.rollback();
-                connection.setAutoCommit(true);
-                inTransaction = false;
+                try {
+                    lease.rollback();
+                } finally {
+                    inTransaction = false;
+                    lease.releaseIfIdle();
+                }
                 routingExecutor.endTransaction(false);
             }
             default -> {
@@ -297,6 +349,17 @@ public final class PgWireSessionHandler implements Runnable {
                     com.sayonora.wire.audit.AuditEvent.Type.DB_LOGIN_SUCCEEDED, username,
                     "pgwire login succeeded for user \"" + username + "\""
                             + (roleAuthCache != null ? " (real Postgres role)" : " (shared credential)")));
+        }
+
+        // Only AFTER a successful login, so an unauthenticated client cannot probe which backend and
+        // set names exist. "options"/search_path are untouched.
+        if (backendRegistry != null) {
+            route = backendRegistry.connectionRouter().resolve(
+                    com.sayonora.wire.core.ConnectionRouter.PROTO_POSTGRES, params.get("database"), username);
+            if (route.isRejected()) {
+                PgMessages.writeFatal(out, "3D000", "database \"" + route.requestedName() + "\" does not exist");
+                return null;
+            }
         }
 
         PgMessages.writeAuthOk(out);
@@ -522,8 +585,7 @@ public final class PgWireSessionHandler implements Runnable {
         String sql = stmtInfo.sql();
         lastExtendedSql = sql;
 
-        Connection backend = sessionConnection();
-        if (handleTransactionControl(backend, sql)) {
+        if (handleTransactionControl(sql)) {
             portals.put(portalName, new Portal(sql, ExecutionResult.ofUpdate(0), resultFormatCodes));
             PgMessages.writeBindComplete(out);
             return;
@@ -532,9 +594,9 @@ public final class PgWireSessionHandler implements Runnable {
         List<Object> orderedBinds = new ArrayList<>();
         String jdbcSql = rewriteDollarParams(sql, rawParams, orderedBinds);
 
-        terminalExecutor.rebind(backend);
-        Statement statement = Statement.of(SourceDialect.POSTGRES, jdbcSql, orderedBinds, accessContext);
-        ExecutionResult result = pipeline.execute(statement);
+        Runnable afterSuccess = prepareStateEffects(sql);
+        Statement statement = route.apply(Statement.of(SourceDialect.POSTGRES, jdbcSql, orderedBinds, accessContext));
+        ExecutionResult result = executeReleasing(statement, afterSuccess);
         portals.put(portalName, new Portal(sql, result, resultFormatCodes));
         PgMessages.writeBindComplete(out);
     }
@@ -636,16 +698,15 @@ public final class PgWireSessionHandler implements Runnable {
 
     private void executeSimpleQuery(DataOutputStream out, String sql) throws IOException {
         try {
-            Connection backend = sessionConnection();
-            if (handleTransactionControl(backend, sql)) {
+            if (handleTransactionControl(sql)) {
                 PgMessages.writeCommandComplete(out, sql.strip().split("\\s+", 2)[0].toUpperCase(java.util.Locale.ROOT));
                 PgMessages.writeReadyForQuery(out, readyForQueryStatus());
                 out.flush();
                 return;
             }
-            terminalExecutor.rebind(backend);
-            Statement statement = Statement.of(SourceDialect.POSTGRES, sql, List.of(), accessContext);
-            ExecutionResult result = pipeline.execute(statement);
+            Runnable afterSuccess = prepareStateEffects(sql);
+            Statement statement = route.apply(Statement.of(SourceDialect.POSTGRES, sql, List.of(), accessContext));
+            ExecutionResult result = executeReleasing(statement, afterSuccess);
             if (result.isQuery()) {
                 PgMessages.writeRowDescription(out, result.columnNames(), result.columnJdbcTypes(),
                         result.columnTypeNames(), null);

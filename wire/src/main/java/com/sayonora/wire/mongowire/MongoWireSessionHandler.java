@@ -45,7 +45,8 @@ public final class MongoWireSessionHandler implements Runnable {
             com.sayonora.wire.cluster.RowCache cache, com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         PostgresDocumentStore store = new PostgresDocumentStore(backendRegistry);
-        this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics);
+        this.dispatcher = new MongoCommandDispatcher(store, cache, sqlMetrics)
+                .withRouter(backendRegistry.connectionRouter());
         this.sqlMetrics = sqlMetrics;
     }
 

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { type ReportAnalysis, type UploadedReport, analyzeReport, getReport } from '../api/client'
+import { Button, Loading, Notice, PageHeader, Section } from '../ui'
 import ReportAnalysisView from './ReportAnalysisView'
 
 export default function ReportDetail() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [report, setReport] = useState<UploadedReport | null>(null)
   const [analysis, setAnalysis] = useState<ReportAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -31,35 +31,31 @@ export default function ReportDetail() {
     }
   }
 
-  if (error && !report) return <p style={{ color: 'var(--hard)' }}>{error}</p>
-  if (!report) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
+  if (error && !report) return <><PageHeader back={{ to: '/reports', label: 'Reports' }} title="Report" /><Notice tone="error">{error}</Notice></>
+  if (!report) return <Section><Loading /></Section>
 
   return (
-    <div style={{ maxWidth: 780 }}>
-      <button onClick={() => navigate('/reports')} style={{ marginBottom: 16, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 13 }}>
-        ← Reports
-      </button>
-      <h1 style={{ marginBottom: 2, fontSize: 22 }}>{report.name}</h1>
-      <p style={{ color: 'var(--muted)', marginTop: 0, fontSize: 13 }}>
-        {report.filename} · {report.dialect.replace('_', ' ')} · {(report.textLength / 1024).toFixed(1)} KB · uploaded {new Date(report.uploadedAt).toLocaleString()}
-      </p>
+    <>
+      <PageHeader
+        back={{ to: '/reports', label: 'Reports' }}
+        title={report.name}
+        subtitle={`${report.filename} · ${report.dialect.replace('_', ' ')} · ${(report.textLength / 1024).toFixed(1)} KB · uploaded ${new Date(report.uploadedAt).toLocaleString()}`}
+        actions={
+          <Button variant="primary" onClick={handleAnalyze} disabled={analyzing}>
+            {analyzing ? 'Analyzing…' : analysis ? 'Re-analyze' : 'Analyze report'}
+          </Button>
+        }
+      />
 
-      <div className="panel" style={{ marginBottom: 20, borderColor: 'var(--medium)' }}>
-        <strong style={{ color: 'var(--medium)' }}>Heuristic, not deterministic</strong>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted)' }}>
-          This analysis comes from a model reading the uploaded report's text -- there's no live
-          database to run catalog queries against, unlike the Connections flow. Treat findings
-          here as a starting point for a deeper look, not a final migration score.
-        </p>
-      </div>
+      <Notice tone="warn" title="Heuristic, not deterministic">
+        This analysis comes from a model reading the uploaded report's text -- there's no live
+        database to run catalog queries against, unlike the Connections flow. Treat findings
+        here as a starting point for a deeper look, not a final migration score.
+      </Notice>
 
-      <button className="primary" onClick={handleAnalyze} disabled={analyzing} style={{ marginBottom: 20 }}>
-        {analyzing ? 'Analyzing…' : analysis ? 'Re-analyze' : 'Analyze report'}
-      </button>
-
-      {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       {analysis && <ReportAnalysisView analysis={analysis} />}
-    </div>
+    </>
   )
 }

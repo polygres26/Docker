@@ -1,0 +1,320 @@
+{
+ "service": "dynamodb",
+ "suite": "node",
+ "endpoint": "http://localhost:50817",
+ "tag": "warp",
+ "date": "2026-09-25 13:34",
+ "runner_rc": 1,
+ "seconds": 1.8,
+ "counts": {
+  "pass": 23,
+  "fail": 36,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/dynamodb-conformance.test.ts": {
+   "pass": 9,
+   "fail": 33,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/dynamodb.test.ts": {
+   "pass": 14,
+   "fail": 3,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/dynamodb.test.ts tests/dynamodb-conformance.test.ts --testTimeout 20000 --reporter=junit --outputFile.junit=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-dynamodb-node.junit.xml",
+ "failures": [
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 1: ListTables > respects Limit and returns LastEvaluatedTableName",
+   "status": "fail",
+   "message": "expected [ 'lt-aaa-test-f66ba078', \u2026(4) ] to have a length of 1 but got 5",
+   "time": 0.005321959,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 1: ListTables > rejects Limit=0 with ValidationException",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.00146175,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 1: ListTables > rejects Limit=101 with ValidationException",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.001193208,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 1: ValidationException rename > rejects a 2-char table name with ValidationException",
+   "status": "fail",
+   "message": "expected 'ResourceNotFoundException' to be 'ValidationException' // Object.is equality",
+   "time": 0.003309583,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 1: ValidationException rename > rejects empty table name with ValidationException",
+   "status": "fail",
+   "message": "expected 'ResourceNotFoundException' to be 'ValidationException' // Object.is equality",
+   "time": 0.001486375,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 2: ProjectionExpression > rejects AttributesToGet combined with ProjectionExpression",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.002128208,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > BatchWriteItem rejects more than 25 items",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.006630125,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > BatchGetItem rejects more than 100 keys",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.006753583,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > PutItem rejects empty string as PK",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.001226875,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > TransactWriteItems rejects duplicate keys",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.002097917,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > TransactWriteItems idempotency token conflict throws IdempotentParameterMismatchException",
+   "status": "fail",
+   "message": "expected IdempotentParameterMismatchException to be thrown: expected undefined to be defined",
+   "time": 0.0019915,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 3: Batch limits & key validation > PutItem with ReturnItemCollectionMetrics=SIZE returns metrics on LSI table",
+   "status": "fail",
+   "message": "expected undefined to be defined",
+   "time": 0.001254708,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > Query Select=COUNT returns Count without Items",
+   "status": "fail",
+   "message": "expected [ { pk: { S: 'p1' }, \u2026(3) }, \u2026(4) ] to be undefined",
+   "time": 0.001914166,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > Scan Select=COUNT returns Count without Items",
+   "status": "fail",
+   "message": "expected [ { pk: { S: 'p1' }, \u2026(3) }, \u2026(4) ] to be undefined",
+   "time": 0.001229583,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > parallel scan partitions with no overlap and full coverage",
+   "status": "fail",
+   "message": "expected true to be false // Object.is equality",
+   "time": 0.001992083,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > parallel scan requires both Segment and TotalSegments",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.000974417,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > attribute_type() function in FilterExpression",
+   "status": "fail",
+   "message": "Unsupported function: attribute_type",
+   "time": 0.002410125,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > parenthesized key condition expression works",
+   "status": "fail",
+   "message": "KeyConditionExpression references non-key attribute:",
+   "time": 0.001237209,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 4: Query/Scan behaviour > Query without KeyConditionExpression throws ValidationException",
+   "status": "fail",
+   "message": "expected 'InternalFailure' to be 'ValidationException' // Object.is equality",
+   "time": 0.231559584,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 7: Tags API errors > TagResource with invalid ARN throws ValidationException",
+   "status": "fail",
+   "message": "expected 'UnknownOperationException' to be 'ValidationException' // Object.is equality",
+   "time": 0.00288175,
+   "class": "c"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 7: Tags API errors > ListTagsOfResource with valid-format non-existent ARN throws AccessDeniedException",
+   "status": "fail",
+   "message": "expected 'UnknownOperationException' to be 'AccessDeniedException' // Object.is equality",
+   "time": 0.0019355,
+   "class": "c"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 9: Reserved words > bare reserved word in ConditionExpression throws ValidationException",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.001477834,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 9: Reserved words > bare reserved word in FilterExpression throws ValidationException",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.000879791,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > AttributesToGet returns only listed attributes (no auto-key-include)",
+   "status": "fail",
+   "message": "expected { pk: { S: 'p1' }, \u2026(3) } to not have property \"pk\"",
+   "time": 0.001293708,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > AttributeUpdates (legacy) applies PUT action",
+   "status": "fail",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null",
+   "time": 0.097710083,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > AttributeUpdates (legacy) applies DELETE action to remove attribute",
+   "status": "fail",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null",
+   "time": 0.184051875,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > QueryFilter (legacy) filters query results",
+   "status": "fail",
+   "message": "Cannot invoke \"com.google.gson.JsonElement.getAsString()\" because the return value of \"com.google.gson.JsonObject.get(String)\" is null",
+   "time": 0.159772583,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > QueryFilter and KeyConditionExpression are mutually exclusive",
+   "status": "fail",
+   "message": "expected undefined to be 'ValidationException' // Object.is equality",
+   "time": 0.002806458,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > ScanFilter (legacy) filters scan results",
+   "status": "fail",
+   "message": "expected 3 to be 1 // Object.is equality",
+   "time": 0.002741959,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 10: Legacy API > KeyConditions and KeyConditionExpression are mutually exclusive",
+   "status": "fail",
+   "message": "expected ValidationException to be thrown: expected undefined to be defined",
+   "time": 0.00190025,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 11: Enum validation before table lookup > invalid ReturnValues on PutItem throws ValidationException even for non-existent table",
+   "status": "fail",
+   "message": "expected 'ResourceNotFoundException' to be 'ValidationException' // Object.is equality",
+   "time": 0.0038225,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 11: Enum validation before table lookup > invalid ReturnValues on DeleteItem throws ValidationException even for non-existent table",
+   "status": "fail",
+   "message": "expected 'ResourceNotFoundException' to be 'ValidationException' // Object.is equality",
+   "time": 0.001608208,
+   "class": "b"
+  },
+  {
+   "file": "tests/dynamodb-conformance.test.ts",
+   "test": "DynamoDB \u2014 Phase 11: Enum validation before table lookup > invalid ReturnConsumedCapacity throws ValidationException even for non-existent table",
+   "status": "fail",
+   "message": "expected 'ResourceNotFoundException' to be 'ValidationException' // Object.is equality",
+   "time": 0.001471459,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb.test.ts",
+   "test": "DynamoDB GSI/LSI > should verify indexes via DescribeTable",
+   "status": "fail",
+   "message": "expected +0 to be 1 // Object.is equality",
+   "time": 0.001469,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb.test.ts",
+   "test": "DynamoDB GSI/LSI > should query GSI",
+   "status": "fail",
+   "message": "KeyConditionExpression references non-key attribute: gsiPk",
+   "time": 0.001302875,
+   "class": "a"
+  },
+  {
+   "file": "tests/dynamodb.test.ts",
+   "test": "DynamoDB GSI/LSI > should query LSI",
+   "status": "fail",
+   "message": "KeyConditionExpression references non-key attribute: lsiSk",
+   "time": 0.001039167,
+   "class": "a"
+  }
+ ]
+}

@@ -24,9 +24,9 @@ import requests
 import warp_pb2
 import warp_pb2_grpc
 
-from polywire_support import WarpProcess, RealPostgres
+from warp_test_support import WarpProcess, RealPostgres
 
-ADMIN_TOKEN = "warp-polywire-test-admin-token"
+ADMIN_TOKEN = "warp-test-admin-token"
 os.environ["WARP_ADMIN_TOKEN"] = ADMIN_TOKEN
 
 
@@ -40,7 +40,7 @@ def postgres():
 @pytest.fixture(scope="module")
 def warp(postgres):
     # gRPC's port is WARP_GRPC_PORT, always allocated by WarpProcess itself (see
-    # polywire_support.py) -- there's no separate frontend_env_var to pass here since every
+    # warp_test_support.py) -- there's no separate frontend_env_var to pass here since every
     # WarpProcess already starts the native gRPC QueryService.
     proc = WarpProcess(postgres, "WARP_PGWIRE_PORT", frontend_name="grpc")
     yield proc

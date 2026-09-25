@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type WireConfig, getWireConfig, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 /**
  * IP / CIDR access control -- edits `warp_config.aclRules` (one `allow:<cidr>` or
@@ -49,21 +50,17 @@ export default function AclRules() {
   }
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>ACL: IP / CIDR access</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        One rule per line, checked top to bottom — the first matching CIDR wins. No rules means
-        every client is allowed.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="ACL: IP / CIDR access" description="One rule per line, checked top to bottom — the first matching CIDR wins. No rules means every client is allowed." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Rules</div>
             <textarea
@@ -91,7 +88,7 @@ export default function AclRules() {
             Trust PROXY protocol v2 (behind a load balancer that sends it)
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

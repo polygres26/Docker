@@ -10,6 +10,7 @@ const MIGRATION_ADVISOR_TABS: DmsTab[] = [
   { to: '/connections', label: 'Connections' },
   { to: '/reports', label: 'Reports' },
   { to: '/sizing', label: 'Sizing' },
+  { to: '/quick-scan', label: 'Quick scan' },
 ]
 
 /**
@@ -28,12 +29,12 @@ const MIGRATION_ADVISOR_TABS: DmsTab[] = [
  */
 export default function DmsTabs({ tabs = MIGRATION_ADVISOR_TABS }: { tabs?: DmsTab[] }) {
   return (
-    <div className={styles.tabs}>
+    <nav className={styles.tabs} aria-label="Section pages">
       {tabs.map((t) => (
         <NavLink key={t.to} to={t.to} className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}>
           {t.label}
         </NavLink>
       ))}
-    </div>
+    </nav>
   )
 }

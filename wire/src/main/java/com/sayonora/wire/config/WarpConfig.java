@@ -32,7 +32,13 @@ public record WarpConfig(
         String llmApiKey,
         String llmBaseUrl,
         String llmModel,
-        String backendGroups) {
+        String backendGroups,
+        String backendDescriptions,
+        String backendGroupDescriptions,
+        String mcpEndpoints,
+        String backendStores,
+        String backendSetNames,
+        String connectionRoutes) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -64,7 +70,38 @@ public record WarpConfig(
                 System.getenv("WARP_LLM_API_KEY"),
                 System.getenv("WARP_LLM_BASE_URL"),
                 System.getenv("WARP_LLM_MODEL"),
-                System.getenv("WARP_BACKEND_GROUPS"));
+                System.getenv("WARP_BACKEND_GROUPS"),
+                System.getenv("WARP_BACKEND_DESCRIPTIONS"),
+                System.getenv("WARP_BACKEND_GROUP_DESCRIPTIONS"),
+                null,
+                System.getenv("WARP_BACKEND_STORES"),
+                System.getenv("WARP_BACKEND_SET_NAMES"),
+                System.getenv("WARP_CONNECTION_ROUTES"));
+    }
+
+    /** Copy with the backend-model fields replaced (null keeps nothing: pass the values you want). */
+    public WarpConfig withBackendModel(String backends, String backendGroups, String backendDescriptions,
+            String backendGroupDescriptions, String backendStores, String backendSetNames) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes);
+    }
+
+    /** Copy with the connect-time route table (JSON array, see ConnectionRouter) replaced. */
+    public WarpConfig withConnectionRoutes(String routes) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                routes);
     }
 
     public String toJson() {
@@ -98,6 +135,12 @@ public record WarpConfig(
         fields.put("llmBaseUrl", llmBaseUrl);
         fields.put("llmModel", llmModel);
         fields.put("backendGroups", backendGroups);
+        fields.put("backendDescriptions", backendDescriptions);
+        fields.put("backendGroupDescriptions", backendGroupDescriptions);
+        fields.put("mcpEndpoints", mcpEndpoints);
+        fields.put("backendStores", backendStores);
+        fields.put("backendSetNames", backendSetNames);
+        fields.put("connectionRoutes", connectionRoutes);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -143,7 +186,13 @@ public record WarpConfig(
                 fields.get("llmApiKey"),
                 fields.get("llmBaseUrl"),
                 fields.get("llmModel"),
-                fields.get("backendGroups"));
+                fields.get("backendGroups"),
+                fields.get("backendDescriptions"),
+                fields.get("backendGroupDescriptions"),
+                fields.get("mcpEndpoints"),
+                fields.get("backendStores"),
+                fields.get("backendSetNames"),
+                fields.get("connectionRoutes"));
     }
 
     private static String quote(String value) {
