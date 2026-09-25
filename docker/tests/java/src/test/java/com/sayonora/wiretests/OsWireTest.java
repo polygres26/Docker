@@ -83,7 +83,7 @@ class OsWireTest {
 
         SearchResponse<Map> response = c.search(s -> s.index(index).size(0)
                 .aggregations("by_category", a -> a
-                        .terms(t -> t.field("category").size(10))
+                        .terms(t -> t.field("category.keyword").size(10))
                         .aggregations("avg_price", sub -> sub.avg(avg -> avg.field("price")))),
                 Map.class);
 

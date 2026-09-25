@@ -5,7 +5,7 @@ with SSL disabled is enough (matches how real OpenSearch's own dev/test setups r
 """
 import uuid
 
-from opensearchpy import OpenSearch
+from opensearchpy import NotFoundError, OpenSearch
 
 from conftest import HOST, OSWIRE_PORT
 
@@ -39,10 +39,13 @@ def test_get_update_delete_document():
     assert doc["_source"]["name"] == "warp"
 
     c.delete(index=index, id="1")
-    # Real OpenSearch's GET returns HTTP 200 with found=false for a missing document, not a 404 --
-    # unlike DELETE, which does 404 when there's nothing to delete.
-    after_delete = c.get(index=index, id="1")
-    assert after_delete["found"] is False
+    # Real OpenSearch answers GET of a missing document with HTTP 404 ({"found": false}), which opensearch-py
+    # raises as NotFoundError.
+    try:
+        c.get(index=index, id="1")
+        raise AssertionError("expected NotFoundError")
+    except NotFoundError as e:
+        assert e.info["found"] is False
 
 
 def test_terms_aggregation_with_nested_avg_metric():
@@ -55,7 +58,7 @@ def test_terms_aggregation_with_nested_avg_metric():
     result = c.search(index=index, body={
         "size": 0,
         "aggs": {"by_category": {
-            "terms": {"field": "category", "size": 10},
+            "terms": {"field": "category.keyword", "size": 10},
             "aggs": {"avg_price": {"avg": {"field": "price"}}},
         }},
     })
