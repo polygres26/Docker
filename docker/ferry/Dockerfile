@@ -1,8 +1,8 @@
 # PolyAdvisor -- one image, one process. DmsHttpServer is built on embedded Jetty (already a
-# dependency of this module) and now serves the built dms/web SPA itself via
+# dependency of this module) and now serves the built Ferry/web SPA itself via
 # SpaResourceHandler -- no nginx or second container required. Build context is the repo root
-# (see docker-compose.yml) since dms/ is a standalone Maven module (no parent pom, no
-# reactor with wire/), so only dms/ ever needs to be in the build context.
+# (see docker-compose.yml) since Ferry/ is a standalone Maven module (no parent pom, no
+# reactor with Warp/), so only Ferry/ ever needs to be in the build context.
 #
 # Prefer a separate static-file tier anyway (CDN-fronted, scaled independently of the API)?
 # Dockerfile.frontend + nginx.conf are still here for that -- just don't set
@@ -11,9 +11,9 @@
 # ---- build the SPA ----
 FROM node:22-alpine AS web-build
 WORKDIR /build
-COPY dms/web/package.json dms/web/package-lock.json ./
+COPY Ferry/web/package.json Ferry/web/package-lock.json ./
 RUN npm ci
-COPY dms/web/ .
+COPY Ferry/web/ .
 RUN npm run build
 
 # ---- build the backend ----
@@ -22,10 +22,10 @@ WORKDIR /build
 
 # Dependency layer cached separately from source -- a source-only change (the common case) skips
 # re-resolving the full dependency tree.
-COPY dms/pom.xml .
+COPY Ferry/pom.xml .
 RUN mvn -q -B dependency:go-offline
 
-COPY dms/src ./src
+COPY Ferry/src ./src
 RUN mvn -q -B -DskipTests package
 
 # ---- runtime stage ----

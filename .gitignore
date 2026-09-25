@@ -7,14 +7,14 @@ dependency-reduced-pom.xml
 # from -- not a build artifact of any single module, so not scoped under target/.
 ignite/
 
-dms/web/node_modules/
-dms/web/dist/
-dms/web/.vite/
-dms/web/.oxlintrc.json.bak
+Ferry/web/node_modules/
+Ferry/web/dist/
+Ferry/web/.vite/
+Ferry/web/.oxlintrc.json.bak
 
-wire/web/node_modules/
-wire/web/dist/
-wire/web/.vite/
+Warp/web/node_modules/
+Warp/web/dist/
+Warp/web/.vite/
 
 docker/tests/python/.pytest_cache/
 docker/tests/python/__pycache__/

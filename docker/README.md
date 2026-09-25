@@ -66,10 +66,10 @@ running against these published images directly, no source checkout required. Se
 
 ## Image packaging reference
 
-`warp/` and `dms/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
+`warp/` and `Ferry/` in this repo hold the actual `Dockerfile`s and `docker-compose.yml`s
 these images are built from, plus their own module-specific docs (build stages, configuration,
 data persistence). They won't build standalone from this repo alone — the Dockerfiles `COPY` from
-`wire/` and `dms/` (formerly `advisor/`), which live in Sayonora's private source repos — they're
+`Warp/` and `Ferry/` (formerly `advisor/`), which live in Sayonora's private source repos — they're
 included here for transparency into exactly how each image is put together, not as a
 build-it-yourself path.
 

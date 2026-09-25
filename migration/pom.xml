@@ -29,7 +29,7 @@
          connects to a genuine SOURCE MongoDB deployment as a CDC consumer, a different use case
          from anything wire itself does. -->
     <mongodb-driver-sync.version>5.5.1</mongodb-driver-sync.version>
-    <!-- Matches wire/pom.xml's own awssdk.version exactly (there test-scope only, used to
+    <!-- Matches Warp/pom.xml's own awssdk.version exactly (there test-scope only, used to
          validate dynamowire's wire protocol against a real AWS SDK client; see that pom's own
          dependency comment). This module needs it compile-scope: DynamoSource connects to a
          genuine SOURCE DynamoDB deployment (and its Streams) as a CDC consumer, a different use
@@ -78,7 +78,7 @@
       <artifactId>mongodb-driver-sync</artifactId>
       <version>${mongodb-driver-sync.version}</version>
     </dependency>
-    <!-- Matches wire/pom.xml's own mysql-connector-j version exactly (there compile-scope,
+    <!-- Matches Warp/pom.xml's own mysql-connector-j version exactly (there compile-scope,
          pinned specifically at 8.4.0 because newer 9.x releases dropped client-side
          mysql_native_password support mywire's own SERVER-side handshake relies on; that concern
          doesn't apply here, since MySqlSource is a plain JDBC CLIENT authenticating however the
@@ -101,7 +101,7 @@
       <artifactId>mysql-binlog-connector-java</artifactId>
       <version>0.29.2</version>
     </dependency>
-    <!-- Matches wire/pom.xml's own mssql-jdbc version exactly, same lockstep reasoning as
+    <!-- Matches Warp/pom.xml's own mssql-jdbc version exactly, same lockstep reasoning as
          mysql-connector-j above. SQL Server's own Change Data Capture feature (cdc.fn_cdc_get_all_changes_*,
          sys.fn_cdc_get_max_lsn/increment_lsn) is queried through plain JDBC; no separate CDC
          client library needed, unlike MySQL's binlog or MongoDB's change streams. -->
@@ -110,7 +110,7 @@
       <artifactId>mssql-jdbc</artifactId>
       <version>12.8.1.jre11</version>
     </dependency>
-    <!-- Matches wire/pom.xml's own ojdbc11 version exactly, same lockstep reasoning as the other
+    <!-- Matches Warp/pom.xml's own ojdbc11 version exactly, same lockstep reasoning as the other
          vendor drivers above. Oracle's own LogMiner feature (DBMS_LOGMNR.START_LOGMNR/END_LOGMNR,
          V$LOGMNR_CONTENTS) is queried through plain JDBC; no separate CDC client library needed,
          same as SQL Server CDC. -->
@@ -119,7 +119,7 @@
       <artifactId>ojdbc11</artifactId>
       <version>23.8.0.25.04</version>
     </dependency>
-    <!-- Matches wire/pom.xml's own neo4j-java-driver version exactly, same lockstep reasoning as
+    <!-- Matches Warp/pom.xml's own neo4j-java-driver version exactly, same lockstep reasoning as
          every other vendor driver above (there test-scope only, negotiating Bolt 4.4 against
          boltwire). Neo4jSource has no separate CDC library to add: real Neo4j Community Edition
          and boltwire both have no exposed change-tracking mechanism at all (Neo4j CDC is an
@@ -143,7 +143,7 @@
     <plugins>
       <!-- Publishes this module's src/test/java classes (RealMongo, RealPostgres,
            WarpProcess, etc. under testsupport/) as a second, `tests`-classified jar;
-           dms now depends on it (test scope only, see dms/pom.xml's own comment) so
+           dms now depends on it (test scope only, see Ferry/pom.xml's own comment) so
            MigrationJobRunnerIntegrationTest can prove the NEW dms-side job-launching glue
            against real infrastructure using the SAME real-container test helpers every connector's
            own integration test already relies on, instead of re-implementing (or, worse,

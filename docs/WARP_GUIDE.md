@@ -516,7 +516,7 @@ whatever SQL a client sent.
 **Real DDL, no longer hardcoded in Java.** Every one of these stores used to build its own
 `CREATE TABLE`/`CREATE INDEX` text as inline Java string literals — real engine differences had
 nowhere to live but a pile of if/else branches inside otherwise storage-logic-only methods. DDL
-now lives in `wire/src/main/resources/ddl/<engine>/<name>.sql` (`postgres`/`oracle`/`sqlserver`/
+now lives in `Warp/src/main/resources/ddl/<engine>/<name>.sql` (`postgres`/`oracle`/`sqlserver`/
 `mysql`), loaded and parameterized (`${table}`) at runtime by `DdlTemplates` — a real, engine-keyed
 directory, not a config format for its own sake: `BackendDriverRegistry.engineDirFor`-equivalent
 dispatch (`DdlTemplates.engineDirFor`) picks the right file from a `BackendTarget`'s own `jdbcUrl`,
@@ -756,7 +756,7 @@ dynamowire serves the DynamoDB JSON API (`X-Amz-Target: DynamoDB_20120810.*`, Si
 `WARP_AWS_IAM_CREDENTIALS` is set) over Postgres. It aims to behave like the real service: the validation
 rules, error types and messages, expression language, pagination and limits below were checked against
 Amazon's DynamoDB Local and the AWS documentation, and against Floci's DynamoDB SDK compatibility suites
-(`wire/tests/python/floci_compat/`). Where it deliberately differs, the difference is listed under
+(`Warp/tests/python/floci_compat/`). Where it deliberately differs, the difference is listed under
 *Differences from real DynamoDB*.
 
 **Storage.** One Postgres table per DynamoDB table (`dynamo_item_<name>`: `pk_value`, `sk_value`, `sk_num`,
@@ -903,7 +903,7 @@ ValidationException/`UnsupportedOperationException`, never silently):
 
 `influxwire` speaks InfluxDB 1.x's HTTP API (plus the 2.x write endpoint) over plain Postgres tables, so Telegraf, the `influxdb` /
 `influxdb-client` SDKs, `curl` and Grafana's InfluxQL data source work unchanged. Its behaviour is defined by a **differential test
-against a real InfluxDB 1.8.10** (`wire/tests/python/influx_conformance/`: 290 scenarios, 1,821 requests replayed identically against the
+against a real InfluxDB 1.8.10** (`Warp/tests/python/influx_conformance/`: 290 scenarios, 1,821 requests replayed identically against the
 real server and against Warp on one Postgres backend and on two sharded backends): 1,794 answers are byte-identical after normalisation,
 16 are documented divergences, 8 are clock/server-state dependent, and 3 differ only in the wording of a parse error (before this work 208
 of the 1,821 matched). The same corpus, with InfluxDB's answers recorded as a golden file, runs against Warp alone in
@@ -1235,7 +1235,7 @@ range field types, `flat_object`, `join`, `percolator`, data streams, rollover, 
 path answers `400 no handler found`), `_termvectors`, `_search/template`, custom routing, `_reindex` from a remote cluster. OpenSearch Dashboards
 has not been verified against oswire.
 
-**Conformance evidence** (harness in `wire/tests/python/os_conformance/`, README there): (1) OpenSearch's own REST API YAML tests
+**Conformance evidence** (harness in `Warp/tests/python/os_conformance/`, README there): (1) OpenSearch's own REST API YAML tests
 (`rest-api-spec`, 42 directories: document/search/aggregation/index/cat/cluster APIs), first run against a real OpenSearch 2.19.6 to keep the
 936 tests that are valid for it, then against Warp: **21 -> 693 of 936** (the remaining failures are
 classified in `results/spec_failures.tsv`: unsupported features above, routing/refresh/shard-internals that cannot exist here, details).
@@ -1969,7 +1969,7 @@ instrumentation found (each with a live before/after benchmark) are in
 
 ## 11. Admin UI
 
-A React/TS/Vite app (`wire/web`) gives Warp a real operator UI on top of the HTTP endpoints in
+A React/TS/Vite app (`Warp/web`) gives Warp a real operator UI on top of the HTTP endpoints in
 §4.3/§8.3/§9/§10 — built with `npm run build` and served directly by Warp's own admin HTTP
 server (`WARP_ADMIN_WEB_DIR` pointing at the built `dist/`, no separate process). An operator
 opens the admin URL, enters the `WARP_ADMIN_TOKEN` bearer token once, and the browser talks to

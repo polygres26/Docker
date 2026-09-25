@@ -9,10 +9,10 @@ for the exact tests; each one warms up with 1 throwaway call then times 40 real 
 
 **Correction (made outside the pass that generated the rest of this file): `docs/PERFORMANCE.md`
 does exist** — at the repo root (`/Users/kumarrajamani/Projects/Sayonora/docs/PERFORMANCE.md`), one
-directory above `wire/`. The claim below that it doesn't exist was a wrong-directory mistake (the
-agent that wrote this file was working from inside `wire/` and checked `wire/docs/`, which
+directory above `Warp/`. The claim below that it doesn't exist was a wrong-directory mistake (the
+agent that wrote this file was working from inside `Warp/` and checked `Warp/docs/`, which
 genuinely has no such file, then wrongly concluded the file didn't exist anywhere). This file was
-also moved from the mistaken `wire/docs/` location to the real `docs/` directory to sit alongside
+also moved from the mistaken `Warp/docs/` location to the real `docs/` directory to sit alongside
 `PERFORMANCE.md`. The real historical numbers, and a real comparison against them, are below —
 this is NOT a first-ever baseline for the 7 protocols `PERFORMANCE.md` already covers.
 
@@ -597,7 +597,7 @@ found the residual gap is the gRPC-java framework floor.
 
 **grpc-xds fix.** Cause: `google-cloud-spanner-jdbc` pulls grpc-xds/alts/googleapis/rls/services/
 opentelemetry 1.82.2 (and bigquery pulls grpc-grpclb) while pom pinned grpc-netty-shaded/protobuf/stub
-(hence grpc-api) at 1.68.1. Fix in `wire/pom.xml`: `grpc.version` 1.82.2 plus a `grpc-bom` import in
+(hence grpc-api) at 1.68.1. Fix in `Warp/pom.xml`: `grpc.version` 1.82.2 plus a `grpc-bom` import in
 `dependencyManagement` so every io.grpc artifact is aligned; `grpc.plugin.version` stays 1.68.1 for
 protoc-gen-grpc-java (only that version is available locally; generated stubs are compatible).
 Verified: PeerChannelPoolTest (2), WarpPeerServiceIntegrationTest (2),
@@ -651,8 +651,8 @@ batching/pipelining several statements per RPC so the fixed ~40us amortizes.
 | SELECT | 328 / 391 / 620 | 326,323 / 396,397 / 627,645 | 286 / 393 / 669 | 252,251 / 292,293 / 423,444 |
 
 Default gRPC is unchanged in performance (no safe change helped); only the classpath fix and the
-opt-in knob shipped. Files: `wire/pom.xml`, `wire/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
-`wire/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
+opt-in knob shipped. Files: `Warp/pom.xml`, `Warp/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
+`Warp/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
 properties, p99, `-Dserver.direct`). The earlier "known bug" note above is resolved.
 
 ## 2026-09-23: s3wire (S3 frontend over a MinIO backend bucket)
@@ -710,7 +710,7 @@ the hidden bucket marker.
 Question: N client connections against a Warp whose pool to Postgres is `WARP_POOL_MAX_SIZE=10`; when
 all 10 are in use, does the client WAIT or get an ERROR? Real Postgres 16 container, real Warp jar
 (`target/sayonora-wire.jar`, built 2026-09-24 22:50), real drivers, no mocks. Harness:
-`wire/tests/python/test_connection_pooling.py` (opt-in: `WARP_RUN_POOL_TESTS=1`, run as a script,
+`Warp/tests/python/test_connection_pooling.py` (opt-in: `WARP_RUN_POOL_TESTS=1`, run as a script,
 `--help` lists `--protocols/--n/--mode/--env/--fresh/--idle-holders/--release-probe`). Fresh Postgres and
 Warp per case, Ignite discovery pinned to one seed port, QoS `RATE/BURST=100000` so only the pool is
 measured. Server-side truth is sampled every 50 ms from `pg_stat_activity` (direct connection) and
@@ -905,7 +905,7 @@ where the gate fires the client sees an abrupt close with a driver-specific mess
 - Fix bugs 1-3 before relying on saturation behavior in production; bug 1 in particular makes one saturated
   pool freeze new-connection acceptance for the SQL frontends.
 
-Reproduce: `ulimit -n 8192; WARP_RUN_POOL_TESTS=1 python3 wire/tests/python/test_connection_pooling.py
+Reproduce: `ulimit -n 8192; WARP_RUN_POOL_TESTS=1 python3 Warp/tests/python/test_connection_pooling.py
 --protocols pg --mode hold --n 25 --fresh` (also `--idle-holders`, `--release-probe`,
 `--env WARP_POOL_CONNECT_TIMEOUT_MS=60000`). Raw JSON per run is not committed.
 
@@ -961,7 +961,7 @@ not), boltwire 9 of 25 failed. After: **25/25 ok on every protocol, p50 0.31-0.3
 
 The 40-sample pytest RTT tests swing +-0.15 ms run to run on this loaded machine (e.g. pgwire 0.26-0.48 for the
 same jar), too noisy to resolve the few-microsecond cost of a borrow/return, so this used a high-sample harness
-(`wire/tests/python/rtt_bench.py`: 300 warm-up + 1500 timed statements per run, jars alternated before/after, 4 rounds, median of
+(`Warp/tests/python/rtt_bench.py`: 300 warm-up + 1500 timed statements per run, jars alternated before/after, 4 rounds, median of
 the per-run p50):
 
 | Protocol | before p50 (p90) | after p50 (p90) | delta p50 |
@@ -1009,7 +1009,7 @@ left on it) the whole `warp.*` identity is now applied in ONE round trip instead
 * The Java integration tests that spawn a Warp JVM or need Docker images (Oracle/SQL Server containers) could not run
   on this machine (Docker VM disk full; a stray-Warp Ignite discovery hang for the spawned JVMs).
 
-Reproduce: `WARP_TEST_PG_LOCAL=1` (only if Docker is unavailable), then from `wire/tests/python`:
+Reproduce: `WARP_TEST_PG_LOCAL=1` (only if Docker is unavailable), then from `Warp/tests/python`:
 `python3 -m pytest -q test_connection_pooling.py` (the multiplexing tests: idle holders, 25 clients / pool 2,
 transaction isolation, extended-protocol prepared statements and partial-fetch portals, SET/temp-table pinning,
 RLS identity isolation, pool exhaustion errors, QoS threshold, listener resilience, kill switch), and
@@ -1052,7 +1052,7 @@ untuned, warm cache, one 100 MiB object per mode, macOS. Not measured: concurren
 
 **Conformance.** Floci's SQS compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native
 Postgres 17 per run, credentials test/test) before -> after: **python 7/16 -> 16/16, node 6/8 -> 8/8, java 8/27 -> 27/27**
-(pass/total; baseline files kept as `wire/tests/python/floci_compat/results/warp-sqs-*-baseline.md`). Nothing is left
+(pass/total; baseline files kept as `Warp/tests/python/floci_compat/results/warp-sqs-*-baseline.md`). Nothing is left
 failing, so no test is classified Floci-specific. Warp's own `tests/python/test_sqswire_conformance.py` adds 31 scenarios
 run against one and against two sharded Postgres backends (62 cases), with both the JSON protocol (boto3) and the Query/XML
 protocol (raw SigV4-signed requests), and passes; `test_sqswire.py`, the SQS cases in `test_backend_set_stores.py` and
@@ -1081,7 +1081,7 @@ time parked is excluded from the reported RTT and no backend connection is held 
 
 **Conformance.** Floci's DynamoDB SDK compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native
 Postgres 17 per run, credentials test/test) before -> after, pass/total: **python 13/22 -> 22/22, node 23/59 -> 59/59, java
-38/120 -> 118/120** (baseline files kept as `wire/tests/python/floci_compat/results/warp-dynamodb-*-baseline.md`). The two remaining java
+38/120 -> 118/120** (baseline files kept as `Warp/tests/python/floci_compat/results/warp-dynamodb-*-baseline.md`). The two remaining java
 failures are Floci-specific: `DynamoDbTest::updateTableReplicaLifecycle` (adds a replica region to a stream-less table through UpdateTable
 `ReplicaUpdates`; global tables are documented as unsupported and answer a ValidationException) and `DynamoDbTest::searchVectors` (`SearchVectors`
 is a Floci extension, not a DynamoDB API). Warp's own `tests/python/test_dynamowire_conformance.py` adds 17 scenarios (33 cases: 16 run
@@ -1116,7 +1116,7 @@ milliseconds) after the change.
 
 ## 2026-09-25 -- influxwire behaves like InfluxDB (differential conformance) and RTT
 
-influxwire was made to behave like a real InfluxDB 1.8.10 (measured differentially: `wire/tests/python/influx_conformance/`, 290 cases /
+influxwire was made to behave like a real InfluxDB 1.8.10 (measured differentially: `Warp/tests/python/influx_conformance/`, 290 cases /
 1,821 requests replayed against the real server and against Warp). Result before -> after:
 
 | | identical | documented divergence | clock/server-state dependent | message-only | different | cases fully identical |
@@ -1148,7 +1148,7 @@ server-side `avgRttMs` of 1, inside its 3 ms bar. Throughput sanity check on 200
 ## 2026-09-25 -- oswire behaves like OpenSearch (differential + REST-spec conformance) and RTT
 
 oswire (OpenSearch REST/JSON over Postgres) was made to behave like a real OpenSearch 2.19.6, measured two ways
-(`wire/tests/python/os_conformance/`, README there): OpenSearch's own REST API YAML tests and a 321-case differential corpus replayed against the
+(`Warp/tests/python/os_conformance/`, README there): OpenSearch's own REST API YAML tests and a 321-case differential corpus replayed against the
 real server and against Warp. Result before -> after:
 
 | | before | after, one Postgres backend | after, index sharded over two Postgres backends |
@@ -1186,7 +1186,7 @@ A get is unchanged. `test_oswire.py::test_write_rtt_baseline` (40 samples) repor
 
 **Conformance.** Floci's S3 compatibility suites (Floci `compatibility-tests/`, one suite at a time, fresh Warp on native Postgres 17 per run, s3 store enabled on the
 default backend, credentials test/test) before -> after, pass / total: **python 17/42 -> 42/42, node 20/35 -> 35/35, java 30/75 -> 74/75** (baseline files:
-`wire/tests/python/floci_compat/results/warp-baseline-s3-*.md`; current: `warp-s3-*.md`). The one remaining failure, `S3Test::deleteBucketTagging`, is class c
+`Warp/tests/python/floci_compat/results/warp-baseline-s3-*.md`; current: `warp-s3-*.md`). The one remaining failure, `S3Test::deleteBucketTagging`, is class c
 (Floci-specific): it expects an empty tag set from GetBucketTagging after DeleteBucketTagging, real S3 answers `404 NoSuchTagSet`, and s3wire answers like S3. The baseline
 failures were tagging, versioning + ListObjectVersions, GetObjectAttributes and multipart checksum types (COMPOSITE / FULL_OBJECT), CORS, PublicAccessBlock, UploadPartCopy,
 LocationConstraint, virtual-hosted addressing and object annotations. Floci classes beyond those suites, run against the same Warp: S3LifecycleTest 2/2, S3PresignTest 1/1,

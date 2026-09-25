@@ -1,14 +1,14 @@
 # Warp — Docker
 
-Multi-stage build: a `node:22-alpine` stage builds the admin SPA (`wire/web`), a
+Multi-stage build: a `node:22-alpine` stage builds the admin SPA (`Warp/web`), a
 `maven:3.9-eclipse-temurin-21` stage builds the shaded jar (`target/sayonora-wire.jar`), then an
 `eclipse-temurin:21-jre-jammy` runtime stage runs both — nothing beyond a JRE is needed at
 runtime, everything's already bundled into the shaded jar plus the built SPA's static files.
 
 ## Quick start
 
-From the **repo root** (the build context has to be the repo root, not this directory — `wire/`
-is a standalone Maven module with no parent pom, but the Dockerfile still needs `wire/` as a
+From the **repo root** (the build context has to be the repo root, not this directory — `Warp/`
+is a standalone Maven module with no parent pom, but the Dockerfile still needs `Warp/` as a
 subdirectory it can `COPY` from):
 
 ```bash
@@ -39,7 +39,7 @@ network allowlisting, and more).
 ## How the admin app gets served (no nginx)
 
 The image build has two stages that feed the runtime stage: a `node:22-alpine` stage builds
-`wire/web` to static files, and a `maven:3.9-eclipse-temurin-21` stage builds the backend jar.
+`Warp/web` to static files, and a `maven:3.9-eclipse-temurin-21` stage builds the backend jar.
 Both outputs land in the final `eclipse-temurin:21-jre-jammy` image; `WARP_ADMIN_WEB_DIR=/app/web`
 tells `MetricsServer` where to find the built SPA at startup, serving it via `SpaResourceHandler`
 on the same port as the admin JSON API (19090). Unset that env var (or point it at a directory

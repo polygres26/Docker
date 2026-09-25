@@ -1,16 +1,16 @@
 # Warp -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
-# dynamowire/sqswire/gRPC/MCP) plus its own admin app (wire/web). Build context is the repo root
+# dynamowire/sqswire/gRPC/MCP) plus its own admin app (Warp/web). Build context is the repo root
 # (see docker-compose.yml / the `docker build` command in README.md) since this Dockerfile COPYs
-# both wire/ and wire/web in explicitly -- wire/ is a standalone Maven module (no parent pom, no
-# reactor with advisor/), so only wire/ ever needs to be in the build context, keeping rebuilds
+# both Warp/ and Warp/web in explicitly -- Warp/ is a standalone Maven module (no parent pom, no
+# reactor with advisor/), so only Warp/ ever needs to be in the build context, keeping rebuilds
 # fast when advisor/ changes.
 
 # ---- build the admin SPA ----
 FROM node:22-alpine AS web-build
 WORKDIR /build
-COPY wire/web/package.json wire/web/package-lock.json ./
+COPY Warp/web/package.json Warp/web/package-lock.json ./
 RUN npm ci
-COPY wire/web/ .
+COPY Warp/web/ .
 RUN npm run build
 
 # ---- build the backend ----
@@ -19,10 +19,10 @@ WORKDIR /build
 
 # Dependency layer cached separately from source -- a source-only change (the common case) skips
 # re-resolving the full dependency tree (real cost here: grpc/Calcite/Ignite/Nimbus pull a lot).
-COPY wire/pom.xml .
+COPY Warp/pom.xml .
 RUN mvn -q -B dependency:go-offline
 
-COPY wire/src ./src
+COPY Warp/src ./src
 RUN mvn -q -B -DskipTests package
 
 # ---- runtime stage ----
