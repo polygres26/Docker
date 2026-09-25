@@ -76,6 +76,7 @@ class DynamoDbErrorMappingIntegrationTest {
                         .attributeDefinitions(AttributeDefinition.builder()
                                 .attributeName("id").attributeType(ScalarAttributeType.S).build())
                         .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
+                        .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
                         .build());
 
                 // Drop the REAL underlying table directly against Postgres, bypassing dynamowire
@@ -118,12 +119,13 @@ class DynamoDbErrorMappingIntegrationTest {
 
             try (DynamoDbClient dynamo = client(warp.port("dynamowire"))) {
                 dynamo.createTable(CreateTableRequest.builder()
-                        .tableName("t")
+                        .tableName("warmup_t")
                         .attributeDefinitions(AttributeDefinition.builder()
                                 .attributeName("id").attributeType(ScalarAttributeType.S).build())
                         .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
+                        .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
                         .build());
-                dynamo.putItem(PutItemRequest.builder().tableName("t")
+                dynamo.putItem(PutItemRequest.builder().tableName("warmup_t")
                         .item(java.util.Map.of("id", AttributeValue.builder().s("warmup").build()))
                         .build());
 
@@ -131,7 +133,7 @@ class DynamoDbErrorMappingIntegrationTest {
                 try {
                     DynamoDbException thrown = assertThrows(InternalServerErrorException.class,
                             () -> dynamo.getItem(GetItemRequest.builder()
-                                    .tableName("t")
+                                    .tableName("warmup_t")
                                     .key(java.util.Map.of("id", AttributeValue.builder().s("warmup").build()))
                                     .build()),
                             "an operation against a genuinely dead backend connection must be a real "

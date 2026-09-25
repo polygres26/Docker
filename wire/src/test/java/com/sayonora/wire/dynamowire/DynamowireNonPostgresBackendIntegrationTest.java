@@ -63,7 +63,8 @@ class DynamowireNonPostgresBackendIntegrationTest {
                     .attributeDefinitions(AttributeDefinition.builder()
                             .attributeName("id").attributeType(ScalarAttributeType.S).build())
                     .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
-                    .build());
+                    .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
+                        .build());
 
             dynamo.putItem(PutItemRequest.builder()
                     .tableName(tableName)
@@ -99,7 +100,8 @@ class DynamowireNonPostgresBackendIntegrationTest {
                     .keySchema(
                             KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build(),
                             KeySchemaElement.builder().attributeName("ts").keyType(KeyType.RANGE).build())
-                    .build());
+                    .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
+                        .build());
 
             dynamo.putItem(PutItemRequest.builder()
                     .tableName(tableName)
