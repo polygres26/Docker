@@ -140,7 +140,8 @@ public final class PgItemStore {
     }
 
     private List<String> currentShardGroup() {
-        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+        return backendRegistry == null ? List.of()
+                : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.DYNAMODB);
     }
 
     /**
@@ -157,6 +158,12 @@ public final class PgItemStore {
      * down at startup, every wire protocol included, over a dynamowire-only config detail.
      */
     private String currentCatalogBackendName() {
+        // DynamoDB enabled on backend(s) of the frontend's backend set: the catalog lives on the
+        // first host (declaration order), the same fixed-home rule, just relative to the hosts.
+        String home = backendRegistry.storeHome(com.sayonora.wire.core.StoreType.DYNAMODB);
+        if (home != null) {
+            return home;
+        }
         List<String> group = currentShardGroup();
         if (backendRegistry.get(BackendRegistry.DEFAULT_BACKEND_NAME) != null) {
             return BackendRegistry.DEFAULT_BACKEND_NAME;
@@ -185,7 +192,7 @@ public final class PgItemStore {
     }
 
     public boolean isSharded() {
-        return !currentShardGroup().isEmpty();
+        return currentShardGroup().size() > 1;
     }
 
     /** Which backend name a given partition-key value would route to -- no connection opened. */
@@ -701,9 +708,90 @@ public final class PgItemStore {
         sql.append(" ORDER BY pk_value, sk_value");
         try {
             List<Connection> connections = shardConnectionsForDdl();
+            boolean allPostgres = true;
+            for (Connection c : connections) {
+                allPostgres &= c.getMetaData().getURL().startsWith("jdbc:postgresql:");
+            }
+            if (connections.size() > 1 && allPostgres) {
+                return mergedScan(connections, pg, schema, filterExpr, ctx, limit, exclusiveStartKey);
+            }
             return runAndFilter(connections, pg, schema, sql.toString(), params, filterExpr, ctx, limit);
         } catch (SQLException e) {
             throw new RuntimeException("Scan failed", e);
+        }
+    }
+
+    private record ScanRow(String itemJson, String pk, String sk, java.sql.ResultSet rs) {
+    }
+
+    private static int compareBytes(String a, String b) {
+        return java.util.Arrays.compareUnsigned(a.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                b.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Scan across SEVERAL shards: a k-way merge of every shard's rows in one global (pk, sk) order
+     * (byte order, {@code COLLATE "C"} on the SQL side so every shard sorts identically). That makes
+     * {@code Limit}/{@code ExclusiveStartKey} pagination exact: the last key of a page is a real
+     * position in the global order, and the next page's {@code (pk, sk) > key} predicate is valid on
+     * every shard. (Concatenating shards one after another, as a plain fan-out would, loses the rows
+     * of later shards that sort before the last key.)
+     */
+    private PageResult mergedScan(List<Connection> connections, String pg, TableSchema schema, String filterExpr,
+            ExpressionContext ctx, Integer limit, Map<String, AttributeValue> exclusiveStartKey) throws SQLException {
+        String pkCol = "pk_value COLLATE \"C\"";
+        String skCol = "sk_value COLLATE \"C\"";
+        StringBuilder sql = new StringBuilder("SELECT item, pk_value, sk_value FROM " + pg);
+        if (exclusiveStartKey != null) {
+            sql.append(" WHERE (").append(pkCol).append(", ").append(skCol).append(") > (?::text, ?::text)");
+        }
+        sql.append(" ORDER BY ").append(pkCol).append(", ").append(skCol);
+        java.util.PriorityQueue<ScanRow> queue = new java.util.PriorityQueue<>((x, y) -> {
+            int c = compareBytes(x.pk(), y.pk());
+            return c != 0 ? c : compareBytes(x.sk() == null ? "" : x.sk(), y.sk() == null ? "" : y.sk());
+        });
+        List<PreparedStatement> statements = new ArrayList<>();
+        List<ResultSet> resultSets = new ArrayList<>();
+        try {
+            for (Connection c : connections) {
+                PreparedStatement ps = c.prepareStatement(sql.toString());
+                statements.add(ps);
+                if (exclusiveStartKey != null) {
+                    ps.setString(1, exclusiveStartKey.get(schema.partitionKeyName()).scalar);
+                    ps.setString(2, schema.hasSortKey() ? exclusiveStartKey.get(schema.sortKeyName()).scalar : "");
+                }
+                ResultSet rs = ps.executeQuery();
+                resultSets.add(rs);
+                if (rs.next()) {
+                    queue.add(new ScanRow(rs.getString(1), rs.getString(2), rs.getString(3), rs));
+                }
+            }
+            List<Map<String, AttributeValue>> results = new ArrayList<>();
+            while (!queue.isEmpty()) {
+                ScanRow row = queue.poll();
+                if (row.rs().next()) {
+                    queue.add(new ScanRow(row.rs().getString(1), row.rs().getString(2), row.rs().getString(3), row.rs()));
+                }
+                Map<String, AttributeValue> item = jsonToItem(JsonParser.parseString(row.itemJson()).getAsJsonObject());
+                if (filterExpr != null && !ConditionExpressionEvaluator.evaluate(filterExpr, item, ctx)) {
+                    continue;
+                }
+                results.add(item);
+                if (limit != null && results.size() >= limit) {
+                    return new PageResult(results, queue.isEmpty() ? null : keyOf(schema, item));
+                }
+            }
+            return new PageResult(results, null);
+        } finally {
+            for (ResultSet rs : resultSets) {
+                try { rs.close(); } catch (SQLException ignored) { }
+            }
+            for (PreparedStatement ps : statements) {
+                try { ps.close(); } catch (SQLException ignored) { }
+            }
+            for (Connection c : connections) {
+                try { c.close(); } catch (SQLException ignored) { }
+            }
         }
     }
 

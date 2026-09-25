@@ -3,7 +3,7 @@ import { Database, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
   type BackendInfo, type BackendTestResult, type NodeInfo, type WireMetricsSummary,
-  getWireConfig, getWireMetrics, listBackends, listNodes, parseBackendSetNames, testConfiguredBackend,
+  getWireMetrics, listBackends, listNodes, listBackendSets, testConfiguredBackend,
 } from '../api/client'
 import {
   Button, DataTable, EmptyState, KpiStrip, Loading, Notice, PageHeader, Section, SortTh, SummaryGrid, StatusPill, Tag, useSort,
@@ -28,6 +28,8 @@ type Probe = { state: 'pending' } | { state: 'done'; result: BackendTestResult }
 
 interface Row {
   name: string
+  set: string
+  stores: string[]
   dialect: string
   target: string
   calls: number
@@ -39,7 +41,7 @@ interface Row {
  * Gateway overview: health strip, backend table and protocol mix, all from the admin API that
  * already exists (/api/metrics/summary, /api/backends, /api/nodes, /api/config). Nothing here is
  * estimated: a figure the API does not report (p95 latency, policy-block counts) is not shown.
- * Backend health is a real probe -- the same POST /api/backends/{name}/test the Backends page uses.
+ * Backend health is a real probe -- the same POST /api/backends/{name}/test the Backend sets page uses.
  */
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<WireMetricsSummary | null>(null)
@@ -77,7 +79,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadMetrics()
     loadBackends()
-    getWireConfig().then((c) => setSetNames(parseBackendSetNames(c.backendSets))).catch(() => setSetNames(null))
+    listBackendSets().then((r) => setSetNames(r.sets.map((x) => x.name))).catch(() => setSetNames(null))
     const id = setInterval(loadMetrics, POLL_MS)
     return () => clearInterval(id)
   }, [loadMetrics, loadBackends])
@@ -86,6 +88,8 @@ export default function Dashboard() {
     const stat = metrics?.byBackend.find((x) => x.backend === b.name)
     return {
       name: b.name,
+      set: b.backendSet ?? 'default',
+      stores: b.enabledStores ?? [],
       dialect: b.dialect ?? 'unknown',
       target: targetOf(b.jdbcUrl),
       calls: stat?.calls ?? 0,
@@ -95,7 +99,7 @@ export default function Dashboard() {
   }), [backends, metrics, probes])
 
   const { sorted, sort, toggle } = useSort(rows, {
-    name: (r) => r.name, dialect: (r) => r.dialect, target: (r) => r.target, calls: (r) => r.calls,
+    name: (r) => r.name, set: (r) => r.set, dialect: (r) => r.dialect, target: (r) => r.target, calls: (r) => r.calls,
     health: (r) => (r.probe.state === 'pending' ? 1 : r.probe.result.ok ? 0 : 2),
   }, { key: 'calls', dir: 'desc' })
 
@@ -136,20 +140,21 @@ export default function Dashboard() {
       {metricsError && <Notice tone="bad">Could not load metrics: {metricsError}</Notice>}
       {!metrics && !metricsError ? <Loading>Loading overview…</Loading> : <KpiStrip items={kpis} label="Gateway health" />}
 
-      <Section flush title="Backends" meta={updated ? `Updated ${updated.toLocaleTimeString()}` : undefined}>
+      <Section flush title="Backends" meta={<><Link to="/backend-sets">Backend sets</Link>{updated ? ` · Updated ${updated.toLocaleTimeString()}` : ""}</>}>
         {backendsError ? (
           <div className={styles.pad}><Notice tone="bad">Could not list backends: {backendsError}</Notice></div>
         ) : !backends ? (
           <div className={styles.pad}><Loading>Loading backends…</Loading></div>
         ) : backends.length === 0 ? (
           <EmptyState icon={<Database size={18} aria-hidden="true" />} title="No backends configured">
-            Add a named Postgres target on the <Link to="/backends">Backends</Link> page and it will show up here with a live health check.
+            Add a backend to a set on the <Link to="/backend-sets">Backend sets</Link> page and it will show up here with a live health check.
           </EmptyState>
         ) : (
-          <DataTable caption="Configured backends" minWidth={720}>
+          <DataTable caption="Configured backends" minWidth={820}>
             <thead>
               <tr>
                 <SortTh label="Backend" k="name" sort={sort} onSort={toggle} />
+                <SortTh label="Set" k="set" sort={sort} onSort={toggle} />
                 <SortTh label="Dialect" k="dialect" sort={sort} onSort={toggle} />
                 <SortTh label="Target" k="target" sort={sort} onSort={toggle} />
                 <SortTh label="Health" k="health" sort={sort} onSort={toggle} />
@@ -161,6 +166,7 @@ export default function Dashboard() {
               {sorted.map((r) => (
                 <tr key={r.name}>
                   <td className={styles.mono}>{r.name}</td>
+                  <td><Link to="/backend-sets">{r.set}</Link>{r.stores.length > 0 && <div className={styles.sub}>{r.stores.join(' · ')}</div>}</td>
                   <td><Tag>{r.dialect}</Tag></td>
                   <td className={styles.mono}>{r.target}</td>
                   <td><HealthPill probe={r.probe} /></td>

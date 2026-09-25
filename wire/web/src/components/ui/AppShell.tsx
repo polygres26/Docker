@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Activity, Boxes, Cpu, Database, GitMerge, KeyRound, Layers, LayoutDashboard, ListOrdered, LogOut,
+  Activity, Boxes, Cpu, GitMerge, KeyRound, Layers, LayoutDashboard, ListOrdered, LogOut,
   Menu, Network, Route, Shield, SlidersHorizontal, TableProperties, Waypoints, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -22,7 +22,6 @@ export const NAV_GROUPS: NavGroupDef[] = [
       { to: '/metrics', label: 'Traffic', icon: Activity },
       { to: '/topology', label: 'Topology', icon: Waypoints },
       { to: '/router', label: 'Router rules', icon: Route },
-      { to: '/backends', label: 'Backends', icon: Database },
       { to: '/backend-sets', label: 'Backend sets', icon: Boxes },
       { to: '/queues', label: 'Queues', icon: ListOrdered },
     ],

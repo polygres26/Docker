@@ -188,6 +188,9 @@ public final class Main {
                 config.backends(), config.shardBackends(), config.backendSets(), config.backendGroups(),
                 defaultBackendTarget, nativeBackendTargets);
         backendRegistry.applyDescriptions(config.backendDescriptions(), config.backendGroupDescriptions());
+        backendRegistry.applyStoreConfig(config.backendStores(), config.backendSetNames());
+        // schema of every store enabled on a Postgres backend, before any frontend starts serving
+        com.sayonora.wire.core.StoreBootstrap.ensureAll(backendRegistry);
         logSchemaDiscoveryConflicts(backendRegistry);
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
@@ -780,6 +783,8 @@ public final class Main {
             // sets from BEFORE this same config version, one version stale.
             backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
             backendRegistry.applyDescriptions(c.backendDescriptions(), c.backendGroupDescriptions());
+            backendRegistry.applyStoreConfig(c.backendStores(), c.backendSetNames());
+            com.sayonora.wire.core.StoreBootstrap.ensureAll(backendRegistry);
             mcpServer.endpoints().load(c.mcpEndpoints());
             if (schemaAutoDiscoveryStage != null) {
                 schemaAutoDiscoveryStage.invalidateCatalogCache();

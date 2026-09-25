@@ -35,7 +35,9 @@ public record WarpConfig(
         String backendGroups,
         String backendDescriptions,
         String backendGroupDescriptions,
-        String mcpEndpoints) {
+        String mcpEndpoints,
+        String backendStores,
+        String backendSetNames) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -70,7 +72,21 @@ public record WarpConfig(
                 System.getenv("WARP_BACKEND_GROUPS"),
                 System.getenv("WARP_BACKEND_DESCRIPTIONS"),
                 System.getenv("WARP_BACKEND_GROUP_DESCRIPTIONS"),
-                null);
+                null,
+                System.getenv("WARP_BACKEND_STORES"),
+                System.getenv("WARP_BACKEND_SET_NAMES"));
+    }
+
+    /** Copy with the backend-model fields replaced (null keeps nothing: pass the values you want). */
+    public WarpConfig withBackendModel(String backends, String backendGroups, String backendDescriptions,
+            String backendGroupDescriptions, String backendStores, String backendSetNames) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames);
     }
 
     public String toJson() {
@@ -107,6 +123,8 @@ public record WarpConfig(
         fields.put("backendDescriptions", backendDescriptions);
         fields.put("backendGroupDescriptions", backendGroupDescriptions);
         fields.put("mcpEndpoints", mcpEndpoints);
+        fields.put("backendStores", backendStores);
+        fields.put("backendSetNames", backendSetNames);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -155,7 +173,9 @@ public record WarpConfig(
                 fields.get("backendGroups"),
                 fields.get("backendDescriptions"),
                 fields.get("backendGroupDescriptions"),
-                fields.get("mcpEndpoints"));
+                fields.get("mcpEndpoints"),
+                fields.get("backendStores"),
+                fields.get("backendSetNames"));
     }
 
     private static String quote(String value) {

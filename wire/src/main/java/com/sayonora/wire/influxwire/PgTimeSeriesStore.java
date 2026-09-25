@@ -86,12 +86,37 @@ public final class PgTimeSeriesStore {
         this.backendRegistry = backendRegistry;
     }
 
-    private BackendTarget defaultTarget() {
-        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+    /** The backends hosting InfluxDB data: those enabling it in the frontend's backend set, else `default`. */
+    private List<String> hostNames() {
+        List<String> hosts = backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.INFLUXDB);
+        return hosts.isEmpty() ? List.of(BackendRegistry.DEFAULT_BACKEND_NAME) : hosts;
+    }
+
+    private BackendTarget targetNamed(String name) {
+        BackendTarget target = backendRegistry.resolveForRouting(name);
         if (target == null) {
-            throw new IllegalStateException("influxwire: no default backend configured");
+            throw new IllegalStateException("influxwire: backend \"" + name + "\" is not configured");
         }
         return target;
+    }
+
+    private BackendTarget defaultTarget() {
+        return targetNamed(hostNames().get(0));
+    }
+
+    private List<BackendTarget> hostTargets() {
+        List<BackendTarget> out = new ArrayList<>();
+        for (String n : hostNames()) {
+            out.add(targetNamed(n));
+        }
+        return out;
+    }
+
+    /** Shard key of a point: measurement + its full (sorted) tag set = one time series lives on one host. */
+    static String seriesKey(InfluxPoint p) {
+        StringBuilder sb = new StringBuilder(p.measurement());
+        new java.util.TreeMap<>(p.tags()).forEach((k, v) -> sb.append(',').append(k).append('=').append(v));
+        return sb.toString();
     }
 
     static String pgTableName(String measurement) {
@@ -185,7 +210,35 @@ public final class PgTimeSeriesStore {
         if (points.isEmpty()) {
             return;
         }
-        BackendTarget target = defaultTarget();
+        List<String> hosts = hostNames();
+        if (hosts.size() == 1) {
+            writeTo(targetNamed(hosts.get(0)), points);
+            return;
+        }
+        // Several hosts: every series (measurement + tag set) hashes to exactly one host, so a
+        // series is never split and writes of one series keep their order. A batch spanning hosts
+        // is applied host by host; if one host fails the exception says which points were lost.
+        com.sayonora.wire.core.ShardingStrategy strategy = com.sayonora.wire.core.ShardingStrategy.hash(hosts);
+        Map<String, List<InfluxPoint>> perHost = new LinkedHashMap<>();
+        for (InfluxPoint p : points) {
+            perHost.computeIfAbsent(strategy.resolve(seriesKey(p)), h -> new ArrayList<>()).add(p);
+        }
+        List<String> failures = new ArrayList<>();
+        for (Map.Entry<String, List<InfluxPoint>> e : perHost.entrySet()) {
+            try {
+                writeTo(targetNamed(e.getKey()), e.getValue());
+            } catch (SQLException | RuntimeException ex) {
+                failures.add(e.getKey() + " (" + e.getValue().size() + " point(s): " + ex.getMessage() + ")");
+            }
+        }
+        if (!failures.isEmpty()) {
+            throw new InfluxException("influxwire: partial write -- points destined for " + String.join("; ", failures)
+                    + " were NOT written; the remaining hosts' points were. Retry the request (writes are idempotent "
+                    + "per timestamp/series only if the client de-duplicates).");
+        }
+    }
+
+    private void writeTo(BackendTarget target, List<InfluxPoint> points) throws SQLException {
         // Group by measurement first -- each measurement is its own table/PreparedStatement/batch,
         // but a single /write body routinely carries points for more than one measurement.
         Map<String, List<InfluxPoint>> byMeasurement = new LinkedHashMap<>();
@@ -236,7 +289,17 @@ public final class PgTimeSeriesStore {
      * work over genuinely mixed-type data, not a bug to hide.
      */
     public QueryResult select(InfluxQlParser.SelectStatement stmt) throws SQLException {
-        BackendTarget target = defaultTarget();
+        List<BackendTarget> targets = hostTargets();
+        if (targets.size() == 1) {
+            return selectOn(targets.get(0), stmt, false);
+        }
+        return scatterSelect(targets, stmt);
+    }
+
+    /** One host's answer. {@code partial}: aggregated multi-host mode -- MEAN is returned as a
+     * (sum, count) column pair and no LIMIT is applied, so the caller can merge exactly. */
+    private QueryResult selectOn(BackendTarget target, InfluxQlParser.SelectStatement stmt, boolean partial)
+            throws SQLException {
         ensureMeasurement(target, stmt.measurement());
         String table = pgTableName(stmt.measurement());
 
@@ -270,6 +333,13 @@ public final class PgTimeSeriesStore {
                 String colAlias = (item.func() == null ? item.field() : item.func().name().toLowerCase(Locale.ROOT))
                         + "_" + item.field();
                 String fieldExpr = "(fields->>'" + item.field() + "')::double precision";
+                if (partial && (item.func() == null || item.func() == InfluxQlParser.AggFunc.MEAN)) {
+                    selectExprs.add("sum(" + fieldExpr + ") AS partial_sum_" + item.field());
+                    selectExprs.add("count(fields->'" + item.field() + "') AS partial_count_" + item.field());
+                    columns.add("partial_sum_" + item.field());
+                    columns.add("partial_count_" + item.field());
+                    continue;
+                }
                 String aggExpr = switch (item.func() == null ? InfluxQlParser.AggFunc.MEAN : item.func()) {
                     case MEAN -> "avg(" + fieldExpr + ")";
                     case SUM -> "sum(" + fieldExpr + ")";
@@ -313,7 +383,7 @@ public final class PgTimeSeriesStore {
             appendWhere(sql, params, stmt.where());
             sql.append(" ORDER BY time DESC");
         }
-        if (stmt.limit() != null) {
+        if (stmt.limit() != null && !(partial && aggregated)) {
             sql.append(" LIMIT ").append(stmt.limit().intValue());
         }
 
@@ -339,6 +409,128 @@ public final class PgTimeSeriesStore {
             }
         }
         return new QueryResult(columns, rows);
+    }
+
+    /**
+     * Multi-host read: every host answers the same InfluxQL and the answers are merged.
+     * <ul>
+     *   <li>Plain SELECT: each host returns its newest {@code LIMIT} points; merged newest-first,
+     *       re-limited (exact).</li>
+     *   <li>Aggregates ({@code count/sum/min/max/mean}, optionally {@code GROUP BY time(..), tag}):
+     *       each host returns partial aggregates per group ({@code mean} as sum and count); the
+     *       groups are combined exactly. LIMIT is applied after the merge.</li>
+     * </ul>
+     */
+    private QueryResult scatterSelect(List<BackendTarget> targets, InfluxQlParser.SelectStatement stmt)
+            throws SQLException {
+        boolean aggregated = stmt.groupBy() != null || stmt.selectList().stream().anyMatch(i -> i.func() != null);
+        List<QueryResult> parts = new ArrayList<>();
+        for (BackendTarget t : targets) {
+            parts.add(selectOn(t, stmt, aggregated));
+        }
+        if (!aggregated) {
+            List<List<Object>> rows = new ArrayList<>();
+            parts.forEach(r -> rows.addAll(r.rows()));
+            rows.sort((a, b) -> Instant.parse(String.valueOf(b.get(0))).compareTo(Instant.parse(String.valueOf(a.get(0)))));
+            List<List<Object>> limited = stmt.limit() != null && rows.size() > stmt.limit().intValue()
+                    ? new ArrayList<>(rows.subList(0, stmt.limit().intValue())) : rows;
+            return new QueryResult(parts.get(0).columns(), limited);
+        }
+
+        int groupCols = stmt.groupBy() == null ? 0 : 1 + stmt.groupBy().tagColumns().size();
+        // output columns: group columns, then one per select item (partial mean pair collapses to mean_<f>)
+        List<String> outColumns = new ArrayList<>(parts.get(0).columns().subList(0, groupCols));
+        List<InfluxQlParser.AggFunc> funcs = new ArrayList<>();
+        for (InfluxQlParser.SelectItem item : stmt.selectList()) {
+            InfluxQlParser.AggFunc f = item.func() == null ? InfluxQlParser.AggFunc.MEAN : item.func();
+            funcs.add(f);
+            outColumns.add((item.func() == null ? item.field() : item.func().name().toLowerCase(Locale.ROOT))
+                    + "_" + item.field());
+        }
+        Map<List<Object>, double[]> acc = new LinkedHashMap<>();   // per group: [sum|min|max, count] per item
+        Map<List<Object>, boolean[]> seen = new LinkedHashMap<>();
+        for (QueryResult part : parts) {
+            for (List<Object> row : part.rows()) {
+                List<Object> key = new ArrayList<>(row.subList(0, groupCols));
+                double[] a = acc.computeIfAbsent(key, k -> new double[funcs.size() * 2]);
+                boolean[] sn = seen.computeIfAbsent(key, k -> new boolean[funcs.size()]);
+                int col = groupCols;
+                for (int i = 0; i < funcs.size(); i++) {
+                    switch (funcs.get(i)) {
+                        case MEAN -> {
+                            Object sum = row.get(col++);
+                            Object cnt = row.get(col++);
+                            if (sum != null) {
+                                a[i * 2] += ((Number) sum).doubleValue();
+                                sn[i] = true;
+                            }
+                            a[i * 2 + 1] += cnt == null ? 0 : ((Number) cnt).doubleValue();
+                        }
+                        case COUNT -> {
+                            Object v = row.get(col++);
+                            a[i * 2] += v == null ? 0 : ((Number) v).doubleValue();
+                            sn[i] = true;
+                        }
+                        case SUM -> {
+                            Object v = row.get(col++);
+                            if (v != null) {
+                                a[i * 2] += ((Number) v).doubleValue();
+                                sn[i] = true;
+                            }
+                        }
+                        case MIN -> {
+                            Object v = row.get(col++);
+                            if (v != null) {
+                                double d = ((Number) v).doubleValue();
+                                a[i * 2] = sn[i] ? Math.min(a[i * 2], d) : d;
+                                sn[i] = true;
+                            }
+                        }
+                        case MAX -> {
+                            Object v = row.get(col++);
+                            if (v != null) {
+                                double d = ((Number) v).doubleValue();
+                                a[i * 2] = sn[i] ? Math.max(a[i * 2], d) : d;
+                                sn[i] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        List<List<Object>> rows = new ArrayList<>();
+        for (Map.Entry<List<Object>, double[]> e : acc.entrySet()) {
+            List<Object> out = new ArrayList<>(e.getKey());
+            boolean[] sn = seen.get(e.getKey());
+            for (int i = 0; i < funcs.size(); i++) {
+                double[] a = e.getValue();
+                out.add(switch (funcs.get(i)) {
+                    case COUNT -> (Object) (long) a[i * 2];
+                    case MEAN -> a[i * 2 + 1] == 0 ? null : (Object) (a[i * 2] / a[i * 2 + 1]);
+                    default -> sn[i] ? (Object) a[i * 2] : null;
+                });
+            }
+            rows.add(out);
+        }
+        if (groupCols > 0) {
+            rows.sort((x, y) -> {
+                for (int i = 0; i < groupCols; i++) {
+                    Object p = x.get(i);
+                    Object q = y.get(i);
+                    int c = p == null ? (q == null ? 0 : -1) : q == null ? 1
+                            : (i == 0 && stmt.groupBy() != null ? Instant.parse(String.valueOf(p)).compareTo(Instant.parse(String.valueOf(q)))
+                                    : String.valueOf(p).compareTo(String.valueOf(q)));
+                    if (c != 0) {
+                        return c;
+                    }
+                }
+                return 0;
+            });
+        }
+        if (stmt.limit() != null && rows.size() > stmt.limit().intValue()) {
+            rows = new ArrayList<>(rows.subList(0, stmt.limit().intValue()));
+        }
+        return new QueryResult(outColumns, rows);
     }
 
     private static Object resultValue(ResultSet rs, int col, String pgType) throws SQLException {
@@ -393,21 +585,24 @@ public final class PgTimeSeriesStore {
         }
     }
 
-    /** {@code SHOW MEASUREMENTS} -- every table this store owns on the default backend. */
+    /** {@code SHOW MEASUREMENTS} -- every measurement table on any host (distinct, sorted when several hosts). */
     public List<String> listMeasurements() throws SQLException {
-        List<String> names = new ArrayList<>();
-        try (Connection c = defaultTarget().open();
-                PreparedStatement ps = c.prepareStatement(
-                        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' "
-                                + "AND table_name LIKE ?")) {
-            ps.setString(1, TABLE_PREFIX + "%");
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    names.add(rs.getString(1).substring(TABLE_PREFIX.length()));
+        java.util.TreeSet<String> names = new java.util.TreeSet<>();
+        List<BackendTarget> targets = hostTargets();
+        for (BackendTarget t : targets) {
+            try (Connection c = t.open();
+                    PreparedStatement ps = c.prepareStatement(
+                            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' "
+                                    + "AND table_name LIKE ?")) {
+                ps.setString(1, TABLE_PREFIX + "%");
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        names.add(rs.getString(1).substring(TABLE_PREFIX.length()));
+                    }
                 }
             }
         }
-        return names;
+        return new ArrayList<>(names);
     }
 
     private static String toJson(Map<String, ?> map) {

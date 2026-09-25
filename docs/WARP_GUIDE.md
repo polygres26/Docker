@@ -287,7 +287,10 @@ sequenceDiagram
 
 `WARP_SHARD_BACKENDS` names a subset of the registered backends as a shard group;
 `RoutingBackendExecutor` fans a matching query out to all of them and merges results — useful
-for read-side aggregate queries across horizontally-partitioned Postgres backends.
+for read-side aggregate queries across horizontally-partitioned Postgres backends. The protocol
+frontends (DynamoDB, MongoDB, SQS, OpenSearch, InfluxDB) now shard across the backends of a backend
+set that enable them — see §4.7; `WARP_SHARD_BACKENDS` remains the fallback when no backend enables
+the store.
 
 ### 4.3 Cross-shard / cross-backend JOIN federation
 
@@ -631,6 +634,120 @@ hold a full copy if reachable, not that reads stay consistent during a partition
 
 ---
 
+### 4.7 Backend sets and enabled stores
+
+**Every backend belongs to a backend set, and a Postgres backend can host protocol stores.** This is
+the one place backends are added, edited and removed (Admin UI → *Backend sets*, or the admin API
+below).
+
+**One concept, one name.** Warp used to have two look-alikes: `WARP_BACKEND_GROUPS` (every backend in
+exactly one group; what an MCP scope `group:<name>` names) and `WARP_BACKEND_SETS` (named lists a
+backend may appear in several of, used inside router rules). The user-facing **backend set** is the
+first: a set has a name and an optional description, and every backend is in exactly one. A backend
+with no declared group lives in the implicit set `default`, so **an existing config needs no migration
+and behaves exactly as before** (`default` is the set holding the `default` backend). The older
+multi-membership `WARP_BACKEND_SETS` is unchanged, is now called *router aliases*, and is edited under
+"Advanced" on the Backend sets page.
+
+**Enabled stores.** A Postgres backend can be asked to *host* any of `influxdb`, `mongodb`, `sqs`,
+`neo4j`, `opensearch`, `dynamodb`. Enabling a store on a backend means:
+
+* Warp creates that protocol's schema **in that Postgres**, idempotently, before the change is
+  saved (fixed catalog/graph tables, plus a `warp_enabled_stores` marker table; per-collection tables
+  such as Mongo collections, Influx measurements, OpenSearch indexes, DynamoDB item tables and SQS queue
+  tables are created on first use on every host). If the schema cannot be created the request fails
+  and nothing changes.
+* The protocol frontend reads and writes there instead of the hard-wired `default` backend, and MCP
+  lists the store as a typed store of the backend (§8.5.2).
+* Only Postgres backends may enable stores; anything else is rejected with HTTP 400.
+* **Disabling never drops data.** Warp stops serving the store; the tables and rows stay in that
+  database. (There is deliberately no purge switch: drop the tables yourself if you want them gone.)
+
+**Which set does a frontend serve?** The set that holds the `default` backend, unless a per-frontend
+setting names another set:
+
+| Setting | Frontend |
+|---|---|
+| `WARP_DYNAMOWIRE_SET` | DynamoDB (`dynamodb`) |
+| `WARP_SQSWIRE_SET` | SQS (`sqs`) |
+| `WARP_MONGOWIRE_SET` | MongoDB (`mongodb`) |
+| `WARP_INFLUXWIRE_SET` | InfluxDB (`influxdb`) |
+| `WARP_OSWIRE_SET` | OpenSearch (`opensearch`) |
+| `WARP_BOLTWIRE_SET` | Neo4j (`neo4j`) |
+
+A store enabled on a backend in a set the frontend does not serve is reported as `servedFromThisSet:
+false` and does nothing. **A store enabled on no backend keeps its previous behavior** (the `default`
+backend, or the `WARP_SHARD_BACKENDS` group for DynamoDB/MongoDB/SQS/OpenSearch), which is why
+single-backend deployments are unchanged.
+
+#### Sharding across the backends of a set
+
+When several backends of the set enable the same store, the frontend **shards across them**, using the
+same hash machinery as `WARP_SHARD_BACKENDS` (`ShardingStrategy.hash` over the enabled backends in the
+order they were declared in `WARP_BACKENDS`; the mapping of a key is stable as long as that host list
+is unchanged). With one enabled backend all data lives there.
+
+| Store | Shard key | Point operations | Scatter-gather (merged) | Not supported on several hosts |
+|---|---|---|---|---|
+| DynamoDB | table + partition key | PutItem, GetItem, UpdateItem, DeleteItem, Query | Scan (exact global `(pk, sk)` order, so `Limit`/`ExclusiveStartKey` pagination is exact), item counts, ListTables (catalog on the first host) | `TransactWriteItems` whose items hash to different hosts is refused up front with a ValidationException (nothing written) |
+| MongoDB | collection + `_id` | insert, find/update/delete by `_id` | find, count, distinct, `updateOne`/`deleteOne` (exactly one document in total), `$group` with `$sum`/`$min`/`$max`/`$avg` (partials merged exactly, then `$sort`/`$limit`) | `aggregate` with `$sort`/`$limit` and no `$group` (a clear error) |
+| SQS | queue name | a queue **lives wholly on one host**, so send/receive/visibility/FIFO ordering are exactly the single-host behavior | ListQueues (catalog on the first host) | dead-letter redrive between queues on different hosts is a best-effort two-step move |
+| InfluxDB | measurement + full tag set (one series never splits) | writes | SELECT (newest-first merge, re-limited), `count/sum/min/max/mean` with `GROUP BY time(..), tag` (partials merged exactly, LIMIT after merge), SHOW MEASUREMENTS | a write batch spanning hosts is applied host by host; if one host fails the error names the points that were **not** written |
+| OpenSearch | index + `_id` | index/get/delete by `_id` | `_search` (bool/term/range/match, sort, from/size), aggregations (AVG merged from sum/count) | hybrid and k-NN vector search on an index stored on several hosts (a clear error) |
+| Neo4j | — | — | — | **not sharded** (below) |
+
+`BatchWriteItem` is not atomic (as in real DynamoDB): on several hosts a write that fails on its host is
+returned in `UnprocessedItems` for the client to retry instead of failing the whole call.
+
+**Neo4j: one backend per set.** The graph store (`warp_graph_nodes`/`warp_graph_edges`, Cypher translated
+to SQL) cannot answer traversals correctly when nodes and relationships are spread across several
+databases, so enabling Neo4j on a second backend of the same set is rejected with a validation error
+that says why. This is the one exception to "several hosts ⇒ sharding". A different set may host Neo4j
+on its own backend.
+
+#### Adding a backend does not rebalance
+
+Adding a host (or enabling a store on one more backend) changes the host list, so keys re-hash over the
+new list. **Warp does not move existing data.** The write/patch/delete response lists every affected store
+in `rebalanceRequired` (`store`, `before`, `after`, `message`), the UI shows it as a warning, and Warp
+logs it. Data written before the change stays where it was written and is no longer found for keys that now
+hash elsewhere until it is copied to the host they hash to. What to do: enable the store on the extra
+backend **before** the store has data; or copy the rows yourself (each store's tables have the same name
+and shape on every host: `dynamo_item_<table>`, `sqs_queue_<queue>`, `"<db>"."<collection>"`,
+`warp_influx_<measurement>`, `warp_search_<index>`), moving each key to the host `ShardingStrategy.hash`
+picks. Removing a host has the same effect. The catalogs (`_dynamo_tables`, `sqs_queues_catalog`) live on
+the **first enabled host in declaration order**; keep it first.
+
+#### Admin API
+
+All calls take the admin bearer token, return JSON, and persist as a new `warp_config` version that every
+Warp instance hot-reloads over `LISTEN/NOTIFY` (`backendStores` and `backendSetNames` sit next to
+`backends`/`backendGroups`; `WARP_BACKEND_STORES=pg2=mongodb,sqs|default=dynamodb` and
+`WARP_BACKEND_SET_NAMES=a,b` are the env spellings). The raw `PUT /api/config` route still works but
+runs the same store validation.
+
+| Call | Purpose |
+|---|---|
+| `GET /api/backend-sets[?health=true]` | Every set with its backends: `name`, `type`, `family`, masked `url`, `description`, `enabledStores`, `canHostStores`, `state`, `health` (live connectivity probe with `health=true`), plus per set `stores` (`hosts`, `sharded`, `servedFromThisSet`) and the store catalog |
+| `POST /api/backend-sets` | `{"name","description"}` → 201 |
+| `PATCH /api/backend-sets/{set}` | `{"description"}` |
+| `DELETE /api/backend-sets/{set}` | 409 if the set is not empty or holds the `default` backend / is the `default` set |
+| `POST /api/backend-sets/{set}/backends` | `{"name","url","user","password","description","enabledStores":[..]}` → 201 with `backend`, `rebalanceRequired`, `warnings`. A set is required: `POST /api/backends` (the legacy path) without `set` is HTTP 400, an unknown set is 404 |
+| `PATCH /api/backend-sets/{set}/backends/{name}` | any of `description`, `enabledStores`, `url`, `user`, `password` (blank/omitted password keeps the stored one) |
+| `DELETE /api/backend-sets/{set}/backends/{name}` | 409 for `default`; a hosted store's data stays in its database |
+| `POST /api/backend-sets/{set}/backends/{name}/test` | connectivity probe (`POST /api/backends/{name}/test` and `/api/backends/test` keep working) |
+| `GET /api/backend-stores` | the six stores with descriptions |
+| `GET /api/backends` | unchanged read endpoint, now also `backendSet` and `enabledStores` |
+
+Errors: 400 invalid request (no set, non-Postgres backend with stores, unknown store, Neo4j twice in
+one set, untrusted host, license cap), 404 unknown set/backend, 409 delete rules or duplicate name,
+502 the schema could not be created on that backend (nothing was saved). Passwords are never returned.
+
+**Limits.** The Developer license caps `WARP_BACKENDS` at 3 backends of any engine (`default` counts) and
+the API refuses to add a fourth; there is no workaround. When `WARP_BACKENDS` was unset, the first backend
+you add makes the implicit `default` an explicit entry (this drops its `WARP_STANDBY_*` failover settings,
+and the response says so).
+
 ## 5. Deploying on a laptop (fastest path)
 
 ```bash
@@ -891,6 +1008,20 @@ grammar is unchanged: `WARP_MCP_SCOPE` = `db:<backend>` / `group:<name>` / `all`
 the emulated `influx`; `kafka`/`cassandra`/`splunk` have no MCP data tools (they are federated SQL
 sources) but are listed and described.
 
+**Backend sets and enabled stores (§4.7).** The user-facing *backend set* is the group concept above
+(a backend with no group is in the implicit `default` set). A Postgres backend that *enables* a store
+(`influxdb`, `mongodb`, `sqs`, `neo4j`, `opensearch`, `dynamodb`) lists it as a typed store named
+`<backend>.<kind>` (`pg2.dynamodb`, `default.mongodb`, `default.influx`, `pg2.sqs`, `default.opensearch`,
+`default.neo4j`), one per hosting backend, with `hostedOn` (all hosts) and `sharded`. `list_backends` /
+`describe_backend` also show `enabledStores` and `backendSet` on the real backend. The tools behind
+`dynamodb`/`mongodb`/`influx` stores run the sharded frontends' own logic, so a call sees the whole
+store whichever host's entry it addresses (`query_influxql`, list/scan, find, count, writes); Influx's
+`query_sql` / `get_measurement_schema` run on the addressed host and see only that host's shard.
+`sqs`, `opensearch` and `neo4j` are listed and described (queues with their shard, indexes with document
+counts, node/relationship counts) but have no MCP data tools yet. This replaces reliance on the
+environment variable below for any store enabled through config; `WARP_MCP_EMULATED_STORES` still works
+as a fallback and only adds `default.<kind>` for stores not enabled through config.
+
 **Warp-emulated stores** (dynamowire / mongowire / influxwire, data in Postgres tables) appear as
 *logical backends of the default backend*: `default.dynamodb`, `default.mongodb`, `default.influx`
 (type `dynamodb`/`mongodb`/`influx`, `engine: warp-emulated`, `host: default`). They show up only when
@@ -1088,7 +1219,7 @@ sent anywhere else.
 | SQL Firewall | `warp_firewall_rules` CRUD (§3.3) |
 | ACL | `warp_config.aclRules`/PPv2 settings (§3.1) |
 | OAuth | OIDC issuer/audience/claim-mapping config (§3.4) |
-| Backends | `WARP_BACKENDS`/shard-group config, plus a connectivity-test API (probe a candidate `jdbcUrl` before saving it, or re-check an already-configured one) |
+| Backend sets | `/api/backend-sets` — the single place backends live (§4.7): sets and their backends (type, masked target, description, enabled-store tags, health), add/edit/test/delete a backend inside a set, "Enable stores" for Postgres backends (with sharding and Neo4j-once notes), create/delete sets; router aliases and the legacy shard group under "Advanced". `/backends` redirects here |
 | Queues | sqswire's queues — live depth (visible/in-flight), FIFO/DLQ attributes, resolved shard backend, delete action; polls every 5s |
 | Data Explorer | object browser + ad-hoc SQL console against any configured backend, bypassing the wire pipeline (firewall/ACL don't apply — gated the same way as every other admin route instead) |
 | Router rules | `RouterStage` schema/predicate/value-shard rules |

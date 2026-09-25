@@ -93,7 +93,8 @@ final class PostgresDocumentStore {
     }
 
     private List<String> currentShardGroup() {
-        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+        return backendRegistry == null ? List.of()
+                : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.MONGODB);
     }
 
     private void logShardGroupIfChanged() {
@@ -109,7 +110,7 @@ final class PostgresDocumentStore {
     }
 
     boolean isSharded() {
-        return !currentShardGroup().isEmpty();
+        return currentShardGroup().size() > 1;
     }
 
     /** Metrics-label-only: which backend a document with this _id would route to, no connection opened. */
@@ -375,7 +376,8 @@ final class PostgresDocumentStore {
             throws SQLException {
         ensureTable(db, collection);
         List<Document> results = new ArrayList<>();
-        for (Connection conn : allBackendConnections()) {
+        List<Connection> shardConns = allBackendConnections();
+        for (Connection conn : shardConns) {
             try (conn; PreparedStatement ps = conn.prepareStatement(query.sql())) {
                 bindParams(ps, query.jsonbParams());
                 try (ResultSet rs = ps.executeQuery()) {
@@ -386,6 +388,39 @@ final class PostgresDocumentStore {
             }
         }
         return results;
+    }
+
+    /**
+     * {@code aggregate} on a collection that may live on several backends: with one backend it is the
+     * plain query; with several, each backend runs the partial query and the answers are merged exactly
+     * ({@link MongoShardMerge}) -- or the pipeline is refused with a clear message if it cannot be.
+     */
+    List<Document> aggregate(String db, String collection, String table, org.bson.BsonArray pipeline)
+            throws SQLException {
+        if (!isSharded()) {
+            return aggregate(db, collection, MongoAggregationTranslator.translate(table, pipeline));
+        }
+        MongoAggregationTranslator.ShardedAggregate plan = MongoAggregationTranslator.translateForShards(table, pipeline);
+        ensureTable(db, collection);
+        List<List<Document>> perShard = new ArrayList<>();
+        for (Connection conn : allBackendConnections()) {
+            List<Document> rows = new ArrayList<>();
+            try (conn; PreparedStatement ps = conn.prepareStatement(plan.query().sql())) {
+                bindParams(ps, plan.query().jsonbParams());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        rows.add(BsonJson.fromJson(rs.getString(1)));
+                    }
+                }
+            }
+            perShard.add(rows);
+        }
+        if (plan.merge() == null) {
+            List<Document> all = new ArrayList<>();
+            perShard.forEach(all::addAll);
+            return all;
+        }
+        return MongoShardMerge.merge(plan.merge(), perShard);
     }
 
     List<Document> find(String db, String collection, BsonDocument filter, MongoQueryTranslator.Where where, int limit) throws SQLException {
@@ -418,9 +453,15 @@ final class PostgresDocumentStore {
         List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
         int totalCount = 0;
         List<String> allIds = new ArrayList<>();
-        String selectSql = "SELECT id, doc FROM " + qualifiedTable(db, collection) + where.sql()
-                + (limit > 0 ? " LIMIT " + limit : "");
         for (Connection conn : targets) {
+            // updateOne (limit 1) across several shards must touch ONE document in total, not one per shard
+            int remaining = limit > 0 ? limit - totalCount : 0;
+            if (limit > 0 && remaining <= 0) {
+                conn.close();
+                continue;
+            }
+            String selectSql = "SELECT id, doc FROM " + qualifiedTable(db, collection) + where.sql()
+                    + (limit > 0 ? " LIMIT " + remaining : "");
             try (conn) {
                 List<String> ids = new ArrayList<>();
                 List<String> newDocs = new ArrayList<>();
@@ -459,9 +500,14 @@ final class PostgresDocumentStore {
         List<Connection> targets = idJson != null ? List.of(shardConnectionFor(idJson)) : allBackendConnections();
         int totalCount = 0;
         List<String> allIds = new ArrayList<>();
-        String selectSql = "SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
-                + (limit > 0 ? " LIMIT " + limit : "");
         for (Connection conn : targets) {
+            int remaining = limit > 0 ? limit - totalCount : 0;
+            if (limit > 0 && remaining <= 0) {
+                conn.close();
+                continue;
+            }
+            String selectSql = "SELECT id FROM " + qualifiedTable(db, collection) + where.sql()
+                    + (limit > 0 ? " LIMIT " + remaining : "");
             try (conn) {
                 List<String> ids = new ArrayList<>();
                 try (PreparedStatement ps = conn.prepareStatement(selectSql)) {

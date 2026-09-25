@@ -11,7 +11,8 @@ import time
 import uuid
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-JAR_PATH = os.path.join(REPO_ROOT, "target", "sayonora-wire.jar")
+# WARP_TEST_JAR lets a test run use a jar built elsewhere (e.g. while another Warp still runs target/).
+JAR_PATH = os.environ.get("WARP_TEST_JAR") or os.path.join(REPO_ROOT, "target", "sayonora-wire.jar")
 
 ADD_OPENS = [
     "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
@@ -55,6 +56,19 @@ def docker_run_on_free_port(name, port_args_builder, attempts=5):
         last = result
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
     raise subprocess.CalledProcessError(last.returncode, "docker run", last.stdout, last.stderr)
+
+
+ALL_LISTEN_PORT_VARS = [
+    "WARP_A2A_PORT", "WARP_BOLTWIRE_PORT", "WARP_DYNAMOWIRE_PORT", "WARP_INFLUXWIRE_PORT", "WARP_MCP_PORT",
+    "WARP_MONGOWIRE_PORT", "WARP_OSWIRE_PORT", "WARP_S3WIRE_PORT", "WARP_SQSWIRE_PORT", "WARP_PGWIRE_PORT",
+    "WARP_MYWIRE_PORT", "WARP_ORAWIRE_PORT", "WARP_MSSQLWIRE_PORT"]
+
+
+def isolated_ports(exclude=None):
+    """A free port for every Warp listener except `exclude` (the frontend WarpProcess already assigns),
+    so two Warp processes -- or one alongside a dev Warp on the default ports -- never collide. Pass
+    the result as (part of) `extra_env`."""
+    return {name: str(free_port()) for name in ALL_LISTEN_PORT_VARS if name != exclude}
 
 
 class RealPostgres:

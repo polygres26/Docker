@@ -333,29 +333,49 @@ final class OperationHandlers {
         return resp;
     }
 
+    /**
+     * Not atomic (same as real DynamoDB): every write is applied on its own shard. When the store is
+     * spread over several backends a write that fails on its shard (backend down, ...) is reported
+     * back in {@code UnprocessedItems} -- the client retries just those -- instead of aborting the
+     * call and leaving the caller unable to tell which writes already landed. Single-backend
+     * behaviour is unchanged (a failure fails the call).
+     */
     private JsonObject batchWriteItem(JsonObject req) {
         JsonObject requestItems = req.getAsJsonObject("RequestItems");
+        JsonObject unprocessed = new JsonObject();
         for (var e : requestItems.entrySet()) {
             TableSchema schema = store.describeTable(e.getKey());
             for (JsonElement reqEl : e.getValue().getAsJsonArray()) {
                 JsonObject writeReq = reqEl.getAsJsonObject();
-                if (writeReq.has("PutRequest")) {
-                    Map<String, AttributeValue> item = PgItemStore.jsonToItem(writeReq.getAsJsonObject("PutRequest").getAsJsonObject("Item"));
-                    store.putItem(schema, item, null, new ExpressionContext(), false);
-                    if (cache != null) {
-                        cache.invalidate(cacheKeyFor(schema, item));
+                try {
+                    if (writeReq.has("PutRequest")) {
+                        Map<String, AttributeValue> item = PgItemStore.jsonToItem(writeReq.getAsJsonObject("PutRequest").getAsJsonObject("Item"));
+                        store.putItem(schema, item, null, new ExpressionContext(), false);
+                        if (cache != null) {
+                            cache.invalidate(cacheKeyFor(schema, item));
+                        }
+                    } else if (writeReq.has("DeleteRequest")) {
+                        Map<String, AttributeValue> key = PgItemStore.jsonToItem(writeReq.getAsJsonObject("DeleteRequest").getAsJsonObject("Key"));
+                        store.deleteItem(schema, key, null, new ExpressionContext(), false);
+                        if (cache != null) {
+                            cache.invalidate(cacheKeyFor(schema, key));
+                        }
                     }
-                } else if (writeReq.has("DeleteRequest")) {
-                    Map<String, AttributeValue> key = PgItemStore.jsonToItem(writeReq.getAsJsonObject("DeleteRequest").getAsJsonObject("Key"));
-                    store.deleteItem(schema, key, null, new ExpressionContext(), false);
-                    if (cache != null) {
-                        cache.invalidate(cacheKeyFor(schema, key));
+                } catch (DynamoException de) {
+                    throw de;
+                } catch (RuntimeException re) {
+                    if (!store.isSharded()) {
+                        throw re;
                     }
+                    if (!unprocessed.has(e.getKey())) {
+                        unprocessed.add(e.getKey(), new JsonArray());
+                    }
+                    unprocessed.getAsJsonArray(e.getKey()).add(writeReq);
                 }
             }
         }
         JsonObject resp = new JsonObject();
-        resp.add("UnprocessedItems", new JsonObject());
+        resp.add("UnprocessedItems", unprocessed);
         return resp;
     }
 
@@ -387,6 +407,7 @@ final class OperationHandlers {
         // atomically together too, so using the first item's own key is consistent with that,
         // not a shortcut specific to this implementation.
         String routingPartitionKey = firstTransactPartitionKey(transactItems);
+        rejectCrossShardTransaction(transactItems);
 
         store.runInTransaction(routingPartitionKey, conn -> {
             for (JsonElement e : transactItems) {
@@ -408,6 +429,39 @@ final class OperationHandlers {
             }
         }
         return new JsonObject();
+    }
+
+    /**
+     * A transaction is one database transaction, so it can only commit atomically on one shard. On a
+     * store spread over several backends a transaction whose items hash to different shards is
+     * refused up front (nothing is written) instead of silently writing everything to the first
+     * item's shard, where the other items would then never be found.
+     */
+    private void rejectCrossShardTransaction(JsonArray transactItems) {
+        if (!store.isSharded()) {
+            return;
+        }
+        java.util.Set<String> shards = new java.util.LinkedHashSet<>();
+        for (JsonElement e : transactItems) {
+            JsonObject op = e.getAsJsonObject();
+            for (String opName : List.of("Put", "Delete", "Update", "ConditionCheck")) {
+                if (!op.has(opName)) {
+                    continue;
+                }
+                JsonObject body = op.getAsJsonObject(opName);
+                TableSchema schema = store.describeTable(body.get("TableName").getAsString());
+                JsonObject keySource = "Put".equals(opName) ? body.getAsJsonObject("Item") : body.getAsJsonObject("Key");
+                AttributeValue pk = PgItemStore.jsonToItem(keySource).get(schema.partitionKeyName());
+                if (pk != null) {
+                    shards.add(store.resolveBackendFor(pk.scalar));
+                }
+            }
+        }
+        if (shards.size() > 1) {
+            throw new DynamoException("ValidationException", "TransactWriteItems spans " + shards.size()
+                    + " storage shards (" + shards + ") -- Warp can only commit a transaction atomically within one "
+                    + "shard. Use partition keys that live on the same shard, or BatchWriteItem for non-atomic writes.");
+        }
     }
 
     private String firstTransactPartitionKey(JsonArray transactItems) {

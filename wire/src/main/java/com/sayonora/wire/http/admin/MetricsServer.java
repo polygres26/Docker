@@ -543,6 +543,36 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && backendRegistry != null && options != null
+                        && BackendSetsApi.handles(target)) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    BackendSetsApi.handle(target, request, response, configStore, backendRegistry, options);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (configStore != null && backendRegistry != null && options != null
+                        && "/api/backends".equals(target) && "POST".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    BackendSetsApi.addViaLegacyPath(request, response, configStore, backendRegistry, options);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (backendRegistry != null && target.startsWith("/api/backends")) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -1350,10 +1380,15 @@ public final class MetricsServer {
                         field(body, "backendGroups", current.backendGroups()),
                         field(body, "backendDescriptions", current.backendDescriptions()),
                         field(body, "backendGroupDescriptions", current.backendGroupDescriptions()),
-                        field(body, "mcpEndpoints", current.mcpEndpoints()));
+                        field(body, "mcpEndpoints", current.mcpEndpoints()),
+                        field(body, "backendStores", current.backendStores()),
+                        field(body, "backendSetNames", current.backendSetNames()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.wire.acl.ClientAcl.parse(updated.aclRules());
+                // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
+                // the backend-set admin API, so the raw config route cannot bypass them
+                com.sayonora.wire.core.BackendSetModel.from(updated, null).validateStores();
                 // backendSets' member names are validated against the backends spec this same
                 // PUT is about to apply (not the currently-live registry) -- a request that
                 // changes both fields together (a new backend plus a set naming it) must not be
@@ -1443,7 +1478,8 @@ public final class MetricsServer {
                         current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
                         current.oauthRolesClaim(), current.awsIamCredentials(),
                         newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
-                        current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints());
+                        current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
+                        current.backendStores(), current.backendSetNames());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -1625,7 +1661,8 @@ public final class MetricsServer {
                 current.oauthRolesClaim(), current.awsIamCredentials(),
                 current.llmProvider(), current.llmApiKey(), current.llmBaseUrl(), current.llmModel(),
                 current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
-                all.isEmpty() ? null : com.sayonora.wire.mcp.McpEndpoints.serialize(all));
+                all.isEmpty() ? null : com.sayonora.wire.mcp.McpEndpoints.serialize(all),
+                current.backendStores(), current.backendSetNames());
         configStore.write(updated);
     }
 
@@ -1699,6 +1736,9 @@ public final class MetricsServer {
                             .append(",\"description\":").append(jsonString(backendRegistry.descriptionOf(t.name())))
                             .append(",\"group\":").append(jsonString(groupOrNull(backendRegistry, t.name())))
                             .append(",\"sets\":").append(jsonStringArray(backendRegistry.backendSetsContaining(t.name())))
+                            .append(",\"backendSet\":").append(jsonString(backendRegistry.setOf(t.name())))
+                            .append(",\"enabledStores\":").append(jsonStringArray(backendRegistry.enabledStores(t.name())
+                                    .stream().map(com.sayonora.wire.core.StoreType::id).toList()))
                             .append('}');
                 }
                 json.append(']');

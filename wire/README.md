@@ -82,7 +82,9 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `warp_config`, `warp_firewall_rules`, and control-plane state |
 | `WARP_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
 | `WARP_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
-| `WARP_BACKENDS` / `WARP_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups |
+| `WARP_BACKENDS` / `WARP_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups. Backends are managed inside **backend sets** (admin UI *Backend sets*, `/api/backend-sets`); `WARP_BACKEND_GROUPS` are the sets (a backend with no group is in the implicit `default` set) |
+| `WARP_BACKEND_STORES` / `WARP_BACKEND_SET_NAMES` | Env spelling of the enabled stores per Postgres backend (`pg2=mongodb,sqs\|default=dynamodb`; stores: `influxdb`, `mongodb`, `sqs`, `neo4j`, `opensearch`, `dynamodb`) and the declared set names (`a,b`); persisted in `warp_config` (`backendStores`, `backendSetNames`), hot-reloaded |
+| `WARP_DYNAMOWIRE_SET` / `WARP_SQSWIRE_SET` / `WARP_MONGOWIRE_SET` / `WARP_INFLUXWIRE_SET` / `WARP_OSWIRE_SET` / `WARP_BOLTWIRE_SET` | The backend set a protocol frontend serves (default: the set holding the `default` backend). A store enabled on backend(s) of that set is hosted there, sharded by key hash when several backends enable it (Neo4j: one backend per set). See `docs/WARP_GUIDE.md` §4.7 |
 | `WARP_ROUTER_SCHEMA_RULES` | Routes a schema-qualified table to a named backend — 2+ rules also enables cross-backend `JOIN` federation |
 | `WARP_FEDERATION_PLAN_HISTORY` | Capacity of the federated-query SQL plan cache/history (0/unset disables) |
 | `WARP_TRUSTED_BACKEND_HOSTS` | Allowlist gating what hosts `WARP_BACKENDS` can register — env-var only, never DB-writable |
@@ -94,7 +96,7 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_S3WIRE_CREDENTIALS` / `WARP_S3WIRE_PORT` | s3wire client SigV4 pairs `key=secret;key2=secret2` (required; falls back to `WARP_AWS_IAM_CREDENTIALS`) and port (default 18020) |
 | `WARP_MCP_TOOLS` | Postgres functions/procedures to expose as individually-named MCP tools |
 | `WARP_BACKEND_DESCRIPTIONS` / `WARP_BACKEND_GROUP_DESCRIPTIONS` | JSON objects `{"<backend>":"text"}` / `{"<group>":"text"}` describing backends and backend groups/sets; persisted in `warp_config` (`backendDescriptions`, `backendGroupDescriptions`, editable with `PUT /api/config`), hot-reloaded; shown by MCP `list_backends`/`describe_backend`, `inspect_schema` and `GET /api/backends` |
-| `WARP_MCP_EMULATED_STORES` | Opt the Warp-emulated stores into MCP as logical backends of `default` (`default.dynamodb`, `default.mongodb`, `default.influx`): comma list or `all` (default none) |
+| `WARP_MCP_EMULATED_STORES` | Fallback: opt the Warp-emulated stores into MCP as logical backends of `default` (`default.dynamodb`, `default.mongodb`, `default.influx`): comma list or `all` (default none). Stores enabled on a backend through config (§4.7) are listed automatically as `<backend>.<kind>` and need no env |
 | `WARP_MCP_READ_ONLY` | Hide and refuse every non-relational MCP write tool (`put_item`, `insert-many`, `put_object`, `write_line_protocol`, ...) |
 | `WARP_MCP_REQUIRE_ENDPOINT` | `true` = the MCP listener serves only user-created endpoints (`/e/<id>` + bearer token) |
 | `WARP_MCP_KIND` | **Legacy override/filter only** (tools are now associated automatically from the backend types in scope): restrict an endpoint to families (`relational`, `dynamodb`, `influx`, `mongodb`, `s3`, ...; comma list); several families → `<kind>_`-prefixed tools, `/kinds/<kind>` paths |

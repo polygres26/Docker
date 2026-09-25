@@ -171,6 +171,12 @@ public final class WarpMcpServer {
         for (BackendKind describeOnly : new BackendKind[] {BackendKind.KAFKA, BackendKind.CASSANDRA, BackendKind.SPLUNK}) {
             this.providers.put(describeOnly, new ConnectorDescribeProvider(describeOnly));
         }
+        this.providers.put(BackendKind.SQS, new StoreDescribeProvider(BackendKind.SQS,
+                com.sayonora.wire.core.StoreType.SQS, backendRegistry));
+        this.providers.put(BackendKind.OPENSEARCH, new StoreDescribeProvider(BackendKind.OPENSEARCH,
+                com.sayonora.wire.core.StoreType.OPENSEARCH, backendRegistry));
+        this.providers.put(BackendKind.NEO4J, new StoreDescribeProvider(BackendKind.NEO4J,
+                com.sayonora.wire.core.StoreType.NEO4J, backendRegistry));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -729,11 +735,7 @@ public final class WarpMcpServer {
 
             @Override
             public AdHocQueryRunner.Result sql(String sql) {
-                try (Connection c = openBackendConnection()) {
-                    return runSql(c, sql, accessContext);
-                } catch (SQLException e) {
-                    return AdHocQueryRunner.Result.ofError(e);
-                }
+                return runProviderSql(target, sql, accessContext);
             }
         };
         BackendToolProvider.Outcome outcome;
@@ -804,12 +806,26 @@ public final class WarpMcpServer {
         o.addProperty("type", b.type());
         o.addProperty("family", b.kind().id());
         o.addProperty("engine", b.emulated() ? "warp-emulated" : "real");
+        String hostName = b.emulated() ? b.host() : b.name();
         if (b.emulated()) {
             o.addProperty("host", b.host());
+            com.sayonora.wire.core.StoreType st = storeTypeOf(b.kind());
+            if (st != null) {
+                List<String> hosts = backendRegistry.storeHosts(st);
+                JsonArray hostArr = new JsonArray();
+                hosts.forEach(hostArr::add);
+                o.add("hostedOn", hostArr);
+                o.addProperty("sharded", hosts.size() > 1);
+            }
+        }
+        o.addProperty("backendSet", backendRegistry.setOf(hostName));
+        JsonArray enabled = new JsonArray();
+        if (!b.emulated()) {
+            backendRegistry.enabledStores(b.name()).forEach(t -> enabled.add(t.id()));
+            o.add("enabledStores", enabled);
         }
         String desc = backendRegistry.descriptionOf(b.name());
         o.addProperty("description", desc);
-        String hostName = b.emulated() ? b.host() : b.name();
         BackendRegistry.BackendGroupInfo gi = backendRegistry.groupInfoFor(hostName);
         JsonArray groups = new JsonArray();
         if (gi != null && !BackendRegistry.UNGROUPED_GROUP_NAME.equals(gi.name())) {
@@ -824,6 +840,42 @@ public final class WarpMcpServer {
         applicableTools(b).forEach(tools::add);
         o.add("tools", tools);
         return o;
+    }
+
+    private static com.sayonora.wire.core.StoreType storeTypeOf(BackendKind k) {
+        return switch (k) {
+            case INFLUX -> com.sayonora.wire.core.StoreType.INFLUXDB;
+            case MONGODB -> com.sayonora.wire.core.StoreType.MONGODB;
+            case SQS -> com.sayonora.wire.core.StoreType.SQS;
+            case NEO4J -> com.sayonora.wire.core.StoreType.NEO4J;
+            case OPENSEARCH -> com.sayonora.wire.core.StoreType.OPENSEARCH;
+            case DYNAMODB -> com.sayonora.wire.core.StoreType.DYNAMODB;
+            default -> null;
+        };
+    }
+
+    /** SQL for a provider tool: on a store hosted by a non-default backend it must run ON that
+     * backend (pinned + scoped to it, like DATABASE scope), otherwise the gateway's default one. */
+    private AdHocQueryRunner.Result runProviderSql(McpBackend b, String sql,
+            com.sayonora.wire.core.AccessContext accessContext) {
+        if (b.emulated() && b.host() != null && !BackendRegistry.DEFAULT_BACKEND_NAME.equals(b.host())
+                && options.mcpBackendMode() == McpBackendMode.POSTGRES
+                && currentScope().type() != McpScope.Type.DATABASE) {
+            com.sayonora.wire.core.BackendTarget t = backendRegistry.get(b.host());
+            if (t != null) {
+                try (Connection c = t.open()) {
+                    return AdHocQueryRunner.run(c, sharedStages, backendRegistry, "default", sql, List.of(),
+                            accessContext, null, t.name(), SourceDialect.POSTGRES, BackendScope.single(t.name()));
+                } catch (SQLException e) {
+                    return AdHocQueryRunner.Result.ofError(e);
+                }
+            }
+        }
+        try (Connection c = openBackendConnection()) {
+            return runSql(c, sql, accessContext);
+        } catch (SQLException e) {
+            return AdHocQueryRunner.Result.ofError(e);
+        }
     }
 
     private BackendToolProvider.Outcome listBackends() {
@@ -919,11 +971,7 @@ public final class WarpMcpServer {
 
                     @Override
                     public AdHocQueryRunner.Result sql(String sql) {
-                        try (Connection c = openBackendConnection()) {
-                            return runSql(c, sql, accessContext);
-                        } catch (SQLException e) {
-                            return AdHocQueryRunner.Result.ofError(e);
-                        }
+                        return runProviderSql(target, sql, accessContext);
                     }
                 });
             }

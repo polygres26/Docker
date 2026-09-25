@@ -11,7 +11,6 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Property-graph storage for boltwire, backed by plain Postgres -- same "real SQL underneath, no
@@ -40,14 +39,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class PgGraphStore {
 
     private final BackendRegistry backendRegistry;
-    private final AtomicBoolean schemaEnsured = new AtomicBoolean(false);
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> schemaEnsured =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     PgGraphStore(BackendRegistry backendRegistry) {
         this.backendRegistry = backendRegistry;
     }
 
     BackendTarget defaultTarget() {
-        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        // Neo4j enabled on a backend of the frontend's set: the graph lives there (one host only --
+        // the admin API rejects a second; graph traversals are not shardable). Otherwise `default`.
+        String home = backendRegistry.storeHome(com.sayonora.wire.core.StoreType.NEO4J);
+        BackendTarget target = backendRegistry.resolveForRouting(
+                home != null ? home : BackendRegistry.DEFAULT_BACKEND_NAME);
         if (target == null) {
             throw new IllegalStateException("boltwire: no default backend configured");
         }
@@ -65,7 +69,7 @@ final class PgGraphStore {
     }
 
     private void ensureSchema(BackendTarget target) throws SQLException {
-        if (!schemaEnsured.compareAndSet(false, true)) {
+        if (schemaEnsured.putIfAbsent(target.jdbcUrl(), Boolean.TRUE) != null) {
             return;
         }
         // Real DDL, loaded from ddl/postgres/boltwire_graph_schema.sql -- see that file's own

@@ -141,7 +141,8 @@ public final class PgQueueStore {
     }
 
     private List<String> currentShardGroup() {
-        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+        return backendRegistry == null ? List.of()
+                : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.SQS);
     }
 
     private void logShardGroupIfChanged() {
@@ -194,7 +195,10 @@ public final class PgQueueStore {
             if (legacyDs != null) {
                 return legacyDs.getConnection();
             }
-            BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+            // SQS enabled on backend(s) of the frontend's set: the queue catalog lives on the first host
+            String home = backendRegistry.storeHome(com.sayonora.wire.core.StoreType.SQS);
+            BackendTarget target = backendRegistry.resolveForRouting(
+                    home != null ? home : BackendRegistry.DEFAULT_BACKEND_NAME);
             if (target == null) {
                 List<String> group = currentShardGroup();
                 if (!group.isEmpty()) {

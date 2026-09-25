@@ -131,7 +131,10 @@ public final class PostgresSearchStore {
 
     private BackendTarget defaultTarget() {
         // resolveForRouting, not get -- see BackendRegistry.resolveForRouting's javadoc.
-        BackendTarget target = backendRegistry.resolveForRouting(BackendRegistry.DEFAULT_BACKEND_NAME);
+        // OpenSearch enabled on backend(s) of the frontend's set: the single host (or first host)
+        List<String> group = shardGroup();
+        BackendTarget target = backendRegistry.resolveForRouting(
+                group.isEmpty() ? BackendRegistry.DEFAULT_BACKEND_NAME : group.get(0));
         if (target == null) {
             throw new IllegalStateException("oswire: no default backend configured");
         }
@@ -139,7 +142,8 @@ public final class PostgresSearchStore {
     }
 
     private List<String> shardGroup() {
-        return backendRegistry == null ? List.of() : backendRegistry.shardGroup();
+        return backendRegistry == null ? List.of()
+                : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.OPENSEARCH);
     }
 
     /** Every shard target, resolved fresh from the registry -- live-reloadable, matching
@@ -250,7 +254,7 @@ public final class PostgresSearchStore {
     public SearchResult search(SearchRequest request) throws SQLException {
         ensureCollection(request.collection());
         String table = pgTableName(request.collection());
-        boolean sharded = !shardGroup().isEmpty();
+        boolean sharded = shardGroup().size() > 1;
 
         if (request.isHybrid()) {
             if (sharded) {

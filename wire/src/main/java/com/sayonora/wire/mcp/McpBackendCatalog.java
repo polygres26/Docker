@@ -3,9 +3,11 @@ package com.sayonora.wire.mcp;
 import com.sayonora.wire.core.BackendCatalogDiscovery;
 import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.core.BackendTarget;
+import com.sayonora.wire.core.StoreType;
 import com.sayonora.wire.server.ServerOptions.McpBackendMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
@@ -78,9 +80,30 @@ final class McpBackendCatalog {
                 defaultInScope = true;
             }
         }
+        // Stores ENABLED through backend-set config: each hosting Postgres backend lists them as typed
+        // stores named <backend>.<kind>. The tools behind them are the sharded frontends' own logic,
+        // so a call sees the whole store whichever host's entry it addresses.
+        java.util.Set<String> configured = new java.util.HashSet<>();
+        if (mode == McpBackendMode.POSTGRES) {
+            Map<String, List<StoreType>> enabled = registry.allEnabledStores();
+            for (BackendTarget t : targets) {
+                for (StoreType st : enabled.getOrDefault(t.name(), List.of())) {
+                    BackendKind k = kindOf(st);
+                    if (!kinds.contains(k) || !registry.storeHosts(st).contains(t.name()) || !storeRunning(k)) {
+                        continue;
+                    }
+                    String name = t.name() + McpBackend.EMULATED_SEPARATOR + k.id();
+                    configured.add(name);
+                    out.add(new McpBackend(name, k.id(), k, true, t.name(), t));
+                }
+            }
+        }
         if (defaultInScope) {
             String host = BackendRegistry.DEFAULT_BACKEND_NAME;
             for (BackendKind k : new BackendKind[] {BackendKind.DYNAMODB, BackendKind.MONGODB, BackendKind.INFLUX}) {
+                if (configured.contains(host + McpBackend.EMULATED_SEPARATOR + k.id())) {
+                    continue; // already listed because it is enabled through config; env is only the fallback
+                }
                 if (emulatedKinds.contains(k) && kinds.contains(k) && storeRunning(k)) {
                     out.add(new McpBackend(host + McpBackend.EMULATED_SEPARATOR + k.id(), k.id(), k, true, host,
                             registry.get(host)));
@@ -95,7 +118,19 @@ final class McpBackendCatalog {
             case DYNAMODB -> stores.dynamo() != null;
             case MONGODB -> stores.mongo() != null;
             case INFLUX -> stores.influx() != null;
+            case SQS, OPENSEARCH, NEO4J -> true; // described straight from the hosting Postgres
             default -> false;
+        };
+    }
+
+    static BackendKind kindOf(StoreType st) {
+        return switch (st) {
+            case INFLUXDB -> BackendKind.INFLUX;
+            case MONGODB -> BackendKind.MONGODB;
+            case SQS -> BackendKind.SQS;
+            case NEO4J -> BackendKind.NEO4J;
+            case OPENSEARCH -> BackendKind.OPENSEARCH;
+            case DYNAMODB -> BackendKind.DYNAMODB;
         };
     }
 }

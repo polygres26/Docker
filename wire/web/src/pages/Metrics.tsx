@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { type WireConfig, type WireMetricsSummary, getWireConfig, getWireMetrics, parseBackendSetNames } from '../api/client'
+import { type WireMetricsSummary, getWireMetrics, listBackendSets } from '../api/client'
 import styles from './Metrics.module.css'
 import { DataTable, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, type KpiItem } from '../components/ui'
 
@@ -46,7 +46,7 @@ export default function Metrics() {
     const id = setInterval(load, 5000)
     // Backend sets change rarely (an admin edit, not live traffic) -- fetched once, not on the
     // same 5s poll as the metrics themselves.
-    getWireConfig().then((c: WireConfig) => setBackendSetNames(parseBackendSetNames(c.backendSets))).catch(() => {})
+    listBackendSets().then((r) => setBackendSetNames(r.sets.map((x) => x.name))).catch(() => {})
     return () => clearInterval(id)
   }, [])
 
@@ -164,8 +164,8 @@ export default function Metrics() {
 
       <Section flush title="Traffic by backend" meta={
         <>
-          <Link to="/backends">Backends</Link>
-          {backendSetNames.length > 0 && <> · <Link to="/backend-sets">Backend sets</Link> ({backendSetNames.join(', ')})</>}
+          <Link to="/backend-sets">Backend sets</Link>
+          {backendSetNames.length > 0 && <> ({backendSetNames.join(', ')})</>}
         </>
       }>
         {metrics.byBackend.length === 0 ? (

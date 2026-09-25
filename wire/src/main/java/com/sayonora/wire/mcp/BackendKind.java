@@ -28,7 +28,11 @@ public enum BackendKind {
     S3("s3", "s3_"),
     KAFKA("kafka", "kafka_"),
     CASSANDRA("cassandra", "cassandra_"),
-    SPLUNK("splunk", "splunk_");
+    SPLUNK("splunk", "splunk_"),
+    /** Warp-hosted stores with no MCP data tools of their own yet: listed and described only. */
+    SQS("sqs", "sqs_"),
+    OPENSEARCH("opensearch", "opensearch_"),
+    NEO4J("neo4j", "neo4j_");
 
     private final String id;
     private final String prefix;
@@ -58,6 +62,9 @@ public enum BackendKind {
             case "kafka" -> KAFKA;
             case "cassandra" -> CASSANDRA;
             case "splunk" -> SPLUNK;
+            case "sqs" -> SQS;
+            case "opensearch", "os" -> OPENSEARCH;
+            case "neo4j" -> NEO4J;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

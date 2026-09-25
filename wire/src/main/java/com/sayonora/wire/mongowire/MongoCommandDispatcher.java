@@ -358,7 +358,7 @@ final class MongoCommandDispatcher {
         String table = PostgresDocumentStore.qualifiedTable(db, collection);
 
         long readStart = System.nanoTime();
-        List<Document> docs = store.aggregate(db, collection, MongoAggregationTranslator.translate(table, pipeline));
+        List<Document> docs = store.aggregate(db, collection, table, pipeline);
         recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
 
         BsonArray firstBatch = new BsonArray();
