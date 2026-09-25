@@ -1,12 +1,12 @@
 package com.sayonora.wire.s3wire;
 
 import com.sayonora.wire.acl.ConnectionGate;
+import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.core.SqlMetricsCollector;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -19,70 +19,40 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
-import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
 import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.S3ClientBuilder;
-import software.amazon.awssdk.services.s3.model.CommonPrefix;
-import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
-import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
-import software.amazon.awssdk.services.s3.model.CompletedPart;
-import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
-import software.amazon.awssdk.services.s3.model.CopyObjectResponse;
-import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
-import software.amazon.awssdk.services.s3.model.Delete;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
-import software.amazon.awssdk.services.s3.model.MetadataDirective;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.model.S3Object;
-import software.amazon.awssdk.services.s3.model.UploadPartRequest;
-import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
 /**
  * s3wire -- Amazon S3 REST API frontend. A stock S3 client (boto3, AWS SDKs, aws-cli) points its
  * endpoint at Warp, signs with SigV4 against the credentials in {@link S3WireConfig}, and Warp
- * stores/serves the objects in ONE real backend S3-compatible bucket (MinIO in tests) using its own
- * backend credentials via the AWS SDK v2.
+ * stores/serves the objects through an {@link ObjectStore}:
+ * <ul>
+ *   <li><b>Postgres mode</b> ({@link PostgresObjectStore}): the {@code s3} store is enabled on one or more
+ *       Postgres backends of the frontend's backend set (see {@code StoreType.S3}); objects are chunked into
+ *       those databases and sharded by key across them. Wins over proxy mode when both are configured.</li>
+ *   <li><b>Proxy mode</b> ({@link ProxyObjectStore}, {@code WARP_S3WIRE_BACKEND_BUCKET}): ONE real
+ *       S3-compatible backend bucket (MinIO in tests) through the AWS SDK v2 using Warp's own credentials.</li>
+ * </ul>
+ * The mode is chosen per request from the live backend registry, so enabling/disabling the store hot-reloads.
  *
- * <p><b>Bucket model:</b> client-visible buckets are key prefixes inside the single backend bucket:
+ * <p><b>Proxy-mode bucket model:</b> client-visible buckets are key prefixes inside the single backend bucket:
  * bucket {@code b}, key {@code k} lives at backend key {@code b/k}. CreateBucket writes a reserved
  * zero-byte marker {@code b/.s3wire-bucket} (hidden from listings and rejected as a client key).
  * ListBuckets returns the distinct first path segments in the backend bucket. Objects written into
  * the backend bucket directly without a {@code bucket/} prefix are not visible through s3wire.
  *
- * <p><b>Supported:</b> ListBuckets, CreateBucket, HeadBucket, DeleteBucket, GetBucketLocation,
- * PutObject, GetObject (Range, If-Match, If-None-Match), HeadObject, DeleteObject, DeleteObjects,
- * CopyObject (server-side, single request), ListObjects (v1) and ListObjectsV2 (prefix, delimiter,
- * continuation-token, start-after, max-keys, encoding-type=url), multipart (Create/UploadPart/
- * Complete/Abort, proxied to backend multipart), presigned GET/PUT URLs. Path-style addressing only.
- *
- * <p><b>Not supported (501 NotImplemented):</b> ListParts, ListMultipartUploads, UploadPartCopy,
- * object versioning, ACLs, tagging, policies, lifecycle, CORS, encryption config, SelectObjectContent,
- * virtual-hosted-style addressing, CopyObject of objects over 5 GB.
+ * <p><b>Postgres mode</b> serves the whole surface documented in {@link S3Api}: versioning, tagging, ACL / public access /
+ * policy / CORS / lifecycle / ... configuration documents, checksums, multipart incl. ListParts and UploadPartCopy,
+ * presigned and POST-policy uploads, SelectObjectContent, annotations, virtual-hosted-style addressing.
+ * <b>Proxy mode</b> keeps the original surface: ListBuckets, CreateBucket, HeadBucket, DeleteBucket, GetBucketLocation,
+ * PutObject, GetObject (Range, If-Match, If-None-Match), HeadObject, DeleteObject(s), CopyObject (single request),
+ * ListObjects v1/v2, multipart (Create/UploadPart/Complete/Abort), presigned GET/PUT. Everything else answers
+ * 501 NotImplemented there (bucket subresources have no equivalent in a shared backend bucket).
  *
  * <p>Every operation is recorded in {@link SqlMetricsCollector} with protocol {@code s3wire}
  * (exec time and full request-to-response-written RTT are the same span), and the connection ACL
@@ -94,7 +64,7 @@ public final class S3WireServer {
     private static final Logger log = LoggerFactory.getLogger(S3WireServer.class);
     static final String MARKER = ".s3wire-bucket";
     private static final String OWNER = "warp-s3wire";
-    private static final java.util.regex.Pattern BUCKET_NAME =
+    static final java.util.regex.Pattern BUCKET_NAME =
             java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$");
     private static final java.util.regex.Pattern HEX64 = java.util.regex.Pattern.compile("^[0-9a-fA-F]{64}$");
     private static final Set<String> UNSUPPORTED_SUBRESOURCES = Set.of("acl", "tagging", "versioning", "policy",
@@ -105,23 +75,38 @@ public final class S3WireServer {
     private static final int MAX_XML_BODY = 4 * 1024 * 1024;
 
     private final Server server;
-    private final S3Client s3;
     private final S3WireConfig config;
     private final SqlMetricsCollector sqlMetrics;
     private final S3SigV4Verifier verifier;
-    private final Set<String> knownBuckets = ConcurrentHashMap.newKeySet();
-    private final String backendLabel;
+    private final ObjectStore proxyStore;
+    private final PostgresObjectStore postgresStore;
+    private final S3Api api;
+    private final List<String> vhostDomains = S3Addressing.parseDomains(System.getenv("WARP_S3WIRE_VHOST_DOMAIN"));
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
     private record Route(String op, boolean write, String bucket, String key, Map<String, String> query) {
     }
 
+    /** Proxy-only server (the original constructor): no Postgres store. */
     public S3WireServer(int port, S3WireConfig config, ConnectionGate connectionGate, SqlMetricsCollector sqlMetrics) {
+        this(port, config, connectionGate, sqlMetrics, null, null);
+    }
+
+    /**
+     * @param registry backend registry whose {@code s3} store hosts back Postgres mode; null = proxy only
+     * @param options  Postgres-mode tunables (null = defaults)
+     */
+    public S3WireServer(int port, S3WireConfig config, ConnectionGate connectionGate, SqlMetricsCollector sqlMetrics,
+            BackendRegistry registry, S3StoreOptions options) {
         this.config = config;
         this.sqlMetrics = sqlMetrics;
         this.verifier = new S3SigV4Verifier(config.clientCredentials());
-        this.backendLabel = "s3:" + config.backendBucket();
-        this.s3 = buildClient(config);
+        this.proxyStore = config.backendBucket() == null ? null : new ProxyObjectStore(config);
+        this.postgresStore = registry == null ? null
+                : new PostgresObjectStore(registry, options == null ? S3StoreOptions.defaults() : options);
+        this.api = postgresStore == null ? null : new S3Api(postgresStore, config);
         this.server = new Server(port);
+        allowAmbiguousKeyPaths(server);
         server.setHandler(new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
@@ -132,22 +117,26 @@ public final class S3WireServer {
         });
     }
 
-    private static S3Client buildClient(S3WireConfig c) {
-        AwsCredentialsProvider creds = c.accessKey() != null && c.secretKey() != null
-                ? StaticCredentialsProvider.create(AwsBasicCredentials.create(c.accessKey(), c.secretKey()))
-                : DefaultCredentialsProvider.create();
-        S3ClientBuilder b = S3Client.builder().region(Region.of(c.region())).credentialsProvider(creds)
-                // Only send checksums the API requires: keeps streamed uploads on plain
-                // aws-chunked framing without an extra trailing-checksum pass.
-                .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
-                .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED);
-        if (c.endpoint() != null) {
-            b.endpointOverride(URI.create(c.endpoint()));
+    /**
+     * S3 keys may legally contain empty path segments ({@code a//b}), {@code .} / {@code ..} segments and
+     * encoded slashes; Jetty rejects such request targets as "ambiguous" by default. s3wire never maps
+     * the path onto the filesystem, so it accepts them and reads the raw URI.
+     */
+    private static void allowAmbiguousKeyPaths(Server server) {
+        org.eclipse.jetty.http.UriCompliance lax = org.eclipse.jetty.http.UriCompliance.from(java.util.EnumSet.of(
+                org.eclipse.jetty.http.UriCompliance.Violation.AMBIGUOUS_PATH_SEGMENT,
+                org.eclipse.jetty.http.UriCompliance.Violation.AMBIGUOUS_EMPTY_SEGMENT,
+                org.eclipse.jetty.http.UriCompliance.Violation.AMBIGUOUS_PATH_SEPARATOR,
+                org.eclipse.jetty.http.UriCompliance.Violation.AMBIGUOUS_PATH_ENCODING));
+        for (org.eclipse.jetty.server.Connector c : server.getConnectors()) {
+            org.eclipse.jetty.server.HttpConnectionFactory f =
+                    c.getConnectionFactory(org.eclipse.jetty.server.HttpConnectionFactory.class);
+            if (f != null) {
+                f.getHttpConfiguration().setUriCompliance(lax);
+                // S3 caps the header section at 8 KiB itself; Warp validates (e.g. an oversized x-amz-tagging) and answers S3 errors
+                f.getHttpConfiguration().setRequestHeaderSize(32 * 1024);
+            }
         }
-        if (c.pathStyle()) {
-            b.forcePathStyle(true);
-        }
-        return b.build();
     }
 
     public void start() throws Exception {
@@ -156,48 +145,191 @@ public final class S3WireServer {
 
     public void stop() throws Exception {
         server.stop();
-        s3.close();
+        if (proxyStore != null) {
+            proxyStore.close();
+        }
+        if (postgresStore != null) {
+            postgresStore.close();
+        }
+    }
+
+    /** Postgres mode wins whenever the s3 store is enabled; else proxy mode; else null. */
+    private PostgresObjectStore selectPostgres() {
+        return postgresStore != null && postgresStore.available() ? postgresStore : null;
     }
 
     // ---------------------------------------------------------------------------------------------
 
+    /** Presigned URLs: every {@code x-amz-*} header the client sent must be part of X-Amz-SignedHeaders. */
+    private static void requireHeadersSigned(HttpServletRequest request) {
+        String spec = S3SigV4Verifier.parseQuery(request.getQueryString()).getOrDefault("X-Amz-SignedHeaders", "");
+        Set<String> signed = new java.util.HashSet<>();
+        for (String h : spec.split(";")) {
+            signed.add(h.trim().toLowerCase(Locale.ROOT));
+        }
+        List<String> unsigned = new ArrayList<>();
+        for (String name : Collections.list(request.getHeaderNames())) {
+            String n = name.toLowerCase(Locale.ROOT);
+            if (n.startsWith("x-amz-") && !signed.contains(n)) {
+                unsigned.add(n);
+            }
+        }
+        if (!unsigned.isEmpty()) {
+            throw new S3WireException(403, "AccessDenied", "There were headers present in the request which were not signed",
+                    null, Map.of("HeadersNotSigned", String.join(",", unsigned)));
+        }
+    }
+
+    /** Where the request points: bucket (null/empty = service level) and decoded key ("" = none). */
+    private record Addr(String bucket, String key, boolean vhost) {
+    }
+
+    private Addr address(HttpServletRequest request) {
+        String rawPath = request.getRequestURI();
+        String rest = rawPath.startsWith("/") ? rawPath.substring(1) : rawPath;
+        String vb = S3Addressing.bucketFromHost(request.getHeader("Host"), vhostDomains);
+        if (vb != null) {
+            return new Addr(vb, S3SigV4Verifier.percentDecode(rest, false), true);
+        }
+        int slash = rest.indexOf('/');
+        String bucket = S3SigV4Verifier.percentDecode(slash < 0 ? rest : rest.substring(0, slash), false);
+        String key = slash < 0 ? "" : S3SigV4Verifier.percentDecode(rest.substring(slash + 1), false);
+        return new Addr(bucket, key, false);
+    }
+
     private void serve(HttpServletRequest request, HttpServletResponse response, ConnectionGate gate) {
         long start = System.nanoTime();
+        byte[] idBytes = new byte[12];
+        RANDOM.nextBytes(idBytes);
         String requestId = UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase(Locale.ROOT);
         response.setHeader("x-amz-request-id", requestId);
+        response.setHeader("x-amz-id-2", java.util.Base64.getEncoder().encodeToString(idBytes) + "="
+                + java.util.Base64.getEncoder().encodeToString(idBytes));
         response.setHeader("Server", "Warp-s3wire");
         Route route = null;
+        ObjectStore store = null;
+        PostgresObjectStore pg = null;
         try {
             if (!gate.acceptHttp(request)) {
                 throw new S3WireException(403, "AccessDenied", "Access denied by Warp connection ACL");
             }
+            pg = selectPostgres();
+            Addr addr = address(request);
+            if (pg != null && addr.bucket() != null && !addr.bucket().isEmpty()
+                    && (request.getHeader("Origin") != null || "OPTIONS".equals(request.getMethod()))) {
+                if (cors(pg, addr, request, response)) {
+                    return;
+                }
+            }
             S3SigV4Verifier.Result auth = verifier.verify(request.getMethod(), request.getRequestURI(),
                     request.getQueryString(), headers(request), Instant.now());
             if (!auth.valid()) {
+                if (pg != null && S3Api.isAnonymousPostForm(request, addr.key())) {
+                    // browser form upload: authenticated by the signed policy inside the form, not by headers
+                    route = new Route("PostObject", true, addr.bucket(), null, Map.of());
+                    api.postObject(addr.bucket(), request, response);
+                    return;
+                }
                 log.warn("s3wire: rejecting request -- {} ({})", auth.message(), auth.code());
                 throw new S3WireException(auth.status(), auth.code(), auth.message());
             }
-            route = route(request);
-            execute(route, request, response);
+            request.setAttribute("s3wire.chunkAuth", auth.chunk());
+            if (request.getQueryString() != null && request.getQueryString().contains("X-Amz-Signature")) {
+                requireHeadersSigned(request);
+            }
+            if (pg == null) {
+                store = proxyStore;
+            }
+            if (pg == null && store == null) {
+                throw new S3WireException(503, "ServiceUnavailable",
+                        "No object store is available: enable the s3 store on a Postgres backend of this set "
+                                + "or configure WARP_S3WIRE_BACKEND_BUCKET");
+            }
+            if (pg != null) {
+                S3Api.Route ar = api.route(request, addr.bucket(), addr.key(), S3SigV4Verifier.parseQuery(request.getQueryString()));
+                route = new Route(ar.op(), ar.write(), ar.bucket(), ar.key(), ar.query());
+                api.execute(ar, request, response);
+            } else {
+                route = route(request, store, addr);
+                execute(store, route, request, response);
+            }
         } catch (S3WireException e) {
-            writeError(request, response, requestId, e.status, e.code, e.getMessage(), route);
+            writeError(request, response, requestId, e.status, e.code, e.getMessage(), route, e);
         } catch (S3Exception e) {
-            handleBackendError(request, response, requestId, e, route);
+            handleBackendError(store, request, response, requestId, e, route);
         } catch (SdkException e) {
             log.error("s3wire: backend unreachable/failed for {}", route == null ? "?" : route.op(), e);
             writeError(request, response, requestId, 503, "ServiceUnavailable",
-                    "The backend object store is unavailable: " + e.getMessage(), route);
+                    "The backend object store is unavailable: " + e.getMessage(), route, null);
         } catch (IOException | RuntimeException e) {
             log.error("s3wire: {} failed", route == null ? "?" : route.op(), e);
-            writeError(request, response, requestId, 500, "InternalError", "We encountered an internal error.", route);
+            writeError(request, response, requestId, 500, "InternalError", "We encountered an internal error.", route, null);
         } finally {
-            if (sqlMetrics != null && route != null) {
+            if (sqlMetrics != null && route != null && (store != null || pg != null)) {
                 long elapsed = System.nanoTime() - start;
-                sqlMetrics.recordOperation("s3wire", backendLabel,
+                sqlMetrics.recordOperation("s3wire", pg != null ? pg.label() : store.label(),
                         route.write() ? SqlMetricsCollector.StatementKind.WRITE : SqlMetricsCollector.StatementKind.READ,
                         route.op(), elapsed, elapsed);
             }
         }
+    }
+
+    /**
+     * CORS: answers a preflight ({@code OPTIONS}) completely and decorates actual responses. Returns true when the
+     * request was fully handled (preflight).
+     */
+    private boolean cors(PostgresObjectStore pg, Addr addr, HttpServletRequest request, HttpServletResponse response) {
+        String origin = request.getHeader("Origin");
+        boolean preflight = "OPTIONS".equals(request.getMethod());
+        if (!preflight && origin == null) {
+            return false;
+        }
+        if (preflight && (origin == null || request.getHeader("Access-Control-Request-Method") == null)) {
+            throw new S3WireException(400, "BadRequest", "Insufficient information. Origin request header needed.");
+        }
+        if (preflight && !pg.bucketExists(addr.bucket())) {
+            throw new S3WireException(404, "NoSuchBucket", "The specified bucket does not exist", null,
+                    Map.of("BucketName", addr.bucket()));
+        }
+        String xml = pg.corsConfig(addr.bucket());
+        List<S3Cfg.CorsRule> rules = null;
+        if (xml != null) {
+            try {
+                rules = S3Cfg.parseCors(S3Xml.utf8(xml));
+            } catch (RuntimeException e) {
+                rules = null;
+            }
+        }
+        String method = preflight ? request.getHeader("Access-Control-Request-Method") : request.getMethod();
+        S3Cfg.CorsRule rule = rules == null ? null : S3Cfg.matchCors(rules, origin, method,
+                preflight ? request.getHeader("Access-Control-Request-Headers") : null);
+        if (rule == null) {
+            if (preflight) {
+                throw new S3WireException(403, "AccessForbidden", "CORSResponse: This CORS request is not allowed. This is "
+                        + "usually because the evalution of Origin, request method / Access-Control-Request-Method or "
+                        + "Access-Control-Request-Headers are not whitelisted by the resource's CORS spec.", null,
+                        Map.of("Method", method, "ResourceType", "BUCKET"));
+            }
+            return false;
+        }
+        response.setHeader("Access-Control-Allow-Origin", rule.origins().contains("*") ? "*" : origin);
+        response.setHeader("Vary", preflight ? "Origin, Access-Control-Request-Headers, Access-Control-Request-Method" : "Origin");
+        response.setHeader("Access-Control-Allow-Methods", String.join(", ", rule.methods()));
+        if (preflight && request.getHeader("Access-Control-Request-Headers") != null) {
+            response.setHeader("Access-Control-Allow-Headers", request.getHeader("Access-Control-Request-Headers"));
+        }
+        if (!rule.expose().isEmpty()) {
+            response.setHeader("Access-Control-Expose-Headers", String.join(", ", rule.expose()));
+        }
+        if (rule.maxAge() != null) {
+            response.setHeader("Access-Control-Max-Age", String.valueOf(rule.maxAge()));
+        }
+        if (preflight) {
+            response.setStatus(200);
+            response.setContentLength(0);
+            return true;
+        }
+        return false;
     }
 
     private static Map<String, List<String>> headers(HttpServletRequest request) {
@@ -208,8 +340,8 @@ public final class S3WireServer {
         return out;
     }
 
-    private void handleBackendError(HttpServletRequest request, HttpServletResponse response, String requestId,
-            S3Exception e, Route route) {
+    private void handleBackendError(ObjectStore store, HttpServletRequest request, HttpServletResponse response,
+            String requestId, S3Exception e, Route route) {
         int status = e.statusCode();
         String code = e.awsErrorDetails() != null && e.awsErrorDetails().errorCode() != null
                 ? e.awsErrorDetails().errorCode() : "InternalError";
@@ -220,26 +352,26 @@ public final class S3WireServer {
             return;
         }
         if (status == 404 && route != null && route.bucket() != null && !route.op().equals("HeadBucket")
-                && !route.op().equals("CreateBucket") && !safeBucketExists(route.bucket())) {
+                && !route.op().equals("CreateBucket") && !safeBucketExists(store, route.bucket())) {
             code = "NoSuchBucket";
             message = "The specified bucket does not exist";
         } else if (status == 404 && "NotFound".equals(code) && route != null && route.key() != null) {
             code = "NoSuchKey";
             message = "The specified key does not exist.";
         }
-        writeError(request, response, requestId, status, code, message, route);
+        writeError(request, response, requestId, status, code, message, route, null);
     }
 
-    private boolean safeBucketExists(String bucket) {
+    private static boolean safeBucketExists(ObjectStore store, String bucket) {
         try {
-            return bucketExists(bucket);
+            return store.bucketExists(bucket);
         } catch (RuntimeException e) {
             return true;
         }
     }
 
     private void writeError(HttpServletRequest request, HttpServletResponse response, String requestId, int status,
-            String code, String message, Route route) {
+            String code, String message, Route route, S3WireException ex) {
         if (response.isCommitted()) {
             log.warn("s3wire: error {} after response committed for {}", code, request.getRequestURI());
             return;
@@ -247,7 +379,25 @@ public final class S3WireServer {
         try {
             response.setStatus(status);
             response.setHeader("x-amz-error-code", code);
-            if ("HEAD".equals(request.getMethod())) {
+            if (ex != null && ex.headers != null) {
+                ex.headers.forEach(response::setHeader);
+            }
+            if (status == 304 || "HEAD".equals(request.getMethod())) {
+                return;
+            }
+            if (ex != null && (ex.details != null || ex.headers != null || status != 501)) {
+                Map<String, String> details = new LinkedHashMap<>();
+                if (ex.details != null) {
+                    details.putAll(ex.details);
+                } else if (route != null && "NoSuchKey".equals(code) && route.key() != null) {
+                    details.put("Key", route.key());
+                } else if (route != null && "NoSuchBucket".equals(code)) {
+                    details.put("BucketName", route.bucket());
+                }
+                String resource = route != null && route.bucket() != null ? "/" + route.bucket()
+                        + (route.key() == null || route.key().isEmpty() ? "" : "/" + route.key()) : request.getRequestURI();
+                writeXml(response, status, S3Xml.errorRich(code, message, resource, requestId,
+                        response.getHeader("x-amz-id-2"), details));
                 return;
             }
             String extraName = null;
@@ -275,13 +425,10 @@ public final class S3WireServer {
 
     // ---- routing -------------------------------------------------------------------------------
 
-    private Route route(HttpServletRequest request) {
+    private Route route(HttpServletRequest request, ObjectStore store, Addr addr) {
         String method = request.getMethod();
-        String rawPath = request.getRequestURI();
-        String rest = rawPath.startsWith("/") ? rawPath.substring(1) : rawPath;
-        int slash = rest.indexOf('/');
-        String bucket = S3SigV4Verifier.percentDecode(slash < 0 ? rest : rest.substring(0, slash), false);
-        String key = slash < 0 ? "" : S3SigV4Verifier.percentDecode(rest.substring(slash + 1), false);
+        String bucket = addr.bucket();
+        String key = addr.key();
         Map<String, String> q = S3SigV4Verifier.parseQuery(request.getQueryString());
         boolean unsupportedSub = false;
         for (String k : q.keySet()) {
@@ -331,7 +478,7 @@ public final class S3WireServer {
         if (key.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024) {
             throw new S3WireException(400, "KeyTooLongError", "Your key is too long");
         }
-        if (key.equals(MARKER)) {
+        if (store.reservesMarkerKey() && key.equals(MARKER)) {
             throw new S3WireException(400, "InvalidArgument", "Key '" + MARKER + "' is reserved by s3wire");
         }
         switch (method) {
@@ -382,124 +529,74 @@ public final class S3WireServer {
                 "s3wire does not implement this operation (" + what + " " + q.keySet() + ")");
     }
 
-    private void execute(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+    // ---- execution ---------------------------------------------------------------------------------
+
+    private void requireBucket(ObjectStore store, String bucket) {
+        if (!store.bucketExists(bucket)) {
+            throw new S3WireException(404, "NoSuchBucket", "The specified bucket does not exist");
+        }
+    }
+
+    private void execute(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
         switch (r.op()) {
-            case "ListBuckets" -> listBuckets(resp);
-            case "CreateBucket" -> createBucket(r, resp);
-            case "HeadBucket" -> {
-                requireBucket(r.bucket());
+            case "ListBuckets" -> listBuckets(store, resp);
+            case "CreateBucket" -> {
+                store.createBucket(r.bucket());
+                resp.setHeader("Location", "/" + r.bucket());
                 resp.setStatus(200);
             }
-            case "DeleteBucket" -> deleteBucket(r, resp);
-            case "GetBucketLocation" -> {
-                requireBucket(r.bucket());
-                writeXml(resp, 200, S3Xml.location(config.region()));
+            case "HeadBucket" -> {
+                requireBucket(store, r.bucket());
+                resp.setStatus(200);
             }
-            case "ListObjects", "ListObjectsV2" -> listObjects(r, resp);
-            case "PutObject" -> putObject(r, req, resp);
-            case "GetObject" -> getObject(r, req, resp);
-            case "HeadObject" -> headObject(r, req, resp);
-            case "DeleteObject" -> {
-                requireBucket(r.bucket());
-                s3.deleteObject(b -> b.bucket(config.backendBucket()).key(backendKey(r.bucket(), r.key())));
+            case "DeleteBucket" -> {
+                store.deleteBucket(r.bucket());
                 resp.setStatus(204);
             }
-            case "DeleteObjects" -> deleteObjects(r, req, resp);
-            case "CopyObject" -> copyObject(r, req, resp);
-            case "CreateMultipartUpload" -> createMultipart(r, req, resp);
-            case "UploadPart" -> uploadPart(r, req, resp);
-            case "CompleteMultipartUpload" -> completeMultipart(r, req, resp);
+            case "GetBucketLocation" -> {
+                requireBucket(store, r.bucket());
+                writeXml(resp, 200, S3Xml.location(config.region()));
+            }
+            case "ListObjects", "ListObjectsV2" -> listObjects(store, r, resp);
+            case "PutObject" -> putObject(store, r, req, resp);
+            case "GetObject" -> getObject(store, r, req, resp);
+            case "HeadObject" -> headObject(store, r, req, resp);
+            case "DeleteObject" -> {
+                requireBucket(store, r.bucket());
+                store.delete(r.bucket(), r.key());
+                resp.setStatus(204);
+            }
+            case "DeleteObjects" -> deleteObjects(store, r, req, resp);
+            case "CopyObject" -> copyObject(store, r, req, resp);
+            case "CreateMultipartUpload" -> {
+                requireBucket(store, r.bucket());
+                String id = store.createMultipart(r.bucket(), r.key(), Attrs.fromRequest(req));
+                writeXml(resp, 200, S3Xml.initiateMultipart(r.bucket(), r.key(), id));
+            }
+            case "UploadPart" -> uploadPart(store, r, req, resp);
+            case "CompleteMultipartUpload" -> {
+                String eTag = store.completeMultipart(r.bucket(), r.key(), r.query().get("uploadId"),
+                        S3Xml.parseCompleteMultipart(readSmallBody(req)));
+                writeXml(resp, 200, S3Xml.completeMultipart(req.getRequestURL().toString(), r.bucket(), r.key(), eTag));
+            }
             case "AbortMultipartUpload" -> {
-                requireBucket(r.bucket());
-                s3.abortMultipartUpload(b -> b.bucket(config.backendBucket()).key(backendKey(r.bucket(), r.key()))
-                        .uploadId(r.query().get("uploadId")));
+                requireBucket(store, r.bucket());
+                store.abortMultipart(r.bucket(), r.key(), r.query().get("uploadId"));
                 resp.setStatus(204);
             }
             default -> throw notImplemented(r.op(), r.query());
         }
     }
 
-    // ---- buckets -------------------------------------------------------------------------------
-
-    private static String backendKey(String bucket, String key) {
-        return bucket + "/" + key;
-    }
-
-    private boolean bucketExists(String bucket) {
-        if (knownBuckets.contains(bucket)) {
-            return true;
-        }
-        ListObjectsV2Response res = s3.listObjectsV2(b -> b.bucket(config.backendBucket()).prefix(bucket + "/").maxKeys(1));
-        boolean exists = res.keyCount() != null && res.keyCount() > 0;
-        if (exists) {
-            knownBuckets.add(bucket);
-        }
-        return exists;
-    }
-
-    private void requireBucket(String bucket) {
-        if (!bucketExists(bucket)) {
-            throw new S3WireException(404, "NoSuchBucket", "The specified bucket does not exist");
-        }
-    }
-
-    private void createBucket(Route r, HttpServletResponse resp) {
-        if (!BUCKET_NAME.matcher(r.bucket()).matches()) {
-            throw new S3WireException(400, "InvalidBucketName", "The specified bucket is not valid.");
-        }
-        if (bucketExists(r.bucket())) {
-            throw new S3WireException(409, "BucketAlreadyOwnedByYou",
-                    "Your previous request to create the named bucket succeeded and you already own it.");
-        }
-        s3.putObject(b -> b.bucket(config.backendBucket()).key(backendKey(r.bucket(), MARKER)).contentLength(0L),
-                RequestBody.empty());
-        knownBuckets.add(r.bucket());
-        resp.setHeader("Location", "/" + r.bucket());
-        resp.setStatus(200);
-    }
-
-    private void deleteBucket(Route r, HttpServletResponse resp) {
-        requireBucket(r.bucket());
-        ListObjectsV2Response res = s3.listObjectsV2(b -> b.bucket(config.backendBucket()).prefix(r.bucket() + "/").maxKeys(2));
-        for (S3Object o : res.contents()) {
-            if (!o.key().equals(backendKey(r.bucket(), MARKER))) {
-                throw new S3WireException(409, "BucketNotEmpty", "The bucket you tried to delete is not empty");
-            }
-        }
-        s3.deleteObject(b -> b.bucket(config.backendBucket()).key(backendKey(r.bucket(), MARKER)));
-        knownBuckets.remove(r.bucket());
-        resp.setStatus(204);
-    }
-
-    private void listBuckets(HttpServletResponse resp) throws IOException {
+    private void listBuckets(ObjectStore store, HttpServletResponse resp) throws IOException {
         List<String[]> buckets = new ArrayList<>();
-        String token = null;
-        do {
-            String t = token;
-            ListObjectsV2Response res = s3.listObjectsV2(b -> {
-                b.bucket(config.backendBucket()).delimiter("/");
-                if (t != null) {
-                    b.continuationToken(t);
-                }
-            });
-            for (CommonPrefix cp : res.commonPrefixes()) {
-                String name = cp.prefix().substring(0, cp.prefix().length() - 1);
-                Instant created = Instant.EPOCH;
-                try {
-                    created = s3.headObject(b -> b.bucket(config.backendBucket()).key(backendKey(name, MARKER))).lastModified();
-                } catch (S3Exception ignored) {
-                    // prefix without a marker (objects written another way): still listed
-                }
-                buckets.add(new String[] {name, S3Xml.iso(created)});
-            }
-            token = Boolean.TRUE.equals(res.isTruncated()) ? res.nextContinuationToken() : null;
-        } while (token != null);
+        for (ObjectStore.BucketEntry b : store.listBuckets()) {
+            buckets.add(new String[] {b.name(), S3Xml.iso(b.created())});
+        }
         writeXml(resp, 200, S3Xml.listBuckets(buckets, OWNER));
     }
 
-    // ---- listing -------------------------------------------------------------------------------
-
-    private void listObjects(Route r, HttpServletResponse resp) throws IOException {
+    private void listObjects(ObjectStore store, Route r, HttpServletResponse resp) throws IOException {
         Map<String, String> q = r.query();
         boolean v2 = "ListObjectsV2".equals(r.op());
         String prefix = q.getOrDefault("prefix", "");
@@ -519,182 +616,106 @@ public final class S3WireServer {
         }
         String startAfter = v2 ? q.get("start-after") : q.get("marker");
         String token = v2 ? q.get("continuation-token") : null;
-        String bucketPrefix = r.bucket() + "/";
         if (max == 0) {
-            requireBucket(r.bucket());
+            requireBucket(store, r.bucket());
             writeXml(resp, 200, S3Xml.listObjects(new S3Xml.ListParams(r.bucket(), prefix, delimiter, 0, false, v2,
                     token, null, startAfter, startAfter, null, urlEncode), List.of(), List.of()));
             return;
         }
-        final int maxKeys = max;
-        ListObjectsV2Response res = s3.listObjectsV2(b -> {
-            b.bucket(config.backendBucket()).prefix(bucketPrefix + prefix).maxKeys(maxKeys);
-            if (delimiter != null && !delimiter.isEmpty()) {
-                b.delimiter(delimiter);
-            }
-            if (token != null) {
-                b.continuationToken(token);
-            }
-            if (startAfter != null && !startAfter.isEmpty()) {
-                b.startAfter(bucketPrefix + startAfter);
-            }
-        });
-        if (res.contents().isEmpty() && res.commonPrefixes().isEmpty() && token == null && !bucketExists(r.bucket())) {
-            throw new S3WireException(404, "NoSuchBucket", "The specified bucket does not exist");
-        }
-        List<S3Xml.ObjectEntry> objects = new ArrayList<>();
-        String lastKey = null;
-        for (S3Object o : res.contents()) {
-            String k = o.key().substring(bucketPrefix.length());
-            lastKey = k;
-            if (!k.equals(MARKER)) {
-                objects.add(new S3Xml.ObjectEntry(k, o.lastModified(), o.eTag(), o.size() == null ? 0 : o.size()));
-            }
-        }
-        List<String> prefixes = new ArrayList<>();
-        for (CommonPrefix cp : res.commonPrefixes()) {
-            String p = cp.prefix().substring(bucketPrefix.length());
-            prefixes.add(p);
-            if (lastKey == null || p.compareTo(lastKey) > 0) {
-                lastKey = p;
-            }
-        }
-        boolean truncated = Boolean.TRUE.equals(res.isTruncated());
-        writeXml(resp, 200, S3Xml.listObjects(new S3Xml.ListParams(r.bucket(), prefix, delimiter, maxKeys, truncated,
-                v2, token, truncated ? res.nextContinuationToken() : null, v2 ? startAfter : null, startAfter,
-                truncated ? lastKey : null, urlEncode), objects, prefixes));
+        ObjectStore.ListResult res = store.list(new ObjectStore.ListRequest(r.bucket(), prefix, delimiter, max, token,
+                startAfter, v2));
+        writeXml(resp, 200, S3Xml.listObjects(new S3Xml.ListParams(r.bucket(), prefix, delimiter, max, res.truncated(),
+                v2, token, res.truncated() ? res.nextToken() : null, v2 ? startAfter : null, startAfter,
+                res.truncated() ? res.lastKey() : null, urlEncode), res.objects(), res.commonPrefixes()));
     }
 
-    // ---- objects -------------------------------------------------------------------------------
+    // ---- objects -----------------------------------------------------------------------------------
 
-    private void putObject(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        requireBucket(r.bucket());
+    private void putObject(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        requireBucket(store, r.bucket());
         Body body = openBody(req);
-        PutObjectRequest.Builder b = PutObjectRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key())).contentLength(body.length());
-        applyObjectHeaders(req, b::contentType, b::cacheControl, b::contentDisposition, b::contentEncoding,
-                b::contentLanguage, b::metadata);
-        String md5 = req.getHeader("Content-MD5");
-        if (md5 != null) {
-            b.contentMD5(md5);
-        }
-        PutObjectResponse res = s3.putObject(b.build(), RequestBody.fromInputStream(body.stream(), body.length()));
-        if (!body.verifyDigest()) {
-            try {
-                s3.deleteObject(d -> d.bucket(config.backendBucket()).key(backendKey(r.bucket(), r.key())));
-            } catch (RuntimeException e) {
-                log.warn("s3wire: could not roll back object after payload-hash mismatch", e);
-            }
-            throw new S3WireException(400, "XAmzContentSHA256Mismatch",
-                    "The provided 'x-amz-content-sha256' header does not match what was computed.");
-        }
-        if (res.eTag() != null) {
-            resp.setHeader("ETag", res.eTag());
+        ObjectStore.ObjectInfo info = store.put(new ObjectStore.PutRequest(r.bucket(), r.key(), Attrs.fromRequest(req),
+                body.stream(), body.length(), req.getHeader("Content-MD5"), body::verifyDigest));
+        if (info.eTag() != null) {
+            resp.setHeader("ETag", info.eTag());
         }
         resp.setStatus(200);
     }
 
-    private void getObject(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        GetObjectRequest.Builder b = GetObjectRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key()));
-        if (req.getHeader("Range") != null) {
-            b.range(req.getHeader("Range"));
-        }
-        if (req.getHeader("If-Match") != null) {
-            b.ifMatch(req.getHeader("If-Match"));
-        }
-        if (req.getHeader("If-None-Match") != null) {
-            b.ifNoneMatch(req.getHeader("If-None-Match"));
-        }
-        try (ResponseInputStream<GetObjectResponse> in = s3.getObject(b.build())) {
-            GetObjectResponse g = in.response();
+    private static ObjectStore.Conditions conditions(HttpServletRequest req, boolean all) {
+        return new ObjectStore.Conditions(req.getHeader("If-Match"), req.getHeader("If-None-Match"),
+                all ? req.getHeader("If-Modified-Since") : null, all ? req.getHeader("If-Unmodified-Since") : null);
+    }
+
+    private void getObject(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        // proxy mode forwards only If-Match / If-None-Match to the backend (unchanged); Postgres mode evaluates all four
+        try (ObjectStore.ObjectRead g = store.get(r.bucket(), r.key(), conditions(req, !store.reservesMarkerKey()),
+                req.getHeader("Range"))) {
+            ObjectStore.ObjectInfo i = g.info();
             resp.setStatus(g.contentRange() != null ? 206 : 200);
-            writeObjectHeaders(resp, g.contentLength(), g.contentType(), g.eTag(), g.lastModified(), g.contentRange(),
-                    g.cacheControl(), g.contentDisposition(), g.contentEncoding(), g.contentLanguage(), g.metadata());
-            in.transferTo(resp.getOutputStream());
+            writeObjectHeaders(resp, g.contentLength() < 0 ? null : g.contentLength(), i, g.contentRange());
+            g.transferTo(resp.getOutputStream());
         }
     }
 
-    private void headObject(Route r, HttpServletRequest req, HttpServletResponse resp) {
-        HeadObjectRequest.Builder b = HeadObjectRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key()));
-        if (req.getHeader("If-Match") != null) {
-            b.ifMatch(req.getHeader("If-Match"));
-        }
-        if (req.getHeader("If-None-Match") != null) {
-            b.ifNoneMatch(req.getHeader("If-None-Match"));
-        }
-        HeadObjectResponse h = s3.headObject(b.build());
+    private void headObject(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) {
+        ObjectStore.ObjectInfo h = store.head(r.bucket(), r.key(), conditions(req, !store.reservesMarkerKey()));
         resp.setStatus(200);
-        writeObjectHeaders(resp, h.contentLength(), h.contentType(), h.eTag(), h.lastModified(), null,
-                h.cacheControl(), h.contentDisposition(), h.contentEncoding(), h.contentLanguage(), h.metadata());
+        writeObjectHeaders(resp, h.size(), h, null);
     }
 
-    private static void writeObjectHeaders(HttpServletResponse resp, Long length, String type, String eTag,
-            Instant modified, String range, String cache, String disposition, String encoding, String language,
-            Map<String, String> metadata) {
+    private static void writeObjectHeaders(HttpServletResponse resp, Long length, ObjectStore.ObjectInfo info,
+            String range) {
+        ObjectStore.Attrs a = info.attrs();
         if (length != null) {
             resp.setContentLengthLong(length);
         }
-        if (type != null) {
-            resp.setContentType(type);
+        if (a.contentType() != null) {
+            resp.setContentType(a.contentType());
         }
-        if (eTag != null) {
-            resp.setHeader("ETag", eTag);
+        if (info.eTag() != null) {
+            resp.setHeader("ETag", info.eTag());
         }
-        if (modified != null) {
-            resp.setHeader("Last-Modified", S3Xml.httpDate(modified));
+        if (info.lastModified() != null) {
+            resp.setHeader("Last-Modified", S3Xml.httpDate(info.lastModified()));
         }
         if (range != null) {
             resp.setHeader("Content-Range", range);
         }
         resp.setHeader("Accept-Ranges", "bytes");
-        if (cache != null) {
-            resp.setHeader("Cache-Control", cache);
+        if (a.cacheControl() != null) {
+            resp.setHeader("Cache-Control", a.cacheControl());
         }
-        if (disposition != null) {
-            resp.setHeader("Content-Disposition", disposition);
+        if (a.contentDisposition() != null) {
+            resp.setHeader("Content-Disposition", a.contentDisposition());
         }
-        if (encoding != null) {
-            resp.setHeader("Content-Encoding", encoding);
+        if (a.contentEncoding() != null) {
+            resp.setHeader("Content-Encoding", a.contentEncoding());
         }
-        if (language != null) {
-            resp.setHeader("Content-Language", language);
+        if (a.contentLanguage() != null) {
+            resp.setHeader("Content-Language", a.contentLanguage());
         }
-        if (metadata != null) {
-            metadata.forEach((k, v) -> resp.setHeader("x-amz-meta-" + k, v));
+        if (a.expires() != null) {
+            resp.setHeader("Expires", a.expires());
+        }
+        if (a.metadata() != null) {
+            a.metadata().forEach((k, v) -> resp.setHeader("x-amz-meta-" + k, v));
         }
     }
 
-    private void deleteObjects(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        requireBucket(r.bucket());
+    private void deleteObjects(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        requireBucket(store, r.bucket());
         byte[] xml = readSmallBody(req);
         S3Xml.Delete d = S3Xml.parseDelete(xml);
         if (d.keys().size() > 1000 || d.keys().isEmpty()) {
             throw new S3WireException(400, "MalformedXML", "DeleteObjects requires between 1 and 1000 keys.");
         }
-        List<ObjectIdentifier> ids = new ArrayList<>();
-        List<S3Xml.DeleteOutcome> errors = new ArrayList<>();
-        for (String k : d.keys()) {
-            if (k.equals(MARKER)) {
-                errors.add(new S3Xml.DeleteOutcome(k, "InvalidArgument", "Key is reserved by s3wire"));
-            } else {
-                ids.add(ObjectIdentifier.builder().key(backendKey(r.bucket(), k)).build());
-            }
-        }
-        List<String> deleted = new ArrayList<>();
-        if (!ids.isEmpty()) {
-            DeleteObjectsResponse res = s3.deleteObjects(DeleteObjectsRequest.builder().bucket(config.backendBucket())
-                    .delete(Delete.builder().objects(ids).quiet(false).build()).build());
-            int strip = r.bucket().length() + 1;
-            res.deleted().forEach(x -> deleted.add(x.key().substring(strip)));
-            res.errors().forEach(x -> errors.add(new S3Xml.DeleteOutcome(x.key().substring(strip), x.code(), x.message())));
-        }
-        writeXml(resp, 200, S3Xml.deleteResult(deleted, errors, d.quiet()));
+        ObjectStore.DeleteManyResult res = store.deleteMany(r.bucket(), d.keys());
+        writeXml(resp, 200, S3Xml.deleteResult(res.deleted(), res.errors(), d.quiet()));
     }
 
-    private void copyObject(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        requireBucket(r.bucket());
+    private void copyObject(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        requireBucket(store, r.bucket());
         String src = req.getHeader("x-amz-copy-source");
         int qm = src.indexOf('?');
         if (qm >= 0) {
@@ -707,35 +728,18 @@ public final class S3WireServer {
         }
         String srcBucket = src.substring(0, slash);
         String srcKey = src.substring(slash + 1);
-        if (srcKey.equals(MARKER)) {
+        if (store.reservesMarkerKey() && srcKey.equals(MARKER)) {
             throw new S3WireException(400, "InvalidArgument", "Key '" + MARKER + "' is reserved by s3wire");
         }
-        requireBucket(srcBucket);
-        CopyObjectRequest.Builder b = CopyObjectRequest.builder().sourceBucket(config.backendBucket())
-                .sourceKey(backendKey(srcBucket, srcKey)).destinationBucket(config.backendBucket())
-                .destinationKey(backendKey(r.bucket(), r.key()));
-        if ("REPLACE".equalsIgnoreCase(req.getHeader("x-amz-metadata-directive"))) {
-            b.metadataDirective(MetadataDirective.REPLACE);
-            applyObjectHeaders(req, b::contentType, b::cacheControl, b::contentDisposition, b::contentEncoding,
-                    b::contentLanguage, b::metadata);
-        }
-        CopyObjectResponse res = s3.copyObject(b.build());
-        writeXml(resp, 200, S3Xml.copyResult(res.copyObjectResult().eTag(), res.copyObjectResult().lastModified()));
+        ObjectStore.Attrs replace = "REPLACE".equalsIgnoreCase(req.getHeader("x-amz-metadata-directive"))
+                ? Attrs.fromRequest(req) : null;
+        ObjectStore.CopyResult res = store.copy(new ObjectStore.CopyRequest(srcBucket, srcKey, r.bucket(), r.key(), replace));
+        writeXml(resp, 200, S3Xml.copyResult(res.eTag(), res.lastModified()));
     }
 
-    // ---- multipart -----------------------------------------------------------------------------
+    // ---- multipart ---------------------------------------------------------------------------------
 
-    private void createMultipart(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        requireBucket(r.bucket());
-        CreateMultipartUploadRequest.Builder b = CreateMultipartUploadRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key()));
-        applyObjectHeaders(req, b::contentType, b::cacheControl, b::contentDisposition, b::contentEncoding,
-                b::contentLanguage, b::metadata);
-        String id = s3.createMultipartUpload(b.build()).uploadId();
-        writeXml(resp, 200, S3Xml.initiateMultipart(r.bucket(), r.key(), id));
-    }
-
-    private void uploadPart(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+    private void uploadPart(ObjectStore store, Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
         int partNumber;
         try {
             partNumber = Integer.parseInt(r.query().get("partNumber"));
@@ -746,38 +750,15 @@ public final class S3WireServer {
             throw new S3WireException(400, "InvalidArgument", "Part number must be an integer between 1 and 10000, inclusive");
         }
         Body body = openBody(req);
-        UploadPartRequest.Builder b = UploadPartRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key())).uploadId(r.query().get("uploadId")).partNumber(partNumber)
-                .contentLength(body.length());
-        String md5 = req.getHeader("Content-MD5");
-        if (md5 != null) {
-            b.contentMD5(md5);
-        }
-        UploadPartResponse res = s3.uploadPart(b.build(), RequestBody.fromInputStream(body.stream(), body.length()));
-        if (!body.verifyDigest()) {
-            throw new S3WireException(400, "XAmzContentSHA256Mismatch",
-                    "The provided 'x-amz-content-sha256' header does not match what was computed.");
-        }
-        if (res.eTag() != null) {
-            resp.setHeader("ETag", res.eTag());
+        String eTag = store.uploadPart(new ObjectStore.UploadPartRequest(r.bucket(), r.key(), r.query().get("uploadId"),
+                partNumber, body.stream(), body.length(), req.getHeader("Content-MD5"), body::verifyDigest));
+        if (eTag != null) {
+            resp.setHeader("ETag", eTag);
         }
         resp.setStatus(200);
     }
 
-    private void completeMultipart(Route r, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        List<S3Xml.Part> parts = S3Xml.parseCompleteMultipart(readSmallBody(req));
-        List<CompletedPart> cps = new ArrayList<>();
-        for (S3Xml.Part p : parts) {
-            cps.add(CompletedPart.builder().partNumber(p.number()).eTag(p.eTag()).build());
-        }
-        var res = s3.completeMultipartUpload(CompleteMultipartUploadRequest.builder().bucket(config.backendBucket())
-                .key(backendKey(r.bucket(), r.key())).uploadId(r.query().get("uploadId"))
-                .multipartUpload(CompletedMultipartUpload.builder().parts(cps).build()).build());
-        knownBuckets.add(r.bucket());
-        writeXml(resp, 200, S3Xml.completeMultipart(req.getRequestURL().toString(), r.bucket(), r.key(), res.eTag()));
-    }
-
-    // ---- request body / headers ----------------------------------------------------------------
+    // ---- request body / headers --------------------------------------------------------------------
 
     /** A streamed request body with its declared decoded length and optional payload-hash check. */
     private static final class Body {
@@ -860,43 +841,32 @@ public final class S3WireServer {
         return data;
     }
 
-    private static void applyObjectHeaders(HttpServletRequest req, java.util.function.Consumer<String> contentType,
-            java.util.function.Consumer<String> cache, java.util.function.Consumer<String> disposition,
-            java.util.function.Consumer<String> encoding, java.util.function.Consumer<String> language,
-            java.util.function.Consumer<Map<String, String>> metadata) {
-        if (req.getHeader("Content-Type") != null) {
-            contentType.accept(req.getHeader("Content-Type"));
-        }
-        if (req.getHeader("Cache-Control") != null) {
-            cache.accept(req.getHeader("Cache-Control"));
-        }
-        if (req.getHeader("Content-Disposition") != null) {
-            disposition.accept(req.getHeader("Content-Disposition"));
-        }
-        String enc = req.getHeader("Content-Encoding");
-        if (enc != null) {
-            // aws-chunked is transfer framing, not a property of the stored object
-            List<String> kept = new ArrayList<>();
-            for (String e : enc.split(",")) {
-                if (!e.trim().equalsIgnoreCase("aws-chunked") && !e.isBlank()) {
-                    kept.add(e.trim());
+    /** Builds {@link ObjectStore.Attrs} from request headers ({@code aws-chunked} is framing, not stored). */
+    private static final class Attrs {
+        static ObjectStore.Attrs fromRequest(HttpServletRequest req) {
+            String enc = req.getHeader("Content-Encoding");
+            String encoding = null;
+            if (enc != null) {
+                List<String> kept = new ArrayList<>();
+                for (String e : enc.split(",")) {
+                    if (!e.trim().equalsIgnoreCase("aws-chunked") && !e.isBlank()) {
+                        kept.add(e.trim());
+                    }
+                }
+                if (!kept.isEmpty()) {
+                    encoding = String.join(",", kept);
                 }
             }
-            if (!kept.isEmpty()) {
-                encoding.accept(String.join(",", kept));
+            Map<String, String> meta = new LinkedHashMap<>();
+            for (String name : Collections.list(req.getHeaderNames())) {
+                if (name.toLowerCase(Locale.ROOT).startsWith("x-amz-meta-")) {
+                    meta.put(name.substring("x-amz-meta-".length()).toLowerCase(Locale.ROOT), req.getHeader(name));
+                }
             }
-        }
-        if (req.getHeader("Content-Language") != null) {
-            language.accept(req.getHeader("Content-Language"));
-        }
-        Map<String, String> meta = new LinkedHashMap<>();
-        for (String name : Collections.list(req.getHeaderNames())) {
-            if (name.toLowerCase(Locale.ROOT).startsWith("x-amz-meta-")) {
-                meta.put(name.substring("x-amz-meta-".length()).toLowerCase(Locale.ROOT), req.getHeader(name));
-            }
-        }
-        if (!meta.isEmpty()) {
-            metadata.accept(meta);
+            return new ObjectStore.Attrs(req.getHeader("Content-Type"), req.getHeader("Cache-Control"),
+                    req.getHeader("Content-Disposition"), encoding, req.getHeader("Content-Language"),
+                    req.getHeader("Expires"), meta);
         }
     }
+
 }

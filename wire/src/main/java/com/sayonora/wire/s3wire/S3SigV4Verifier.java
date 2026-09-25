@@ -40,13 +40,21 @@ public final class S3SigV4Verifier {
     private static final DateTimeFormatter AMZ_DATE =
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
 
-    public record Result(boolean valid, String accessKeyId, int status, String code, String message) {
+    /** What per-chunk signature verification of {@code STREAMING-AWS4-HMAC-SHA256-PAYLOAD} bodies needs. */
+    public record ChunkAuth(byte[] signingKey, String amzDate, String scope, String seedSignature) {
+    }
+
+    public record Result(boolean valid, String accessKeyId, int status, String code, String message, ChunkAuth chunk) {
+        static Result ok(String key, ChunkAuth chunk) {
+            return new Result(true, key, 200, null, null, chunk);
+        }
+
         static Result ok(String key) {
-            return new Result(true, key, 200, null, null);
+            return new Result(true, key, 200, null, null, null);
         }
 
         static Result fail(int status, String code, String message) {
-            return new Result(false, null, status, code, message);
+            return new Result(false, null, status, code, message, null);
         }
     }
 
@@ -128,9 +136,6 @@ public final class S3SigV4Verifier {
         } catch (RuntimeException e) {
             return Result.fail(400, "AuthorizationHeaderMalformed", "Missing or malformed X-Amz-Date.");
         }
-        if (!amzDate.startsWith(scopeDate)) {
-            return Result.fail(403, "SignatureDoesNotMatch", "Credential scope date does not match X-Amz-Date.");
-        }
         long skew = now.getEpochSecond() - requestTime.getEpochSecond();
         if (presigned) {
             long expires;
@@ -148,6 +153,9 @@ public final class S3SigV4Verifier {
         } else if (Math.abs(skew) > MAX_SKEW_SECONDS) {
             return Result.fail(403, "RequestTimeTooSkewed",
                     "The difference between the request time and the current time is too large.");
+        }
+        if (!amzDate.startsWith(scopeDate)) {
+            return Result.fail(403, "SignatureDoesNotMatch", "Credential scope date does not match X-Amz-Date.");
         }
 
         try {
@@ -179,7 +187,7 @@ public final class S3SigV4Verifier {
                 return Result.fail(403, "SignatureDoesNotMatch",
                         "The request signature we calculated does not match the signature you provided.");
             }
-            return Result.ok(accessKey);
+            return Result.ok(accessKey, new ChunkAuth(k, amzDate, scope, computed));
         } catch (Exception e) {
             return Result.fail(400, "InvalidRequest", "Signature verification error: " + e.getMessage());
         }
@@ -276,6 +284,10 @@ public final class S3SigV4Verifier {
 
     private static byte[] sha256(byte[] data) throws Exception {
         return MessageDigest.getInstance("SHA-256").digest(data);
+    }
+
+    static byte[] hmacBytes(byte[] key, String data) throws Exception {
+        return hmac(key, data);
     }
 
     private static byte[] hmac(byte[] key, String data) throws Exception {
