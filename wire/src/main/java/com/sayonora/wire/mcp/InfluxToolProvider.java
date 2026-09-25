@@ -39,7 +39,7 @@ final class InfluxToolProvider implements BackendToolProvider {
 
     @Override
     public List<Tool> tools() {
-        JsonObject db = str("Database name (accepted for compatibility; influxwire has one namespace)");
+        JsonObject db = str("Database name (default: \"default\")");
         return List.of(
                 new Tool("health_check", "Check the InfluxDB-shaped store is reachable.", schema(List.of()), false),
                 new Tool("list_databases", "List databases (influxwire exposes one logical database).",
@@ -57,8 +57,8 @@ final class InfluxToolProvider implements BackendToolProvider {
                         + "fields (jsonb), e.g. SELECT time, fields->>'value' FROM warp_influx_temp.",
                         schema(List.of("db", "q"), "db", db, "q", str("SQL SELECT"),
                                 "params", arr("Not supported; must be empty or omitted")), false),
-                new Tool("query_influxql", "Run bounded read-only InfluxQL (SHOW MEASUREMENTS, or SELECT with "
-                        + "WHERE / GROUP BY time() / mean|sum|count|min|max); InfluxDB v1 result shape.",
+                new Tool("query_influxql", "Run InfluxQL (SELECT with functions, GROUP BY time()/fill, subqueries; SHOW ...; "
+                        + "DDL/DELETE need the HTTP frontend); InfluxDB v1 result shape.",
                         schema(List.of("db", "q"), "db", db, "q", str("InfluxQL query")), false),
                 new Tool("write_line_protocol", "Write points in InfluxDB line protocol.",
                         schema(List.of("db", "data"), "db", db, "data", str("Line protocol payload"),
@@ -96,35 +96,35 @@ final class InfluxToolProvider implements BackendToolProvider {
                     return Outcome.ok("{\"status\":\"pass\",\"message\":\"influxwire store reachable\"}");
                 }
                 case "list_databases" -> {
-                    return Outcome.ok("{\"databases\":[{\"name\":\"default\"}]}");
+                    JsonObject out = new JsonObject();
+                    JsonArray arr = new JsonArray();
+                    java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>(influx.databases());
+                    names.add(InfluxEmbedded.DEFAULT_DB);
+                    for (String n : names) {
+                        JsonObject o = new JsonObject();
+                        o.addProperty("name", n);
+                        arr.add(o);
+                    }
+                    out.add("databases", arr);
+                    return Outcome.ok(out.toString());
                 }
                 case "get_measurements", "list_tables" -> {
                     JsonObject out = new JsonObject();
                     JsonArray arr = new JsonArray();
-                    influx.measurements().stream().sorted().forEach(arr::add);
+                    influx.measurements(optString(a, "db")).stream().sorted().forEach(arr::add);
                     out.add(tool.equals("list_tables") ? "tables" : "measurements", arr);
                     return Outcome.ok(out.toString());
                 }
                 case "get_measurement_schema", "describe_table" -> {
                     String m = requireString(a, tool.equals("describe_table") ? "table" : "measurement");
                     String table = InfluxEmbedded.physicalTable(m);
-                    if (!influx.measurements().contains(m.toLowerCase(java.util.Locale.ROOT))) {
+                    if (!influx.measurements(optString(a, "db")).contains(m)) {
                         return Outcome.error("measurement \"" + m + "\" not found");
                     }
                     JsonArray cols = new JsonArray();
                     cols.add(col("time", "timestamp", "time"));
-                    AdHocQueryRunner.Result tags = ctx.sql("SELECT DISTINCT k FROM " + table
-                            + ", jsonb_object_keys(tags) AS k ORDER BY k");
-                    if (!tags.success()) {
-                        return Outcome.error("ERROR [" + tags.sqlState() + "]: " + tags.error());
-                    }
-                    tags.rows().forEach(r -> cols.add(col(String.valueOf(r.get(0)), "string", "tag")));
-                    AdHocQueryRunner.Result fields = ctx.sql("SELECT k, jsonb_typeof(v) AS t FROM " + table
-                            + ", jsonb_each(fields) AS f(k, v) GROUP BY k, jsonb_typeof(v) ORDER BY k");
-                    if (!fields.success()) {
-                        return Outcome.error("ERROR [" + fields.sqlState() + "]: " + fields.error());
-                    }
-                    fields.rows().forEach(r -> cols.add(col(String.valueOf(r.get(0)), String.valueOf(r.get(1)), "field")));
+                    influx.tagKeys(optString(a, "db"), m).forEach(k -> cols.add(col(k, "string", "tag")));
+                    influx.fieldTypes(optString(a, "db"), m).forEach((k, t) -> cols.add(col(k, t, "field")));
                     JsonObject out = new JsonObject();
                     out.addProperty("measurement", m);
                     out.add("columns", cols);
@@ -134,10 +134,10 @@ final class InfluxToolProvider implements BackendToolProvider {
                     return querySql(a, ctx);
                 }
                 case "query_influxql" -> {
-                    return Outcome.ok(influx.queryInfluxQl(requireString(a, "q")).toString());
+                    return Outcome.ok(influx.queryInfluxQl(optString(a, "db"), requireString(a, "q")).toString());
                 }
                 case "write_line_protocol" -> {
-                    int n = influx.write(requireString(a, "data"), optString(a, "precision"));
+                    int n = influx.write(optString(a, "db"), requireString(a, "data"), optString(a, "precision"));
                     return Outcome.ok("{\"success\":true,\"points_written\":" + n + "}");
                 }
                 default -> {

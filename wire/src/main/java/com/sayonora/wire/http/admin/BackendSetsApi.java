@@ -14,6 +14,7 @@ import com.sayonora.wire.core.BackendSetModel.Backend;
 import com.sayonora.wire.core.BackendSetModel.BackendSet;
 import com.sayonora.wire.core.BackendSetModel.ModelException;
 import com.sayonora.wire.core.BackendTarget;
+import com.sayonora.wire.core.ConnectionRouter;
 import com.sayonora.wire.core.StoreBootstrap;
 import com.sayonora.wire.core.StoreType;
 import com.sayonora.wire.mcp.BackendTypes;
@@ -44,6 +45,10 @@ import org.slf4j.LoggerFactory;
  *   DELETE /api/backend-sets/{set}/backends/{name}
  *   POST   /api/backend-sets/{set}/backends/{name}/test
  *   GET    /api/backend-stores                          the stores a Postgres backend can host
+ *   GET    /api/connection-routes                       connect-time routing: mode + explicit routes
+ *   POST   /api/connection-routes                       {protocol?, database, user?, target, defaultBackend?, position?}
+ *   PATCH  /api/connection-routes/{id}                  {target?, defaultBackend?}   (id = protocol|database|user)
+ *   DELETE /api/connection-routes/{id}
  * </pre>
  * {@code POST /api/backends} is accepted as an alias of the add-backend call but REQUIRES {@code set}.
  * Everything is persisted as a new {@code warp_config} version (hot-reloaded on every instance).
@@ -54,6 +59,8 @@ public final class BackendSetsApi {
     private static final Logger log = LoggerFactory.getLogger(BackendSetsApi.class);
     private static final Object WRITE_LOCK = new Object();
 
+    private static final Pattern ROUTES = Pattern.compile("^/api/connection-routes/?$");
+    private static final Pattern ROUTE = Pattern.compile("^/api/connection-routes/([^/]+)/?$");
     private static final Pattern SETS = Pattern.compile("^/api/backend-sets/?$");
     private static final Pattern SET = Pattern.compile("^/api/backend-sets/([^/]+)/?$");
     private static final Pattern SET_BACKENDS = Pattern.compile("^/api/backend-sets/([^/]+)/backends/?$");
@@ -64,7 +71,8 @@ public final class BackendSetsApi {
     }
 
     public static boolean handles(String target) {
-        return target.equals("/api/backend-stores") || target.startsWith("/api/backend-sets");
+        return target.equals("/api/backend-stores") || target.startsWith("/api/backend-sets")
+                || target.startsWith("/api/connection-routes");
     }
 
     public static void handle(String target, HttpServletRequest request, HttpServletResponse response,
@@ -77,6 +85,24 @@ public final class BackendSetsApi {
                 return;
             }
             Matcher m;
+            if (ROUTES.matcher(target).matches()) {
+                switch (method) {
+                    case "GET" -> write(response, 200, routesJson(registry));
+                    case "POST" -> addRoute(readBody(request), response, configStore, registry);
+                    default -> notFound(response);
+                }
+                return;
+            }
+            if ((m = ROUTE.matcher(target)).matches()) {
+                String id = decode(m.group(1));
+                switch (method) {
+                    case "GET" -> getRoute(id, response, registry);
+                    case "PATCH", "PUT" -> patchRoute(id, readBody(request), response, configStore, registry);
+                    case "DELETE" -> deleteRoute(id, response, configStore, registry);
+                    default -> notFound(response);
+                }
+                return;
+            }
             if (SETS.matcher(target).matches()) {
                 if ("GET".equals(method)) {
                     write(response, 200, listSets(request, configStore, registry, options));
@@ -192,6 +218,7 @@ public final class BackendSetsApi {
         out.addProperty("maxBackends", com.sayonora.wire.license.License.current().maxBackends());
         out.addProperty("backendCount", model.allBackends().size());
         out.add("stores", storesCatalog().get("stores"));
+        out.add("connectionRouting", routesJson(registry));
         return out;
     }
 
@@ -211,6 +238,9 @@ public final class BackendSetsApi {
         o.addProperty("name", s.name());
         o.addProperty("description", s.description());
         o.addProperty("isDefaultSet", holdsDefault(model, s.name()));
+        // the exact database/service name that selects this whole set (null: a backend of the same
+        // name shadows it -- reach the set through an explicit route instead)
+        o.addProperty("connectAs", registry == null ? s.name() : registry.connectionRouter().connectAsSet(s.name()));
         JsonArray arr = new JsonArray();
         for (Backend b : model.backendsOf(s.name())) {
             arr.add(backendJson(model, b, registry, health));
@@ -262,6 +292,7 @@ public final class BackendSetsApi {
         o.addProperty("description", b.description());
         o.addProperty("fallback", b.fallback());
         o.addProperty("isDefault", BackendRegistry.DEFAULT_BACKEND_NAME.equals(b.name()));
+        o.addProperty("connectAs", b.name());
         List<String> ids = new ArrayList<>();
         for (StoreType s : b.stores()) {
             ids.add(s.id());
@@ -447,6 +478,13 @@ public final class BackendSetsApi {
         WarpConfig after = model.applyTo(before);
         BackendRegistry beforeReg = hypothetical(before, options);
         BackendRegistry afterReg = hypothetical(after, options); // throws IllegalArgumentException on dangling refs
+        // a connect-time route may not be left pointing at a backend/set this change removes
+        try {
+            afterReg.connectionRouter().load(after.connectionRoutes());
+            afterReg.connectionRouter().validateAgainstRegistry(afterReg.connectionRouter().routes());
+        } catch (IllegalArgumentException e) {
+            throw new ModelException(409, e.getMessage() + " -- remove or change the connection route first");
+        }
 
         // schema for newly enabled (backend, store) pairs
         for (Backend b : model.allBackends()) {
@@ -492,6 +530,7 @@ public final class BackendSetsApi {
                 registry.reload(after.backends(), after.shardBackends(), after.backendSets(), after.backendGroups());
                 registry.applyDescriptions(after.backendDescriptions(), after.backendGroupDescriptions());
                 registry.applyStoreConfig(after.backendStores(), after.backendSetNames());
+                registry.connectionRouter().load(after.connectionRoutes());
             } catch (RuntimeException e) {
                 log.warn("backend sets: local immediate apply failed (the LISTEN/NOTIFY reload will retry): {}", e.toString());
             }
@@ -523,6 +562,127 @@ public final class BackendSetsApi {
             return r.shardGroup();
         }
         return List.of(BackendRegistry.DEFAULT_BACKEND_NAME);
+    }
+
+    // ---- connect-time routes -------------------------------------------------------------------
+
+    private static JsonObject routeJson(ConnectionRouter.Route r, BackendRegistry registry) {
+        JsonObject o = ConnectionRouter.toJson(r);
+        o.addProperty("id", r.key());
+        String t = r.target().toLowerCase(java.util.Locale.ROOT);
+        String kind = t.startsWith("set:") || t.startsWith("group:") ? "set"
+                : t.startsWith("db:") || t.startsWith("backend:") ? "backend"
+                : registry != null && registry.get(r.target()) != null ? "backend" : "set";
+        o.addProperty("targetKind", kind);
+        return o;
+    }
+
+    private static JsonObject routesJson(BackendRegistry registry) {
+        JsonObject out = new JsonObject();
+        ConnectionRouter router = registry.connectionRouter();
+        out.addProperty("mode", router.mode().name().toLowerCase(java.util.Locale.ROOT));
+        JsonArray arr = new JsonArray();
+        for (ConnectionRouter.Route r : router.routes()) {
+            arr.add(routeJson(r, registry));
+        }
+        out.add("routes", arr);
+        return out;
+    }
+
+    private static ConnectionRouter.Route findRoute(String id, BackendRegistry registry) {
+        for (ConnectionRouter.Route r : registry.connectionRouter().routes()) {
+            if (r.key().equals(id)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private static void getRoute(String id, HttpServletResponse response, BackendRegistry registry) throws IOException {
+        ConnectionRouter.Route r = findRoute(id, registry);
+        if (r == null) {
+            error(response, 404, "no connection route '" + id + "'");
+            return;
+        }
+        write(response, 200, routeJson(r, registry));
+    }
+
+    /** Persists {@code routes} as a new warp_config version and applies it locally at once. */
+    private static long commitRoutes(List<ConnectionRouter.Route> routes, ConfigStore configStore,
+            BackendRegistry registry) throws SQLException {
+        registry.connectionRouter().validateAgainstRegistry(routes);
+        WarpConfig before = latest(configStore);
+        long version = configStore.write(before.withConnectionRoutes(ConnectionRouter.render(routes)));
+        registry.connectionRouter().load(ConnectionRouter.render(routes));
+        return version;
+    }
+
+    private static void addRoute(JsonObject body, HttpServletResponse response, ConfigStore configStore,
+            BackendRegistry registry) throws SQLException, IOException {
+        ConnectionRouter.Route added = ConnectionRouter.validated(str(body, "protocol"), str(body, "database"),
+                str(body, "user"), str(body, "target"), str(body, "defaultBackend"), "route");
+        synchronized (WRITE_LOCK) {
+            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
+            for (ConnectionRouter.Route r : routes) {
+                if (r.key().equals(added.key())) {
+                    error(response, 409, "a route for '" + added.key() + "' already exists");
+                    return;
+                }
+            }
+            JsonElement pos = body.get("position");
+            int at = pos == null || pos.isJsonNull() ? routes.size() : Math.max(0, Math.min(pos.getAsInt(), routes.size()));
+            routes.add(at, added);
+            long version = commitRoutes(routes, configStore, registry);
+            JsonObject out = routeJson(added, registry);
+            out.addProperty("version", version);
+            write(response, 201, out);
+        }
+    }
+
+    private static void patchRoute(String id, JsonObject body, HttpServletResponse response, ConfigStore configStore,
+            BackendRegistry registry) throws SQLException, IOException {
+        synchronized (WRITE_LOCK) {
+            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
+            for (int i = 0; i < routes.size(); i++) {
+                ConnectionRouter.Route r = routes.get(i);
+                if (!r.key().equals(id)) {
+                    continue;
+                }
+                ConnectionRouter.Route changed = ConnectionRouter.validated(r.protocol(), r.database(), r.user(),
+                        body.has("target") ? str(body, "target") : r.target(),
+                        body.has("defaultBackend") ? str(body, "defaultBackend") : r.defaultBackend(), "route");
+                routes.set(i, changed);
+                long version = commitRoutes(routes, configStore, registry);
+                JsonObject out = routeJson(changed, registry);
+                out.addProperty("version", version);
+                write(response, 200, out);
+                return;
+            }
+            error(response, 404, "no connection route '" + id + "'");
+        }
+    }
+
+    private static void deleteRoute(String id, HttpServletResponse response, ConfigStore configStore,
+            BackendRegistry registry) throws SQLException, IOException {
+        synchronized (WRITE_LOCK) {
+            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
+            if (!routes.removeIf(r -> r.key().equals(id))) {
+                error(response, 404, "no connection route '" + id + "'");
+                return;
+            }
+            long version = commitRoutes(routes, configStore, registry);
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            out.addProperty("version", version);
+            write(response, 200, out);
+        }
+    }
+
+    /** The persisted route list (the source of truth for a read-modify-write), falling back to the
+     * live one when nothing is persisted yet. */
+    private static List<ConnectionRouter.Route> reloadedRoutes(ConfigStore configStore, BackendRegistry registry)
+            throws SQLException {
+        return ConnectionRouter.parse(latest(configStore).connectionRoutes());
     }
 
     // ---- small helpers -----------------------------------------------------------------------

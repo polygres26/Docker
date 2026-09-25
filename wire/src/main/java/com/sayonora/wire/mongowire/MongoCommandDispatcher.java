@@ -44,12 +44,41 @@ final class MongoCommandDispatcher {
         this.sqlMetrics = sqlMetrics;
     }
 
+    private com.sayonora.wire.core.ConnectionRouter router;
+
+    /** Enables connect-time routing: each data-plane command's {@code $db} selects a backend or set. */
+    MongoCommandDispatcher withRouter(com.sayonora.wire.core.ConnectionRouter router) {
+        this.router = router;
+        return this;
+    }
+
+    private static final java.util.Set<String> DATA_PLANE = java.util.Set.of("insert", "find", "aggregate",
+            "update", "delete", "listcollections", "count", "distinct", "findandmodify");
+
     BsonDocument dispatch(BsonDocument command) {
         String commandName = command.getFirstKey();
         String db = command.containsKey("$db") ? command.getString("$db").getValue() : "test";
         String lower = commandName.toLowerCase(java.util.Locale.ROOT);
         long start = System.nanoTime();
         try {
+            // Connect-time routing: $db names a backend or backend set (the handshake carries no database
+            // -- hello/auth are $db=admin -- so the per-command $db is the one place a Mongo client says
+            // which database it means). Only data-plane commands are routed/rejected.
+            if (router != null && DATA_PLANE.contains(lower)) {
+                com.sayonora.wire.core.ConnectionRoute route =
+                        router.resolve(com.sayonora.wire.core.ConnectionRouter.PROTO_MONGODB, db, null);
+                if (route.isRejected()) {
+                    return error("database \"" + db + "\" not found", 26, "NamespaceNotFound");
+                }
+                List<String> hosts = router.storeBackends(route);
+                if (hosts != null && hosts.isEmpty()) {
+                    return error("database \"" + db + "\" routes to " + route.description()
+                            + ", which cannot store documents (only Postgres backends can)", 2, "BadValue");
+                }
+                store.routeTo(hosts);
+            } else {
+                store.routeTo(null);
+            }
             return switch (lower) {
                 case "hello", "ismaster", "ismastercmd" -> hello(command);
                 case "ping" -> ok();
@@ -310,7 +339,9 @@ final class MongoCommandDispatcher {
         int limit = command.containsKey("limit") ? command.getNumber("limit").intValue() : 0;
         List<Document> docs;
         
-        String idJson = cache != null ? MongoQueryTranslator.exactIdEquality(filter) : null;
+        // The single-row cache is keyed by db.collection alone (no backend): never serve or fill it for a
+        // connection routed to a specific backend/set.
+        String idJson = cache != null && !store.isRouted() ? MongoQueryTranslator.exactIdEquality(filter) : null;
         if (idJson != null) {
             String physicalTable = db + "." + collection;
             String cacheKey = com.sayonora.wire.cluster.RowCache.key(physicalTable, idJson, null);

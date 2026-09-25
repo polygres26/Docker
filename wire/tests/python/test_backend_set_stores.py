@@ -150,7 +150,7 @@ def test_dynamodb_query_with_sort_key_hits_one_shard(warp, pgs, ports):
                   sql(pgs[1], "SELECT count(*) FROM dynamo_item_events WHERE pk_value='u3'")[0]) == [0, 5]
 
 
-def test_dynamodb_batch_write_spans_shards_and_cross_shard_transactions_are_refused(warp, pgs, ports):
+def test_dynamodb_batch_write_spans_shards_and_cross_shard_transactions_are_atomic(warp, pgs, ports):
     c = dynamo(warp, ports)
     c.batch_write_item(RequestItems={"orders": [
         {"PutRequest": {"Item": {"id": {"S": f"b{i}"}, "total": {"N": "1"}}}} for i in range(20)]})
@@ -162,18 +162,28 @@ def test_dynamodb_batch_write_spans_shards_and_cross_shard_transactions_are_refu
         shard = 0 if sql(pgs[0], "SELECT 1 FROM dynamo_item_orders WHERE pk_value=%s", (f"b{i}",)) else 1
         on.setdefault(shard, f"b{i}")
     assert set(on) == {0, 1}
+    # a transaction spanning both shards commits atomically (one database transaction per shard, all prepared
+    # before the first commit)...
+    c.transact_write_items(TransactItems=[
+        {"Put": {"TableName": "orders", "Item": {"id": {"S": on[0]}, "total": {"N": "9"}}}},
+        {"Put": {"TableName": "orders", "Item": {"id": {"S": on[1]}, "total": {"N": "9"}}}}])
+    assert c.get_item(TableName="orders", Key={"id": {"S": on[0]}})["Item"]["total"]["N"] == "9"
+    assert c.get_item(TableName="orders", Key={"id": {"S": on[1]}})["Item"]["total"]["N"] == "9"
+    # ...and a failing condition on one shard cancels the write on the other
     with pytest.raises(ClientError) as e:
         c.transact_write_items(TransactItems=[
-            {"Put": {"TableName": "orders", "Item": {"id": {"S": on[0]}, "total": {"N": "9"}}}},
-            {"Put": {"TableName": "orders", "Item": {"id": {"S": on[1]}, "total": {"N": "9"}}}}])
-    assert "spans 2 storage shards" in str(e.value)
-    assert c.get_item(TableName="orders", Key={"id": {"S": on[0]}})["Item"]["total"]["N"] == "1", "nothing may be written"
-    assert c.get_item(TableName="orders", Key={"id": {"S": on[1]}})["Item"]["total"]["N"] == "1"
-    # a transaction whose items share one partition key is one shard and works
+            {"Put": {"TableName": "orders", "Item": {"id": {"S": on[0]}, "total": {"N": "5"}}}},
+            {"Put": {"TableName": "orders", "Item": {"id": {"S": on[1]}, "total": {"N": "5"}},
+                     "ConditionExpression": "#t = :x", "ExpressionAttributeNames": {"#t": "total"},
+                     "ExpressionAttributeValues": {":x": {"N": "1"}}}}])
+    assert e.value.response["Error"]["Code"] == "TransactionCanceledException"
+    assert [r["Code"] for r in e.value.response["CancellationReasons"]] == ["None", "ConditionalCheckFailed"]
+    assert c.get_item(TableName="orders", Key={"id": {"S": on[0]}})["Item"]["total"]["N"] == "9", "nothing may be written"
+    assert c.get_item(TableName="orders", Key={"id": {"S": on[1]}})["Item"]["total"]["N"] == "9"
+    # a single-item transaction (one shard) works as before
     c.transact_write_items(TransactItems=[
-        {"Put": {"TableName": "orders", "Item": {"id": {"S": on[0]}, "total": {"N": "5"}}}},
-        {"Update": {"TableName": "orders", "Key": {"id": {"S": on[0]}}, "UpdateExpression": "SET total = :v",
-                    "ExpressionAttributeValues": {":v": {"N": "6"}}}}])
+        {"Update": {"TableName": "orders", "Key": {"id": {"S": on[0]}}, "UpdateExpression": "SET #t = :v",
+                    "ExpressionAttributeNames": {"#t": "total"}, "ExpressionAttributeValues": {":v": {"N": "6"}}}}])
     assert c.get_item(TableName="orders", Key={"id": {"S": on[0]}})["Item"]["total"]["N"] == "6"
 
 
@@ -286,12 +296,16 @@ def test_influx_series_shard_and_queries_merge_exactly(warp, pgs, ports):
     s = influx_query(ports, "SELECT count(value), sum(value), min(value), max(value), mean(value) FROM cpu")
     row = s[0]["values"][0]
     assert row[-5:] == [200, sum(range(200)), 0, 199, sum(range(200)) / 200], row
-    # newest-first plain read with a limit merges across shards
+    # plain reads are oldest-first (InfluxDB's default); ORDER BY time DESC gives newest-first; both merge across shards
     s = influx_query(ports, "SELECT value FROM cpu LIMIT 5")
+    assert [r[-1] for r in s[0]["values"]] == [0, 1, 2, 3, 4]
+    s = influx_query(ports, "SELECT value FROM cpu ORDER BY time DESC LIMIT 5")
     assert [r[-1] for r in s[0]["values"]] == [199, 198, 197, 196, 195]
     s = influx_query(ports, "SELECT count(value) FROM cpu WHERE host = 'h7'")
     assert s[0]["values"][0][-1] == 5
-    s = influx_query(ports, "SELECT mean(value) FROM cpu GROUP BY time(50s)")
+    # like InfluxDB, GROUP BY time() fills every bucket up to the query's upper bound: bound the range
+    s = influx_query(ports, "SELECT mean(value) FROM cpu WHERE time >= 1700000000000000000 AND time < 1700000200000000000 "
+                            "GROUP BY time(50s)")
     assert [r[-1] for r in s[0]["values"]] == [24.5, 74.5, 124.5, 174.5], s
     names = [v[0] for v in influx_query(ports, "SHOW MEASUREMENTS")[0]["values"]]
     assert "cpu" in names

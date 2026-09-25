@@ -3,7 +3,6 @@ package com.sayonora.wire.core.access;
 import com.sayonora.wire.core.AccessContext;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * The mssqlwire equivalent of {@link OraclePgEmulationSessionInitializer}/{@code
@@ -24,19 +23,11 @@ import java.sql.Statement;
  */
 public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessionInitializer {
 
-    private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer();
-
-    // Same redundant-per-statement-round-trip shape PostgresRlsSessionInitializer's own javadoc
-    // now documents -- this instance is constructed exactly once per mssqlwire session
-    // (MssqlWireSessionHandler's ctor), and `SET db_emulation` only ever needs re-asserting when
-    // THIS executor's connection actually changes (a fresh pooled physical connection, or a
-    // failover rebind) -- never on every statement against the same connection it was already set
-    // on. Cached by connection IDENTITY so a rebind (new pooled connection, possibly last used by
-    // a completely different dialect's session) is always a cache miss and re-asserts for real,
-    // matching OraclePgEmulationSessionInitializer's own db_emulation_assign_hook-reconciliation
-    // caveat (see its javadoc) -- this cache never assumes correctness across a connection swap,
-    // only across repeated statements on the SAME already-initialized connection.
-    private Connection lastEmulationConnection;
+    // Same rls delegate as before, but built for a session that keeps its own emulation ("plainSession" false)
+    // and always asserts warp.user_id, as this frontend always did. What was applied to a physical connection
+    // is recorded on the connection (PhysicalSessionState), not on this per-session instance: with connection
+    // multiplexing a session's next statement may run on a different connection than its last one.
+    private final PostgresRlsSessionInitializer delegate = new PostgresRlsSessionInitializer(false, true);
 
     @Override
     public boolean runEvenWhenAnonymous() {
@@ -51,7 +42,9 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
         delegate.initialize(connection, accessContext);
 
-        if (connection == lastEmulationConnection) {
+        PhysicalSessionState.State st = PhysicalSessionState.of(connection);
+        SessionStateReconciler.clearTenantPath(connection, st);
+        if (!st.emulationUnknown && "sqlserver".equals(st.emulation)) {
             return;
         }
 
@@ -63,10 +56,6 @@ public final class MssqlPgEmulationSessionInitializer implements NativeRlsSessio
         if (!com.sayonora.wire.license.DbCompatLicensing.dbEmulationAllowed()) {
             return;
         }
-
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("SET db_emulation = 'sqlserver'");
-        }
-        lastEmulationConnection = connection;
+        SessionStateReconciler.ensureEmulation(connection, st, "sqlserver");
     }
 }

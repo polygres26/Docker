@@ -65,11 +65,31 @@ public final class JdbcBackendExecutor implements BackendExecutor {
         this.connection = connection;
     }
 
+    // Connection multiplexing (SessionConnectionLease): when bound, the connection is borrowed HERE, at the
+    // last moment before the statement really needs the backend -- after firewall / QoS / cache stages have
+    // had their say -- instead of by the session handler up front. A pooled connection is a new proxy per
+    // borrow whose statements were closed on release, so the per-connection statement cache is dropped when
+    // the connection changes (pgjdbc's own per-physical-connection server-prepared cache, enabled by
+    // WARP_STMT_CACHE_SIZE, keeps repeated statements cheap across borrows).
+    private com.sayonora.wire.core.SessionConnectionLease lease;
+
+    public void bindLease(com.sayonora.wire.core.SessionConnectionLease lease) {
+        this.lease = lease;
+    }
+
     @Override
     public ExecutionResult execute(Statement statement) throws SQLException {
 
+        if (lease != null) {
+            Connection leased = lease.acquire();
+            if (leased != connection) {
+                closeAllCachedStatements();
+                connection = leased;
+            }
+        }
         if (nativeRlsInitializer != null
-                && (!statement.accessContext().isAnonymous() || nativeRlsInitializer.runEvenWhenAnonymous())) {
+                && (!statement.accessContext().isAnonymous() || nativeRlsInitializer.runEvenWhenAnonymous()
+                        || nativeRlsInitializer.needsRunEvenWhenAnonymous(connection))) {
             nativeRlsInitializer.initialize(connection, statement.accessContext());
         }
         String sqlText = stripTrailingSemicolon(statement.sqlText());

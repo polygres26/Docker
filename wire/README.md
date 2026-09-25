@@ -63,8 +63,8 @@ below for pointing it at a real backend.
 | mongowire | MongoDB wire protocol | 27017 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 |
 | sqswire | Amazon SQS HTTP/JSON API | 9324 |
-| s3wire | Amazon S3 REST API (path-style, SigV4) over an S3-compatible backend bucket (MinIO); off unless `WARP_S3WIRE_BACKEND_BUCKET` is set | 18020 |
-| oswire | OpenSearch HTTP/JSON API (`_search`/documents/`_bulk`) | 9200 |
+| s3wire | Amazon S3 REST API (path-style, SigV4); Postgres mode (objects stored in the Postgres backends that enable the `s3` store, sharded by key) or proxy mode over an S3-compatible bucket (MinIO); off unless the `s3` store is enabled, `WARP_S3WIRE_BACKEND_BUCKET` is set or `WARP_S3WIRE_ENABLED=true` | 18020 |
+| oswire | OpenSearch 2.x REST/JSON API (documents, `_bulk`, `_search` with query DSL/aggregations/highlight, scroll, k-NN, index management, cat/cluster probes; Lucene BM25 scoring; verified against a real OpenSearch, see `tests/python/os_conformance/`) | 9200 |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 |
 | Admin / metrics | HTTP | 19090 |
@@ -83,6 +83,9 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
 | `WARP_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
 | `WARP_BACKENDS` / `WARP_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups. Backends are managed inside **backend sets** (admin UI *Backend sets*, `/api/backend-sets`); `WARP_BACKEND_GROUPS` are the sets (a backend with no group is in the implicit `default` set) |
+| `WARP_CONNECT_ROUTING` | Connect-time backend routing: the database / service name a client sends selects a backend or backend set. `implicit` (default: routes + backend/set names, unknown names behave as before), `strict` (reject unknown names with the protocol's native error), `off`. See WARP_GUIDE §4.8 |
+| `WARP_CONNECTION_ROUTES` / `warp_config.connectionRoutes` | JSON array of explicit routes `{protocol?, database, user?, target, defaultBackend?}` (`/api/connection-routes`) |
+| `WARP_BACKEND_HEALTH_PROBE_TIMEOUT_SECONDS` | Per-backend health-probe timeout (default 10); all backends are probed concurrently. With many backends also lower `WARP_POOL_MAX_SIZE` (pools are per backend) |
 | `WARP_BACKEND_STORES` / `WARP_BACKEND_SET_NAMES` | Env spelling of the enabled stores per Postgres backend (`pg2=mongodb,sqs\|default=dynamodb`; stores: `influxdb`, `mongodb`, `sqs`, `neo4j`, `opensearch`, `dynamodb`) and the declared set names (`a,b`); persisted in `warp_config` (`backendStores`, `backendSetNames`), hot-reloaded |
 | `WARP_DYNAMOWIRE_SET` / `WARP_SQSWIRE_SET` / `WARP_MONGOWIRE_SET` / `WARP_INFLUXWIRE_SET` / `WARP_OSWIRE_SET` / `WARP_BOLTWIRE_SET` | The backend set a protocol frontend serves (default: the set holding the `default` backend). A store enabled on backend(s) of that set is hosted there, sharded by key hash when several backends enable it (Neo4j: one backend per set). See `docs/WARP_GUIDE.md` §4.7 |
 | `WARP_ROUTER_SCHEMA_RULES` | Routes a schema-qualified table to a named backend — 2+ rules also enables cross-backend `JOIN` federation |
@@ -94,6 +97,12 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_AWS_IAM_CREDENTIALS` | AWS SigV4 request verification for dynamowire |
 | `WARP_S3WIRE_BACKEND_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_REGION` / `_PATH_STYLE` | s3wire backend: the one S3-compatible bucket (required to enable s3wire), its endpoint (unset = AWS), Warp's own credentials, region (default us-east-1), path-style (default true) |
 | `WARP_S3WIRE_CREDENTIALS` / `WARP_S3WIRE_PORT` | s3wire client SigV4 pairs `key=secret;key2=secret2` (required; falls back to `WARP_AWS_IAM_CREDENTIALS`) and port (default 18020) |
+| `WARP_S3WIRE_SET` | Backend set s3wire serves in Postgres mode (default: the set holding `default`). Enable the `s3` store on its Postgres backend(s) to store objects in Postgres instead of proxying; Postgres mode wins when `WARP_S3WIRE_BACKEND_BUCKET` is also set (WARN logged) |
+| `WARP_S3WIRE_ENABLED` | `true` = start the s3wire listener even when neither the store nor the proxy bucket is configured yet (it adopts the `s3` store when enabled later). Needs `WARP_S3WIRE_CREDENTIALS` |
+| `WARP_S3WIRE_CHUNK_BYTES` | Postgres mode chunk (bytea row) size, default 4194304 (64 KiB–64 MiB); stored per object, so changing it is safe |
+| `WARP_S3WIRE_MAX_OBJECT_BYTES` / `WARP_S3WIRE_MAX_MULTIPART_BYTES` | Largest single PUT or part (default 5 GiB) / largest completed multipart object (default 50 GiB); over → `EntityTooLarge` |
+| `WARP_S3WIRE_GC_INTERVAL_SECONDS` / `_GC_GRACE_SECONDS` / `_GC_UPLOADING_AGE_SECONDS` / `_GC_MULTIPART_AGE_SECONDS` | Postgres mode collector: period (60, 0 = off), how long replaced/deleted chunks stay for in-flight readers (600), idle age after which an unfinished upload is discarded (3600), age after which an uncompleted multipart upload is aborted (604800) |
+| `WARP_S3WIRE_BUCKET_CACHE_MILLIS` / `WARP_S3WIRE_PROBE_OTHER_SHARDS` | Bucket-exists cache per Warp process (default 2000, 0 = off) / on a GET/HEAD miss also look on the other hosts of the set (default false; for data written before a topology change) |
 | `WARP_MCP_TOOLS` | Postgres functions/procedures to expose as individually-named MCP tools |
 | `WARP_BACKEND_DESCRIPTIONS` / `WARP_BACKEND_GROUP_DESCRIPTIONS` | JSON objects `{"<backend>":"text"}` / `{"<group>":"text"}` describing backends and backend groups/sets; persisted in `warp_config` (`backendDescriptions`, `backendGroupDescriptions`, editable with `PUT /api/config`), hot-reloaded; shown by MCP `list_backends`/`describe_backend`, `inspect_schema` and `GET /api/backends` |
 | `WARP_MCP_EMULATED_STORES` | Fallback: opt the Warp-emulated stores into MCP as logical backends of `default` (`default.dynamodb`, `default.mongodb`, `default.influx`): comma list or `all` (default none). Stores enabled on a backend through config (§4.7) are listed automatically as `<backend>.<kind>` and need no env |

@@ -177,6 +177,8 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.OPENSEARCH, backendRegistry));
         this.providers.put(BackendKind.NEO4J, new StoreDescribeProvider(BackendKind.NEO4J,
                 com.sayonora.wire.core.StoreType.NEO4J, backendRegistry));
+        this.providers.put(BackendKind.S3STORE, new StoreDescribeProvider(BackendKind.S3STORE,
+                com.sayonora.wire.core.StoreType.S3, backendRegistry));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -850,6 +852,7 @@ public final class WarpMcpServer {
             case NEO4J -> com.sayonora.wire.core.StoreType.NEO4J;
             case OPENSEARCH -> com.sayonora.wire.core.StoreType.OPENSEARCH;
             case DYNAMODB -> com.sayonora.wire.core.StoreType.DYNAMODB;
+            case S3STORE -> com.sayonora.wire.core.StoreType.S3;
             default -> null;
         };
     }

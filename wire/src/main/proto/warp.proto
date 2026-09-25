@@ -19,6 +19,10 @@ message ExecuteRequest {
   string password = 2;
   string sql = 3;
   repeated string params = 4; // positional bind values, text-encoded
+  // Optional (additive, backward compatible): the backend or backend set this call is routed to,
+  // exactly like the database name on a SQL wire protocol -- see "Connecting to a specific backend
+  // or set" in docs/WARP_GUIDE.md. Empty = today's behavior.
+  string database = 5;
 }
 
 message ExecuteResponse {

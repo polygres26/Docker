@@ -23,4 +23,15 @@ public interface NativeRlsSessionInitializer {
     default boolean runEvenWhenAnonymous() {
         return false;
     }
+
+    /**
+     * Per-connection refinement of {@link #runEvenWhenAnonymous}: an anonymous session may skip this
+     * initializer only if the physical connection it holds carries nothing a previous borrower applied.
+     * With connection multiplexing several sessions take turns on one physical connection, so an
+     * anonymous borrower must still run the initializer when the connection still holds someone else's
+     * identity (to clear it) -- see {@link PhysicalSessionState}.
+     */
+    default boolean needsRunEvenWhenAnonymous(Connection connection) {
+        return false;
+    }
 }

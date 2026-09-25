@@ -32,7 +32,9 @@ public enum BackendKind {
     /** Warp-hosted stores with no MCP data tools of their own yet: listed and described only. */
     SQS("sqs", "sqs_"),
     OPENSEARCH("opensearch", "opensearch_"),
-    NEO4J("neo4j", "neo4j_");
+    NEO4J("neo4j", "neo4j_"),
+    /** The Warp-hosted S3 object store (the {@code s3} store of a Postgres backend): described only. */
+    S3STORE("s3store", "s3store_");
 
     private final String id;
     private final String prefix;
@@ -65,6 +67,7 @@ public enum BackendKind {
             case "sqs" -> SQS;
             case "opensearch", "os" -> OPENSEARCH;
             case "neo4j" -> NEO4J;
+            case "s3store" -> S3STORE;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

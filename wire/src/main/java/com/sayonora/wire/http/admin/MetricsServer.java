@@ -1382,10 +1382,12 @@ public final class MetricsServer {
                         field(body, "backendGroupDescriptions", current.backendGroupDescriptions()),
                         field(body, "mcpEndpoints", current.mcpEndpoints()),
                         field(body, "backendStores", current.backendStores()),
-                        field(body, "backendSetNames", current.backendSetNames()));
+                        field(body, "backendSetNames", current.backendSetNames()),
+                        field(body, "connectionRoutes", current.connectionRoutes()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.wire.acl.ClientAcl.parse(updated.aclRules());
+                com.sayonora.wire.core.ConnectionRouter.parse(updated.connectionRoutes());
                 // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
                 // the backend-set admin API, so the raw config route cannot bypass them
                 com.sayonora.wire.core.BackendSetModel.from(updated, null).validateStores();
@@ -1479,7 +1481,7 @@ public final class MetricsServer {
                         current.oauthRolesClaim(), current.awsIamCredentials(),
                         newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
-                        current.backendStores(), current.backendSetNames());
+                        current.backendStores(), current.backendSetNames(), current.connectionRoutes());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -1662,7 +1664,7 @@ public final class MetricsServer {
                 current.llmProvider(), current.llmApiKey(), current.llmBaseUrl(), current.llmModel(),
                 current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
                 all.isEmpty() ? null : com.sayonora.wire.mcp.McpEndpoints.serialize(all),
-                current.backendStores(), current.backendSetNames());
+                current.backendStores(), current.backendSetNames(), current.connectionRoutes());
         configStore.write(updated);
     }
 

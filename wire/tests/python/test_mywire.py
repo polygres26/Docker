@@ -88,12 +88,11 @@ def test_create_insert_select_round_trip(warp):
         conn.close()
 
 
-@pytest.mark.xfail(
-    reason="mywire has no session-scoped connection yet (see module docstring) -- each "
-           "statement runs on its own fresh, auto-closed connection, so there is no "
-           "cross-statement transaction state for ROLLBACK to undo.",
-    strict=True,
-)
+# History: this was xfail(strict) -- "mywire has no session-scoped connection yet". The session connection has
+# existed for a while, but "SET autocommit=0" only started ONE transaction: after the first COMMIT the session fell
+# back to autocommit, so a later INSERT + ROLLBACK (as here: CREATE; COMMIT; INSERT; ROLLBACK) could not be undone.
+# With connection multiplexing autocommit=0 is a session MODE (every statement after a COMMIT/ROLLBACK opens the
+# next transaction), which is what real MySQL does, so the test now passes.
 def test_transaction_rollback_discards_uncommitted_writes(warp):
     conn = connect(warp)
     try:

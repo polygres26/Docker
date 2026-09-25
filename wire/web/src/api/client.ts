@@ -403,7 +403,7 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 
 // --- Backend sets: /api/backend-sets (the one place backends are added, edited and removed) ---
 
-export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb'
+export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb' | 's3'
 
 export interface StoreInfo {
   id: StoreId
@@ -424,6 +424,8 @@ export interface SetBackend {
   description: string | null
   fallback: string | null
   isDefault: boolean
+  /** The exact database / service name a client connects with to reach ONLY this backend. */
+  connectAs: string
   enabledStores: StoreId[]
   canHostStores: boolean
   state: string
@@ -441,11 +443,33 @@ export interface BackendSetInfo {
   name: string
   description: string | null
   isDefaultSet: boolean
+  /** The database / service name that selects this whole set; null when a backend of the same name shadows it. */
+  connectAs: string | null
   backends: SetBackend[]
   stores: Partial<Record<StoreId, SetStoreHosting>>
 }
 
+export interface ConnectionRoute {
+  id: string
+  protocol?: string
+  database: string
+  user?: string
+  target: string
+  targetKind: 'backend' | 'set'
+  defaultBackend?: string
+}
+
+export interface ConnectionRouting {
+  /** implicit (default) | strict | off -- WARP_CONNECT_ROUTING */
+  mode: 'implicit' | 'strict' | 'off'
+  routes: ConnectionRoute[]
+}
+
+export type ConnectionRouteDraft = Pick<ConnectionRoute, 'database' | 'target'>
+  & Partial<Pick<ConnectionRoute, 'protocol' | 'user' | 'defaultBackend'>>
+
 export interface BackendSetsResponse {
+  connectionRouting: ConnectionRouting
   sets: BackendSetInfo[]
   maxBackends: number
   backendCount: number
@@ -496,6 +520,14 @@ export async function updateSetBackend(set: string, name: string, draft: Partial
 
 export async function deleteSetBackend(set: string, name: string): Promise<BackendWriteResult> {
   return api(backendPath(set, name), { method: 'DELETE' })
+}
+
+export async function addConnectionRoute(draft: ConnectionRouteDraft): Promise<ConnectionRoute> {
+  return api('/api/connection-routes', { method: 'POST', body: JSON.stringify(draft) })
+}
+
+export async function deleteConnectionRoute(id: string): Promise<{ ok: boolean; version: number }> {
+  return api(`/api/connection-routes/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function testSetBackend(set: string, name: string): Promise<BackendTestResult> {

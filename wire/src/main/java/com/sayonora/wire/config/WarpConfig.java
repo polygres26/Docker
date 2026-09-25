@@ -37,7 +37,8 @@ public record WarpConfig(
         String backendGroupDescriptions,
         String mcpEndpoints,
         String backendStores,
-        String backendSetNames) {
+        String backendSetNames,
+        String connectionRoutes) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -74,7 +75,8 @@ public record WarpConfig(
                 System.getenv("WARP_BACKEND_GROUP_DESCRIPTIONS"),
                 null,
                 System.getenv("WARP_BACKEND_STORES"),
-                System.getenv("WARP_BACKEND_SET_NAMES"));
+                System.getenv("WARP_BACKEND_SET_NAMES"),
+                System.getenv("WARP_CONNECTION_ROUTES"));
     }
 
     /** Copy with the backend-model fields replaced (null keeps nothing: pass the values you want). */
@@ -86,7 +88,20 @@ public record WarpConfig(
                 rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
-                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames);
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes);
+    }
+
+    /** Copy with the connect-time route table (JSON array, see ConnectionRouter) replaced. */
+    public WarpConfig withConnectionRoutes(String routes) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                routes);
     }
 
     public String toJson() {
@@ -125,6 +140,7 @@ public record WarpConfig(
         fields.put("mcpEndpoints", mcpEndpoints);
         fields.put("backendStores", backendStores);
         fields.put("backendSetNames", backendSetNames);
+        fields.put("connectionRoutes", connectionRoutes);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -175,7 +191,8 @@ public record WarpConfig(
                 fields.get("backendGroupDescriptions"),
                 fields.get("mcpEndpoints"),
                 fields.get("backendStores"),
-                fields.get("backendSetNames"));
+                fields.get("backendSetNames"),
+                fields.get("connectionRoutes"));
     }
 
     private static String quote(String value) {

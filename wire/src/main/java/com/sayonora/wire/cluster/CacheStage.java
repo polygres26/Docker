@@ -236,13 +236,19 @@ public final class CacheStage implements PipelineStage {
     public ExecutionResult handle(Statement statement, PipelineChain next) throws SQLException {
         String sql = statement.sqlText();
         if (SELECT_PREFIX.matcher(sql).find()) {
-            ExecutionResult rowResult = tryRowCacheLookup(statement, next);
-            if (rowResult != null) {
-                return rowResult;
-            }
-            ExecutionResult genericPkResult = tryGenericPkLookup(statement, next);
-            if (genericPkResult != null) {
-                return genericPkResult;
+            // The two single-row caches are keyed by physical table name alone (no backend), so a
+            // connection routed to one backend/set (backendScope != null) must never read or fill
+            // them: a same-named table on another backend would answer with the wrong backend's row.
+            // The result cache below keys on the routed backend and stays on.
+            if (statement.backendScope() == null) {
+                ExecutionResult rowResult = tryRowCacheLookup(statement, next);
+                if (rowResult != null) {
+                    return rowResult;
+                }
+                ExecutionResult genericPkResult = tryGenericPkLookup(statement, next);
+                if (genericPkResult != null) {
+                    return genericPkResult;
+                }
             }
             if (matchesAnyPattern(sql)) {
                 return handleCacheableSelect(statement, next);

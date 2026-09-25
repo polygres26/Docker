@@ -1,8 +1,16 @@
 package com.sayonora.wire.core;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +34,11 @@ import org.slf4j.LoggerFactory;
  * (won't auto-flip it to {@code DOWN} on a probe failure, and won't auto-flip it back to {@code
  * ACTIVE} just because a probe happens to succeed while maintenance is still in progress). It only
  * ever moves a backend between {@code ACTIVE} and {@code DOWN}.
+ *
+ * <p>Scale: every backend of a cycle is probed CONCURRENTLY, each with its own timeout
+ * ({@code WARP_BACKEND_HEALTH_PROBE_TIMEOUT_SECONDS}, default 10), so one dead or hanging backend
+ * among 100 costs the cycle at most that timeout instead of stalling every probe queued behind it. A
+ * probe that times out counts as a failed probe.
  */
 public final class BackendHealthChecker {
 
@@ -43,15 +56,41 @@ public final class BackendHealthChecker {
     // than your accepted RPO" warning -- see probeOne's javadoc.
     private final Double maxAcceptableFailoverLagSeconds;
     private ScheduledExecutorService scheduler;
+    private final Function<BackendTarget, BackendConnectivityTest.Result> prober;
+    private final long probeTimeoutMillis;
+    private final ExecutorService probePool = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "warp-backend-probe");
+        t.setDaemon(true);
+        return t;
+    });
 
     public BackendHealthChecker(BackendRegistry registry, long periodSeconds) {
         this(registry, periodSeconds, null);
     }
 
     public BackendHealthChecker(BackendRegistry registry, long periodSeconds, Double maxAcceptableFailoverLagSeconds) {
+        this(registry, periodSeconds, maxAcceptableFailoverLagSeconds,
+                t -> BackendConnectivityTest.test(t.jdbcUrl(), t.user(), t.password()),
+                envSeconds("WARP_BACKEND_HEALTH_PROBE_TIMEOUT_SECONDS", 10) * 1000);
+    }
+
+    /** {@code prober} and {@code probeTimeoutMillis} are injectable for tests. */
+    BackendHealthChecker(BackendRegistry registry, long periodSeconds, Double maxAcceptableFailoverLagSeconds,
+            Function<BackendTarget, BackendConnectivityTest.Result> prober, long probeTimeoutMillis) {
         this.registry = registry;
         this.periodSeconds = periodSeconds;
         this.maxAcceptableFailoverLagSeconds = maxAcceptableFailoverLagSeconds;
+        this.prober = prober;
+        this.probeTimeoutMillis = probeTimeoutMillis;
+    }
+
+    private static long envSeconds(String name, long dflt) {
+        String v = System.getenv(name);
+        try {
+            return v == null || v.isBlank() ? dflt : Math.max(1, Long.parseLong(v.trim()));
+        } catch (NumberFormatException e) {
+            return dflt;
+        }
     }
 
     public void start() {
@@ -70,28 +109,58 @@ public final class BackendHealthChecker {
                 + "(DRAINING backends are left alone -- that's an operator decision)", periodSeconds);
     }
 
-    private void probeAllSafely() {
-        for (BackendTarget target : registry.all()) {
+    /** One probe cycle: all eligible backends concurrently, each bounded by the probe timeout. */
+    void probeAllSafely() {
+        Map<BackendTarget, Future<BackendConnectivityTest.Result>> inFlight = new LinkedHashMap<>();
+        for (BackendTarget target : new ArrayList<>(registry.all())) {
+            if (!eligible(target)) {
+                continue;
+            }
+            inFlight.put(target, probePool.submit(() -> prober.apply(target)));
+        }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(probeTimeoutMillis);
+        for (Map.Entry<BackendTarget, Future<BackendConnectivityTest.Result>> e : inFlight.entrySet()) {
+            BackendTarget target = e.getKey();
+            BackendConnectivityTest.Result result;
             try {
-                probeOne(target);
-            } catch (RuntimeException e) {
+                long remaining = Math.max(1, deadline - System.nanoTime());
+                result = e.getValue().get(remaining, TimeUnit.NANOSECONDS);
+            } catch (TimeoutException timeout) {
+                e.getValue().cancel(true);
+                result = new BackendConnectivityTest.Result(false,
+                        "probe timed out after " + probeTimeoutMillis + "ms", probeTimeoutMillis, null);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (java.util.concurrent.ExecutionException | RuntimeException failure) {
                 log.warn("backend health: probe of '{}' itself threw unexpectedly (treating as a "
-                        + "transient checker failure, not a backend-down signal): {}", target.name(), e.toString());
+                        + "transient checker failure, not a backend-down signal): {}", target.name(),
+                        failure.toString());
+                continue;
+            }
+            try {
+                applyResult(target, result);
+            } catch (RuntimeException failure) {
+                log.warn("backend health: applying the probe of '{}' threw unexpectedly: {}", target.name(),
+                        failure.toString());
             }
         }
     }
 
-    private void probeOne(BackendTarget target) {
-        BackendRegistry.BackendState current = registry.stateOf(target.name());
-        if (current == BackendRegistry.BackendState.DRAINING) {
-            return;
+    private boolean eligible(BackendTarget target) {
+        if (registry.stateOf(target.name()) == BackendRegistry.BackendState.DRAINING) {
+            return false;
         }
         // A DynamoDB/Mongo connector backend has no JDBC URL to probe -- a JDBC connectivity test
         // would always "fail" and wrongly mark it DOWN. Not health-checked in this first version.
-        if (target.isFederationOnlyConnector()) {
-            return;
+        return !target.isFederationOnlyConnector();
+    }
+
+    private void applyResult(BackendTarget target, BackendConnectivityTest.Result result) {
+        BackendRegistry.BackendState current = registry.stateOf(target.name());
+        if (current == BackendRegistry.BackendState.DRAINING) {
+            return; // drained by an operator while the probe was in flight
         }
-        var result = BackendConnectivityTest.test(target.jdbcUrl(), target.user(), target.password());
         if (result.ok() && current == BackendRegistry.BackendState.DOWN) {
             registry.setState(target.name(), BackendRegistry.BackendState.ACTIVE);
             log.info("backend health: '{}' is reachable again -- ACTIVE (routing no longer prefers its "

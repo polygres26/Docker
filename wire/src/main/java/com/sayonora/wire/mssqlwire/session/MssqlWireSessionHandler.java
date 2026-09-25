@@ -56,8 +56,29 @@ public final class MssqlWireSessionHandler implements Runnable {
     // BRAND NEW backend connection, execute, and close -- meaning BEGIN TRAN/COMMIT TRAN/ROLLBACK
     // TRAN (already regex-matched below, but only to NO-OP them) had nowhere real to apply. Same
     // fix as pgwire/mywire already have: one connection lives for the whole session.
-    private Connection sessionConnection;
+    // Backend connection lease (connection multiplexing, WARP_MULTIPLEX_SESSIONS): borrowed per statement /
+    // transaction and returned to the pool right after the statement, unless the session is pinned -- open
+    // transaction (BEGIN TRAN / SET IMPLICIT_TRANSACTIONS ON) or backend session state (#temp tables,
+    // SCOPE_IDENTITY(), ...). See SessionConnectionLease. sp_prepare/sp_prepexec handles are client-side
+    // (handle -> SQL text) and re-executed per sp_execute, so they need no pin.
+    private final com.sayonora.wire.core.SessionConnectionLease lease;
     private boolean inTransaction;
+    // SET IMPLICIT_TRANSACTIONS ON (what mssql-jdbc / FreeTDS send for autocommit=false): SQL Server starts the
+    // transaction at the next statement, not at the SET. Tracked as a mode, so an idle autocommit-off client holds
+    // no backend connection; the connection is borrowed and pinned when the first statement that is not a plain
+    // read runs (see executeQuery) and released at COMMIT/ROLLBACK, after which the mode is still on.
+    private boolean implicitTransactions;
+    // BEGIN TRAN: the transaction exists logically (inTransaction) from here, but the backend connection is only
+    // borrowed and pinned by the first statement that is not a plain read (ensurePhysicalTransaction) -- pymssql
+    // begins a transaction right after connecting, and that must not pin a connection while the client is idle.
+    // Reads before the first write run in autocommit mode, which is indistinguishable at READ COMMITTED.
+    private boolean pendingBegin;
+    // SCOPE_IDENTITY() / @@IDENTITY are per-session: with the connection released after every statement they are
+    // answered from the generated key of this session's last INSERT instead of from the backend.
+    private long lastIdentity;
+    private static final Pattern IDENTITY_QUERY = Pattern.compile(
+            "^\\s*select\\s+(?:scope_identity\\s*\\(\\s*\\)|@@identity)(?:\\s+as\\s+\\w+)?\\s*;?\\s*$",
+            Pattern.CASE_INSENSITIVE);
     // Set by an "INSERT BULK <table> (...)" statement (real BCP's own literal-SQL_BATCH trigger --
     // see #INSERT_BULK's javadoc), consumed by the very next TdsPacketType.BULK_LOAD_BCP packet.
     // Session-scoped, one in flight at a time -- a real client always completes one bulk load
@@ -93,10 +114,44 @@ public final class MssqlWireSessionHandler implements Runnable {
         this(clientSocket, options, sharedStages, backendRegistry, roleAuthCache, null);
     }
 
+    // Connect-time backend routing (LOGIN7 database, re-resolved on USE db); see core/ConnectionRouter.
+    // Every Statement this session builds passes through route.apply().
+    private final BackendRegistry backendRegistry;
+    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
+    private String loginUser = "";
+
+    /** Resolves the LOGIN7 database after a successful login; on a strict-mode rejection writes SQL Server
+     * error 4060 and returns false (the caller closes the connection). */
+    private boolean applyLoginRoute(OutputStream out, TdsPacket packets, String database, String user)
+            throws IOException {
+        loginUser = user == null ? "" : user;
+        if (backendRegistry == null) {
+            return true;
+        }
+        route = backendRegistry.connectionRouter().resolve(
+                com.sayonora.wire.core.ConnectionRouter.PROTO_SQLSERVER, database, loginUser);
+        if (route.isRejected()) {
+            packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(4060,
+                    "Cannot open database \"" + route.requestedName() + "\" requested by the login. The login failed."));
+            return false;
+        }
+        return true;
+    }
+
+    private static String databaseOfUse(String sql) {
+        String name = sql.strip().replaceFirst("(?i)^use\\s+", "").replaceFirst(";\\s*$", "").strip();
+        if (name.length() >= 2 && (name.startsWith("[") && name.endsWith("]")
+                || name.startsWith("\"") && name.endsWith("\""))) {
+            name = name.substring(1, name.length() - 1);
+        }
+        return name;
+    }
+
     public MssqlWireSessionHandler(Socket clientSocket, ServerOptions options,
             List<PipelineStage> sharedStages, BackendRegistry backendRegistry,
             com.sayonora.wire.auth.PgRoleAuthCache roleAuthCache, com.sayonora.wire.audit.AuditLog auditLog) {
         this.clientSocket = clientSocket;
+        this.backendRegistry = backendRegistry;
         this.options = options;
         // Same real-identity-into-native-RLS wiring as PgWireSessionHandler -- see its
         // constructor's javadoc for the full reasoning. MssqlPgEmulationSessionInitializer
@@ -113,6 +168,8 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.sqlMetrics = com.sayonora.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
+        this.lease = PgConnections.newSessionLease(options);
+        this.terminalExecutor.bindLease(lease);
         this.roleAuthCache = roleAuthCache;
         this.auditLog = auditLog;
     }
@@ -167,23 +224,8 @@ public final class MssqlWireSessionHandler implements Runnable {
             } catch (SQLException ignoredOnSessionTeardown) {
 
             }
-            if (sessionConnection != null) {
-                try {
-                    sessionConnection.close();
-                } catch (SQLException ignoredOnSessionTeardown) {
-
-                }
-            }
+            lease.close();
         }
-    }
-
-    private Connection sessionConnection() throws SQLException {
-        if (sessionConnection == null) {
-            sessionConnection = PgConnections.open(options);
-            sessionConnection.setAutoCommit(true);
-            terminalExecutor.rebind(sessionConnection);
-        }
-        return sessionConnection;
     }
 
     private record HandshakeStreams(DataInputStream in, OutputStream out) {
@@ -243,6 +285,9 @@ public final class MssqlWireSessionHandler implements Runnable {
             return null;
         }
 
+        if (!applyLoginRoute(out, packets, creds.database(), creds.userName())) {
+            return null;
+        }
         packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.loginAck(creds.database()));
         return new HandshakeStreams(in, out);
     }
@@ -306,11 +351,19 @@ public final class MssqlWireSessionHandler implements Runnable {
                     TdsTokens.errorMessage(18456, "Login failed for user '" + type3.userName() + "'"));
             return null;
         }
+        if (!applyLoginRoute(out, packets, creds.database(), type3.userName())) {
+            return null;
+        }
         packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.loginAck(creds.database()));
         return new HandshakeStreams(in, out);
     }
 
     private static final Pattern SET_STATEMENT = Pattern.compile("^\\s*set\\s+", Pattern.CASE_INSENSITIVE);
+    // "USE <db>" -- pymssql (database=...) and many T-SQL tools send it right after login. The one backend
+    // database is fixed by Warp's own configuration, so switching is a no-op acknowledged like SET.
+    private static final Pattern IMPLICIT_TRANSACTIONS_SWITCH = Pattern.compile("IMPLICIT_TRANSACTIONS\\s+(ON|OFF)\\b");
+    private static final Pattern USE_DATABASE = Pattern.compile(
+            "^\\s*use\\s+(?:\\[[^\\]]+\\]|\"[^\"]+\"|\\w+)\\s*;?\\s*$", Pattern.CASE_INSENSITIVE);
 
     // Real client behavior, not something this project's own hand-written tests would have
     // exercised: mssql-jdbc (and other TDS clients) manage a client-driven transaction by sending
@@ -342,7 +395,7 @@ public final class MssqlWireSessionHandler implements Runnable {
      * {@code rollback()}, and its {@code SET IMPLICIT_TRANSACTIONS ON/OFF} for {@code
      * Connection#setAutoCommit(false/true)}, need a REAL backend connection in manual-commit mode
      * to mean anything; with the old per-statement-fresh-connection design there wasn't one, so
-     * no-op was the only safe choice. Now that {@link #sessionConnection()} is session-scoped,
+     * no-op was the only safe choice. Now that the session's backend connection lease is in place,
      * these can (and must) actually run. Checked in this exact order -- ROLLBACK/COMMIT before
      * IMPLICIT_TRANSACTIONS ON -- because a real {@code setAutoCommit(true)} batch contains BOTH
      * "IMPLICIT_TRANSACTIONS OFF" and a trailing "COMMIT TRAN": the COMMIT is the real action,
@@ -351,30 +404,65 @@ public final class MssqlWireSessionHandler implements Runnable {
      * #TRANSACTION_CONTROL_STATEMENT} but none of the checked verbs) -- not yet implemented, same
      * as before this fix; still correctly swallowed rather than reaching the (Postgres-translated)
      * backend as invalid T-SQL syntax. */
-    private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
+    private void endTransaction(boolean commit) throws SQLException {
+        try {
+            if (commit) {
+                lease.commit();
+            } else {
+                lease.rollback();
+            }
+        } finally {
+            inTransaction = false;
+            pendingBegin = false;
+            lease.releaseIfIdle();
+        }
+        routingExecutor.endTransaction(commit);
+    }
+
+    private void beginTransaction() {
+        inTransaction = true;
+        pendingBegin = true;
+        routingExecutor.beginTransaction();
+    }
+
+    /** Borrows and pins the backend connection for the transaction the client is in (BEGIN TRAN) or implicitly
+     * starts (IMPLICIT_TRANSACTIONS ON), at the first statement that needs it -- see {@link #pendingBegin}. */
+    private void ensurePhysicalTransaction(String sql) throws SQLException {
+        if (!(pendingBegin || implicitTransactions) || lease.inTransaction()) {
+            return;
+        }
+        if (lease.pinReason() == null && !lease.hasSettings()
+                && com.sayonora.wire.core.SessionStatePins.isPureRead(SourceDialect.SQL_SERVER, sql)) {
+            return; // nothing to keep on the connection yet
+        }
+        if (route.permitsDefault()) {
+            lease.begin(); // a session routed to another backend never borrows the default backend's connection
+        }
+        if (!inTransaction) {
+            inTransaction = true;
+            routingExecutor.beginTransaction();
+        }
+        pendingBegin = false;
+    }
+
+    private boolean handleTransactionControl(String sql) throws SQLException {
         if (!TRANSACTION_CONTROL_STATEMENT.matcher(sql).find()) {
             return false;
         }
         String upper = sql.toUpperCase(java.util.Locale.ROOT);
+        // The mode switch is independent of what else the batch says: mssql-jdbc's setAutoCommit(true) is ONE batch
+        // "SET IMPLICIT_TRANSACTIONS OFF IF @@TRANCOUNT > 0 COMMIT TRAN" (mode off AND commit).
+        java.util.regex.Matcher implicit = IMPLICIT_TRANSACTIONS_SWITCH.matcher(upper);
+        if (implicit.find()) {
+            implicitTransactions = "ON".equals(implicit.group(1));
+        }
         if (upper.contains("ROLLBACK")) {
             if (inTransaction) {
-                connection.rollback();
-                connection.setAutoCommit(true);
-                inTransaction = false;
-                routingExecutor.endTransaction(false);
+                endTransaction(false);
             }
         } else if (upper.contains("COMMIT")) {
             if (inTransaction) {
-                connection.commit();
-                connection.setAutoCommit(true);
-                inTransaction = false;
-                routingExecutor.endTransaction(true);
-            }
-        } else if (upper.contains("IMPLICIT_TRANSACTIONS") && upper.contains("ON")) {
-            if (!inTransaction) {
-                connection.setAutoCommit(false);
-                inTransaction = true;
-                routingExecutor.beginTransaction();
+                endTransaction(true);
             }
         } else if (upper.contains("IMPLICIT_TRANSACTIONS")) {
             // "...OFF" with no COMMIT/ROLLBACK alongside it (the ROLLBACK/COMMIT branches above
@@ -382,9 +470,7 @@ public final class MssqlWireSessionHandler implements Runnable {
             // any currently-open transaction exactly as it is matches real SQL Server, where
             // turning implicit_transactions off doesn't itself end an already-open transaction.
         } else if (upper.contains("BEGIN")) {
-            connection.setAutoCommit(false);
-            inTransaction = true;
-            routingExecutor.beginTransaction();
+            beginTransaction();
         }
         return true;
     }
@@ -580,11 +666,16 @@ public final class MssqlWireSessionHandler implements Runnable {
         String insertSql = "INSERT INTO " + table + " (" + columnList + ") VALUES (" + placeholders + ")";
         int rowsInserted = 0;
         try {
-            sessionConnection();
-            for (List<Object> row : bcp.rows()) {
-                Statement statement = Statement.of(SourceDialect.SQL_SERVER, insertSql, row, accessContext);
-                pipeline.execute(statement);
-                rowsInserted++;
+            try {
+                ensurePhysicalTransaction(insertSql);
+                for (List<Object> row : bcp.rows()) {
+                    Statement statement = route.apply(
+                            Statement.of(SourceDialect.SQL_SERVER, insertSql, row, accessContext));
+                    pipeline.execute(statement);
+                    rowsInserted++;
+                }
+            } finally {
+                lease.releaseIfIdle();
             }
         } catch (SQLException e) {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
@@ -628,7 +719,7 @@ public final class MssqlWireSessionHandler implements Runnable {
                 sql = execRewrite;
             }
             try {
-                if (handleTransactionControl(sessionConnection(), sql)) {
+                if (handleTransactionControl(sql)) {
                     ByteArrayOutputStream body = new ByteArrayOutputStream();
                     TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
                     packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
@@ -641,17 +732,34 @@ public final class MssqlWireSessionHandler implements Runnable {
                 return;
             }
         }
+        // USE <db> re-resolves the connect-time route (a strict-mode rejection is error 4060 and leaves the
+        // current route unchanged). Outside native mode it is then acknowledged like SET; in native mode it
+        // still falls through and runs against the real backend.
+        if (USE_DATABASE.matcher(sql).matches()) {
+            if (backendRegistry != null) {
+                com.sayonora.wire.core.ConnectionRoute next = backendRegistry.connectionRouter().resolve(
+                        com.sayonora.wire.core.ConnectionRouter.PROTO_SQLSERVER, databaseOfUse(sql), loginUser);
+                if (next.isRejected()) {
+                    packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, TdsTokens.errorMessage(4060,
+                            "Cannot open database \"" + next.requestedName() + "\" requested by the login. "
+                                    + "The login failed."));
+                    return;
+                }
+                route = next;
+            }
+        }
         // A no-op against the (fake, dialect-translated) Postgres backend -- in native mode a SET
         // statement means something real against the real SQL Server backend and must actually
         // run, not be silently swallowed.
-        if (!options.mssqlwireNativeBackend() && SET_STATEMENT.matcher(sql).find()) {
+        if (!options.mssqlwireNativeBackend()
+                && (SET_STATEMENT.matcher(sql).find() || USE_DATABASE.matcher(sql).matches())) {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             TdsTokens.writeDone(body, TdsTokens.doneFinalStatus(), 0, 0);
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT, body.toByteArray());
             return;
         }
 
-        Statement statement = Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext);
+        Statement statement = route.apply(Statement.of(SourceDialect.SQL_SERVER, sql, bindParams, accessContext));
         try {
             ExecutionResult result;
             try {
@@ -690,12 +798,31 @@ public final class MssqlWireSessionHandler implements Runnable {
                     }
                     result = pipeline.execute(statement);
                 } else {
-                    // One connection for the whole session (see sessionConnection()'s own
-                    // javadoc, which also does the one-time terminalExecutor.rebind()), not a
-                    // fresh one per statement -- required for BEGIN/COMMIT/ROLLBACK TRAN (handled
-                    // above) to mean anything across statements.
-                    sessionConnection();
-                    result = pipeline.execute(statement);
+                    // The connection comes from this session's lease (bound to terminalExecutor): borrowed by
+                    // the executor at the moment the statement really needs the backend, kept while the
+                    // session is pinned (open transaction, session state), otherwise returned to the pool right
+                    // after -- see SessionConnectionLease.
+                    ensurePhysicalTransaction(sql);
+                    String pinReason = com.sayonora.wire.core.SessionStatePins.sessionStateReason(SourceDialect.SQL_SERVER, sql);
+                    if (pinReason != null) {
+                        lease.pinSessionState(pinReason);
+                    }
+                    try {
+                        if (lease.multiplexing() && IDENTITY_QUERY.matcher(sql).matches()) {
+                            result = ExecutionResult.ofQuery(
+                                    List.of(new com.sayonora.wire.core.ColumnInfo("", java.sql.Types.BIGINT,
+                                            19, 0, 20, true, "int8")),
+                                    List.of(java.util.Collections.singletonList(
+                                            lastIdentity == 0 ? null : (Object) Long.valueOf(lastIdentity))));
+                        } else {
+                            result = pipeline.execute(statement);
+                            if (result.generatedKey() != 0) {
+                                lastIdentity = result.generatedKey();
+                            }
+                        }
+                    } finally {
+                        lease.releaseIfIdle();
+                    }
                 }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.SQL_SERVER, sql,

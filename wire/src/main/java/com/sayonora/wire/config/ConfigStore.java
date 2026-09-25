@@ -93,7 +93,7 @@ public final class ConfigStore implements AutoCloseable {
                 c.llmProvider(), com.sayonora.wire.secrets.FieldCipher.encrypt(c.llmApiKey()),
                 c.llmBaseUrl(), c.llmModel(), c.backendGroups(),
                 c.backendDescriptions(), c.backendGroupDescriptions(), c.mcpEndpoints(),
-                c.backendStores(), c.backendSetNames());
+                c.backendStores(), c.backendSetNames(), c.connectionRoutes());
     }
 
     private static WarpConfig decryptSecretFields(WarpConfig c) {
@@ -109,7 +109,7 @@ public final class ConfigStore implements AutoCloseable {
                 c.llmProvider(), com.sayonora.wire.secrets.FieldCipher.decrypt(c.llmApiKey()),
                 c.llmBaseUrl(), c.llmModel(), c.backendGroups(),
                 c.backendDescriptions(), c.backendGroupDescriptions(), c.mcpEndpoints(),
-                c.backendStores(), c.backendSetNames());
+                c.backendStores(), c.backendSetNames(), c.connectionRoutes());
     }
 
     public void listen(Consumer<Version> callback) throws SQLException {

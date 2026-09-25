@@ -31,7 +31,9 @@ public enum StoreType {
     OPENSEARCH("opensearch", "OpenSearch", "WARP_OSWIRE_SET", true,
             "OpenSearch documents, search and bulk API; one table per index."),
     DYNAMODB("dynamodb", "DynamoDB", "WARP_DYNAMOWIRE_SET", true,
-            "DynamoDB API; items are kept as rows, one table per DynamoDB table.");
+            "DynamoDB API; items are kept as rows, one table per DynamoDB table."),
+    S3("s3", "S3", "WARP_S3WIRE_SET", true,
+            "Amazon S3 API; objects are stored as chunked rows and sharded by key.");
 
     private final String id;
     private final String label;

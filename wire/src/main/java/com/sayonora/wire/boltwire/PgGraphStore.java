@@ -63,9 +63,34 @@ final class PgGraphStore {
      * per session" javadoc for why this replaced opening (and immediately returning) a fresh
      * pooled connection on every single query. */
     Connection connect() throws SQLException {
-        BackendTarget target = defaultTarget();
+        return connect(defaultTarget());
+    }
+
+    /** As {@link #connect()} but against an explicit backend (connect-time routing). */
+    Connection connect(BackendTarget target) throws SQLException {
         ensureSchema(target);
         return target.open();
+    }
+
+    /** The graph host for a connect-time route: the one backend of a DATABASE route; for a set, its
+     * member with the Neo4j store enabled, else its first Postgres member. {@code null} when the
+     * route names nothing that can host a graph. */
+    BackendTarget targetFor(com.sayonora.wire.core.ConnectionRoute route) {
+        List<String> hosts = backendRegistry.connectionRouter().storeBackends(route);
+        if (hosts == null) {
+            return defaultTarget();
+        }
+        String chosen = null;
+        for (String h : hosts) {
+            if (backendRegistry.enabledStores(h).contains(com.sayonora.wire.core.StoreType.NEO4J)) {
+                chosen = h;
+                break;
+            }
+        }
+        if (chosen == null && !hosts.isEmpty()) {
+            chosen = hosts.get(0);
+        }
+        return chosen == null ? null : backendRegistry.resolveForRouting(chosen);
     }
 
     private void ensureSchema(BackendTarget target) throws SQLException {

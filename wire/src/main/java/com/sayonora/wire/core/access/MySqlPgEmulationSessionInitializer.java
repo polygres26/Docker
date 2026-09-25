@@ -3,7 +3,6 @@ package com.sayonora.wire.core.access;
 import com.sayonora.wire.core.AccessContext;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * The mywire equivalent of {@link OraclePgEmulationSessionInitializer}: every mywire session's
@@ -28,13 +27,9 @@ import java.sql.Statement;
  */
 public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessionInitializer {
 
-    // Same redundant-per-statement-round-trip fix as OraclePgEmulationSessionInitializer/
-    // MssqlPgEmulationSessionInitializer's own (see their javadoc) -- currently a no-op saving in
-    // the default test/dev setup (no pg_mysql extension installed, so PgMysqlSupport.isAvailable()
-    // already short-circuits cheaply before ever reaching the SET below), but a real, non-trivial
-    // per-statement Postgres round trip the moment pg_mysql IS installed and this SET actually
-    // runs -- caching by connection identity, one per session instance, same as the other two.
-    private Connection lastEmulationConnection;
+    // Emulation state is recorded per PHYSICAL connection (PhysicalSessionState), not per session: with
+    // connection multiplexing (SessionConnectionLease) a session's next statement may land on another
+    // connection, and several sessions take turns on each one. Unchanged connection = zero round trips.
 
     @Override
     public boolean runEvenWhenAnonymous() {
@@ -50,6 +45,14 @@ public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessio
 
     @Override
     public void initialize(Connection connection, AccessContext accessContext) throws SQLException {
+        PhysicalSessionState.State st = PhysicalSessionState.of(connection);
+        // mywire has no identity of its own: never inherit another frontend's warp.* identity or tenant
+        // search_path from a shared physical connection.
+        SessionStateReconciler.applyRls(connection, st, AccessContext.ANONYMOUS, false);
+        SessionStateReconciler.clearTenantPath(connection, st);
+        if (!st.emulationUnknown && "mysql".equals(st.emulation)) {
+            return;
+        }
         if (!com.sayonora.wire.core.PgMysqlSupport.isAvailable(connection)) {
             return;
         }
@@ -58,12 +61,6 @@ public final class MySqlPgEmulationSessionInitializer implements NativeRlsSessio
         if (!com.sayonora.wire.license.DbCompatLicensing.dbEmulationAllowed()) {
             return;
         }
-        if (connection == lastEmulationConnection) {
-            return;
-        }
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("SET db_emulation = 'mysql'");
-        }
-        lastEmulationConnection = connection;
+        SessionStateReconciler.ensureEmulation(connection, st, "mysql");
     }
 }

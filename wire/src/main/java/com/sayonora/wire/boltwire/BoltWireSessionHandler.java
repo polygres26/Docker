@@ -72,22 +72,18 @@ public final class BoltWireSessionHandler implements Runnable {
     // param in this codebase is (tests that don't care about metrics can omit it).
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
-    // Lazily opened on this session's first RUN, reused for every RUN after that, returned to the
-    // pool on GOODBYE/EOF/error -- real bug, found live comparing boltwire's own measured latency
-    // against pgwire's (2+ ms vs well under 1 ms for a comparable round trip): every single RUN was
-    // borrowing a fresh pooled connection via target.open() and immediately handing it back,
-    // instead of holding one connection for the whole Bolt session the way pgwire itself does (a
-    // pgwire client's backend connection is bound once at login, not re-borrowed per statement).
-    // HikariCP's own borrow/return isn't free, and paying it on every RUN when a Bolt session, like
-    // a pgwire session, already has its own persistent client connection to amortize it over was a
-    // real, avoidable cost -- not an inherent property of speaking a different wire protocol.
-    private Connection sessionConnection;
+    // Backend connection lease (connection multiplexing, WARP_MULTIPLEX_SESSIONS): borrowed when a RUN actually
+    // needs the backend and returned to the pool as soon as that RUN finished -- RUN executes the whole
+    // (translated) statement and fully materialises its rows into pendingQuery, so a later PULL serialises
+    // already-fetched, in-memory rows and holds nothing on a backend connection. Boltwire has no explicit
+    // transactions (BEGIN/COMMIT are answered with FAILURE) and no session state, so nothing ever pins a Bolt
+    // session; with WARP_MULTIPLEX_SESSIONS=false it holds one connection for its whole life as before. (History:
+    // this once opened a connection per RUN and was changed to hold one per session for latency -- the lease keeps
+    // that steady-state cost, an unpinned pool hit, but no longer starves other clients while idle.)
+    private final com.sayonora.wire.core.SessionConnectionLease lease;
 
     private Connection sessionConnection() throws SQLException {
-        if (sessionConnection == null) {
-            sessionConnection = graphStore.connect();
-        }
-        return sessionConnection;
+        return lease.acquire();
     }
 
     private static final Pattern RETURN_LITERAL = Pattern.compile(
@@ -104,6 +100,7 @@ public final class BoltWireSessionHandler implements Runnable {
         this.clientSocket = clientSocket;
         this.backendRegistry = backendRegistry;
         this.graphStore = new PgGraphStore(backendRegistry);
+        this.lease = new com.sayonora.wire.core.SessionConnectionLease(this::openGraphConnection);
         this.sqlMetrics = sqlMetrics;
     }
 
@@ -121,13 +118,7 @@ public final class BoltWireSessionHandler implements Runnable {
         } catch (RuntimeException e) {
             log.warn("boltwire: session failed", e);
         } finally {
-            if (sessionConnection != null) {
-                try {
-                    sessionConnection.close();
-                } catch (SQLException e) {
-                    log.debug("boltwire: error closing session connection", e);
-                }
-            }
+            lease.close();
         }
     }
 
@@ -233,6 +224,24 @@ public final class BoltWireSessionHandler implements Runnable {
         writeSuccess(out, metadata);
     }
 
+    // Connect-time backend routing: Bolt 4.x carries the database in the RUN message's "extra" map
+    // ("db"); resolved per RUN (cheap) so a driver session may address different databases. See
+    // core/ConnectionRouter. HELLO carries no database and Warp's Bolt frontend does not authenticate
+    // a user, so routes are matched on the database name alone.
+    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
+
+    private String heldGraphBackend;
+
+    private Connection openGraphConnection() throws SQLException {
+        com.sayonora.wire.core.BackendTarget target = graphStore.targetFor(route);
+        if (target == null) {
+            throw new SQLException("backend " + route.description() + " cannot host a graph "
+                    + "(only Postgres backends can)");
+        }
+        heldGraphBackend = target.name();
+        return graphStore.connect(target);
+    }
+
     private ExecutedQuery pendingQuery;
 
     private record ExecutedQuery(List<String> columns, List<List<Object>> rows) {
@@ -240,6 +249,28 @@ public final class BoltWireSessionHandler implements Runnable {
 
     private void handleRun(DataOutputStream out, PackStream.Struct msg) throws IOException {
         String cypher = (String) msg.fields().get(0);
+        String database = null;
+        if (msg.fields().size() > 2 && msg.fields().get(2) instanceof Map<?, ?> extra
+                && extra.get("db") instanceof String db) {
+            database = db;
+        }
+        route = backendRegistry.connectionRouter().resolve(
+                com.sayonora.wire.core.ConnectionRouter.PROTO_BOLT, database, null);
+        if (route.isRejected()) {
+            route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
+            pendingQuery = null;
+            writeFailure(out, "Neo.ClientError.Database.DatabaseNotFound",
+                    "Database does not exist. Database name: '" + database + "'.");
+            return;
+        }
+        if (lease.isHeld()) {
+            // multiplexing off keeps the connection across RUNs: never run a RUN routed to another
+            // backend on the previous backend's connection
+            com.sayonora.wire.core.BackendTarget want = graphStore.targetFor(route);
+            if (want == null || !want.name().equals(heldGraphBackend)) {
+                lease.close();
+            }
+        }
         // RTT: from here (RUN's own real backend execution, including the full result-set fetch --
         // translateAndRun/runMatch/runCreate already drain the JDBC ResultSet into ExecutedQuery
         // before returning) through the SUCCESS write just below. Unlike pgwire's extended query
@@ -253,7 +284,12 @@ public final class BoltWireSessionHandler implements Runnable {
         // metric exists to surface.
         long rttStart = System.nanoTime();
         try {
-            ExecutedQuery result = translateAndRun(cypher);
+            ExecutedQuery result;
+            try {
+                result = translateAndRun(cypher);
+            } finally {
+                lease.releaseIfIdle(); // rows are fully materialised: nothing left on the backend connection
+            }
             pendingQuery = result;
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("fields", result.columns());
@@ -265,7 +301,9 @@ public final class BoltWireSessionHandler implements Runnable {
         } catch (SQLException e) {
             pendingQuery = null;
             log.warn("boltwire: Postgres error running translated query for \"{}\": {}", cypher, e.getMessage());
-            writeFailure(out, "Neo.ClientError.Statement.ExecutionFailed", e.getMessage());
+            writeFailure(out, e instanceof com.sayonora.wire.core.BackendPoolExhaustedException
+                    ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.ClientError.Statement.ExecutionFailed",
+                    e.getMessage());
         }
     }
 

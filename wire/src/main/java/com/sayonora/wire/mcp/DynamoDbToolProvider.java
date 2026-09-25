@@ -24,9 +24,9 @@ final class DynamoDbToolProvider implements BackendToolProvider {
     private static final Gson GSON = new Gson();
     private static final Set<String> TYPE_TAGS = Set.of("S", "N", "B", "BOOL", "NULL", "L", "M", "SS", "NS", "BS");
     private static final Map<String, String> UNSUPPORTED = Map.of(
-            "create_gsi", "dynamowire has no global secondary indexes",
-            "update_gsi", "dynamowire has no global secondary indexes",
-            "create_lsi", "dynamowire has no local secondary indexes",
+            "create_gsi", "add or drop a global secondary index with UpdateTable through the DynamoDB endpoint (dynamowire supports GSIs and LSIs)",
+            "update_gsi", "add or drop a global secondary index with UpdateTable through the DynamoDB endpoint (dynamowire supports GSIs and LSIs)",
+            "create_lsi", "a local secondary index can only be declared when the table is created (CreateTable through the DynamoDB endpoint)",
             "update_capacity", "dynamowire has no provisioned capacity (storage is Postgres)");
 
     private final EmulatedStores stores;
@@ -79,11 +79,13 @@ final class DynamoDbToolProvider implements BackendToolProvider {
                         schema(List.of("tableName", "keyConditionExpression", "expressionAttributeValues"),
                                 "tableName", str(tn), "keyConditionExpression", str("e.g. pk = :pk AND sk > :s"),
                                 "expressionAttributeValues", values, "expressionAttributeNames", names,
-                                "filterExpression", str("Optional post-filter"), "limit", num("Max items")), false),
+                                "filterExpression", str("Optional post-filter"), "limit", num("Max items"),
+                                "indexName", str("Query a global/local secondary index instead of the table")), false),
                 new Tool("scan_table", "Scan a whole table, optionally filtered.",
                         schema(List.of("tableName"), "tableName", str(tn), "filterExpression", str("Optional filter"),
                                 "expressionAttributeValues", values, "expressionAttributeNames", names,
-                                "limit", num("Max items")), false));
+                                "limit", num("Max items"),
+                                "indexName", str("Scan a secondary index instead of the table")), false));
     }
 
     /** The DynamoDB JSON-API surface a tool runs against: dynamowire's own handlers for the emulated
@@ -235,6 +237,7 @@ final class DynamoDbToolProvider implements BackendToolProvider {
                     }
                     expressionArgs(a, req);
                     copy(a, "filterExpression", req, "FilterExpression");
+                    copy(a, "indexName", req, "IndexName");
                     Integer limit = optInt(a, "limit");
                     if (limit != null) {
                         req.addProperty("Limit", limit);
@@ -256,10 +259,12 @@ final class DynamoDbToolProvider implements BackendToolProvider {
     }
 
     private static void expressionArgs(JsonObject a, JsonObject req) {
-        if (a.has("expressionAttributeNames") && a.get("expressionAttributeNames").isJsonObject()) {
+        if (a.has("expressionAttributeNames") && a.get("expressionAttributeNames").isJsonObject()
+                && !a.getAsJsonObject("expressionAttributeNames").entrySet().isEmpty()) {
             req.add("ExpressionAttributeNames", a.get("expressionAttributeNames"));
         }
-        if (a.has("expressionAttributeValues") && a.get("expressionAttributeValues").isJsonObject()) {
+        if (a.has("expressionAttributeValues") && a.get("expressionAttributeValues").isJsonObject()
+                && !a.getAsJsonObject("expressionAttributeValues").entrySet().isEmpty()) {
             req.add("ExpressionAttributeValues", typedMap(a.get("expressionAttributeValues"), "expressionAttributeValues"));
         }
     }

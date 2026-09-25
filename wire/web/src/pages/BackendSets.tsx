@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Boxes, PlugZap, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Boxes, Check, Copy, PlugZap, Plus, Pencil, Route as RouteIcon, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
   type BackendDraft, type BackendSetInfo, type BackendSetsResponse, type BackendTestResult, type BackendWriteResult,
-  type SetBackend, type StoreId, type StoreInfo, type WireConfig,
-  addBackendToSet, createBackendSet, deleteBackendSet, deleteSetBackend, getWireConfig, listBackendSets,
+  type ConnectionRoute, type ConnectionRouting, type SetBackend, type StoreId, type StoreInfo, type WireConfig,
+  addBackendToSet, addConnectionRoute, createBackendSet, deleteBackendSet, deleteConnectionRoute, deleteSetBackend,
+  getWireConfig, listBackendSets,
   saveWireConfig, testBackendConnection, testSetBackend, updateSetBackend,
 } from '../api/client'
 import CredentialField from '../components/CredentialField'
@@ -67,6 +68,7 @@ function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
                 {blocked && <>Already enabled on <code>{on.join(', ')}</code>. Neo4j runs on one backend per set: graph traversals cannot be answered correctly when the graph is spread over several databases.</>}
                 {!blocked && s.shardable && on.length > 0 && <>Also enabled on <code>{on.join(', ')}</code>: data will be sharded across {on.length + (checked ? 1 : 0)} backend{on.length + (checked ? 1 : 0) === 1 ? '' : 's'}{checked ? '' : ' if you enable it'}. Existing data is not moved.</>}
                 {!blocked && !s.shardable && on.length === 0 && <>One backend per set.</>}
+                {s.id === 's3' && <> Limits: 5 GiB per PUT, keys up to 1024 bytes; the bucket list lives on the first S3 host. For very large objects use s3wire proxy mode instead.</>}
                 {editing && wasEnabled.includes(s.id) && !checked && <> Disabling keeps the data in this database but Warp stops serving it.</>}
               </div>
             </li>
@@ -145,7 +147,7 @@ function BackendEditor({ set, editing, stores, onDone, onCancel }: {
 
         {canHost
           ? <StoresFieldset stores={stores} set={set} editing={editing} value={enabled} onChange={setEnabled} wasEnabled={editing?.enabledStores ?? []} />
-          : <Notice tone="muted">Only Postgres backends can host protocol stores (InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB).</Notice>}
+          : <Notice tone="muted">Only Postgres backends can host protocol stores (InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3).</Notice>}
 
         {error && <Notice tone="bad">{error}</Notice>}
         {test && (
@@ -187,6 +189,221 @@ function Health({ b, probe, busy }: { b: SetBackend; probe?: BackendTestResult; 
   if (h) return <span title={h.message}><StatusPill tone={h.ok ? 'ok' : 'bad'}>{h.ok ? `Healthy · ${h.tookMs} ms` : 'Unreachable'}</StatusPill></span>
   if (b.state !== 'ACTIVE') return <StatusPill tone="warn">{b.state.toLowerCase()}</StatusPill>
   return <span className={styles.sub}>Checking…</span>
+}
+
+/** One-click copy with a short "Copied" confirmation; falls back to a hidden textarea when the async
+ * clipboard API is unavailable (plain-http admin URLs). */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button type="button" className={styles.iconBtn} title={copied ? 'Copied' : label} aria-label={label} onClick={copy}>
+      {copied ? <Check size={15} strokeWidth={1.8} /> : <Copy size={15} strokeWidth={1.8} />}
+    </button>
+  )
+}
+
+/** Default listener ports; the real ones are whatever WARP_<PROTOCOL>_PORT is set to. */
+const HOST = '<warp-host>'
+function connectSnippets(db: string): Array<{ label: string; code: string }> {
+  return [
+    { label: 'psql', code: `psql "host=${HOST} port=15432 dbname=${db} user=<user>"` },
+    { label: 'JDBC (PostgreSQL)', code: `jdbc:postgresql://${HOST}:15432/${db}` },
+    { label: 'mysql', code: `mysql -h ${HOST} -P 13306 -D ${db} -u <user> -p` },
+    { label: 'JDBC (MySQL)', code: `jdbc:mysql://${HOST}:13306/${db}` },
+    { label: 'sqlcmd', code: `sqlcmd -S ${HOST},14333 -d ${db} -U <user>` },
+    { label: 'JDBC (SQL Server)', code: `jdbc:sqlserver://${HOST}:14333;databaseName=${db}` },
+    { label: 'sqlplus', code: `sqlplus <user>@//${HOST}:11521/${db}` },
+    { label: 'JDBC (Oracle thin)', code: `jdbc:oracle:thin:@//${HOST}:11521/${db}` },
+    { label: 'mongosh', code: `mongosh "mongodb://${HOST}:27017/${db}"` },
+    { label: 'Neo4j driver', code: `driver.session(database="${db}")` },
+    { label: 'gRPC', code: `ExecuteRequest(database="${db}", ...)` },
+  ]
+}
+
+/** "Connect with database = <name>" for a backend or a set: the name to copy, and per-driver examples. */
+function ConnectPanel({ setName, connectAs, backends }: { setName: string; connectAs: string | null; backends: SetBackend[] }) {
+  const targets = [
+    ...(connectAs ? [{ value: connectAs, label: `Whole set — ${connectAs}` }] : []),
+    ...backends.map((b) => ({ value: b.connectAs, label: `Backend — ${b.connectAs}` })),
+  ]
+  const [chosen, setChosen] = useState(targets[0]?.value ?? '')
+  const active = targets.some((t) => t.value === chosen) ? chosen : targets[0]?.value ?? ''
+  const selectId = `connect-target-${setName}`
+  return (
+    <details className={styles.connect}>
+      <summary>How to connect to this set or one of its backends</summary>
+      <div className={styles.connectBody}>
+        <p className={styles.help}>
+          Set the <strong>database</strong> (or Oracle <strong>service name</strong>) your driver already sends to the name below — no client
+          code changes. A backend name reaches only that backend; a set name reaches only the backends of that set.
+          {!connectAs && <> This set&apos;s name is also a backend name, so a bare <code>{setName}</code> reaches the backend; add a route below to reach the set.</>}
+        </p>
+        <div className={styles.connectPick}>
+          <label htmlFor={selectId} className={styles.sub}>Connect to</label>
+          <select id={selectId} value={active} onChange={(e) => setChosen(e.target.value)}>
+            {targets.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </div>
+        <ul className={styles.snippets}>
+          {connectSnippets(active).map((sn) => (
+            <li key={sn.label} className={styles.snippet}>
+              <span className={styles.snippetLabel}>{sn.label}</span>
+              <code className={styles.snippetCode}>{sn.code}</code>
+              <CopyButton text={sn.code} label={`Copy ${sn.label} example`} />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
+  )
+}
+
+const PROTOCOLS = ['postgres', 'mysql', 'sqlserver', 'oracle', 'mongodb', 'bolt', 'grpc'] as const
+
+const MODE_NOTE: Record<ConnectionRouting['mode'], string> = {
+  implicit: 'A database name that is neither a backend, a set, nor a route falls back to Warp’s normal routing (not an error). Set WARP_CONNECT_ROUTING=strict to reject it instead.',
+  strict: 'Strict mode: a database name that is not a backend, a set or a route is rejected with the protocol’s own “unknown database” error.',
+  off: 'Connect-time routing is switched off (WARP_CONNECT_ROUTING=off): database names and routes are ignored.',
+}
+
+/** Explicit connect-time routes: first match wins; they take precedence over backend / set names. */
+function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; onChanged: () => void }) {
+  const routing = data.connectionRouting
+  const [protocol, setProtocol] = useState('')
+  const [database, setDatabase] = useState('')
+  const [user, setUser] = useState('')
+  const [target, setTarget] = useState('')
+  const [defaultBackend, setDefaultBackend] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const allBackends = data.sets.flatMap((s) => s.backends)
+  const targetSet = data.sets.find((s) => `set:${s.name}` === target)
+  const isSet = !!targetSet
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true); setError(null); setMessage(null)
+    try {
+      await addConnectionRoute({
+        database: database.trim(), target,
+        ...(protocol ? { protocol } : {}), ...(user.trim() ? { user: user.trim() } : {}),
+        ...(isSet && defaultBackend ? { defaultBackend } : {}),
+      })
+      setMessage(`Added route ${database.trim()} → ${target}. Every Warp instance picks it up within a moment.`)
+      setDatabase(''); setUser(''); setDefaultBackend('')
+      onChanged()
+    } catch (e2) { setError(errorText(e2)) } finally { setBusy(false) }
+  }
+
+  async function remove(r: ConnectionRoute) {
+    setBusy(true); setError(null); setMessage(null)
+    try {
+      await deleteConnectionRoute(r.id)
+      setMessage(`Removed route ${r.database} → ${r.target}.`)
+      onChanged()
+    } catch (e2) { setError(errorText(e2)) } finally { setBusy(false) }
+  }
+
+  return (
+    <Section flush title="Connection routes" meta={`${routing.routes.length} route${routing.routes.length === 1 ? '' : 's'} · mode ${routing.mode}`}>
+      <div className={styles.toolbar}>
+        <span className={styles.setDesc}>
+          Routes map the database name a client sends (exact or <code>*</code>/<code>?</code> pattern, optionally per protocol and login user) to a
+          backend or set. The first matching route wins and beats a backend or set of the same name. {MODE_NOTE[routing.mode]}
+        </span>
+      </div>
+      {routing.routes.length === 0 ? (
+        <EmptyState icon={<RouteIcon size={18} aria-hidden="true" />} title="No explicit routes">
+          Backend and set names already work as database names. Add a route to give a database name of your own, or to choose a backend by login user.
+        </EmptyState>
+      ) : (
+        <DataTable caption="Connection routes, in match order" minWidth={720}>
+          <thead>
+            <tr><th>Database</th><th>Protocol</th><th>User</th><th>Target</th><th>Set default</th><th aria-label="Actions"></th></tr>
+          </thead>
+          <tbody>
+            {routing.routes.map((r) => (
+              <tr key={r.id}>
+                <td className={styles.mono}>{r.database}</td>
+                <td>{r.protocol ?? <span className={styles.sub}>any</span>}</td>
+                <td className={styles.mono}>{r.user ?? <span className={styles.sub}>any</span>}</td>
+                <td><span className={styles.mono}>{r.target}</span> <Tag>{r.targetKind}</Tag></td>
+                <td className={styles.mono}>{r.defaultBackend ?? <span className={styles.sub}>—</span>}</td>
+                <td>
+                  <div className={styles.actions}>
+                    <button type="button" className={styles.iconBtn} title="Remove route" aria-label={`Remove route ${r.database}`}
+                      disabled={busy} onClick={() => remove(r)}><Trash2 size={16} strokeWidth={1.8} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+      <form onSubmit={add} aria-label="Add connection route" className={styles.routeForm}>
+        <div className={styles.formGrid}>
+          <Field label="Database or service name" hint="Exact, or a pattern such as sales_*">
+            {(id) => <input id={id} value={database} onChange={(e) => setDatabase(e.target.value)} required autoComplete="off" className={styles.monoInput} />}
+          </Field>
+          <Field label="Route to" hint="A backend, or a whole set.">
+            {(id) => (
+              <select id={id} value={target} onChange={(e) => { setTarget(e.target.value); setDefaultBackend('') }} required>
+                <option value="" disabled>Choose a target…</option>
+                <optgroup label="Backends">
+                  {allBackends.map((b) => <option key={b.name} value={`db:${b.name}`}>{b.name}</option>)}
+                </optgroup>
+                <optgroup label="Sets">
+                  {data.sets.map((s) => <option key={s.name} value={`set:${s.name}`}>{s.name}</option>)}
+                </optgroup>
+              </select>
+            )}
+          </Field>
+          <Field label="Protocol" hint="Optional; default: every protocol.">
+            {(id) => (
+              <select id={id} value={protocol} onChange={(e) => setProtocol(e.target.value)}>
+                <option value="">Any protocol</option>
+                {PROTOCOLS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+          </Field>
+          <Field label="Login user" hint="Optional; exact or pattern. Not authentication.">
+            {(id) => <input id={id} value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" className={styles.monoInput} />}
+          </Field>
+          {isSet && (
+            <Field label="Default backend of the set" hint="Where statements no routing rule claims run. Blank: the set’s first backend.">
+              {(id) => (
+                <select id={id} value={defaultBackend} onChange={(e) => setDefaultBackend(e.target.value)}>
+                  <option value="">First backend</option>
+                  {targetSet!.backends.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
+                </select>
+              )}
+            </Field>
+          )}
+        </div>
+        {error && <Notice tone="bad">{error}</Notice>}
+        {message && <Notice tone="ok">{message}</Notice>}
+        <div className={styles.formActions}>
+          <Button variant="primary" type="submit" disabled={busy || !database.trim() || !target}>{busy ? 'Saving…' : 'Add route'}</Button>
+        </div>
+      </form>
+    </Section>
+  )
 }
 
 type Editor = { kind: 'add'; set: string } | { kind: 'edit'; set: string; backend: string }
@@ -261,7 +478,7 @@ export default function BackendSets() {
     <div>
       <PageHeader
         title="Backend sets"
-        description="Every backend lives in a backend set. A Postgres backend can also host protocol stores — InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB — sharded across the backends of its set."
+        description="Every backend lives in a backend set. A Postgres backend can also host protocol stores — InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3 — sharded across the backends of its set."
         actions={<Button variant="primary" icon={<Plus size={14} aria-hidden="true" />} onClick={() => { setCreating(true); setEditor(null) }}>Create set</Button>}
       />
 
@@ -316,7 +533,16 @@ export default function BackendSets() {
         return (
           <Section key={set.name} flush title={set.name} meta={`${set.backends.length} backend${set.backends.length === 1 ? '' : 's'}`}>
             <div className={styles.toolbar}>
-              <span className={styles.setDesc}>{set.description ?? (set.isDefaultSet ? 'Holds the default backend and everything not placed in another set.' : 'No description.')}</span>
+              <span className={styles.setDesc}>
+                {set.description ?? (set.isDefaultSet ? 'Holds the default backend and everything not placed in another set.' : 'No description.')}
+                {' '}
+                {set.connectAs ? (
+                  <span className={styles.connectCell}>
+                    Connect to the whole set with database <code className={styles.mono}>{set.connectAs}</code>
+                    <CopyButton text={set.connectAs} label={`Copy set name ${set.connectAs}`} />
+                  </span>
+                ) : <span>Reach the whole set through a route (its name is also a backend).</span>}
+              </span>
               <span className={styles.toolbarActions}>
                 <Button icon={<Plus size={14} aria-hidden="true" />} onClick={() => { setEditor({ kind: 'add', set: set.name }); setCreating(false) }}
                   aria-label={`Add backend to ${set.name}`}>Add backend</Button>
@@ -329,10 +555,10 @@ export default function BackendSets() {
                 Add a backend to it{removable ? ', or delete the set' : ''}.
               </EmptyState>
             ) : (
-              <DataTable caption={`Backends in set ${set.name}`} minWidth={860}>
+              <DataTable caption={`Backends in set ${set.name}`} minWidth={1000}>
                 <thead>
                   <tr>
-                    <th>Name</th><th>Type</th><th>Target</th><th>Description</th><th>Stores</th><th>Health</th><th aria-label="Actions"></th>
+                    <th>Name</th><th>Type</th><th>Target</th><th>Connect with database</th><th>Description</th><th>Stores</th><th>Health</th><th aria-label="Actions"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -341,6 +567,12 @@ export default function BackendSets() {
                       <td className={styles.mono}>{b.name}{b.isDefault && <> <Tag>default</Tag></>}</td>
                       <td><Tag>{b.type}</Tag></td>
                       <td className={styles.mono}>{b.url}</td>
+                      <td>
+                        <span className={styles.connectCell}>
+                          <code className={styles.mono}>{b.connectAs}</code>
+                          <CopyButton text={b.connectAs} label={`Copy database name ${b.connectAs}`} />
+                        </span>
+                      </td>
                       <td>{b.description ?? <span className={styles.sub}>—</span>}</td>
                       <td><StoreTags backend={b} set={set} stores={data.stores} /></td>
                       <td><Health b={b} probe={probes[b.name]} busy={!!testing[b.name]} /></td>
@@ -359,9 +591,12 @@ export default function BackendSets() {
                 </tbody>
               </DataTable>
             )}
+            {set.backends.length > 0 && <ConnectPanel setName={set.name} connectAs={set.connectAs} backends={set.backends} />}
           </Section>
         )
       })}
+
+      {data && <RoutesSection data={data} onChanged={load} />}
 
       {data && editor && editingSet && (editor.kind === 'add' || editingBackend) && (
         <BackendEditor key={`${editor.kind}-${editor.set}-${editor.kind === 'edit' ? editor.backend : ''}`}

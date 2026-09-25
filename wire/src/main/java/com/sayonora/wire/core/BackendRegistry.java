@@ -405,6 +405,7 @@ public final class BackendRegistry {
         this.backendToGroupName = fresh.backendToGroupName;
         this.declarationOrder = fresh.declarationOrder;
         this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
+        touch();
     }
 
     // Operator-supplied, human-readable descriptions (WARP_BACKEND_DESCRIPTIONS /
@@ -462,6 +463,24 @@ public final class BackendRegistry {
 
     public static final String DEFAULT_SET_NAME = "default";
 
+    // Bumped after every mutation of the backend/set model (reload, applyStoreConfig) and of the
+    // connect-time route table, so ConnectionRouter's immutable lookup snapshot rebuilds lazily.
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+    private final ConnectionRouter connectionRouter = new ConnectionRouter(this, ConnectionRouter.modeFromEnv());
+
+    public long generation() {
+        return generation.get();
+    }
+
+    void touch() {
+        generation.incrementAndGet();
+    }
+
+    /** Connect-time routing (database/service name -> backend or set); see {@link ConnectionRouter}. */
+    public ConnectionRouter connectionRouter() {
+        return connectionRouter;
+    }
+
     private volatile List<String> declarationOrder = List.of();
     private volatile Map<String, List<StoreType>> enabledStores = Map.of();
     private volatile List<String> declaredSetNames = List.of();
@@ -489,6 +508,7 @@ public final class BackendRegistry {
         }
         this.declaredSetNames = List.copyOf(names);
         this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
+        touch();
     }
 
     public static Map<String, List<StoreType>> parseStoreSpec(String spec) {

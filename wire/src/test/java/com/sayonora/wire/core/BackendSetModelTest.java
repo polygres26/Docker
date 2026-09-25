@@ -21,7 +21,7 @@ class BackendSetModelTest {
     private static WarpConfig config(String backends, String groups) {
         return new WarpConfig(null, null, null, null, null, null, null, backends, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, groups, null, null, null, null, null);
+                null, null, null, null, groups, null, null, null, null, null, null);
     }
 
     @Test

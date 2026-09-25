@@ -54,7 +54,7 @@ def docker_run_on_free_port(name, port_args_builder, attempts=5):
         if result.returncode == 0:
             return port
         last = result
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True, text=True)
     raise subprocess.CalledProcessError(last.returncode, "docker run", last.stdout, last.stderr)
 
 
@@ -71,11 +71,76 @@ def isolated_ports(exclude=None):
     return {name: str(free_port()) for name in ALL_LISTEN_PORT_VARS if name != exclude}
 
 
+class LocalPostgres:
+    """A real, disposable Postgres SERVER PROCESS (Homebrew `initdb`/`postgres`, scram password auth like the
+    container) in a temp dir -- for machines where the Docker VM is out of disk. Opt-in via
+    WARP_TEST_PG_LOCAL=1; RealPostgres delegates to it."""
+
+    def __init__(self):
+        import shutil
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="warp-localpg-")
+        self.port = free_port()
+        datadir = os.path.join(self.dir, "data")
+        pwfile = os.path.join(self.dir, "pw")
+        with open(pwfile, "w") as f:
+            f.write("postgres\n")
+        bins = os.environ.get("WARP_TEST_PG_BIN", "")
+        initdb = os.path.join(bins, "initdb") if bins else shutil.which("initdb")
+        postgres = os.path.join(bins, "postgres") if bins else shutil.which("postgres")
+        subprocess.run([initdb, "-D", datadir, "-U", "postgres", "--pwfile", pwfile, "-A", "scram-sha-256",
+                        "-E", "UTF8", "--locale=C"], check=True, capture_output=True)
+        self.process = subprocess.Popen(
+            [postgres, "-D", datadir, "-p", str(self.port), "-k", self.dir, "-c", "listen_addresses=127.0.0.1",
+             "-c", "max_connections=200", "-c", "max_prepared_transactions=10"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, "LC_ALL": "en_US.UTF-8"})
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            self.close()
+            raise TimeoutError("local Postgres did not start")
+        # the server accepts TCP slightly before it finished recovery; wait for a real login
+        import psycopg2
+        while time.time() < deadline:
+            try:
+                psycopg2.connect(host="127.0.0.1", port=self.port, user="postgres", password="postgres",
+                                 dbname="postgres").close()
+                return
+            except Exception:  # noqa: BLE001
+                time.sleep(0.2)
+        self.close()
+        raise TimeoutError("local Postgres did not accept logins")
+
+    def close(self):
+        import shutil
+        if self.process.poll() is None:
+            import signal
+            # SIGINT = "fast shutdown" (disconnects clients); SIGTERM's smart shutdown waits for every client to
+            # leave, which leaks the postmaster (and its SysV shared memory) when a Warp is still connected.
+            self.process.send_signal(signal.SIGINT)
+            try:
+                self.process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
 class RealPostgres:
     """A real, disposable Postgres container -- plain `docker run`, not a test-library
     abstraction, so it needs nothing beyond Docker itself being installed."""
 
     def __init__(self):
+        if os.environ.get("WARP_TEST_PG_LOCAL") == "1":
+            self._local = LocalPostgres()
+            self.name = "local-" + os.path.basename(self._local.dir)
+            self.port = self._local.port
+            return
+        self._local = None
         self.name = f"warp-pytest-pg-{uuid.uuid4().hex[:12]}"
         self.port = docker_run_on_free_port(self.name, lambda port: [
             "-p", f"{port}:5432",
@@ -99,7 +164,10 @@ class RealPostgres:
         raise TimeoutError(f"Postgres container {self.name} did not become ready in {timeout}s")
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        if self._local is not None:
+            self._local.close()
+            return
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)
 
 
 class WarpProcess:
@@ -269,7 +337,7 @@ class RealMinio:
         raise TimeoutError(f"MinIO container {self.name} did not become ready in {timeout}s")
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)
 
 
 class RealMongo:
@@ -293,7 +361,7 @@ class RealMongo:
         raise TimeoutError(f"MongoDB container {self.name} did not become ready in {timeout}s")
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)
 
 
 class RealDynamoDb:
@@ -327,7 +395,7 @@ class RealDynamoDb:
         raise TimeoutError(f"DynamoDB Local container {self.name} did not become ready in {timeout}s")
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)
 
 
 class RealKafka:
@@ -369,7 +437,7 @@ class RealKafka:
         assert r.returncode == 0, r.stderr
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)
 
 
 class RealCassandra:
@@ -399,4 +467,4 @@ class RealCassandra:
         raise TimeoutError(f"Cassandra container {self.name} did not become ready in {timeout}s")
 
     def close(self):
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True, text=True)
+        subprocess.run(["docker", "rm", "-f", "-v", self.name], capture_output=True, text=True)

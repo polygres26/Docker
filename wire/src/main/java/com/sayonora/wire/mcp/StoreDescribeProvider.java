@@ -14,7 +14,7 @@ import java.util.TreeMap;
 
 /**
  * Describe-only provider for the Warp-hosted stores that have no MCP data tools of their own yet
- * (SQS queues, OpenSearch indexes, the Neo4j graph): they are listed as typed stores of the
+ * (SQS queues, OpenSearch indexes, the Neo4j graph, S3 buckets with object counts and bytes per shard): they are listed as typed stores of the
  * backend(s) that host them and {@code describe_backend} shows what they contain, read straight
  * from the hosting Postgres (fixed catalog/metadata queries only -- never caller SQL). Data access
  * is through the store's own wire protocol (sqswire / oswire / boltwire).
@@ -77,6 +77,20 @@ final class StoreDescribeProvider implements BackendToolProvider {
             }
             case OPENSEARCH -> {
                 TreeMap<String, Long> docs = new TreeMap<>();
+                // index names that are not plain identifiers (my-logs-2024.01.01) live in warp_os_catalog; the table
+                // name is only a sanitised form of them
+                java.util.Map<String, String> tableToIndex = new java.util.HashMap<>();
+                String osHome = registry.storeHome(store);
+                if (osHome != null) {
+                    try (Connection c = registry.get(osHome).open(); Statement st = c.createStatement();
+                            ResultSet rs = st.executeQuery("SELECT table_name, name FROM warp_os_catalog")) {
+                        while (rs.next()) {
+                            tableToIndex.put(rs.getString(1), rs.getString(2));
+                        }
+                    } catch (SQLException noCatalogYet) {
+                        // no index created through the catalog yet: fall back to table names below
+                    }
+                }
                 for (String h : hosts) {
                     BackendTarget t = registry.get(h);
                     try (Connection c = t.open(); Statement st = c.createStatement();
@@ -90,7 +104,7 @@ final class StoreDescribeProvider implements BackendToolProvider {
                             try (Statement cs = c.createStatement();
                                     ResultSet cr = cs.executeQuery("SELECT count(*) FROM \"" + table + "\"")) {
                                 cr.next();
-                                docs.merge(table.substring("warp_search_".length()), cr.getLong(1), Long::sum);
+                                docs.merge(tableToIndex.getOrDefault(table, table.substring("warp_search_".length())), cr.getLong(1), Long::sum);
                             }
                         }
                     }
@@ -122,6 +136,60 @@ final class StoreDescribeProvider implements BackendToolProvider {
                         out.addProperty("note", "graph tables not readable yet: " + e.getMessage());
                     }
                 }
+            }
+            case S3 -> {
+                // per-host object/byte counts (from the fixed catalog tables); buckets come from the first host
+                JsonArray shards = new JsonArray();
+                java.util.TreeMap<String, long[]> perBucket = new java.util.TreeMap<>();
+                for (String h : hosts) {
+                    JsonObject sh = new JsonObject();
+                    sh.addProperty("host", h);
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement()) {
+                        try (ResultSet rs = st.executeQuery("SELECT bucket, count(*), COALESCE(sum(size), 0) "
+                                + "FROM warp_s3_objects GROUP BY bucket")) {
+                            long objects = 0;
+                            long bytes = 0;
+                            while (rs.next()) {
+                                long[] t = perBucket.computeIfAbsent(rs.getString(1), k -> new long[2]);
+                                t[0] += rs.getLong(2);
+                                t[1] += rs.getLong(3);
+                                objects += rs.getLong(2);
+                                bytes += rs.getLong(3);
+                            }
+                            sh.addProperty("objectCount", objects);
+                            sh.addProperty("totalBytes", bytes);
+                        }
+                        try (ResultSet rs = st.executeQuery("SELECT count(*) FROM warp_s3_blobs "
+                                + "WHERE state = 'garbage'")) {
+                            rs.next();
+                            sh.addProperty("garbageBlobs", rs.getLong(1));
+                        }
+                    } catch (SQLException e) {
+                        sh.addProperty("note", "s3 tables not readable yet: " + e.getMessage());
+                    }
+                    shards.add(sh);
+                }
+                JsonArray buckets = new JsonArray();
+                if (!hosts.isEmpty()) {
+                    try (Connection c = registry.get(hosts.get(0)).open(); Statement st = c.createStatement();
+                            ResultSet rs = st.executeQuery("SELECT name, created_at FROM warp_s3_buckets ORDER BY name")) {
+                        while (rs.next()) {
+                            JsonObject b = new JsonObject();
+                            String name = rs.getString(1);
+                            long[] t = perBucket.getOrDefault(name, new long[2]);
+                            b.addProperty("name", name);
+                            b.addProperty("created", rs.getTimestamp(2).toInstant().toString());
+                            b.addProperty("objectCount", t[0]);
+                            b.addProperty("totalBytes", t[1]);
+                            buckets.add(b);
+                        }
+                    } catch (SQLException e) {
+                        out.addProperty("note", "bucket catalog not readable yet: " + e.getMessage());
+                    }
+                }
+                out.addProperty("bucketCount", buckets.size());
+                out.add("buckets", buckets);
+                out.add("shards", shards);
             }
             default -> {
             }

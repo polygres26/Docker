@@ -73,6 +73,20 @@ def test_simple_select(warp):
         conn.close()
 
 
+def test_use_database_statement_is_accepted_as_a_noop(warp):
+    # pymssql/FreeTDS and many T-SQL tools send "USE <db>" after login; the backend Postgres rejected it
+    # (syntax error at or near "use") before mssqlwire acknowledged it like SET.
+    conn = connect(warp)
+    try:
+        cur = conn.cursor()
+        cur.execute("USE postgres")
+        cur.execute("USE [postgres];")
+        cur.execute("SELECT 1")
+        assert str(cur.fetchone()[0]) == "1"  # see test_simple_select: no per-column type mapping yet
+    finally:
+        conn.close()
+
+
 def test_create_insert_select_round_trip(warp):
     conn = connect(warp)
     try:

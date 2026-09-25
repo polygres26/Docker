@@ -59,6 +59,7 @@ public final class StoreBootstrap {
                 case DYNAMODB -> exec(st, "dynamowire_catalog");
                 case SQS -> exec(st, "sqswire_catalog");
                 case NEO4J -> exec(st, "boltwire_graph_schema");
+                case S3 -> exec(st, "s3wire_store");
                 default -> {
                     // per-collection tables are created on first use
                 }

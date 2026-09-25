@@ -189,6 +189,7 @@ public final class Main {
                 defaultBackendTarget, nativeBackendTargets);
         backendRegistry.applyDescriptions(config.backendDescriptions(), config.backendGroupDescriptions());
         backendRegistry.applyStoreConfig(config.backendStores(), config.backendSetNames());
+        backendRegistry.connectionRouter().load(config.connectionRoutes());
         // schema of every store enabled on a Postgres backend, before any frontend starts serving
         com.sayonora.wire.core.StoreBootstrap.ensureAll(backendRegistry);
         logSchemaDiscoveryConflicts(backendRegistry);
@@ -676,20 +677,34 @@ public final class Main {
                     sqsWirePort, e);
         }
 
-        // s3wire: Amazon S3 REST API frontend over one real S3-compatible backend bucket (MinIO in
-        // tests). Unlike the Postgres-backed frontends it has no default backend, so it only starts
-        // when WARP_S3WIRE_BACKEND_BUCKET is set -- see S3WireConfig for the full env var list.
-        // Wrapped the same way sqswire is: an s3wire-only misconfiguration logs loudly and leaves
-        // s3wire off without affecting any other wire protocol.
+        // s3wire: Amazon S3 REST API frontend. Postgres mode (objects chunked into the Postgres backends of the
+        // set that enabled the "s3" store, sharded by key) or proxy mode (one real S3-compatible backend bucket
+        // via WARP_S3WIRE_BACKEND_BUCKET). It starts when either is configured now, or when
+        // WARP_S3WIRE_ENABLED=true (start now, adopt the store when it is enabled later); Postgres mode wins
+        // when both are configured. Wrapped the same way sqswire is: an s3wire-only misconfiguration logs
+        // loudly and leaves s3wire off without affecting any other wire protocol.
         try {
             com.sayonora.wire.s3wire.S3WireConfig s3Config = com.sayonora.wire.s3wire.S3WireConfig.fromEnv();
-            if (s3Config != null) {
+            boolean s3Postgres = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.S3).isEmpty();
+            boolean s3Forced = "true".equalsIgnoreCase(System.getenv("WARP_S3WIRE_ENABLED"));
+            if (s3Postgres || s3Config.proxyConfigured() || s3Forced) {
+                s3Config.requireCredentials();
+                if (s3Postgres && s3Config.proxyConfigured()) {
+                    log.warn("s3wire: the s3 store is enabled on {} AND WARP_S3WIRE_BACKEND_BUCKET is set -- "
+                            + "Postgres mode wins and the proxy configuration is ignored while the store stays "
+                            + "enabled (remove the store from the backend set to fall back to the proxy)",
+                            backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.S3));
+                }
                 int s3WirePort = parseIntEnv("WARP_S3WIRE_PORT", 18020);
                 com.sayonora.wire.s3wire.S3WireServer s3WireServer = new com.sayonora.wire.s3wire.S3WireServer(
-                        s3WirePort, s3Config, connectionGate, sqlMetrics);
+                        s3WirePort, s3Config, connectionGate, sqlMetrics, backendRegistry,
+                        com.sayonora.wire.s3wire.S3StoreOptions.fromEnv());
                 s3WireServer.start();
-                log.info("warp listening for Amazon S3 REST API (s3wire) on port {}, backend bucket '{}'",
-                        s3WirePort, s3Config.backendBucket());
+                log.info("warp listening for Amazon S3 REST API (s3wire) on port {}, mode {}", s3WirePort,
+                        s3Postgres ? "postgres (hosts " + backendRegistry.storeHosts(
+                                com.sayonora.wire.core.StoreType.S3) + ")"
+                                : s3Config.proxyConfigured() ? "proxy (backend bucket '" + s3Config.backendBucket() + "')"
+                                : "waiting for the s3 store to be enabled");
             }
         } catch (Exception e) {
             log.error("s3wire failed to start -- every other wire protocol is still up. "
@@ -784,6 +799,7 @@ public final class Main {
             backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
             backendRegistry.applyDescriptions(c.backendDescriptions(), c.backendGroupDescriptions());
             backendRegistry.applyStoreConfig(c.backendStores(), c.backendSetNames());
+            backendRegistry.connectionRouter().load(c.connectionRoutes());
             com.sayonora.wire.core.StoreBootstrap.ensureAll(backendRegistry);
             mcpServer.endpoints().load(c.mcpEndpoints());
             if (schemaAutoDiscoveryStage != null) {
@@ -908,6 +924,63 @@ public final class Main {
         });
     }
 
+    @FunctionalInterface
+    private interface SessionFactory {
+        Runnable create(Socket clientSocket) throws Exception;
+    }
+
+    /** The one accept loop every TCP frontend shares. Resilient by construction: an aborted connection (a
+     * {@code SocketException} from {@code setTcpNoDelay} on a peer that already reset, a handler that fails to
+     * construct, a rejected submit) drops THAT connection with a log line and the loop continues -- it used to
+     * end the whole listener until Warp restarted. Handlers must not borrow from the backend pool in their
+     * constructor: this runs on the single accept thread and a saturated pool would freeze accepting for
+     * everyone (see FailedStatementLog for the one place that used to). Only a closed server socket (shutdown)
+     * ends the loop, by rethrowing to the caller. */
+    private static void acceptLoop(String listenerName, ServerSocket serverSocket,
+            com.sayonora.wire.acl.ConnectionGate connectionGate, ExecutorService sessionExecutor,
+            SessionFactory sessionFactory) throws IOException {
+        while (true) {
+            Socket clientSocket;
+            try {
+                clientSocket = serverSocket.accept();
+            } catch (IOException e) {
+                if (serverSocket.isClosed()) {
+                    throw e;
+                }
+                log.warn("{} listener: accept failed ({}), continuing", listenerName, e.toString());
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+                continue;
+            }
+            boolean gated = false;
+            try {
+                clientSocket.setTcpNoDelay(true);
+                if (!connectionGate.acceptTcp(clientSocket)) {
+                    continue;
+                }
+                gated = true;
+                Runnable session = sessionFactory.create(clientSocket);
+                submitSession(sessionExecutor, connectionGate, session);
+                gated = false; // submitSession's finally now owns the release
+            } catch (Exception e) {
+                log.warn("{} listener: dropping a connection that could not be served ({}); listener keeps running",
+                        listenerName, e.toString());
+                if (gated) {
+                    connectionGate.release();
+                }
+                try {
+                    clientSocket.close();
+                } catch (IOException ignored) {
+                    // already closed
+                }
+            }
+        }
+    }
+
     private static void acceptPgWireLoop(ServerOptions options, List<PipelineStage> pipelineStages,
             BackendRegistry backendRegistry, ExecutorService sessionExecutor,
             com.sayonora.wire.auth.PgRoleAuthCache roleAuthCache, com.sayonora.wire.acl.ConnectionGate connectionGate,
@@ -915,14 +988,8 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
             log.info("warp listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate, new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
-            }
+            acceptLoop("Postgres wire", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
         } catch (IOException e) {
             log.error("Postgres wire listener on port {} failed", options.pgWireListenPort(), e);
         }
@@ -940,15 +1007,8 @@ public final class Main {
             com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             log.info("warp listening for Bolt (Neo4j wire) on port {}", port);
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate,
-                        new com.sayonora.wire.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry, sqlMetrics));
-            }
+            acceptLoop("Bolt", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new com.sayonora.wire.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry, sqlMetrics));
         } catch (IOException e) {
             log.error("Bolt (boltwire) listener on port {} failed -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring boltwire back.", port, e);
@@ -961,14 +1021,8 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.myWireListenPort())) {
             log.info("warp listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate, new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
-            }
+            acceptLoop("MySQL wire", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
         } catch (IOException e) {
             log.error("MySQL wire listener on port {} failed", options.myWireListenPort(), e);
         }
@@ -981,14 +1035,8 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("warp listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate, new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
-            }
+            acceptLoop("SQL Server TDS wire", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
         } catch (IOException e) {
             log.error("SQL Server TDS wire listener on port {} failed", options.mssqlWireListenPort(), e);
         }
@@ -1003,14 +1051,8 @@ public final class Main {
                     + "(find/insert/update/delete, plus a real [$match][$group][$sort][$limit][$project] "
                     + "aggregate pipeline -- see MongoAggregationTranslator for its exact scope)",
                     mongoPort);
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate, new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
-            }
+            acceptLoop("MongoDB wire", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);
         }
@@ -1022,14 +1064,8 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
             log.info("warp listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(clientSocket)) {
-                    continue;
-                }
-                submitSession(sessionExecutor, connectionGate, new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
-            }
+            acceptLoop("Oracle wire", serverSocket, connectionGate, sessionExecutor,
+                    clientSocket -> new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
         } catch (IOException e) {
             log.error("Oracle wire listener on port {} failed", options.listenPort(), e);
         }
@@ -1042,17 +1078,12 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
             log.info("warp listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            while (true) {
-                Socket plainSocket = serverSocket.accept();
-                plainSocket.setTcpNoDelay(true);
-                if (!connectionGate.acceptTcp(plainSocket)) {
-                    continue;
-                }
+            acceptLoop("Oracle wire TCPS", serverSocket, connectionGate, sessionExecutor, plainSocket -> {
                 SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
                         plainSocket, null, plainSocket.getPort(), true);
                 tlsSocket.setUseClientMode(false);
-                submitSession(sessionExecutor, connectionGate, new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
-            }
+                return new SessionHandler(tlsSocket, backendPool, options, pipelineStages, backendRegistry, auditLog);
+            });
         } catch (IOException e) {
             log.error("Oracle wire TCPS listener on port {} failed", options.tlsPort(), e);
         }

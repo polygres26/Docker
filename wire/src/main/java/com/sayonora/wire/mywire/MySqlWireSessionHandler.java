@@ -66,11 +66,32 @@ public final class MySqlWireSessionHandler implements Runnable {
     // against a throwaway connection with zero effect on any OTHER statement. Any ORM transaction
     // (ActiveRecord, Django, Hibernate, Sequelize -- virtually every write path in a typical app)
     // was silently non-atomic. Fixed the same way pgwire already does it: one connection lives for
-    // the whole session (see sessionConnection()), and BEGIN/COMMIT/ROLLBACK toggle its real
+    // the whole session (now a lease, see below), and BEGIN/COMMIT/ROLLBACK toggle its real
     // autoCommit state and actually commit/rollback, instead of being no-op'd or run against a
     // connection nobody else will ever see again.
-    private Connection sessionConnection;
+    // Backend connection lease (connection multiplexing, WARP_MULTIPLEX_SESSIONS): borrowed per statement /
+    // transaction and returned to the pool right after the statement, unless the session is pinned -- open
+    // transaction (BEGIN / START TRANSACTION / SET autocommit=0) or session state (SET time_zone, isolation level,
+    // temp tables, LAST_INSERT_ID(), ...). See SessionConnectionLease. Prepared statements are client-side
+    // (statement id -> SQL text) and re-executed per COM_STMT_EXECUTE, so they need no pin.
+    private final com.sayonora.wire.core.SessionConnectionLease lease;
     private boolean inTransaction;
+    // "SET autocommit = 0" (what mysql-connector-j / pymysql send for autocommit=false): MySQL starts the
+    // transaction at the next statement, not at the SET. Tracked as a mode, so an idle autocommit=0 client holds
+    // no backend connection; the connection is borrowed and pinned when the first statement that is not a plain
+    // read runs (see executeQuery) and released at COMMIT/ROLLBACK, after which the mode is still on.
+    private boolean implicitTransactions;
+    // START TRANSACTION / BEGIN: the transaction exists logically (inTransaction) from here, but the backend
+    // connection is only borrowed and pinned by the first statement that is not a plain read (ensurePhysical
+    // Transaction) -- a driver that begins a transaction right after connecting must not pin a connection while
+    // idle. Reads before that first write run in autocommit mode, which is indistinguishable at the backend's
+    // READ COMMITTED level.
+    private boolean pendingBegin;
+    // MySQL's LAST_INSERT_ID() is per-session state; with the connection released after every statement it is
+    // answered from the generated key of this session's last INSERT instead of from the backend.
+    private long lastInsertId;
+    private static final java.util.regex.Pattern LAST_INSERT_ID_QUERY = java.util.regex.Pattern.compile(
+            "^\\s*select\\s+last_insert_id\\s*\\(\\s*\\)\\s*;?\\s*$", java.util.regex.Pattern.CASE_INSENSITIVE);
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
     private final FailedStatementLog failedStatementLog;
@@ -78,6 +99,12 @@ public final class MySqlWireSessionHandler implements Runnable {
     /** Session-scoped: statement handles are only meaningful within the connection that
      * PREPAREd them, same as real MySQL. */
     private final Map<Integer, PreparedStmt> preparedStatements = new HashMap<>();
+
+    // Connect-time backend routing (handshake database, re-resolved on COM_INIT_DB / USE db); see
+    // core/ConnectionRouter. Every Statement this session builds passes through route.apply().
+    private com.sayonora.wire.core.BackendRegistry backendRegistry;
+    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
+    private String loginUser = "";
     private final AtomicInteger nextStmtId = new AtomicInteger(1);
 
     private static final class PreparedStmt {
@@ -102,6 +129,7 @@ public final class MySqlWireSessionHandler implements Runnable {
             List<com.sayonora.wire.core.PipelineStage> sharedStages, com.sayonora.wire.core.BackendRegistry backendRegistry) {
         this.clientSocket = clientSocket;
         this.options = options;
+        this.backendRegistry = backendRegistry;
         this.routingExecutor = new com.sayonora.wire.core.RoutingBackendExecutor(backendRegistry, terminalExecutor,
                 new com.sayonora.wire.xa.XaRecoveryLog(options),
                 com.sayonora.wire.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.wire.core.RouterStage.tableShardRulesIn(sharedStages))
@@ -111,6 +139,8 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.sqlMetrics = com.sayonora.wire.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);
         this.failedStatementLog.ensureSchema();
+        this.lease = PgConnections.newSessionLease(options);
+        this.terminalExecutor.bindLease(lease);
     }
 
     @Override
@@ -141,23 +171,8 @@ public final class MySqlWireSessionHandler implements Runnable {
             } catch (SQLException ignoredOnSessionTeardown) {
 
             }
-            if (sessionConnection != null) {
-                try {
-                    sessionConnection.close();
-                } catch (SQLException ignoredOnSessionTeardown) {
-
-                }
-            }
+            lease.close();
         }
-    }
-
-    private Connection sessionConnection() throws SQLException {
-        if (sessionConnection == null) {
-            sessionConnection = PgConnections.open(options);
-            sessionConnection.setAutoCommit(true);
-            terminalExecutor.rebind(sessionConnection);
-        }
-        return sessionConnection;
     }
 
     // MySQL clients express transaction control two ways a real app hits constantly: the SQL
@@ -173,24 +188,62 @@ public final class MySqlWireSessionHandler implements Runnable {
             "^\\s*set\\s+(?:session\\s+|@@(?:session\\.)?)?autocommit\\s*=\\s*'?(0|1|off|on|false|true)'?\\s*$",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    private boolean handleTransactionControl(Connection connection, String sql) throws SQLException {
+    private void endTransaction(boolean commit) throws SQLException {
+        try {
+            if (commit) {
+                lease.commit();
+            } else {
+                lease.rollback();
+            }
+        } finally {
+            inTransaction = false;
+            pendingBegin = false;
+            lease.releaseIfIdle();
+        }
+        routingExecutor.endTransaction(commit);
+    }
+
+    private void beginTransaction() {
+        inTransaction = true;
+        pendingBegin = true;
+        routingExecutor.beginTransaction();
+    }
+
+    /** Borrows and pins the backend connection for the transaction the client is in (BEGIN) or implicitly starts
+     * (autocommit=0), at the first statement that needs it -- see {@link #pendingBegin}. */
+    private void ensurePhysicalTransaction(String sql) throws SQLException {
+        if (!(pendingBegin || implicitTransactions) || lease.inTransaction()) {
+            return;
+        }
+        if (lease.pinReason() == null && !lease.hasSettings() && com.sayonora.wire.core.SessionStatePins.isPureRead(SourceDialect.MYSQL, sql)) {
+            return; // nothing to keep on the connection yet
+        }
+        if (route.permitsDefault()) {
+            lease.begin(); // a session routed to another backend never borrows the default backend's connection
+        }
+        if (!inTransaction) {
+            inTransaction = true;
+            routingExecutor.beginTransaction();
+        }
+        pendingBegin = false;
+    }
+
+    private boolean handleTransactionControl(String sql) throws SQLException {
         java.util.regex.Matcher autocommit = SET_AUTOCOMMIT.matcher(sql);
         if (autocommit.matches()) {
             boolean enable = switch (autocommit.group(1).toLowerCase(java.util.Locale.ROOT)) {
                 case "0", "off", "false" -> false;
                 default -> true;
             };
-            if (!enable && !inTransaction) {
-                connection.setAutoCommit(false);
-                inTransaction = true;
-                routingExecutor.beginTransaction();
-            } else if (enable && inTransaction) {
-                // Real MySQL commits whatever's pending when autocommit is turned back on
-                // mid-transaction -- matching that rather than silently discarding it.
-                connection.commit();
-                connection.setAutoCommit(true);
-                inTransaction = false;
-                routingExecutor.endTransaction(true);
+            if (!enable) {
+                implicitTransactions = true;
+            } else {
+                implicitTransactions = false;
+                if (inTransaction) {
+                    // Real MySQL commits whatever's pending when autocommit is turned back on
+                    // mid-transaction -- matching that rather than silently discarding it.
+                    endTransaction(true);
+                }
             }
             return true;
         }
@@ -200,11 +253,7 @@ public final class MySqlWireSessionHandler implements Runnable {
         }
         String verb = prefix.group(1).replaceAll("\\s+", " ").toUpperCase(java.util.Locale.ROOT);
         switch (verb) {
-            case "START TRANSACTION", "BEGIN" -> {
-                connection.setAutoCommit(false);
-                inTransaction = true;
-                routingExecutor.beginTransaction();
-            }
+            case "START TRANSACTION", "BEGIN" -> beginTransaction();
             // Real gap found live: a real mysql-connector-j client sends a bare "COMMIT"/
             // "ROLLBACK" even when it never explicitly started a transaction via SQL text (no
             // preceding START TRANSACTION/BEGIN and, confirmed live, no SET autocommit=0 either --
@@ -217,18 +266,12 @@ public final class MySqlWireSessionHandler implements Runnable {
             // active transaction commits/rolls back nothing, it's not an error).
             case "COMMIT" -> {
                 if (inTransaction) {
-                    connection.commit();
-                    connection.setAutoCommit(true);
-                    inTransaction = false;
-                    routingExecutor.endTransaction(true);
+                    endTransaction(true);
                 }
             }
             case "ROLLBACK" -> {
                 if (inTransaction) {
-                    connection.rollback();
-                    connection.setAutoCommit(true);
-                    inTransaction = false;
-                    routingExecutor.endTransaction(false);
+                    endTransaction(false);
                 }
             }
             default -> {
@@ -282,9 +325,11 @@ public final class MySqlWireSessionHandler implements Runnable {
         // plugin after an explicit AuthSwitchRequest.
         byte[] firstAuthResponse = Arrays.copyOfRange(response, pos[0], pos[0] + authLen);
         pos[0] += authLen;
+        String database = null;
         if ((clientCapabilities & MySqlMessages.CLIENT_CONNECT_WITH_DB) != 0) {
-            MySqlPacket.readNulString(response, pos);	// database -- not used, just needs skipping
+            database = MySqlPacket.readNulString(response, pos);
         }
+        loginUser = username;
         String firstPluginName = (clientCapabilities & MySqlMessages.CLIENT_PLUGIN_AUTH) != 0
                 ? MySqlPacket.readNulString(response, pos)
                 : null;
@@ -320,6 +365,17 @@ public final class MySqlWireSessionHandler implements Runnable {
             return null;
         }
 
+        // Only AFTER a successful login, so an unauthenticated client cannot probe which backend and
+        // set names exist.
+        if (backendRegistry != null) {
+            route = backendRegistry.connectionRouter().resolve(
+                    com.sayonora.wire.core.ConnectionRouter.PROTO_MYSQL, database, username);
+            if (route.isRejected()) {
+                packets.writePayload(out, MySqlMessages.errPacket(1049, "42000",
+                        "Unknown database '" + route.requestedName() + "'"));
+                return null;
+            }
+        }
         packets.writePayload(out, MySqlMessages.okPacket(0));
         return new HandshakeStreams(in, out);
     }
@@ -345,7 +401,9 @@ public final class MySqlWireSessionHandler implements Runnable {
                 case COM_QUIT -> {
                     return;
                 }
-                case COM_PING, COM_INIT_DB -> packets.writePayload(out, MySqlMessages.okPacket(0));
+                case COM_PING -> packets.writePayload(out, MySqlMessages.okPacket(0));
+                case COM_INIT_DB -> switchDatabase(out, packets,
+                        new String(payload, 1, payload.length - 1, StandardCharsets.UTF_8));
                 case COM_QUERY -> {
                     String sql = new String(payload, 1, payload.length - 1, StandardCharsets.UTF_8);
                     long rttStart = System.nanoTime();
@@ -382,6 +440,25 @@ public final class MySqlWireSessionHandler implements Runnable {
         }
     }
 
+    /** COM_INIT_DB / {@code USE db}: re-resolves this connection's route for the new database name.
+     * A strict-mode rejection is MySQL error 1049 and leaves the current route unchanged. */
+    private void switchDatabase(OutputStream out, MySqlPacket packets, String database) throws IOException {
+        if (backendRegistry != null) {
+            com.sayonora.wire.core.ConnectionRoute next = backendRegistry.connectionRouter().resolve(
+                    com.sayonora.wire.core.ConnectionRouter.PROTO_MYSQL, database.strip(), loginUser);
+            if (next.isRejected()) {
+                packets.writePayload(out, MySqlMessages.errPacket(1049, "42000",
+                        "Unknown database '" + next.requestedName() + "'"));
+                return;
+            }
+            route = next;
+        }
+        packets.writePayload(out, MySqlMessages.okPacket(0));
+    }
+
+    private static final java.util.regex.Pattern USE_DATABASE = java.util.regex.Pattern.compile(
+            "^\\s*use\\s+`?([^`\\s;]+)`?\\s*;?\\s*$", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private void handleSendLongData(byte[] payload) {
         // COM_STMT_SEND_LONG_DATA streams a BLOB/CLOB parameter across possibly many packets, sent
         // separately from -- and excluded entirely from -- the following EXECUTE's own parameter
@@ -412,7 +489,7 @@ public final class MySqlWireSessionHandler implements Runnable {
     private void handlePrepare(OutputStream out, MySqlPacket packets, String sql) throws IOException {
         int paramCount = MySqlBinaryProtocol.countPlaceholders(sql);
         List<String> columnNames = List.of();
-        if (sql.stripLeading().regionMatches(true, 0, "SELECT", 0, 6)) {
+        if (sql.stripLeading().regionMatches(true, 0, "SELECT", 0, 6) && route.permitsDefault()) {
             // Best-effort only: prepare-time column metadata is used purely to size
             // COM_STMT_PREPARE_OK's num_columns declaration, NOT held across PREPARE->EXECUTE --
             // EXECUTE re-runs the full statement against a fresh connection (same as plain
@@ -420,21 +497,42 @@ public final class MySqlWireSessionHandler implements Runnable {
             // actual response. A metadata-fetch failure here just means PREPARE_OK declares 0
             // columns; some clients tolerate that better than others, but EXECUTE's response is
             // unaffected either way.
-            try (Connection backend = options.mywireNativeBackend()
-                    ? MySqlBackendConnections.open(options) : PgConnections.open(options);
-                    PreparedStatement ps = backend.prepareStatement(sql)) {
-                ResultSetMetaData md = ps.getMetaData();
-                if (md != null) {
-                    List<String> names = new ArrayList<>();
-                    for (int i = 1; i <= md.getColumnCount(); i++) {
-                        names.add(md.getColumnLabel(i));
+            // Outside a transaction the probe runs on this session's own lease (borrowed for the call, released
+            // right after unless pinned). Inside one it must NOT touch the session's connection -- a probe that
+            // fails (MySQL-only syntax) would abort the client's open transaction -- so it takes a separate,
+            // short-lived borrow exactly as before multiplexing.
+            boolean native_ = options.mywireNativeBackend();
+            boolean separate = native_ || lease.inTransaction();
+            Connection backend = null;
+            try {
+                backend = native_ ? MySqlBackendConnections.open(options)
+                        : separate ? PgConnections.open(options) : lease.acquire();
+                try (PreparedStatement ps = backend.prepareStatement(sql)) {
+                    ResultSetMetaData md = ps.getMetaData();
+                    if (md != null) {
+                        List<String> names = new ArrayList<>();
+                        for (int i = 1; i <= md.getColumnCount(); i++) {
+                            names.add(md.getColumnLabel(i));
+                        }
+                        columnNames = names;
                     }
-                    columnNames = names;
                 }
             } catch (SQLException e) {
                 log.debug("mywire: could not fetch prepare-time column metadata for \"{}\" -- "
                         + "PREPARE_OK will declare 0 columns, EXECUTE's response is unaffected: {}",
                         sql, e.getMessage());
+            } finally {
+                if (separate) {
+                    if (backend != null) {
+                        try {
+                            backend.close();
+                        } catch (SQLException ignored) {
+                            // best effort
+                        }
+                    }
+                } else {
+                    lease.releaseIfIdle();
+                }
             }
         }
 
@@ -527,7 +625,8 @@ public final class MySqlWireSessionHandler implements Runnable {
     /** @return true if {@code sql} was a real {@code SET time_zone} this rewrote and executed for
      *      real against {@code connection} -- false (nothing done) for anything else, including
      *      MySQL's "SYSTEM" keyword, left to the generic SET_STATEMENT no-op. */
-    private static boolean handleSetTimeZone(Connection connection, String sql) throws SQLException {
+    private static boolean handleSetTimeZone(com.sayonora.wire.core.SessionConnectionLease lease, String sql)
+            throws SQLException {
         java.util.regex.Matcher m = SET_TIME_ZONE.matcher(sql);
         if (!m.matches()) {
             return false;
@@ -536,8 +635,17 @@ public final class MySqlWireSessionHandler implements Runnable {
         if ("system".equalsIgnoreCase(value)) {
             return false;
         }
-        try (java.sql.Statement stmt = connection.createStatement()) {
-            stmt.execute("SET TIME ZONE '" + value.replace("'", "''") + "'");
+        // A plain session setting: recorded on the lease and replayed on whichever backend connection the session
+        // gets next instead of pinning it (see SessionConnectionLease#recordSetting).
+        String statement = "SET TIME ZONE '" + value.replace("'", "''") + "'";
+        if (lease.inTransaction()) {
+            lease.pinSessionState("SET time_zone inside a transaction"); // a rollback would undo it: keep the connection
+        }
+        try (java.sql.Statement stmt = lease.acquire().createStatement()) {
+            stmt.execute(statement);
+        }
+        if (!lease.inTransaction()) {
+            lease.recordSetting("timezone", statement);
         }
         return true;
     }
@@ -580,14 +688,22 @@ public final class MySqlWireSessionHandler implements Runnable {
                     + "(READ\\s+UNCOMMITTED|READ\\s+COMMITTED|REPEATABLE\\s+READ|SERIALIZABLE)\\s*$",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    private static boolean handleSetIsolationLevel(Connection connection, String sql) throws SQLException {
+    private static boolean handleSetIsolationLevel(com.sayonora.wire.core.SessionConnectionLease lease, String sql)
+            throws SQLException {
         java.util.regex.Matcher m = SET_ISOLATION_LEVEL.matcher(sql);
         if (!m.matches()) {
             return false;
         }
-        try (java.sql.Statement stmt = connection.createStatement()) {
-            stmt.execute("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL "
-                    + m.group(1).toUpperCase(java.util.Locale.ROOT).replaceAll("\\s+", " "));
+        String statement = "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL "
+                + m.group(1).toUpperCase(java.util.Locale.ROOT).replaceAll("\\s+", " ");
+        if (lease.inTransaction()) {
+            lease.pinSessionState("SET TRANSACTION ISOLATION LEVEL inside a transaction");
+        }
+        try (java.sql.Statement stmt = lease.acquire().createStatement()) {
+            stmt.execute(statement);
+        }
+        if (!lease.inTransaction()) {
+            lease.recordSetting("default_transaction_isolation", statement); // replayed, not pinned
         }
         return true;
     }
@@ -604,7 +720,7 @@ public final class MySqlWireSessionHandler implements Runnable {
             boolean binaryResult) throws IOException {
         if (!options.mywireNativeBackend()) {
             try {
-                if (handleTransactionControl(sessionConnection(), sql)) {
+                if (handleTransactionControl(sql)) {
                     packets.writePayload(out, MySqlMessages.okPacket(0));
                     return;
                 }
@@ -615,11 +731,17 @@ public final class MySqlWireSessionHandler implements Runnable {
                 return;
             }
         }
-        if (!options.mywireNativeBackend()) {
+        java.util.regex.Matcher use = USE_DATABASE.matcher(sql);
+        if (use.matches() && !options.mywireNativeBackend()) {
+            switchDatabase(out, packets, use.group(1));
+            return;
+        }
+        if (!options.mywireNativeBackend() && route.permitsDefault()) {
             try {
-                if (handleSetTimeZone(sessionConnection(), sql)
+                if (handleSetTimeZone(lease, sql)
                         || handleSetNames(sql)
-                        || handleSetIsolationLevel(sessionConnection(), sql)) {
+                        || handleSetIsolationLevel(lease, sql)) {
+                    lease.releaseIfIdle();
                     packets.writePayload(out, MySqlMessages.okPacket(0));
                     return;
                 }
@@ -648,7 +770,7 @@ public final class MySqlWireSessionHandler implements Runnable {
             return;
         }
 
-        Statement statement = Statement.of(SourceDialect.MYSQL, sql, bindParams);
+        Statement statement = route.apply(Statement.of(SourceDialect.MYSQL, sql, bindParams));
         try {
             ExecutionResult result;
             try {
@@ -684,16 +806,30 @@ public final class MySqlWireSessionHandler implements Runnable {
                     }
                     result = pipeline.execute(statement);
                 } else {
-                    // One connection for the whole session (see sessionConnection()'s own
-                    // javadoc, which also does the one-time terminalExecutor.rebind()), not a
-                    // fresh one per statement -- required for BEGIN/COMMIT/ROLLBACK (handled
-                    // above) to mean anything across statements. Deliberately NOT calling
-                    // rebind() again here on every statement: that would defeat
-                    // JdbcBackendExecutor's own prepared-statement cache (documented in its own
-                    // class -- rebind() closes and clears every cached entry, since it exists for
-                    // a genuine reconnect/failover, not routine reuse of the same connection).
-                    sessionConnection();
-                    result = pipeline.execute(statement);
+                    // The connection comes from this session's lease (bound to terminalExecutor): borrowed by
+                    // the executor at the moment the statement really needs the backend, kept while the
+                    // session is pinned (open transaction, session state), otherwise returned to the pool right
+                    // after -- see SessionConnectionLease.
+                    ensurePhysicalTransaction(sql);
+                    String pinReason = com.sayonora.wire.core.SessionStatePins.sessionStateReason(SourceDialect.MYSQL, sql);
+                    if (pinReason != null) {
+                        lease.pinSessionState(pinReason);
+                    }
+                    try {
+                        if (lease.multiplexing() && LAST_INSERT_ID_QUERY.matcher(sql).matches()) {
+                            result = ExecutionResult.ofQuery(
+                                    List.of(new com.sayonora.wire.core.ColumnInfo("LAST_INSERT_ID()", Types.BIGINT,
+                                            20, 0, 20, false, "int8")),
+                                    List.of(List.of(lastInsertId)));
+                        } else {
+                            result = pipeline.execute(statement);
+                            if (result.generatedKey() != 0) {
+                                lastInsertId = result.generatedKey();
+                            }
+                        }
+                    } finally {
+                        lease.releaseIfIdle();
+                    }
                 }
             } catch (UntranslatableQueryException e) {
                 failedStatementLog.record(SourceDialect.MYSQL, sql,

@@ -125,6 +125,12 @@ public final class RequestLoop {
     private final FailedStatementLog failedStatementLog;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
 
+    // Connection multiplexing (WARP_MULTIPLEX_SESSIONS, see SessionConnectionLease / LazyPooledConnection): true
+    // while this session's implicit transaction holds an uncommitted write, i.e. while the backend connection is
+    // pinned. A plain read (or a statement carrying the client's own commit flag) runs in autocommit mode and
+    // releases the connection afterwards; an uncommitted write leaves this true until COMMIT/ROLLBACK.
+    private boolean transactionDirty;
+
     // Built once per session and reused across every Execute, instead of a fresh
     // JdbcBackendExecutor + RoutingBackendExecutor + StatementPipeline object graph per call --
     // same pattern PgWireSessionHandler already uses. primaryConn is stable across a session's
@@ -158,6 +164,12 @@ public final class RequestLoop {
             new JdbcBackendExecutor(null, new com.sayonora.wire.core.access.OraclePgEmulationSessionInitializer());
     private final StatementPipeline reusablePipeline;
     private final com.sayonora.wire.core.AccessContext accessContext;
+    // Connect-time backend routing (the TNS service name / login user); see core/ConnectionRouter.
+    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
+
+    public void setConnectionRoute(com.sayonora.wire.core.ConnectionRoute route) {
+        this.route = route == null ? com.sayonora.wire.core.ConnectionRoute.UNROUTED : route;
+    }
 
     private record StatementSignature(String sql, int[] bindTypes) {
     }
@@ -349,6 +361,7 @@ public final class RequestLoop {
                     }
                 }
             } else if (functionCode == TtcConstants.FUNC_ROLLBACK) {
+                transactionDirty = false;
                 if (xaTransaction != null) {
                     xaTransaction.rollback();
                 } else {
@@ -699,6 +712,7 @@ public final class RequestLoop {
     }
 
     private void rollbackAfterStatementError() {
+        transactionDirty = false;
         try {
             pgConnection.rollback();
         } catch (SQLException rollbackFailure) {
@@ -722,6 +736,7 @@ public final class RequestLoop {
     }
 
     private void commitAll() throws SQLException {
+        transactionDirty = false;
         if (xaTransaction != null) {
             xaTransaction.commit();
         } else {
@@ -1147,7 +1162,12 @@ public final class RequestLoop {
         // orawire and pgwire/mywire/mssqlwire's write latency, once the translation-cache and
         // per-call pipeline-construction costs earlier in this investigation were already fixed.
         boolean wantsCommit = (request.options & TtcConstants.EXEC_OPTION_COMMIT) != 0;
-        boolean useNativeAutocommit = wantsCommit && !dual && replicaConnections.isEmpty() && xaTransaction == null;
+        // Multiplexing (single plain backend only): a pure read outside an open write-transaction has nothing
+        // to keep on the connection, so it runs in the same one-round-trip autocommit mode and lets it go.
+        boolean canMultiplex = pgConnection.multiplexing() && !dual && replicaConnections.isEmpty() && xaTransaction == null;
+        boolean pureRead = canMultiplex && !transactionDirty
+                && com.sayonora.wire.core.SessionStatePins.isPureRead(SourceDialect.ORACLE, request.sqlText);
+        boolean useNativeAutocommit = (wantsCommit || pureRead) && !dual && replicaConnections.isEmpty() && xaTransaction == null;
         // A real DML array-execute (ojdbc's PreparedStatement.addBatch()/executeBatch(), confirmed
         // live -- see ExecuteRequest#bindRows's own javadoc) carries one bind row per batched
         // statement. This codebase's execution pipeline has no native JDBC-batch path, so each row
@@ -1185,9 +1205,13 @@ public final class RequestLoop {
         // see "Postgres" for this statement instead of "Oracle" -- acceptable next to a client-
         // crashing malformed response.
         SourceDialect pipelineDialect = authoritativeIsOracle ? SourceDialect.POSTGRES : SourceDialect.ORACLE;
-        for (List<BindParam> bindRow : request.bindRows) {
+        // A statement with no bind rows at all (found live: "SELECT pg_sleep(0.1) FROM dual") used to skip this loop
+        // entirely, leave `result` null and die with a NullPointerException that hung the session. Run it once,
+        // with no binds -- a statement that really needs binds then fails with the backend's own clear error.
+        List<List<BindParam>> bindRowsToRun = request.bindRows.isEmpty() ? List.of(List.<BindParam>of()) : request.bindRows;
+        for (List<BindParam> bindRow : bindRowsToRun) {
             List<Object> binds = orderedBindValues(bindRow, rewritten.placeholderToBindIndex());
-            Statement statement = Statement.of(pipelineDialect, rewritten.sql(), binds, accessContext);
+            Statement statement = route.apply(Statement.of(pipelineDialect, rewritten.sql(), binds, accessContext));
             if (useNativeAutocommit) {
                 primaryConn.setAutoCommit(true);
                 try {
@@ -1199,6 +1223,21 @@ public final class RequestLoop {
                 result = reusablePipeline.execute(statement);
             }
             totalUpdateCount += result.updateCount();
+        }
+        if (canMultiplex) {
+            // What the statement left on the physical connection decides whether it can go back to the pool.
+            if (com.sayonora.wire.core.SessionStatePins.sessionStateReason(SourceDialect.ORACLE, request.sqlText) != null) {
+                pgConnection.pinSessionState();
+            }
+            if (useNativeAutocommit) {
+                transactionDirty = false; // ran and committed on its own (also committed anything pending)
+            } else {
+                transactionDirty = true;  // an implicit transaction is open on the connection: pinned
+            }
+            // Rows are fully materialised (openRows below), so nothing else needs the backend connection.
+            if (!transactionDirty && !(wantsCommit && !useNativeAutocommit)) {
+                pgConnection.releaseIfIdle();
+            }
         }
         openCursorId = nextCursorId++;
         if (bindTypes != null) {

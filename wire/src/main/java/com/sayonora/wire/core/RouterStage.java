@@ -517,6 +517,11 @@ public final class RouterStage implements PipelineStage {
      * by default.</li>
      * </ol> */
     private String resolveUnambiguousDefault(Statement statement) {
+        // Connect-time routing to a backend SET: the fallback is the set's own default backend
+        // (see BackendScope#defaultBackend), never the global "default" when that isn't a member.
+        if (statement.backendScope() != null && statement.backendScope().defaultBackend() != null) {
+            return statement.backendScope().defaultBackend();
+        }
         if (backendRegistry == null) {
             return null;
         }

@@ -154,7 +154,8 @@ def test_dynamodb_round_trip(warp, ports):
         "tableName": "mcp_orders", "keyConditionExpression": "customer = :c AND order_no > :n",
         "expressionAttributeValues": {":c": {"S": "acme"}, ":n": {"N": "1"}}}, path=p)
     assert [i["order_no"]["N"] for i in q["Items"]] == ["2"]
-    scan = call_json(warp, "scan_table", {"tableName": "mcp_orders", "filterExpression": "total >= :t",
+    scan = call_json(warp, "scan_table", {"tableName": "mcp_orders", "filterExpression": "#t >= :t",
+                                          "expressionAttributeNames": {"#t": "total"},
                                           "expressionAttributeValues": {":t": {"N": "10"}}}, path=p)
     assert len(scan["Items"]) == 2
 
@@ -165,7 +166,8 @@ def test_dynamodb_round_trip(warp, ports):
     assert item["total"] == {"N": "99"} and item["vip"] == {"BOOL": True}
     call(warp, "update_item", {"tableName": "mcp_orders",
                                "key": {"customer": "beta", "order_no": 7},
-                               "updateExpression": "SET total = :t",
+                               "updateExpression": "SET #t = :t",
+                               "expressionAttributeNames": {"#t": "total"},
                                "expressionAttributeValues": {":t": 100}}, path=p)
     assert ddb.get_item(TableName="mcp_orders", Key={"customer": {"S": "beta"}, "order_no": {"N": "7"}}
                         )["Item"]["total"] == {"N": "100"}

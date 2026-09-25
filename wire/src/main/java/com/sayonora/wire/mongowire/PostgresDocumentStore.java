@@ -92,7 +92,25 @@ final class PostgresDocumentStore {
         logShardGroupIfChanged();
     }
 
+    // Connect-time routing (see core/ConnectionRouter): when non-null, THIS session's current command
+    // stores/reads documents only on these backends (a DATABASE route's one backend, or a set's
+    // Postgres members hashed by _id) instead of the MONGODB store's own shard group. One store per
+    // session and one command at a time, so a plain field suffices.
+    private volatile List<String> routedGroup;
+
+    void routeTo(List<String> group) {
+        this.routedGroup = group;
+    }
+
+    boolean isRouted() {
+        return routedGroup != null;
+    }
+
     private List<String> currentShardGroup() {
+        List<String> routed = routedGroup;
+        if (routed != null) {
+            return routed;
+        }
         return backendRegistry == null ? List.of()
                 : backendRegistry.storeShardGroup(com.sayonora.wire.core.StoreType.MONGODB);
     }
