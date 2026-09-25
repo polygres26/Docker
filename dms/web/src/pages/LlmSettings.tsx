@@ -7,6 +7,8 @@ import {
   getLocalModelPresets,
   saveLlmSettings,
 } from '../api/client'
+import { Button, Check, Field, Input, Notice, PageHeader, Section, Stack } from '../ui'
+import styles from './LlmSettings.module.css'
 
 export default function LlmSettings() {
   const [presets, setPresets] = useState<{ qwen: LocalModelPreset; gemma: LocalModelPreset } | null>(null)
@@ -14,31 +16,33 @@ export default function LlmSettings() {
   useEffect(() => { getLocalModelPresets().then(setPresets).catch(() => {}) }, [])
 
   return (
-    <div style={{ maxWidth: 640 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
+    <>
       {/* Not migration-only -- this same Primary/Judge model config also drives Warp's SQL
-          translation and any other feature that calls the LLM, which is why it's a standalone
-          "Shared" sidebar entry rather than a tab under Migration. */}
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Primary and Judge can each independently use the built-in local model (Qwen or Gemma) or an OpenAI API key.
-      </p>
-
-      <RoleCard
-        role="primary"
-        title="Primary"
-        description="Does the work: PL/SQL summarization and workload classification."
-        showEnabledToggle={false}
-        presets={presets}
+          translation and any other feature that calls the LLM, which is why it's its own
+          "Configure" sidebar entry rather than a tab under Assessments. */}
+      <PageHeader
+        title="LLM settings"
+        subtitle="Primary and Judge can each independently use the built-in local model (Qwen or Gemma) or an OpenAI API key."
       />
-      <div style={{ height: 20 }} />
-      <RoleCard
-        role="judge"
-        title="Judge (optional)"
-        description="Second opinion on Primary's summaries -- use a different model than Primary for the best results."
-        showEnabledToggle={true}
-        presets={presets}
-      />
-    </div>
+      <div className={styles.narrow}>
+        <Stack>
+          <RoleCard
+            role="primary"
+            title="Primary"
+            description="Does the work: PL/SQL summarization and workload classification."
+            showEnabledToggle={false}
+            presets={presets}
+          />
+          <RoleCard
+            role="judge"
+            title="Judge (optional)"
+            description="Second opinion on Primary's summaries -- use a different model than Primary for the best results."
+            showEnabledToggle={true}
+            presets={presets}
+          />
+        </Stack>
+      </div>
+    </>
   )
 }
 
@@ -96,98 +100,88 @@ function RoleCard({
     }
   }
 
+  const idp = `llm-${role}`
   return (
-    <form className="panel" onSubmit={handleSave}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h3 style={{ margin: 0 }}>{title}</h3>
-        {showEnabledToggle && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)' }}>
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Enabled
+    <Section
+      title={title}
+      meta={description}
+      actions={showEnabledToggle && <Check checked={enabled} onChange={(e) => setEnabled(e.target.checked)}>Enabled</Check>}
+    >
+      <form onSubmit={handleSave}>
+        <fieldset className={styles.provider}>
+          <legend className="sr-only">Provider for {title}</legend>
+          <label className={styles.radio}>
+            <input type="radio" name={`${idp}-provider`} checked={providerType === 'local'} onChange={() => setProviderType('local')} />
+            Local
           </label>
+          <label className={styles.radio}>
+            <input type="radio" name={`${idp}-provider`} checked={providerType === 'external'} onChange={() => setProviderType('external')} />
+            OpenAI API
+          </label>
+        </fieldset>
+
+        {providerType === 'local' && presets && (
+          <Field
+            label="Model"
+            /* One line on what "local" means -- not the full sidecar-process/PATH explanation, that's implementation detail, not decision-relevant. */
+            hint="Runs on this machine -- no API key, nothing sent over the network."
+          >
+            <div className={styles.presets} role="group" aria-label="Local model">
+              {[presets.qwen, presets.gemma].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className={`${styles.preset} ${modelPath === preset.modelPath ? styles.presetOn : ''}`}
+                  aria-pressed={modelPath === preset.modelPath}
+                  onClick={() => chooseLocalModel(preset)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </Field>
         )}
-      </div>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>{description}</p>
 
-      <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-          <input type="radio" checked={providerType === 'local'} onChange={() => setProviderType('local')} />
-          Local
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-          <input type="radio" checked={providerType === 'external'} onChange={() => setProviderType('external')} />
-          OpenAI API
-        </label>
-      </div>
+        {providerType === 'external' && (
+          <>
+            <Field label={<>API key {hasStoredKey && <span className={styles.subtle}>(configured -- leave blank to keep it)</span>}</>} htmlFor={`${role}-apiKey`}>
+              <Input
+                id={`${role}-apiKey`}
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={hasStoredKey ? '••••••••••••' : 'sk-...'}
+              />
+            </Field>
+            <Field label={<>Base URL <span className={styles.subtle}>(change only for Azure OpenAI or a compatible endpoint)</span></>} htmlFor={`${role}-baseUrl`}>
+              <Input
+                id={`${role}-baseUrl`}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+            </Field>
+            <Field label="Model" htmlFor={`${role}-model`}>
+              <Input
+                id={`${role}-model`}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. gpt-4.1"
+              />
+            </Field>
+          </>
+        )}
 
-      {providerType === 'local' && presets && (
-        <div className="field">
-          <label>Model</label>
-          <div style={{ display: 'flex', gap: 10 }}>
-            {[presets.qwen, presets.gemma].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => chooseLocalModel(preset)}
-                style={{
-                  flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                  border: modelPath === preset.modelPath ? '2px solid var(--accent)' : '1px solid var(--border)',
-                  background: modelPath === preset.modelPath ? 'var(--accent-soft)' : 'var(--bg)',
-                  color: 'var(--text)', fontSize: 14, fontWeight: modelPath === preset.modelPath ? 600 : 400,
-                  textAlign: 'left',
-                }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          {/* One line on what "local" means -- not the full sidecar-process/PATH explanation, that's implementation detail, not decision-relevant. */}
-          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6, marginBottom: 0 }}>
-            Runs on this machine -- no API key, nothing sent over the network.
-          </p>
+        {error && <Notice tone="error">{error}</Notice>}
+        {status && <Notice tone="ok">{status}</Notice>}
+
+        <div className={styles.foot}>
+          <Button variant="primary" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          {updatedAt && <span className={styles.subtle}>Last updated {new Date(updatedAt).toLocaleString()}</span>}
         </div>
-      )}
-
-      {providerType === 'external' && (
-        <>
-          <div className="field">
-            <label htmlFor={`${role}-apiKey`}>API key {hasStoredKey && <span style={{ color: 'var(--muted)' }}>(configured -- leave blank to keep it)</span>}</label>
-            <input
-              id={`${role}-apiKey`}
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasStoredKey ? '••••••••••••' : 'sk-...'}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor={`${role}-baseUrl`}>Base URL <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(change only for Azure OpenAI or a compatible endpoint)</span></label>
-            <input
-              id={`${role}-baseUrl`}
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.openai.com/v1"
-            />
-          </div>
-          <div className="field">
-            <label htmlFor={`${role}-model`}>Model</label>
-            <input
-              id={`${role}-model`}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="e.g. gpt-4.1"
-            />
-          </div>
-        </>
-      )}
-
-      {error && <p style={{ color: 'var(--hard)', fontSize: 13 }}>{error}</p>}
-      {status && <p style={{ color: 'var(--accent)', fontSize: 13 }}>{status}</p>}
-      {updatedAt && <p style={{ color: 'var(--muted)', fontSize: 12 }}>Last updated {new Date(updatedAt).toLocaleString()}</p>}
-
-      <button className="primary" type="submit" disabled={saving}>
-        {saving ? 'Saving…' : 'Save'}
-      </button>
-    </form>
+      </form>
+    </Section>
   )
 }

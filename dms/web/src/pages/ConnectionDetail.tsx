@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
   type CapturedStatement,
   type Connection,
@@ -15,12 +15,17 @@ import {
   runConnectionWorkload,
   summarizeObject,
 } from '../api/client'
+import { tierTone } from '../lib/tone'
+import {
+  AnchorButton, Button, CodeBlock, DataTable, EmptyState, Input, KpiStrip, Loading, Meter, Notice, PageHeader, Section, Stack, StatusPill, Tabs, Tag, List, type Tone,
+} from '../ui'
+import { table } from '../ui/styles'
+import styles from './ConnectionDetail.module.css'
 
 type Tab = 'findings' | 'objects' | 'workload' | 'parameters'
 
 export default function ConnectionDetail() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('findings')
   const [connection, setConnection] = useState<Connection | null>(null)
 
@@ -29,62 +34,39 @@ export default function ConnectionDetail() {
   }, [id])
 
   return (
-    <div style={{ maxWidth: 1100 }}>
-      <button onClick={() => navigate('/connections')} style={{ marginBottom: 16, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 13 }}>
-        ← Connections
-      </button>
-      <h1 style={{ marginBottom: 2, fontSize: 22 }}>{connection?.name ?? 'Connection detail'}</h1>
-      {connection && (
-        <p style={{
-          color: 'var(--muted)', marginTop: 0, fontSize: 13,
-          fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-          wordBreak: 'break-all', overflowWrap: 'anywhere',
-        }}>
-          {connection.jdbcUrl}
-        </p>
-      )}
+    <>
+      <PageHeader
+        back={{ to: '/connections', label: 'Connections' }}
+        title={connection?.name ?? 'Connection detail'}
+        subtitle={connection && <span className={styles.url}>{connection.jdbcUrl}</span>}
+      />
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['findings', 'objects', 'workload', 'parameters'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              background: tab === t ? 'var(--accent)' : 'none',
-              color: tab === t ? 'white' : 'var(--text)',
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '8px 16px',
-              cursor: 'pointer',
-              textTransform: 'capitalize',
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label="Connection views"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'findings', label: 'Findings' },
+          { id: 'objects', label: 'Objects' },
+          { id: 'workload', label: 'Workload' },
+          { id: 'parameters', label: 'Parameters' },
+        ]}
+      />
 
       {id && tab === 'findings' && <FindingsTab id={id} onSeeWorkload={() => setTab('workload')} />}
       {id && tab === 'objects' && <ObjectsTab id={id} />}
       {id && tab === 'workload' && <WorkloadTab id={id} />}
       {id && tab === 'parameters' && <ParametersTab id={id} />}
-    </div>
+    </>
   )
 }
 
 // --- Findings ---------------------------------------------------------
 
-/** Soft-background + solid-text badge, matching Omnigate's badgePass/badgeWarn/badgeFail pattern (Admin.module.css) rather than a solid fill with dark text. */
-function severityStyle(points: number): { bg: string; fg: string; label: string } {
-  if (points >= 15) return { bg: 'var(--hard-soft)', fg: 'var(--hard)', label: 'High' }
-  if (points >= 5) return { bg: 'var(--medium-soft)', fg: 'var(--medium)', label: 'Medium' }
-  return { bg: 'var(--easy-soft)', fg: 'var(--easy)', label: 'Low' }
-}
-
-function tierStyle(tier: string): { bg: string; fg: string } {
-  if (tier.startsWith('EASY')) return { bg: 'var(--easy-soft)', fg: 'var(--accent-strong)' }
-  if (tier.startsWith('MEDIUM')) return { bg: 'var(--medium-soft)', fg: 'var(--medium)' }
-  return { bg: 'var(--hard-soft)', fg: 'var(--hard)' }
+function severity(points: number): { tone: Tone; label: string } {
+  if (points >= 15) return { tone: 'red', label: 'High' }
+  if (points >= 5) return { tone: 'amber', label: 'Medium' }
+  return { tone: 'green', label: 'Low' }
 }
 
 function formatMicros(micros: number): string {
@@ -96,7 +78,7 @@ function formatMicros(micros: number): string {
 
 function FindingsTab({ id, onSeeWorkload }: { id: string; onSeeWorkload: () => void }) {
   const [result, setResult] = useState<FindingsResult | null>(null)
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   async function run() {
@@ -110,22 +92,17 @@ function FindingsTab({ id, onSeeWorkload }: { id: string; onSeeWorkload: () => v
     }
   }
 
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- run() closes over id; re-run only when id changes
   useEffect(() => { run() }, [id])
 
-  if (loading) {
-    return (
-      <div className="panel" style={{ textAlign: 'center', padding: 48 }}>
-        <p style={{ color: 'var(--muted)' }}>Profiling schema, scoring migration difficulty, capturing workload…</p>
-      </div>
-    )
-  }
+  if (loading) return <Section><Loading>Profiling schema, scoring migration difficulty, capturing workload…</Loading></Section>
 
   if (error) {
     return (
-      <div className="panel" style={{ borderColor: 'var(--hard)' }}>
-        <p style={{ color: 'var(--hard)' }}>{error}</p>
-        <button className="primary" onClick={run} style={{ marginTop: 12 }}>Retry</button>
-      </div>
+      <Section>
+        <Notice tone="error">{error}</Notice>
+        <Button variant="primary" onClick={run}>Retry</Button>
+      </Section>
     )
   }
   if (!result) return null
@@ -134,127 +111,97 @@ function FindingsTab({ id, onSeeWorkload }: { id: string; onSeeWorkload: () => v
   const sortedFindings = [...score.findings].sort((a, b) => b.points - a.points)
   const meterPct = Math.min(100, (score.totalScore / 100) * 100)
   const sortedWorkload = workload ? [...workload].sort((a, b) => b.elapsedTimeMicros - a.elapsedTimeMicros) : []
+  const [tierName, tierDetail] = score.tier.split(' -- ')
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <Stack>
       {/* Overall complexity hero */}
-      <div className="panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+      <Section
+        title="Migration difficulty"
+        actions={
+          <div className={styles.row}>
+            <Button variant="secondary" onClick={run}>Re-run findings</Button>
+            <AnchorButton variant="primary" href={`/api/connections/${id}/report`}>Download report</AnchorButton>
+          </div>
+        }
+      >
+        <div className={styles.hero}>
           <div>
-            <span className="tier-badge" style={{ background: tierStyle(score.tier).bg, color: tierStyle(score.tier).fg }}>
-              {score.tier.split(' -- ')[0]}
-            </span>
-            <p style={{ marginTop: 10, marginBottom: 4, maxWidth: 560 }}>{score.tier.split(' -- ')[1]}</p>
-            {snapshot.sourceVersion && <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>{snapshot.sourceVersion}</p>}
+            <StatusPill tone={tierTone(tierName)}>{tierName}</StatusPill>
+            <p className={styles.tierDetail}>{tierDetail}</p>
+            {snapshot.sourceVersion && <p className={styles.muted}>{snapshot.sourceVersion}</p>}
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 36, fontWeight: 700, lineHeight: 1 }}>{score.totalScore}</div>
-            <div style={{ color: 'var(--muted)', fontSize: 12 }}>overall complexity score</div>
+          <div className={styles.score}>
+            <div className={styles.scoreValue}>{score.totalScore}</div>
+            <div className={styles.muted}>overall complexity score</div>
           </div>
         </div>
-
-        <div style={{ marginTop: 18 }}>
-          <div style={{ position: 'relative', height: 10, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
-            <div style={{ flex: 20, background: 'var(--easy)' }} />
-            <div style={{ flex: 40, background: 'var(--medium)' }} />
-            <div style={{ flex: 40, background: 'var(--hard)' }} />
-            <div
-              style={{
-                position: 'absolute', top: -3, left: `calc(${meterPct}% - 2px)`,
-                width: 4, height: 16, background: 'var(--text)', borderRadius: 2,
-              }}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-            <span>EASY (0–20)</span><span>MEDIUM (21–60)</span><span>HARD (61+)</span>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-          <button className="primary" onClick={run}>Re-run findings</button>
-          <a
-            href={`/api/connections/${id}/report`}
-            className="primary"
-            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-          >
-            Download report
-          </a>
-        </div>
-      </div>
+        <Meter
+          pct={meterPct}
+          label={`Complexity score ${score.totalScore} of 100`}
+          segments={[
+            { flex: 20, tone: 'green', label: 'EASY (0–20)' },
+            { flex: 40, tone: 'amber', label: 'MEDIUM (21–60)' },
+            { flex: 40, tone: 'red', label: 'HARD (61+)' },
+          ]}
+        />
+      </Section>
 
       {score.warnings.length > 0 && (
-        <div className="panel" style={{ borderColor: 'var(--medium)' }}>
-          <strong>Warnings</strong>
-          <ul style={{ marginBottom: 0 }}>
-            {score.warnings.map((w, i) => <li key={i}>{w}</li>)}
-          </ul>
-        </div>
+        <Notice tone="warn" title="Warnings">
+          <ul className={styles.plainList}>{score.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        </Notice>
       )}
 
       {/* Feature inventory quick stats */}
-      <div className="panel">
-        <h3 style={{ marginTop: 0 }}>Feature inventory</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
-          {[
-            ['Tables', snapshot.tableCount], ['Views', snapshot.viewCount],
-            ['Mat. views', snapshot.materializedViewCount], ['Sequences', snapshot.sequenceCount],
-            ['Triggers', snapshot.simpleTriggerCount + snapshot.complexTriggerCount],
-            ['Packages', snapshot.packageCount], ['Procedures', snapshot.standaloneProcedureCount],
-            ['Functions', snapshot.standaloneFunctionCount], ['DB links', snapshot.dbLinkCount],
-            ['Scheduled jobs', snapshot.scheduledJobCount], ['Partitioned tables', snapshot.partitionedTableCount],
-          ].map(([label, value]) => (
-            <div key={label as string} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{value as number}</div>
-              <div style={{ color: 'var(--muted)', fontSize: 12 }}>{label}</div>
-            </div>
-          ))}
-        </div>
+      <div>
+        <KpiStrip
+          label="Feature inventory"
+          items={[
+            { label: 'Tables', value: snapshot.tableCount }, { label: 'Views', value: snapshot.viewCount },
+            { label: 'Mat. views', value: snapshot.materializedViewCount }, { label: 'Sequences', value: snapshot.sequenceCount },
+            { label: 'Triggers', value: snapshot.simpleTriggerCount + snapshot.complexTriggerCount },
+            { label: 'Packages', value: snapshot.packageCount }, { label: 'Procedures', value: snapshot.standaloneProcedureCount },
+            { label: 'Functions', value: snapshot.standaloneFunctionCount }, { label: 'DB links', value: snapshot.dbLinkCount },
+            { label: 'Scheduled jobs', value: snapshot.scheduledJobCount }, { label: 'Partitioned tables', value: snapshot.partitionedTableCount },
+          ]}
+        />
       </div>
 
       {/* Per-item complexity */}
-      <div className="panel">
-        <h3 style={{ marginTop: 0 }}>Migration complexity by item</h3>
-        {sortedFindings.length === 0 && <p style={{ color: 'var(--muted)' }}>No difficulty-scoring findings -- looks like a clean schema+data migration.</p>}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {sortedFindings.map((f, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
-              <span style={{
-                background: severityStyle(f.points).bg, color: severityStyle(f.points).fg, fontSize: 11, fontWeight: 650,
-                borderRadius: 999, padding: '3px 10px', flexShrink: 0, width: 64, textAlign: 'center',
-              }}>
-                {severityStyle(f.points).label}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>{f.feature} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>× {f.count}</span></div>
-                <div style={{ color: 'var(--muted)', fontSize: 13 }}>{f.note}</div>
-              </div>
-              <div style={{ fontWeight: 700, flexShrink: 0 }}>{f.points} pts</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <Section title="Migration complexity by item" flush={sortedFindings.length > 0}>
+        {sortedFindings.length === 0 && <p className={styles.muted}>No difficulty-scoring findings -- looks like a clean schema+data migration.</p>}
+        {sortedFindings.length > 0 && (
+          <List>
+            {sortedFindings.map((f, i) => (
+              <li key={i} className={styles.finding}>
+                <Tag tone={severity(f.points).tone}>{severity(f.points).label}</Tag>
+                <div className={styles.findingBody}>
+                  <div className={styles.findingName}>{f.feature} <span className={styles.count}>× {f.count}</span></div>
+                  <div className={styles.muted}>{f.note}</div>
+                </div>
+                <div className={styles.points}>{f.points} pts</div>
+              </li>
+            ))}
+          </List>
+        )}
+      </Section>
 
       {/* Workload captured -- compact pointer; the full summary/stats/table live in the Workload tab */}
-      <div className="panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0 }}>Workload captured</h3>
-          <button className="btn-ghost-link" onClick={onSeeWorkload} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 12px', color: 'var(--accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            View workload →
-          </button>
-        </div>
-        {workloadError && <p style={{ color: 'var(--medium)' }}>{workloadError}</p>}
-        {!workloadError && sortedWorkload.length === 0 && <p style={{ color: 'var(--muted)' }}>No cached SQL captured.</p>}
+      <Section title="Workload captured" actions={<Button size="sm" onClick={onSeeWorkload}>View workload →</Button>}>
+        {workloadError && <p className={styles.warnText}>{workloadError}</p>}
+        {!workloadError && sortedWorkload.length === 0 && <p className={styles.muted}>No cached SQL captured.</p>}
         {sortedWorkload.length > 0 && (
-          <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 0 }}>
+          <p className={styles.muted}>
             {sortedWorkload.length} statement{sortedWorkload.length === 1 ? '' : 's'} captured from V$SQL, top by elapsed time:{' '}
-            <span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>
+            <span className={table.mono}>
               {sortedWorkload[0].sqlText.slice(0, 60)}{sortedWorkload[0].sqlText.length > 60 ? '…' : ''}
             </span>{' '}
             ({formatMicros(sortedWorkload[0].elapsedTimeMicros)})
           </p>
         )}
-      </div>
-    </div>
+      </Section>
+    </Stack>
   )
 }
 
@@ -294,21 +241,16 @@ function WorkloadTab({ id }: { id: string }) {
     }
   }
 
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- run() closes over id; re-run only when id changes
   useEffect(() => { run() }, [id])
 
-  if (loading) {
-    return (
-      <div className="panel" style={{ textAlign: 'center', padding: 48 }}>
-        <p style={{ color: 'var(--muted)' }}>Capturing V$SQL snapshot…</p>
-      </div>
-    )
-  }
+  if (loading) return <Section><Loading>Capturing V$SQL snapshot…</Loading></Section>
   if (error) {
     return (
-      <div className="panel" style={{ borderColor: 'var(--hard)' }}>
-        <p style={{ color: 'var(--hard)' }}>{error}</p>
-        <button className="primary" onClick={run} style={{ marginTop: 12 }}>Retry</button>
-      </div>
+      <Section>
+        <Notice tone="error">{error}</Notice>
+        <Button variant="primary" onClick={run}>Retry</Button>
+      </Section>
     )
   }
   if (!result) return null
@@ -333,122 +275,106 @@ function WorkloadTab({ id }: { id: string }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <Stack>
       {/* Summary, in the source database's own vocabulary -- same terms an AWR/Statspack report uses */}
-      <div className="panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-          <h3 style={{ margin: 0 }}>Workload summary</h3>
-          <button className="primary" onClick={run}>Re-capture</button>
-        </div>
-        <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>
-          Point-in-time snapshot of Oracle's shared-pool cursor cache (V$SQL), scoped to this connection's schema.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginTop: 12 }}>
-          {[
-            ['Distinct SQL Statements', summary.distinctStatements.toLocaleString()],
-            ['Executions', summary.totalExecutions.toLocaleString()],
-            ['Elapsed Time', formatMicros(summary.totalElapsedTimeMicros)],
-            ['CPU Time', formatMicros(summary.totalCpuTimeMicros)],
-            ['Buffer Gets', summary.totalBufferGets.toLocaleString()],
-            ['Disk Reads', summary.totalDiskReads.toLocaleString()],
-          ].map(([label, value]) => (
-            <div key={label} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
-              <div style={{ fontSize: 19, fontWeight: 700, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{value}</div>
-              <div style={{ color: 'var(--muted)', fontSize: 11.5 }}>{label}</div>
-            </div>
-          ))}
+      <div>
+        <KpiStrip
+          label="Workload summary"
+          items={[
+            { label: 'Distinct SQL Statements', value: summary.distinctStatements.toLocaleString() },
+            { label: 'Executions', value: summary.totalExecutions.toLocaleString() },
+            { label: 'Elapsed Time', value: formatMicros(summary.totalElapsedTimeMicros) },
+            { label: 'CPU Time', value: formatMicros(summary.totalCpuTimeMicros) },
+            { label: 'Buffer Gets', value: summary.totalBufferGets.toLocaleString() },
+            { label: 'Disk Reads', value: summary.totalDiskReads.toLocaleString() },
+          ]}
+        />
+        <div className={styles.summaryFoot}>
+          <span className={styles.muted}>Point-in-time snapshot of Oracle's shared-pool cursor cache (V$SQL), scoped to this connection's schema.</span>
+          <Button size="sm" variant="primary" onClick={run}>Re-capture</Button>
         </div>
       </div>
 
       {summary.topByElapsedTime && (
-        <div className="panel">
-          <h3 style={{ marginTop: 0 }}>Top SQL by Elapsed Time</h3>
-          <p style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 13, background: 'var(--bg)', padding: 12, borderRadius: 8, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
-            {summary.topByElapsedTime.sqlText}
-          </p>
-          <div style={{ display: 'flex', gap: 20, fontSize: 13, color: 'var(--muted)', flexWrap: 'wrap' }}>
-            <span>SQL_ID: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.sqlId}</strong></span>
-            <span>Elapsed: <strong style={{ color: 'var(--text)' }}>{formatMicros(summary.topByElapsedTime.elapsedTimeMicros)}</strong></span>
-            <span>Executions: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.executions.toLocaleString()}</strong></span>
-            <span>Module: <strong style={{ color: 'var(--text)' }}>{summary.topByElapsedTime.module || '—'}</strong></span>
+        <Section title="Top SQL by Elapsed Time">
+          <CodeBlock>{summary.topByElapsedTime.sqlText}</CodeBlock>
+          <div className={styles.facts}>
+            <span>SQL_ID: <strong>{summary.topByElapsedTime.sqlId}</strong></span>
+            <span>Elapsed: <strong>{formatMicros(summary.topByElapsedTime.elapsedTimeMicros)}</strong></span>
+            <span>Executions: <strong>{summary.topByElapsedTime.executions.toLocaleString()}</strong></span>
+            <span>Module: <strong>{summary.topByElapsedTime.module || '—'}</strong></span>
           </div>
-        </div>
+        </Section>
       )}
 
       {Object.keys(summary.topModules).length > 0 && (
-        <div className="panel">
-          <h3 style={{ marginTop: 0 }}>Workload by module</h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <Section title="Workload by module">
+          <div className={styles.chips}>
             {Object.entries(summary.topModules).map(([module, count]) => (
-              <span key={module} style={{ background: 'var(--accent-soft)', color: 'var(--accent-strong)', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 600 }}>
-                {module} <span style={{ fontWeight: 400, opacity: 0.8 }}>× {count}</span>
-              </span>
+              <span key={module} className={styles.chip}>{module} <span className={styles.chipCount}>× {count}</span></span>
             ))}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* Full per-statement statistics -- every application SQL captured, sortable/filterable */}
-      <div className="panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-          <h3 style={{ margin: 0 }}>All application SQL &amp; statistics</h3>
-          <input
+      <Section
+        title="All application SQL & statistics"
+        actions={
+          <Input
+            className={styles.filter}
+            aria-label="Filter by SQL text or module"
             placeholder="Filter by SQL text or module…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', color: 'var(--text)', fontSize: 13, minWidth: 240 }}
           />
-        </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        }
+        flush
+      >
+        <div className={styles.sorts} role="group" aria-label="Sort by">
           {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
             <button
               key={key}
+              type="button"
+              className={`${styles.sort} ${sortKey === key ? styles.sortOn : ''}`}
+              aria-pressed={sortKey === key}
               onClick={() => toggleSort(key)}
-              style={{
-                fontSize: 12, padding: '5px 10px', borderRadius: 999,
-                border: '1px solid var(--border)',
-                background: sortKey === key ? 'var(--accent)' : 'none',
-                color: sortKey === key ? '#fff' : 'var(--muted)',
-                cursor: 'pointer',
-              }}
             >
               {SORT_LABELS[key]} {sortKey === key ? (sortDir === 'desc' ? '↓' : '↑') : ''}
             </button>
           ))}
         </div>
 
-        {sorted.length === 0 && <p style={{ color: 'var(--muted)' }}>No statements match.</p>}
+        {sorted.length === 0 && <EmptyState title="No statements match" />}
         {sorted.length > 0 && (
-          <div style={{ overflowX: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>SQL_ID</th><th>SQL Text</th><th>Executions</th><th>Elapsed Time</th>
-                  <th>CPU Time</th><th>Buffer Gets</th><th>Disk Reads</th><th>Avg Elapsed / Exec</th><th>Module</th>
+          <DataTable caption="Captured SQL statements and statistics" minWidth={false}>
+            <thead>
+              <tr>
+                <th scope="col">SQL_ID</th><th scope="col">SQL Text</th><th scope="col" className={table.num}>Executions</th><th scope="col" className={table.num}>Elapsed Time</th>
+                <th scope="col" className={table.num}>CPU Time</th><th scope="col" className={table.num}>Buffer Gets</th><th scope="col" className={table.num}>Disk Reads</th><th scope="col" className={table.num}>Avg Elapsed / Exec</th><th scope="col">Module</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((s) => (
+                <tr key={s.sqlId}>
+                  <td className={`${table.mono} ${styles.muted} ${styles.sqlId}`} title={s.sqlId}>{s.sqlId}</td>
+                  <td className={`${table.mono} ${styles.sqlText}`} title={s.sqlText}>
+                    {s.sqlText.length > 90 ? s.sqlText.slice(0, 90) + '…' : s.sqlText}
+                  </td>
+                  <td className={table.num}>{s.executions.toLocaleString()}</td>
+                  <td className={table.num}>{formatMicros(s.elapsedTimeMicros)}</td>
+                  <td className={table.num}>{formatMicros(s.cpuTimeMicros)}</td>
+                  <td className={table.num}>{s.bufferGets.toLocaleString()}</td>
+                  <td className={table.num}>{s.diskReads.toLocaleString()}</td>
+                  <td className={table.num}>{formatMicros(avgElapsed(s))}</td>
+                  <td className={styles.muted}>{s.module || '—'}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {sorted.map((s) => (
-                  <tr key={s.sqlId}>
-                    <td style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 11.5, color: 'var(--muted)' }}>{s.sqlId}</td>
-                    <td style={{ maxWidth: 360, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 12 }} title={s.sqlText}>
-                      {s.sqlText.length > 90 ? s.sqlText.slice(0, 90) + '…' : s.sqlText}
-                    </td>
-                    <td>{s.executions.toLocaleString()}</td>
-                    <td>{formatMicros(s.elapsedTimeMicros)}</td>
-                    <td>{formatMicros(s.cpuTimeMicros)}</td>
-                    <td>{s.bufferGets.toLocaleString()}</td>
-                    <td>{s.diskReads.toLocaleString()}</td>
-                    <td>{formatMicros(avgElapsed(s))}</td>
-                    <td style={{ color: 'var(--muted)' }}>{s.module || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </DataTable>
         )}
-      </div>
-    </div>
+      </Section>
+    </Stack>
   )
 }
 
@@ -491,91 +417,82 @@ function ObjectsTab({ id }: { id: string }) {
     }
   }
 
-  if (error) return <p style={{ color: 'var(--hard)' }}>{error}</p>
-  if (!objects) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
+  if (error) return <Notice tone="error">{error}</Notice>
+  if (!objects) return <Section><Loading /></Section>
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16 }}>
-      <div className="panel" style={{ maxHeight: 560, overflowY: 'auto' }}>
-        {Object.entries(objects).length === 0 && <p style={{ color: 'var(--muted)' }}>No objects found.</p>}
+    <div className={styles.objects}>
+      <Section title="Objects" className={styles.objectList}>
+        {Object.entries(objects).length === 0 && <p className={styles.muted}>No objects found.</p>}
         {Object.entries(objects).map(([type, names]) => (
-          <div key={type} style={{ marginBottom: 12 }}>
-            <div style={{ color: 'var(--muted)', fontSize: 12, textTransform: 'uppercase', marginBottom: 4 }}>
-              {type} ({names.length})
-            </div>
-            {names.map((n) => (
-              <div
-                key={n}
-                onClick={() => select(type, n)}
-                style={{
-                  padding: '4px 8px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  background: selected?.type === type && selected?.name === n ? 'var(--accent)' : 'transparent',
-                  color: selected?.type === type && selected?.name === n ? 'white' : 'var(--text)',
-                  fontSize: 14,
-                }}
-              >
-                {n}
-              </div>
-            ))}
+          <div key={type} className={styles.objectGroup}>
+            <h3 className={styles.objectType}>{type} ({names.length})</h3>
+            <ul className={styles.objectNames}>
+              {names.map((n) => {
+                const active = selected?.type === type && selected?.name === n
+                return (
+                  <li key={n}>
+                    <button
+                      type="button"
+                      className={`${styles.objectBtn} ${active ? styles.objectBtnOn : ''}`}
+                      aria-current={active ? 'true' : undefined}
+                      onClick={() => select(type, n)}
+                    >
+                      {n}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
           </div>
         ))}
-      </div>
+      </Section>
 
-      <div className="panel">
-        {!selected && <p style={{ color: 'var(--muted)' }}>Select an object to inspect it.</p>}
+      <Section title={selected ? `${selected.type}: ${selected.name}` : 'Details'} flush={!!detail?.columns} className={styles.objectDetail}>
+        {!selected && <p className={styles.muted}>Select an object to inspect it.</p>}
         {selected && (
           <>
-            <h3>{selected.type}: {selected.name}</h3>
             {detail?.columns && (
-              <table>
-                <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th></tr></thead>
+              <DataTable caption="Columns" minWidth={false}>
+                <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nullable</th><th scope="col">Default</th></tr></thead>
                 <tbody>
                   {(detail.columns as { name: string; dataType: string; nullable: boolean; defaultValue: string | null }[]).map((c) => (
                     <tr key={c.name}>
-                      <td>{c.name}</td><td>{c.dataType}</td><td>{c.nullable ? 'Y' : 'N'}</td><td>{c.defaultValue ?? ''}</td>
+                      <td>{c.name}</td><td className={table.mono}>{c.dataType}</td><td>{c.nullable ? 'Y' : 'N'}</td><td>{c.defaultValue ?? ''}</td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             )}
             {detail?.source !== undefined && (
               <>
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, background: 'var(--bg)', padding: 12, borderRadius: 8, maxHeight: 320, overflowY: 'auto' }}>
-                  {detail.source || '(empty)'}
-                </pre>
+                <CodeBlock maxHeight={320}>{detail.source || '(empty)'}</CodeBlock>
                 {detail.source && (
-                  <button className="primary" onClick={handleSummarize} disabled={summarizing} style={{ marginTop: 12 }}>
-                    {summarizing ? 'Summarizing…' : 'Summarize with LLM'}
-                  </button>
+                  <div className={styles.summarize}>
+                    <Button variant="primary" onClick={handleSummarize} disabled={summarizing}>
+                      {summarizing ? 'Summarizing…' : 'Summarize with LLM'}
+                    </Button>
+                  </div>
                 )}
-                {summaryError && <p style={{ color: 'var(--hard)', marginTop: 10, fontSize: 13 }}>{summaryError}</p>}
+                {summaryError && <Notice tone="error">{summaryError}</Notice>}
                 {summary && (
-                  <div style={{ marginTop: 16 }}>
+                  <div className={styles.summary}>
                     {summary.judge && (
-                      <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 10,
-                        background: summary.judge.approved ? 'var(--easy-soft)' : 'var(--medium-soft)',
-                        color: summary.judge.approved ? 'var(--accent-strong)' : 'var(--medium)',
-                        borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 650,
-                      }}>
-                        Judge: {summary.judge.approved ? 'Approved' : 'Flagged'}
+                      <div className={styles.judge}>
+                        <StatusPill tone={summary.judge.approved ? 'green' : 'amber'}>Judge: {summary.judge.approved ? 'Approved' : 'Flagged'}</StatusPill>
                       </div>
                     )}
                     {summary.judge && !summary.judge.approved && (
-                      <p style={{ fontSize: 13, color: 'var(--medium)', marginTop: 0, marginBottom: 10 }}>{summary.judge.explanation}</p>
+                      <p className={styles.warnText}>{summary.judge.explanation}</p>
                     )}
-                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
-                      {summary.summary}
-                    </div>
+                    <div className={styles.summaryText}>{summary.summary}</div>
                   </div>
                 )}
               </>
             )}
           </>
         )}
-      </div>
+      </Section>
     </div>
   )
 }
@@ -591,31 +508,30 @@ function ParametersTab({ id }: { id: string }) {
     getParameters(id).then(setParams).catch((e) => setError(String(e.message ?? e)))
   }, [id])
 
-  if (error) return <p style={{ color: 'var(--hard)' }}>{error}</p>
-  if (!params) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
+  if (error) return <Notice tone="error">{error}</Notice>
+  if (!params) return <Section><Loading /></Section>
 
   const filtered = params.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
 
   return (
-    <div className="panel">
-      <input
-        placeholder="Filter parameters…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        style={{ marginBottom: 12, width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)' }}
-      />
-      <table>
-        <thead><tr><th>Name</th><th>Value</th><th>Default?</th></tr></thead>
+    <Section
+      title="Parameters"
+      meta={`${filtered.length} of ${params.length}`}
+      actions={<Input className={styles.filter} aria-label="Filter parameters" placeholder="Filter parameters…" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+      flush
+    >
+      <DataTable caption="Database parameters" minWidth={false}>
+        <thead><tr><th scope="col">Name</th><th scope="col">Value</th><th scope="col">Default?</th></tr></thead>
         <tbody>
           {filtered.map((p) => (
             <tr key={p.name}>
-              <td>{p.name}</td>
-              <td>{p.value}</td>
-              <td>{p.isDefault ? 'Y' : 'N (customized)'}</td>
+              <td className={table.mono}>{p.name}</td>
+              <td className={table.mono}>{p.value}</td>
+              <td>{p.isDefault ? 'Y' : <Tag tone="amber">customized</Tag>}</td>
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
+      </DataTable>
+    </Section>
   )
 }

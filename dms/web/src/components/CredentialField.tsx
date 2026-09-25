@@ -1,4 +1,9 @@
 import { useState } from 'react'
+import {
+  Input,
+} from '../ui'
+import { ui } from '../ui/styles'
+import styles from './CredentialField.module.css'
 
 export type CredentialSource = 'plaintext' | 'vault' | 'cyberark' | 'awssm' | 'azurekv' | 'gcpsm'
 
@@ -12,8 +17,9 @@ export type CredentialSource = 'plaintext' | 'vault' | 'cyberark' | 'awssm' | 'a
  * through every password field.
  */
 export default function CredentialField({
-  value, onChange, placeholder, existingLabel,
+  value, onChange, placeholder, existingLabel, id,
 }: {
+  id?: string
   value: string
   onChange: (value: string) => void
   placeholder?: string
@@ -74,18 +80,14 @@ export default function CredentialField({
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+      <div className={styles.sources} role="group" aria-label="Credential source">
         {(['plaintext', 'vault', 'cyberark', 'awssm', 'azurekv', 'gcpsm'] as const).map((opt) => (
           <button
             key={opt}
             type="button"
+            className={`${styles.source} ${source === opt ? styles.sourceActive : ''}`}
             onClick={() => handleSourceChange(opt)}
-            style={{
-              padding: '4px 10px', fontSize: 12, borderRadius: 999, cursor: 'pointer',
-              border: source === opt ? '1px solid var(--accent)' : '1px solid var(--border)',
-              background: source === opt ? 'var(--accent-soft)' : 'none',
-              color: source === opt ? 'var(--accent-strong)' : 'var(--muted)',
-            }}
+            aria-pressed={source === opt}
           >
             {sourceLabel(opt)}
           </button>
@@ -93,77 +95,70 @@ export default function CredentialField({
       </div>
 
       {source === 'plaintext' && (
-        <input
+        <Input
+          id={id}
           type="password"
           value={plaintext}
           placeholder={placeholder ?? (existingLabel ? `leave blank to keep ${existingLabel}` : undefined)}
           onChange={(e) => { setPlaintext(e.target.value); emit({ plaintext: e.target.value }) }}
-          style={{ width: '100%', padding: '8px 10px', fontSize: 14 }}
         />
       )}
 
       {source === 'vault' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
-          <input
+        <div className={styles.pair}>
+          <Input className={ui.mono}
             value={vaultPath}
             onChange={(e) => { setVaultPath(e.target.value); emit({ vaultPath: e.target.value }) }}
             placeholder="secret/data/prod/postgres"
-            style={{ padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
           />
-          <input
+          <Input className={ui.mono}
             value={vaultField}
             onChange={(e) => { setVaultField(e.target.value); emit({ vaultField: e.target.value }) }}
             placeholder="password"
-            style={{ padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
           />
         </div>
       )}
 
       {source === 'cyberark' && (
-        <input
+        <Input className={ui.mono}
           value={cyberarkQuery}
           onChange={(e) => { setCyberarkQuery(e.target.value); emit({ cyberarkQuery: e.target.value }) }}
           placeholder="AppID=Warp&Safe=DB-Secrets&Object=prod-postgres"
-          style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
         />
       )}
 
       {source === 'awssm' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
-          <input
+        <div className={styles.pair}>
+          <Input className={ui.mono}
             value={awsSecretId}
             onChange={(e) => { setAwsSecretId(e.target.value); emit({ awsSecretId: e.target.value }) }}
             placeholder="prod/postgres-password"
-            style={{ padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
           />
-          <input
+          <Input className={ui.mono}
             value={awsRegion}
             onChange={(e) => { setAwsRegion(e.target.value); emit({ awsRegion: e.target.value }) }}
             placeholder="region (optional)"
-            style={{ padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
           />
         </div>
       )}
 
       {source === 'azurekv' && (
-        <input
+        <Input className={ui.mono}
           value={azurePath}
           onChange={(e) => { setAzurePath(e.target.value); emit({ azurePath: e.target.value }) }}
           placeholder="my-vault/postgres-password"
-          style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
         />
       )}
 
       {source === 'gcpsm' && (
-        <input
+        <Input className={ui.mono}
           value={gcpPath}
           onChange={(e) => { setGcpPath(e.target.value); emit({ gcpPath: e.target.value }) }}
           placeholder="my-project/postgres-password"
-          style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }}
         />
       )}
 
-      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>
+      <div className={styles.hint}>
         {source === 'plaintext' && 'Stored as-is. Resolved at connect time either way.'}
         {source === 'vault' && 'Resolved from HashiCorp Vault (KV v2) at connect time -- needs VAULT_ADDR/VAULT_TOKEN set on the server.'}
         {source === 'cyberark' && 'Resolved from CyberArk’s Central Credential Provider at connect time -- needs CYBERARK_CCP_URL set on the server.'}

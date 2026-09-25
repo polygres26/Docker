@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Star, Trash2 } from 'lucide-react'
+import { Database, Plus, Search, Star, Trash2 } from 'lucide-react'
 import { type Connection, createConnection, deleteConnection, listConnections } from '../api/client'
 import DmsTabs from '../components/DmsTabs'
 import CredentialField from '../components/CredentialField'
+import {
+  Button, DataTable, EmptyState, Field, FormActions, Input, LinkButton, Notice, PageHeader, Section,
+} from '../ui'
+import { table } from '../ui/styles'
+import { formatTimestamp } from './migrationServiceShared'
+import styles from './Connections.module.css'
 
 // Favorite connections pinned to the top of the list, same pattern as versitygw's bucket
 // favorites (star icon, persists across sessions -- see
@@ -69,91 +75,93 @@ export default function Connections() {
     await refresh()
   }
 
+  const sorted = [...connections].sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)))
+
   return (
-    <div>
+    <>
       <DmsTabs />
-      <h1 style={{ fontSize: 22, marginBottom: 20 }}>Connections</h1>
-
-      <div className="panel" style={{ marginBottom: 20, maxWidth: 640 }}>
-        {connections.length === 0 && <p style={{ color: 'var(--muted)' }}>No connections yet.</p>}
-        {[...connections]
-          .sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)))
-          .map((c) => (
-          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 10 }}>
-            <button
-              type="button"
-              onClick={() => toggleFavorite(c.id)}
-              title={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
-              aria-label={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
-              style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: favorites.has(c.id) ? 'var(--accent)' : 'var(--muted)', display: 'flex', flexShrink: 0 }}
-            >
-              <Star size={15} strokeWidth={1.8} fill={favorites.has(c.id) ? 'currentColor' : 'none'} />
-            </button>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <Link to={`/connections/${c.id}`} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{c.name}</Link>
-              {/* Full JDBC URL can run well past the panel width (SQL Server's "database=...;encrypt=...;" style
-                  strings especially) -- truncate with an ellipsis here and rely on the connection detail page
-                  (linked via the name above, and via clicking this text too) to show it in full, wrapped. */}
-              <Link
-                to={`/connections/${c.id}`}
-                title={c.jdbcUrl}
-                style={{
-                  display: 'block', color: 'var(--muted)', fontSize: 13, textDecoration: 'none',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}
-              >
-                {c.jdbcUrl}
-              </Link>
-            </div>
-            <Link
-              to={`/connections/${c.id}`}
-              title="Browse objects"
-              aria-label="Browse objects"
-              style={{ display: 'flex', color: 'var(--muted)', flexShrink: 0, padding: 4 }}
-            >
-              <Search size={16} strokeWidth={1.8} />
-            </Link>
-            <button
-              onClick={() => handleDelete(c.id)}
-              title="Delete connection"
-              aria-label="Delete connection"
-              style={{ background: 'none', border: 'none', padding: 4, color: 'var(--hard)', cursor: 'pointer', flexShrink: 0, display: 'flex' }}
-            >
-              <Trash2 size={16} strokeWidth={1.8} />
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {!showForm && <button className="primary" onClick={() => setShowForm(true)}>Add connection</button>}
+      <PageHeader
+        title="Connections"
+        subtitle="Source databases to assess. Open one to browse its objects, score migration difficulty, capture workload and size the target."
+        actions={!showForm && <Button variant="primary" onClick={() => setShowForm(true)}><Plus size={15} strokeWidth={2} aria-hidden />Add connection</Button>}
+      />
 
       {showForm && (
-        <form className="panel" onSubmit={handleCreate}>
-          <div className="field">
-            <label htmlFor="name">Name</label>
-            <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Prod Oracle 19c" />
-          </div>
-          <div className="field">
-            <label htmlFor="jdbcUrl">JDBC URL</label>
-            <input id="jdbcUrl" value={jdbcUrl} onChange={(e) => setJdbcUrl(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="user">Schema / user</label>
-            <input id="user" value={user} onChange={(e) => setUser(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="password">Credential</label>
-            <CredentialField value={password} onChange={setPassword} />
-          </div>
-          {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="primary" type="submit">Save</button>
-            <button type="button" onClick={() => setShowForm(false)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 18px', color: 'var(--text)', cursor: 'pointer' }}>
-              Cancel
-            </button>
-          </div>
-        </form>
+        <Section title="New connection">
+          <form onSubmit={handleCreate}>
+            <Field label="Name" htmlFor="name">
+              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Prod Oracle 19c" />
+            </Field>
+            <Field label="JDBC URL" htmlFor="jdbcUrl">
+              <Input id="jdbcUrl" value={jdbcUrl} onChange={(e) => setJdbcUrl(e.target.value)} />
+            </Field>
+            <Field label="Schema / user" htmlFor="user">
+              <Input id="user" value={user} onChange={(e) => setUser(e.target.value)} />
+            </Field>
+            <Field label="Credential" htmlFor="password">
+              <CredentialField id="password" value={password} onChange={setPassword} />
+            </Field>
+            {error && <Notice tone="error">{error}</Notice>}
+            <FormActions>
+              <Button variant="primary" type="submit">Save</Button>
+              <Button onClick={() => setShowForm(false)}>Cancel</Button>
+            </FormActions>
+          </form>
+        </Section>
       )}
-    </div>
+
+      <Section title="Saved connections" meta={`${connections.length} total`} flush>
+        {connections.length === 0 ? (
+          <EmptyState icon={Database} title="No connections yet" action={!showForm && <Button variant="primary" onClick={() => setShowForm(true)}>Add connection</Button>}>
+            Add a source database to start an assessment.
+          </EmptyState>
+        ) : (
+          <DataTable caption="Saved connections">
+            <thead>
+              <tr>
+                <th scope="col" className={table.narrow}><span className="sr-only">Favorite</span></th>
+                <th scope="col">Name</th>
+                <th scope="col">JDBC URL</th>
+                <th scope="col">Added</th>
+                <th scope="col"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <Button
+                      variant="ghost" size="sm" icon
+                      className={favorites.has(c.id) ? styles.starOn : undefined}
+                      onClick={() => toggleFavorite(c.id)}
+                      title={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
+                      aria-label={favorites.has(c.id) ? 'Remove from favorites' : 'Add to favorites'}
+                      aria-pressed={favorites.has(c.id)}
+                    >
+                      <Star size={15} strokeWidth={1.8} fill={favorites.has(c.id) ? 'currentColor' : 'none'} />
+                    </Button>
+                  </td>
+                  <td><Link to={`/connections/${c.id}`} className={table.main}>{c.name}</Link></td>
+                  {/* Full JDBC URLs can run long (SQL Server's "database=...;encrypt=...;" strings) -- truncated
+                      here, shown in full on the connection detail page. */}
+                  <td className={`${table.ellipsis} ${table.mono}`} title={c.jdbcUrl}>{c.jdbcUrl}</td>
+                  <td className={styles.when}>{formatTimestamp(c.createdAt)}</td>
+                  <td>
+                    <div className={styles.actions}>
+                      <LinkButton to={`/connections/${c.id}`} variant="ghost" size="sm" className={styles.iconLink} title="Browse objects" aria-label="Browse objects">
+                        <Search size={15} strokeWidth={1.8} />
+                      </LinkButton>
+                      <Button variant="ghost" size="sm" icon onClick={() => handleDelete(c.id)} title="Delete connection" aria-label={`Delete connection ${c.name}`} className={styles.danger}>
+                        <Trash2 size={15} strokeWidth={1.8} />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+      </Section>
+    </>
   )
 }

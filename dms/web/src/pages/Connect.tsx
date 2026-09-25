@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { runScan } from '../api/client'
+import DmsTabs from '../components/DmsTabs'
+import { Button, Field, Input, Notice, Narrow, PageHeader, Section } from '../ui'
 
 /**
  * Oracle-only today, per the project's stated sequencing (Oracle first, then MariaDB/MySQL) --
@@ -30,43 +32,39 @@ export default function Connect() {
   }
 
   return (
-    <div className="app-shell">
-      <h1>Sayonora Ferry</h1>
-      <p style={{ color: 'var(--muted)' }}>
-        Connect to a source database to assess Postgres-migration difficulty. Oracle, MySQL/MariaDB,
-        and SQL Server are all supported.
-      </p>
+    <>
+      <DmsTabs />
+      <PageHeader
+        title="Quick scan"
+        subtitle="Connect to a source database once, without saving it, to assess Postgres-migration difficulty. Oracle, MySQL/MariaDB, and SQL Server are all supported."
+      />
 
-      <form className="panel" onSubmit={handleScan}>
-        <div className="field">
-          <label htmlFor="jdbcUrl">JDBC URL</label>
-          <input
-            id="jdbcUrl"
-            value={jdbcUrl}
-            onChange={(e) => setJdbcUrl(e.target.value)}
-            placeholder="jdbc:oracle:thin:@host:1521/service"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="user">Schema / user</label>
-          <input id="user" value={user} onChange={(e) => setUser(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
+      <Narrow>
+      <Section title="Source database">
+        <form onSubmit={handleScan}>
+          <Field label="JDBC URL" htmlFor="jdbcUrl">
+            <Input
+              id="jdbcUrl"
+              value={jdbcUrl}
+              onChange={(e) => setJdbcUrl(e.target.value)}
+              placeholder="jdbc:oracle:thin:@host:1521/service"
+            />
+          </Field>
+          <Field label="Schema / user" htmlFor="user">
+            <Input id="user" value={user} onChange={(e) => setUser(e.target.value)} />
+          </Field>
+          <Field label="Password" htmlFor="password">
+            <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
 
-        {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
+          {error && <Notice tone="error">{error}</Notice>}
 
-        <button className="primary" type="submit" disabled={loading}>
-          {loading ? 'Scanning…' : 'Scan database'}
-        </button>
-      </form>
-    </div>
+          <Button variant="primary" type="submit" disabled={loading}>
+            {loading ? 'Scanning…' : 'Scan database'}
+          </Button>
+        </form>
+      </Section>
+      </Narrow>
+    </>
   )
 }

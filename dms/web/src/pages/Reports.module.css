@@ -1,0 +1,5 @@
+.subtle { color: var(--sy-muted); font-weight: 400; }
+.groupTitle { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.when { color: var(--sy-muted); white-space: nowrap; }
+.actions { display: flex; justify-content: flex-end; }
+.combined { font-size: 18px; margin: 8px 0 12px; }

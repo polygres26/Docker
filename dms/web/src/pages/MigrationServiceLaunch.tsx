@@ -7,8 +7,13 @@ import {
 import DmsTabs from '../components/DmsTabs'
 import { setLastTargetConnectionId } from '../lib/lastTargetConnection'
 import {
-  MIGRATION_SERVICE_TABS, SOURCE_FIELDS, inputStyle, labelStyle, formatTimestamp, statusColor,
+  Button, DataTable, Field, FormActions, FormGrid, Input, Notice, PageHeader, Section, Select, StatusPill,
+} from '../ui'
+import { table } from '../ui/styles'
+import {
+  MIGRATION_SERVICE_TABS, SOURCE_FIELDS, formatTimestamp, statusTone,
 } from './migrationServiceShared'
+import styles from './MigrationServiceLaunch.module.css'
 
 const JOBS_POLL_INTERVAL_MS = 3000
 
@@ -63,124 +68,99 @@ function StartMigrationForm({ connections, onStarted }: { connections: Connectio
   }
 
   return (
-    <div className="panel" style={{ marginBottom: 20 }}>
-      <h2 style={{ fontSize: 15, marginTop: 0, marginBottom: 12 }}>Start a migration</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
-        <div>
-          <label style={labelStyle}>Connector</label>
-          <select
+    <Section title="Start a migration">
+      <FormGrid>
+        <Field label="Connector" htmlFor="ms-connector">
+          <Select
+            id="ms-connector"
             value={connectorType}
             onChange={(e) => { setConnectorType(e.target.value as MigrationConnectorType); setSourceConfig({}) }}
-            style={inputStyle}
           >
             {Object.keys(SOURCE_FIELDS).map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Target Postgres connection (checkpoints/dead-letters, and where Status tracks this job)</label>
-          <select value={targetConnectionId} onChange={(e) => setTargetConnectionId(e.target.value)} style={inputStyle}>
+          </Select>
+        </Field>
+        <Field label="Target Postgres connection (checkpoints/dead-letters, and where Status tracks this job)" htmlFor="ms-target">
+          <Select id="ms-target" value={targetConnectionId} onChange={(e) => setTargetConnectionId(e.target.value)}>
             <option value="">Select…</option>
             {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Warp gRPC host</label>
-          <input value={grpcHost} onChange={(e) => setGrpcHost(e.target.value)} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Warp gRPC port</label>
-          <input value={grpcPort} onChange={(e) => setGrpcPort(e.target.value)} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Warp user</label>
-          <input value={grpcUser} onChange={(e) => setGrpcUser(e.target.value)} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Warp password</label>
-          <input type="password" value={grpcPassword} onChange={(e) => setGrpcPassword(e.target.value)} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Parallelism (Enterprise license required for &gt;1)</label>
-          <input value={parallelism} onChange={(e) => setParallelism(e.target.value)} style={inputStyle} />
-        </div>
-      </div>
+          </Select>
+        </Field>
+        <Field label="Warp gRPC host" htmlFor="ms-host">
+          <Input id="ms-host" value={grpcHost} onChange={(e) => setGrpcHost(e.target.value)} />
+        </Field>
+        <Field label="Warp gRPC port" htmlFor="ms-port">
+          <Input id="ms-port" value={grpcPort} onChange={(e) => setGrpcPort(e.target.value)} />
+        </Field>
+        <Field label="Warp user" htmlFor="ms-user">
+          <Input id="ms-user" value={grpcUser} onChange={(e) => setGrpcUser(e.target.value)} />
+        </Field>
+        <Field label="Warp password" htmlFor="ms-password">
+          <Input id="ms-password" type="password" value={grpcPassword} onChange={(e) => setGrpcPassword(e.target.value)} />
+        </Field>
+        <Field label="Parallelism (Enterprise license required for >1)" htmlFor="ms-parallelism">
+          <Input id="ms-parallelism" value={parallelism} onChange={(e) => setParallelism(e.target.value)} />
+        </Field>
+      </FormGrid>
 
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          {connectorType} source
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+      <div className={styles.sourceBlock}>
+        <h3 className={styles.sourceTitle}>{connectorType} source</h3>
+        <FormGrid>
           {fields.map((f) => (
-            <div key={f.key}>
-              <label style={labelStyle}>{f.label}{f.required ? ' *' : ''}</label>
-              <input
+            <Field key={f.key} label={`${f.label}${f.required ? ' *' : ''}`} htmlFor={`ms-src-${f.key}`}>
+              <Input
+                id={`ms-src-${f.key}`}
                 value={sourceConfig[f.key] ?? ''}
                 onChange={(e) => updateField(f.key, e.target.value)}
                 placeholder={f.placeholder}
                 type={f.key.toLowerCase().includes('password') || f.key === 'secretKey' ? 'password' : 'text'}
-                style={inputStyle}
               />
-            </div>
+            </Field>
           ))}
-        </div>
+        </FormGrid>
       </div>
 
-      {error && <p style={{ color: 'var(--hard)', fontSize: 13 }}>{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
 
-      <button
-        onClick={handleSubmit}
-        disabled={submitting}
-        style={{
-          background: 'var(--accent-strong)', color: 'var(--bg)', border: 'none', borderRadius: 8,
-          padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: submitting ? 'default' : 'pointer',
-          opacity: submitting ? 0.6 : 1,
-        }}
-      >
-        {submitting ? 'Starting…' : 'Start migration'}
-      </button>
-    </div>
+      <FormActions>
+        <Button variant="primary" onClick={handleSubmit} disabled={submitting}>
+          {submitting ? 'Starting…' : 'Start migration'}
+        </Button>
+      </FormActions>
+    </Section>
   )
 }
 
 function JobsPanel({ jobs, onStop }: { jobs: MigrationJobState[]; onStop: (id: string) => void }) {
   if (jobs.length === 0) return null
   return (
-    <div className="panel" style={{ overflowX: 'auto' }}>
-      <h2 style={{ fontSize: 15, marginTop: 0, marginBottom: 12 }}>Jobs launched from this Ferry process</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+    <Section title="Jobs launched from this Ferry process" flush>
+      <DataTable caption="Migration jobs">
         <thead>
-          <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <th style={{ padding: '8px 10px' }}>Connector</th>
-            <th style={{ padding: '8px 10px' }}>Status</th>
-            <th style={{ padding: '8px 10px' }}>Started</th>
-            <th style={{ padding: '8px 10px' }}>Finished</th>
-            <th style={{ padding: '8px 10px' }}>Error</th>
-            <th style={{ padding: '8px 10px' }} />
+          <tr>
+            <th scope="col">Connector</th>
+            <th scope="col">Status</th>
+            <th scope="col">Started</th>
+            <th scope="col">Finished</th>
+            <th scope="col">Error</th>
+            <th scope="col"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           {jobs.map((j) => (
-            <tr key={j.id} style={{ borderTop: '1px solid var(--border)' }}>
-              <td style={{ padding: '10px', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }}>{j.connectorType}</td>
-              <td style={{ padding: '10px', color: statusColor(j.status), fontWeight: 600 }}>{j.status}</td>
-              <td style={{ padding: '10px', color: 'var(--muted)' }}>{formatTimestamp(j.startedAt)}</td>
-              <td style={{ padding: '10px', color: 'var(--muted)' }}>{formatTimestamp(j.finishedAt)}</td>
-              <td style={{ padding: '10px', color: 'var(--hard)' }}>{j.errorMessage ?? '—'}</td>
-              <td style={{ padding: '10px' }}>
-                {j.status === 'RUNNING' && (
-                  <button
-                    onClick={() => onStop(j.id)}
-                    style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}
-                  >
-                    Stop
-                  </button>
-                )}
+            <tr key={j.id}>
+              <td className={table.mono}>{j.connectorType}</td>
+              <td><StatusPill tone={statusTone(j.status)}>{j.status.toLowerCase()}</StatusPill></td>
+              <td className={styles.muted}>{formatTimestamp(j.startedAt)}</td>
+              <td className={styles.muted}>{formatTimestamp(j.finishedAt)}</td>
+              <td className={styles.error}>{j.errorMessage ?? '—'}</td>
+              <td>
+                {j.status === 'RUNNING' && <Button size="sm" onClick={() => onStop(j.id)}>Stop</Button>}
               </td>
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
+      </DataTable>
+    </Section>
   )
 }
 
@@ -226,20 +206,14 @@ export default function MigrationServiceLaunch() {
   }
 
   return (
-    <div style={{ maxWidth: 1080 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Migration Service</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 0, marginBottom: 16 }}>
-        Launch massively-parallel migration runs (sayonora-migration) writing into Warp over
-        its own gRPC driver. Massively parallel throughput (parallelism &gt; 1, and multi-process
-        distributed coordination) requires an Enterprise Warp license — without one, migrations
-        run correctly but serially, one partition at a time.
-      </p>
+    <>
       <DmsTabs tabs={MIGRATION_SERVICE_TABS} />
-
-      <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <StartMigrationForm connections={connections} onStarted={handleStarted} />
-        <JobsPanel jobs={jobs} onStop={handleStop} />
-      </div>
-    </div>
+      <PageHeader
+        title="Data sync"
+        subtitle="Launch massively-parallel migration runs (sayonora-migration) writing into Warp over its own gRPC driver. Massively parallel throughput (parallelism > 1, and multi-process distributed coordination) requires an Enterprise Warp license — without one, migrations run correctly but serially, one partition at a time."
+      />
+      <StartMigrationForm connections={connections} onStarted={handleStarted} />
+      <JobsPanel jobs={jobs} onStop={handleStop} />
+    </>
   )
 }

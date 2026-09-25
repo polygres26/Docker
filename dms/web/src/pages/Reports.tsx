@@ -6,6 +6,12 @@ import {
 } from '../api/client'
 import ReportAnalysisView from './ReportAnalysisView'
 import DmsTabs from '../components/DmsTabs'
+import {
+  Button, Check, DataTable, EmptyState, Field, FormActions, Input, Notice, PageHeader, Section, Select, StatusPill, Tag,
+} from '../ui'
+import { table } from '../ui/styles'
+import { FileText, Upload } from 'lucide-react'
+import styles from './Reports.module.css'
 
 const DIALECTS = ['ORACLE', 'MYSQL', 'MARIADB', 'SQL_SERVER']
 
@@ -102,126 +108,115 @@ export default function Reports() {
     }
   }
 
+  const groups = groupByDatabase(reports)
+
   return (
-    <div style={{ maxWidth: 780 }}>
+    <>
       <DmsTabs />
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Reports</h1>
-      {/* Why this page exists, in one line -- not a walkthrough of every field below. */}
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        For customers who won't share a live connect string: upload an AWR/performance/DMV report instead, named after its source database, for an LLM-assisted migration read.
-      </p>
-
-      <div className="panel" style={{ marginBottom: 16 }}>
-        {reports.length === 0 && <p style={{ color: 'var(--muted)' }}>No reports uploaded yet.</p>}
-        {groupByDatabase(reports).map((group) => (
-          <div key={group.database + ' ' + group.dialect} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <strong style={{ fontSize: 15 }}>{group.database}</strong>
-              <span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase', background: 'var(--accent-soft)', color: 'var(--accent-strong)', borderRadius: 5, padding: '3px 7px' }}>
-                {group.dialect.toLowerCase().replace('_', ' ')}
-              </span>
-              <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-                {group.reports.length} file{group.reports.length === 1 ? '' : 's'}
-              </span>
-            </div>
-            {group.reports.map((r) => (
-              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0 4px 4px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={selected.has(r.id)}
-                    onChange={() => toggleSelected(r.id)}
-                    style={{ marginTop: 4 }}
-                  />
-                  <div>
-                    <Link to={`/reports/${r.id}`} style={{ color: 'var(--accent)', fontWeight: 500, textDecoration: 'none', fontSize: 13.5 }}>
-                      {r.filename}
-                    </Link>
-                    <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-                      {(r.textLength / 1024).toFixed(1)} KB · uploaded {new Date(r.uploadedAt).toLocaleString()}
-                      {r.analyzedAt && <> · analyzed</>}
-                    </div>
-                  </div>
-                </div>
-                <button onClick={() => handleDelete(r.id)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--hard)', cursor: 'pointer', flexShrink: 0 }}>
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
-        {!showForm && <button className="primary" onClick={() => setShowForm(true)}>Upload reports</button>}
-        {selected.size > 0 && (
-          <button className="primary" onClick={handleAnalyzeSelected} disabled={batchAnalyzing}>
-            {batchAnalyzing ? 'Analyzing…' : `Analyze selected (${selected.size})`}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Reports"
+        subtitle="For customers who won't share a live connect string: upload an AWR/performance/DMV report instead, named after its source database, for an LLM-assisted migration read."
+        actions={
+          <>
+            {selected.size > 0 && (
+              <Button variant="secondary" onClick={handleAnalyzeSelected} disabled={batchAnalyzing}>
+                {batchAnalyzing ? 'Analyzing…' : `Analyze selected (${selected.size})`}
+              </Button>
+            )}
+            {!showForm && <Button variant="primary" onClick={() => setShowForm(true)}><Upload size={15} strokeWidth={2} aria-hidden />Upload reports</Button>}
+          </>
+        }
+      />
 
       {showForm && (
-        <form className="panel" onSubmit={handleUpload} style={{ marginBottom: 20 }}>
-          <div className="field">
-            <label htmlFor="name">Database name {files.length > 1 && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(groups these {files.length} files together)</span>}</label>
-            <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Orders DB" />
-          </div>
-          <div className="field">
-            <label htmlFor="dialect">Source database</label>
-            <select
-              id="dialect"
-              value={dialect}
-              onChange={(e) => setDialect(e.target.value)}
-              style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', color: 'var(--text)', fontSize: 14 }}
+        <Section title="Upload reports">
+          <form onSubmit={handleUpload}>
+            <Field label={<>Database name {files.length > 1 && <span className={styles.subtle}>(groups these {files.length} files together)</span>}</>} htmlFor="name">
+              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Orders DB" />
+            </Field>
+            <Field label="Source database" htmlFor="dialect">
+              <Select id="dialect" value={dialect} onChange={(e) => setDialect(e.target.value)}>
+                {DIALECTS.map((d) => <option key={d} value={d}>{d.replace('_', ' ')}</option>)}
+              </Select>
+            </Field>
+            <Field
+              label="Report file(s) (AWR HTML, text export, CSV, ...) — select multiple to upload them all at once"
+              htmlFor="file"
+              hint={files.length > 0 ? `${files.length} file${files.length === 1 ? '' : 's'} selected: ${files.map((f) => f.name).join(', ')}` : undefined}
             >
-              {DIALECTS.map((d) => <option key={d} value={d}>{d.replace('_', ' ')}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="file">Report file(s) (AWR HTML, text export, CSV, ...) — select multiple to upload them all at once</label>
-            <input
-              id="file"
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
-            />
-            {files.length > 0 && (
-              <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6, marginBottom: 0 }}>
-                {files.length} file{files.length === 1 ? '' : 's'} selected: {files.map((f) => f.name).join(', ')}
-              </p>
-            )}
-          </div>
-          {uploadProgress && (
-            <p style={{ color: 'var(--muted)', fontSize: 13 }}>Uploading {uploadProgress.done} of {uploadProgress.total}…</p>
-          )}
-          {error && <p style={{ color: 'var(--hard)' }}>{error}</p>}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="primary" type="submit" disabled={uploading}>
-              {uploading ? 'Uploading…' : files.length > 1 ? `Upload ${files.length} files` : 'Upload'}
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 18px', color: 'var(--text)', cursor: 'pointer' }}>
-              Cancel
-            </button>
-          </div>
-        </form>
+              <Input
+                id="file"
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
+              />
+            </Field>
+            {uploadProgress && <Notice>Uploading {uploadProgress.done} of {uploadProgress.total}…</Notice>}
+            {error && <Notice tone="error">{error}</Notice>}
+            <FormActions>
+              <Button variant="primary" type="submit" disabled={uploading}>
+                {uploading ? 'Uploading…' : files.length > 1 ? `Upload ${files.length} files` : 'Upload'}
+              </Button>
+              <Button onClick={() => setShowForm(false)}>Cancel</Button>
+            </FormActions>
+          </form>
+        </Section>
       )}
 
-      {batchError && <p style={{ color: 'var(--hard)' }}>{batchError}</p>}
-      {batchAnalysis && (
-        <div>
-          <h2 style={{ fontSize: 18, marginBottom: 12 }}>Combined analysis — {selected.size} report{selected.size === 1 ? '' : 's'}</h2>
-          <div className="panel" style={{ marginBottom: 20, borderColor: 'var(--medium)' }}>
-            <strong style={{ color: 'var(--medium)' }}>Heuristic, not deterministic</strong>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted)' }}>
-              Synthesized by the model across the selected reports' text -- a starting point, not a
-              final migration score.
-            </p>
-          </div>
-          <ReportAnalysisView analysis={batchAnalysis} />
-        </div>
+      {groups.length === 0 && (
+        <Section flush>
+          <EmptyState icon={FileText} title="No reports uploaded yet" action={!showForm && <Button variant="primary" onClick={() => setShowForm(true)}>Upload reports</Button>}>
+            Uploaded AWR / performance reports are grouped by database here.
+          </EmptyState>
+        </Section>
       )}
-    </div>
+
+      {groups.map((group) => (
+        <Section
+          key={group.database + ' ' + group.dialect}
+          title={<span className={styles.groupTitle}>{group.database} <Tag>{group.dialect.toLowerCase().replace('_', ' ')}</Tag></span>}
+          meta={`${group.reports.length} file${group.reports.length === 1 ? '' : 's'}`}
+          flush
+        >
+          <DataTable caption={`Reports for ${group.database}`}>
+            <thead>
+              <tr>
+                <th scope="col" className={table.narrow}><span className="sr-only">Select</span></th>
+                <th scope="col">File</th>
+                <th scope="col" className={table.num}>Size</th>
+                <th scope="col">Uploaded</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.reports.map((r) => (
+                <tr key={r.id}>
+                  <td><Check checked={selected.has(r.id)} onChange={() => toggleSelected(r.id)} aria-label={`Select ${r.filename}`}>{null}</Check></td>
+                  <td><Link to={`/reports/${r.id}`} className={table.main}>{r.filename}</Link></td>
+                  <td className={table.num}>{(r.textLength / 1024).toFixed(1)} KB</td>
+                  <td className={styles.when}>{new Date(r.uploadedAt).toLocaleString()}</td>
+                  <td>{r.analyzedAt ? <StatusPill tone="green">Analyzed</StatusPill> : <StatusPill>Not analyzed</StatusPill>}</td>
+                  <td><div className={styles.actions}><Button variant="danger" size="sm" onClick={() => handleDelete(r.id)} aria-label={`Delete ${r.filename}`}>Delete</Button></div></td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Section>
+      ))}
+
+      {batchError && <Notice tone="error">{batchError}</Notice>}
+      {batchAnalysis && (
+        <>
+          <h2 className={styles.combined}>Combined analysis — {selected.size} report{selected.size === 1 ? '' : 's'}</h2>
+          <Notice tone="warn" title="Heuristic, not deterministic">
+            Synthesized by the model across the selected reports' text -- a starting point, not a
+            final migration score.
+          </Notice>
+          <ReportAnalysisView analysis={batchAnalysis} />
+        </>
+      )}
+    </>
   )
 }

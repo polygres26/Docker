@@ -1,0 +1,35 @@
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { min-height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--sy-paper);
+  color: var(--sy-ink);
+  font: 13px/1.5 var(--sy-font);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: 0; text-wrap: balance; }
+p { margin: 0; }
+code, pre { font-family: var(--sy-mono); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--sy-accent-strong); }
+img { max-width: 100%; }
+
+:focus-visible { outline: 2px solid var(--sy-accent); outline-offset: 2px; }
+
+::selection { background: var(--sy-accent-fill); color: var(--sy-on-accent); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}

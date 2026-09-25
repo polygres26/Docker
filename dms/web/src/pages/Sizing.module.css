@@ -1,0 +1,2 @@
+.body { display: flex; flex-direction: column; gap: 12px; }
+.reportList { display: flex; flex-direction: column; gap: 8px; max-height: 140px; overflow-y: auto; }

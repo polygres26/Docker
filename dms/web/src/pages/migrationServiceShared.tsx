@@ -1,5 +1,6 @@
 import { type MigrationConnectorType, type MigrationJobState, type MigrationSourceStatus } from '../api/client'
 import { type DmsTab } from '../components/DmsTabs'
+import type { Tone } from '../ui'
 
 /** Migration Service's own two tabs (Launch a job, track its Status) -- see DmsTabs' own javadoc
  * for why this is a tab strip within one sidebar entry rather than two separate sidebar items. */
@@ -20,11 +21,11 @@ export function formatLag(seconds: number | null): string {
   return `${Math.round(seconds / 3600)}h`
 }
 
-export function lagColor(seconds: number | null): string {
-  if (seconds === null) return 'var(--muted)'
-  if (seconds < 30) return 'var(--accent-strong)'
-  if (seconds < 300) return 'var(--medium)'
-  return 'var(--hard)'
+export function lagTone(seconds: number | null): Tone {
+  if (seconds === null) return 'neutral'
+  if (seconds < 30) return 'green'
+  if (seconds < 300) return 'amber'
+  return 'red'
 }
 
 export function formatTimestamp(iso: string | null): string {
@@ -36,10 +37,10 @@ export function formatTimestamp(iso: string | null): string {
   }
 }
 
-export function statusColor(status: MigrationJobState['status']): string {
-  if (status === 'RUNNING') return 'var(--medium)'
-  if (status === 'COMPLETED') return 'var(--accent-strong)'
-  return 'var(--hard)'
+export function statusTone(status: MigrationJobState['status']): Tone {
+  if (status === 'RUNNING') return 'amber'
+  if (status === 'COMPLETED') return 'green'
+  return 'red'
 }
 
 export interface SourceField {
@@ -123,9 +124,3 @@ export const SOURCE_FIELDS: Record<MigrationConnectorType, SourceField[]> = {
     { key: 'tagKeys', label: 'Tag keys (comma-separated)', placeholder: 'sensor,region', required: true },
   ],
 }
-
-export const inputStyle: React.CSSProperties = {
-  width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8,
-  padding: '9px 11px', color: 'var(--text)', fontSize: 13.5,
-}
-export const labelStyle: React.CSSProperties = { fontSize: 12, color: 'var(--muted)', marginBottom: 4, display: 'block' }
