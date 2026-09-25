@@ -1,6 +1,6 @@
 """Single-point write / point-query RTT of influxwire against a real Postgres, for before/after comparisons.
 
-  WARP_TEST_JAR=<jar> WARP_TEST_PG_LOCAL=1 python3 rtt_bench.py [--writes 300] [--queries 100]
+  WARP_TEST_JAR=<jar> WARP_TEST_PG_LOCAL=1 python3 influx_rtt_bench.py [--writes 300] [--queries 100]
 
 Prints client-observed min/p50/p90 (ms) for `POST /write` of one new-series point and for a small filtered
 SELECT, plus the server-side average RTT from /api/metrics/summary.

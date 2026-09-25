@@ -28,7 +28,7 @@ python3 run_spec.py --specs $SPEC --url http://localhost:<oswire port> --dirs $D
 
 `results/` holds the recorded counts and the classified remaining failures.
 
-## 2. Differential corpus (`diff_harness.py` + `corpus.py`)
+## 2. Differential corpus (`diff_harness.py` + `os_corpus.py`)
 
 About 330 request sequences (index CRUD, versioning, bulk, update, scripts, dynamic mapping, query DSL, sorting, paging,
 aggregations, highlighting, analyzers, aliases, templates, cat/cluster, error shapes) replayed against a real OpenSearch
@@ -50,6 +50,6 @@ A case can carry a `known` reason: it is then reported as `known` instead of fai
 
 ## Launching Warp for these runs
 
-`launch_warp.py --state state.json [--shards 2]` starts a throwaway Warp (oswire on a free port) on 1 or 2 local Postgres
+`os_launch_warp.py --state state.json [--shards 2]` starts a throwaway Warp (oswire on a free port) on 1 or 2 local Postgres
 servers (`WARP_TEST_PG_LOCAL=1`; two servers = one backend set, the `opensearch` store sharded across both) and
 prints the URL. `build.sh <dir>` builds Warp in a private copy of the tree.

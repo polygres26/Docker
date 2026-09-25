@@ -18,7 +18,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import corpus  # noqa: E402
+import influx_corpus as corpus  # noqa: E402
 
 TIMEOUT = 60
 NOW_YEAR = str(time.gmtime().tm_year)

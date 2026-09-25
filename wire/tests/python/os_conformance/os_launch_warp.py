@@ -2,7 +2,7 @@
 """Start a throwaway Warp with oswire on free ports and 1 or 2 local Postgres backends (2 = one backend set,
 the `opensearch` store sharded across both). Prints/writes {"url", "pids"} and stays up until SIGTERM/SIGINT.
 
-  WARP_TEST_PG_LOCAL=1 WARP_TEST_JAR=<jar> python3 launch_warp.py --state state.json [--shards 2]
+  WARP_TEST_PG_LOCAL=1 WARP_TEST_JAR=<jar> python3 os_launch_warp.py --state state.json [--shards 2]
 """
 import argparse, json, os, signal, subprocess, sys, time
 

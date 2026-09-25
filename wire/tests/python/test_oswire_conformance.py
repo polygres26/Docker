@@ -1,6 +1,6 @@
 """oswire against real OpenSearch's behaviour, with real Warp + real Postgres.
 
-1. Replays the differential corpus (tests/python/os_conformance/corpus.py, ~320 request sequences) against Warp and
+1. Replays the differential corpus (tests/python/os_conformance/os_corpus.py, ~320 request sequences) against Warp and
    compares with OpenSearch 2.19.6's recorded, normalised answers (golden/oracle_2.19.6.json) -- once with one Postgres
    backend and once with the index sharded over TWO Postgres backends. Differences must be listed in
    os_conformance/known.py (each with its reason).
@@ -22,10 +22,10 @@ from opensearchpy import OpenSearch, helpers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "os_conformance"))
-import corpus  # noqa: E402
+import os_corpus as corpus  # noqa: E402
 import diff_harness  # noqa: E402
 import known  # noqa: E402
-from launch_warp import Stack  # noqa: E402
+from os_launch_warp import Stack  # noqa: E402
 
 GOLDEN = os.path.join(HERE, "os_conformance", "golden", "oracle_2.19.6.json")
 

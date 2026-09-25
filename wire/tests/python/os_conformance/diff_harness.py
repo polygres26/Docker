@@ -6,7 +6,7 @@ normalised comparison of status codes, error types and response shapes.
   diff_harness.py --golden golden/oracle.json --warp http://localhost:19200          # no OpenSearch needed
 
 `--record` stores the oracle's normalised responses so Warp can later be checked against them without Docker
-(tests/python/test_oswire_conformance.py does exactly that). Cases live in corpus.py.
+(tests/python/test_oswire_conformance.py does exactly that). Cases live in os_corpus.py.
 """
 import argparse
 import json
@@ -19,7 +19,7 @@ import time
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import corpus  # noqa: E402
+import os_corpus as corpus  # noqa: E402
 import known  # noqa: E402
 
 VOLATILE = {"took", "uuid", "index_uuid", "creation_date", "cluster_uuid", "timestamp", "epoch", "_scroll_id", "pit_id", "id",

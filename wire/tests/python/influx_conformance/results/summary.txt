@@ -1,4 +1,4 @@
-Differential run of influx_conformance/corpus.py (290 cases, 1,821 requests) against InfluxDB 1.8.10 (docker influxdb:1.8)
+Differential run of influx_conformance/influx_corpus.py (290 cases, 1,821 requests) against InfluxDB 1.8.10 (docker influxdb:1.8)
 date: 2026-09-25
 
                                      identical  accepted  skipped  message-only  different   cases fully identical

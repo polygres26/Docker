@@ -1,7 +1,7 @@
 """Warp-side regression tests for influxwire's InfluxDB conformance (real Warp + real Postgres, no oracle needed).
 
 The heart is a *golden corpus*: influx_conformance/golden.json.gz holds the answers a real InfluxDB 1.8 gave to every
-request of influx_conformance/corpus.py (recorded with `harness.py --record`, each case run twice on the oracle and
+request of influx_conformance/influx_corpus.py (recorded with `harness.py --record`, each case run twice on the oracle and
 non-deterministic answers dropped). Every case is replayed here against Warp -- on one Postgres backend and on two
 sharded backends -- and must produce byte-for-byte the same normalised answer. On top of that: the InfluxDB 2.x write
 endpoint, the Flux refusal, native credentials, lenient/strict database creation, the official `influxdb` python
