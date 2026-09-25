@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { getStoredConnection } from './api/client'
-import Layout from './Layout'
+import { AppShell } from './components/ui'
 import Connect from './pages/Connect'
 import Dashboard from './pages/Dashboard'
 import Metrics from './pages/Metrics'
@@ -25,7 +25,7 @@ import FederationPlans from './pages/FederationPlans'
  * which clears storage and bounces back here (see src/api/client.ts). */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getStoredConnection()) return <Navigate to="/connect" replace />
-  return <Layout>{children}</Layout>
+  return <AppShell>{children}</AppShell>
 }
 
 export default function App() {

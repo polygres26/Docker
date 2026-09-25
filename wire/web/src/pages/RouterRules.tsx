@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type WireConfig, draftRouterSuggestion, getWireConfig, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 type ShardStrategy = 'hash' | 'consistent' | 'list' | 'range' | 'date'
 
@@ -134,24 +135,21 @@ export default function RouterRules() {
   }
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Router rules</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Decides which backend a statement goes to.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="Router rules" description="Decides which backend a statement goes to." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       <button type="button" onClick={handleSuggest} disabled={suggesting} style={{ marginBottom: 16 }}>
         {suggesting ? 'Drafting…' : '✦ Suggest table sharding with AI'}
       </button>
       {suggestError && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{suggestError}</div>
+        <Notice tone="bad">{suggestError}</Notice>
       )}
       {suggestion && (
-        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+        <div className="card">
           {suggestion.draft ? (
             <>
               <div style={{ fontSize: 13, marginBottom: 12 }}>
@@ -171,9 +169,9 @@ export default function RouterRules() {
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <h2 style={{ fontSize: 15, marginBottom: 4 }}>Declarative table sharding</h2>
           <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 12 }}>
             One row per horizontally-partitioned table. No schema-qualifier prefix needed in queries —
@@ -189,7 +187,7 @@ export default function RouterRules() {
             <div key={i} style={{
               display: 'grid', gridTemplateColumns: '1fr 130px 1fr 2fr auto', gap: 8,
               alignItems: 'start', marginBottom: 8, padding: 10,
-              border: '1px solid var(--border, #333)', borderRadius: 6,
+              border: '1px solid var(--border)', borderRadius: 6,
             }}>
               <label>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>Table</div>
@@ -258,7 +256,7 @@ export default function RouterRules() {
               style={{ width: '100%', padding: '8px 10px', fontSize: 13, fontFamily: 'monospace' }} />
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

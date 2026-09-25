@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type WireConfig, draftQosSuggestion, getWireConfig, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 /**
  * QoS / rate limiting -- edits the five `warp_config.qos*` fields QosControlStage.fromConfig
@@ -78,24 +79,21 @@ export default function Qos() {
   }
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>QoS / rate limiting</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Token-bucket rate limiting applied before a statement reaches a backend pool.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="QoS / rate limiting" description="Token-bucket rate limiting applied before a statement reaches a backend pool." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       <button type="button" onClick={handleSuggest} disabled={suggesting} style={{ marginBottom: 16 }}>
         {suggesting ? 'Drafting…' : '✦ Suggest with AI'}
       </button>
       {suggestError && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{suggestError}</div>
+        <Notice tone="bad">{suggestError}</Notice>
       )}
       {suggestion && (
-        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+        <div className="card">
           <div style={{ fontSize: 13, marginBottom: 8 }}>
             Proposed change to <b>{suggestion.draft.target}</b>: rate {suggestion.draft.ratePerSecond}/s,
             burst {suggestion.draft.burstCapacity}, max wait {suggestion.draft.maxWaitMillis}ms.
@@ -110,9 +108,9 @@ export default function Qos() {
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
             <label>
               <div style={{ fontSize: 13, marginBottom: 4 }}>Rate per second</div>
@@ -142,7 +140,7 @@ export default function Qos() {
               style={{ width: '100%', padding: '8px 10px', fontFamily: 'monospace' }} />
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

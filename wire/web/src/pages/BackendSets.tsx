@@ -1,6 +1,7 @@
 import { Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { type BackendInfo, type WireConfig, getWireConfig, listBackends, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 interface SetRow {
   name: string
@@ -79,22 +80,17 @@ export default function BackendSets() {
   }
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Backend sets</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Name a reusable set of backends — any mix of engines — then reference the set's name
-        instead of every backend individually in a <a href="/router">Router rule</a>'s hash/
-        consistent-hash sharding.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="Backend sets" description={<>Name a reusable set of backends — any mix of engines — then reference the set's name instead of every backend individually in a <a href="/router">Router rule</a>'s hash/ consistent-hash sharding.</>} />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           {backends && backends.length > 0 && (
             <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 16 }}>
               Configured backends: {backends.map((b) => `${b.name}${b.dialect ? ` (${b.dialect})` : ''}`).join(', ')}
@@ -118,7 +114,7 @@ export default function BackendSets() {
           </button>
           <div>
             <button type="submit" disabled={saving} style={{ marginRight: 8 }}>{saving ? 'Saving…' : 'Save'}</button>
-            {message && <span style={{ color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+            {message && <span style={{ color: 'var(--success)', fontSize: 13 }}>{message}</span>}
           </div>
         </form>
       )}

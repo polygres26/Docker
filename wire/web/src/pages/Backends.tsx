@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { PlugZap, Star, TableProperties } from 'lucide-react'
+import { Database, PlugZap, Star, TableProperties } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
   type BackendInfo, type BackendTestResult, type WireConfig,
   getWireConfig, listBackends, saveWireConfig, testBackendConnection, testConfiguredBackend,
 } from '../api/client'
 import CredentialField from '../components/CredentialField'
+import styles from './Backends.module.css'
+import { DataTable, Loading, Notice, PageHeader, Section, SortTh, StatusPill, SummaryGrid, Tag, useSort } from '../components/ui'
 
 // Favorite backends pinned to the top of the configured-backends list, same pattern as
 // versitygw's bucket favorites (star icon, persists across sessions -- see
@@ -28,15 +30,11 @@ function saveFavorites(favs: Set<string>) {
 
 function TestResultBadge({ result }: { result: BackendTestResult }) {
   return (
-    <div style={{
-      marginTop: 8, padding: '8px 10px', borderRadius: 6, fontSize: 12.5,
-      background: result.ok ? 'var(--accent-soft)' : 'var(--hard-soft, #fbeae8)',
-      color: result.ok ? 'var(--accent-strong)' : 'var(--hard, crimson)',
-    }}>
+    <Notice tone={result.ok ? 'ok' : 'bad'}>
       {result.ok ? '✓ Connected' : '✗ Failed'} in {result.tookMs}ms
       {result.ok && result.serverVersion && <> — {result.serverVersion.split(',')[0]}</>}
       {!result.ok && <> — {result.message}</>}
-    </div>
+    </Notice>
   )
 }
 
@@ -69,8 +67,7 @@ function ConnectionTester() {
   }
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 24 }}>
-      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Test a connection before adding it</div>
+    <Section title="Test a connection before adding it">
       <label style={{ display: 'block', marginBottom: 10 }}>
         <div style={{ fontSize: 12.5, marginBottom: 4 }}>JDBC URL</div>
         <input value={jdbcUrl} onChange={(e) => setJdbcUrl(e.target.value)}
@@ -90,9 +87,9 @@ function ConnectionTester() {
       <button type="button" onClick={handleTest} disabled={testing || !jdbcUrl.trim()}>
         {testing ? 'Testing…' : 'Test connection'}
       </button>
-      {error && <div style={{ marginTop: 8, color: 'var(--error, crimson)', fontSize: 12.5 }}>{error}</div>}
-      {result && <TestResultBadge result={result} />}
-    </div>
+      {error && <div style={{ marginTop: 10 }}><Notice tone="bad">{error}</Notice></div>}
+      {result && <div style={{ marginTop: 10 }}><TestResultBadge result={result} /></div>}
+    </Section>
   )
 }
 
@@ -116,43 +113,47 @@ function ConfiguredBackendRow({ backend, favorite, onToggleFavorite }: {
     }
   }
 
+  const dialect = backend.dialect ?? 'unknown'
   return (
-    <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <tr>
+      <td style={{ width: 40 }}>
         <button
           type="button"
           onClick={onToggleFavorite}
           title={favorite ? 'Remove from favorites' : 'Add to favorites'}
-          aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
-          style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: favorite ? 'var(--accent)' : 'var(--muted)', display: 'flex', flexShrink: 0 }}
+          aria-label={favorite ? `Remove ${backend.name} from favorites` : `Add ${backend.name} to favorites`}
+          aria-pressed={favorite}
+          className={styles.iconBtn}
+          style={{ color: favorite ? 'var(--sy-accent-strong)' : 'var(--sy-muted)' }}
         >
           <Star size={15} strokeWidth={1.8} fill={favorite ? 'currentColor' : 'none'} />
         </button>
-        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{backend.name}</span>
-        <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {backend.jdbcUrl}
-        </span>
-        <Link
-          to="/data"
-          title="Open in data explorer"
-          aria-label="Open in data explorer"
-          style={{ display: 'flex', color: 'var(--muted)', flexShrink: 0, padding: 4 }}
-        >
-          <TableProperties size={16} strokeWidth={1.8} />
-        </Link>
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={testing}
-          title="Test connection"
-          aria-label="Test connection"
-          style={{ background: 'none', border: 'none', padding: 4, cursor: testing ? 'default' : 'pointer', color: 'var(--muted)', display: 'flex', flexShrink: 0 }}
-        >
-          <PlugZap size={16} strokeWidth={1.8} />
-        </button>
-      </div>
-      {result && <TestResultBadge result={result} />}
-    </div>
+      </td>
+      <td className={styles.mono}>{backend.name}</td>
+      <td><Tag>{dialect}</Tag></td>
+      <td className={styles.mono}>{backend.jdbcUrl}</td>
+      <td>
+        {testing ? <StatusPill tone="muted">Testing</StatusPill>
+          : result ? (
+            <span title={result.message}>
+              <StatusPill tone={result.ok ? 'ok' : 'bad'}>{result.ok ? `Connected · ${result.tookMs} ms` : 'Failed'}</StatusPill>
+              {result.ok && result.serverVersion && <div className={styles.sub}>{result.serverVersion.split(',')[0]}</div>}
+              {!result.ok && <div className={styles.sub}>{result.message}</div>}
+            </span>
+          ) : <span className={styles.sub}>Not tested</span>}
+      </td>
+      <td>
+        <div className={styles.actions}>
+          <Link to="/data" title="Open in data explorer" aria-label={`Open ${backend.name} in data explorer`} className={styles.iconBtn}>
+            <TableProperties size={16} strokeWidth={1.8} />
+          </Link>
+          <button type="button" onClick={handleTest} disabled={testing} title="Test connection"
+            aria-label={`Test connection to ${backend.name}`} className={styles.iconBtn}>
+            <PlugZap size={16} strokeWidth={1.8} />
+          </button>
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -171,6 +172,17 @@ export default function Backends() {
   const [error, setError] = useState<string | null>(null)
   const [configured, setConfigured] = useState<BackendInfo[] | null>(null)
   const [favorites, setFavorites] = useState<Set<string>>(loadFavorites)
+
+  const { sorted, sort, toggle } = useSort(configured ?? [], {
+    name: (b) => b.name, dialect: (b) => b.dialect ?? 'unknown', url: (b) => b.jdbcUrl,
+  }, { key: 'name', dir: 'asc' })
+  // Favorites stay pinned above whatever sort is chosen (same pinning as before).
+  const sortedBackends = [...sorted].sort((a, b) => Number(favorites.has(b.name)) - Number(favorites.has(a.name)))
+  const dialectCounts = Object.entries((configured ?? []).reduce<Record<string, number>>((acc, b) => {
+    const d = b.dialect ?? 'unknown'
+    acc[d] = (acc[d] ?? 0) + 1
+    return acc
+  }, {}))
 
   function toggleFavorite(name: string) {
     setFavorites((prev) => {
@@ -217,40 +229,48 @@ export default function Backends() {
   }
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Backends</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Named Postgres targets the router can send statements to. Each entry's host must already
-        be in <code>WARP_TRUSTED_BACKEND_HOSTS</code> on the Warp process, or it's
-        silently skipped.
-      </p>
+    <div>
+      <PageHeader title="Backends" description={<>Named Postgres targets the router can send statements to. Each entry's host must already be in <code>WARP_TRUSTED_BACKEND_HOSTS</code> on the Warp process, or it's silently skipped.</>} />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
         <>
           <ConnectionTester />
 
           {configured && configured.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Configured backends</div>
-              {[...configured]
-                .sort((a, b) => Number(favorites.has(b.name)) - Number(favorites.has(a.name)))
-                .map((b) => (
-                  <ConfiguredBackendRow
-                    key={b.name}
-                    backend={b}
-                    favorite={favorites.has(b.name)}
-                    onToggleFavorite={() => toggleFavorite(b.name)}
-                  />
-                ))}
-            </div>
+            <Section flush title="Configured backends" meta={`${configured.length} backend${configured.length === 1 ? '' : 's'}`}>
+              <SummaryGrid items={dialectCounts.map(([d, n]) => ({ title: d, sub: `${n} backend${n === 1 ? '' : 's'}`, icon: <Database size={16} aria-hidden="true" /> }))} />
+              <DataTable caption="Configured backends" minWidth={760}>
+                <thead>
+                  <tr>
+                    <th aria-label="Favorite"></th>
+                    <SortTh label="Name" k="name" sort={sort} onSort={toggle} />
+                    <SortTh label="Dialect" k="dialect" sort={sort} onSort={toggle} />
+                    <SortTh label="Target" k="url" sort={sort} onSort={toggle} />
+                    <th>Status</th>
+                    <th aria-label="Actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedBackends.map((b) => (
+                    <ConfiguredBackendRow
+                      key={b.name}
+                      backend={b}
+                      favorite={favorites.has(b.name)}
+                      onToggleFavorite={() => toggleFavorite(b.name)}
+                    />
+                  ))}
+                </tbody>
+              </DataTable>
+            </Section>
           )}
 
+          <Section title="Edit backend definitions">
           <form onSubmit={handleSave}>
             <label style={{ display: 'block', marginBottom: 16 }}>
               <div style={{ fontSize: 13, marginBottom: 4 }}>Backends (one per line: name=jdbcUrl|user|password)</div>
@@ -280,8 +300,9 @@ export default function Backends() {
               />
             </label>
             <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-            {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+            {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
           </form>
+          </Section>
         </>
       )}
     </div>

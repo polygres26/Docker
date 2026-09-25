@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type LlmProvider, getLlmConfig, saveLlmConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 
@@ -24,7 +25,7 @@ export default function LlmConfig() {
   useEffect(() => {
     getLlmConfig()
       .then((c) => {
-        setProvider(c.provider)
+        setProvider(c.provider ?? 'none')
         setBaseUrl(c.baseUrl ?? (c.provider === 'openai' ? OPENAI_DEFAULT_BASE_URL : ''))
         setModel(c.model ?? '')
         setApiKeySet(c.apiKeySet)
@@ -51,7 +52,7 @@ export default function LlmConfig() {
         baseUrl: provider === 'none' ? null : baseUrl || null,
         model: provider === 'none' ? null : model || null,
       })
-      setProvider(saved.provider)
+      setProvider(saved.provider ?? 'none')
       setBaseUrl(saved.baseUrl ?? '')
       setModel(saved.model ?? '')
       setApiKeySet(saved.apiKeySet)
@@ -65,24 +66,17 @@ export default function LlmConfig() {
   }
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>LLM configuration</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Warp translates SQL between dialects with a fast, deterministic AST-based rewriter
-        first. Only statements that rewriter can't handle fall back to an LLM call -- so this is a
-        <strong> coverage setting for the long tail</strong>, not Warp's primary translation
-        path. Choosing "None" disables the fallback: unhandled statements fail the rewrite instead
-        of being sent to a model.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="LLM configuration" description={<>Warp translates SQL between dialects with a fast, deterministic AST-based rewriter first. Only statements that rewriter can't handle fall back to an LLM call -- so this is a <strong> coverage setting for the long tail</strong>, not Warp's primary translation path. Choosing "None" disables the fallback: unhandled statements fail the rewrite instead of being sent to a model.</>} />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Provider</div>
             <select value={provider} onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
@@ -144,7 +138,7 @@ export default function LlmConfig() {
           )}
 
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

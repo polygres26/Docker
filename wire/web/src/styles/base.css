@@ -1,0 +1,106 @@
+/* Global element defaults. Pages that have not adopted a component still render on-brand because
+   bare inputs, buttons, tables and code are styled here. */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { min-height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--sy-paper);
+  color: var(--sy-ink);
+  font: var(--fs-base)/1.5 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { font-weight: 500; letter-spacing: 0; text-wrap: balance; }
+h1 { font-size: var(--fs-h1); margin: 0 0 5px; }
+h2 { font-size: 15px; margin: 0 0 4px; }
+h3 { font-size: var(--fs-md); margin: 0; }
+p { text-wrap: pretty; }
+
+code, pre, kbd { font-family: var(--font-mono); font-size: 0.92em; }
+code { background: var(--sy-paper); border: 1px solid var(--sy-line); border-radius: var(--radius-sm); padding: 0 4px; }
+
+a { color: var(--sy-accent-strong); text-underline-offset: 2px; }
+a:hover { color: var(--sy-accent-hover); }
+
+::selection { background: var(--sy-accent-strong); color: var(--sy-on-accent); }
+
+:focus-visible {
+  outline: 2px solid var(--sy-accent-strong);
+  outline-offset: 2px;
+}
+
+/* ---- form controls ---- */
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--sy-ink);
+  background: var(--sy-surface);
+  border: 1px solid var(--sy-line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  max-width: 100%;
+  min-height: 36px;
+}
+textarea { line-height: 1.5; }
+input::placeholder, textarea::placeholder { color: var(--sy-muted); opacity: 0.75; }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--sy-accent-strong);
+  box-shadow: var(--focus-ring);
+}
+input[type="checkbox"], input[type="radio"] { accent-color: var(--sy-accent-strong); width: 15px; height: 15px; }
+label { color: var(--sy-ink); }
+
+/* ---- buttons: bare <button> is the secondary style; submit buttons are primary ---- */
+button {
+  font: inherit;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--sy-ink);
+  background: var(--sy-surface);
+  border: 1px solid var(--sy-line);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  min-height: 34px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+button:hover:not(:disabled) { background: var(--sy-paper); border-color: color-mix(in srgb, var(--sy-line) 60%, var(--sy-muted)); }
+button:disabled { opacity: 0.55; cursor: default; }
+button[type="submit"], button.primary {
+  background: var(--sy-accent-strong);
+  border-color: var(--sy-accent-strong);
+  color: var(--sy-on-accent);
+}
+button[type="submit"]:hover:not(:disabled), button.primary:hover:not(:disabled) {
+  background: var(--sy-accent-hover);
+  border-color: var(--sy-accent-hover);
+}
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+th {
+  color: var(--sy-muted);
+  font-weight: 500;
+  text-align: left;
+  padding: 9px 14px;
+  background: var(--sy-surface-2);
+  border-bottom: 1px solid var(--sy-line);
+  white-space: nowrap;
+}
+td { padding: 11px 14px; border-top: 1px solid var(--sy-line); vertical-align: top; }
+tbody tr:first-child td { border-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+/* Plain bordered surface for page-level forms and panels that are not a full <Section>. */
+.card { background: var(--sy-surface); border: 1px solid var(--sy-line); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 18px; }
+
+/* Cell helpers used by tables that live inside page components. */
+td.mono, .mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }

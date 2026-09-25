@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type WireConfig, draftRollupSuggestion, getWireConfig, saveWireConfig } from '../api/client'
+import { PageHeader, Notice, Loading } from '../components/ui'
 
 /**
  * Rollup (pre-aggregation) definitions -- edits `warp_config.rollupDefinitionsYaml`, the same
@@ -62,25 +63,21 @@ export default function Rollups() {
   }
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Rollups</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Pre-aggregated summary tables, kept fresh on a schedule — matching client queries are
-        rewritten to read from them automatically.
-      </p>
+    <div style={{ maxWidth: 1100 }}>
+      <PageHeader title="Rollups" description="Pre-aggregated summary tables, kept fresh on a schedule — matching client queries are rewritten to read from them automatically." />
 
       {error && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{error}</div>
+        <Notice tone="bad">{error}</Notice>
       )}
 
       <button type="button" onClick={handleSuggest} disabled={suggesting} style={{ marginBottom: 16 }}>
         {suggesting ? 'Drafting…' : '✦ Suggest a rollup with AI'}
       </button>
       {suggestError && (
-        <div style={{ marginBottom: 16, color: 'var(--error, crimson)', fontSize: 13 }}>{suggestError}</div>
+        <Notice tone="bad">{suggestError}</Notice>
       )}
       {suggestion && (
-        <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+        <div className="card">
           {suggestion.draft ? (
             <>
               <div style={{ fontSize: 13, marginBottom: 12 }}>
@@ -101,9 +98,9 @@ export default function Rollups() {
       )}
 
       {!loaded && !error ? (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        <Loading />
       ) : (
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} className="card">
           <label style={{ display: 'block', marginBottom: 16 }}>
             <div style={{ fontSize: 13, marginBottom: 4 }}>Rollup definitions (YAML)</div>
             <textarea value={yaml} onChange={(e) => setYaml(e.target.value)} rows={16}
@@ -111,7 +108,7 @@ export default function Rollups() {
               style={{ width: '100%', padding: '8px 10px', fontFamily: 'monospace', fontSize: 13 }} />
           </label>
           <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-          {message && <span style={{ marginLeft: 12, color: 'var(--success, green)', fontSize: 13 }}>{message}</span>}
+          {message && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
         </form>
       )}
     </div>

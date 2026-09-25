@@ -1,7 +1,7 @@
-import { Layers, Radio } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { type NodeInfo, listNodes } from '../api/client'
 import styles from './Topology.module.css'
+import { EmptyState, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, type KpiItem } from '../components/ui'
 
 const POLL_INTERVAL_MS = 10_000
 const UNKNOWN_ZONE_LABEL = 'Unknown zone'
@@ -79,18 +79,18 @@ export default function Topology() {
 
   if (error) {
     return (
-      <div className={styles.page}>
-        <h1 style={{ fontSize: 22, marginBottom: 4 }}>Topology</h1>
-        <p style={{ color: 'var(--error, crimson)', fontSize: 13 }}>{error}</p>
+      <div>
+        <PageHeader title="Topology" />
+        <Notice tone="bad">{error}</Notice>
       </div>
     )
   }
 
   if (!nodes) {
     return (
-      <div className={styles.page}>
-        <h1 style={{ fontSize: 22, marginBottom: 4 }}>Topology</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</p>
+      <div>
+        <PageHeader title="Topology" />
+        <Loading />
       </div>
     )
   }
@@ -98,51 +98,31 @@ export default function Topology() {
   const zoneGroups = groupByZone(nodes)
   const upCount = nodes.filter((n) => n.status === 'up').length
   const staleCount = nodes.length - upCount
+  const kpis: KpiItem[] = [
+    { label: 'Nodes total', value: nodes.length, hint: `${zoneGroups.length} zone(s)` },
+    { label: 'Healthy', value: upCount, hint: `${staleCount} stale` },
+  ]
 
   return (
-    <div className={styles.page}>
-      <div className={styles.hero}>
-        <div className={styles.heroTop}>
-          <div>
-            <h1 className={styles.heroTitle}>Warp topology</h1>
-            <p className={styles.heroSubtitle}>
-              Every Warp instance in this deployment, grouped by zone.
-            </p>
-          </div>
-          <div className={styles.heroBadge}>
-            <span className={styles.liveDot} />
-            Live · updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
-          </div>
-        </div>
-        <div className={styles.heroStats}>
-          <div className={styles.heroStat}>
-            <div className={styles.heroStatLabel}><Layers size={13} /> Nodes total</div>
-            <div className={styles.heroStatValue}>{nodes.length}</div>
-            <div className={styles.heroStatSub}>{zoneGroups.length} zone(s)</div>
-          </div>
-          <div className={styles.heroStat}>
-            <div className={styles.heroStatLabel}><Radio size={13} /> Healthy</div>
-            <div className={styles.heroStatValue}>{upCount}</div>
-            <div className={styles.heroStatSub}>{staleCount} stale</div>
-          </div>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title="Topology"
+        description="Every Warp instance in this deployment, grouped by zone."
+        actions={<StatusPill tone="ok">Live · updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</StatusPill>}
+      />
+      <KpiStrip items={kpis} label="Node health" />
 
       {nodes.length === 0 ? (
-        <div className={styles.card}>
-          <div className={styles.empty}>
+        <Section>
+          <EmptyState title="No nodes yet">
             No nodes have heartbeated yet. This is expected right after a fresh deploy — the
             heartbeat table populates once at least one Warp instance has started and checked
             in against the shared config Postgres.
-          </div>
-        </div>
+          </EmptyState>
+        </Section>
       ) : (
         zoneGroups.map(([zone, zoneNodes]) => (
-          <div className={styles.card} style={{ marginBottom: 16 }} key={zone}>
-            <div className={styles.cardHeadRow}>
-              <p className={styles.cardTitle}>{zone}</p>
-              <span className={styles.cardCount}>{zoneNodes.length} node(s)</span>
-            </div>
+          <Section title={zone} meta={`${zoneNodes.length} node(s)`} key={zone}>
             <div className={styles.nodeGrid}>
               {zoneNodes.map((node) => {
                 const uptimeMs = now - new Date(node.startedAt).getTime()
@@ -151,9 +131,7 @@ export default function Topology() {
                   <div className={styles.nodeCard} key={node.nodeId}>
                     <div className={styles.nodeCardTop}>
                       <span className={styles.nodeHost}>{node.host}:{node.adminPort}</span>
-                      <span className={`${styles.statusBadge} ${node.status === 'up' ? styles.statusUp : styles.statusStale}`}>
-                        {node.status === 'up' ? 'up' : 'stale'}
-                      </span>
+                      <StatusPill tone={node.status === 'up' ? 'ok' : 'warn'}>{node.status === 'up' ? 'Up' : 'Stale'}</StatusPill>
                     </div>
                     <div className={styles.nodeId}>{node.nodeId}</div>
                     <div className={styles.nodeMetaRow}>
@@ -167,7 +145,7 @@ export default function Topology() {
                 )
               })}
             </div>
-          </div>
+          </Section>
         ))
       )}
     </div>

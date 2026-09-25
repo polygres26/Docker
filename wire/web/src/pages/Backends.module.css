@@ -1,0 +1,8 @@
+.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.sub { color: var(--sy-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 2px; justify-content: flex-end; }
+.iconBtn {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; min-height: 0; padding: 0;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius); color: var(--sy-muted);
+}
+.iconBtn:hover:not(:disabled) { background: var(--sy-paper); color: var(--sy-ink); border-color: transparent; }

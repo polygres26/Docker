@@ -6,6 +6,7 @@ import {
   listBackendTables, listBackends, runBackendQuery,
 } from '../api/client'
 import styles from './DataExplorer.module.css'
+import { PageHeader } from '../components/ui'
 
 /**
  * Object browser + ad-hoc SQL console for Warp's configured backends -- pick a backend,
@@ -79,21 +80,14 @@ export default function DataExplorer() {
   if (backends !== null && backends.length === 0) {
     return (
       <div className={styles.page}>
-        <h1 style={{ fontSize: 22, marginBottom: 4 }}>Data explorer</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 13 }}>
-          No backends configured yet. Add one on the <Link to="/backends">Backends</Link> page first.
-        </p>
+        <PageHeader title="Data explorer" description={<>No backends configured yet. Add one on the <Link to="/backends">Backends</Link> page first.</>} />
       </div>
     )
   }
 
   return (
     <div className={styles.page}>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Data explorer</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 16 }}>
-        Browse objects and run ad-hoc SQL directly against a backend. Bypasses SQL Firewall/ACL by
-        design -- this is an admin tool, not client traffic.
-      </p>
+      <PageHeader title="Data explorer" description="Browse objects and run ad-hoc SQL directly against a backend. Bypasses SQL Firewall/ACL by design -- this is an admin tool, not client traffic." />
 
       <div className={styles.toolbar}>
         <select className={styles.select} value={backend} onChange={(e) => setBackend(e.target.value)}>
@@ -101,7 +95,7 @@ export default function DataExplorer() {
             <option key={b.name} value={b.name}>{b.name} ({b.dialect ?? 'unknown'})</option>
           ))}
         </select>
-        {error && <span style={{ color: 'var(--hard, crimson)', fontSize: 13 }}>{error}</span>}
+        {error && <span style={{ color: 'var(--hard)', fontSize: 13 }}>{error}</span>}
       </div>
 
       <div className={styles.body}>

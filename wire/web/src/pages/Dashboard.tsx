@@ -1,150 +1,215 @@
-import { useEffect, useState } from 'react'
-import { Activity, ArrowDownToLine, ArrowUpFromLine, Boxes, Gauge, Server, Waypoints } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Database, RefreshCw } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import {
-  type BackendInfo, type NodeInfo, type WireConfig, type WireMetricsSummary,
-  getWireConfig, getWireMetrics, listBackends, listNodes, parseBackendSetNames,
+  type BackendInfo, type BackendTestResult, type NodeInfo, type WireMetricsSummary,
+  getWireConfig, getWireMetrics, listBackends, listNodes, parseBackendSetNames, testConfiguredBackend,
 } from '../api/client'
+import {
+  Button, DataTable, EmptyState, KpiStrip, Loading, Notice, PageHeader, Section, SortTh, SummaryGrid, StatusPill, Tag, useSort,
+  type KpiItem, type Tone,
+} from '../components/ui'
+import styles from './Dashboard.module.css'
+
+const POLL_MS = 10_000
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+/** Host[:port]/db portion of a JDBC URL, for a compact "target" column. */
+function targetOf(jdbcUrl: string): string {
+  return jdbcUrl.replace(/^jdbc:[^:]+:(\/\/)?/, '').replace(/\?.*$/, '')
+}
+
+type Probe = { state: 'pending' } | { state: 'done'; result: BackendTestResult }
+
+interface Row {
+  name: string
+  dialect: string
+  target: string
+  calls: number
+  avgMs: number | null
+  probe: Probe
+}
 
 /**
- * Landing page after connecting -- modeled on versitygw's Admin Dashboard (see
- * https://github.com/versity/versitygw/wiki/WebGUI#admin-dashboard): a handful of stat cards
- * giving an at-a-glance read on gateway health before drilling into any one page. Warp has no
- * single "uptime" figure exposed yet, so this leans on what /api/metrics/summary, /api/backends,
- * /api/config, and /api/nodes already report: throughput, backend count, backend sets, and node
- * topology health.
+ * Gateway overview: health strip, backend table and protocol mix, all from the admin API that
+ * already exists (/api/metrics/summary, /api/backends, /api/nodes, /api/config). Nothing here is
+ * estimated: a figure the API does not report (p95 latency, policy-block counts) is not shown.
+ * Backend health is a real probe -- the same POST /api/backends/{name}/test the Backends page uses.
  */
-
-interface StatCardProps {
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
-  label: string
-  value: string
-  hint?: string
-  tone?: 'ok' | 'warn' | 'default'
-}
-
-function StatCard({ icon: Icon, label, value, hint, tone = 'default' }: StatCardProps) {
-  const toneColor = tone === 'ok' ? 'var(--accent-strong)' : tone === 'warn' ? 'var(--hard, crimson)' : 'var(--text)'
-  return (
-    <div style={{
-      border: '1px solid var(--border)', borderRadius: 10, padding: '16px 18px',
-      background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--muted)', fontSize: 12.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-        <Icon size={15} strokeWidth={1.8} />
-        {label}
-      </div>
-      <div style={{ fontSize: 26, fontWeight: 700, color: toneColor, lineHeight: 1.1 }}>{value}</div>
-      {hint && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</div>}
-    </div>
-  )
-}
-
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<WireMetricsSummary | null>(null)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
   const [backends, setBackends] = useState<BackendInfo[] | null>(null)
+  const [backendsError, setBackendsError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<NodeInfo[] | null>(null)
-  const [backendSets, setBackendSets] = useState<string[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [setNames, setSetNames] = useState<string[] | null>(null)
+  const [probes, setProbes] = useState<Record<string, Probe>>({})
+  const [updated, setUpdated] = useState<Date | null>(null)
 
-  useEffect(() => {
-    getWireMetrics().then(setMetrics).catch((e) => setError(e instanceof Error ? e.message : String(e)))
-    listBackends().then(setBackends).catch(() => setBackends(null))
-    // Node heartbeats are a newer, optional endpoint (single-node deployments may not run the
-    // heartbeat loop at all) -- absence here just means "no topology data," not an error.
+  const loadMetrics = useCallback(() => {
+    getWireMetrics()
+      .then((m) => { setMetrics(m); setMetricsError(null); setUpdated(new Date()) })
+      .catch((e) => setMetricsError(e instanceof Error ? e.message : String(e)))
+    // Heartbeats are optional (single-node deployments may not run the loop): absent means "no data".
     listNodes().then(setNodes).catch(() => setNodes(null))
-    getWireConfig().then((c: WireConfig) => setBackendSets(parseBackendSetNames(c.backendSets))).catch(() => setBackendSets(null))
   }, [])
 
-  const upNodes = nodes?.filter((n) => n.status === 'up').length ?? null
+  const probeAll = useCallback((list: BackendInfo[]) => {
+    setProbes(Object.fromEntries(list.map((b) => [b.name, { state: 'pending' } as Probe])))
+    list.forEach((b) => {
+      testConfiguredBackend(b.name)
+        .catch((e): BackendTestResult => ({ ok: false, message: e instanceof Error ? e.message : String(e), tookMs: 0, serverVersion: null }))
+        .then((result) => setProbes((p) => ({ ...p, [b.name]: { state: 'done', result } })))
+    })
+  }, [])
+
+  const loadBackends = useCallback(() => {
+    listBackends()
+      .then((list) => { setBackends(list); setBackendsError(null); probeAll(list) })
+      .catch((e) => setBackendsError(e instanceof Error ? e.message : String(e)))
+  }, [probeAll])
+
+  useEffect(() => {
+    loadMetrics()
+    loadBackends()
+    getWireConfig().then((c) => setSetNames(parseBackendSetNames(c.backendSets))).catch(() => setSetNames(null))
+    const id = setInterval(loadMetrics, POLL_MS)
+    return () => clearInterval(id)
+  }, [loadMetrics, loadBackends])
+
+  const rows: Row[] = useMemo(() => (backends ?? []).map((b) => {
+    const stat = metrics?.byBackend.find((x) => x.backend === b.name)
+    return {
+      name: b.name,
+      dialect: b.dialect ?? 'unknown',
+      target: targetOf(b.jdbcUrl),
+      calls: stat?.calls ?? 0,
+      avgMs: stat ? stat.avgMs : null,
+      probe: probes[b.name] ?? { state: 'pending' },
+    }
+  }), [backends, metrics, probes])
+
+  const { sorted, sort, toggle } = useSort(rows, {
+    name: (r) => r.name, dialect: (r) => r.dialect, target: (r) => r.target, calls: (r) => r.calls,
+    health: (r) => (r.probe.state === 'pending' ? 1 : r.probe.result.ok ? 0 : 2),
+  }, { key: 'calls', dir: 'desc' })
+
+  const totalCalls = rows.reduce((s, r) => s + r.calls, 0)
+  const done = rows.filter((r) => r.probe.state === 'done')
+  const down = done.filter((r) => r.probe.state === 'done' && !r.probe.result.ok).length
   const staleNodes = nodes?.filter((n) => n.status === 'stale').length ?? 0
-  const totalCalls = metrics
-    ? Object.values(metrics.protocolCounts).reduce((sum, c) => sum + c, 0)
-    : null
+
+  let envTone: Tone = 'ok'
+  let envText = 'All systems operational'
+  if (metricsError) { envTone = 'bad'; envText = 'Admin API error' }
+  else if (!metrics || !backends) { envTone = 'muted'; envText = 'Checking…' }
+  else if (down > 0) { envTone = 'warn'; envText = `${down} of ${rows.length} backend${rows.length === 1 ? '' : 's'} unreachable` }
+  else if (staleNodes > 0) { envTone = 'warn'; envText = `${staleNodes} node${staleNodes === 1 ? '' : 's'} stale` }
+  else if (done.length < rows.length) { envTone = 'muted'; envText = 'Probing backends…' }
+
+  const kpis: KpiItem[] = [{ label: 'Environment', value: envText, tone: envTone, wide: true }]
+  if (metrics) {
+    kpis.push({ label: 'Requests / sec', value: (metrics.readsPerSec + metrics.writesPerSec).toFixed(1), hint: `${metrics.readsPerSec.toFixed(1)} reads · ${metrics.writesPerSec.toFixed(1)} writes` })
+    if (metrics.avgRttMs !== null) kpis.push({ label: 'Avg round-trip', value: `${metrics.avgRttMs} ms`, hint: `${fmt(metrics.rttSamples)} sample${metrics.rttSamples === 1 ? '' : 's'}` })
+  }
+  if (backends) kpis.push({ label: 'Active backends', value: backends.length, hint: setNames && setNames.length > 0 ? `${setNames.length} backend set${setNames.length === 1 ? '' : 's'}` : undefined })
+  if (nodes && nodes.length > 0) kpis.push({ label: 'Nodes up', value: `${nodes.length - staleNodes} / ${nodes.length}`, hint: staleNodes > 0 ? `${staleNodes} stale` : 'all reporting' })
+
+  const protocols = metrics ? Object.entries(metrics.protocolCounts).sort((a, b) => b[1] - a[1]) : []
+  const topSql = metrics?.topSql.slice(0, 5) ?? []
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>Dashboard</h1>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0, marginBottom: 24 }}>
-        Live snapshot of this Warp process -- throughput, configured backends and backend sets, and node topology.
-      </p>
+      <PageHeader
+        title="Gateway overview"
+        description="Live health and traffic for this Warp process."
+        actions={
+          <Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { loadMetrics(); loadBackends() }}>Refresh</Button>
+        }
+      />
 
-      {error && <div style={{ marginBottom: 16, color: 'var(--hard, crimson)', fontSize: 13 }}>{error}</div>}
+      {metricsError && <Notice tone="bad">Could not load metrics: {metricsError}</Notice>}
+      {!metrics && !metricsError ? <Loading>Loading overview…</Loading> : <KpiStrip items={kpis} label="Gateway health" />}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 28 }}>
-        <StatCard
-          icon={ArrowDownToLine}
-          label="Reads / sec"
-          value={metrics ? metrics.readsPerSec.toFixed(1) : '—'}
-          hint={metrics ? `${metrics.totalReads.toLocaleString()} total reads` : undefined}
-        />
-        <StatCard
-          icon={ArrowUpFromLine}
-          label="Writes / sec"
-          value={metrics ? metrics.writesPerSec.toFixed(1) : '—'}
-          hint={metrics ? `${metrics.totalWrites.toLocaleString()} total writes` : undefined}
-        />
-        <StatCard
-          icon={Gauge}
-          label="Avg round-trip"
-          value={metrics?.avgRttMs != null ? `${metrics.avgRttMs.toFixed(1)}ms` : '—'}
-          hint={metrics ? `${metrics.rttSamples.toLocaleString()} samples` : undefined}
-        />
-        <StatCard
-          icon={Activity}
-          label="Statements handled"
-          value={totalCalls != null ? totalCalls.toLocaleString() : '—'}
-          hint={metrics ? `${metrics.totalOther.toLocaleString()} other` : undefined}
-        />
-        <StatCard
-          icon={Server}
-          label="Backends"
-          value={backends ? String(backends.length) : '—'}
-          hint={backends && backends.length > 0 ? backends.map((b) => b.name).join(', ') : 'none configured'}
-        />
-        <StatCard
-          icon={Boxes}
-          label="Backend sets"
-          value={backendSets ? String(backendSets.length) : '—'}
-          hint={backendSets && backendSets.length > 0 ? backendSets.join(', ') : 'none configured'}
-        />
-        <StatCard
-          icon={Waypoints}
-          label="Nodes up"
-          value={upNodes != null ? String(upNodes) : '—'}
-          tone={staleNodes > 0 ? 'warn' : 'ok'}
-          hint={nodes ? (staleNodes > 0 ? `${staleNodes} stale` : 'all healthy') : 'topology not reporting'}
-        />
-      </div>
-
-      {metrics && metrics.byBackend.length > 0 && (
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Traffic by backend</div>
-          <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: 'var(--panel)', textAlign: 'left' }}>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--muted)' }}>Backend</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--muted)' }}>Calls</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--muted)' }}>Reads</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--muted)' }}>Writes</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--muted)' }}>Avg ms</th>
+      <Section flush title="Backends" meta={updated ? `Updated ${updated.toLocaleTimeString()}` : undefined}>
+        {backendsError ? (
+          <div className={styles.pad}><Notice tone="bad">Could not list backends: {backendsError}</Notice></div>
+        ) : !backends ? (
+          <div className={styles.pad}><Loading>Loading backends…</Loading></div>
+        ) : backends.length === 0 ? (
+          <EmptyState icon={<Database size={18} aria-hidden="true" />} title="No backends configured">
+            Add a named Postgres target on the <Link to="/backends">Backends</Link> page and it will show up here with a live health check.
+          </EmptyState>
+        ) : (
+          <DataTable caption="Configured backends" minWidth={720}>
+            <thead>
+              <tr>
+                <SortTh label="Backend" k="name" sort={sort} onSort={toggle} />
+                <SortTh label="Dialect" k="dialect" sort={sort} onSort={toggle} />
+                <SortTh label="Target" k="target" sort={sort} onSort={toggle} />
+                <SortTh label="Health" k="health" sort={sort} onSort={toggle} />
+                <SortTh label="Calls" k="calls" sort={sort} onSort={toggle} />
+                <th>Share of traffic</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => (
+                <tr key={r.name}>
+                  <td className={styles.mono}>{r.name}</td>
+                  <td><Tag>{r.dialect}</Tag></td>
+                  <td className={styles.mono}>{r.target}</td>
+                  <td><HealthPill probe={r.probe} /></td>
+                  <td className={styles.num}>{r.calls.toLocaleString()}{r.avgMs !== null && <span className={styles.sub}> · {r.avgMs} ms avg</span>}</td>
+                  <td>
+                    <div className={styles.bar} role="img" aria-label={`${totalCalls ? Math.round((r.calls / totalCalls) * 100) : 0}% of statements`}>
+                      <span style={{ width: `${totalCalls ? (r.calls / totalCalls) * 100 : 0}%` }} />
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {metrics.byBackend.map((b) => (
-                  <tr key={b.backend} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{b.backend}</td>
-                    <td style={{ padding: '8px 12px' }}>{b.calls.toLocaleString()}</td>
-                    <td style={{ padding: '8px 12px' }}>{b.reads.toLocaleString()}</td>
-                    <td style={{ padding: '8px 12px' }}>{b.writes.toLocaleString()}</td>
-                    <td style={{ padding: '8px 12px' }}>{b.avgMs.toFixed(1)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+      </Section>
+
+      {metrics && (
+        <Section flush title="By protocol" meta="Statements since process start">
+          {protocols.length === 0 ? (
+            <EmptyState title="No traffic yet">Send a query through any wire protocol to see it here.</EmptyState>
+          ) : (
+            <SummaryGrid items={protocols.map(([name, count]) => ({ title: name, sub: `${count.toLocaleString()} statement${count === 1 ? '' : 's'}`, icon: <Database size={16} aria-hidden="true" /> }))} />
+          )}
+        </Section>
+      )}
+
+      {metrics && topSql.length > 0 && (
+        <Section flush title="Top SQL by cost" meta={<Link to="/metrics">All traffic</Link>}>
+          <DataTable caption="Most expensive statements" minWidth={560}>
+            <thead><tr><th>SQL</th><th>Calls</th><th>Avg</th><th>Total</th></tr></thead>
+            <tbody>
+              {topSql.map((s, i) => (
+                <tr key={i}>
+                  <td className={styles.sql}>{s.sql}</td>
+                  <td className={styles.num}>{fmt(s.calls)}</td>
+                  <td className={styles.num}>{s.avgMs} ms</td>
+                  <td className={styles.num}>{fmt(s.totalMs)} ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Section>
       )}
     </div>
   )
+}
+
+function HealthPill({ probe }: { probe: Probe }) {
+  if (probe.state === 'pending') return <StatusPill tone="muted">Checking</StatusPill>
+  if (probe.result.ok) return <StatusPill tone="ok">Healthy · {probe.result.tookMs} ms</StatusPill>
+  return <span title={probe.result.message}><StatusPill tone="bad">Unreachable</StatusPill></span>
 }
