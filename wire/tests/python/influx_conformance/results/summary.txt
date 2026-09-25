@@ -1,0 +1,12 @@
+Differential run of influx_conformance/corpus.py (290 cases, 1,821 requests) against InfluxDB 1.8.10 (docker influxdb:1.8)
+date: 2026-09-25
+
+                                     identical  accepted  skipped  message-only  different   cases fully identical
+Warp before (pre-conformance jar)         0*       19        8        196          1598           2 / 290
+Warp after, 1 Postgres backend         1794       19        8          0             0         290 / 290
+Warp after, 2 sharded backends         1794       19        8          0             0         290 / 290
+
+* the pre-conformance jar never sent a JSON Content-Type on 204 responses, so every step differed in the strict comparison; ignoring
+  Content-Type, 208 of 1,821 steps (11%) were identical before.
+accepted = documented divergence (remaining_differences.txt); skipped = depends on the clock or on server-global state.
+Golden corpus (recorded from the same InfluxDB, run offline by tests/python/test_influxwire_conformance.py): 588 tests pass.
