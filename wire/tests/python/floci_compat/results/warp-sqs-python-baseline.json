@@ -1,0 +1,98 @@
+{
+ "service": "sqs",
+ "suite": "python",
+ "endpoint": "http://localhost:50816",
+ "tag": "warp",
+ "date": "2026-09-25 13:34",
+ "runner_rc": 1,
+ "seconds": 0.4,
+ "counts": {
+  "pass": 7,
+  "fail": 9,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_sqs.py": {
+   "pass": 7,
+   "fail": 9,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_sqs.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-sqs-python.junit.xml --timeout=30",
+ "failures": [
+  {
+   "file": "test_sqs.py",
+   "test": "test_send_message_batch",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the SendMessageBatch operation: sqswire does not implement SendMessageBatch",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_delete_message_batch",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the SendMessageBatch operation: sqswire does not implement SendMessageBatch",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_message_attributes",
+   "status": "fail",
+   "message": "AssertionError: assert None == 'myval'",
+   "time": 0.01,
+   "class": "b"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_tag_queue",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagQueue operation: sqswire does not implement TagQueue",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_list_queue_tags",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagQueue operation: sqswire does not implement TagQueue",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_untag_queue",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the TagQueue operation: sqswire does not implement TagQueue",
+   "time": 0.009,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_long_polling",
+   "status": "fail",
+   "message": "assert 0.0013699531555175781 >= 1.8",
+   "time": 0.009,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_dlq_routing",
+   "status": "fail",
+   "message": "KeyError: 'QueueArn'",
+   "time": 0.006,
+   "class": "a"
+  },
+  {
+   "file": "test_sqs.py",
+   "test": "test_list_dead_letter_source_queues",
+   "status": "fail",
+   "message": "KeyError: 'QueueArn'",
+   "time": 0.006,
+   "class": "b"
+  }
+ ]
+}

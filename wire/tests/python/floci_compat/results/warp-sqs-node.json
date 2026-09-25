@@ -1,0 +1,25 @@
+{
+ "service": "sqs",
+ "suite": "node",
+ "endpoint": "http://localhost:62422",
+ "tag": "warp",
+ "date": "2026-09-25 14:27",
+ "runner_rc": 0,
+ "seconds": 0.7,
+ "counts": {
+  "pass": 8,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/sqs.test.ts": {
+   "pass": 8,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/sqs.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-sqs-node.junit.xml",
+ "failures": []
+}

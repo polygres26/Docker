@@ -1,0 +1,42 @@
+{
+ "service": "sqs",
+ "suite": "node",
+ "endpoint": "http://localhost:50816",
+ "tag": "warp",
+ "date": "2026-09-25 13:34",
+ "runner_rc": 1,
+ "seconds": 0.5,
+ "counts": {
+  "pass": 6,
+  "fail": 2,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/sqs.test.ts": {
+   "pass": 6,
+   "fail": 2,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/sqs.test.ts --testTimeout 20000 --reporter=junit --outputFile.junit=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-sqs-node.junit.xml",
+ "failures": [
+  {
+   "file": "tests/sqs.test.ts",
+   "test": "SQS > should get queue attributes",
+   "status": "fail",
+   "message": "expected undefined to be truthy",
+   "time": 0.003847667,
+   "class": "b"
+  },
+  {
+   "file": "tests/sqs.test.ts",
+   "test": "SQS > should send batch messages",
+   "status": "fail",
+   "message": "sqswire does not implement SendMessageBatch",
+   "time": 0.003313708,
+   "class": "a"
+  }
+ ]
+}
