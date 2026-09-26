@@ -193,7 +193,7 @@ public final class S3SigV4Verifier {
         }
     }
 
-    static String canonicalUri(String rawPath) {
+    public static String canonicalUri(String rawPath) {
         String decoded = percentDecode(rawPath == null || rawPath.isEmpty() ? "/" : rawPath, false);
         return encode(decoded, false);
     }
@@ -226,7 +226,7 @@ public final class S3SigV4Verifier {
         return sb.toString();
     }
 
-    static Map<String, String> parseQuery(String rawQuery) {
+    public static Map<String, String> parseQuery(String rawQuery) {
         Map<String, String> out = new java.util.LinkedHashMap<>();
         if (rawQuery == null || rawQuery.isEmpty()) {
             return out;
@@ -244,7 +244,7 @@ public final class S3SigV4Verifier {
     }
 
     /** Percent-decodes UTF-8; {@code plusIsSpace} only for query strings ('+' is literal in paths). */
-    static String percentDecode(String s, boolean plusIsSpace) {
+    public static String percentDecode(String s, boolean plusIsSpace) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(s.length());
         byte[] raw = s.getBytes(StandardCharsets.UTF_8);
         for (int i = 0; i < raw.length; i++) {
@@ -263,7 +263,7 @@ public final class S3SigV4Verifier {
     }
 
     /** RFC 3986 encoding as SigV4 defines it; '/' left alone in paths. */
-    static String encode(String s, boolean encodeSlash) {
+    public static String encode(String s, boolean encodeSlash) {
         StringBuilder sb = new StringBuilder();
         for (byte b : s.getBytes(StandardCharsets.UTF_8)) {
             int c = b & 0xff;
@@ -286,7 +286,7 @@ public final class S3SigV4Verifier {
         return MessageDigest.getInstance("SHA-256").digest(data);
     }
 
-    static byte[] hmacBytes(byte[] key, String data) throws Exception {
+    public static byte[] hmacBytes(byte[] key, String data) throws Exception {
         return hmac(key, data);
     }
 
@@ -296,7 +296,7 @@ public final class S3SigV4Verifier {
         return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
     }
 
-    static String hex(byte[] bytes) {
+    public static String hex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) {
             sb.append(String.format(Locale.ROOT, "%02x", b));
