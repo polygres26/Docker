@@ -21,9 +21,18 @@ final class OpMsgFrame {
     static final int OP_MSG = 2013;
     private static final int CHECKSUM_PRESENT = 1;
 
+    static final int OP_COMPRESSED = 2012;
+    private static final int MORE_TO_COMPLETE = 2;
+    private static final int EXHAUST_ALLOWED = 1 << 16;
+
     final int requestId;
     final BsonDocument body;
     final boolean legacyQuery;
+    /** Client sent moreToCome (unacknowledged write): no reply must be sent. */
+    boolean noReply;
+    boolean exhaustAllowed;
+    /** Database from the legacy OP_QUERY namespace (before ".$cmd"), or null. */
+    String legacyDb;
 
     private OpMsgFrame(int requestId, BsonDocument body, boolean legacyQuery) {
         this.requestId = requestId;
@@ -43,17 +52,59 @@ final class OpMsgFrame {
         if (remaining <= 0) {
             throw new EOFException("empty message body");
         }
+        if (messageLength > 48 * 1024 * 1024 + 1024) {
+            throw new IOException("mongowire: message of " + messageLength + " bytes exceeds maxMessageSizeBytes");
+        }
         byte[] rest = new byte[remaining];
         in.readFully(rest);
+        if (opCode == OP_COMPRESSED) {
+            ByteBuffer cb = ByteBuffer.wrap(rest).order(ByteOrder.LITTLE_ENDIAN);
+            int originalOpcode = cb.getInt();
+            int uncompressedSize = cb.getInt();
+            int compressor = cb.get() & 0xFF;
+            byte[] compressed = new byte[cb.remaining()];
+            cb.get(compressed);
+            switch (compressor) {
+                case 0 -> rest = compressed;
+                case 2 -> {
+                    java.util.zip.Inflater inflater = new java.util.zip.Inflater();
+                    inflater.setInput(compressed);
+                    byte[] out = new byte[uncompressedSize];
+                    try {
+                        int n = 0;
+                        while (n < out.length && !inflater.finished()) {
+                            int r = inflater.inflate(out, n, out.length - n);
+                            if (r == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
+                                break;
+                            }
+                            n += r;
+                        }
+                    } catch (java.util.zip.DataFormatException e) {
+                        throw new IOException("mongowire: bad zlib payload", e);
+                    } finally {
+                        inflater.end();
+                    }
+                    rest = out;
+                }
+                default -> throw new IOException("mongowire: unsupported compressor id " + compressor + " (only noop and zlib)");
+            }
+            opCode = originalOpcode;
+        }
         ByteBuffer bb = ByteBuffer.wrap(rest).order(ByteOrder.LITTLE_ENDIAN);
 
         if (opCode == OP_QUERY) {
             bb.getInt();
-            readCString(bb);
+            String ns = readCStringValue(bb);
             bb.getInt();
             bb.getInt();
             BsonDocument query = readOneDocument(bb);
-            return new OpMsgFrame(requestId, query, true);
+            if (query.containsKey("$query") && query.get("$query").isDocument()) {
+                query = query.getDocument("$query");
+            }
+            OpMsgFrame f = new OpMsgFrame(requestId, query, true);
+            int dot = ns.indexOf(".$cmd");
+            f.legacyDb = dot > 0 ? ns.substring(0, dot) : null;
+            return f;
         }
         if (opCode != OP_MSG) {
             throw new IOException("mongowire: unsupported opcode " + opCode + " (only OP_QUERY/2004 for the "
@@ -91,7 +142,10 @@ final class OpMsgFrame {
         for (int i = 0; i < pendingIdentifiers.size(); i++) {
             doc.put(pendingIdentifiers.get(i), pendingSequences.get(i));
         }
-        return new OpMsgFrame(requestId, doc, false);
+        OpMsgFrame f = new OpMsgFrame(requestId, doc, false);
+        f.noReply = (flagBits & MORE_TO_COMPLETE) != 0;
+        f.exhaustAllowed = (flagBits & EXHAUST_ALLOWED) != 0;
+        return f;
     }
 
     private static void readCString(ByteBuffer bb) {

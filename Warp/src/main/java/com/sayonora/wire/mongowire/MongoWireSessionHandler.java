@@ -65,7 +65,8 @@ public final class MongoWireSessionHandler implements Runnable {
     @Override
     public void run() {
         try (Socket socket = clientSocket) {
-            DataInputStream in = new DataInputStream(socket.getInputStream());
+            DataInputStream in = new DataInputStream(new java.io.BufferedInputStream(socket.getInputStream(), 65536));
+            dispatcher.withRemoteAddress(String.valueOf(socket.getRemoteSocketAddress()).replace("/", ""));
             OutputStream out = socket.getOutputStream();
             while (true) {
                 OpMsgFrame frame = OpMsgFrame.read(in);
@@ -75,8 +76,13 @@ public final class MongoWireSessionHandler implements Runnable {
                 // own first-command-key logic just enough to land in the same per-fingerprint
                 // bucket record() already created -- see SqlMetricsCollector's RTT javadoc.
                 long rttStart = System.nanoTime();
+                if (frame.legacyDb != null && !frame.body.containsKey("$db")) {
+                    frame.body.put("$db", new org.bson.BsonString(frame.legacyDb));
+                }
                 BsonDocument reply = dispatcher.dispatch(frame.body);
-                OpMsgFrame.writeReply(out, frame.requestId, reply, frame.legacyQuery);
+                if (!frame.noReply) {
+                    OpMsgFrame.writeReply(out, frame.requestId, reply, frame.legacyQuery);
+                }
                 if (sqlMetrics != null && !frame.body.isEmpty()) {
                     // Must match MongoCommandDispatcher#dispatch's own label exactly ("db.command",
                     // not just "command") or this updates a bucket that was never created and

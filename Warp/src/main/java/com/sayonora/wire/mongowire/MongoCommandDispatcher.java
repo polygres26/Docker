@@ -6,42 +6,56 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.bson.BsonArray;
 import org.bson.BsonBinary;
 import org.bson.BsonBoolean;
+import org.bson.BsonDateTime;
 import org.bson.BsonDocument;
 import org.bson.BsonDouble;
 import org.bson.BsonInt32;
 import org.bson.BsonInt64;
 import org.bson.BsonString;
 import org.bson.BsonValue;
-import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Executes one MongoDB command document against the Postgres-backed document store. The CRUD semantics live in
+ * {@link MongoCrud}, administration in {@link MongoAdmin}; this class routes commands, answers the handshake and
+ * server-info commands, and maps every failure to a MongoDB-style {@code {ok: 0, errmsg, code, codeName}} reply.
+ */
 final class MongoCommandDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(MongoCommandDispatcher.class);
+    static final int MAX_WIRE_VERSION = 21;
+    private static final String VERSION = "7.0.0";
+
     private final PostgresDocumentStore store;
     private final com.sayonora.wire.cluster.RowCache cache;
     private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
     private final CredentialStore credentials = new CredentialStore();
-    // SCRAM state for the single login attempt in flight on this connection -- mongowire is one
-    // dispatcher instance per connection (see MongoWireSessionHandler), so instance fields are the
-    // right scope, same as MongoScramConversation's own javadoc explains. conversationId is a
-    // simple per-connection counter; real MongoDB drivers just echo back whatever the server sent
-    // in saslStart's reply, they never invent their own.
+    private final MongoCrud crud;
+    private final MongoAdmin admin;
     private MongoScramConversation pendingScram;
     private int scramConversationId;
+    private String authenticatedUser;
+    private String remoteAddress = "127.0.0.1:0";
+    private final long connectionId = CONNECTION_IDS.incrementAndGet();
+    private static final java.util.concurrent.atomic.AtomicLong CONNECTION_IDS = new java.util.concurrent.atomic.AtomicLong();
 
     MongoCommandDispatcher(PostgresDocumentStore store, com.sayonora.wire.cluster.RowCache cache) {
         this(store, cache, null);
     }
 
-    MongoCommandDispatcher(PostgresDocumentStore store, com.sayonora.wire.cluster.RowCache cache, com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
+    MongoCommandDispatcher(PostgresDocumentStore store, com.sayonora.wire.cluster.RowCache cache,
+            com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
         this.store = store;
         this.cache = cache;
         this.sqlMetrics = sqlMetrics;
+        this.crud = new MongoCrud(store, cache, (outcome, nanos) -> recordRttOutcome(outcome, nanos));
+        this.admin = new MongoAdmin(store);
     }
 
     private com.sayonora.wire.core.ConnectionRouter router;
@@ -52,86 +66,185 @@ final class MongoCommandDispatcher {
         return this;
     }
 
-    private static final java.util.Set<String> DATA_PLANE = java.util.Set.of("insert", "find", "aggregate",
-            "update", "delete", "listcollections", "count", "distinct", "findandmodify");
+    MongoCommandDispatcher withRemoteAddress(String remote) {
+        this.remoteAddress = remote;
+        return this;
+    }
+
+    private static final Set<String> DATA_PLANE = Set.of("insert", "find", "aggregate", "update", "delete", "listCollections", "count",
+            "distinct", "findAndModify", "findandmodify", "create", "drop", "dropDatabase", "listIndexes", "createIndexes", "dropIndexes",
+            "collMod", "dbStats", "collStats", "validate", "getMore", "explain", "renameCollection");
+    private static final Set<String> VIRTUAL_DBS = Set.of("admin", "config", "local");
+
+    private static final List<String> COMMANDS = List.of("aggregate", "buildInfo", "collMod", "collStats", "connectionStatus", "count",
+            "create", "createIndexes", "dbStats", "delete", "distinct", "drop", "dropDatabase", "dropIndexes", "endSessions", "explain",
+            "find", "findAndModify", "getCmdLineOpts", "getMore", "getParameter", "hello", "hostInfo", "isMaster", "insert", "killCursors",
+            "killSessions", "listCollections", "listCommands", "listDatabases", "listIndexes", "logout", "ping", "refreshSessions",
+            "renameCollection", "saslContinue", "saslStart", "serverStatus", "startSession", "update", "validate", "whatsmyuri");
 
     BsonDocument dispatch(BsonDocument command) {
+        if (command.isEmpty()) {
+            return new MongoCmdException(59, "Received a command with an empty name").toReply();
+        }
         String commandName = command.getFirstKey();
-        String db = command.containsKey("$db") ? command.getString("$db").getValue() : "test";
-        String lower = commandName.toLowerCase(java.util.Locale.ROOT);
+        String db = command.containsKey("$db") && command.get("$db").isString() ? command.getString("$db").getValue() : "test";
         long start = System.nanoTime();
         try {
-            // Connect-time routing: $db names a backend or backend set (the handshake carries no database
-            // -- hello/auth are $db=admin -- so the per-command $db is the one place a Mongo client says
-            // which database it means). Only data-plane commands are routed/rejected.
-            if (router != null && DATA_PLANE.contains(lower)) {
+            if (router != null && DATA_PLANE.contains(commandName) && !VIRTUAL_DBS.contains(db)) {
                 com.sayonora.wire.core.ConnectionRoute route =
                         router.resolve(com.sayonora.wire.core.ConnectionRouter.PROTO_MONGODB, db, null);
                 if (route.isRejected()) {
-                    return error("database \"" + db + "\" not found", 26, "NamespaceNotFound");
+                    return new MongoCmdException(26, "database \"" + db + "\" not found").toReply();
                 }
                 List<String> hosts = router.storeBackends(route);
                 if (hosts != null && hosts.isEmpty()) {
-                    return error("database \"" + db + "\" routes to " + route.description()
-                            + ", which cannot store documents (only Postgres backends can)", 2, "BadValue");
+                    return new MongoCmdException(2, "database \"" + db + "\" routes to " + route.description()
+                            + ", which cannot store documents (only Postgres backends can)").toReply();
                 }
                 store.routeTo(hosts);
             } else {
                 store.routeTo(null);
             }
-            return switch (lower) {
-                case "hello", "ismaster", "ismastercmd" -> hello(command);
-                case "ping" -> ok();
-                case "buildinfo" -> buildInfo();
-                case "getparameter" -> ok();
-                case "endsessions" -> ok();
-                case "saslstart" -> saslStart(command);
-                case "saslcontinue" -> saslContinue(command);
-                case "insert" -> insert(command, db);
-                case "find" -> find(command, db);
-                case "aggregate" -> aggregate(command, db);
-                case "update" -> update(command, db);
-                case "delete" -> delete(command, db);
-                case "listcollections" -> listCollections(command, db);
-                case "count" -> count(command, db);
-                case "distinct" -> distinct(command, db);
-                case "findandmodify" -> findAndModify(command, db);
-                default -> commandNotFound(commandName);
-            };
-        } catch (IllegalArgumentException badFilter) {
-
-            return error(badFilter.getMessage(), 9);
+            return execute(commandName, command, db);
+        } catch (MongoCmdException e) {
+            return e.toReply();
+        } catch (MongoCrud.SqlFailure e) {
+            return sqlError(commandName, e.sql);
         } catch (SQLException e) {
-            log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
-            return error("Postgres error: " + e.getMessage(),
-                    MongoErrorMapper.code(e.getSQLState()), MongoErrorMapper.codeName(e.getSQLState()));
+            return sqlError(commandName, e);
+        } catch (org.bson.BsonInvalidOperationException | ClassCastException e) {
+            return new MongoCmdException(14, "BSON field type mismatch in '" + commandName + "': " + e.getMessage()).toReply();
+        } catch (IllegalArgumentException e) {
+            return new MongoCmdException(9, e.getMessage() == null ? "bad argument" : e.getMessage()).toReply();
+        } catch (RuntimeException e) {
+            MongoCrud.SqlFailure sf = null;
+            Throwable t = e;
+            while (t != null) {
+                if (t instanceof SQLException se) {
+                    return sqlError(commandName, se);
+                }
+                t = t.getCause();
+            }
+            log.warn("mongowire: unexpected failure servicing \"{}\": {}", commandName, e.toString(), e);
+            return new MongoCmdException(8, String.valueOf(e.getMessage() == null ? e.toString() : e.getMessage())).toReply();
         } finally {
-            // Only the real data-plane commands -- hello/ping/buildinfo/etc. are driver handshake
-            // noise on every connection, not something a traffic dashboard should show as
-            // "operations", and would otherwise dominate the top-N-by-cost table with near-zero
-            // latency entries.
             if (sqlMetrics != null) {
-                var kind = switch (lower) {
+                var kind = switch (commandName) {
                     case "find", "aggregate" -> com.sayonora.wire.core.SqlMetricsCollector.StatementKind.READ;
                     case "insert", "update", "delete" -> com.sayonora.wire.core.SqlMetricsCollector.StatementKind.WRITE;
                     default -> null;
                 };
                 if (kind != null) {
-                    sqlMetrics.recordOperation("mongowire", resolveBackendLabel(command, lower), kind, db + "." + lower,
+                    sqlMetrics.recordOperation("mongowire", resolveBackendLabel(command, commandName), kind, db + "." + commandName.toLowerCase(java.util.Locale.ROOT),
                             System.nanoTime() - start);
                 }
             }
         }
     }
 
-    /**
-     * Best-effort, metrics-label-only re-derivation of which shard an operation resolved to --
-     * mirrors dynamowire's {@code DynamoWireServer#resolveBackendLabel}. For find/update/delete
-     * this is exact ({@code exactIdEquality} is the same check the store itself uses to route);
-     * for insert it's a peek at the caller-supplied {@code _id} on the first document only --
-     * an auto-generated one isn't known until {@code insertOne} runs, and that's fine, this is a
-     * label, not a routing decision. Any failure just falls back to "default".
-     */
+    private BsonDocument sqlError(String commandName, SQLException e) {
+        log.warn("mongowire: Postgres error servicing \"{}\": {}", commandName, e.getMessage());
+        return new MongoCmdException(MongoErrorMapper.code(e.getSQLState()), "Postgres error: " + e.getMessage()).toReply();
+    }
+
+    private BsonDocument execute(String name, BsonDocument command, String db) throws SQLException {
+        switch (name) {
+            case "hello": case "isMaster": case "ismaster": case "ismastercmd":
+                return hello(command, name);
+            case "ping":
+                return ok();
+            case "buildInfo": case "buildinfo":
+                return buildInfo();
+            case "getParameter":
+                return getParameter(command);
+            case "setParameter":
+                return new BsonDocument("was", new BsonInt32(0)).append("ok", new BsonDouble(1.0));
+            case "endSessions": case "killSessions": case "refreshSessions": case "logout": case "killOp":
+                return ok();
+            case "startSession":
+                return new BsonDocument("id", new BsonDocument("id", new BsonBinary(java.util.UUID.randomUUID())))
+                        .append("timeoutMinutes", new BsonInt32(30)).append("ok", new BsonDouble(1.0));
+            case "saslStart":
+                return saslStart(command);
+            case "saslContinue":
+                return saslContinue(command);
+            case "whatsmyuri":
+                return new BsonDocument("you", new BsonString(remoteAddress)).append("ok", new BsonDouble(1.0));
+            case "connectionStatus":
+                return connectionStatus();
+            case "listCommands":
+                return listCommands();
+            case "serverStatus":
+                return MongoAdmin.serverStatus(1);
+            case "hostInfo":
+                return hostInfo();
+            case "getCmdLineOpts":
+                return new BsonDocument("argv", new BsonArray(List.of(new BsonString("mongod")))).append("parsed", new BsonDocument())
+                        .append("ok", new BsonDouble(1.0));
+            case "currentOp":
+                return new BsonDocument("inprog", new BsonArray()).append("ok", new BsonDouble(1.0));
+            case "getLog":
+                return new BsonDocument("totalLinesWritten", new BsonInt32(0)).append("log", new BsonArray()).append("ok", new BsonDouble(1.0));
+            case "profile":
+                return new BsonDocument("was", new BsonInt32(0)).append("slowms", new BsonInt32(100)).append("sampleRate", new BsonDouble(1.0))
+                        .append("ok", new BsonDouble(1.0));
+            case "replSetGetStatus": case "replSetGetConfig": case "replSetInitiate": case "replSetStepDown":
+                throw new MongoCmdException(76, "not running with --replSet");
+            case "insert":
+                return crud.insert(command, db);
+            case "find":
+                return crud.find(command, db);
+            case "getMore":
+                return crud.getMore(command, db);
+            case "killCursors":
+                return crud.killCursors(command, db);
+            case "aggregate":
+                return crud.aggregate(command, db);
+            case "update":
+                return crud.update(command, db);
+            case "delete":
+                return crud.delete(command, db);
+            case "count":
+                return crud.count(command, db);
+            case "distinct":
+                return crud.distinct(command, db);
+            case "findAndModify": case "findandmodify":
+                return crud.findAndModify(command, db);
+            case "create":
+                return admin.create(command, db);
+            case "drop":
+                return admin.drop(command, db);
+            case "dropDatabase":
+                return admin.dropDatabase(command, db);
+            case "renameCollection":
+                return admin.renameCollection(command, db);
+            case "listCollections":
+                return admin.listCollections(command, db);
+            case "listDatabases":
+                return admin.listDatabases(command, db);
+            case "listIndexes":
+                return admin.listIndexes(command, db);
+            case "createIndexes":
+                return admin.createIndexes(command, db);
+            case "dropIndexes":
+                return admin.dropIndexes(command, db);
+            case "collMod":
+                return admin.collMod(command, db);
+            case "dbStats":
+                return admin.dbStats(command, db);
+            case "collStats":
+                return admin.collStats(command, db);
+            case "validate":
+                return admin.validate(command, db);
+            case "explain":
+                return explain(command, db);
+            default:
+                throw new MongoCmdException(59, "no such command: '" + name + "'");
+        }
+    }
+
+    // ------------------------------------------------------------------ metrics helpers
+
     private String resolveBackendLabel(BsonDocument command, String lower) {
         try {
             BsonDocument filter = switch (lower) {
@@ -141,14 +254,13 @@ final class MongoCommandDispatcher {
                 default -> null;
             };
             if (filter != null) {
-                String idJson = MongoQueryTranslator.exactIdEquality(filter);
-                return idJson == null ? "default" : store.resolveBackendFor(idJson);
+                BsonValue eq = MongoMatcher.idEquality(filter);
+                return eq == null ? "default" : store.resolveBackendFor(PostgresDocumentStore.idKey(eq));
             }
             if ("insert".equals(lower) && command.containsKey("documents")) {
                 BsonArray docs = command.getArray("documents");
                 if (!docs.isEmpty() && docs.get(0).asDocument().containsKey("_id")) {
-                    String idJson = BsonJson.valueToJson(docs.get(0).asDocument().get("_id"));
-                    return store.resolveBackendFor(idJson);
+                    return store.resolveBackendFor(PostgresDocumentStore.idKey(docs.get(0).asDocument().get("_id")));
                 }
             }
             return "default";
@@ -168,28 +280,56 @@ final class MongoCommandDispatcher {
         return specs.get(0).asDocument().getDocument("q", new BsonDocument());
     }
 
-    private BsonDocument hello(BsonDocument command) {
-        BsonDocument reply = new BsonDocument();
-        reply.put("ismaster", BsonBoolean.TRUE);
-        reply.put("helloOk", BsonBoolean.TRUE);
-        reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
-        reply.put("maxMessageSizeBytes", new BsonInt32(48 * 1024 * 1024));
-        reply.put("maxWriteBatchSize", new BsonInt32(100000));
-        reply.put("localTime", new org.bson.BsonDateTime(System.currentTimeMillis()));
-        reply.put("logicalSessionTimeoutMinutes", new BsonInt32(30));
-        reply.put("connectionId", new BsonInt32(1));
-        reply.put("minWireVersion", new BsonInt32(0));
+    private void recordRttOutcome(String outcome, long elapsedNanos) {
+        if (sqlMetrics != null) {
+            sqlMetrics.recordRttOutcome("mongowire", switch (outcome) {
+                case "pg_write" -> com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE;
+                default -> com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ;
+            }, elapsedNanos);
+        }
+    }
 
-        reply.put("maxWireVersion", new BsonInt32(17));
+    // ------------------------------------------------------------------ handshake / server info
+
+    private static BsonDocument ok() {
+        return new BsonDocument("ok", new BsonDouble(1.0));
+    }
+
+    private BsonDocument hello(BsonDocument command, String name) {
+        boolean legacy = !name.equals("hello");
+        BsonDocument reply = new BsonDocument();
+        if (legacy) {
+            reply.put("ismaster", BsonBoolean.TRUE);
+        }
+        if (!legacy) {
+            reply.put("isWritablePrimary", BsonBoolean.TRUE);
+        }
+        if (command.containsKey("helloOk") && command.get("helloOk").isBoolean() && command.getBoolean("helloOk").getValue() || !legacy) {
+            if (legacy) {
+                reply.put("helloOk", BsonBoolean.TRUE);
+            }
+        }
+        reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
+        reply.put("maxMessageSizeBytes", new BsonInt32(48000000));
+        reply.put("maxWriteBatchSize", new BsonInt32(100000));
+        reply.put("localTime", new BsonDateTime(System.currentTimeMillis()));
+        reply.put("logicalSessionTimeoutMinutes", new BsonInt32(30));
+        reply.put("connectionId", new BsonInt64(connectionId));
+        reply.put("minWireVersion", new BsonInt32(0));
+        reply.put("maxWireVersion", new BsonInt32(MAX_WIRE_VERSION));
         reply.put("readOnly", BsonBoolean.FALSE);
-        // A client that's about to authenticate probes here first with saslSupportedMechs:
-        // "<db>.<user>" (real mongo-java-driver behavior whenever a MongoCredential is
-        // configured) to pick a mechanism before ever sending saslStart. Only SCRAM-SHA-256 is
-        // implemented (see MongoScramConversation's javadoc), so that's the only one advertised --
-        // a driver that only supports SCRAM-SHA-1 will fail to negotiate a mechanism and report
-        // that clearly, rather than this server silently accepting a mechanism it can't actually
-        // verify.
-        if (command.containsKey("saslSupportedMechs")) {
+        if (command.containsKey("compression") && command.get("compression").isArray()) {
+            BsonArray accepted = new BsonArray();
+            for (BsonValue c : command.getArray("compression")) {
+                if (c.isString() && c.asString().getValue().equals("zlib")) {
+                    accepted.add(c);
+                }
+            }
+            if (!accepted.isEmpty()) {
+                reply.put("compression", accepted);
+            }
+        }
+        if (command.containsKey("saslSupportedMechs") && command.get("saslSupportedMechs").isString()) {
             String spec = command.getString("saslSupportedMechs").getValue();
             int dot = spec.indexOf('.');
             String username = dot >= 0 ? spec.substring(dot + 1) : spec;
@@ -204,17 +344,17 @@ final class MongoCommandDispatcher {
     private BsonDocument saslStart(BsonDocument command) {
         String mechanism = command.containsKey("mechanism") ? command.getString("mechanism").getValue() : "";
         if (!"SCRAM-SHA-256".equals(mechanism)) {
-            return error("Unsupported mechanism '" + mechanism + "' -- only SCRAM-SHA-256 is implemented", 334, "MechanismUnavailable");
+            return new MongoCmdException(334, "Unsupported mechanism '" + mechanism + "' -- only SCRAM-SHA-256 is implemented").toReply();
         }
         String clientFirstMessage = new String(command.getBinary("payload").getData(), StandardCharsets.UTF_8);
         MongoScramConversation conversation;
         try {
             conversation = MongoScramConversation.start(clientFirstMessage, credentials);
         } catch (IllegalArgumentException malformed) {
-            return error("Invalid SCRAM client-first-message: " + malformed.getMessage(), 9);
+            return new MongoCmdException(9, "Invalid SCRAM client-first-message: " + malformed.getMessage()).toReply();
         }
         if (conversation == null) {
-            return error("Authentication failed.", 18, "AuthenticationFailed");
+            return new MongoCmdException(18, "Authentication failed.").toReply();
         }
         pendingScram = conversation;
         scramConversationId++;
@@ -228,15 +368,16 @@ final class MongoCommandDispatcher {
     private BsonDocument saslContinue(BsonDocument command) {
         int conversationId = command.getNumber("conversationId").intValue();
         if (pendingScram == null || conversationId != scramConversationId) {
-            return error("Authentication failed.", 18, "AuthenticationFailed");
+            return new MongoCmdException(18, "Authentication failed.").toReply();
         }
         String clientFinalMessage = new String(command.getBinary("payload").getData(), StandardCharsets.UTF_8);
         String serverFinalMessage = pendingScram.verifyAndFinish(clientFinalMessage);
         if (serverFinalMessage == null) {
             pendingScram = null;
-            return error("Authentication failed.", 18, "AuthenticationFailed");
+            return new MongoCmdException(18, "Authentication failed.").toReply();
         }
         pendingScram = null;
+        authenticatedUser = "user";
         BsonDocument reply = ok();
         reply.put("conversationId", new BsonInt32(conversationId));
         reply.put("done", BsonBoolean.TRUE);
@@ -245,285 +386,160 @@ final class MongoCommandDispatcher {
     }
 
     private BsonDocument buildInfo() {
-        BsonDocument reply = ok();
-        reply.put("version", new BsonString("7.0.0-warp-mongowire"));
-        reply.put("versionArray", new BsonArray(List.of(new BsonInt32(7), new BsonInt32(0), new BsonInt32(0))));
+        BsonDocument reply = new BsonDocument();
+        reply.put("version", new BsonString(VERSION));
+        reply.put("gitVersion", new BsonString("warp-mongowire"));
+        reply.put("modules", new BsonArray());
+        reply.put("allocator", new BsonString("system"));
+        reply.put("javascriptEngine", new BsonString("none"));
+        reply.put("sysInfo", new BsonString("deprecated"));
+        reply.put("versionArray", new BsonArray(List.of(new BsonInt32(7), new BsonInt32(0), new BsonInt32(0), new BsonInt32(0))));
+        reply.put("bits", new BsonInt32(64));
+        reply.put("debug", BsonBoolean.FALSE);
         reply.put("maxBsonObjectSize", new BsonInt32(16 * 1024 * 1024));
+        reply.put("storageEngines", new BsonArray(List.of(new BsonString("postgres"))));
+        reply.put("ok", new BsonDouble(1.0));
         return reply;
     }
 
-    private static BsonDocument ok() {
-        BsonDocument doc = new BsonDocument();
-        doc.put("ok", new BsonDouble(1.0));
-        return doc;
-    }
-
-    private static BsonDocument error(String message, int code) {
-        return error(message, code, null);
-    }
-
-    /** {@code codeName} is real MongoDB's own second, string-typed identifier for the same error
-     * -- a genuine command-error reply always carries both, not code alone (see {@link
-     * MongoErrorMapper}'s javadoc). Callers that only have a bare numeric code (the handful of
-     * fixed, hand-picked codes elsewhere in this class, like {@link #commandNotFound}) pass {@code
-     * null} via the other overload rather than inventing a codeName that isn't real. */
-    private static BsonDocument error(String message, int code, String codeName) {
-        BsonDocument doc = new BsonDocument();
-        doc.put("ok", new BsonDouble(0.0));
-        doc.put("errmsg", new BsonString(message));
-        doc.put("code", new BsonInt32(code));
-        if (codeName != null) {
-            doc.put("codeName", new BsonString(codeName));
-        }
-        return doc;
-    }
-
-    private static BsonDocument commandNotFound(String commandName) {
-        return error("no such command: '" + commandName + "' (mongowire covers hello/ping/buildInfo/"
-                + "getParameter/endSessions plus find/insert/update/delete/aggregate — not "
-                + "index/admin commands or auth)", 59);
-    }
-
-    /** Shared by every read/write branch below -- one sample per Mongo command, same granularity
-     * {@link #dispatch} already uses for {@code recordOperation}. No-op if metrics are disabled. */
-    private void recordRttOutcome(String outcome, long elapsedNanos) {
-        if (sqlMetrics != null) {
-            sqlMetrics.recordRttOutcome("mongowire", outcome, elapsedNanos);
-        }
-    }
-
-    private BsonDocument insert(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("insert").getValue();
-        BsonArray documents = command.getArray("documents");
-        int inserted = 0;
-        List<BsonDocument> writeErrors = new ArrayList<>();
-        long writeStart = System.nanoTime();
-        for (int i = 0; i < documents.size(); i++) {
-            Document doc = BsonJson.toDocument(documents.get(i).asDocument());
-            try {
-                // No cache.invalidate() here, deliberately -- found live costing ~150-270us on
-                // every single insert (an Ignite cache op, not free even locally) to guard
-                // against a case that can't happen: a freshly successful INSERT (not an upsert)
-                // means this _id wasn't already in the table, and updateMany/deleteMany below
-                // already invalidate their own touched keys on every write, so any *prior*
-                // occupant of this _id (if it was ever deleted to free the id up for reuse) had
-                // its cache entry cleared by that delete already. By the time a fresh insert can
-                // reuse an _id, there is nothing stale left to invalidate.
-                store.insertOne(db, collection, doc);
-                inserted++;
-            } catch (SQLException e) {
-                BsonDocument werr = new BsonDocument();
-                werr.put("index", new BsonInt32(i));
-                // Real MongoDB per-item writeErrors always carry code/codeName, not just errmsg --
-                // this was missing entirely before, so a real driver's own per-item error handling
-                // (pymongo's BulkWriteError.details['writeErrors'][i]['code'], etc.) had nothing
-                // to key off.
-                werr.put("code", new BsonInt32(MongoErrorMapper.code(e.getSQLState())));
-                werr.put("codeName", new BsonString(MongoErrorMapper.codeName(e.getSQLState())));
-                werr.put("errmsg", new BsonString(e.getMessage()));
-                writeErrors.add(werr);
+    private BsonDocument getParameter(BsonDocument command) {
+        BsonDocument reply = new BsonDocument();
+        boolean all = false;
+        int found = 0;
+        for (Map.Entry<String, BsonValue> e : command.entrySet()) {
+            String k = e.getKey();
+            if (k.equals("getParameter")) {
+                if (e.getValue().isString() && e.getValue().asString().getValue().equals("*")) {
+                    all = true;
+                }
+                continue;
             }
+            if (k.startsWith("$") || k.equals("lsid") || k.equals("comment") || k.equals("maxTimeMS") || k.equals("showDetails")
+                    || k.equals("allParameters")) {
+                continue;
+            }
+            BsonValue v = parameter(k);
+            if (v == null) {
+                throw new MongoCmdException(72, "no option found to get");
+            }
+            reply.put(k, v);
+            found++;
         }
-        recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
-        BsonDocument reply = ok();
-        reply.put("n", new BsonInt32(inserted));
-        if (!writeErrors.isEmpty()) {
-            reply.put("writeErrors", new BsonArray(new ArrayList<>(writeErrors)));
+        if (all || command.containsKey("allParameters") && MongoExpr.truthy(command.get("allParameters"))) {
+            for (String k : List.of("featureCompatibilityVersion", "authenticationMechanisms", "maxBSONDepth", "logLevel")) {
+                reply.put(k, parameter(k));
+            }
+        } else if (found == 0 && !(command.get("getParameter").isString())) {
+            // {getParameter: 1} alone
+            throw new MongoCmdException(72, "no option found to get");
         }
+        reply.put("ok", new BsonDouble(1.0));
         return reply;
     }
 
-    private BsonDocument find(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("find").getValue();
-        BsonDocument filter = command.containsKey("filter") ? command.getDocument("filter") : new BsonDocument();
-        int limit = command.containsKey("limit") ? command.getNumber("limit").intValue() : 0;
-        List<Document> docs;
-        
-        // The single-row cache is keyed by db.collection alone (no backend): never serve or fill it for a
-        // connection routed to a specific backend/set.
-        String idJson = cache != null && !store.isRouted() ? MongoQueryTranslator.exactIdEquality(filter) : null;
-        if (idJson != null) {
-            String physicalTable = db + "." + collection;
-            String cacheKey = com.sayonora.wire.cluster.RowCache.key(physicalTable, idJson, null);
-            long cacheStart = System.nanoTime();
-            String cachedJson = cache.get(cacheKey);
-            if (cachedJson != null) {
-                log.debug("mongowire cache hit: {}", cacheKey);
-                recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - cacheStart);
-                docs = List.of(BsonJson.fromJson(cachedJson));
-            } else {
-                long readStart = System.nanoTime();
-                docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
-                recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
-                if (!docs.isEmpty()) {
-                    cache.put(cacheKey, BsonJson.toJson(docs.get(0)));
+    private static BsonValue parameter(String name) {
+        return switch (name) {
+            case "featureCompatibilityVersion" -> new BsonDocument("version", new BsonString("7.0"));
+            case "authenticationMechanisms" -> new BsonArray(List.of(new BsonString("SCRAM-SHA-256")));
+            case "maxBSONDepth" -> new BsonInt32(200);
+            case "logLevel" -> new BsonInt32(0);
+            case "quiet" -> BsonBoolean.FALSE;
+            case "internalQueryMaxBlockingSortMemoryUsageBytes" -> new BsonInt32(104857600);
+            default -> null;
+        };
+    }
+
+    private BsonDocument connectionStatus() {
+        BsonArray users = new BsonArray();
+        BsonArray roles = new BsonArray();
+        if (authenticatedUser != null) {
+            users.add(new BsonDocument("user", new BsonString(authenticatedUser)).append("db", new BsonString("admin")));
+        }
+        BsonDocument auth = new BsonDocument("authenticatedUsers", users).append("authenticatedUserRoles", roles);
+        return new BsonDocument("authInfo", auth).append("ok", new BsonDouble(1.0));
+    }
+
+    private BsonDocument listCommands() {
+        BsonDocument cmds = new BsonDocument();
+        for (String c : COMMANDS) {
+            cmds.put(c, new BsonDocument("help", new BsonString("")).append("requiresAuth", BsonBoolean.FALSE).append("secondaryOk", BsonBoolean.TRUE)
+                    .append("secondaryOverrideOk", BsonBoolean.FALSE).append("apiVersions", new BsonArray()).append("deprecatedApiVersions", new BsonArray())
+                    .append("adminOnly", BsonBoolean.valueOf(List.of("listDatabases", "renameCollection", "hostInfo", "serverStatus").contains(c))));
+        }
+        return new BsonDocument("commands", cmds).append("ok", new BsonDouble(1.0));
+    }
+
+    private BsonDocument hostInfo() {
+        BsonDocument system = new BsonDocument("currentTime", new BsonDateTime(System.currentTimeMillis()))
+                .append("hostname", new BsonString("warp")).append("cpuAddrSize", new BsonInt32(64))
+                .append("memSizeMB", new BsonInt64(Runtime.getRuntime().maxMemory() / (1024 * 1024)))
+                .append("numCores", new BsonInt32(Runtime.getRuntime().availableProcessors()))
+                .append("cpuArch", new BsonString(System.getProperty("os.arch"))).append("numaEnabled", BsonBoolean.FALSE);
+        BsonDocument os = new BsonDocument("type", new BsonString(System.getProperty("os.name"))).append("name", new BsonString(System.getProperty("os.name")))
+                .append("version", new BsonString(System.getProperty("os.version")));
+        return new BsonDocument("system", system).append("os", os).append("extra", new BsonDocument()).append("ok", new BsonDouble(1.0));
+    }
+
+    // ------------------------------------------------------------------ explain
+
+    private BsonDocument explain(BsonDocument command, String db) throws SQLException {
+        BsonValue inner = command.get("explain");
+        if (inner == null || !inner.isDocument() || inner.asDocument().isEmpty()) {
+            throw new MongoCmdException(14, "BSON field 'explain.explain' is the wrong type, expected type 'object'");
+        }
+        BsonDocument cmd = inner.asDocument().clone();
+        if (!cmd.containsKey("$db")) {
+            cmd.put("$db", new BsonString(db));
+        }
+        String verbosity = command.containsKey("verbosity") && command.get("verbosity").isString()
+                ? command.getString("verbosity").getValue() : "allPlansExecution";
+        String cname = cmd.getFirstKey();
+        if (!List.of("find", "aggregate", "count", "distinct", "update", "delete", "findAndModify").contains(cname)) {
+            throw new MongoCmdException(59, "Explain failed due to unknown command: " + cname);
+        }
+        String coll = cmd.get(cname).isString() ? cmd.getString(cname).getValue() : "";
+        BsonDocument filter = cmd.containsKey("filter") && cmd.get("filter").isDocument() ? cmd.getDocument("filter")
+                : cmd.containsKey("query") && cmd.get("query").isDocument() ? cmd.getDocument("query") : new BsonDocument();
+        BsonDocument r = new BsonDocument("explainVersion", new BsonString("1"));
+        r.put("queryPlanner", MongoCrud.planner(db + "." + coll, filter));
+        if (!verbosity.equals("queryPlanner")) {
+            long n = 0;
+            long examined = 0;
+            if (cname.equals("find")) {
+                BsonDocument c2 = cmd.clone();
+                c2.put("batchSize", new BsonInt32(0));
+                c2.remove("limit");
+                BsonDocument all = crudCount(coll, db, filter);
+                examined = all.getInt64("n").getValue();
+                n = examined;
+                BsonDocument countCmd = new BsonDocument("count", new BsonString(coll)).append("query", filter).append("$db", new BsonString(db));
+                n = MongoNum.truncLong(crud.count(countCmd, db).get("n"));
+                if (cmd.containsKey("limit") && MongoNum.truncLong(cmd.get("limit")) > 0) {
+                    n = Math.min(n, MongoNum.truncLong(cmd.get("limit")));
                 }
             }
-        } else {
-            long readStart = System.nanoTime();
-            docs = store.find(db, collection, filter, MongoQueryTranslator.translate(filter), limit);
-            recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
+            BsonDocument stages = new BsonDocument("stage", new BsonString("COLLSCAN")).append("nReturned", new BsonInt32((int) n))
+                    .append("executionTimeMillisEstimate", new BsonInt32(0)).append("works", new BsonInt64(examined + 1))
+                    .append("advanced", new BsonInt64(n)).append("direction", new BsonString("forward"))
+                    .append("docsExamined", new BsonInt64(examined));
+            r.put("executionStats", new BsonDocument("executionSuccess", BsonBoolean.TRUE).append("nReturned", new BsonInt32((int) n))
+                    .append("executionTimeMillis", new BsonInt32(0)).append("totalKeysExamined", new BsonInt64(0))
+                    .append("totalDocsExamined", new BsonInt64(examined)).append("executionStages", stages));
         }
-
-        BsonArray firstBatch = new BsonArray();
-        for (Document d : docs) {
-            firstBatch.add(d.toBsonDocument());
-        }
-        BsonDocument cursor = new BsonDocument();
-        cursor.put("id", new BsonInt64(0));
-        cursor.put("ns", new BsonString(db + "." + collection));
-        cursor.put("firstBatch", firstBatch);
-
-        BsonDocument reply = ok();
-        reply.put("cursor", cursor);
-        return reply;
+        r.put("command", cmd);
+        r.put("serverInfo", MongoCrud.serverInfo());
+        r.put("serverParameters", new BsonDocument("internalQueryFacetBufferSizeBytes", new BsonInt32(104857600)));
+        r.put("ok", new BsonDouble(1.0));
+        return r;
     }
 
-    /** Real {@code aggregate} support -- see {@link MongoAggregationTranslator}'s own javadoc for
-     * the exact pipeline shape this understands ({@code [$match] [$group] [$sort] [$limit]
-     * [$project]}, each optional). Reply shape mirrors {@link #find}'s cursor-with-firstBatch --
-     * a real driver's {@code aggregate()} cursor iterator reads this identically either way. */
-    private BsonDocument aggregate(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("aggregate").getValue();
-        BsonArray pipeline = command.containsKey("pipeline") ? command.getArray("pipeline") : new BsonArray();
-        String table = PostgresDocumentStore.qualifiedTable(db, collection);
-
-        long readStart = System.nanoTime();
-        List<Document> docs = store.aggregate(db, collection, table, pipeline);
-        recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_READ, System.nanoTime() - readStart);
-
-        BsonArray firstBatch = new BsonArray();
-        for (Document d : docs) {
-            firstBatch.add(d.toBsonDocument());
-        }
-        BsonDocument cursor = new BsonDocument();
-        cursor.put("id", new BsonInt64(0));
-        cursor.put("ns", new BsonString(db + "." + collection));
-        cursor.put("firstBatch", firstBatch);
-
-        BsonDocument reply = ok();
-        reply.put("cursor", cursor);
-        return reply;
+    private BsonDocument crudCount(String coll, String db, BsonDocument filter) throws SQLException {
+        BsonDocument countCmd = new BsonDocument("count", new BsonString(coll)).append("$db", new BsonString(db));
+        BsonDocument r = crud.count(countCmd, db);
+        return new BsonDocument("n", new BsonInt64(MongoNum.truncLong(r.get("n"))));
     }
 
-    private BsonDocument update(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("update").getValue();
-        BsonArray updates = command.getArray("updates");
-        int matched = 0;
-        int modified = 0;
-        long writeStart = System.nanoTime();
-        for (BsonValue u : updates) {
-            BsonDocument spec = u.asDocument();
-            BsonDocument filter = spec.getDocument("q", new BsonDocument());
-            Document updateDoc = BsonJson.toDocument(spec.getDocument("u"));
-            boolean multi = spec.containsKey("multi") && spec.getBoolean("multi").getValue();
-            MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            PostgresDocumentStore.WriteResult result = store.updateMany(db, collection, filter, where, updateDoc, multi ? 0 : 1);
-            matched += result.count();
-            modified += result.count();
-            if (cache != null) {
-                for (String idJson : result.ids()) {
-                    cache.invalidate(com.sayonora.wire.cluster.RowCache.key(db + "." + collection, idJson, null));
-                }
-            }
-        }
-        recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
-        BsonDocument reply = ok();
-        reply.put("n", new BsonInt32(matched));
-        reply.put("nModified", new BsonInt32(modified));
-        return reply;
-    }
-
-    private BsonDocument delete(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("delete").getValue();
-        BsonArray deletes = command.getArray("deletes");
-        int deleted = 0;
-        long writeStart = System.nanoTime();
-        for (BsonValue d : deletes) {
-            BsonDocument spec = d.asDocument();
-            BsonDocument filter = spec.getDocument("q", new BsonDocument());
-            int limit = spec.containsKey("limit") ? spec.getNumber("limit").intValue() : 0;
-            MongoQueryTranslator.Where where = MongoQueryTranslator.translate(filter);
-            PostgresDocumentStore.WriteResult result = store.deleteMany(db, collection, filter, where, limit);
-            deleted += result.count();
-            if (cache != null) {
-                for (String idJson : result.ids()) {
-                    cache.invalidate(com.sayonora.wire.cluster.RowCache.key(db + "." + collection, idJson, null));
-                }
-            }
-        }
-        recordRttOutcome(com.sayonora.wire.core.SqlMetricsCollector.OUTCOME_PG_WRITE, System.nanoTime() - writeStart);
-        BsonDocument reply = ok();
-        reply.put("n", new BsonInt32(deleted));
-        return reply;
-    }
-
-    /** Real {@code listCollections} support -- see {@link PostgresDocumentStore#listCollections}'s
-     * own javadoc for why this closes a connection-SETUP gap, not just a query gap (mongoose's
-     * default {@code autoIndex} behavior calls this before ever running a real query). Reply
-     * shape mirrors a real server's own {@code {cursor: {firstBatch: [{name, type}]}}}. */
-    private BsonDocument listCollections(BsonDocument command, String db) throws SQLException {
-        List<String> names = store.listCollections(db);
-        BsonArray firstBatch = new BsonArray();
-        for (String name : names) {
-            BsonDocument entry = new BsonDocument();
-            entry.put("name", new BsonString(name));
-            entry.put("type", new BsonString("collection"));
-            firstBatch.add(entry);
-        }
-        BsonDocument cursor = new BsonDocument();
-        cursor.put("id", new BsonInt64(0));
-        cursor.put("ns", new BsonString(db + ".$cmd.listCollections"));
-        cursor.put("firstBatch", firstBatch);
-        BsonDocument reply = ok();
-        reply.put("cursor", cursor);
-        return reply;
-    }
-
-    /** Real {@code count}/{@code countDocuments} support. */
-    private BsonDocument count(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("count").getValue();
-        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
-        long n = store.count(db, collection, MongoQueryTranslator.translate(filter));
-        BsonDocument reply = ok();
-        reply.put("n", new BsonInt64(n));
-        return reply;
-    }
-
-    /** Real {@code distinct} support. */
-    private BsonDocument distinct(BsonDocument command, String db) throws SQLException {
-        String collection = command.getString("distinct").getValue();
-        String field = command.getString("key").getValue();
-        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
-        List<org.bson.BsonValue> values = store.distinct(db, collection, field, MongoQueryTranslator.translate(filter));
-        BsonDocument reply = ok();
-        reply.put("values", new BsonArray(values));
-        return reply;
-    }
-
-    /** Real {@code findAndModify} support -- the single wire command real drivers/ODMs use for
-     * BOTH {@code findOneAndUpdate} and {@code findOneAndDelete}. See {@link
-     * PostgresDocumentStore#findAndModify}'s own javadoc for the exact matching/return-value
-     * semantics. Reply shape mirrors a real server's own {@code {value: <doc-or-null>}}. */
-    private BsonDocument findAndModify(BsonDocument command, String db) throws SQLException {
-        // The command's own first key IS its collection-name value, whatever casing the client
-        // actually sent ("findAndModify" vs "findandmodify" -- driver-dependent) -- reading it
-        // positionally like this sidesteps needing to guess which spelling to look up.
-        String collection = command.get(command.getFirstKey()).asString().getValue();
-        BsonDocument filter = command.containsKey("query") ? command.getDocument("query") : new BsonDocument();
-        boolean remove = command.containsKey("remove") && command.getBoolean("remove").getValue();
-        boolean returnNew = command.containsKey("new") && command.getBoolean("new").getValue();
-        Document updateMerger = null;
-        if (!remove) {
-            if (!command.containsKey("update")) {
-                throw new IllegalArgumentException("findAndModify: either \"remove\" or \"update\" must be given");
-            }
-            updateMerger = Document.parse(command.getDocument("update").toJson());
-        }
-        Document result = store.findAndModify(db, collection, filter, MongoQueryTranslator.translate(filter),
-                updateMerger, remove, returnNew);
-        BsonDocument reply = ok();
-        reply.put("value", result != null ? result.toBsonDocument() : org.bson.BsonNull.VALUE);
-        return reply;
+    static List<String> commands() {
+        return new ArrayList<>(COMMANDS);
     }
 }

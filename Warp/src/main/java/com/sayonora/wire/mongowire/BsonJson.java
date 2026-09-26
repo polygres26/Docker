@@ -28,6 +28,10 @@ final class BsonJson {
         return Document.parse(json);
     }
 
+    static BsonDocument toBson(Document document) {
+        return document.toBsonDocument();
+    }
+
     static Document toDocument(BsonDocument bsonDocument) {
         return new DocumentCodec().decode(new BsonDocumentReader(bsonDocument), DecoderContext.builder().build());
     }

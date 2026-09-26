@@ -35,15 +35,15 @@ final class MongoToolProvider implements BackendToolProvider {
     private static final int MAX_DOCS = 1000;
     private static final Map<String, String> UNSUPPORTED = Map.ofEntries(
             Map.entry("create-collection", "collections are created implicitly by the first insert-many"),
-            Map.entry("drop-collection", "mongowire has no drop/DDL commands"),
-            Map.entry("drop-database", "mongowire has no drop/DDL commands"),
-            Map.entry("rename-collection", "mongowire has no rename command"),
-            Map.entry("create-index", "mongowire has no index management"),
-            Map.entry("drop-index", "mongowire has no index management"),
-            Map.entry("collection-indexes", "mongowire has no index management"),
-            Map.entry("explain", "mongowire has no explain command"),
-            Map.entry("db-stats", "mongowire has no dbStats command"),
-            Map.entry("collection-storage-size", "mongowire has no collStats command"));
+            Map.entry("drop-collection", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("drop-database", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("rename-collection", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("create-index", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("drop-index", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("collection-indexes", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("explain", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("db-stats", "not exposed by this gateway (use a MongoDB client against mongowire)"),
+            Map.entry("collection-storage-size", "not exposed by this gateway (use a MongoDB client against mongowire)"));
 
     private static final String EMULATED_LIST_DATABASES_SQL = "SELECT DISTINCT c.table_schema FROM information_schema.columns c "
             + "JOIN information_schema.columns d ON d.table_schema = c.table_schema "
@@ -78,7 +78,7 @@ final class MongoToolProvider implements BackendToolProvider {
                                 "filter", filter, "projection", obj("Fields to include/exclude"),
                                 "sort", obj("Sort spec, e.g. {\"age\": -1}"), "limit", num("Max documents (default 10)"),
                                 "skip", num("Documents to skip")), false),
-                new Tool("aggregate", "Run an aggregation pipeline ([$match] [$group] [$sort] [$limit] [$project]).",
+                new Tool("aggregate", "Run an aggregation pipeline (all stages and expression operators mongowire supports).",
                         schema(List.of("database", "collection", "pipeline"), "database", db, "collection", coll,
                                 "pipeline", arr("Aggregation stages")), false),
                 new Tool("count", "Count documents matching a filter.",

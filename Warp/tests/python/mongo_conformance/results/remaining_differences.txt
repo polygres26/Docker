@@ -1,0 +1,104 @@
+# Remaining differences from MongoDB 7.0 (single backend run; every other step of the recorded corpus is identical or differs only in message text / codeName)
+Class c = infeasible or deliberately unsupported; there are no class a (not implemented but wanted) or class b (wrong behaviour) differences left in the corpus.
+
+## aggregation error code of a failing expression/stage differs (both fail) (42 steps)
+agg_pipes_02/p10, agg_pipes_04/p13, expr_00/e08, expr_00/e18, expr_00/e28, expr_00/e37, expr_03/e33, expr_04/e02, expr_05/e04, expr_05/e19, expr_05/e37, expr_06/e10, expr_06/e11, expr_06/e12, expr_06/e17, expr_06/e32, expr_07/e03, expr_07/e04, expr_07/e10, expr_07/e19, expr_07/e29, expr_07/e30, expr_07/e31, expr_07/e34, expr_08/e08, expr_08/e25, expr_08/e32, expr_08/e38, expr_09/e03, expr_09/e08, expr_09/e17, expr_09/e20, expr_10/e11, expr_10/e17, expr_10/e25, expr_13/e07, expr_13/e08, expr_13/e17, expr_14/e30, expr_16/e06 ...
+
+## views (system.views) are not implemented (4 steps)
+admin_collections/listcollections_filter_type, admin_collections/names, admin_collections/names_after, admin_collections/names_after_rename
+
+## geospatial query operators are not implemented (2 steps)
+find_filters_13/f08, find_filters_13/f09
+
+## listIndexes includes the unsupported text/2dsphere indexes (2 steps)
+idx_create_list_drop/index_information, idx_create_list_drop/list_after
+
+## index counts include the unsupported text/2dsphere indexes (2 steps)
+idx_create_list_drop/raw_create, idx_create_list_drop/raw_create_dup
+
+## $gt MinKey over mixed types (1 steps)
+find_filters_02/f11
+
+## $lt MaxKey over mixed types (1 steps)
+find_filters_02/f12
+
+## query path with a trailing '.' is treated differently (1 steps)
+find_filters_11/f01
+
+## deeply missing dotted path on empty subdocument (1 steps)
+find_filters_11/f02
+
+## $where needs a JavaScript engine (unsupported, clear BadValue error) (1 steps)
+find_filters_13/f00
+
+## error code for a non-string collection name in count (1 steps)
+count_distinct_estimated/count_cmd_bad_coll
+
+## $bucketAuto boundaries when values tie (1 steps)
+agg_pipes_05/p06
+
+## $lookup with an array localField: order/duplicates of matches within 'o' (1 steps)
+agg_pipes_05/p23
+
+## $currentOp is not implemented (1 steps)
+agg_pipes_06/p24
+
+## $geoNear is not implemented (1 steps)
+agg_pipes_07/p01
+
+## $search is Atlas-only; Warp answers CommandNotSupported instead (1 steps)
+agg_pipes_07/p03
+
+## $densify is not implemented (1 steps)
+agg_pipes_07/p08
+
+## $fill is not implemented (1 steps)
+agg_pipes_07/p09
+
+## message text (1 steps)
+agg_out_merge/merge_fail
+
+## $merge does not verify a unique index on the join fields (1 steps)
+agg_out_merge/merge_on_field
+
+## libm last digit of exp(1) (1 steps)
+expr_02/e09
+
+## $regexFindAll with empty matches (1 steps)
+expr_05/e35
+
+## $toHashedIndexKey is not implemented (1 steps)
+expr_16/e22
+
+## '$db' is accepted as a field name by mongod inside an expression object (1 steps)
+expr_17/e06
+
+## text indexes are not implemented (CommandNotSupported) (1 steps)
+idx_create_list_drop/text
+
+## 2dsphere indexes are not implemented (CommandNotSupported) (1 steps)
+idx_create_list_drop/2dsphere
+
+## unique index collation key message (1 steps)
+idx_unique_enforcement/coll2_case
+
+## views are not implemented (1 steps)
+admin_collections/create_view
+
+## collStats of a missing collection returns zeros of different integer widths (1 steps)
+admin_collections/collstats_missing
+
+## views/system.views counted by mongod (1 steps)
+admin_collections/dbstats_counts
+
+## validation error details (errInfo) are simplified (1 steps)
+admin_validators/many_unordered
+
+## explain of an empty collection reports EOF in mongod, COLLSCAN here (1 steps)
+server_commands/explain_stage
+
+## Two backends only: depends on natural document order, which differs across shards (33 steps)
+agg_pipes_00/p05, agg_pipes_00/p06, agg_pipes_00/p07, agg_pipes_03/p12, agg_pipes_03/p16, agg_pipes_03/p17, agg_pipes_04/p06, agg_pipes_04/p08, agg_pipes_05/p15, agg_pipes_07/p16, delete_semantics/s1, delete_semantics/s2, find_large_and_batches/default_102, find_large_and_batches/exact_batch_boundary_unsorted, find_large_and_batches/exact_default_101, find_large_and_batches/first_batch_exact, find_large_and_batches/limit_eq_batch, find_large_and_batches/limit_gt_batch, find_large_and_batches/limit_lt_batch, find_large_and_batches/single_batch, find_natural_order_and_defaults/limit, find_natural_order_and_defaults/neg_limit, find_natural_order_and_defaults/skip, find_natural_order_and_defaults/skip_limit, find_sort/sort_empty, update_positional_arrayfilters/many_af_state, update_positional_arrayfilters/many_all_state, update_semantics/one_noop_same_value, update_semantics/s1, update_semantics/s2, update_semantics/s3, update_semantics/s4, update_semantics/s5
+
+## Spec suites
+See spec_after_1backend.json / spec_after_2backends.json. The 12 failures on two backends are all natural-order dependent (first match of an updateOne/findOneAndUpdate without a sort, unsorted multi-batch result order, `distinct` with a collation returning another representative of equal strings).

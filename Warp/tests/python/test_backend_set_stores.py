@@ -268,10 +268,8 @@ def test_mongodb_documents_shard_by_id_and_finds_scatter_gather(warp, pgs, ports
     top = list(coll.aggregate([{"$group": {"_id": "$grp", "c": {"$sum": 1}}}, {"$sort": {"c": -1, "_id": 1}},
                                {"$limit": 2}]))
     assert len(top) == 2 and top[0]["c"] >= top[1]["c"]
-    # what cannot be merged exactly is refused, not silently wrong
-    with pytest.raises(OperationFailure) as e:
-        list(coll.aggregate([{"$sort": {"n": -1}}, {"$limit": 3}]))
-    assert "several backends" in str(e.value)
+    # a global $sort + $limit is exact too: every host is scanned and the pipeline runs once over the merged documents
+    assert [d["n"] for d in coll.aggregate([{"$sort": {"n": -1}}, {"$limit": 3}])] == [119, 118, 117]
 
 
 # ---------------------------------------------------------------------------------------------
