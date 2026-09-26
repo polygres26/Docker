@@ -1,5 +1,6 @@
-# Warp -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
-# dynamowire/sqswire/gRPC/MCP) plus its own admin app (Warp/web). Build context is the repo root
+# Warp -- multi-protocol gateway that makes Postgres speak SQL (pg/my/mssql/ora), MongoDB, DynamoDB,
+# SQS, S3, Redis, OpenSearch, InfluxDB, Neo4j, Azure Storage, Google Cloud Storage, SNS, Kinesis,
+# Secrets Manager, SSM, KMS, STS and Pub/Sub, plus gRPC and MCP, and its own admin app (Warp/web). Build context is the repo root
 # (see docker-compose.yml / the `docker build` command in README.md) since this Dockerfile COPYs
 # both Warp/ and Warp/web in explicitly -- Warp/ is a standalone Maven module (no parent pom, no
 # reactor with advisor/), so only Warp/ ever needs to be in the build context, keeping rebuilds
@@ -61,7 +62,10 @@ USER warp
 # Every TCP/HTTP frontend Warp can start -- see ServerOptions.java/Main.java for the full,
 # authoritative list and each one's real default. Not all are reachable unless published (see
 # docker-compose.yml's own port list for which ones this compose setup actually exposes).
-EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090
+# SQL: 15432 pg, 13306 my, 14333 mssql, 11521 ora (2484 ora TLS). Stores: 27017 mongo, 18000 dynamo,
+# 16379 redis, 9200 opensearch, 8086 influx, 7687 bolt, 9324 sqs, 18020 s3, 4443 gcs, 4566 aws (sns,
+# kinesis, secrets, ssm, kms, sts), 8085 pubsub gRPC. Native: 7070/17071 gRPC, 18010 MCP, 19090 admin.
+EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090 16379 8086 7687 18020 4443 4566 8085
 
 # --add-opens flags: required by embedded Apache Ignite (CacheStage, only actually started when
 # WARP_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base

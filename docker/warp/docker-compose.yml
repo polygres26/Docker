@@ -55,6 +55,12 @@ services:
       - "9324:9324"   # sqswire (Amazon SQS HTTP/JSON)
       - "9200:9200"   # oswire (OpenSearch HTTP/JSON)
       - "8086:8086"   # influxwire (InfluxDB HTTP/JSON)
+      - "16379:16379" # rediswire (RESP2/RESP3), enable with WARP_REDISWIRE_ENABLED
+      - "7687:7687"   # boltwire (Neo4j Bolt), enable with WARP_BOLTWIRE_ENABLED
+      - "18020:18020" # s3wire (Amazon S3), enable with WARP_S3WIRE_ENABLED
+      - "4443:4443"   # gcswire (Google Cloud Storage), enable with WARP_GCSWIRE_ENABLED
+      - "4566:4566"   # awswire (SNS, Kinesis, Secrets Manager, SSM, KMS, STS), enable with WARP_AWSWIRE_ENABLED
+      - "8085:8085"   # pubsubwire (Google Pub/Sub gRPC), enable with WARP_PUBSUBWIRE_ENABLED
       - "18010:18010" # MCP (Model Context Protocol)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 
