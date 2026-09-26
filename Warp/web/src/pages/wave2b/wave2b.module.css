@@ -1,0 +1,28 @@
+.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.sub { color: var(--sy-muted); font-size: var(--fs-xs); }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.pad { padding: 16px; }
+.help { color: var(--sy-muted); font-size: var(--fs-sm); margin: 0 0 var(--space-3); max-width: 780px; }
+.stack { display: grid; gap: var(--space-3); }
+.rowList { display: grid; }
+.rowItem { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--sy-line); }
+.rowItem:first-child { border-top: 0; }
+.rowItem strong { display: block; font-size: var(--fs-sm); font-weight: 500; }
+.s { color: var(--sy-muted); font-size: var(--fs-xs); display: block; overflow-wrap: anywhere; }
+.rowEnd { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sides { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: stretch; padding: 16px; }
+@media (max-width: 720px) { .sides { grid-template-columns: 1fr; } .arrow { display: none; } }
+.side { border: 1px solid var(--sy-line); border-radius: var(--radius); padding: 12px; background: var(--sy-surface-2); min-width: 0; }
+.side h3 { margin: 0 0 8px; font-size: var(--fs-sm); font-weight: 600; }
+.side dl { margin: 0; display: grid; gap: 4px; }
+.side dl div { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-sm); }
+.side dt { color: var(--sy-muted); }
+.side dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.arrow { display: flex; align-items: center; color: var(--sy-muted); }
+.diffList { margin: 4px 0 0; padding-left: 16px; font-family: var(--font-mono); font-size: 11px; color: var(--sy-muted); }
+.thresholds { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 var(--space-4); padding: 0 16px 8px; }
+.sel { min-height: 28px; }
+.pill { display: inline-flex; }
+.wrapCell { white-space: normal; max-width: 420px; }
+.tokens { font-family: var(--font-mono); font-size: 11px; }
+.sqlCell { font-family: var(--font-mono); font-size: 11px; max-width: 520px; overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -212,7 +212,7 @@ export function RouteTabs({ items, label = 'Section pages' }: { items: Array<{ t
   return (
     <nav className={styles.tabs} aria-label={label}>
       {items.map((t) => (
-        <NavLink key={t.to} to={t.to} className={({ isActive }) => cx(styles.tab, isActive && styles.tabActive)}>{t.label}</NavLink>
+        <NavLink key={t.to} to={t.to} end className={({ isActive }) => cx(styles.tab, isActive && styles.tabActive)}>{t.label}</NavLink>
       ))}
     </nav>
   )

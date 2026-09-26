@@ -30,11 +30,14 @@ export const NAV_GROUPS: NavGroup[] = [
       ] },
       { label: 'Traffic', icon: Activity, to: '/metrics', tabs: [{ to: '/metrics', label: 'Traffic' }, { to: '/topology', label: 'Topology' }] },
       { label: 'Caching', icon: Layers, to: '/rollups', tabs: [{ to: '/rollups', label: 'Rollups' }] },
-      { label: 'Routing & QoS', icon: Route, to: '/router', tabs: [
-        { to: '/router', label: 'Router rules' }, { to: '/qos', label: 'QoS' }, { to: '/queues', label: 'Queues' },
+      { label: 'Routing & QoS', icon: Route, to: '/routing', tabs: [
+        { to: '/routing', label: 'Routes & admission' }, { to: '/router', label: 'Router rules' }, { to: '/qos', label: 'QoS' }, { to: '/queues', label: 'SQS queues' },
       ] },
       { label: 'Policies', icon: Shield, to: '/firewall', tabs: [{ to: '/firewall', label: 'SQL firewall' }] },
-      { label: 'Access & ACLs', icon: KeyRound, to: '/acl', tabs: [{ to: '/acl', label: 'ACL' }, { to: '/oauth', label: 'OAuth' }] },
+      { label: 'Access & ACLs', icon: KeyRound, to: '/access', tabs: [
+        { to: '/access', label: 'Access rules' }, { to: '/access/identities', label: 'Identities' }, { to: '/access/authentication', label: 'Authentication' },
+        { to: '/access/denied', label: 'Denied activity' }, { to: '/acl', label: 'ACL editor' }, { to: '/oauth', label: 'OAuth' },
+      ] },
       { label: 'Infrastructure', icon: Server, to: '/infrastructure', tabs: [{ to: '/infrastructure', label: 'Backend sets' }] },
     ],
   },
@@ -49,8 +52,9 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Migration',
     items: [
-      { label: 'Compatibility lab', icon: FlaskConical, to: '/ab-routing', tabs: [
-        { to: '/ab-routing', label: 'A/B routing' }, { to: '/llm-config', label: 'Dialect translation (LLM)' },
+      { label: 'Compatibility lab', icon: FlaskConical, to: '/lab', tabs: [
+        { to: '/lab', label: 'Comparison' }, { to: '/lab/profiles', label: 'Profiles' }, { to: '/lab/traffic', label: 'Captured traffic' },
+        { to: '/lab/known', label: 'Known differences' }, { to: '/ab-routing', label: 'A/B routing' }, { to: '/llm-config', label: 'Dialect translation (LLM)' },
       ] },
     ],
   },

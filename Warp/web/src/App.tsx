@@ -21,6 +21,9 @@ import Rollups from './pages/Rollups'
 import LlmConfig from './pages/LlmConfig'
 import FederationPlans from './pages/FederationPlans'
 import AbRouting from './pages/AbRouting'
+import RoutingQos from './pages/wave2b/RoutingQos'
+import AccessAcls from './pages/wave2b/AccessAcls'
+import CompatLab from './pages/wave2b/CompatLab'
 
 /** Gate: redirects to /connect unless a base URL + token are already sitting in sessionStorage.
  * Unlike advisor's RequireAuth, this never calls the server to check -- Warp's admin API has
@@ -59,6 +62,9 @@ export default function App() {
       <Route path="/rollups" element={<RequireAuth><Rollups /></RequireAuth>} />
       <Route path="/federation-plans" element={<RequireAuth><FederationPlans /></RequireAuth>} />
       <Route path="/llm-config" element={<RequireAuth><LlmConfig /></RequireAuth>} />
+      <Route path="/routing" element={<RequireAuth><RoutingQos /></RequireAuth>} />
+      <Route path="/access/*" element={<RequireAuth><AccessAcls /></RequireAuth>} />
+      <Route path="/lab/*" element={<RequireAuth><CompatLab /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/overview" replace />} />
       <Route path="*" element={<Navigate to="/overview" replace />} />
     </Routes>

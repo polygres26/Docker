@@ -419,6 +419,22 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if ("/api/access-summary".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(AccessSummary.toJson(System.getenv()).toString());
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if ("/api/interfaces".equals(target) && "GET".equals(request.getMethod())) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);

@@ -26,7 +26,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const conn = getStoredConnection()
   const section = sectionFor(location.pathname)
   const group = NAV_GROUPS.find((g) => section && g.items.includes(section))
-  const tab = section?.tabs.find((t) => location.pathname === t.to || location.pathname.startsWith(t.to + '/'))
+  const tab = section?.tabs.filter((t) => location.pathname === t.to || location.pathname.startsWith(t.to + '/')).sort((a, b) => b.to.length - a.to.length)[0]
   const showTabCrumb = !!(tab && section && section.tabs.length > 1 && tab.label !== section.label)
 
   useEffect(() => { setOpen(false) }, [location.pathname])
