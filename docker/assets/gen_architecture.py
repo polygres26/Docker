@@ -18,7 +18,8 @@ FRONTENDS = [
         ("mongowire", "27017", "MongoDB"), ("dynamowire", "18000", "DynamoDB"),
         ("rediswire", "16379", "Redis"), ("oswire", "9200", "OpenSearch"),
         ("boltwire", "7687", "Neo4j"), ("influxwire", "8086", "InfluxDB"),
-        ("aztable", "azure", "Azure Table"), ("firestorewire", "grpc", "Firestore, Datastore")]),
+        ("aztable", "azure", "Azure Table"), ("firestorewire", "8080", "Firestore"),
+        ("datastorewire", "8081", "Datastore"), ("bigtablewire", "8087", "Bigtable")]),
     ("Queues and streams", "amber", [
         ("sqswire", "9324", "SQS"), ("awswire", "4566", "SNS, Kinesis"),
         ("azqueue", "azure", "Azure Queue"), ("pubsubwire", "8085", "Pub/Sub")]),
