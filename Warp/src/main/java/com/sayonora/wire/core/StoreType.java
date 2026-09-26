@@ -74,7 +74,11 @@ public enum StoreType {
     GREMLIN("gremlin", "Gremlin (TinkerPop)", "WARP_GREMLINWIRE_SET", true,
             "Apache TinkerPop Gremlin Server protocol (WebSocket and HTTP; also the Cosmos DB Gremlin API surface); a property graph "
                     + "where a vertex lives on one backend (hash of its id) and an edge with its out-vertex, in-edge and by-id edge lookups "
-                    + "scatter-gather over all backends.");
+                    + "scatter-gather over all backends."),
+    COSMOS("cosmos", "Azure Cosmos DB (NoSQL)", "WARP_COSMOSWIRE_SET", true,
+            "Azure Cosmos DB for NoSQL REST API (SQL query language, master-key auth, change feed); a document lives on one backend "
+                    + "(hash of database, container and partition key), the database and container catalog on the first backend of the set, "
+                    + "cross-partition queries scatter-gather over all backends.");
 
     private final String id;
     private final String label;

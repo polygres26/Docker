@@ -32,6 +32,7 @@ class StoreToolProvidersTest {
         out.add(new DatastoreToolProvider(null, stores));
         out.add(new BigtableToolProvider(null, stores));
         out.add(new KafkaToolProvider(null, stores));
+        out.add(new CosmosToolProvider(null, stores));
         return out;
     }
 
@@ -55,7 +56,7 @@ class StoreToolProvidersTest {
         // names carry their store: redis_*, azblob_*, ... (awsparams tools use the AWS service prefix instead)
         for (StoreToolProvider p : providers()) {
             String kind = p.kind().id();
-            Set<String> prefixes = kind.equals("awsparams") ? Set.of("secrets_", "ssm_", "kms_", "sts_") : kind.equals("kafkastore") ? Set.of("kafka_") : Set.of(kind + "_");
+            Set<String> prefixes = kind.equals("awsparams") ? Set.of("secrets_", "ssm_", "kms_", "sts_") : kind.equals("kafkastore") ? Set.of("kafka_") : kind.equals("cosmosstore") ? Set.of("cosmos_") : Set.of(kind + "_");
             for (BackendToolProvider.Tool t : p.tools()) {
                 assertTrue(prefixes.stream().anyMatch(t.name()::startsWith), t.name());
             }
@@ -71,7 +72,7 @@ class StoreToolProvidersTest {
         for (String w : List.of("redis_set", "redis_delete", "gcs_put_object", "azblob_upload_blob", "azqueue_receive_messages",
                 "sns_publish", "kinesis_put_record", "secrets_put_secret_value", "ssm_put_parameter", "kms_create_key", "pubsub_publish",
                 "pubsub_pull", "pubsub_ack", "firestore_add_document", "datastore_upsert_entity", "bigtable_mutate_row",
-                "bigtable_drop_row_range", "kafka_create_topic", "kafka_delete_topic", "kafka_produce")) {
+                "bigtable_drop_row_range", "kafka_create_topic", "kafka_delete_topic", "kafka_produce", "cosmos_upsert_item", "cosmos_delete_item", "cosmos_create_database", "cosmos_create_container")) {
             assertTrue(writes.contains(w), w + " must be a write tool");
         }
         for (String r : List.of("redis_get", "gcs_get_object", "azblob_get_blob", "azqueue_peek_messages", "sns_list_topics",

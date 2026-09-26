@@ -75,6 +75,7 @@ public final class StoreBootstrap {
                 case CQL -> exec(st, "cqlwire_store");
                 case KAFKA -> exec(st, "kafkawire_store");
                 case GREMLIN -> exec(st, "gremlinwire_store");
+                case COSMOS -> exec(st, "cosmoswire_store");
                 default -> {
                     // per-collection tables are created on first use
                 }

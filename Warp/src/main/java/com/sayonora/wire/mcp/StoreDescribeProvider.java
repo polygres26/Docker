@@ -214,7 +214,7 @@ final class StoreDescribeProvider implements BackendToolProvider {
                 out.add("edgeLabels", el);
                 out.add("shards", shards);
             }
-            case AZBLOB, AZQUEUE, AZTABLE, GCS, BIGTABLE, PUBSUB, CQL, KAFKA -> {
+            case AZBLOB, AZQUEUE, AZTABLE, GCS, BIGTABLE, PUBSUB, CQL, KAFKA, COSMOS -> {
                 String[][] q = switch (store) {
                     case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},
                         {"blobs", "SELECT account || '/' || container, count(*), coalesce(sum(size),0) FROM warp_azblob_blobs WHERE snapshot='' GROUP BY 1 ORDER BY 1"}};
@@ -228,6 +228,8 @@ final class StoreDescribeProvider implements BackendToolProvider {
                         {"cells", "SELECT 'all tables', count(*), coalesce(sum(length(val)),0) FROM warp_cql_cells"}};
                     case KAFKA -> new String[][] {{"topics", "SELECT name, partitions, 0 FROM warp_kafka_topics ORDER BY 1"},
                         {"retainedBatches", "SELECT topic, count(*), coalesce(sum(nbytes),0) FROM warp_kafka_log GROUP BY 1 ORDER BY 1"}};
+                    case COSMOS -> new String[][] {{"containers", "SELECT db || '/' || id, 0, 0 FROM warp_cosmos_colls ORDER BY 1"},
+                        {"items", "SELECT db || '/' || coll, count(*), coalesce(sum(length(body)),0) FROM warp_cosmos_docs GROUP BY 1 ORDER BY 1"}};
                     case PUBSUB -> new String[][] {{"topics", "SELECT name, 0, 0 FROM warp_pubsub_topics ORDER BY 1"},
                         {"subscriptionBacklog", "SELECT sub, count(*), coalesce(sum(length(data)),0) FROM warp_pubsub_msgs WHERE NOT acked GROUP BY 1 ORDER BY 1"}};
                     default -> new String[][] {{"tables", "SELECT account || '/' || name, 0, 0 FROM warp_aztable_tables ORDER BY 1"},

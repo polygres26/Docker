@@ -871,6 +871,25 @@ public final class Main {
             log.error("gremlinwire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // cosmoswire: Azure Cosmos DB for NoSQL REST API (default port 18081; 8081 is datastorewire's) whose documents live in the "cosmos"
+        // store of the set's Postgres backends, sharded by hash of database, container and partition key; the catalog on the first host.
+        // Starts when WARP_COSMOSWIRE_PORT is set, the cosmos store is enabled on a backend, or WARP_COSMOSWIRE_ENABLED=true.
+        // Auth: master-key HMAC (the emulator's well-known key unless WARP_COSMOSWIRE_KEYS is set); WARP_COSMOSWIRE_AUTH=false disables it.
+        try {
+            boolean cosStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.COSMOS).isEmpty();
+            boolean cosPort = System.getenv("WARP_COSMOSWIRE_PORT") != null && !System.getenv("WARP_COSMOSWIRE_PORT").isBlank();
+            boolean cosForced = "true".equalsIgnoreCase(System.getenv("WARP_COSMOSWIRE_ENABLED"));
+            if (cosStore || cosPort || cosForced) {
+                int cosPortNo = parseIntEnv("WARP_COSMOSWIRE_PORT", 18081);
+                com.sayonora.wire.cosmoswire.CosmosWireServer cosmosWireServer = new com.sayonora.wire.cosmoswire.CosmosWireServer(cosPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                cosmosWireServer.start();
+                log.info("warp listening for Azure Cosmos DB (cosmoswire) on port {}", cosPortNo);
+            }
+        } catch (Exception e) {
+            log.error("cosmoswire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

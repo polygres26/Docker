@@ -203,6 +203,8 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.KAFKA, backendRegistry));
         this.providers.put(BackendKind.GREMLINSTORE, new StoreDescribeProvider(BackendKind.GREMLINSTORE,
                 com.sayonora.wire.core.StoreType.GREMLIN, backendRegistry));
+        this.providers.put(BackendKind.COSMOSSTORE, new StoreDescribeProvider(BackendKind.COSMOSSTORE,
+                com.sayonora.wire.core.StoreType.COSMOS, backendRegistry));
         this.providers.put(BackendKind.FIRESTORE, new StoreDescribeProvider(BackendKind.FIRESTORE,
                 com.sayonora.wire.core.StoreType.FIRESTORE, backendRegistry));
         this.providers.put(BackendKind.DATASTORE, new StoreDescribeProvider(BackendKind.DATASTORE,
@@ -225,6 +227,7 @@ public final class WarpMcpServer {
         registerStoreTools(new BigtableToolProvider(describer(BackendKind.BIGTABLE), emulatedStores));
         registerStoreTools(new KafkaToolProvider(describer(BackendKind.KAFKASTORE), emulatedStores));
         registerStoreTools(new GremlinToolProvider(describer(BackendKind.GREMLINSTORE), emulatedStores));
+        registerStoreTools(new CosmosToolProvider(describer(BackendKind.COSMOSSTORE), emulatedStores));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -921,6 +924,7 @@ public final class WarpMcpServer {
             case CQLSTORE -> com.sayonora.wire.core.StoreType.CQL;
             case KAFKASTORE -> com.sayonora.wire.core.StoreType.KAFKA;
             case GREMLINSTORE -> com.sayonora.wire.core.StoreType.GREMLIN;
+            case COSMOSSTORE -> com.sayonora.wire.core.StoreType.COSMOS;
             case PUBSUB -> com.sayonora.wire.core.StoreType.PUBSUB;
             default -> null;
         };

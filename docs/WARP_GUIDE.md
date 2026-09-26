@@ -3204,3 +3204,49 @@ graph database runs: the traversal **interpreter is written for Warp** and the g
   reference's; the Java `gremlin-driver` and the Gremlin Console are not in that image, so the driver itself and the console were **not** run), sessions, chunking, the HTTP endpoint, WebSocket framing, SASL PLAIN and
   Basic auth, timeouts, 6 concurrent writers, both-host placement of vertices and edges with traversals crossing hosts, restart durability, `WARP_POOL_MAX_SIZE=4` with stalled readers, `rebalanceRequired`, MCP tools
   and metrics; and 18 Java unit tests of the parser, engine, codecs and server. GraphSON 2.0 is implemented and tested for shape only (the reference's default configuration does not enable it).
+
+## The Cosmos DB store (cosmoswire)
+
+cosmoswire speaks the **Azure Cosmos DB for NoSQL (SQL/Core) REST API** over plain HTTP on port **18081** (`WARP_COSMOSWIRE_PORT`; 8081 is
+datastorewire's). The official SDKs connect with an `http://` endpoint and a master key; the emulator's well-known key works out of the box:
+
+```python
+from azure.cosmos import CosmosClient, PartitionKey
+client = CosmosClient("http://warp-host:18081/", credential="C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==")
+container = client.create_database_if_not_exists("app").create_container_if_not_exists("orders", partition_key=PartitionKey(path="/customer"))
+container.upsert_item({"id": "1", "customer": "alice", "total": 12.5})
+list(container.query_items("SELECT c.customer, SUM(c.total) AS t FROM c GROUP BY c.customer", enable_cross_partition_query=True))
+```
+
+**Enable it** by ticking *Azure Cosmos DB (NoSQL)* on a Postgres backend of a backend set (`WARP_COSMOSWIRE_SET` names the set), or set
+`WARP_COSMOSWIRE_ENABLED=true` / `WARP_COSMOSWIRE_PORT`. Tables are created per backend from `ddl/postgres/cosmoswire_store.sql`.
+
+**Placement.** A document lives on **one** backend: the hash of `database/container/first partition key value`. A query with a partition key
+(header, or `WHERE c.pk = ...` on every partition key path) goes to that backend only; other queries scatter-gather over all backends and the
+merge (ORDER BY, TOP, OFFSET/LIMIT, DISTINCT, GROUP BY, COUNT/SUM/AVG/MIN/MAX) happens in Warp, so results do not depend on the number of
+backends. The database and container catalog (and stored scripts) live on the first backend. Adding a backend does not move existing data
+(`rebalanceRequired` in the backend set view).
+
+**What works.** Databases and containers (partition key paths, hierarchical partition keys of up to 3 paths, indexing policy stored, default TTL,
+unique keys per logical partition, throughput offers stored); items: create, upsert, replace, patch (add/set/replace/remove/incr/move, conditional),
+delete, point read, ETags with `If-Match`/`If-None-Match`, `_rid/_self/_etag/_ts`, session tokens, `x-ms-request-charge` (synthetic),
+`x-ms-continuation` paging with `x-ms-max-item-count`; transactional batch inside one partition key (atomic, 207/424 on failure); incremental
+change feed (`A-IM: Incremental feed`, etag continuation, 304 when nothing changed); TTL with a sweeper (`WARP_COSMOSWIRE_SWEEP_SECONDS`, 5);
+the SQL language: `SELECT [DISTINCT] [TOP n] [VALUE]`, `FROM` with aliases, `IN` iteration and `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY` (several
+keys), `OFFSET LIMIT`, parameters, `EXISTS`/`ARRAY()`/scalar subqueries, and the string, math, type-checking, array, date/time and minimal spatial
+functions; the query-plan and partition-key-ranges endpoints and the database account document (`writableLocations` point at the request's host,
+or `WARP_COSMOSWIRE_ADVERTISED_URL`).
+
+**What does not.** Stored procedures, triggers and UDFs are stored but **never executed** (501 / 400): there is no JavaScript engine. No feed
+ranges / EPK ranges (so hierarchical-key prefix queries through the SDKs), no full-fidelity change feed, no users/permissions, no TLS, no RU
+throttling, and the indexing policy is stored but not used. The complete list is in `tests/python/cosmos_conformance/cosmos_known.md`. **cosmoswire
+has not been compared with a real Cosmos DB service or emulator**; it was tested with the Python SDK, documentation-derived expectations and a
+randomized differential test.
+
+**Auth and settings.** `WARP_COSMOSWIRE_KEYS` (comma list of base64 master keys), `WARP_COSMOSWIRE_AUTH=false` (no checks),
+`WARP_COSMOSWIRE_MAX_SKEW_SECONDS` (900), `WARP_COSMOSWIRE_RU` (constant request charge), `WARP_COSMOSWIRE_RESOURCE_TOKENS` / `WARP_COSMOSWIRE_AAD_TOKENS`
+(allow-lists, not validated), `WARP_COSMOSWIRE_QUERY_PLAN_HANDSHAKE=true` (answer cross-partition queries with the gateway's 400/1004 plan error),
+`WARP_COSMOSWIRE_ORDERBY_EXCLUDE_UNDEFINED=true`, `WARP_COSMOSWIRE_MAX_MATERIALIZE_DOCS` (1,000,000).
+
+**MCP.** `cosmos_list_databases`, `cosmos_list_containers`, `cosmos_query`, `cosmos_get_item` and (hidden under `WARP_MCP_READ_ONLY`)
+`cosmos_create_database`, `cosmos_create_container`, `cosmos_upsert_item`, `cosmos_delete_item` work on the same tables the REST API uses.

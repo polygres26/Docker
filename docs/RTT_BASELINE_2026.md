@@ -1496,3 +1496,23 @@ Writes: `addV().property()` is one `INSERT` plus one `nextval()` for the generat
 and other work, so treat the figure as an order of magnitude). GraphBinary and bytecode requests cost the same as the script rows within noise (one bytecode row is included).
 
 Method notes: Postgres `fsync` is on; the graph and the request strings are the ones in the golden corpus, so the bench doubles as a smoke test of the same code paths the conformance run exercises.
+
+### Azure Cosmos DB for NoSQL (cosmoswire), Warp only
+
+Sequential raw signed REST requests on one connection (no real Cosmos service or emulator to compare with), median / p99 in ms, n=300.
+
+| Operation | 1 Postgres backend | 2 Postgres backends |
+|---|---|---|
+| Create item (1 KB) | 0.97 / 1.20 | 0.97 / 1.13 |
+| Point read | 0.88 / 1.19 | 0.86 / 1.20 |
+| Upsert item | 0.97 / 1.33 | 0.98 / 1.20 |
+| Replace item | 1.19 / 1.49 | 1.13 / 1.36 |
+| Patch item (set + incr) | 1.20 / 1.40 | 1.13 / 1.33 |
+| Delete item | 1.08 / 1.28 | 1.03 / 3.83 |
+| Query, one partition key (10 items) | 0.88 / 1.11 | 0.88 / 1.50 |
+| Query by id in one partition | 0.86 / 1.14 | 0.84 / 1.04 |
+| Cross-partition SELECT VALUE COUNT(1) (1000 items) | 0.87 / 1.21 | 0.95 / 1.25 |
+| Cross-partition filter scan (1000 items, 10 hits) | 2.22 / 4.19 | 2.21 / 4.02 |
+| Cross-partition ORDER BY n DESC TOP 10 (1000 items) | 2.55 / 4.39 | 2.66 / 4.62 |
+| Cross-partition GROUP BY pk COUNT (1000 items) | 2.25 / 3.76 | 2.35 / 4.07 |
+| Transactional batch of 5 creates | 1.38 / 1.59 | 1.42 / 1.68 |
