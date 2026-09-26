@@ -9,6 +9,9 @@ import SqlDrivers from './pages/interfaces/SqlDrivers'
 import ApiEndpoints from './pages/interfaces/ApiEndpoints'
 import McpServers from './pages/interfaces/McpServers'
 import Metrics from './pages/Metrics'
+import Traffic from './pages/Traffic'
+import Caching from './pages/Caching'
+import Policies from './pages/Policies'
 import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
@@ -46,7 +49,12 @@ export default function App() {
       <Route path="/interfaces/sql" element={<RequireAuth><SqlDrivers /></RequireAuth>} />
       <Route path="/interfaces/api" element={<RequireAuth><ApiEndpoints /></RequireAuth>} />
       <Route path="/interfaces/mcp" element={<RequireAuth><McpServers /></RequireAuth>} />
-      <Route path="/metrics" element={<RequireAuth><Metrics /></RequireAuth>} />
+      {/* The server's own /metrics is the Prometheus endpoint, so a browser reload of /metrics never reaches the SPA: the page lives at /traffic. */}
+      <Route path="/traffic" element={<RequireAuth><Traffic /></RequireAuth>} />
+      <Route path="/metrics" element={<Navigate to="/traffic" replace />} />
+      <Route path="/traffic-detail" element={<RequireAuth><Metrics /></RequireAuth>} />
+      <Route path="/cache" element={<RequireAuth><Caching /></RequireAuth>} />
+      <Route path="/policies" element={<RequireAuth><Policies /></RequireAuth>} />
       <Route path="/topology" element={<RequireAuth><Topology /></RequireAuth>} />
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />

@@ -54,6 +54,10 @@ public final class DialectTranslationStage implements PipelineStage {
      * to reuse the SAME configured provider/model for an unrelated LLM-backed feature (e.g.
      * {@code MetricsServer}'s natural-language firewall-rule drafting) instead of standing up a
      * second, separately-configured client. */
+    public TranslationCache translationCache() {
+        return cache;
+    }
+
     public TranslationLlmClient llmClient() {
         return llmClient;
     }

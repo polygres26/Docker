@@ -536,6 +536,27 @@ public final class Main {
                 adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
         metricsServer.setQueryRepairStage(queryRepairStage);
         metricsServer.setAnomalyScheduler(anomalyScheduler);
+        {
+            var insights = metricsServer.insights();
+            insights.setCacheStage(cacheStage);
+            insights.setAuditLog(auditLog);
+            insights.setClusterSize(cacheCluster::clusterSize);
+            insights.setTranslationCache(dialectTranslationStage::translationCache);
+            final CacheStage historyCacheStage = cacheStage;
+            com.sayonora.warp.core.MetricsHistory metricsHistory = new com.sayonora.warp.core.MetricsHistory(360, 10_000,
+                    com.sayonora.warp.core.MetricsHistory.standardSource(statsStage, qosStage, () -> {
+                        java.util.Map<String, Long> m = new java.util.LinkedHashMap<>();
+                        if (historyCacheStage != null) {
+                            var snap = historyCacheStage.stats().snapshot();
+                            m.put("cacheHits", snap.resultHits() + snap.pkHits() + com.sayonora.warp.cluster.RowCache.hitCount());
+                            m.put("cacheMisses", snap.resultMisses() + snap.pkMisses() + com.sayonora.warp.cluster.RowCache.missCount());
+                            m.put("cacheServed", historyCacheStage.stats().servedFromCache());
+                        }
+                        return m;
+                    }));
+            insights.setHistory(metricsHistory);
+            metricsHistory.start();
+        }
         metricsServer.start();
 
         // Phase 1a of the parallel execution engine's node-to-node peer service (see the

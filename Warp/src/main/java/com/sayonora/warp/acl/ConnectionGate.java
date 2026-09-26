@@ -104,6 +104,7 @@ public final class ConnectionGate {
             log.warn("license: rejecting connection from {} -- Developer edition is capped at {} "
                     + "concurrent connections per instance (see the Pricing section of the docs "
                     + "for Enterprise, which has no connection limit)", socket.getInetAddress(), max);
+            denied(String.valueOf(socket.getInetAddress()), "TCP listener", "Connection cap of " + max + " reached (license)");
             return rejectTcp(socket);
         }
         if (this == DISABLED) {
@@ -118,6 +119,7 @@ public final class ConnectionGate {
                 if (!currentTrustedProxies.isEmpty() && !matchesAny(rawPeer, currentTrustedProxies)) {
                     log.warn("ACL: rejecting connection from {} -- PPv2 is enabled on this listener but this peer "
                             + "is not in WARP_ACL_TRUSTED_PROXIES", rawPeer);
+                    denied(String.valueOf(rawPeer), "TCP listener", "PROXY protocol peer is not a trusted proxy");
                     return rejectTcp(socket);
                 }
                 ProxyProtocolV2.Result header = ProxyProtocolV2.readHeader(socket.getInputStream());
@@ -126,10 +128,12 @@ public final class ConnectionGate {
             }
         } catch (IOException e) {
             log.warn("ACL: rejecting connection from {} -- {}", rawPeer, e.getMessage());
+            denied(String.valueOf(rawPeer), "TCP listener", "Invalid PROXY protocol header");
             return rejectTcp(socket);
         }
         if (!acl.isAllowed(effectiveClient)) {
             log.warn("ACL: rejecting connection from {}", effectiveClient);
+            denied(String.valueOf(effectiveClient), "TCP listener", "Client address not allowed by ACL");
             return rejectTcp(socket);
         }
         return true;
@@ -154,11 +158,13 @@ public final class ConnectionGate {
         if (effectiveClient == null) {
             log.warn("ACL: rejecting request -- could not resolve a client address to evaluate (remoteAddr={})",
                     request.getRemoteAddr());
+            denied(String.valueOf(request.getRemoteAddr()), "Admin/HTTP listener", "Client address could not be resolved");
             return false;
         }
         boolean allowed = acl.isAllowed(effectiveClient);
         if (!allowed) {
             log.warn("ACL: rejecting request from {}", effectiveClient);
+            denied(String.valueOf(effectiveClient), "Admin/HTTP listener", "Client address not allowed by ACL");
         }
         return allowed;
     }
@@ -186,6 +192,12 @@ public final class ConnectionGate {
     /** Every rejection path in {@link #acceptTcp} routes through here -- a socket that's rejected
      * never gets a session, so it must never hold a slot in {@link #liveConnections} either.
      * Always returns {@code false}, so a caller can just {@code return rejectTcp(socket);}. */
+    private static void denied(String client, String target, String reason) {
+        // InetAddress.toString() is "host/ip" or "/ip": keep only the address
+        String who = client == null ? "unknown" : client.substring(client.lastIndexOf('/') + 1);
+        com.sayonora.warp.core.PolicyDecisionLog.get().record("Network ACL", who, target, "Block", reason);
+    }
+
     private boolean rejectTcp(Socket socket) {
         liveConnections.decrementAndGet();
         closeQuietly(socket);

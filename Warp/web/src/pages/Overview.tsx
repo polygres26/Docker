@@ -147,7 +147,7 @@ export default function Overview() {
       </div>
 
       {topSql.length > 0 && (
-        <Section flush title="Top SQL by cost" meta={<Link to="/metrics">All traffic</Link>}>
+        <Section flush title="Top SQL by cost" meta={<Link to="/traffic">All traffic</Link>}>
           <DataTable caption="Most expensive statements" minWidth={560}>
             <thead><tr><th>SQL</th><th>Calls</th><th>Avg</th><th>Total</th></tr></thead>
             <tbody>

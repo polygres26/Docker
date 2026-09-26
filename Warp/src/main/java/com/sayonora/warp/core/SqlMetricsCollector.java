@@ -311,6 +311,25 @@ public final class SqlMetricsCollector {
         return normalized;
     }
 
+    /** Cumulative counts without the side effect {@link #snapshot()} has on its per-second rate window. */
+    public long totalReadCount() {
+        return totalReads.sum();
+    }
+
+    public long totalWriteCount() {
+        return totalWrites.sum();
+    }
+
+    public long totalOtherCount() {
+        return totalOther.sum();
+    }
+
+    public Map<String, Long> protocolCountsSnapshot() {
+        Map<String, Long> out = new java.util.LinkedHashMap<>();
+        byProtocol.forEach((k, v) -> out.put(k, v.sum()));
+        return out;
+    }
+
     public Snapshot snapshot() {
         long now = System.nanoTime();
         long reads = totalReads.sum();

@@ -123,6 +123,7 @@ public final class CacheStage implements PipelineStage {
     private final WarpCluster cluster;
 
     private volatile List<Pattern> cachePatterns;
+    private volatile List<String> cacheTableNames = List.of();
     private volatile long ttlMillis;
     
     // Deliberately byte[], not a typed IgniteCache<String, ExecutionResult> -- tried that (to
@@ -164,9 +165,40 @@ public final class CacheStage implements PipelineStage {
     private volatile Map<String, List<String>> primaryKeysByTable = Map.of();
     private volatile IgniteCache<String, byte[]> pkRowCache;
 
+    private final CacheStats stats = new CacheStats();
+
+    public CacheStats stats() {
+        return stats;
+    }
+
+    /** Live shape of the cache tiers for the admin API. Entry counts are cluster-wide primary entries. */
+    public record Info(List<String> tablePatterns, long ttlMillis, long resultEntries, long pkEntries,
+            long indexedTables, boolean rowCacheAttached, long rowEntries) {
+    }
+
+    public Info info() {
+        List<String> patterns = cacheTableNames;
+        RowCache rc = this.rowCache;
+        return new Info(patterns, ttlMillis, resultCache.size(org.apache.ignite.cache.CachePeekMode.PRIMARY),
+                pkRowCache.size(org.apache.ignite.cache.CachePeekMode.PRIMARY),
+                keysByTable.size(org.apache.ignite.cache.CachePeekMode.PRIMARY),
+                rc != null, rc == null ? 0 : rc.size());
+    }
+
+    /** Operator-triggered invalidation of every tier this stage owns (result, primary-key row and shared row caches). */
+    public void invalidateEverything(String reason) {
+        clearAll(reason);
+        pkRowCache.clear();
+        RowCache rc = this.rowCache;
+        if (rc != null) {
+            rc.clearAll(reason);
+        }
+    }
+
     public CacheStage(WarpCluster cluster, List<String> cacheTablePatterns, long ttlMillis) {
         this.cluster = cluster;
         this.cachePatterns = compilePatterns(cacheTablePatterns);
+        this.cacheTableNames = cacheTablePatterns.stream().map(String::trim).toList();
         this.ttlMillis = ttlMillis;
         this.resultCache = cluster.getOrCreateCache(cacheName(ttlMillis), ttlMillis);
         this.keysByTable = cluster.getOrCreateCache("warp-query-cache-index", 0);
@@ -224,6 +256,7 @@ public final class CacheStage implements PipelineStage {
         }
         long newTtl = ttlMillisSpec == null || ttlMillisSpec.isBlank() ? 30_000 : Long.parseLong(ttlMillisSpec);
         this.cachePatterns = compilePatterns(tables);
+        this.cacheTableNames = tables.stream().map(String::trim).toList();
         if (newTtl != this.ttlMillis) {
             this.resultCache = cluster.getOrCreateCache(cacheName(newTtl), newTtl);
             this.pkRowCache = cluster.getOrCreateCache("warp-generic-pk-cache-ttl" + newTtl, newTtl);
@@ -270,6 +303,7 @@ public final class CacheStage implements PipelineStage {
         byte[] cachedBytes = resultCache.get(key);
         if (cachedBytes != null) {
             long elapsedNanos = System.nanoTime() - start;
+            stats.hit(CacheStats.TIER_RESULT, extractFromTarget(statement.sqlText()));
             log.debug("cache hit: {}", key);
             if (sqlMetrics != null) {
                 sqlMetrics.recordRttOutcome(com.sayonora.warp.core.SqlMetricsCollector.protocolName(statement.sourceDialect()),
@@ -277,6 +311,7 @@ public final class CacheStage implements PipelineStage {
             }
             return deserialize(cachedBytes);
         }
+        stats.miss(CacheStats.TIER_RESULT, extractFromTarget(statement.sqlText()));
         ExecutionResult result = next.proceed(statement);
         byte[] serialized = serialize(result);
         // Synchronous, deliberately -- an earlier version of this fix made this putAsync
@@ -391,6 +426,7 @@ public final class CacheStage implements PipelineStage {
                         com.sayonora.warp.core.SqlMetricsCollector.protocolName(statement.sourceDialect()),
                         com.sayonora.warp.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - start);
             }
+            stats.rowServed();
             log.debug("row cache hit: {}", key);
             com.sayonora.warp.core.ColumnInfo column =
                     new com.sayonora.warp.core.ColumnInfo(valueColumnName, java.sql.Types.VARCHAR, 0, 0, 0, false);
@@ -504,6 +540,7 @@ public final class CacheStage implements PipelineStage {
         long start = System.nanoTime();
         byte[] cached = pkRowCache.get(key);
         if (cached != null) {
+            stats.hit(CacheStats.TIER_PK, extractFromTarget(statement.sqlText()));
             if (sqlMetrics != null) {
                 sqlMetrics.recordRttOutcome(com.sayonora.warp.core.SqlMetricsCollector.protocolName(statement.sourceDialect()),
                         com.sayonora.warp.core.SqlMetricsCollector.OUTCOME_CACHE_HIT, System.nanoTime() - start);
@@ -511,6 +548,7 @@ public final class CacheStage implements PipelineStage {
             log.debug("generic pk cache hit: {}", key);
             return deserialize(cached);
         }
+        stats.miss(CacheStats.TIER_PK, extractFromTarget(statement.sqlText()));
         ExecutionResult result = next.proceed(statement);
         // A real primary-key-equality WHERE clause covering every PK column can match at most one
         // row by definition -- if the backend somehow returned more (or the "PK" this catalog
@@ -732,9 +770,9 @@ public final class CacheStage implements PipelineStage {
         // exact same code path and can never disagree about which index entries to drop.
         int dot = table.indexOf('.');
         if (dot > 0) {
-            invalidateTable(table.substring(0, dot), table.substring(dot + 1));
+            invalidateTable(table.substring(0, dot), table.substring(dot + 1), "write through Warp");
         } else {
-            invalidateTable(null, table);
+            invalidateTable(null, table, "write through Warp");
         }
     }
 
@@ -754,6 +792,11 @@ public final class CacheStage implements PipelineStage {
      * @param schema the table's schema, or {@code null} when the caller only knows the bare name
      */
     public void invalidateTable(String schema, String table) {
+        invalidateTable(schema, table, "external write (NOTIFY)");
+    }
+
+    /** As {@link #invalidateTable(String, String)}, recording {@code source} in the invalidation activity feed. */
+    public void invalidateTable(String schema, String table, String source) {
         if (table == null || table.isBlank()) {
             return;
         }
@@ -762,6 +805,7 @@ public final class CacheStage implements PipelineStage {
         if (schema != null && !schema.isBlank()) {
             removed += invalidateIndexEntry(normalizeTable(schema + "." + table));
         }
+        stats.tableInvalidated(schema == null || schema.isBlank() ? bare : schema + "." + bare, removed, source);
         if (removed > 0) {
             log.debug("cache invalidation: table={}{} removed {} entries", schema == null ? "" : schema + ".", bare, removed);
         }
@@ -797,6 +841,7 @@ public final class CacheStage implements PipelineStage {
         int before = results.size();
         results.clear();
         index.clear();
+        stats.cleared(before, reason);
         log.info("cache invalidation: cleared the whole result cache ({} entries) -- {}", before, reason);
     }
 

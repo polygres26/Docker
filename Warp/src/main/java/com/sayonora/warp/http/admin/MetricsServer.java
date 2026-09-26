@@ -96,6 +96,13 @@ public final class MetricsServer {
     // Same "set after construction, orthogonal and opt-in" reasoning as queryRepairStage above.
     private com.sayonora.warp.core.AnomalyDetectionScheduler anomalyScheduler;
 
+    private final WarpInsightsApi insightsApi = new WarpInsightsApi();
+
+    /** History, cache and policy-decision endpoints ({@code /api/metrics/history}, {@code /api/cache/*}, {@code /api/policy-decisions}). */
+    public WarpInsightsApi insights() {
+        return insightsApi;
+    }
+
     public void setAnomalyScheduler(com.sayonora.warp.core.AnomalyDetectionScheduler anomalyScheduler) {
         this.anomalyScheduler = anomalyScheduler;
     }
@@ -432,6 +439,20 @@ public final class MetricsServer {
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(AccessSummary.toJson(System.getenv()).toString());
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (WarpInsightsApi.handles(target)) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    insightsApi.handle(target, request, response);
                     baseRequest.setHandled(true);
                     return;
                 }

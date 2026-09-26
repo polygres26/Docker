@@ -31,6 +31,28 @@ public final class RowCache {
 
     private final IgniteCache<String, String> cache;
 
+    // Shared by every RowCache instance (dynamowire and mongowire each hold one, over the same Ignite cache).
+    private static final java.util.concurrent.atomic.LongAdder HITS = new java.util.concurrent.atomic.LongAdder();
+    private static final java.util.concurrent.atomic.LongAdder MISSES = new java.util.concurrent.atomic.LongAdder();
+    private static final java.util.concurrent.atomic.LongAdder INVALIDATED_KEYS = new java.util.concurrent.atomic.LongAdder();
+
+    public static long hitCount() {
+        return HITS.sum();
+    }
+
+    public static long missCount() {
+        return MISSES.sum();
+    }
+
+    /** Keys removed by point invalidations (a requested removal, whether or not the key was still cached). */
+    public static long invalidatedKeyCount() {
+        return INVALIDATED_KEYS.sum();
+    }
+
+    public long size() {
+        return cache.size(org.apache.ignite.cache.CachePeekMode.PRIMARY);
+    }
+
     private RowCache(IgniteCache<String, String> cache) {
         this.cache = cache;
     }
@@ -45,7 +67,9 @@ public final class RowCache {
     }
 
     public String get(String key) {
-        return cache.get(key);
+        String value = cache.get(key);
+        (value == null ? MISSES : HITS).increment();
+        return value;
     }
 
     public void put(String key, String valueJson) {
@@ -54,6 +78,7 @@ public final class RowCache {
 
     public void invalidate(String key) {
         cache.remove(key);
+        INVALIDATED_KEYS.increment();
         log.debug("row cache invalidated: {}", key);
     }
 
@@ -78,6 +103,7 @@ public final class RowCache {
             return;
         }
         cache.removeAll(cacheKeys);
+        INVALIDATED_KEYS.add(cacheKeys.size());
         log.debug("row cache invalidated {} key(s) on {}", cacheKeys.size(), physicalTable);
     }
 

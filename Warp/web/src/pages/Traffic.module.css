@@ -1,0 +1,14 @@
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sub { color: var(--sy-muted); font-size: var(--fs-xs); }
+.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.half { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; align-items: start; }
+.half > * { min-width: 0; }
+@media (max-width: 900px) { .half { grid-template-columns: minmax(0, 1fr); } }
+.pad { padding: 16px; }
+.share { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; min-width: 120px; }
+.track { height: 6px; background: var(--sy-line); border-radius: 3px; overflow: hidden; }
+.track span { display: block; height: 100%; background: var(--sy-accent); }
+.note { color: var(--sy-muted); font-size: var(--fs-sm); margin: 0 0 var(--space-3); max-width: 820px; }
+.anom { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: var(--fs-sm); }
+.anom li { display: grid; gap: 2px; }
+.pillRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

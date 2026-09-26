@@ -28,12 +28,14 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Workloads', icon: Boxes, to: '/workloads', tabs: [
         { to: '/workloads', label: 'Workloads' }, { to: '/data', label: 'Data explorer' }, { to: '/federation-plans', label: 'Federation plans' },
       ] },
-      { label: 'Traffic', icon: Activity, to: '/metrics', tabs: [{ to: '/metrics', label: 'Traffic' }, { to: '/topology', label: 'Topology' }] },
-      { label: 'Caching', icon: Layers, to: '/rollups', tabs: [{ to: '/rollups', label: 'Rollups' }] },
+      { label: 'Traffic', icon: Activity, to: '/traffic', tabs: [
+        { to: '/traffic', label: 'Traffic' }, { to: '/traffic-detail', label: 'SQL & backends' }, { to: '/topology', label: 'Topology' },
+      ] },
+      { label: 'Caching', icon: Layers, to: '/cache', tabs: [{ to: '/cache', label: 'Caching' }, { to: '/rollups', label: 'Rollups' }] },
       { label: 'Routing & QoS', icon: Route, to: '/routing', tabs: [
         { to: '/routing', label: 'Routes & admission' }, { to: '/router', label: 'Router rules' }, { to: '/qos', label: 'QoS' }, { to: '/queues', label: 'SQS queues' },
       ] },
-      { label: 'Policies', icon: Shield, to: '/firewall', tabs: [{ to: '/firewall', label: 'SQL firewall' }] },
+      { label: 'Policies', icon: Shield, to: '/policies', tabs: [{ to: '/policies', label: 'Policies' }, { to: '/firewall', label: 'SQL firewall' }] },
       { label: 'Access & ACLs', icon: KeyRound, to: '/access', tabs: [
         { to: '/access', label: 'Access rules' }, { to: '/access/identities', label: 'Identities' }, { to: '/access/authentication', label: 'Authentication' },
         { to: '/access/denied', label: 'Denied activity' }, { to: '/acl', label: 'ACL editor' }, { to: '/oauth', label: 'OAuth' },
