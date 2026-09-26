@@ -1,4 +1,4 @@
-# Floci AWS-SDK compatibility baseline for Warp (dynamowire / sqswire / s3wire)
+# Floci AWS-SDK compatibility baseline for Warp (dynamowire / sqswire / s3wire, and SNS / Kinesis / Secrets Manager / SSM / KMS / STS on the unified AWS endpoint)
 
 Runs the SDK tests from [floci-io/floci](https://github.com/floci-io/floci) `compatibility-tests/` (MIT) against
 Warp's AWS frontends. Floci code is NOT in this repo; point `--floci-dir` at a checkout
@@ -116,3 +116,27 @@ expression indexes).
 `services/s3/`: S3Service.java (buckets/objects/multipart/versioning/ListParts), S3Controller.java (REST routing),
 S3VirtualHostFilter.java (virtual-host style), S3HeaderSignatureFilter.java + S3RequestAuthorizationParser.java (SigV4 header
 auth), PreSignedUrlFilter/Generator, S3CorsFilter, S3AclPolicy, S3SelectService.
+
+
+## SNS, Kinesis, Secrets Manager, SSM, KMS, STS (awswire, 2026-09-26)
+
+These six run against the **unified AWS endpoint** (Floci's tests use one endpoint for every service, and the SNS tests create SQS queues): `python3 launch_warp.py --state s.json --aws-unified &` starts a throwaway Warp with the
+endpoint on a free port, the `sns`, `kinesis` and `awsparams` stores enabled on the default backend (through the admin API) and `WARP_KMS_INSECURE_DEV_KEY=true`, and writes it as `aws` in the state file; then
+`python3 run_floci_compat.py --service {sns,kinesis,secretsmanager,ssm,kms,sts} --suite {python,node,java} --endpoint $(jq -r .aws s.json) --floci-dir $F`. `--aws-unified --s3-postgres` also serves S3 there. Baseline = a Warp
+without the AWS frontends (every call is answered by sqswire with `UnknownOperation`), summaries kept as `results/warp-<service>-<suite>-baseline.md`; current summaries are `results/warp-<service>-<suite>.md`.
+On Python 3.9 Floci's `test_kms.py` cannot even be collected (a class-scoped fixture stacked on `@staticmethod` needs Python 3.10's `staticmethod.__name__`); the runner then runs a generated copy with that one fixture hoisted to module level
+(`tests/_py39_test_kms.py` in the Floci checkout), the tests themselves are unchanged.
+
+| service (files run) | python pass / fail: baseline -> now | node | java |
+|---|---|---|---|
+| SNS (`test_sns.py`, `sns.test.ts`, `SnsTest`) | 0 / 10 -> **10 / 0** | 0 / 10 -> **10 / 0** | 0 / 16 -> **16 / 0** |
+| Kinesis (`test_kinesis.py`, `kinesis.test.ts`, `KinesisTest` + `KinesisEfoTest`) | 0 / 9 -> **9 / 0** | 0 / 6 -> **6 / 0** | 0 / 3 -> **5 / 0** |
+| Secrets Manager | 1 / 12 -> **13 / 0** | 1 / 5 -> **6 / 0** | 1 / 21 -> **21 / 1** |
+| SSM | 0 / 12 -> **12 / 0** | 1 / 6 -> **7 / 0** | 0 / 16 -> **16 / 0** |
+| KMS (`test_kms.py`, `kms.test.ts` + `kms-features.test.ts`, `KmsTest` + `KmsFeaturesTest` + `KmsGrantLifecycleTest` + `KmsSm2Test`) | 0 / 39 -> **39 / 0** | 0 / 13 -> **13 / 0** | 0 / 57 -> **57 / 0** |
+| STS (`StsTest` needs Floci's IAM: SAML providers and roles) | 1 / 8 -> **9 / 0** | 0 / 2 -> **2 / 0** | 0 / 1 -> **20 / 0** |
+
+The single remaining failure, `SecretsManagerTest::rotateSecretStub`, is **class c** (Floci-specific): it creates a Lambda function through Floci's Lambda service before calling RotateSecret, and Warp does not emulate Lambda. Everything else that failed at baseline was
+class a (not implemented). Notes on what the suites needed beyond the services themselves: the JavaScript SDK v3 speaks **cleartext HTTP/2 with prior knowledge** to Kinesis (Warp's h2c support, `H2cConnectionFactory`); the Java SDK v2 speaks **CBOR** to Kinesis; the Java async client's SubscribeToShard is an HTTP/1.1
+event stream here (`Protocol.HTTP1_1` in Floci's fixture); `StsTest` needs IAM `CreateSAMLProvider` / `CreateRole` and a real XML-DSig validation of the SAML assertion (Warp implements both, see WARP_GUIDE section 4.7); the KMS suites need Ed25519 / Ed25519ph, secp256k1 (BouncyCastle), ML-DSA (Java 24+) and SM2.
+Re-run with a fresh Warp per suite run.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run Floci's AWS-SDK compatibility tests (compatibility-tests/ in floci-io/floci, MIT) for one service
-against ANY AWS-style endpoint (here: Warp's dynamowire / sqswire / s3wire) and emit JSON + markdown.
+against ANY AWS-style endpoint (here: Warp's dynamowire / sqswire / s3wire, and the awswire unified endpoint for SNS, Kinesis,
+Secrets Manager, SSM, KMS and STS -- point --endpoint at the `aws` entry of launch_warp.py --aws-unified's state file) and emit JSON + markdown.
 
   run_floci_compat.py --service dynamodb --endpoint http://localhost:18000 --suite python \
        --floci-dir /path/to/floci [--out results] [--timeout 60] [--tag warp]
@@ -19,11 +20,23 @@ TARGETS = {
         "dynamodb": ["test_dynamodb.py"],
         "sqs": ["test_sqs.py"],
         "s3": ["test_s3.py", "test_s3_cors.py"],
+        "sns": ["test_sns.py"],
+        "kinesis": ["test_kinesis.py"],
+        "secretsmanager": ["test_secretsmanager.py"],
+        "ssm": ["test_ssm.py"],
+        "kms": ["test_kms.py"],
+        "sts": ["test_sts.py"],
     },
     "node": {
         "dynamodb": ["dynamodb.test.ts", "dynamodb-conformance.test.ts"],
         "sqs": ["sqs.test.ts"],
         "s3": ["s3.test.ts", "s3-cors.test.ts", "s3-multipart-checksum.test.ts"],
+        "sns": ["sns.test.ts"],
+        "kinesis": ["kinesis.test.ts"],
+        "secretsmanager": ["secretsmanager.test.ts"],
+        "ssm": ["ssm.test.ts"],
+        "kms": ["kms.test.ts", "kms-features.test.ts"],
+        "sts": ["sts.test.ts"],
     },
     "java": {
         "dynamodb": ["DynamoDbTest", "DynamoDbExpressionTests", "DynamoDbConformanceChangesTest",
@@ -31,6 +44,12 @@ TARGETS = {
                      "DynamoDbScanConditionTests", "DynamoDbConcurrencyTest"],
         "sqs": ["SqsTest", "SqsMd5Test"],
         "s3": ["S3Test", "S3FeaturesTest", "S3VirtualHostStyleTest", "S3MultipartChecksumTest", "S3AnnotationsTest"],
+        "sns": ["SnsTest"],
+        "kinesis": ["KinesisTest", "KinesisEfoTest"],
+        "secretsmanager": ["SecretsManagerTest"],
+        "ssm": ["SsmTest"],
+        "kms": ["KmsTest", "KmsFeaturesTest", "KmsGrantLifecycleTest", "KmsSm2Test"],
+        "sts": ["StsTest"],
     },
 }
 
@@ -89,9 +108,29 @@ def parse_junit(path, service, suite):
     return rows
 
 
+def py39_compat_copy(d, name):
+    """Python 3.9 cannot collect Floci's test_kms.py (a class-scoped fixture stacked on @staticmethod needs the 3.10
+    staticmethod.__name__). Run an equivalent copy with that one fixture hoisted to module level; the tests are unchanged."""
+    src = open(os.path.join(d, "tests", name)).read()
+    m = re.search(r'    @pytest\.fixture\(scope="class"\)\n    @staticmethod\n    def signing_key\(.*?\n        yield key_for\n        for key_id in created\.values\(\):\n            [^\n]*\n', src, re.S)
+    if not m:
+        return name
+    block = "\n".join(ln[4:] if ln.startswith("    ") else ln for ln in m.group(0).splitlines()).replace("@staticmethod\n", "")
+    block = block.replace("@pytest.fixture(scope=\"class\")", "@pytest.fixture(scope=\"module\")")
+    out = src.replace(m.group(0), "")
+    idx = out.index("class TestKMSSigning")
+    out = out[:idx] + block + "\n\n\n" + out[idx:]
+    new = "_py39_" + name
+    open(os.path.join(d, "tests", new), "w").write(out)
+    return new
+
+
 def run_python(floci, service, env, timeout, out_xml):
     d = os.path.join(floci, "compatibility-tests", "sdk-test-python")
-    files = [f"tests/{t}" for t in TARGETS["python"][service]]
+    targets = TARGETS["python"][service]
+    if sys.version_info < (3, 10):
+        targets = [py39_compat_copy(d, t) if t == "test_kms.py" else t for t in targets]
+    files = [f"tests/{t}" for t in targets]
     cmd = [sys.executable, "-m", "pytest", *files, "-o", "addopts=", "-p", "no:cacheprovider", "-q", "--tb=line",
            f"--junit-xml={out_xml}", f"--timeout={timeout}"]
     return cmd, d
@@ -116,7 +155,7 @@ def run_java(floci, service, env, timeout, out_xml):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--service", required=True, choices=["s3", "dynamodb", "sqs"])
+    ap.add_argument("--service", required=True, choices=["s3", "dynamodb", "sqs", "sns", "kinesis", "secretsmanager", "ssm", "kms", "sts"])
     ap.add_argument("--endpoint", required=True)
     ap.add_argument("--suite", default="python", choices=["python", "node", "java"])
     ap.add_argument("--floci-dir", required=True)

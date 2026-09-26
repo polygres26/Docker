@@ -13,13 +13,13 @@ import java.net.SocketAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-final class AclInterceptor implements ServerInterceptor {
+public final class AclInterceptor implements ServerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(AclInterceptor.class);
 
     private final ClientAcl acl;
 
-    AclInterceptor(ClientAcl acl) {
+    public AclInterceptor(ClientAcl acl) {
         this.acl = acl;
     }
 

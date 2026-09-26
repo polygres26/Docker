@@ -65,6 +65,9 @@ public final class StoreBootstrap {
                 case AZQUEUE -> exec(st, "azqueuewire_store");
                 case AZTABLE -> exec(st, "aztablewire_store");
                 case GCS -> exec(st, "gcswire_store");
+                case FIRESTORE -> exec(st, "firestorewire_store");
+                case DATASTORE -> exec(st, "datastorewire_store");
+                case PUBSUB -> exec(st, "pubsubwire_store");
                 case SNS -> exec(st, "snswire_store");
                 case KINESIS -> exec(st, "kinesiswire_store");
                 case AWSPARAMS -> exec(st, "awsparamswire_store");

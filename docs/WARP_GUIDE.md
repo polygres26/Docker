@@ -650,7 +650,7 @@ multi-membership `WARP_BACKEND_SETS` is unchanged, is now called *router aliases
 "Advanced" on the Backend sets page.
 
 **Enabled stores.** A Postgres backend can be asked to *host* any of `influxdb`, `mongodb`, `sqs`,
-`neo4j`, `opensearch`, `dynamodb`, `s3`. Enabling a store on a backend means:
+`neo4j`, `opensearch`, `dynamodb`, `s3` -- and the later `redis`, `azblob`, `azqueue`, `aztable`, `gcs`, `pubsub`, `firestore` and `datastore` (each has its section below). Enabling a store on a backend means:
 
 * Warp creates that protocol's schema **in that Postgres**, idempotently, before the change is
   saved (fixed catalog/graph tables, plus a `warp_enabled_stores` marker table; per-collection tables
@@ -675,6 +675,8 @@ setting names another set:
 | `WARP_OSWIRE_SET` | OpenSearch (`opensearch`) |
 | `WARP_BOLTWIRE_SET` | Neo4j (`neo4j`) |
 | `WARP_S3WIRE_SET` | S3 (`s3`) |
+| `WARP_FIRESTOREWIRE_SET` / `WARP_DATASTOREWIRE_SET` | Firestore (`firestore`) / Datastore (`datastore`) |
+| `WARP_SNSWIRE_SET` / `WARP_KINESISWIRE_SET` / `WARP_AWSPARAMSWIRE_SET` | SNS (`sns`) / Kinesis (`kinesis`) / Secrets, SSM, KMS, STS (`awsparams`) |
 
 A store enabled on a backend in a set the frontend does not serve is reported as `servedFromThisSet:
 false` and does nothing. **A store enabled on no backend keeps its previous behavior** (the `default`
@@ -691,11 +693,13 @@ is unchanged). With one enabled backend all data lives there.
 | Store | Shard key | Point operations | Scatter-gather (merged) | Not supported on several hosts |
 |---|---|---|---|---|
 | DynamoDB | table + partition key | PutItem, GetItem, UpdateItem, DeleteItem, Query on the table or an LSI | Scan and parallel Scan (exact global `(pk, sk)` order, so `Limit`/`ExclusiveStartKey` pagination is exact), GSI Query/Scan (k-way merge in index order), item and index counts, TTL sweep, PartiQL SELECT, ListTables (catalog on the first host); table/index DDL (CreateTable, UpdateTable) runs on every host | a `TransactWriteItems` spanning hosts commits one database transaction per host after locking and validating everything (see *The DynamoDB store*); a host failing at commit time after another committed leaves a partial transaction |
-| MongoDB | collection + `_id` | insert, find/update/delete by `_id` | find, count, distinct, `updateOne`/`deleteOne` (exactly one document in total), `$group` with `$sum`/`$min`/`$max`/`$avg` (partials merged exactly, then `$sort`/`$limit`) | `aggregate` with `$sort`/`$limit` and no `$group` (a clear error) |
+| MongoDB | collection + `_id` (canonical key: `1`, `1L`, `1.0` are the same `_id`) | insert, find/update/delete by `_id` (only the owning shards are read) | **everything else**: every host's documents are scanned and the query, sort, skip/limit, projection, update, aggregation pipeline (all stages and expressions), `count`, `distinct`, cursors and `findAndModify` run **once** over the merged stream, so answers are exact whatever the topology; a unique index is enforced through key-ownership rows placed on the host that hashes the index key | a multi-document write that fails midway leaves the documents already written (as in MongoDB), but which ones were reached first depends on the host scan order; see *The MongoDB store* |
 | SQS | queue name | a queue **lives wholly on one host**, so send/receive/visibility/FIFO ordering are exactly the single-host behavior | ListQueues (catalog on the first host) | dead-letter redrive between queues on different hosts is a best-effort two-step move |
 | InfluxDB | measurement + full tag set (one series never splits) | line-protocol writes | every InfluxQL statement: each host returns the raw points the query needs (time range and tag equality pushed down to SQL), the points are merged and evaluated once, so **every** function is exact across shards -- count/sum/min/max/mean and also median, percentile, mode, stddev, spread, distinct, top/bottom, integral, derivative, moving_average, GROUP BY time with fill(); LIMIT/OFFSET/ORDER BY apply after the merge; DELETE / DROP SERIES / DROP MEASUREMENT / DROP DATABASE run on every host (catalog on the first host) | a write batch spanning hosts is applied host by host; if one host fails the error names the points that were **not** written (see *The InfluxDB store*) |
 | OpenSearch | index + `_id` | index/get/update/delete/bulk/`_mget` by `_id` | the full search surface (query DSL, sort, `from`/`size`, `search_after`, scroll, aggregations, k-NN and hybrid) is evaluated over the documents of every host, so results and aggregations are exact; relevance is scored per host (see *The OpenSearch store*) | scroll and point-in-time contexts live in the memory of the Warp node that created them |
 | S3 | bucket + object key | PutObject, GetObject (Range), HeadObject, DeleteObject, tagging, ACLs, versions (a key and all its versions live on one shard), CopyObject within a shard, multipart incl. ListParts/UploadPartCopy (an upload lives wholly on the shard owning its key) | ListObjects v1/v2 and ListObjectVersions / ListMultipartUploads (k-way merge in key order; common prefixes de-duplicated), ListBuckets and CreateBucket/DeleteBucket and every bucket configuration document (bucket catalog on the first host), DeleteObjects (grouped by shard), CopyObject across shards (streamed through Warp) | see *The S3 store* below |
+| Firestore | database + document path | Get/Create/Update/DeleteDocument, single-document commits, transactions on one host (only the owner is read/locked) | collection and collection-group queries, ListDocuments, ListCollectionIds, aggregation, Listen (exact global `__name__` order via k-way merge of 1,000-row keyset pages; ordered-by-field queries collect their matches) | a commit spanning hosts is atomic except for a failure between the first and last `COMMIT` (no two-phase commit) |
+| Datastore | partition + ROOT ancestor key (an entity group never splits) | Lookup, entity-group commits and transactions, ancestor queries (one host, key-range scan) | kind and kindless queries, projections, aggregation (k-way merge by key; ordered-by-property queries collect their matches) | a commit spanning entity groups on several hosts: same cross-host caveat as Firestore; ids come from one counter on the first host |
 | Neo4j | — | — | — | **not sharded** (below) |
 
 `BatchWriteItem` is not atomic (as in real DynamoDB): on several hosts a write that fails on its host is
@@ -936,6 +940,72 @@ ValidationException/`UnsupportedOperationException`, never silently):
 * Stricter than before: clients written against older Warp versions must now alias reserved words, give a
   billing mode (or throughput) to CreateTable, use table names of at least 3 characters and not send unused
   `ExpressionAttributeNames`/`Values` -- exactly what real DynamoDB requires.
+
+#### The MongoDB store (mongowire)
+
+mongowire answers like a **MongoDB 7.0 standalone `mongod`** (`hello.maxWireVersion` 21). It is verified against a real `mongod:7.0`
+container and MongoDB's own driver-spec tests (see *Conformance* below), so pymongo, the Java/Node/Go drivers, mongosh and Compass work
+without special cases.
+
+*Storage.* Every collection is one Postgres table `"<db>"."<collection>"(id text PRIMARY KEY, doc jsonb, bson bytea, seq bigint identity)`:
+`bson` is the authoritative, type-exact BSON document (field order and int32/int64/double/decimal128/date/binary/timestamp/regex/... survive
+byte for byte), `doc` is a relaxed-JSON mirror for SQL, the MCP tools and the row cache, `seq` gives natural (insertion) order, and `id` is a
+canonical key of `_id` (numbers are normalised, so `1`, `1L` and `1.0` collide as in MongoDB). Collection options and index definitions live
+in `"<db>"."__warp_catalog"`, unique-index keys in `"<db>"."__warp_uk"`; both are hidden from `listCollections`/`listDatabases`. The database
+name is the Postgres schema and the collection name the table name (quoted, so `my-db`, `orders.2024` and unicode work); refused with
+`InvalidNamespace 73`: database names with `/ \ . space " $ * < > : | ?`, longer than 63 bytes, or `pg_*`/`information_schema`/`public`; collection
+names containing `$`, longer than 63 bytes, starting with `__warp_`, and writes to `system.*`.
+
+*Evaluation.* Queries are not translated to SQL: documents are streamed from Postgres in keyset-paged chunks (no Postgres connection is held
+by an open cursor) and evaluated by a Java implementation of MongoDB's semantics (BSON type ordering and bracketing, array traversal, null vs
+missing, numeric equality across types, collation, natural order). A filter on `_id` (equality or `$in`) reads only the owning rows/hosts;
+anything else is a scan of the collection. Sort, group and lookup buffer in memory (there is no spill to disk).
+
+*Supported.* Commands: `hello`/`isMaster`, `ping`, `buildInfo`, `getParameter`, `whatsmyuri`, `connectionStatus`, `listCommands`, `serverStatus`,
+`hostInfo`, `startSession`/`endSessions`/`killSessions`/`refreshSessions`, `saslStart`/`saslContinue` (SCRAM-SHA-256 for the configured
+credentials; commands are not authorised per user), `find`, `getMore`, `killCursors`, `insert`, `update`, `delete`, `findAndModify`, `aggregate`,
+`count`, `distinct`, `explain` (COLLSCAN plans), `create`, `drop`, `dropDatabase`, `renameCollection` (same database), `listCollections`,
+`listDatabases`, `listIndexes`, `createIndexes`, `dropIndexes`, `collMod`, `dbStats`, `collStats`, `validate`. Query operators: `$eq $ne $gt
+$gte $lt $lte $in $nin $and $or $nor $not $exists $type $regex(+options) $mod $size $all $elemMatch $expr $jsonSchema $bitsAllSet/AnySet/
+AllClear/AnyClear $comment`, dotted paths and array indexes. Projection: inclusion/exclusion, `$slice`, `$elemMatch`, positional `$`,
+expressions. Updates: `$set $unset $inc $mul $min $max $rename $currentDate $setOnInsert $push($each/$position/$slice/$sort) $pull $pullAll
+$addToSet $pop $bit`, positional `$`, `$[]`, `$[<id>]` with `arrayFilters`, replacement documents, aggregation-pipeline updates, upserts
+(equality-seeded `_id`), `let`. Aggregation stages: `$match $project $addFields/$set $unset $sort $limit $skip $unwind $group
+$lookup(field and pipeline forms) $unionWith $facet $bucket $bucketAuto $sample $sortByCount $count $replaceRoot/$replaceWith $redact
+$graphLookup $setWindowFields(document windows, rank, shift) $collStats $documents $out $merge`; about 300 expression operators (arithmetic,
+comparison, boolean, conditional, string, regex, array, set, object, type conversion incl. `$convert`, date incl. timezones,
+`$dateAdd/Diff/Trunc/ToString/FromString/ToParts/FromParts`, accumulators, `$let $map $filter $reduce $zip $sortArray`). Accumulators:
+`$sum $avg $min $max $first $last $push $addToSet $count $stdDevPop/Samp $mergeObjects $top/$bottom(N) $firstN/$lastN/$maxN/$minN`.
+Indexes: single/compound/multikey/hashed/wildcard definitions with `unique`, `sparse`, `partialFilterExpression`, `collation`, `hidden`,
+`expireAfterSeconds`; **unique** (also compound, multikey, sparse, partial, collated) is enforced with `E11000` errors carrying `keyPattern` and
+`keyValue`; TTL expiry runs lazily on access at most once a minute per collection; other indexes are metadata (queries scan). Collections:
+validators (`$jsonSchema` or query expressions, `validationLevel`, `validationAction`, `bypassDocumentValidation`, error 121). Handshake:
+`compression: [zlib]` (OP_COMPRESSED), `saslSupportedMechs`, `logicalSessionTimeoutMinutes: 30`, `maxWriteBatchSize` 100000. BSON: 16 MiB
+documents, all types including deprecated ones (symbol, undefined, dbpointer, code with scope).
+
+*Multiple hosts.* Documents are placed by `_id` hash across the backends that enable `mongodb`; reads scan every host and evaluate once, so
+sort/skip/limit, `$group`, `$lookup`, `distinct`, `count`, `findAndModify` and cursors are exact. A **unique index** is enforced with
+key-ownership rows placed on the host chosen by hashing the *index key* (not the `_id`), so two documents that would collide always meet on
+one host and one of them gets `E11000`; the insert of the document and of its key rows are separate statements (a crash between them can
+leave an orphan key row that blocks that key until the collection is re-indexed). Natural order across hosts is "host 1 rows, then host 2
+rows", so results of `limit`/`skip`/`$first` **without a sort** differ from a single host (MongoDB documents natural order as unspecified).
+
+*Deliberately different from real MongoDB* (each returns a clear MongoDB-style error, never a silently wrong answer): transactions
+(`startTransaction`/`txnNumber` -> `IllegalOperation 20`, exactly what a standalone `mongod` answers) and change streams
+(`$changeStream` -> `40573`); `$where` and `$function`/`$accumulator` (no JavaScript engine); `$text` and geospatial operators/indexes/stages
+(`2d`, `2dsphere`, `text`, `$geoNear`, `$near`...); views and time-series/clustered collections (`create` with `viewOn`/`timeseries`);
+`renameCollection` across databases; `$densify`, `$fill`, `$indexStats`, `$currentOp`, `$search`; capped-collection size/max limits are
+recorded but not enforced; `$$NOW`-style server clocks are the JVM clock; `collStats`/`dbStats` sizes are estimates; `explain` reports COLLSCAN
+plans only; error *codes* of failing aggregation expressions follow MongoDB for common cases and may differ for rare ones (documented in
+`mongo_conformance/mongo_known.py`); `SCRAM-SHA-1` and x509 are not offered. Connection multiplexing and connect-time routing by `$db`
+(§4.8) are unchanged; the single-`_id` row cache is still invalidated on writes but no longer serves reads (it cannot carry BSON types).
+
+*Conformance.* `Warp/tests/python/mongo_conformance/` runs the same pymongo operations against a real `mongod:7.0` and against Warp
+(2,692 recorded steps: query operators over mixed types, sort, projection, every update operator, positional/array filters, upserts,
+findAndModify, bulk writes, aggregation stages and ~800 expression evaluations, indexes and unique enforcement, admin, validators, cursors,
+handshake, error shapes) and replays the oracle's recorded answers offline (`test_mongowire_conformance.py`, on one host and on two sharded
+hosts), plus MongoDB's driver-spec suites (CRUD unified tests and the BSON corpus, run through pymongo). `mongo_conformance/README.md` has the
+counts and the list of remaining differences.
 
 #### The InfluxDB store (influxwire)
 
@@ -1538,6 +1608,527 @@ with a 300 MB heap, 16 clients hammering table upserts and queue dequeues withou
 installed on the test machine, so the harness talks raw REST with its own signer (verified by Azurite). RTT: `RTT_BASELINE_2026.md`. Java unit tests:
 `AzurewireUnitTest` (string-to-sign, SAS, OData grammar, continuation tokens, XML).
 
+#### The Google Cloud Storage store (gcswire)
+
+gcswire speaks the **Google Cloud Storage JSON API** (`/storage/v1`, `/upload/storage/v1`, `/download/storage/v1`, `/batch/storage/v1`) and the **XML API**
+(S3-interoperable, path style and virtual-hosted) on **one port** (`WARP_GCSWIRE_PORT`, default **4443** like fake-gcs-server) and keeps the objects in the Postgres
+backends of a backend set: the `gcs` store. The differential oracle is **fsouza/fake-gcs-server**; it is an emulator with many gaps, so where it deviates from real
+GCS, Warp implements real GCS and the difference is documented (below and in `Warp/tests/python/gcs_conformance/gcs_known.py`).
+
+**Why its own tables (`warp_gcs_*`) instead of the s3 store's.** The mechanics are shared (the same `ChunkMath` chunk arithmetic, 4 MiB `bytea` rows with `STORAGE
+EXTERNAL`, hash sharding, `S3SigV4Verifier` helpers, the Azure-style shard/connection plumbing) but the data model is not: a GCS *generation* is an int64
+microsecond timestamp with a per-generation *metageneration*, "live" vs "noncurrent" is a state of the row (versioning off deletes the old row, on keeps it with
+`timeDeleted`), objects can be *composed* (component counts, no md5), a resumable upload is a session whose accepted chunks become segments of the final object without a
+byte being copied again. Forcing that onto S3 version ids / delete markers would have bent both stores; sharing the tables would also make one bucket namespace answer to
+two services (an S3 bucket `a` and a GCS bucket `a` are unrelated products). So: separate schema, created idempotently by `StoreBootstrap` from
+`ddl/postgres/gcswire_store.sql` (`warp_gcs_buckets`, `_hmac`, `_objects`, `_data`, `_data_owner`, `_sessions`); disabling the store never drops data.
+
+**Where things live.** Bucket catalog, bucket metadata (labels, cors, lifecycle, ACLs, IAM policy, notification configs -- stored and returned) and HMAC keys on the
+first host of the set; every object generation, its data chunks and its upload sessions on the host owning `hash(bucket + "/" + object name)`, so all generations of an
+object are together and a resumable session lives with its object. Listings are merged across hosts in `(name, generation)` order with one lazily advancing cursor per
+host (delimiter roll-ups jump past a prefix instead of scanning it; `pageToken` encodes the last entry). `WARP_GCSWIRE_PROBE_OTHER_SHARDS=true` also looks on the other hosts
+on a miss (finds data written before a topology change); adding a host does not move data (`rebalanceRequired`, like the other stores). No connection routing by project or
+bucket is implemented (keep it simple: the set named by `WARP_GCSWIRE_SET`, default the one holding `default`, serves the listener). The listener starts when the `gcs`
+store is enabled, `WARP_GCSWIRE_PORT` is set or `WARP_GCSWIRE_ENABLED=true`.
+
+**JSON API.** Buckets (insert/get/list/patch/update/delete with `location`, `storageClass`, `versioning`, `labels`, `cors`, `lifecycle`, `iamConfiguration` /
+`uniformBucketLevelAccess`, `retentionPolicy` (enforced on delete/overwrite), `softDeletePolicy`; `lockRetentionPolicy`), bucket / default-object / object ACLs and
+`predefinedAcl`, bucket IAM policy (get/set/`testPermissions`, stored), notification configs, HMAC keys, `serviceAccount`. Objects: insert by `uploadType=media`,
+`multipart` (streamed `multipart/related`) and **`resumable`**; get (`alt=json|media`, `Range`, `If-Match` / `If-None-Match` / `If-Modified-Since` /
+`If-Unmodified-Since`, `ifGeneration*` / `ifMetageneration*`, `projection`, `fields=` partial responses, basic decompressive transcoding of `Content-Encoding: gzip`),
+list (`prefix`, `delimiter`, `startOffset`, `endOffset`, `includeTrailingDelimiter`, `matchGlob`, `versions`, `maxResults`, `pageToken`), patch / update, delete (live
+or by `generation`), `copyTo`, `rewriteTo`, `moveTo`, `compose` (up to 32 sources, 1024 components), object holds, batch (`multipart/mixed`, up to 100 metadata
+sub-requests), CORS preflight. Errors are the exact envelope `{"error":{"code","message","errors":[{"message","domain","reason"[,"locationType","location"]}]}}`; XML
+errors for the XML API. Responses carry `x-goog-generation`, `x-goog-metageneration`, `x-goog-hash: crc32c=..,md5=..` (computed exactly), `x-goog-stored-content-length`,
+`x-goog-stored-content-encoding`, `x-goog-component-count`. Hashes declared by the client (`X-Goog-Hash`, `md5Hash` / `crc32c` in the metadata) are verified (400).
+
+**Resumable uploads (what the client libraries use for large objects).** `POST ...uploadType=resumable` answers 200 with an empty body, `Location` (session URI with
+`upload_id`) and `X-GUploader-UploadID`. `PUT` to the session URI with `Content-Range: bytes a-b/*` (or `/total` on the final chunk): every chunk but the last must be a
+multiple of **256 KiB**; the server persists only the aligned prefix of a non-final chunk and answers **308** with `Range: bytes=0-(persisted-1)` (no `Range` header when
+nothing is persisted), the client resumes from there; an offset below the persisted size skips the overlap; an offset beyond it is 400; `Content-Range: bytes */*`
+is the status query (`*/total` finalizes when `total` equals the persisted size); the final chunk answers 200 with the object (repeatable); `DELETE` cancels with **499** and
+frees the data; unknown or cancelled sessions are 404. Preconditions are checked at initiation and again at finalize; hashes are verified over the stored bytes when
+finalizing. Each accepted chunk is its own data blob (its own short borrow of a pooled connection), so memory is one chunk and a 100 MiB upload runs in a JVM with a 300 MB
+heap; abandoned sessions and their data are removed by a sweeper after `WARP_GCSWIRE_SESSION_TTL_SECONDS` (7 days). The same protocol serves the XML API
+(`x-goog-resumable: start` -> 201 + `Location`).
+
+**XML API.** ListBuckets (`x-goog-project-id`), bucket create/delete/head/list-objects (v1 `marker`/`NextMarker` and v2 `list-type=2` with `continuation-token`,
+`start-after`, `prefix`, `delimiter`, `max-keys`, `encoding-type=url`), `?versioning`, `?location`, `?cors`, `?uploads`; object PUT / GET / HEAD / DELETE with `Range`,
+conditional headers, `x-goog-meta-*`, `x-goog-generation` and the `x-goog-if-generation-match` family, `x-goog-acl`, copy (`x-goog-copy-source`, `x-goog-metadata-directive`),
+**multipart upload** (initiate `POST ?uploads`, `PUT ?partNumber&uploadId`, list parts, complete with part-order and ETag validation, abort; the parts become the object's
+segments, nothing is copied), resumable, virtual-hosted requests (`<bucket>.<WARP_GCSWIRE_DOMAIN>`), CORS preflight from the bucket's cors config.
+
+**Authentication** (there is no per-bucket authorization: every accepted credential can do everything). (1) OAuth2 bearer tokens (`Authorization: Bearer` or
+`access_token=`): accepted when listed in `WARP_GCSWIRE_TOKENS` (comma list; not validated as JWTs); with a list configured a wrong token is 401 even if anonymous access is allowed.
+(2) `WARP_GCSWIRE_ALLOW_ANONYMOUS=true` accepts requests with no credentials (and any bearer), which is how fake-gcs-server runs; **the default is to accept nothing** (401 with the real
+GCS envelope) unless a token list is configured. (3) **HMAC keys** created through `POST /storage/v1/projects/{p}/hmacKeys` (create / list / get / update ACTIVE|INACTIVE / delete)
+sign XML API requests with **`AWS4-HMAC-SHA256`** (boto3, s3 tools; region `auto`) or **`GOOG4-HMAC-SHA256`**, header or presigned query. (4) **V4 signed URLs (`GOOG4-RSA-SHA256`) and V2
+signed URLs** (`GoogleAccessId`/`Expires`/`Signature`, RSA-SHA256) are verified with the public keys of `WARP_GCSWIRE_SIGNING_KEYS` (`email=/path;...`: a PEM public key or certificate, a PKCS#8
+private key, or a service-account JSON file), including method, canonical headers, expiry (400 `ExpiredToken`) and tampering (403). Legacy `GOOG1` HMAC v1 signatures are not supported.
+
+**Divergences from fake-gcs-server (documented, tested).** Warp follows real GCS: (a) ETags are opaque tokens and change with the metageneration (the emulator uses the md5), object `id` includes the
+generation; (b) composed objects have `crc32c` and `componentCount` but **no `md5Hash`**; (c) `bucket delete` on a non-empty bucket is 409 `conflict` (emulator: 412), deletes answer 204 (emulator: 200);
+(d) objects listings count common prefixes toward `maxResults`, honour `pageToken`, `matchGlob`, `startOffset`/`endOffset`, order versions by generation; (e) PATCH merges (null removes a label / metadata
+key) and bumps `metageneration`, preconditions apply to every verb (the emulator ignores them on patch/get/delete/copy/compose and answers a failing compose with 500);
+(f) validation: bucket / object names, `predefinedAcl`, `alt`, `maxResults`, `pageToken`, hashes, `project` are checked; (g) the resumable protocol above (the emulator finalizes on the first
+`bytes */*`, persists unaligned chunks, allows a cancelled session to be reused and answers the start with an object body); (h) an object uploaded without a content type is
+`application/octet-stream`. Not implemented / approximated: `rewriteTo` always completes in one call (real GCS may return `done:false` with a `rewriteToken` for cross-location or
+storage-class rewrites; a client-supplied token is rejected), lifecycle rules and notification configs are stored but never executed (no Pub/Sub), retention/holds are enforced only
+on delete/overwrite, `softDelete` restore, `bulkRestore`, `watchAll`, customer-supplied / KMS encryption, `restore`, managed folders, anywhere caching, XML `?acl`/`?lifecycle`/`?tagging`/`?policy`
+sub-resources (501 -- use the JSON API), a `GET /` on the XML API without `x-goog-project-id`, `matchGlob` combined with `delimiter` is approximated (the glob filters objects, prefixes are derived from matches),
+`objects.list` ignores `softDeleted`, and IAM is stored but never evaluated.
+
+**Conformance and performance.** `Warp/tests/python/gcs_conformance/` holds the differential corpus (44 cases, 394 REST steps: bucket / object CRUD, name edge cases, media / multipart / resumable
+uploads with chunking, ranges, preconditions, versioning, listings with prefixes / delimiters / paging / offsets / glob, copy / rewrite / compose, ACLs, error cases) replayed against fake-gcs-server and
+Warp with normalised comparison (status, meaningful headers, canonical JSON with volatile fields, generations mapped to ordinals). Result: **250 identical, 25 same failing status with a different error text,
+119 documented differences, 0 unexpected**, on one backend and on two sharded backends. `golden.json.gz` records the oracle; `test_gcs_conformance.py` replays it offline (no Docker) and adds the
+tests that assert real GCS behaviour where the emulator cannot be the oracle (resumable protocol, XML API, multipart, HMAC and signed URLs, auth, ACL / IAM / notifications / batch), rows landing on both
+hosts, cross-shard copy and compose, a 100 MiB resumable upload with `-Xmx300m`, 16 concurrent writers with a single winner of an `ifGenerationMatch=0` race and `WARP_POOL_MAX_SIZE=4` with slow
+uploaders. The Google Cloud client libraries were not installed on the test machine, so the harness talks raw REST (`requests`) with its own signers. RTT: `RTT_BASELINE_2026.md`. Java unit tests:
+`GcswireUnitTest` (crc32c/md5 encodings, resumable range math, generation preconditions, glob / prefix / token / fields, name validation, error rendering, MIME parsing).
+
+#### The Google Pub/Sub store (pubsubwire)
+
+pubsubwire speaks **Google Cloud Pub/Sub**: the **v1 gRPC API** (`google.pubsub.v1.Publisher`, `Subscriber` including bidirectional **StreamingPull**, `SchemaService`, and `google.iam.v1.IAMPolicy`) on
+`WARP_PUBSUBWIRE_PORT` (default **8085**, like the official emulator) and the **REST/JSON API** (`pubsub.googleapis.com/v1`) on `WARP_PUBSUBWIRE_REST_PORT` (default **8087**, `0` = off), and
+keeps everything in the Postgres backends of a backend set: the `pubsub` store. Every Google client library works with `PUBSUB_EMULATOR_HOST=host:8085` (they then use plaintext gRPC and no
+credentials). The differential oracle is **Google's official Pub/Sub emulator** (`gcloud beta emulators pubsub`); it is a lenient test double, so where it deviates from real Cloud Pub/Sub, Warp
+implements Pub/Sub and the difference is documented (below and in `Warp/tests/python/ps_conformance/ps_known.py`). The listener starts when the `pubsub` store is enabled, `WARP_PUBSUBWIRE_PORT` is
+set or `WARP_PUBSUBWIRE_ENABLED=true`.
+
+**The protos are Google's own.** `Warp/src/main/proto/google/pubsub/v1/{pubsub,schema}.proto` and `google/iam/v1/{iam_policy,policy,options}.proto` are vendored from googleapis (Apache-2.0, see
+`NOTICE`) and compiled by the existing protobuf plugin, so the gRPC service descriptors and messages are byte-identical to Google's. (The IAM files differ from upstream only in `option java_package`:
+the `proto-google-iam-v1` jar on the classpath is built for protobuf 4 and does not load on Warp's protobuf 3.25.) Unary RPCs of all three services go through one table (`PsRpc`) shared with the REST
+transport, whose routes are read from the `google.api.http` annotations of the same protos.
+
+**Storage and sharding** (same conventions as sqswire and gcswire; schema `ddl/postgres/pubsubwire_store.sql`, all tables prefixed `warp_pubsub_`, created idempotently by `StoreBootstrap`):
+
+| Table | Holds | Lives on |
+|---|---|---|
+| `_topics`, `_subs`, `_snapshots`, `_schemas`, `_iam`, `_outbox` | the catalogs: the topic / subscription / snapshot / schema as serialized protobuf, the topic-to-subscription index (`_subs.topic`), IAM policies, the publish outbox | the **first host** of the set (the "home") |
+| `_msgs` | one row per message per subscription: data, attributes, ordering key, publish time, `visible_at` (the lease), delivery attempt, ack token, acked flag | the host owning `hash(subscription name)` |
+| `_snapmsgs`, `_hold` | for each snapshot the ids that were unacked in its subscription; "keep acked messages" markers | with the subscription's queue |
+
+A subscription's queue lives wholly on **one** host (hash of its full name), like an SQS queue, so leasing, ordering and acknowledgement are single-host transactions. **Publish** assigns message ids
+and the publish time, reads the topic's subscriptions from the home host, evaluates each subscription's filter, and inserts the message into every remaining subscription's queue. When all targets are
+on one host that is one transaction; when they span hosts the batch is first written to the **outbox** on the home host (durable, insert first), then inserted host by host (idempotent on
+`(subscription, message id)`), then the outbox row is deleted. A crash or a failing host in between leaves the row; a sweeper (every 5 s) completes rows older than 5 s, so delivery is at-least-once and
+never lost after Publish answered, and a retried step cannot double-insert. Ordering keys are kept per subscription (the queue is ordered by an identity sequence per host). The catalog reads
+(topic exists, list of subscriptions) are two small queries on the home host per Publish; subscription documents are cached for 1 s per process (a change made on another node is seen within a second).
+Project routing: like a database name, a **project id that names a backend or a backend set** (`ConnectionRouter`, protocol `http`) pins that project to those hosts (`projects/pg_east/topics/t` uses only
+backend `pg_east`); otherwise every host with the store serves every project. Nothing else is routed, and `WARP_CONNECT_ROUTING=strict` does not reject unknown projects.
+
+**Publisher.** CreateTopic / GetTopic / UpdateTopic (with `update_mask`, unknown paths rejected with Google's text) / ListTopics / ListTopicSubscriptions / ListTopicSnapshots / DeleteTopic / Publish /
+DetachSubscription. Topic settings (`labels`, `message_retention_duration` 10 min - 31 days, `message_storage_policy`, `schema_settings`, `kms_key_name`, ...) are stored and returned. Publish limits: 1,000
+messages and 10 MB per request, 10 MB per message, 100 attributes (keys up to 256 bytes and not starting with `goog`, values up to 1,024 bytes), ordering keys up to 1,024 bytes, at least data or one
+attribute. Message ids are increasing decimal strings, `publish_time` has microsecond precision. Deleting a topic keeps its subscriptions, whose `topic` becomes `_deleted-topic_`. A topic with
+`schema_settings` validates every published message (below).
+
+**Subscriber.** CreateSubscription / GetSubscription / UpdateSubscription / ListSubscriptions / DeleteSubscription / ModifyAckDeadline / Acknowledge / Pull / StreamingPull / ModifyPushConfig / snapshots
+(Create / Get / List / Update / Delete) / Seek. Defaults and bounds follow Pub/Sub: `ack_deadline_seconds` 10 (10-600), `message_retention_duration` 7 days (10 min - 7 days), an
+`expiration_policy` of 31 days is reported (stored, **not enforced**: subscriptions never expire), `push_config` is always present. Behaviour:
+
+* **Leases and ack ids.** A delivery sets `visible_at = now + deadline` and a random token; the ack id encodes `(queue sequence, delivery attempt, token)` (`PsAckId`). ModifyAckDeadline sets a new lease
+  (`0` = nack: deliverable at once, or after the retry backoff). At-least-once subscriptions accept any well-formed ack id, also from an earlier delivery (like Pub/Sub); a malformed id is
+  INVALID_ARGUMENT. Pull without `return_immediately` waits up to `WARP_PUBSUBWIRE_PULL_WAIT_MS` (20 s) and is woken in-process by a publish (200 ms poll otherwise, for other nodes and for lease expiry); it
+  never holds a database connection while waiting.
+* **Ordering** (`enable_message_ordering`): only the oldest unacknowledged message of each ordering key is deliverable, so there is **one outstanding message per key**, in publish order, and a redelivery
+  keeps the order (the head is redelivered before its successors). Keys are independent; messages without a key flow freely. (Google may hand out several messages of a key at once; this is
+  stricter and slower per key.)
+* **Exactly-once delivery** (`enable_exactly_once_delivery`): an ack or modack counts only with the ack id of the *current* delivery and while its lease has not expired; otherwise Acknowledge / ModifyAckDeadline
+  answer INVALID_ARGUMENT with a `google.rpc.ErrorInfo` (`reason: EXACTLY_ONCE_ACKID_FAILURE`, `metadata[ackId] = PERMANENT_FAILURE_INVALID_ACK_ID`) in the status details, and on a stream the
+  `acknowledge_confirmation` / `modify_ack_deadline_confirmation` lists carry `ack_ids` / `invalid_ack_ids`. `subscription_properties` reports the flag.
+* **Filters** (immutable, evaluated at Publish time, a non-matching message is never queued): `attributes.k = "v"`, `!=` (requires the attribute), `attributes:k`, `hasPrefix(attributes.k, "p")`, `NOT` / `-`,
+  `AND`, `OR` with the precedence NOT > AND > OR and parentheses, quoted names (`attributes:"iana.org"`); up to 256 bytes; an invalid filter is INVALID_ARGUMENT. Parser and evaluator: `PsFilter`.
+* **Dead letters** (`dead_letter_policy`, `max_delivery_attempts` 5-100, default 5): `delivery_attempt` is reported (from 1) on subscriptions that have a policy; a message that used its attempts is
+  forwarded to the dead-letter topic (published like any message, so it fans out across shards) with the attributes `CloudPubSubDeadLetterSourceDeliveryCount`, `...SourceSubscription`,
+  `...SourceSubscriptionProject` and `...SourceTopicPublishTime` and then dropped from the source, on the next Pull / stream poll or by the sweeper. The dead-letter topic must exist at creation.
+* **Retry policy**: after a nack or a lease expiry a message becomes deliverable after `min(max_backoff, min_backoff * 2^(attempt-1))` (defaults 10 s / 600 s once a policy exists; `PsBackoff`); without a
+  policy redelivery is immediate.
+* **Seek and snapshots.** A snapshot records the ids that were unacknowledged in its subscription and turns on "keep acknowledged messages" for every subscription of the topic (they are kept until their retention
+  ends, as for `retain_acked_messages`); its expiry is 7 days minus the age of the oldest unacked message. `Seek` to a snapshot acknowledges what was acknowledged then and replays the rest, also for a
+  *different* subscription of the same topic (its queue may be on the other host); `Seek` to a time acknowledges everything published before it and replays everything published since (needs retained
+  messages: `retain_acked_messages` or a snapshot). Seeking clears leases. Without retention an acknowledged message is deleted at once.
+* **Retention**: unacknowledged messages older than the subscription's `message_retention_duration` (and retained acked ones) are deleted by the sweeper (every 5 s). Topic-level
+  `message_retention_duration` is stored but a topic without subscriptions keeps nothing.
+* **DetachSubscription** detaches (flag `detached`, backlog dropped, no new messages); Pull on it is FAILED_PRECONDITION.
+* **BigQuery / Cloud Storage / Bigtable subscriptions**: the configuration is stored and returned; there is no export, and Pull / StreamingPull on such a subscription is UNIMPLEMENTED.
+
+**StreamingPull** (`PsStreams`). A stream owns neither a thread nor a database connection. One *pump* per subscription that has open streams wakes on a publish (or every 200 ms when idle), leases
+messages with one short query for all streams with room, and writes them to the streams round-robin; acks and modacks from the client are single statements in the gRPC callback. Flow control is the
+client's `max_outstanding_messages` / `max_outstanding_bytes` (default 1,000 messages) against what the stream was sent and neither acknowledged nor expired, and gRPC's own `isReady()` backpressure;
+`stream_ack_deadline_seconds` (10-600) is the lease of what the stream receives. The first response carries `subscription_properties`. A client that disconnects without acknowledging leaves its
+messages leased until the deadline, then they are redelivered (with the same message id and a new ack id). The Developer edition's 25-connection cap applies to the SQL frontends and native gRPC only:
+pubsubwire streams are not counted (they would starve each other), so bound them with `WARP_PUBSUBWIRE_MAX_STREAMS`.
+
+**Push** (`PsPush`). A scanner finds subscriptions with a `push_endpoint` and drains each in the background: leases up to 100 messages, POSTs each as the documented JSON envelope
+`{"message":{"data","attributes","messageId","message_id","publishTime","publish_time","orderingKey"},"subscription":"projects/../subscriptions/..","deliveryAttempt":n}` (`deliveryAttempt` with a dead letter
+policy) or, with `no_wrapper`, the raw data with `X-Goog-Pubsub-*` headers when `write_metadata` is set, and acknowledges on **200, 201, 202, 204 or 102**. Any other status, a timeout or a connection error
+nacks: with a retry policy the message returns after its backoff, otherwise after an exponential backoff of 1 s doubling to 60 s. `http://` endpoints are accepted (real Pub/Sub requires HTTPS).
+**OIDC token settings and `push_config.attributes` are stored and returned, but no `Authorization` token is minted** (there is no Google identity here). ModifyPushConfig with an empty config turns a push
+subscription back into a pull subscription.
+
+**Schemas.** CreateSchema / GetSchema (`view` BASIC omits the definition, like Pub/Sub) / ListSchemas / DeleteSchema / ValidateSchema / ValidateMessage; a topic with `schema_settings` (schema must exist,
+encoding JSON or BINARY) rejects non-conforming messages with INVALID_ARGUMENT. **Avro** definitions are parsed and messages decoded with the Avro library on the classpath (JSON and BINARY encodings; BINARY
+must consume every byte). **Protocol Buffer** schemas are validated only when the schema carries `compiled_proto_schema` (a `FileDescriptorSet` and a root message: messages are parsed against it); a
+`.proto` *text* definition is stored but cannot be parsed without `protoc`, so ValidateMessage and Publish against it are **UNIMPLEMENTED**. Schema revisions (ListSchemaRevisions, CommitSchema,
+RollbackSchema, DeleteSchemaRevision) are UNIMPLEMENTED: a schema has one revision.
+
+**IAM.** GetIamPolicy / SetIamPolicy / TestIamPermissions on topics, subscriptions, snapshots and schemas (gRPC `google.iam.v1.IAMPolicy` and REST `:getIamPolicy` ...): the policy is stored with a new etag and
+returned; **never evaluated** (TestIamPermissions echoes the requested permissions).
+
+**REST/JSON.** Every RPC with an HTTP binding in the protos is served with the same semantics: `PUT /v1/{name}` create, `PATCH` update (`{"topic": {...}, "updateMask": "labels"}`), `GET` / `DELETE`,
+`POST /v1/{topic}:publish`, `:pull`, `:acknowledge`, `:modifyAckDeadline`, `:modifyPushConfig`, `:seek`, `:detach`, `POST /v1/{parent}/schemas`, `schemas:validate`, ..., list calls with `pageSize` / `pageToken`.
+Bodies are proto3 JSON (`data` is base64, int64 as strings, `publishTime` RFC 3339). Errors are Google's envelope `{"error":{"code":404,"message":"Resource not found (resource=t).","status":"NOT_FOUND"}}` with
+the HTTP status of the gRPC code (INVALID_ARGUMENT / FAILED_PRECONDITION 400, UNAUTHENTICATED 401, PERMISSION_DENIED 403, NOT_FOUND 404, ALREADY_EXISTS 409, RESOURCE_EXHAUSTED 429, UNIMPLEMENTED 501,
+UNAVAILABLE 503). StreamingPull has no REST binding.
+
+**Errors.** gRPC codes and texts follow Pub/Sub: `NOT_FOUND` "Resource not found (resource=NAME).", `ALREADY_EXISTS` "Resource already exists in the project (resource=NAME).", `INVALID_ARGUMENT` "Invalid
+[topics] name: (name=...)" / "Invalid resource name given (name=...). Refer to https://cloud.google.com/pubsub/docs/pubsub-basics#resource_names for more information.", "The value for message_count is too
+large. You passed 1001 in the request, but the maximum value is 1000.", `OUT_OF_RANGE` for `max_delivery_attempts`, `FAILED_PRECONDITION`, `UNIMPLEMENTED`. The exact texts of a few validations
+(ack-deadline bounds, push endpoint, filter syntax) were not verifiable against the real service and follow the emulator's shape where it has one.
+
+**Authentication.** None by default, like the emulator. `WARP_PUBSUBWIRE_TOKENS` (comma list) requires `authorization: Bearer <token>` on every gRPC call (UNAUTHENTICATED otherwise) and
+`Authorization: Bearer` (or `access_token=`) on every REST request (401); tokens are not validated as JWTs. The `ConnectionGate` ACL applies to both listeners. IAM policies are not evaluated.
+
+**Connection handling.** No pooled connection is held across a long poll, a StreamingPull, a push request or an idle wait (see *Connection multiplexing*): each poll, ack, publish or claim borrows for one short
+statement / transaction. `WARP_POOL_MAX_SIZE=4` with 30 idle streams and 10 parked long polls still answers other requests promptly (tested).
+
+**Divergences from the official emulator (documented, tested).** Warp follows real Pub/Sub: (a) error texts (`Resource not found (resource=...)` vs the emulator's `Topic not found`); (b) validation the emulator
+skips: ack deadline < 10 or > 600 s, retention > 7 days, reserved / empty attribute keys, negative `page_size`, ListTopicSubscriptions of a missing topic (NOT_FOUND), filter syntax errors (the emulator
+answers UNKNOWN); (c) the default `expiration_policy`, snapshot labels, `UpdateSnapshot`, `DetachSubscription` and the IAM calls, which the emulator lacks (UNIMPLEMENTED); (d) `UpdateTopic` /
+`UpdateSubscription` with `update_mask: labels` (the emulator rejects the valid path); (e) StreamingPull honours `max_outstanding_messages`, sends the initial `subscription_properties`, and exactly-once
+confirmations carry the documented ErrorInfo; (f) the retry policy's backoff and dead letter attributes are honoured; (g) one outstanding message per ordering key, `delivery_attempt` only with a dead
+letter policy, `ListSchemas` default view BASIC.
+
+**Not implemented / approximated.** Subscription expiration (`expiration_policy` is reported, never applied) and topic-level retention without subscriptions; BigQuery / Cloud Storage / Bigtable delivery;
+Protocol Buffer schemas given as `.proto` text and schema revisions; ingestion data sources and message transforms (stored, ignored); push OIDC tokens; IAM enforcement; the publish
+`ordering_key` pause / resume (`resume_publish`) protocol, `PublishFlowControl` is client side; `topic_message_retention_duration` is reported on subscriptions but does not extend queue retention; a message is
+never larger than 10 MB and the whole publish batch is one gRPC message (Warp accepts up to 20 MiB inbound); a subscription's queue is never split over hosts, so one very hot subscription is bounded by
+one Postgres host; adding a host does not move existing queues (`rebalanceRequired`, like the other stores); the number of subscriptions with open streams costs one lease query per pump tick
+(5 per second when idle) per subscription.
+
+**Conformance and performance.** `Warp/tests/python/ps_conformance/` holds the differential corpus (23 cases, 269 gRPC steps: topic and subscription CRUD and validation, publish limits, pull / ack /
+modack / nack, expiry and redelivery, fan-out to three subscriptions, filters, ordering, dead letters, retry policy, snapshots and seek (to a snapshot and to a time), detach, push config, exactly-once,
+StreamingPull incl. flow control, IAM, Avro schemas) replayed against the emulator and Warp (raw gRPC with stubs generated from the vendored protos: the Google client libraries were not installed on the test
+machine) with normalised comparison (ids, timestamps and tokens masked, resource names mapped). Result on one backend and on two sharded backends: **186 identical, 83 documented divergences (about 27 of them the same error in different words) and 0 unexpected**. `golden.json.gz` records the oracle;
+`test_pubsub_conformance.py` replays it offline (no Docker) and adds the tests that assert real Pub/Sub behaviour where the emulator cannot be the oracle: the REST API, push to a local HTTP server
+(retries, `no_wrapper`, envelope fields), StreamingPull with 1,000 messages and reconnect semantics, exactly-once confirmations, dead letters across shards, snapshots across shards, the outbox, ordering
+keys, 20 parallel pullers with no duplicate deliveries while acks are outstanding, the store on both hosts, bearer tokens, `WARP_POOL_MAX_SIZE=4` with 30 idle streams. Java unit tests: `PubsubwireUnitTest`
+(filter grammar and precedence, ack-id encoding, backoff math, id generation, names, error texts, Avro validation). RTT: `RTT_BASELINE_2026.md`.
+
+#### The SNS, Kinesis, Secrets, SSM and KMS stores
+
+Six more Amazon services, all on Postgres, all behind the same SDKs and the same SigV4 credentials: **SNS** (`snswire`), **Kinesis Data Streams**
+(`kinesiswire`), **Secrets Manager** (`secretswire`), **SSM Parameter Store** (`ssmwire`), **KMS** (`kmswire`) and **STS** (`stswire`, with the slice of IAM it needs). They are
+the "simple end" of the AWS list Warp emulates on Postgres (DynamoDB, SQS and S3 came first); each speaks the protocol its SDKs use (Query/XML for SNS, STS and IAM; JSON 1.1 for
+the rest, plus **CBOR** for Kinesis and **HTTP/2 without TLS** for the SDKs that need it). One HTTP listener can serve all of them -- see *The unified AWS endpoint* below --
+and each can also have its own port.
+
+**Store types (why three, not six).** `sns`, `kinesis` and `awsparams`. Secrets Manager, SSM `SecureString` and STS share key management (a secret and a SecureString are
+sealed with a KMS key; a temporary credential must be accepted by every service), so they share one store, `awsparams`. SNS and Kinesis are independent products that shard on
+different keys, and an operator may want topics on one pair of hosts and streams on another, so they are separate stores (the same reasoning as `azblob` / `azqueue` / `aztable`).
+Schemas are prefixed `warp_sns_`, `warp_kinesis_` and `warp_awsparams_`, created idempotently by `StoreBootstrap` from `ddl/postgres/{snswire,kinesiswire,awsparamswire}_store.sql`
+when the store is enabled on a backend; disabling never drops data. Enable them like any store (admin UI *Backend sets*, or `PATCH .../backends/<name> {"enabledStores":["sns","kinesis","awsparams"]}`);
+they show up as typed stores in MCP (`sns`, `kinesis`, `awsparams`, described only). Set selectors: `WARP_SNSWIRE_SET`, `WARP_KINESISWIRE_SET`, `WARP_AWSPARAMSWIRE_SET` (default: the set holding `default`).
+
+**Where things live** (deterministic hash over the hosts that enable the store, in declaration order, like the other stores; adding a host does not move data and is reported as
+`rebalanceRequired`):
+
+| Data | Host |
+|---|---|
+| an SNS topic, its subscriptions, its FIFO dedup window and its recorded deliveries | owner of `hash(topic name)` (ListTopics / ListSubscriptions fan out and merge by ARN) |
+| SNS platform applications and endpoints, SMS settings and opt-outs | first host |
+| a Kinesis stream: catalog row, shards, records, consumers | owner of `hash(stream name)`, wholly (ListStreams fans out) |
+| a secret and its versions | owner of `hash(secret name)` (ListSecrets / BatchGetSecretValue by filter fan out) |
+| an SSM parameter and its history | owner of `hash(parameter name)` (GetParametersByPath, DescribeParameters fan out) |
+| a KMS key, its grants and import tokens | owner of `hash(key id)`; aliases on the first host |
+| STS sessions, IAM roles and SAML providers, SSM run-command records | first host |
+
+**Enabling and ports.** Nothing listens unless configured: `WARP_AWSWIRE_PORT` (or `WARP_AWSWIRE_ENABLED=true`, default 4566) starts the unified endpoint; `WARP_SNSWIRE_PORT`,
+`WARP_KINESISWIRE_PORT`, `WARP_SECRETSWIRE_PORT`, `WARP_SSMWIRE_PORT`, `WARP_KMSWIRE_PORT` and `WARP_STSWIRE_PORT` start one service on its own port. Identity: `WARP_AWS_ACCOUNT_ID` (default
+`WARP_SQSWIRE_ACCOUNT_ID`, else `000000000000`) and `WARP_AWS_REGION` (default `WARP_SQSWIRE_REGION`, else `us-east-1`) form every ARN; the region in a request's credential scope is ignored.
+
+**Authentication -- exactly what is validated.** By default **nothing**: any access key and signature is accepted (like sqswire and dynamowire), access is controlled by the connection ACL. With
+`WARP_AWS_IAM_CREDENTIALS=accessKey=secret;...` (the same variable dynamowire uses) every request must carry an `AWS4-HMAC-SHA256` `Authorization` header that verifies: well-formed `Credential` / `SignedHeaders` /
+`Signature`; the access key is one of the pairs **or an unexpired STS temporary credential issued by this Warp** (then `X-Amz-Security-Token` must equal the issued token); the credential-scope date matches `X-Amz-Date`;
+the request time is within 15 minutes; the HMAC-SHA256 over the canonical request (method, path, query, the signed headers, SHA-256 of the body) equals the signature. **Not validated:** authorization (every valid
+credential may call every operation on every resource), IAM policies, role trust for AssumeRole, the region and service in the scope on a per-service port, presigned-URL (query) authentication of these services. The check
+runs in `AwsSigV4` (s3wire's verifier is bound to `s3` and `x-amz-content-sha256`, so it is not reused); one client-visible quirk is handled: Jetty rewrites a `Content-Type: ...; charset=utf-8` request header to `charset=UTF-8`, so a signature
+made over the lower-case spelling (botocore) is retried with it.
+
+**Metrics.** Every operation is recorded through `SqlMetricsCollector.recordOperation` under the protocol `snswire`, `kinesiswire`, `secretswire`, `ssmwire`, `kmswire`, `stswire` or `iamwire` (per-service listener) or `awswire`
+(through the unified endpoint), labelled with the operation name and the owning backend. HTTP frontends never hold a pooled connection across client I/O, long polls, SubscribeToShard streams or outbound HTTP; **and never nest a second borrow inside
+a transaction** (Secrets Manager and SSM seal and unseal values with KMS *before* opening the transaction that stores them; a KMS call inside it would need a second connection and deadlock at `WARP_POOL_MAX_SIZE=4`; the pool test
+`test_pool_of_four_connections_mixed_load_and_slow_subscribers_do_not_starve` covers it).
+
+##### SNS (snswire)
+
+Query protocol (what botocore, the Java and JS SDKs and the CLI use) and JSON protocol (`X-Amz-Target: SNS_20100331.<Action>`). **Implemented:** CreateTopic (idempotent; attribute mismatch is `InvalidParameter`; FIFO name rules),
+DeleteTopic (also deletes subscriptions), ListTopics (paged), Get/SetTopicAttributes (`DisplayName`, `Policy`, `DeliveryPolicy`, `ContentBasedDeduplication`, `KmsMasterKeyId`, feedback attributes, ... stored; `SubscriptionsConfirmed/Pending` computed),
+Tag/Untag/ListTagsForResource, Add/RemovePermission (maintain the `Policy` attribute), Put/GetDataProtectionPolicy (stored), Subscribe (idempotent per topic/protocol/endpoint), ConfirmSubscription, Unsubscribe, ListSubscriptions, ListSubscriptionsByTopic,
+Get/SetSubscriptionAttributes (`RawMessageDelivery`, `FilterPolicy`, `FilterPolicyScope` `MessageAttributes` | `MessageBody`, `RedrivePolicy`, `DeliveryPolicy`, `SubscriptionRoleArn`), Publish and PublishBatch (message attributes of type
+`String`, `String.Array`, `Number`, `Binary`, `MessageStructure=json` with per-protocol messages, FIFO `MessageGroupId` / `MessageDeduplicationId` / content-based dedup with the 5 minute window, `SequenceNumber`, 256 KiB limit including attributes, `Subject` rules,
+batch limits and the per-entry `Failed` list), platform applications and endpoints (Create/Get/Set/Delete, ListPlatformApplications, ListEndpointsByPlatformApplication, publish to an endpoint ARN), SMS attributes, opt-in/out, publish to a phone number.
+
+**Delivery.** Fan-out runs after the publish transaction commits, per subscription, after the filter policy (attribute scope: exact strings and numbers, `prefix`, `suffix`, `equals-ignore-case`, `anything-but`, `numeric`, `exists`, `cidr`, `$or`, `String.Array`; body scope: nested keys, arrays, booleans, null).
+* `sqs`: sent **in process** through the sqswire operations of the same Warp (`SqsOperations.SendMessage`), synchronously, so the message is in the queue before Publish returns (stronger than AWS; SNS to a queue on another host needs sqswire in that Warp). Non-raw delivery wraps the
+  message in the SNS envelope (`Type`, `MessageId`, `TopicArn`, `Subject`, `Message`, `Timestamp`, `SignatureVersion`, `Signature`, `SigningCertURL`, `UnsubscribeURL`, `MessageAttributes` as `{Type, Value}`); `RawMessageDelivery=true` sends the bare message and the
+  attributes as SQS message attributes (type preserved). FIFO topics pass group and dedup id (a content hash when the topic is content-based) to FIFO queues. A failed delivery goes to the subscription's `RedrivePolicy` dead-letter queue, else is logged.
+* `http` / `https`: **pending until confirmed** -- Subscribe POSTs a `SubscriptionConfirmation` (headers `x-amz-sns-message-type`, `x-amz-sns-topic-arn`, `x-amz-sns-subscription-arn: PendingConfirmation`; body with `Token` and `SubscribeURL`); the subscriber confirms with
+  ConfirmSubscription or by GETting the `SubscribeURL` (a Query request on the same listener). Then `Notification` POSTs carry `x-amz-sns-message-type`, `-message-id`, `-topic-arn`, `-subscription-arn` (and `x-amz-sns-rawdelivery: true` when raw), `Content-Type: text/plain; charset=UTF-8`.
+  Delivery is **asynchronous** with `WARP_SNSWIRE_HTTP_ATTEMPTS` (3) attempts, `WARP_SNSWIRE_HTTP_BACKOFF_MS` (1000) linear backoff, a 15 s timeout, then the redrive policy; retries are in memory and lost on restart. Unsubscribe sends `UnsubscribeConfirmation`.
+* `lambda`, `email`, `email-json`, `sms`, `application`, `firehose`: accepted and **recorded** in `warp_sns_deliveries` (kept one day) without delivering anywhere; they are confirmed immediately (real email subscriptions stay pending until a person confirms).
+* The `Signature` is a real SHA1withRSA signature over the documented string-to-sign, made with a per-process key; `SigningCertURL` is the well-known AWS URL, so it cannot be verified against a certificate Warp publishes -- a subscriber that verifies signatures must skip it.
+
+**Not implemented:** the SMS sandbox APIs, ListSubscriptionsByEndpoint-style reverse lookups, message archiving/replay (`ArchivePolicy` stored only), FIFO high-throughput scopes, delivery status logging, per-subscription `DeliveryPolicy` retry tuning (stored, the env settings apply), and `sqs` delivery across Warp processes.
+
+##### Kinesis Data Streams (kinesiswire)
+
+JSON 1.1 **and CBOR** (`application/x-amz-cbor-1.1`, the Java SDK v2 default, encoded with a small built-in codec: byte strings for `Data`, tag 1 timestamps), and **cleartext HTTP/2 with prior knowledge** on the same port (the JavaScript SDK v3 speaks h2c to Kinesis; the Netty HTTP/2 codec shaded into the gRPC dependency does the framing
+inside Jetty, see `H2cConnectionFactory`). **Implemented:** CreateStream (PROVISIONED / ON_DEMAND, tags), DeleteStream, DescribeStream (paged shards), DescribeStreamSummary, ListStreams, ListShards (opaque `NextToken`), PutRecord, PutRecords, GetShardIterator (TRIM_HORIZON, LATEST, AT_SEQUENCE_NUMBER,
+AFTER_SEQUENCE_NUMBER, AT_TIMESTAMP), GetRecords (`Limit` up to 10000, 10 MiB, `MillisBehindLatest`, `ChildShards` and a null next iterator at the end of a closed shard), SplitShard, MergeShards, UpdateShardCount, Increase/DecreaseStreamRetentionPeriod, Add/RemoveTagsFromStream and
+Tag/Untag/ListTags, Enable/DisableEnhancedMonitoring (stored), UpdateStreamMode, Start/StopStreamEncryption (stored; records are not encrypted), DescribeLimits, Register/Deregister/Describe/ListStreamConsumers, **SubscribeToShard**, Put/Get/DeleteResourcePolicy (stored).
+
+* **Partition keys** hash exactly like Kinesis: MD5 of the key as an unsigned 128-bit integer into the shard hash ranges (`ExplicitHashKey` honoured); a new stream's shards split `0..2^128-1` evenly (`floor(i * 2^128 / n)`), so a 3-shard stream has the same ranges as AWS's.
+* **Sequence numbers** are strictly increasing per shard in commit order: each shard has a counter row that every writer increments with `UPDATE ... RETURNING` in the transaction that inserts its records, so concurrent producers serialize on that row and a reader never sees N+1 before N (tested with 16 producers on one shard). A number is a fixed 36-digit shard prefix plus a 20-digit counter (56 digits, so numeric and lexical order agree).
+* **Iterators** are opaque, carry the stream (routing) and expire after 5 minutes (`ExpiredIteratorException`). Records older than the retention period (24 h default) are deleted by a sweeper every `WARP_KINESISWIRE_SWEEP_SECONDS` (60).
+* **SubscribeToShard** is an `application/vnd.amazon.eventstream` response (initial-response, then a `SubscribeToShardEvent` per batch, from the requested position) over HTTP/2 or chunked HTTP/1.1. **Divergence:** real Kinesis holds the subscription 5 minutes; Warp sends what is there and what arrives within `WARP_KINESISWIRE_EFO_LINGER_MS` (default 2000) and then ends the stream, so a consumer that resubscribes with the last `ContinuationSequenceNumber` (the KCL does) sees the same records. Set the linger to 300000 for real-Kinesis timing; each open subscription occupies one worker thread (200 at most).
+* No throughput limits are enforced (`ProvisionedThroughputExceededException` only appears for a resharding race), stream status is always `ACTIVE`, UpdateStreamWarmThroughput / UpdateMaxRecordSize are not implemented.
+
+##### Secrets Manager (secretswire)
+
+JSON 1.1. **Implemented:** Create/Get/Put/Update/Describe/Delete/RestoreSecret, ListSecrets (filters `name`, `description`, `tag-key`, `tag-value`, `all`, sort, paging), ListSecretVersionIds, UpdateSecretVersionStage, BatchGetSecretValue (ids or filters, partial `Errors`), GetRandomPassword, Tag/UntagResource,
+Put/Get/Delete/ValidateResourcePolicy (stored; validation is syntax only), RotateSecret / CancelRotateSecret (the rotation configuration is stored and `RotationEnabled` reflects it; **no rotation function is invoked** -- there is no Lambda), ReplicateSecretToRegions / RemoveRegionsFromReplication (status records only).
+Secrets are addressed by name, full ARN or partial ARN (without the six-character suffix). Versions and stages follow the real rules: a new AWSCURRENT demotes the old one to AWSPREVIOUS (only one version holds it), custom stages move, versions without stages are deprecated and hidden unless `IncludeDeprecated`.
+`DeleteSecret` schedules deletion (7 to 30 days, swept every minute) or deletes at once with `ForceDeleteWithoutRecovery`; a name scheduled for deletion cannot be reused. **Values are sealed with KMS** (the secret's `KmsKeyId`, else the AWS-managed `alias/aws/secretsmanager`, created on first use) with the secret ARN as
+encryption context, so the service needs the KMS master key; a `KmsKeyId` that does not resolve to a usable key is refused with the AWS message ("You can't access the KMS key..."). A repeated `ClientRequestToken` returns the existing version without comparing the value.
+
+##### SSM Parameter Store (ssmwire)
+
+JSON 1.1. **Implemented:** PutParameter (String, StringList, SecureString, `Overwrite`, `AllowedPattern`, tags, tiers Standard/Advanced, policies stored, `DataType`), GetParameter (`name:version` and `name:label` selectors, ARNs), GetParameters, GetParametersByPath (recursive or one level, filters, paging), DeleteParameter(s),
+DescribeParameters (filters `Name`, `Type`, `KeyId`, `Tier`, `DataType`, `Path`, options Equals / BeginsWith / Contains / Recursive / OneLevel), GetParameterHistory (100 versions kept), Label/UnlabelParameterVersion (a label lives on one version), Add/RemoveTagsFromResource, ListTagsForResource, and the **Run Command
+bookkeeping** Floci's suite exercises: SendCommand (instance ids only; `TimeoutSeconds >= 30`), GetCommandInvocation, ListCommands, ListCommandInvocations, CancelCommand -- commands are recorded as `Pending` and never executed. `SecureString` values are sealed with KMS (`alias/aws/ssm` or the given `KeyId`);
+`WithDecryption=false` returns the base64 ciphertext. Parameter policies (expiration, notification) are stored and echoed by DescribeParameters, **never enforced**. **Not implemented:** SSM documents, associations, maintenance windows, patching, inventory, sessions, OpsCenter, public parameters under `/aws/service/...`; `GetServiceSetting` is a stub.
+
+##### KMS (kmswire) -- an emulator, not an HSM
+
+JSON 1.1. **Key material at rest** is AES-256-GCM sealed (nonce, AAD = key id) under a master key derived with PBKDF2-HMAC-SHA256 from **`WARP_KMS_MASTER_KEY`**; the master key lives in the Warp process. **Without it every operation that creates or uses key material fails closed** with `KMSInternalException` ("KMS is not configured: set WARP_KMS_MASTER_KEY ...")
+-- Secrets Manager and SecureString parameters therefore fail the same way -- unless **`WARP_KMS_INSECURE_DEV_KEY=true`**, which uses a fixed public key (logged as a warning; development only). Changing the master key makes existing key material unreadable (an error), never silently wrong. A symmetric `Encrypt` produces a
+self-describing blob (`0x01 | len | key id | nonce | ciphertext+tag`, AAD = key id and the sorted encryption context), so `Decrypt` works without naming the key and refuses a wrong context or a tampered blob; the blob format is Warp's own, not AWS's.
+**Implemented:** CreateKey (`SYMMETRIC_DEFAULT`, `RSA_2048/3072/4096`, `ECC_NIST_P256/P384/P521`, `ECC_SECG_P256K1` (BouncyCastle), `ECC_NIST_EDWARDS25519`, `HMAC_224/256/384/512`, `ML_DSA_44/65/87` (needs Java 24+), `SM2` (signing; real KMS offers it in the China regions only); usage/spec compatibility checked; tags, policy, `Origin=EXTERNAL`, `MultiRegion` flag),
+DescribeKey, ListKeys, Enable/DisableKey, ScheduleKeyDeletion / CancelKeyDeletion (a sweeper deletes due keys and their aliases), UpdateKeyDescription, aliases (Create/Update/Delete/ListAliases; `alias/aws/...` reserved), Encrypt / Decrypt / ReEncrypt (symmetric AES-GCM; RSA with `RSAES_OAEP_SHA_1/256`; `IncorrectKeyException`,
+`DisabledException`, `KMSInvalidStateException`, `InvalidKeyUsageException`), GenerateDataKey (+WithoutPlaintext), GenerateDataKeyPair (+WithoutPlaintext), GenerateRandom, Sign / Verify (RSASSA-PSS and PKCS#1 v1.5 with SHA-256/384/512, ECDSA, Ed25519 and Ed25519ph, ML-DSA, SM2DSA; RAW and DIGEST message types with the AWS length checks; an invalid
+signature is `KMSInvalidSignatureException`), GetPublicKey (X.509 `SubjectPublicKeyInfo`), GenerateMac / VerifyMac, Get/PutKeyPolicy, ListKeyPolicies, Tag/Untag/ListResourceTags, Enable/DisableKeyRotation, GetKeyRotationStatus, RotateKeyOnDemand, ListKeyRotations, CreateGrant / ListGrants / ListRetirableGrants / RevokeGrant / RetireGrant, GetParametersForImport / ImportKeyMaterial /
+DeleteImportedKeyMaterial (symmetric keys, RSAES_OAEP wrapping). **Stored, never evaluated:** key policies and grants (any caller may use any key). **Divergences:** RotateKeyOnDemand records the rotation but does not change the material (old ciphertexts keep decrypting either way); RSASSA-PSS with `MessageType=DIGEST` is refused (the JDK cannot sign a
+pre-hashed digest with PSS); custom key stores, ReplicateKey / UpdatePrimaryRegion, DeriveSharedSecret and RSA_AES_KEY_WRAP import are `UnsupportedOperationException`.
+
+##### STS and IAM identity basics (stswire, iamwire)
+
+STS, Query protocol only: GetCallerIdentity (root of the account, or the assumed role / federated user when called with an STS credential), AssumeRole, AssumeRoleWithWebIdentity, GetSessionToken, GetFederationToken, DecodeAuthorizationMessage (echoes the message), GetAccessKeyInfo, and **AssumeRoleWithSAML**. Temporary credentials (`ASIA...` access key, secret, session token, expiry
+of 15 minutes to 12 hours (36 for GetSessionToken)) are stored in the `awsparams` store and **accepted by the unified endpoint's SigV4 validation until they expire**. AssumeRole and AssumeRoleWithWebIdentity do not look the role up, do not evaluate trust or session policies and do not verify the web-identity token (any role ARN can be assumed).
+IAM is only what Floci's STS suite needs: CreateRole / GetRole / DeleteRole / ListRoles and CreateSAMLProvider / GetSAMLProvider / DeleteSAMLProvider / ListSAMLProviders (on the unified endpoint; no users, groups, policies or access keys). AssumeRoleWithSAML **is validated**: the assertion must be XML-DSig signed (enveloped, over the assertion, only the
+enveloped-signature and canonicalization transforms -- an XPath transform is rejected with `Response signature invalid`) by the certificate in the provider's metadata, the issuer must be the metadata's entity, the validity window and `urn:amazon:webservices` audience must hold, the `Role` attribute must carry the requested role and provider, and the role's trust policy must allow that provider `sts:AssumeRoleWithSAML`. DOCTYPEs are refused.
+
+##### Conformance: Floci's SDK suites, and Warp's own tests
+
+Acceptance suite: the MIT-licensed SDK compatibility tests of [Floci](https://github.com/floci-io/floci) (`compatibility-tests/`), run by `Warp/tests/python/floci_compat/run_floci_compat.py` against the unified endpoint (`launch_warp.py --aws-unified`; Python 3.9's missing `staticmethod.__name__` is worked around for `test_kms.py` by a
+generated copy with one fixture hoisted). Floci's code is not copied into this repository; the tests are run from a separate checkout. Passing tests, before this work (services absent) -> after:
+
+| service | python (pytest + boto3) | node (vitest + SDK v3) | java (JUnit + SDK v2) |
+|---|---|---|---|
+| SNS | 0 / 10 -> **10 / 10** | 0 / 10 -> **10 / 10** | 0 / 16 -> **16 / 16** |
+| Kinesis | 0 / 9 -> **9 / 9** | 0 / 6 -> **6 / 6** (needs h2c) | 0 / 3 -> **5 / 5** (`KinesisEfoTest` included) |
+| Secrets Manager | 1 / 13 -> **13 / 13** | 1 / 6 -> **6 / 6** | 1 / 22 -> **21 / 22** |
+| SSM | 0 / 12 -> **12 / 12** | 1 / 7 -> **7 / 7** | 0 / 16 -> **16 / 16** (includes Run Command) |
+| KMS | 0 / 39 -> **39 / 39** | 0 / 13 -> **13 / 13** | 0 / 57 -> **57 / 57** (ML-DSA, SM2, import, grants) |
+| STS | 1 / 9 -> **9 / 9** | 0 / 2 -> **2 / 2** | 0 / 20 -> **20 / 20** (the class needs IAM SAML providers and roles) |
+
+The one failing test, `SecretsManagerTest::rotateSecretStub`, is Floci-specific (class c): it first creates a Lambda function through Floci's Lambda service, which Warp does not emulate. Every failure at baseline was class a (not implemented): the services did not exist.
+Per-run summaries with every failure are in `Warp/tests/python/floci_compat/results/awsx-*.md`.
+
+Warp's own tests: `Warp/tests/python/test_awsextras_conformance.py` (boto3 against a real Warp and native Postgres, **one backend and two sharded backends**): SNS-to-SQS fan-out end to end (envelope, raw delivery, attributes, filter policies of both scopes, FIFO dedup and ordering, dead-letter redrive), real HTTP endpoints (confirmation flow, headers, retries without blocking Publish),
+topics and streams and keys and secrets landing on both hosts, Kinesis iterators of every type and 16 concurrent producers with strictly increasing sequence numbers, split / merge / UpdateShardCount, the retention sweeper, SubscribeToShard, KMS crypto / grants / aliases / lifecycle, that secrets and SecureString values and key material are never in Postgres in clear, KMS failing
+closed and a changed master key, SigV4 validation with STS temporary credentials (and their expiry), IAM roles and SAML, each service on its own port and SNS's JSON protocol, Kinesis over cleartext HTTP/2 with the JavaScript SDK (2.7 MB uploaded in 900 KB requests and 40 concurrent 2.7 MB responses on one session -- exercises HTTP/2 flow control in both directions; needs `node` and `FLOCI_DIR`, skipped otherwise), `WARP_POOL_MAX_SIZE=4` under a mixed load with slow HTTP subscribers. Java unit tests (`Warp/src/test/java/com/sayonora/wire/awswire/`): hash-range math and sequence numbers, filter-policy matching, SNS envelope rendering, KMS envelope crypto and algorithms,
+Query and CBOR codecs, event-stream framing. Latency: `RTT_BASELINE_2026.md`.
+
+#### The unified AWS endpoint (awswire)
+
+`awswire` is **one HTTP listener that takes any AWS request** and hands it to the right service, so one endpoint URL (`AWS_ENDPOINT_URL`, `endpoint_url=`, `--endpoint-url`) works for every SDK and every service, the way LocalStack and Floci are used. It is off unless
+`WARP_AWSWIRE_PORT` is set or `WARP_AWSWIRE_ENABLED=true` (default port **4566**). It serves **DynamoDB, SQS and S3** (the existing frontends, which keep their own ports) and **SNS, Kinesis, Secrets Manager, SSM, KMS, STS and IAM** (the stores above). Region and account
+come from `WARP_AWS_REGION` and `WARP_AWS_ACCOUNT_ID` (defaults `us-east-1`, `000000000000`).
+
+**Dispatch**, in order: (1) the `X-Amz-Target` prefix (`DynamoDB_20120810.`, `AmazonSQS.`, `Kinesis_20131202.`, `secretsmanager.`, `AmazonSSM.`, `TrentService.`, `SNS_20100331.`); (2) the service name in the SigV4 credential scope of the `Authorization` header or of a presigned URL's `X-Amz-Credential`
+(`dynamodb`, `sqs`, `s3`, `sns`, `kinesis`, `secretsmanager`, `ssm`, `kms`, `sts`, `iam`); (3) the Query `Action` of an unsigned request (`Publish` is SNS, `GetCallerIdentity` is STS, `SendMessage` is SQS; this is how a subscriber's plain `GET <SubscribeURL>` confirms an SNS subscription);
+(4) otherwise **S3** (path-style and virtual-hosted S3 requests carry no target and often no signature). A request signed for a service Warp does not emulate (Lambda, EC2, ...) is answered `400 UnknownServiceException` naming the supported services instead of being handed to S3. `GET /_warp/health` lists the services and whether each store is enabled.
+
+**Design: in-process dispatch, not a reverse proxy.** The three existing servers each expose the request handler their own Jetty listener uses (`handler()`); the unified listener calls those handler objects directly. A reverse proxy to the local listeners would have cost a second HTTP hop and a second socket per request (doubling the latency of a sub-millisecond
+operation and buffering or re-streaming S3 bodies), could not share the in-memory `SqsOperations` SNS delivers into, and would have had to re-sign or re-parse authentication. The price is that the unified listener lives in the same process and needs those three servers running there (a service that is not running answers `400`); the individual
+ports of dynamowire, sqswire and s3wire keep working, unchanged. The new services are not behind the old servers at all: they run through `AwsHttp` (JSON 1.0/1.1, CBOR, Query decoding, errors, metrics) directly. Queue URLs returned through the unified endpoint point at it (`http://<Host>/<account>/<queue>`), so an SDK keeps using one endpoint.
+
+**HTTP/2.** The listener accepts HTTP/1.1 and cleartext HTTP/2 with prior knowledge (`PRI * HTTP/2.0`) on the same port (the AWS SDK for JavaScript v3 uses it for Kinesis). HTTP/2 is served for the new services only; DynamoDB, SQS and S3 SDKs use HTTP/1.1.
+
+**Authentication.** As above (*Authentication -- exactly what is validated*): nothing by default; with `WARP_AWS_IAM_CREDENTIALS` the unified endpoint validates SigV4 for the new services and for SQS (which has no verifier of its own), accepting configured pairs and STS temporary credentials. DynamoDB is validated by dynamowire's own verifier with the same variable; S3 by s3wire's
+verifier with `WARP_S3WIRE_CREDENTIALS` (S3 requests are signed for `s3` and carry `x-amz-content-sha256`, which is what that verifier checks).
+
+**Metrics.** Requests to the new services through the unified endpoint are recorded under the protocol `awswire` (label = the operation name); the delegated three record under their own protocols (`dynamowire`, `sqswire`, `s3wire`) as they do on their own ports, so nothing is counted twice. Threads: `WARP_AWSWIRE_MAX_THREADS` (400).
+
+**Example.**
+```
+export WARP_KMS_MASTER_KEY='a long random secret'          # or WARP_KMS_INSECURE_DEV_KEY=true for development
+export WARP_AWSWIRE_PORT=4566
+# enable sns, kinesis and awsparams on a Postgres backend of the set (admin UI, or PATCH /api/backend-sets/default/backends/default)
+aws --endpoint-url http://localhost:4566 sns create-topic --name orders
+aws --endpoint-url http://localhost:4566 sqs create-queue --queue-name orders-q
+```
+
+#### The Firestore store (firestorewire)
+
+firestorewire speaks **Google Cloud Firestore (native mode)**: the **v1 gRPC API** (`google.firestore.v1.Firestore`: Get/List/Create/Update/DeleteDocument, BatchGetDocuments, BeginTransaction, Commit, Rollback,
+RunQuery, RunAggregationQuery, PartitionQuery, ListCollectionIds, BatchWrite and the bidirectional **Write** and **Listen** streams) **and the REST/JSON API** (`firestore.googleapis.com/v1`) on **one port**,
+`WARP_FIRESTOREWIRE_PORT` (default **8080**, like the official emulator; the first bytes of a connection decide: the HTTP/2 preface goes to gRPC, anything else is HTTP/1.1), with the documents in the
+`firestore` store of a backend set's Postgres hosts. Every Google client library works with `FIRESTORE_EMULATOR_HOST=host:8080` (plaintext gRPC, `Authorization: Bearer owner` accepted; the Web/Node
+REST fallbacks use the REST surface). The listener starts when the `firestore` store is enabled, `WARP_FIRESTOREWIRE_PORT` is set or `WARP_FIRESTOREWIRE_ENABLED=true`.
+The differential oracle is **Google's official Firestore emulator** (`gcloud emulators firestore start`). **Choice: two stores, not one "gcpdocs" store.** Firestore native mode and Datastore are different
+products with different key, value and ordering models (the emulator for each is different too), so `firestore` and `datastore` are separate store types with separate tables
+(`warp_firestore_*` / `warp_datastore_*`); a Datastore-mode Firestore database is served by datastorewire, never by sharing firestorewire's tables (nothing could be shared safely: key paths, index rules and
+entity groups differ).
+
+**The protos are Google's own.** `Warp/src/main/proto/google/firestore/v1/*.proto` and `google/datastore/v1/*.proto` are vendored unmodified from googleapis (Apache-2.0, see `NOTICE`) and compiled by the
+existing protobuf plugin against the `google/api`, `google/rpc` and `google/type` protos of the `proto-google-common-protos` dependency; the gRPC descriptors and messages are byte-identical to Google's.
+REST bodies are the same messages in proto3 JSON (`ProtoJson`, a descriptor-driven codec: protobuf-java-util is not a Warp dependency).
+
+**Storage and sharding** (schema `ddl/postgres/firestorewire_store.sql`, tables prefixed `warp_firestore_`, created idempotently by `StoreBootstrap`; the marker row is `firestore` in `warp_enabled_stores`):
+
+| Table | Holds | Notes |
+|---|---|---|
+| `warp_firestore_docs` | one row per existing document: `db`, `name_key`, the relative `path`, its parent `coll_path` / `coll_id`, `data` = the serialized `google.firestore.v1.Document` (so **every value type survives exactly**: int64 vs double, timestamps, references, geo points, vectors), `create_us`, `update_us` (microseconds) | primary key `(db, name_key)`; `name_key` is the path's UTF-8 segments joined by `0x00`, so `bytea` order is Firestore's segment-wise `__name__` order; indexes `(db, coll_path, name_key)` and `(db, coll_id, name_key)` |
+| `warp_firestore_log` | append-only version log: one row per write (deletes too) with `commit_us`, the document body, `seq` | serves `read_time` reads and read-only transactions, Listen resume tokens and the Listen change feed; pruned to `WARP_FIRESTOREWIRE_HISTORY_SECONDS` (default 3600, Firestore's own one-hour read_time window), always keeping the newest row at or before the horizon of every document |
+
+A document lives on the host that owns `hash(database + "/" + document path)` (the shared `ShardingStrategy.hash` over the enabled hosts in declaration order). **Point operations** touch only the owner;
+**collection scans, queries, collection-group queries and ListCollectionIds scatter-gather** over every host: each host is read in **keyset pages of 1,000 rows on a short pooled connection** (no cursor and no connection is
+held between pages) and the streams are **k-way merged by `name_key`**, so `__name__` order, cursors, `offset` and `limit` are exact across hosts. A project or database id that names a backend or set pins
+that database to those hosts (`ConnectionRouter`, protocol `http`, like pubsubwire); otherwise every host with the store serves every database.
+
+**Commits and transactions.** A `Commit` takes a Postgres advisory lock per touched document (sorted, so concurrent commits cannot deadlock) plus one lock per database (which is what makes the version
+log's `commit_us` order equal commit order), loads the current documents, evaluates every precondition, update mask and transform **in memory over an overlay** (several writes to one document in one commit
+apply in order), and only then writes: all-or-nothing on one host. **A commit whose documents live on several hosts** opens one database transaction per host, locks and loads on all of them, evaluates on the overlay,
+and commits host by host; it is atomic except for a host (or Warp) failing exactly between the first and the last `COMMIT` -- the same trade-off as dynamowire's cross-host `TransactWriteItems` (Postgres
+`PREPARE TRANSACTION` would close the window but needs `max_prepared_transactions`, which Warp does not assume). **Transactions are optimistic**: a read-write transaction records the update time of every document
+it read (queries record the documents they returned; a read of a missing document records "absent"), and its `Commit` validates them under the locks; a document changed meanwhile makes it fail with
+`ABORTED` and the client retries, which is what all Firestore SDKs do. (The emulator locks pessimistically: a non-transactional write to a document an open transaction read waits and then fails with
+`ABORTED "Transaction lock timeout."`. Optimistic validation gives the same serializable outcome without Warp ever holding a database connection while a client thinks; the difference is documented in
+`fs_known.py` and covered by `test_firestore_conformance.py`.) A transaction lives in the memory of the Warp node that began it (270 s, then `ABORTED`); behind a load balancer keep a client's gRPC connection on one
+node (which gRPC does anyway). Read-only transactions and `read_time` read the version log (`commit_us <= t`), so they are true snapshots; a `read_time` older than the retention window is `FAILED_PRECONDITION`.
+`new_transaction` in BatchGetDocuments / RunQuery / RunAggregationQuery starts a transaction and returns its id in a first message, like the emulator.
+Commit times are microseconds (Firestore's precision), strictly increasing per database; **timestamp values are truncated to microseconds on write**; a write that changes nothing is a no-op (same
+`update_time`, no version row), like Firestore.
+
+**Values, writes and limits.** All value types: null, boolean, integer, double, timestamp, string, bytes, reference, geo point, array, map and **vector** (a map with `__type__ = "__vector__"`). Field names are
+validated (`__.*__` is reserved except `__type__`, no empty names), nesting is limited to 20 map levels (`Property a contains an invalid nested entity.`), arrays may not contain arrays (`Nested arrays are not allowed`),
+a string or bytes value is limited to 1,048,487 bytes and a document to 1 MiB (Firestore's size rules are computed), document and collection ids follow Firestore (`__.*__` reserved, no `/`, up to 1,500 bytes),
+and resource names are validated with the exact texts Google's parser produces (`Document name "..." lacks "documents" at index 31.`). Writes: `update` with an update mask (masked fields absent from the body are
+deleted, nested paths merge), `delete`, the deprecated `transform`, `update_transforms`, preconditions `exists` / `update_time`, and every field transform -- **server timestamp, increment** (integer overflow clamps,
+integer+double is double), **maximum / minimum** (Firestore's mixed-type and NaN rules), **appendMissingElements / removeAllFromArray** (`1` equals `1.0`, `NaN` equals `NaN`); `transform_results` are returned.
+`BatchWrite` applies each write independently (one status per write) and rejects duplicates of one document; `CreateDocument` allocates 20-character ids; `ListDocuments` pages (`page_size` default 100, `order_by`,
+`mask`, `show_missing` lists nonexistent documents that have subcollections); `PartitionQuery` answers a single partition (no split points).
+
+**Queries.** `StructuredQuery` with `select`, `from` (one selector; `all_descendants` = collection group, also below a parent document; an empty `from` = the collections directly under the parent), `where`
+(field filters `EQUAL`, `NOT_EQUAL`, `LESS_THAN(_OR_EQUAL)`, `GREATER_THAN(_OR_EQUAL)`, `ARRAY_CONTAINS`, `IN`, `ARRAY_CONTAINS_ANY`, `NOT_IN`; unary `IS_NAN`, `IS_NULL`, `IS_NOT_NAN`, `IS_NOT_NULL`;
+composite `AND` / `OR`), `order_by`, `start_at` / `end_at` (`before` flag), `offset`, `limit` and **`find_nearest` vector search** (EUCLIDEAN / COSINE / DOT_PRODUCT, `distance_threshold`,
+`distance_result_field`, brute force over the matches). Results follow **Firestore's total order across types**: null < boolean < NaN < number (int and double compared exactly) < timestamp < string (UTF-8 byte
+order) < bytes < reference (segment-wise) < geo point < array < vector < map. Semantics verified against the emulator: an inequality only matches its own type bracket; equality is IEEE (null and NaN never equal
+anything through a field filter, `IN [.., null]` matches no null); `!=` / `not-in` / `IS_NOT_NAN` skip documents whose field is missing **or null** (`!= NaN` matches NaN documents; a null in a `not-in` list matches
+nothing); a document lacking an order-by field is not returned; the effective ordering is the explicit `order_by`, then the fields of inequality filters (multiple inequality fields are allowed), then `__name__`
+(in the direction of the last order); a cursor may have at most as many values as explicit `order_by` fields (`Cursor has too many values.`) and its `__name__` value must be a reference; only one `NOT_EQUAL` /
+`NOT_IN` / `IS_NOT_*` filter and one `ARRAY_CONTAINS` per query. **No composite index is ever required**: Warp never raises `FAILED_PRECONDITION "The query requires an index"` (the emulator does not either).
+The response stream ends with `done = true` on its last message and, when an offset and a limit are set, starts with a `skipped_results` message. Execution: documents stream from the store in `name_key` order and are
+filtered, cursor-tested and windowed in Java; a query ordered by anything other than `__name__` collects its matches (a bounded top-k heap when a limit is given, all matches otherwise -- **the one place a
+query needs memory proportional to its result**); an unfiltered `count()` is a `SELECT count(*)`. `RunAggregationQuery`: `count` (`up_to`), `sum` (integer overflow becomes double), `avg`, aliases (`field_N`
+default), at most 5 aggregations.
+
+**Listen and Write streams -- and connections.** `Listen` supports query and document targets, `once`, target ids assigned by the server when 0, `remove_target`, resume tokens and the full response protocol
+(`ADD` / `CURRENT` / `NO_CHANGE` / `REMOVE` target changes with a `read_time` and resume token, `DocumentChange`, `DocumentDelete`, `DocumentRemove`, `ExistenceFilter` on resume). The initial snapshot is identical
+to the emulator's (verified in the corpus); afterwards Warp sends **incremental** changes like real Firestore (the emulator re-sends the whole result after a `RESET`). Mechanism: every commit runs
+`pg_notify('warp_firestore', database)` **inside its transaction** (delivered on commit); each Warp node keeps **one dedicated `LISTEN` connection per Postgres host** (outside the pool) shared by all its
+streams, plus a 3 s fallback poll; a woken stream reads the version log (`commit_us > its cursor`) with one short query on a pooled connection and lets it go, so **an idle stream holds no pooled connection**
+(30 idle streams with `WARP_POOL_MAX_SIZE=4` leave the pool free; tested), and changes made through *another* Warp node arrive through the shared Postgres. Queries with a `limit` or `offset` are re-run on change and
+diffed; other queries are evaluated per changed document. A resume token is the microsecond read time: the target is replayed as the difference between the state at the token and now (`DocumentChange` for new
+and changed documents, `DocumentDelete` / `DocumentRemove` for the rest, then an existence filter); a token older than the retention window falls back to a full re-list. Ordering caveat: a stream merges the
+per-host version logs by commit time, so across hosts two changes committed within the same few milliseconds may be delivered in either order (each host's own order is exact); output is not flow-controlled
+(a client that never reads accumulates responses in the gRPC buffer). `Write`: handshake (`stream_id`, `stream_token`), then atomic batches, each answered with a new token; an empty request is acknowledged
+with the current token; a failed batch ends the stream with the failure status; resuming a stream is not supported by the emulator and here only accepts a known `stream_id`.
+
+**Auth and the emulator conveniences.** No authentication by default (like the emulator; `Authorization: Bearer owner` is accepted); `WARP_FIRESTOREWIRE_TOKENS=a,b` requires one of the listed bearer tokens on
+gRPC and REST (`UNAUTHENTICATED` / HTTP 401 otherwise; not validated as JWTs). **Security rules are not evaluated** (`PUT /emulator/v1/projects/{p}:securityRules` is accepted and ignored).
+`DELETE /emulator/v1/projects/{p}/databases/{d}/documents` clears a database, `GET /` answers `Ok` (health check). Metrics: every RPC is reported to the SQL statistics collector as protocol `firestorewire`
+(labels `GetDocument`, `Commit`, `RunQuery`, ...).
+
+**Conformance** (`Warp/tests/python/fs_conformance/`, Docker only for the oracle, images `gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators`): `fs_corpus.py` is a differential corpus of raw gRPC and REST
+call sequences (CRUD and masks, every value type and the total order, ~130 filter / order / cursor / offset queries, collection groups, transforms, transactions, aggregations, BatchGet / BatchWrite, REST, Listen and Write
+streams). `fs_harness.py` replays a case against the emulator and Warp, normalising ids, timestamps, transaction and page tokens, and compares status code, message, documents and order.
+`golden.json.gz` holds the emulator's answers (each case recorded twice, unstable steps dropped) and `test_firestore_conformance.py` replays it **offline** against Warp on one and on two sharded Postgres backends.
+Result: 418 steps in 15 cases: 383 identical to the emulator, 21 identical apart from the error-message text, 14 documented known differences, 0 unexplained, on one backend and on two sharded backends alike. The **known differences** (`fs_known.py`, each with its reason): (1) the emulator is a Cloud Datastore adapter and cannot scan keys in descending order, returns Datastore-flavoured
+error texts (`no entity to update: app: "dev~..."`), accepts a document name of another project, collapses several writes to one document into one write result, does not implement PartitionQuery and ignores
+`find_nearest`; Warp implements real Firestore for these; (2) it locks pessimistically; (3) it re-sends the whole result after a Listen change. Everything else -- 340+ steps including the whole value order --
+is byte-for-byte the emulator's answer. Warp-side tests (`test_firestore_conformance.py`) additionally cover: documents landing on both hosts and exact merged order, atomic cross-host commits, collection groups,
+optimistic contention (one of two transactions aborts, the retry succeeds), 8 threads x 10 increments losing nothing, snapshots by `read_time`, the incremental Listen feed (add / modify / leave / delete),
+resume tokens, a Listen woken by a commit through a *second* Warp process, the Write stream, vector search, REST, auth, a **10,000-document collection paged with cursors while Warp runs with `-Xmx300m`**, and 30 idle
+Listen streams on a 4-connection pool. Java unit tests: `FsValuesTest` (total order, exact numeric comparison, code-point string order, field paths), `FsQueryTest` (filter semantics, ordering, cursors, errors),
+`FsWritesTest` (transform semantics, preconditions, masks, no-op writes), `FsNamesTest` (Google's name-parser errors, key order).
+*Not verified / not implemented:* `read_time` beyond the retention window, `ExecutePipeline` (UNIMPLEMENTED), composite-index definitions and `--require-indexes`, TTL policies, multiple databases per project other
+than by name, server-side `WriteStream` resume, Listen at scale (thousands of targets per node), the official client libraries themselves (the tests speak raw gRPC and REST; Google's client libraries are not installed here).
+
+#### The Datastore store (datastorewire)
+
+datastorewire speaks **Google Cloud Datastore v1**: the **gRPC API** (`google.datastore.v1.Datastore`: Lookup, RunQuery incl. **GQL**, RunAggregationQuery, BeginTransaction, Commit, Rollback, AllocateIds,
+ReserveIds) **and the REST/JSON API** (`POST /v1/projects/{project}:{method}`) on **one port**, `WARP_DATASTOREWIRE_PORT` (default **8081**, like the official emulator), with the entities in the `datastore` store
+(`ddl/postgres/datastorewire_store.sql`, tables `warp_datastore_entities` and `warp_datastore_ids`). Client libraries work with `DATASTORE_EMULATOR_HOST=host:8081`. Starts when the `datastore` store is
+enabled, the port is set or `WARP_DATASTOREWIRE_ENABLED=true`; `WARP_DATASTOREWIRE_TOKENS` requires bearer tokens; `POST /reset` clears everything (the emulator's own switch); a project or database id
+naming a backend or set pins it (as above). The oracle is **Google's official Cloud Datastore emulator** (`gcloud beta emulators datastore start --consistency=1.0`), which is the **legacy** Datastore; Warp
+implements the current API, so the corpus steps that exercise what the emulator lacks are listed in `ds_known.py` and covered by Warp-side tests instead.
+
+**Relation to firestorewire.** Separate store, separate tables (see above): a Datastore entity is `(project, database, namespace, key path)` with an int64-or-name id per path element, entity groups and
+ancestor queries, strongly typed values (`entity_value`, `key_value`, `blob`, `meaning`, `exclude_from_indexes`), none of which map onto Firestore's path-and-document model.
+
+**Storage and sharding.** An entity row holds `ns` (`project/database/namespace`), `key_bytes` (an **order-preserving encoding** of the key path: per element `kind 0x00` then `0x01 + 8 bytes` for an id
+(biased so ids sort numerically) or `0x02 + name 0x00`; byte order == Datastore key order: elements one by one, kind, ids before names, an ancestor before its descendants), `root_key` (the first element),
+`kind`, `data` = the serialized `Entity`, `version`, `create_us`, `update_us`. **An entity lives on the host that owns `hash(partition + root ancestor key)`, so an entity group -- and every ancestor
+query and transaction inside it -- is on one host**; kind and kindless queries scatter-gather in keyset pages and are **k-way merged by key**. An ancestor query reads one host with a key-range predicate.
+Ids: `AllocateIds` and incomplete keys in insert/upsert take ids from one counter per partition on the set's first host (`warp_datastore_ids`, `INSERT .. ON CONFLICT .. RETURNING`), unique across hosts; an
+allocated id is fixed before the owner is computed. `ReserveIds` raises the counter. Entity versions are microsecond commit times (per entity strictly increasing).
+**Commits** lock every touched entity (advisory locks, sorted) on every involved host, evaluate all mutations over an overlay, and commit host by host (the same cross-host caveat as firestorewire: atomic
+except for a failure exactly between the first and last `COMMIT`); **transactions are optimistic** (versions read are validated under the locks, `ABORTED "too much contention on these datastore entities.
+please try again."`). Read-only transactions and `read_time` read the current state (no version history is kept for Datastore): `read_time` answers `UNIMPLEMENTED`.
+
+**Values and queries (the emulator's classic Datastore semantics).** One total order across types: null < integers and timestamps (as microseconds) < booleans < byte strings < unicode strings < doubles
+(NaN greatest and equal to itself) < geo points < keys; **inequality filters are not type-bracketed** (`v > 0` also returns strings and keys, which sort after 0), integers and doubles are different types
+(`v = 2` does not match `2.0`); array properties are indexed element by element (a filter matches if any element does; an array sorts by its smallest element ascending / largest descending, restricted to the
+elements that satisfy the filters on that property), an empty array indexes as null, embedded entities are addressed by dotted paths (`e.y.z`) and are not indexed as values, `exclude_from_indexes` values are
+invisible to queries, indexed strings and blobs are limited to 1,500 bytes, timestamps are truncated to microseconds, arrays cannot contain arrays. `Query`: kind (kindless = every non-metadata kind, key
+filters and key-ascending order only), `filter` (property filters `EQUAL`, `LESS_THAN(_OR_EQUAL)`, `GREATER_THAN(_OR_EQUAL)`, `IN`, `NOT_EQUAL`, `NOT_IN`, `HAS_ANCESTOR`; composite `AND` / `OR`),
+`order` (then an implicit `__key__`, and the inequality property first when there is no explicit order), **projections** (one result row per index entry of an array property; only indexed properties;
+entity results of `PROJECTION` type; `__key__`-only is `KEY_ONLY`), `distinct_on`, `start_cursor` / `end_cursor` (opaque, bound to the query's order signature: `cursor does not match query`), `offset`
+(`skipped_results` / `skipped_cursor`), `limit`, `more_results` (`NO_MORE_RESULTS` / `MORE_RESULTS_AFTER_LIMIT`), and the `__kind__` / `__namespace__` metadata kinds. Multiple inequality properties
+and any first sort order are accepted (the current Datastore lifts the legacy restrictions the emulator still enforces). **GQL** (`gql_query` in RunQuery): `SELECT [DISTINCT [ON (..)]] * | __key__ | props FROM kind
+[WHERE conds AND ..] [ORDER BY ..] [LIMIT n] [OFFSET n]`, literals (allowed only with `allow_literals`, else `Disallowed literal: 25.`), named and positional (`@1`) bindings, `KEY(..)`, `DATETIME(..)`,
+`HAS ANCESTOR`, `IN (..)`; not supported: `OR`, aggregation clauses. `RunAggregationQuery`: `count` (`up_to`), `sum`, `avg`, aliases, up to 5. `Commit`: insert / update / upsert / delete, **conflict
+detection** by `base_version` or `update_time` (a conflicting mutation is skipped and reported with `conflict_detected = true`, as the emulator does), `mode` rules (`NON_TRANSACTIONAL` may not name a
+transaction nor touch one entity twice; `TRANSACTIONAL` needs one or `single_use_transaction`), property transforms (server timestamp, increment, maximum, minimum, appendMissingElements,
+removeAllFromArray), `mutation_results` with allocated keys, versions and times. Errors carry the emulator's texts (`entity already exists`, `no entity to update`, `Key path element must not be
+incomplete: [User: , Post: x]`, `The kind "__bad__" is reserved.`, ...).
+
+**Conformance** (`Warp/tests/python/ds_conformance/`): the same method as firestorewire -- `ds_corpus.py` (CRUD and keys, every value type and the total order, ~150 filter / order / cursor / projection /
+ancestor queries, namespaces and metadata queries, transactions and preconditions, ids, GQL, REST), `ds_harness.py`, `golden.json.gz`, `test_datastore_conformance.py` (offline replay on one and on two sharded
+backends). Result: 330 steps in 14 cases: 285 identical, 5 message-only, 40 documented known differences (the legacy emulator lacks the feature), 0 unexplained, on one and on two sharded backends. Known differences (`ds_known.py`): everything the *legacy* emulator lacks -- RunAggregationQuery, IN / NOT_IN / NOT_EQUAL / OR, more than one inequality property,
+non-ancestor queries inside transactions -- and an invalid transaction id (the emulator answers `UNKNOWN` with an empty message). Not compared: `commit_time`, `create_time`, `update_time`, `read_time` and
+`index_updates` (Warp returns them like current Datastore; the emulator does not), entity versions, cursors and transaction ids (opaque), and `more_results` (the emulator always says `MORE_RESULTS_AFTER_LIMIT`;
+Warp answers the real value, asserted in `test_datastore_conformance.py`). Warp-side tests: entity groups on exactly one host, id uniqueness across hosts, IN / NOT_IN / NOT_EQUAL / OR / multi-inequality,
+aggregations, property transforms and base-version conflicts, optimistic contention, an atomic cross-host transaction, 6 threads x 5 increments losing nothing, GQL, REST, auth, and 10,000 entities paged with cursors under
+`-Xmx300m`. Java unit tests: `DsKeysTest` (encoding order == key order, decode, ancestors, error texts), `DsValuesTest` (the total order, array / dotted-path indexing, limits), `DsGqlTest`.
+*Not implemented / not verified:* `read_time` and true read-only snapshots, `find_nearest` (UNIMPLEMENTED), the `__property__` metadata kind, cross-namespace queries, Datastore-mode Firestore's newer ordering
+of mixed numeric types (Warp follows the emulator), official client libraries (not installed).
+
 ### 4.8 Connecting to a specific backend or set
 
 A client driver picks **one backend** or **one whole backend set** with the database / service name it already
@@ -1556,8 +2147,12 @@ this is the missing "which database do I mean" half.
 | boltwire (neo4j driver) | `db` in the Bolt RUN message | `driver.session(database="pg_east")` |
 | gRPC | optional `ExecuteRequest.database` (field 5, additive) | `ExecuteRequest(database="pg_east", ...)` |
 
-The HTTP frontends (dynamowire, sqswire, oswire, influxwire, s3wire) have no database concept and are **not**
+The HTTP frontends (dynamowire, sqswire, oswire, influxwire, s3wire, gcswire) have no database concept and are **not**
 routed (no header/path convention was added: it would not be a boundary those protocols' own clients can express).
+**pubsubwire** is the one exception, and a deliberately simple one: the **project id** in every Pub/Sub resource name
+(`projects/pg_east/topics/t`) is looked up like a database name (protocol `http`), so a project named like a backend or a set uses only
+that backend's / set's hosts for its topics, subscriptions and queues; other projects use every host with the `pubsub` store. Explicit
+routes work the same way; strict mode does not reject unknown projects. **firestorewire** and **datastorewire** route the same way: the **project id, or a named (non-default) database id**, of every request is looked up (protocol `http`), so `projects/pg_east/databases/(default)` (or a project called like a set) keeps that database on those hosts only.
 
 **Resolution order** (first hit wins): (1) explicit routes in `warp_config.connectionRoutes`; (2) the name equals a
 backend name -> that backend; equals a backend set name -> that set; (3) otherwise nothing changes (today's
@@ -1722,11 +2317,16 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default; `WARP_MYWIRE_BACKEND=mysql` switches to native mode — see §8.1.1 |
 | orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native mode — see §8.1.1 |
 | mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default; `WARP_MSSQLWIRE_BACKEND=sqlserver` switches to native mode — see §8.1.1 |
-| mongowire | MongoDB wire protocol | 27017 | document ops mapped to SQL |
+| mongowire | MongoDB wire protocol (OP_MSG, OP_QUERY handshake, OP_COMPRESSED/zlib) | 27017 | a MongoDB 7.0-compatible server over Postgres: CRUD, all query/update/aggregation operators, indexes with unique enforcement, collection and database administration, validators, cursors; sharded over the `mongodb` store hosts -- see *The MongoDB store* in §4.7 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
 | sqswire | Amazon SQS (JSON and AWS Query/XML protocols) | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); batches, message attributes + MD5, long polling, FIFO groups/dedup, DLQ/redrive and message move tasks, tags, retention sweeper; a queue lives on one shard chosen by name — §4.7 *The SQS store* |
 | oswire | OpenSearch 2.x REST/JSON API | 9200 | documents, `_bulk`, `_search` (query DSL, aggregations, highlight, scroll, PIT, k-NN, hybrid), index management, templates, cat/cluster probes; Lucene BM25 scoring, OpenSearch error shapes; sharded over the `opensearch` store hosts -- see *The OpenSearch store* in §4.7 |
 | s3wire | Amazon S3 REST API | 18020 | two modes, chosen per request: **Postgres mode** (the `s3` store enabled on Postgres backend(s) of the set: objects chunked into bytea rows, sharded by key — §4.7 *The S3 store*) or **proxy mode** (`WARP_S3WIRE_BACKEND_BUCKET`: buckets are key prefixes in one backend S3/MinIO bucket); SigV4 verified against `WARP_S3WIRE_CREDENTIALS`; streaming PUT/GET/Range, list, copy, batch delete, multipart; Postgres mode adds versioning, tagging, ACL/public-access/policy documents, CORS, checksums (CRC32/CRC32C/CRC64NVME/SHA1/SHA256), ListParts/UploadPartCopy, presigned + POST-policy uploads, virtual-hosted addressing, SelectObjectContent |
+| gcswire | Google Cloud Storage JSON + XML APIs | 4443 | the `gcs` store (chunked rows sharded by bucket/object name); media / multipart / resumable uploads, generations and versioning, copy / rewrite / compose, HMAC keys + SigV4 for the XML API, V2/V4 signed URLs, bearer tokens; verified against fake-gcs-server — see §4.7 |
+| pubsubwire | Google Cloud Pub/Sub gRPC (Publisher, Subscriber incl. StreamingPull, SchemaService, IAMPolicy) + REST/JSON v1 | 8085 (gRPC), 8087 (REST) | the `pubsub` store (a subscription's queue on one host, Publish fans out with a durable outbox); ack deadlines, ordering keys, filters, dead letters, retry policy, exactly-once delivery, push, snapshots / seek, Avro schemas; no auth unless `WARP_PUBSUBWIRE_TOKENS`; see §4.7 |
+| firestorewire | Google Cloud Firestore v1 (native mode): gRPC incl. bidirectional Write and Listen + REST/JSON, one port | 8080 | the `firestore` store (documents as rows, sharded by document path); structured queries with Firestore's full value order, transactions, transforms, aggregations, vector search, resume tokens; `FIRESTORE_EMULATOR_HOST` works; verified against the official emulator (see "The Firestore store") |
+| datastorewire | Google Cloud Datastore v1: gRPC + REST/JSON (incl. GQL), one port | 8081 | the `datastore` store (entities as rows, sharded by root ancestor key so entity groups stay on one host); queries, projections, transactions, aggregations, ids; `DATASTORE_EMULATOR_HOST` works; verified against the official emulator (see "The Datastore store") |
+| awswire | one unified AWS endpoint (DynamoDB, SQS, S3 in process, plus SNS, Kinesis, Secrets Manager, SSM, KMS, STS and IAM basics) with SigV4 dispatch; HTTP/1.1 and cleartext HTTP/2 | 4566 (off unless `WARP_AWSWIRE_PORT` / `WARP_AWSWIRE_ENABLED`) | the new services live in the `sns`, `kinesis` and `awsparams` stores (sharded by topic / stream / secret / parameter / key); each also has its own optional port (`WARP_SNSWIRE_PORT`, `WARP_KINESISWIRE_PORT`, `WARP_SECRETSWIRE_PORT`, `WARP_SSMWIRE_PORT`, `WARP_KMSWIRE_PORT`, `WARP_STSWIRE_PORT`) -- §4.7 *The SNS, Kinesis, Secrets, SSM and KMS stores*, *The unified AWS endpoint* |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
 | MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` switches to native mode — see §8.1.1 and §8.5 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
@@ -1828,7 +2428,7 @@ sessions onto a small pool of Postgres connections, PgBouncer-transaction-poolin
 backend connection for its whole life: Warp borrows one **when a statement or transaction actually needs it**
 (after the firewall, QoS and cache stages, so a cache hit or a rejected statement never borrows) and returns it
 **as soon as the response is computed**, unless the session holds state that lives on that one physical
-connection. Hundreds of mostly-idle clients then share `WARP_POOL_MAX_SIZE=10` connections. The HTTP frontends and
+connection. Hundreds of mostly-idle clients then share `WARP_POOL_MAX_SIZE=10` connections. The HTTP frontends (including pubsubwire, which never holds a connection across a long poll, a StreamingPull stream, a push request or an idle wait -- every poll, ack, publish and lease is one short borrow; the streams share one pump per subscription -- and gcswire, whose uploads borrow a connection per data chunk and never hold one while a client trickles a body, and the awswire services -- SNS, Kinesis, Secrets Manager, SSM, KMS, STS -- which borrow one pooled connection per short statement or transaction, never across an outbound SNS delivery, a SubscribeToShard stream or a KMS call, and never nest a second borrow inside a transaction) and
 gRPC already borrowed per request; native-proxy modes (orawire `NativeSessionRelay`, mywire/mssqlwire native
 backend) are a byte relay or a dedicated connection and are unchanged.
 
@@ -1863,6 +2463,8 @@ Notes:
   scrubbed on borrow.
 * Idle time in the pool: Hikari validates a connection idle for more than 500 ms when it is borrowed, so the first
   statement after client think time can cost one extra round trip.
+
+**Streams and long-lived requests hold nothing.** The document frontends built on gRPC streams (firestorewire's `Listen` and `Write`) never pin a pooled connection while a stream is open or idle: a stream waits on the per-node `LISTEN` connection (one dedicated, non-pooled connection per Postgres host, shared by every stream of the node), and each wake-up borrows a pooled connection for one short query. Thirty idle `Listen` streams with `WARP_POOL_MAX_SIZE=4` leave the pool free (tested). Transactions of firestorewire and datastorewire are optimistic and held in Warp's memory, so an open transaction holds no database connection either; a commit borrows one connection per involved host for the length of its own database transaction.
 
 **Kill switch:** `WARP_MULTIPLEX_SESSIONS=false` restores the previous behaviour for all five frontends (a session
 borrows one connection at its first statement and holds it until it disconnects; orawire still releases at

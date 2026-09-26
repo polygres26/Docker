@@ -1269,3 +1269,122 @@ Postgres, so read this as "same order of magnitude, Warp is not slower", not as 
 
 Every operation is reported to the metrics collector under the protocol names `azblobwire` / `azqueuewire` / `aztablewire`. Also measured (test suite, 2026-09-26):
 a 100 MiB Put Blob through a Warp started with `-Xmx300m` (25 chunk rows of 4 MiB, MD5 verified on download) completes in about 0.5 s on loopback.
+
+## 2026-09-26: gcswire (Google Cloud Storage JSON / XML API) -- RTT next to fake-gcs-server
+
+Setup: one real Warp process + native Postgres 17 (`WARP_TEST_PG_LOCAL=1`, one or two backends), `Warp/tests/python/gcs_conformance/gcs_rtt_bench.py` (Python `requests`, one keep-alive
+connection, sequential, anonymous access, the same client for both sides, 300 measured requests per operation after 20 warm-up inserts, client-side median / p95 in ms). The comparison is
+`fsouza/fake-gcs-server` (Go, `-backend memory`) in the Docker Desktop VM: its loopback path adds a fraction of a millisecond that a native process would not have, it keeps everything in
+memory while Warp commits every write to Postgres, and it does far less work per request (no preconditions, no generation bookkeeping, no hash verification on most paths), so read this as
+"same order of magnitude, Warp is not slower on this box", not as a claim about Google's service.
+
+| operation | fake-gcs-server median / p95 | Warp, 1 Postgres median / p95 | Warp, 2 sharded Postgres median / p95 |
+|---|---|---|---|
+| object insert 1 KiB (`uploadType=media`) | 2.18 / 3.91 | 1.49 / 2.26 | 1.53 / 2.53 |
+| object get metadata | 1.72 / 2.61 | 0.77 / 0.90 | 0.79 / 0.90 |
+| object get media 1 KiB | 1.66 / 2.51 | 0.85 / 0.99 | 0.86 / 0.98 |
+| list objects (prefix, `maxResults=20`) | 2.41 / 4.22 | 1.39 / 1.91 | 1.61 / 2.58 |
+| object patch metadata | 1.96 / 2.85 | 0.88 / 1.03 | 0.89 / 1.03 |
+| object delete | 1.41 / 3.35 | 0.84 / 0.94 | 0.91 / 0.99 |
+
+An insert is one short transaction on the owning shard (retire the previous generation, insert the row, adopt the data blob) plus the chunk insert; a listing on two shards costs one extra query and
+a merge. Every operation is reported to the metrics collector under the protocol name `gcswire` (labels such as `objects.insert.media`, `objects.get.media`, `objects.list`, `xml.putObject`).
+Also measured (loopback, Warp started with `-Xmx300m`, single run, treat as indicative): a 100 MiB resumable upload in 8 MiB chunks in about 0.64 s (about 155 MiB/s), a streamed download of
+the same object in about 0.07 s, a single 100 MiB `uploadType=media` POST in about 0.4 s.
+
+## 2026-09-26: mongowire (MongoDB 7.0 compatibility rewrite) -- conformance counts and RTT
+
+Setup: one real Warp process + one native Postgres (`WARP_TEST_PG_LOCAL=1`), pymongo 4.17, `Warp/tests/python/mongo_conformance/mongo_rtt_bench.py` (one connection, sequential, 500 measured
+operations, client-side p50 in ms, three runs each), row cache on (default). Before = the previous mongowire jar (SQL translation of a small operator subset), after = the engine described in
+*The MongoDB store* (WARP_GUIDE section 4.7): documents stored as type-exact BSON, evaluated by a Java implementation of MongoDB's semantics.
+
+| operation | before p50 | after p50 |
+|---|---|---|
+| insertOne (one row, `_id` primary key, BSON + jsonb mirror) | 0.110 - 0.113 | 0.116 - 0.119 |
+| find_one by `_id` | 0.161 - 0.241 (row-cache hit path) | 0.124 - 0.126 (one primary-key read; the cache no longer serves reads because it cannot carry BSON types) |
+
+Conformance (real `mongod:7.0` container as the oracle, 2,683 recorded steps): before 322 identical / 22 same-code / 2,105 different (the old server lacked `drop`, `create`, `getMore`, index and admin
+commands and most operators); after 2,357 identical / 247 same code with another message / 0 different / 79 documented divergences on one backend, and the same 0 different on two sharded
+backends. MongoDB driver-spec CRUD + BSON-corpus tests: 1,018 of 1,018 runnable tests pass on one backend (0 of the 51 core CRUD tests passed before), 1,006 on two backends (the 12 failures
+depend on the natural order of documents). Two backends: `insertOne` and find-by-`_id` are unchanged (one host); a non-`_id` read scans both hosts and evaluates once.
+
+## 2026-09-26: awswire (SNS, Kinesis, Secrets Manager, SSM, KMS, STS on Postgres, unified AWS endpoint) -- p50 / p95 only
+
+Setup: one real Warp process + native Postgres 17 (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), the unified AWS endpoint, `Warp/tests/python/awsextras_rtt_bench.py` (boto3, one client per service on a
+keep-alive connection, sequential, dummy credentials, 300 measured requests per operation after 30 warm-ups, client-side median / p95 in ms). There is no comparison product for these services, so this only records Warp's own
+numbers (the SQS row is the same client against the same listener, as a yardstick). The machine was shared with other builds and test runs, so treat differences of a few hundredths of a millisecond as noise.
+
+| operation | 1 Postgres p50 / p95 | 2 sharded Postgres p50 / p95 |
+|---|---|---|
+| sqs SendMessage (reference, unified endpoint) | 0.72 / 0.84 | 0.69 / 0.84 |
+| sns Publish, no subscribers | 0.70 / 0.84 | 0.71 / 0.92 |
+| sns Publish, 1 SQS subscription (envelope) | 1.34 / 1.48 | 1.36 / 1.50 |
+| sns GetTopicAttributes | 0.58 / 0.64 | 0.58 / 0.64 |
+| kinesis PutRecord 100 B | 0.84 / 1.03 | 0.83 / 1.00 |
+| kinesis PutRecords 10 x 100 B | 0.91 / 1.04 | 0.89 / 1.01 |
+| kinesis GetRecords (Limit 10) | 1.05 / 1.26 | 1.03 / 1.13 |
+| secretsmanager GetSecretValue (KMS decrypt) | 0.66 / 0.74 | 0.66 / 0.74 |
+| secretsmanager PutSecretValue (KMS encrypt) | 1.10 / 1.38 | 1.11 / 1.30 |
+| ssm GetParameter String | 0.49 / 0.54 | 0.50 / 0.54 |
+| ssm GetParameter SecureString WithDecryption | 0.51 / 0.58 | 0.51 / 0.59 |
+| ssm PutParameter Overwrite | 1.71 / 1.80 | 2.11 / 2.30 |
+| kms Encrypt 64 B (symmetric) | 0.43 / 0.63 | 0.43 / 0.48 |
+| kms Decrypt | 0.42 / 0.48 | 0.43 / 0.49 |
+| kms GenerateDataKey AES_256 | 0.43 / 0.50 | 0.43 / 0.47 |
+| kms Sign ECDSA_SHA_256 | 0.55 / 0.63 | 0.55 / 0.64 |
+| sts GetCallerIdentity | 0.42 / 0.52 | 0.42 / 0.49 |
+| sts AssumeRole (stores a session) | 0.70 / 1.04 | 0.71 / 0.99 |
+
+Reading it: a read is one pooled connection and one query (SSM GetParameter and KMS calls are dominated by the HTTP and SDK cost; a KMS operation reads the key row once per two seconds per process and does AES-GCM in memory). Publishing to a topic with one SQS subscription costs a
+transaction (topic, dedup, subscriptions) plus the in-process SQS insert. `PutSecretValue` and `SecureString` writes seal the value with KMS before the transaction opens. `PutParameter Overwrite` is the slowest row: it reads the head row, then writes the head, the new history row and prunes old versions in one transaction.
+Two sharded backends do not change the per-request cost (an operation lands on one host); listings (ListTopics, ListSecrets, DescribeParameters) fan out and are not in this table. Every operation is recorded through `SqlMetricsCollector` under `awswire` (unified endpoint) or `snswire` / `kinesiswire` / `secretswire` / `ssmwire` / `kmswire` / `stswire` (own port).
+
+## 2026-09-26: pubsubwire (Google Cloud Pub/Sub gRPC) -- RTT next to Google's official Pub/Sub emulator
+
+Setup: one real Warp process + native Postgres 17 (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), the official emulator (`gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators`, `gcloud beta emulators pubsub start`) in
+Docker on the same machine, `Warp/tests/python/ps_conformance/ps_rtt_bench.py` (raw gRPC from Python, one channel per side, sequential, 300 measured calls per operation after 30 warm-ups, ~1 KB messages, client-side
+median / p95 in ms; the "10 messages" row uses 60 calls). One topic with one subscription, so the two-backend run places the subscription's queue on one of the two hosts. The machine was shared with other builds and
+test runs; differences of a few hundredths of a millisecond are noise.
+
+| operation | emulator median / p95 | Warp, 1 Postgres median / p95 | Warp, 2 sharded Postgres median / p95 |
+|---|---|---|---|
+| Publish 1 message | 0.48 / 0.59 | 0.56 / 0.91 | 0.57 / 0.91 |
+| Publish 10 messages | 0.47 / 0.56 | 0.57 / 0.72 | 0.60 / 0.87 |
+| Pull 1 message (available, `return_immediately`) | 0.48 / 0.54 | 0.36 / 0.53 | 0.36 / 0.52 |
+| Acknowledge 1 message | 0.44 / 0.49 | 0.30 / 0.41 | 0.30 / 0.45 |
+| GetSubscription | 0.47 / 0.67 | 0.16 / 0.23 | 0.17 / 0.23 |
+| Publish -> StreamingPull delivery (one open stream) | 51.76 / 56.92 | 0.58 / 1.02 | 0.64 / 1.46 |
+
+Caveats, honestly: the emulator is a Java process that keeps everything in memory (no durability, no fsync) behind Docker's port forwarding, Warp runs natively and commits every publish to Postgres, so this compares two
+products with different guarantees, not two builds of one. Warp's Publish is the slower row (one transaction per publish plus the topic and subscription lookups on the home host); Pull and Acknowledge win because a
+subscription's document is cached for a second per process and the claim is one indexed `UPDATE ... FOR UPDATE SKIP LOCKED`. The 51 ms emulator delivery latency looks like a polling interval in its StreamingPull path (not investigated), Warp wakes the stream's pump in-process on publish (a publish handled by another node is seen within the 200 ms idle poll). With more subscriptions per topic, Publish costs one insert
+per subscription (batched per host); a topic whose subscriptions span both hosts adds the outbox write (one more short statement on the home host) and one transaction per host. Every operation is
+reported to the metrics collector under the protocol name `pubsubwire` (labels `Publish`, `Pull`, `Acknowledge`, ...).
+
+## 2026-09-26: firestorewire and datastorewire (Firestore / Datastore gRPC) -- RTT next to Google's official emulators
+
+Setup: one real Warp process on native Postgres 17 (one backend), the official emulators (`gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators`, Docker, `--memory 1g`), raw gRPC from Python
+(`Warp/tests/python/fs_conformance/fs_rtt_bench.py`, `ds_conformance/ds_rtt_bench.py`), one channel per side, sequential calls, 200 measured calls per row after 20 warm-ups, ~1 KB documents, 200 documents
+in the collection; median / p95 in ms. The machine was shared with other test runs.
+
+| Firestore operation | emulator | Warp |
+|---|---|---|
+| Commit: set 1 document | 0.46 / 0.54 | 0.89 / 1.21 |
+| GetDocument | 0.40 / 0.48 | 0.27 / 0.38 |
+| BatchGetDocuments (10) | 0.68 / 0.86 | 0.52 / 0.79 |
+| RunQuery: collection, limit 20 | 1.86 / 2.62 | 0.73 / 1.02 |
+| RunQuery: filter, limit 20 | 1.72 / 2.68 | 0.60 / 0.83 |
+| RunAggregationQuery: count | 0.80 / 1.05 | 0.26 / 0.34 |
+| Transaction: begin + get + commit | 1.74 / 2.25 | 0.78 / 0.92 |
+
+| Datastore operation | emulator | Warp |
+|---|---|---|
+| Commit: upsert 1 entity | 0.75 / 1.07 | 0.75 / 1.01 |
+| Lookup 1 key / 10 keys | 0.52 / 0.65, 0.55 / 0.76 | 0.29 / 0.34, 0.32 / 0.40 |
+| RunQuery: kind, limit 20 | 0.57 / 0.85 | 0.52 / 0.80 |
+| RunQuery: filter, limit 20 | 0.69 / 1.00 | 0.48 / 0.62 |
+| Transaction: begin + lookup + commit | 1.46 / 2.14 | 0.93 / 1.42 |
+
+Caveats: the emulators are in-memory Java processes behind Docker port forwarding with no durability; Warp runs natively and commits every write to Postgres (a Firestore commit is the slower row: advisory locks,
+a load, the write and the version-log row in one transaction). Warp's queries are cheap here because 200 documents are scanned and filtered in Java from one keyset page; scans grow linearly with the collection (no
+composite indexes exist) -- these numbers say nothing about large collections. Not measured: two-backend runs, Listen latency.

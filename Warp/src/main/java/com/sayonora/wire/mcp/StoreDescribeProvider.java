@@ -137,7 +137,30 @@ final class StoreDescribeProvider implements BackendToolProvider {
                     }
                 }
             }
-            case AZBLOB, AZQUEUE, AZTABLE, GCS -> {
+            case FIRESTORE, DATASTORE -> {
+                boolean fs = store == com.sayonora.wire.core.StoreType.FIRESTORE;
+                String sql = fs ? "SELECT db, '', count(*) FROM warp_firestore_docs GROUP BY 1 ORDER BY 1"
+                        : "SELECT ns, kind, count(*) FROM warp_datastore_entities GROUP BY 1, 2 ORDER BY 1, 2";
+                java.util.TreeMap<String, Long> counts = new java.util.TreeMap<>();
+                for (String h : hosts) {
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+                        while (rs.next()) {
+                            counts.merge(rs.getString(1) + (rs.getString(2).isEmpty() ? "" : " / " + rs.getString(2)), rs.getLong(3), Long::sum);
+                        }
+                    } catch (SQLException e) {
+                        out.addProperty("note", (fs ? "firestore" : "datastore") + " tables not readable yet: " + e.getMessage());
+                    }
+                }
+                JsonArray arr = new JsonArray();
+                for (var e : counts.entrySet()) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty(fs ? "database" : "namespaceKind", e.getKey());
+                    o.addProperty(fs ? "documents" : "entities", e.getValue());
+                    arr.add(o);
+                }
+                out.add(fs ? "databases" : "namespaces", arr);
+            }
+            case AZBLOB, AZQUEUE, AZTABLE, GCS, PUBSUB -> {
                 String[][] q = switch (store) {
                     case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},
                         {"blobs", "SELECT account || '/' || container, count(*), coalesce(sum(size),0) FROM warp_azblob_blobs WHERE snapshot='' GROUP BY 1 ORDER BY 1"}};
@@ -145,6 +168,8 @@ final class StoreDescribeProvider implements BackendToolProvider {
                         {"messages", "SELECT account || '/' || queue, count(*), 0 FROM warp_azqueue_messages WHERE expires_at > now() GROUP BY 1 ORDER BY 1"}};
                     case GCS -> new String[][] {{"buckets", "SELECT name, 0, 0 FROM warp_gcs_buckets ORDER BY 1"},
                         {"objects", "SELECT bucket, count(*), coalesce(sum(size),0) FROM warp_gcs_objects WHERE deleted_at IS NULL GROUP BY 1 ORDER BY 1"}};
+                    case PUBSUB -> new String[][] {{"topics", "SELECT name, 0, 0 FROM warp_pubsub_topics ORDER BY 1"},
+                        {"subscriptionBacklog", "SELECT sub, count(*), coalesce(sum(length(data)),0) FROM warp_pubsub_msgs WHERE NOT acked GROUP BY 1 ORDER BY 1"}};
                     default -> new String[][] {{"tables", "SELECT account || '/' || name, 0, 0 FROM warp_aztable_tables ORDER BY 1"},
                         {"entities", "SELECT account || '/' || tbl, count(*), 0 FROM warp_aztable_entities GROUP BY 1 ORDER BY 1"}};
                 };

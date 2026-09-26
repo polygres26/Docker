@@ -756,6 +756,59 @@ public final class Main {
             log.error("gcswire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // firestorewire / datastorewire: Google Cloud Firestore (native mode, default port 8080) and Datastore (default port 8081) gRPC + REST
+        // frontends (one port each, like the official emulators) whose data lives in the "firestore" / "datastore" stores of the set's
+        // Postgres backends. Each starts when its port env var is set, its store is enabled on a backend, or WARP_<X>WIRE_ENABLED=true.
+        // Auth: none by default (emulator behaviour) or WARP_FIRESTOREWIRE_TOKENS / WARP_DATASTOREWIRE_TOKENS bearer lists.
+        try {
+            boolean fsStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.FIRESTORE).isEmpty();
+            boolean fsPort = System.getenv("WARP_FIRESTOREWIRE_PORT") != null && !System.getenv("WARP_FIRESTOREWIRE_PORT").isBlank();
+            boolean fsForced = "true".equalsIgnoreCase(System.getenv("WARP_FIRESTOREWIRE_ENABLED"));
+            if (fsStore || fsPort || fsForced) {
+                int fsPortNo = parseIntEnv("WARP_FIRESTOREWIRE_PORT", 8080);
+                com.sayonora.wire.firestorewire.FsWireServer fsWireServer = new com.sayonora.wire.firestorewire.FsWireServer(fsPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                fsWireServer.start();
+                log.info("warp listening for Google Firestore (firestorewire) on port {}", fsPortNo);
+            }
+        } catch (Exception e) {
+            log.error("firestorewire failed to start -- every other wire protocol is still up.", e);
+        }
+        try {
+            boolean dsStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.DATASTORE).isEmpty();
+            boolean dsPort = System.getenv("WARP_DATASTOREWIRE_PORT") != null && !System.getenv("WARP_DATASTOREWIRE_PORT").isBlank();
+            boolean dsForced = "true".equalsIgnoreCase(System.getenv("WARP_DATASTOREWIRE_ENABLED"));
+            if (dsStore || dsPort || dsForced) {
+                int dsPortNo = parseIntEnv("WARP_DATASTOREWIRE_PORT", 8081);
+                com.sayonora.wire.datastorewire.DsWireServer dsWireServer = new com.sayonora.wire.datastorewire.DsWireServer(dsPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                dsWireServer.start();
+                log.info("warp listening for Google Datastore (datastorewire) on port {}", dsPortNo);
+            }
+        } catch (Exception e) {
+            log.error("datastorewire failed to start -- every other wire protocol is still up.", e);
+        }
+
+        // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
+        // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
+        // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.
+        // Auth: none by default; WARP_PUBSUBWIRE_TOKENS requires an "authorization: Bearer" token.
+        try {
+            boolean psStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.PUBSUB).isEmpty();
+            boolean psPort = System.getenv("WARP_PUBSUBWIRE_PORT") != null && !System.getenv("WARP_PUBSUBWIRE_PORT").isBlank();
+            boolean psForced = "true".equalsIgnoreCase(System.getenv("WARP_PUBSUBWIRE_ENABLED"));
+            if (psStore || psPort || psForced) {
+                int psGrpcPort = parseIntEnv("WARP_PUBSUBWIRE_PORT", 8085);
+                int psRestPort = parseIntEnv("WARP_PUBSUBWIRE_REST_PORT", 8087);
+                com.sayonora.wire.pubsubwire.PubsubWireServer psWireServer = new com.sayonora.wire.pubsubwire.PubsubWireServer(
+                        psGrpcPort, psRestPort, backendRegistry, connectionGate, sqlMetrics);
+                psWireServer.start();
+                log.info("warp listening for Google Pub/Sub (pubsubwire) on gRPC port {} and REST port {}", psGrpcPort, psRestPort);
+            }
+        } catch (Exception e) {
+            log.error("pubsubwire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // s3wire: Amazon S3 REST API frontend. Postgres mode (objects chunked into the Postgres backends of the
         // set that enabled the "s3" store, sharded by key) or proxy mode (one real S3-compatible backend bucket
         // via WARP_S3WIRE_BACKEND_BUCKET). It starts when either is configured now, or when

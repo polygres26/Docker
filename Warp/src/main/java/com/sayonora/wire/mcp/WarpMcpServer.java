@@ -187,14 +187,20 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.AZQUEUE, backendRegistry));
         this.providers.put(BackendKind.AZTABLE, new StoreDescribeProvider(BackendKind.AZTABLE,
                 com.sayonora.wire.core.StoreType.AZTABLE, backendRegistry));
-        this.providers.put(BackendKind.GCS, new StoreDescribeProvider(BackendKind.GCS,
-                com.sayonora.wire.core.StoreType.GCS, backendRegistry));
         this.providers.put(BackendKind.SNS, new StoreDescribeProvider(BackendKind.SNS,
                 com.sayonora.wire.core.StoreType.SNS, backendRegistry));
         this.providers.put(BackendKind.KINESIS, new StoreDescribeProvider(BackendKind.KINESIS,
                 com.sayonora.wire.core.StoreType.KINESIS, backendRegistry));
         this.providers.put(BackendKind.AWSPARAMS, new StoreDescribeProvider(BackendKind.AWSPARAMS,
                 com.sayonora.wire.core.StoreType.AWSPARAMS, backendRegistry));
+        this.providers.put(BackendKind.GCS, new StoreDescribeProvider(BackendKind.GCS,
+                com.sayonora.wire.core.StoreType.GCS, backendRegistry));
+        this.providers.put(BackendKind.FIRESTORE, new StoreDescribeProvider(BackendKind.FIRESTORE,
+                com.sayonora.wire.core.StoreType.FIRESTORE, backendRegistry));
+        this.providers.put(BackendKind.DATASTORE, new StoreDescribeProvider(BackendKind.DATASTORE,
+                com.sayonora.wire.core.StoreType.DATASTORE, backendRegistry));
+        this.providers.put(BackendKind.PUBSUB, new StoreDescribeProvider(BackendKind.PUBSUB,
+                com.sayonora.wire.core.StoreType.PUBSUB, backendRegistry));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -873,10 +879,13 @@ public final class WarpMcpServer {
             case AZBLOB -> com.sayonora.wire.core.StoreType.AZBLOB;
             case AZQUEUE -> com.sayonora.wire.core.StoreType.AZQUEUE;
             case AZTABLE -> com.sayonora.wire.core.StoreType.AZTABLE;
-            case GCS -> com.sayonora.wire.core.StoreType.GCS;
             case SNS -> com.sayonora.wire.core.StoreType.SNS;
             case KINESIS -> com.sayonora.wire.core.StoreType.KINESIS;
             case AWSPARAMS -> com.sayonora.wire.core.StoreType.AWSPARAMS;
+            case FIRESTORE -> com.sayonora.wire.core.StoreType.FIRESTORE;
+            case DATASTORE -> com.sayonora.wire.core.StoreType.DATASTORE;
+            case GCS -> com.sayonora.wire.core.StoreType.GCS;
+            case PUBSUB -> com.sayonora.wire.core.StoreType.PUBSUB;
             default -> null;
         };
     }

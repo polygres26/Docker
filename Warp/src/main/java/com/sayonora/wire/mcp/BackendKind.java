@@ -41,8 +41,13 @@ public enum BackendKind {
     AZBLOB("azblob", "azblob_"),
     AZQUEUE("azqueue", "azqueue_"),
     AZTABLE("aztable", "aztable_"),
+    /** The Warp-hosted Google Firestore and Datastore stores (described only). */
+    FIRESTORE("firestore", "firestore_"),
+    DATASTORE("datastore", "datastore_"),
     /** The Warp-hosted Google Cloud Storage store (described only). */
     GCS("gcs", "gcs_"),
+    /** The Warp-hosted Google Pub/Sub store (described only). */
+    PUBSUB("pubsub", "pubsub_"),
     /** The Warp-hosted SNS, Kinesis and Secrets/SSM/KMS/STS stores (described only). */
     SNS("sns", "sns_"),
     KINESIS("kinesis", "kinesis_"),
@@ -84,7 +89,10 @@ public enum BackendKind {
             case "azblob" -> AZBLOB;
             case "azqueue" -> AZQUEUE;
             case "aztable" -> AZTABLE;
+            case "firestore" -> FIRESTORE;
+            case "datastore" -> DATASTORE;
             case "gcs" -> GCS;
+            case "pubsub" -> PUBSUB;
             case "sns" -> SNS;
             case "kinesis" -> KINESIS;
             case "awsparams", "secretsmanager", "ssm", "kms", "sts" -> AWSPARAMS;

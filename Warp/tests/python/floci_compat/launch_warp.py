@@ -16,10 +16,16 @@ from warp_test_support import WarpProcess, RealPostgres, RealMinio, free_port, i
 
 
 def first_free_discovery_port():
+    # Ignite binds the first port it CAN bind (0.0.0.0) and must find that same port in its seed list: test bindability,
+    # not connectability (a stray JVM on another interface makes lsof/connect_ex look free).
+    import socket
     for p in range(47500, 47600):
-        r = subprocess.run(["lsof", "-nP", f"-iTCP:{p}", "-sTCP:LISTEN"], capture_output=True, text=True)
-        if not r.stdout.strip():
-            return p
+        with socket.socket() as s:
+            try:
+                s.bind(("0.0.0.0", p))
+                return p
+            except OSError:
+                continue
     raise RuntimeError("no free Ignite discovery port")
 
 
@@ -35,12 +41,19 @@ def main():
                     help="s3wire in POSTGRES mode: enable the s3 store on the default backend (admin API), "
                          "credentials test=test, no MinIO")
     ap.add_argument("--vhost-domain", help="WARP_S3WIRE_VHOST_DOMAIN for virtual-hosted-style S3 (e.g. localhost)")
+    ap.add_argument("--aws-unified", action="store_true",
+                    help="also start the unified AWS endpoint (WARP_AWSWIRE_PORT, free port) and enable the sns, kinesis and awsparams "
+                         "stores (Secrets/SSM/KMS/STS) on the default backend; KMS runs with WARP_KMS_INSECURE_DEV_KEY=true; "
+                         "also enables the s3 store when --s3-postgres is given")
     ap.add_argument("--extra-env", action="append", default=[], help="KEY=VALUE for the Warp process")
     a = ap.parse_args()
 
     os.environ.setdefault("WARP_ADMIN_TOKEN", "warp-test-admin-token")
     pg, minio, warp = RealPostgres(), None, None
     def cleanup(*_):
+        if warp is not None and os.environ.get("LAUNCH_DUMP_LOG"):
+            with open(os.environ["LAUNCH_DUMP_LOG"], "w") as f:  # the Warp process's stdout/stderr, for debugging a run
+                f.write("".join(warp._output_lines))
         for o in (warp, minio, pg):
             try:
                 o and o.close()
@@ -74,18 +87,32 @@ def main():
             env.update({"WARP_S3WIRE_ENABLED": "true", "WARP_S3WIRE_CREDENTIALS": "test=test"})
         if a.vhost_domain:
             env["WARP_S3WIRE_VHOST_DOMAIN"] = a.vhost_domain
+        aws_port = None
+        if a.aws_unified:
+            aws_port = free_port()
+            env.update({"WARP_AWSWIRE_PORT": str(aws_port), "WARP_KMS_INSECURE_DEV_KEY": "true"})
         for kv in a.extra_env:
             k, v = kv.split("=", 1); env[k] = v
         warp = WarpProcess(pg, "WARP_DYNAMOWIRE_PORT", frontend_name="dynamowire", extra_env=env)
-        if a.s3_postgres:
+        if a.s3_postgres or a.aws_unified:
             import requests
+            stores = (["s3"] if a.s3_postgres else []) + (["sns", "kinesis", "awsparams"] if a.aws_unified else [])
             r = requests.patch(f"http://localhost:{warp.metrics_port}/api/backend-sets/default/backends/default",
-                               json={"enabledStores": ["s3"]}, timeout=60,
+                               json={"enabledStores": stores}, timeout=60,
                                headers={"Authorization": f"Bearer {os.environ['WARP_ADMIN_TOKEN']}"})
             assert r.status_code == 200, (r.status_code, r.text)
+        if aws_port:
+            import requests
+            for _ in range(120):
+                try:
+                    if requests.get(f"http://localhost:{aws_port}/_warp/health", timeout=2).status_code == 200:
+                        break
+                except Exception:  # noqa: BLE001
+                    time.sleep(0.5)
         state = {"dynamodb": f"http://localhost:{warp.frontend_port}",
                  "sqs": f"http://localhost:{env['WARP_SQSWIRE_PORT']}",
                  "s3": f"http://localhost:{s3_port}" if s3_port else None,
+                 "aws": f"http://localhost:{aws_port}" if aws_port else None,
                  "pid": os.getpid(), "warp_pid": warp.process.pid}
         json.dump(state, open(a.state, "w"))
         print(json.dumps(state), flush=True)

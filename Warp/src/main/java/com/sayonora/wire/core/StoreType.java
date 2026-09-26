@@ -45,6 +45,15 @@ public enum StoreType {
             "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey."),
     GCS("gcs", "Google Cloud Storage", "WARP_GCSWIRE_SET", true,
             "Google Cloud Storage JSON and XML APIs; objects are stored as chunked rows and sharded by bucket/object name."),
+    FIRESTORE("firestore", "Google Firestore", "WARP_FIRESTOREWIRE_SET", true,
+            "Google Cloud Firestore (native mode) gRPC and REST APIs; documents are stored as rows and sharded by hash of the "
+                    + "document path, queries scatter-gather over all hosts."),
+    DATASTORE("datastore", "Google Datastore", "WARP_DATASTOREWIRE_SET", true,
+            "Google Cloud Datastore gRPC and REST APIs; entities are stored as rows and sharded by hash of the root ancestor key, "
+                    + "so an entity group lives on one host."),
+    PUBSUB("pubsub", "Google Pub/Sub", "WARP_PUBSUBWIRE_SET", true,
+            "Google Cloud Pub/Sub gRPC and REST APIs; a subscription's message queue lives wholly on one backend "
+                    + "(hash of its name), Publish copies each message into every subscription of the topic."),
     SNS("sns", "SNS", "WARP_SNSWIRE_SET", true,
             "Amazon SNS API (Query and JSON); a topic and its subscriptions live wholly on one backend (hash of the topic name)."),
     KINESIS("kinesis", "Kinesis", "WARP_KINESISWIRE_SET", true,

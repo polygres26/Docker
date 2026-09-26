@@ -38,3 +38,29 @@ SOFTWARE.
 Portions of Warp's Amazon S3 frontend (Warp/src/main/java/com/sayonora/wire/s3wire/: S3PostForm.java, the presigned
 POST policy verification and condition checks, and S3Select.java, the SelectObjectContent SQL subset and event-stream
 framing) are likewise adapted from Floci and are covered by the MIT licence reproduced above.
+
+
+Warp's Google Cloud Pub/Sub frontend (Warp/src/main/java/com/sayonora/wire/pubsubwire/) serves the Pub/Sub v1 API and vendors the
+official service definitions from https://github.com/googleapis/googleapis under the Apache License, Version 2.0
+(Copyright 2015-2025 Google LLC): Warp/src/main/proto/google/pubsub/v1/pubsub.proto and schema.proto, and
+Warp/src/main/proto/google/iam/v1/iam_policy.proto, policy.proto and options.proto. The IAM files differ from upstream only in
+their `option java_package`, which points at com.sayonora.wire.pubsubwire.iam so the generated classes do not collide with the
+protobuf-4 build of proto-google-iam-v1 that is on the classpath. The Apache License 2.0 text is at
+https://www.apache.org/licenses/LICENSE-2.0 . The generated Python stubs under Warp/tests/python/ps_conformance/ps_stubs/ are
+derived from the same files and the same terms apply.
+
+
+Warp's AWS frontends for SNS, Kinesis Data Streams, Secrets Manager, SSM Parameter Store, KMS, STS and IAM basics, and the unified AWS endpoint
+(Warp/src/main/java/com/sayonora/wire/awswire/) were written against, and are verified with, the MIT-licensed SDK compatibility suites of Floci
+(https://github.com/floci-io/floci, compatibility-tests/), whose behaviour (operation coverage, error codes and messages, edge cases) they follow. No Floci source
+file is copied into this repository: the suites are run from a separate checkout by Warp/tests/python/floci_compat/. The SNS message envelope and delivery
+rules (SnsEnvelope.java, SnsService.java) and the STS operation semantics (StsService.java) are adapted from Floci's implementation and are covered by the MIT
+licence reproduced above.
+
+
+The Google Cloud Firestore v1 and Cloud Datastore v1 API definitions vendored under Warp/src/main/proto/google/firestore/v1/ and
+Warp/src/main/proto/google/datastore/v1/ (used by firestorewire and datastorewire, and, generated to Python, by the conformance
+harnesses in Warp/tests/python/fs_conformance/gen/) are copied unmodified from https://github.com/googleapis/googleapis (commit
+00e989377b8e4bb7d4c20bbebd8ce918238a1953), Copyright Google LLC, and are licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). The google/api, google/rpc and google/type protos they import come from the
+proto-google-common-protos dependency.
