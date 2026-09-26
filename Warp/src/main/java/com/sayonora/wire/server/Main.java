@@ -952,7 +952,7 @@ public final class Main {
         // code). See A2AServer's own javadoc for scope: one JSON-RPC method (message/send,
         // synchronous), delegating to the SAME governed natural-language-to-SQL pipeline MCP's
         // own query_natural_language tool already uses -- not a separate, less-governed path.
-        int a2aPort = parseIntEnv("WARP_A2A_PORT", 18020);
+        int a2aPort = parseIntEnv("WARP_A2A_PORT", 18030);
         // Wrapped the same way dynamowire/sqswire/oswire/influxwire are: an a2a-only bind failure
         // (e.g. port already in use by another local Warp instance) used to kill the whole main
         // thread before it ever reached orawire/pgwire/etc. below -- now it just logs and leaves
