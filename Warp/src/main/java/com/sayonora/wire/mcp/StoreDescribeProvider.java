@@ -160,6 +160,60 @@ final class StoreDescribeProvider implements BackendToolProvider {
                 }
                 out.add(fs ? "databases" : "namespaces", arr);
             }
+            case GREMLIN -> {
+                // vertices / edges per host and label counts (a vertex lives on one host, an edge with its out-vertex)
+                java.util.TreeMap<String, long[]> vlabels = new java.util.TreeMap<>();
+                java.util.TreeMap<String, long[]> elabels = new java.util.TreeMap<>();
+                JsonArray shards = new JsonArray();
+                long vertices = 0;
+                long edges = 0;
+                for (String h : hosts) {
+                    JsonObject sh = new JsonObject();
+                    sh.addProperty("host", h);
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement()) {
+                        long hv = 0;
+                        long he = 0;
+                        try (ResultSet rs = st.executeQuery("SELECT label, count(*) FROM warp_gremlin_vertices GROUP BY label")) {
+                            while (rs.next()) {
+                                vlabels.computeIfAbsent(rs.getString(1), k -> new long[1])[0] += rs.getLong(2);
+                                hv += rs.getLong(2);
+                            }
+                        }
+                        try (ResultSet rs = st.executeQuery("SELECT label, count(*) FROM warp_gremlin_edges GROUP BY label")) {
+                            while (rs.next()) {
+                                elabels.computeIfAbsent(rs.getString(1), k -> new long[1])[0] += rs.getLong(2);
+                                he += rs.getLong(2);
+                            }
+                        }
+                        sh.addProperty("vertexCount", hv);
+                        sh.addProperty("edgeCount", he);
+                        vertices += hv;
+                        edges += he;
+                    } catch (SQLException e) {
+                        sh.addProperty("note", "gremlin tables not readable yet: " + e.getMessage());
+                    }
+                    shards.add(sh);
+                }
+                out.addProperty("vertexCount", vertices);
+                out.addProperty("edgeCount", edges);
+                JsonArray vl = new JsonArray();
+                vlabels.forEach((k, v) -> {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("label", k);
+                    o.addProperty("count", v[0]);
+                    vl.add(o);
+                });
+                JsonArray el = new JsonArray();
+                elabels.forEach((k, v) -> {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("label", k);
+                    o.addProperty("count", v[0]);
+                    el.add(o);
+                });
+                out.add("vertexLabels", vl);
+                out.add("edgeLabels", el);
+                out.add("shards", shards);
+            }
             case AZBLOB, AZQUEUE, AZTABLE, GCS, BIGTABLE, PUBSUB, CQL, KAFKA -> {
                 String[][] q = switch (store) {
                     case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},

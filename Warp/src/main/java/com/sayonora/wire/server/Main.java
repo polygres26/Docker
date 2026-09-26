@@ -850,6 +850,27 @@ public final class Main {
             log.error("kafkawire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // gremlinwire: Apache TinkerPop Gremlin Server protocol (WebSocket + HTTP on one port, default 8182; GraphSON 3/2 and GraphBinary;
+        // eval and bytecode ops, sessions, SASL PLAIN) whose property graph lives in the "gremlin" store of the set's Postgres backends,
+        // vertices sharded by hash of the id and edges stored with their out-vertex. This is also the Cosmos DB Gremlin API surface.
+        // Starts when WARP_GREMLINWIRE_PORT is set, the gremlin store is enabled on a backend, or WARP_GREMLINWIRE_ENABLED=true.
+        // Auth: none by default; WARP_GREMLINWIRE_AUTH=true (or WARP_AUTH_CREDENTIALS set) requires SASL PLAIN / HTTP Basic against the
+        // shared CredentialStore.
+        try {
+            boolean gremlinStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.GREMLIN).isEmpty();
+            boolean gremlinPort = System.getenv("WARP_GREMLINWIRE_PORT") != null && !System.getenv("WARP_GREMLINWIRE_PORT").isBlank();
+            boolean gremlinForced = "true".equalsIgnoreCase(System.getenv("WARP_GREMLINWIRE_ENABLED"));
+            if (gremlinStore || gremlinPort || gremlinForced) {
+                int gremlinPortNo = parseIntEnv("WARP_GREMLINWIRE_PORT", 8182);
+                com.sayonora.wire.gremlinwire.GremlinWireServer gremlinWireServer = new com.sayonora.wire.gremlinwire.GremlinWireServer(gremlinPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                gremlinWireServer.start();
+                log.info("warp listening for Apache TinkerPop Gremlin (gremlinwire) on port {}", gremlinPortNo);
+            }
+        } catch (Exception e) {
+            log.error("gremlinwire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

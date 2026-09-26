@@ -70,7 +70,11 @@ public enum StoreType {
                     + "queries without a partition key scatter-gather over all backends."),
     KAFKA("kafka", "Apache Kafka", "WARP_KAFKAWIRE_SET", true,
             "Apache Kafka wire protocol (Produce, Fetch, consumer groups, admin); a partition's log lives on one backend "
-                    + "(hash of topic and partition), topic metadata, consumer groups and committed offsets on the first backend of the set.");
+                    + "(hash of topic and partition), topic metadata, consumer groups and committed offsets on the first backend of the set."),
+    GREMLIN("gremlin", "Gremlin (TinkerPop)", "WARP_GREMLINWIRE_SET", true,
+            "Apache TinkerPop Gremlin Server protocol (WebSocket and HTTP; also the Cosmos DB Gremlin API surface); a property graph "
+                    + "where a vertex lives on one backend (hash of its id) and an edge with its out-vertex, in-edge and by-id edge lookups "
+                    + "scatter-gather over all backends.");
 
     private final String id;
     private final String label;

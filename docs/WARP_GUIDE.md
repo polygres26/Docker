@@ -3111,3 +3111,96 @@ Unmodified Kafka clients connect with `bootstrap.servers=warp-host:19092`: the J
   on one database, twelve waiting Fetches on a pool of three connections, the MCP tools and read-only mode, and 20 Java unit tests (`KBatchTest`, `KWireTest`, `GroupCoordinatorTest`).
   To re-record: start `apache/kafka` (see the header of `kf_harness.py`) and run `python3 kf_harness.py localhost 29092`; `python3 kf_diff_dev.py HOST PORT [case]` prints the differences against a running broker.
   `python3 kf_rtt_bench.py --kafka-port 29092` prints the RTT table of `docs/RTT_BASELINE_2026.md`.
+
+#### The Gremlin store (gremlinwire)
+
+Enable the `gremlin` store on a backend (or set `WARP_GREMLINWIRE_ENABLED=true`, or `WARP_GREMLINWIRE_PORT`) and Warp speaks the **Apache TinkerPop Gremlin Server protocol** on `WARP_GREMLINWIRE_PORT`
+(default **8182**, WebSocket and HTTP on the same port). That is what Azure Cosmos DB's Gremlin API exposes too, so an unmodified Gremlin driver connects: `gremlinpython`
+(`DriverRemoteConnection("ws://warp-host:8182/gremlin", "g")`), the Java `gremlin-driver` (`Cluster.build("warp-host").port(8182).create()`), the Gremlin Console
+(`:remote connect tinkerpop.server conf/remote.yaml`), Node/.NET/Go drivers, or plain `curl -d '{"gremlin":"g.V().count()"}' http://warp-host:8182/`. No TinkerPop or Groovy is embedded and no
+graph database runs: the traversal **interpreter is written for Warp** and the graph lives in the Postgres backends of the backend set (`WARP_GREMLINWIRE_SET` names the set, default the one holding
+`default`).
+
+| Variable | Meaning |
+|---|---|
+| `WARP_GREMLINWIRE_PORT` | listener port (default 8182); setting it starts the frontend |
+| `WARP_GREMLINWIRE_ENABLED` | `true` starts the frontend even when no backend enables the store |
+| `WARP_GREMLINWIRE_SET` | backend set holding the graph |
+| `WARP_GREMLINWIRE_AUTH` | `true` (or `WARP_AUTH_CREDENTIALS` set) requires SASL PLAIN / HTTP Basic against the shared `CredentialStore` |
+| `WARP_GREMLINWIRE_BATCH_SIZE` | default results per response message (64, the reference's `resultIterationBatchSize`) |
+| `WARP_GREMLINWIRE_EVAL_TIMEOUT_MS` | default evaluation timeout (30000); a request's `evaluationTimeout` argument overrides it |
+| `WARP_GREMLINWIRE_SESSION_TIMEOUT_MS` | idle session lifetime (28800000); idle sessions are evicted lazily, when many sessions exist |
+| `WARP_GREMLINWIRE_MAX_CONTENT_LENGTH` | largest WebSocket message / HTTP body (10485760) |
+| `WARP_GREMLINWIRE_READ_ONLY` | `true` refuses every mutating step (also what the MCP `gremlin_query` tool always does) |
+
+- **Protocol.** WebSocket (RFC 6455: masking, fragmentation, ping/pong, close, a size cap that closes with 1009) carrying Gremlin Server request messages `{requestId, op, processor, args}`. Ops:
+  `eval` (script; standard and `session` processors), `bytecode` (traversal bytecode; `traversal` processor), `close` (session), `authentication` (SASL). Serializers are negotiated per message by mimetype:
+  `application/json` and `application/vnd.gremlin-v3.0+json` (GraphSON 3.0, typed), `...;types=false` (untyped, what the HTTP endpoint answers by default), `application/vnd.gremlin-v2.0+json`
+  (GraphSON 2.0), `application/vnd.graphbinary-v1.0` and `...-stringd` (GraphBinary 1.0, results as strings). A text frame is a plain JSON request and is answered with a text frame; a binary frame is
+  `[mimetype length][mimetype][body]` and answered with a binary frame. Results stream in chunks of `batchSize` (default 64): `206` for every chunk but the last, `200` for the last, `204` (data null)
+  when nothing came back, exactly like the reference; a bytecode request answers with `g:Traverser` objects (value + bulk) as Gremlin Server does, which drivers expand.
+- **Status codes.** `200 / 204 / 206`; `407` (authenticate challenge) and `401` (bad credentials); `498` malformed message or unknown op ("Message with op code [x] is not recognized."); `499` invalid arguments
+  (missing `gremlin` / `aliases` / `session`, unknown processor, bad alias); `597` script evaluation error (unknown method, bad arguments, runtime errors of the interpreter); `598` evaluation timeout;
+  `599` serialization error and, for bytecode requests, an unknown step or bad arguments; `500` a bytecode traversal failing while it runs and a store failure. Error messages are the interpreter's own,
+  not Groovy's; the codes are the reference's (checked case by case).
+- **HTTP.** `POST /` (or `/gremlin`) with `{"gremlin": "...", "bindings": {...}, "language": "gremlin-groovy", "aliases": {...}}` (also `GET /?gremlin=...`), keep-alive, chunked bodies, `Expect: 100-continue`.
+  `Accept` picks the serializer (default GraphSON 3.0 untyped `application/json`; GraphSON typed, GraphBinary on request). The body is one message `{"requestId", "status", "result": {"data": [...], "meta": {}}}`
+  (an empty result is `200` with `[]`, unlike WebSocket's 204); a bad body is `400 {"message": "body could not be parsed"}`, a missing script `400`, a failing script `500` with `message`,
+  `Exception-Class`, `exceptions`, `stackTrace`; over the size cap `413`.
+- **Sessions.** Requests with processor `session` and a `session` id share one script environment (variables, `def` functions) until `close` or the idle timeout; sessionless requests do not. Transactions
+  are not supported, like TinkerGraph: `graph.tx().commit()` answers 597 "Graph does not support transactions"; every mutating step commits at once.
+- **Auth.** None by default. `WARP_GREMLINWIRE_AUTH=true` answers the first request `407`; the driver's `authentication` op carries `base64(\0user\0password)` (SASL PLAIN), checked against the shared
+  `CredentialStore` (`WARP_AUTH_USER` / `WARP_AUTH_PASSWORD` or the `WARP_AUTH_CREDENTIALS` list); on success the request that triggered the challenge runs, on failure `401`. HTTP uses Basic auth.
+  For a Cosmos-style client whose user name is `/dbs/<db>/colls/<coll>`, list that name in `WARP_AUTH_CREDENTIALS`. (Only the message flow is implemented; the reference's own secure configuration needs
+  TLS and could not be run here, so the flow follows its source, not a recording.)
+- **The graph.** A property graph of its own, **not** the Neo4j tables of boltwire (`warp_graph_nodes` / `warp_graph_edges` have `BIGSERIAL` ids, flat `JSONB` properties and cannot be sharded), because a Gremlin graph
+  needs arbitrary element ids (Long, String or UUID), several values per property key with meta-properties, typed values, and a layout that spreads over several hosts. `ddl/postgres/gremlinwire_store.sql`
+  creates two tables per Postgres host: `warp_gremlin_vertices (vkey, label, props jsonb)` where `vkey` is `l:<long>`, `s:<string>` or `u:<uuid>` and `props` is `{"name": [{"v": <GraphSON value>, "m": {meta}}]}`,
+  and `warp_gremlin_edges (ekey, label, out_key, in_key, out_label, in_label, props jsonb)`, with indexes on `(out_key, label)`, `(in_key, label)`, the label and a GIN index on the vertex properties (used to push
+  `hasLabel(..)` and `has('key','string')` prefixes of `g.V()` into the scan), and a sequence on the first host for generated ids. Values keep their type (Int32, Int64, Float, Double, BigDecimal, Date, UUID, ...)
+  because they are stored as GraphSON 3.0. Integral ids are Longs (`g.V(1)` and `g.V(1L)` are the same vertex); `T.id` may also be a string or UUID (TinkerGraph's Long id manager refuses those; Cosmos uses string ids).
+- **Sharding.** A **vertex** lives on the host owning `hash(vertex key)` over the backends of the set that enabled the store; an **edge lives with its out-vertex**. Consequences, all handled by
+  scatter-gather so results are identical to a single host: `out()` / `outE()` touch one host; `in()` / `inE()` / `both()` ask every host for the edges pointing at the vertices (one query per host and
+  per batch of up to 128 traversers, not per traverser); `g.E(id)` and edge updates look on every host; `inV()` / `outV()` / neighbours are fetched by id from the owning hosts; full scans (`g.V()`,
+  `g.E()`) page each host by id and **merge in id order (numeric ids first), so a traversal returns the same order whatever the number of hosts**; dropping a vertex removes its out-edges with it and
+  deletes the edges pointing at it on the other hosts (one transaction per host, not a distributed one: a crash in between leaves edges on other hosts whose in-vertex no longer exists, which `out()` skips but `outE()` / `g.E()` still list until they are dropped with `g.E(id).drop()`). A single mutation is one local transaction; a script or traversal with several mutations commits each one on its own. Edge existence of an `addE`
+  is checked by reading both end vertices first. The id sequence lives on the first host. Adding a backend is reported in `rebalanceRequired` (existing data is not moved; new elements hash over the new list).
+- **Pool discipline.** A pooled JDBC connection is borrowed for one statement or transaction and returned before a response chunk is written or a client is waited for: stalled readers pin nothing
+  (`WARP_POOL_MAX_SIZE=4` stays responsive with 8 clients that requested a large result and never read it). The interpreter is lazy (one iterator per step, adjacency fetched in batches of 128
+  traversers, scans paged 500 rows at a time), so `limit()` stops early and a result is streamed, not materialised. Every request is recorded under the protocol name `gremlinwire`.
+- **The interpreter.** *Sources:* `V`, `E`, `inject`, `addV`, `addE`, `mergeV`, `mergeE`, `withSideEffect`, `withSack`. *Graph:* `out in both outE inE bothE outV inV bothV otherV`, `id label key value`, `values properties
+  valueMap elementMap propertyMap` (`valueMap(true)`, `with(WithOptions.tokens)`), `constant identity index`. *Filters:* `has hasNot hasLabel hasId hasKey hasValue is where filter and or not coin sample dedup limit
+  skip range tail simplePath cyclicPath timeLimit none`, with `P` (`eq neq lt lte gt gte within without between inside outside and or negate`) and `TextP` (`containing startingWith endingWith notContaining
+  notStartingWith notEndingWith regex notRegex`); `where(P)` resolves labels and side effects, `where(as('a').out()...)` binds like TinkerPop. *Maps and branches:* `map flatMap local coalesce choose (predicate,
+  traversal and option/Pick forms) union optional repeat/until/emit/times/loops sideEffect`. *Reducers and collections:* `count sum min max mean fold unfold order group groupCount project select (Pop, Column,
+  by) path tree aggregate cap sack barrier math`, `local` scope variants of `count sum min max mean dedup order limit range tail skip`. *Mutations:* `property` (`single`, `list`, `set`, meta-properties, map form),
+  `addV/addE(.property)`, `from/to`, `drop` (vertices, edges, properties), `mergeV/mergeE` with `Merge.onCreate/onMatch`. *Strings:* `asString toLower toUpper trim lTrim rTrim length split replace substring
+  concat reverse`. `by` accepts keys, tokens, traversals, columns, `Order`, closures. *Script language* (a Groovy subset): numeric literals with `L f d` suffixes (Groovy's `BigDecimal` for `1.5`), strings and
+  `${}` interpolation, lists, maps, ranges, arithmetic, comparison, ternary, `def` variables and functions, `if / for-in / while / return`, closures (`{ it.get() }`, `{ a, b -> }`) for `map filter
+  flatMap sideEffect by choose` and collection methods, the static names Gremlin scripts use (`T`, `P`, `Order`, `__`, bare `gt(1)`, `label`, `desc`, ...), `Math`, `UUID`, `Date`, and the traversal terminals
+  `toList toSet next(n) hasNext iterate`. The result of a script is the reference's: an iterable or traversal streams its items, a map streams its entries, a single value is one result, `null` is `[null]`.
+- **Matching TinkerGraph.** Where the reference server (TinkerGraph, 3.8.2) has a behaviour that looks odd, Warp copies it because clients and tests observe it: adjacency iterates edges the way TinkerGraph's
+  `HashMap<label, HashSet<edge>>` does (so `out()` order and `path()` results match), `g.E(7)` with an Integer id finds nothing while `g.E(7L)` does (its edge id manager does not convert; `g.V(1)` does),
+  properties folded into `addV()` default to list cardinality but `property('k', v)` on an existing vertex replaces, `valueMap(false)` still returns the tokens, `sum()` of an empty stream returns nothing,
+  `by(traversal)` that yields nothing filters the traverser (`project` omits the key), `coalesce` extends a path by its result only, `loops()` outside a loop is 0 only when the traversal tracks paths,
+  `store()` does not exist in 3.8, `range(3,1)` is an error, `limit(-1)` means no limit, `inject('a','b','a')` merges equal values into one bulked traverser (`fold()` sees `[a, a, b]`).
+- **MCP.** Tools `gremlin_query` (any script, **always read-only**: a mutating step is refused), `gremlin_list_labels`, `gremlin_count`, `gremlin_get_vertex`, and the write tools `gremlin_write`
+  (a script that may mutate), `gremlin_add_vertex`, `gremlin_add_edge`, `gremlin_drop_vertex`, which are hidden and refused under `WARP_MCP_READ_ONLY`. Results are plain JSON bounded by `maxResults` (default 100,
+  at most 1000). `describe_backend` on the store (`default.gremlinstore`) lists vertex and edge counts, label counts and per-host counts. Add to the store-tools table above:
+  `gremlin | gremlin_query, gremlin_list_labels, gremlin_count, gremlin_get_vertex, gremlin_write W, gremlin_add_vertex W, gremlin_add_edge W, gremlin_drop_vertex W`. Tool calls are recorded as `mcp-gremlinstore`.
+- **Not implemented** (each of the first group answers 597, or 599 for bytecode): `match()`, `explain()`, `profile()`, `subgraph()`, `io()`, the OLAP / computer steps (`pageRank`, `shortestPath`, ...), graph
+  transactions, custom `TraversalStrategy` (accepted and ignored), `GraphSON 1.0`, Kryo. The script language is a subset, not Groovy: classes, `import`, string templates beyond `${expr}` / `$name`, most JDK methods
+  and a Groovy `GString` result (the reference fails to serialise one, Warp returns the text) are outside it. A TinkerGraph-specific quirk not listed under "Matching" may differ; the divergences the
+  tests know about are in `Warp/tests/python/gremlin_conformance/gr_known.py`. Cosmos DB specifics (partition key `pk`, request units, `x-ms-*` headers) are not emulated: a Cosmos client
+  works, its partition key is an ordinary property.
+- **Verified against a real Apache TinkerPop Gremlin Server 3.8.2** (`tinkerpop/gremlin-server:latest`, default TinkerGraph, run memory-capped at 1 GiB; `Warp/tests/python/gremlin_conformance/`, run by
+  `test_gremlin_conformance.py`). `gr_corpus.py` holds 1,546 cases (source and filter steps, predicates, navigation, properties and value maps, ordering and paging, grouping and projection, paths, repeat,
+  branching, side effects, sacks, math and string steps, the classic and modern toy graphs, 48 mutation sequences, script-language cases, error cases, batching, and **700 seeded random traversals**); each was
+  sent to the reference twice as an `eval` script over GraphSON 3.0 and, when the python DSL can express it (1,310 of them), as `bytecode`; 1,539 answers were identical both times and are stored (compressed) in
+  `golden.json.gz`. The test replays the corpus **offline** (no Docker) against Warp on one and on two sharded Postgres backends and requires the same status codes and the same results after canonicalisation
+  (maps, sets and unordered results compared unordered, `VertexProperty` ids ignored): **1,539 of 1,539 match on one backend and on two**, of which 3 cases (`match()`, a `GString` result, a string vertex id) and
+  the bytecode form of one (`P.inside`, where the reference's GraphSON reader includes the lower bound) are documented divergences. `test_gremlin_conformance.py` also runs the real `gremlinpython` (script and
+  bytecode, GraphSON 3.0 and GraphBinary), the **reference's own Java serializers** (gremlin-util `GraphBinaryMessageSerializerV1` / `GraphSONMessageSerializerV3` decode 88 of Warp's answers exactly as the
+  reference's; the Java `gremlin-driver` and the Gremlin Console are not in that image, so the driver itself and the console were **not** run), sessions, chunking, the HTTP endpoint, WebSocket framing, SASL PLAIN and
+  Basic auth, timeouts, 6 concurrent writers, both-host placement of vertices and edges with traversals crossing hosts, restart durability, `WARP_POOL_MAX_SIZE=4` with stalled readers, `rebalanceRequired`, MCP tools
+  and metrics; and 18 Java unit tests of the parser, engine, codecs and server. GraphSON 2.0 is implemented and tested for shape only (the reference's default configuration does not enable it).

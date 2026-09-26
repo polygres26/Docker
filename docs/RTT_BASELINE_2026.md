@@ -1465,3 +1465,34 @@ hand-off (about 2.5 ms on both brokers' order of magnitude), and `kafka-python`'
 woken by an in-process signal when the produce came through the same Warp node and otherwise notices an append within its 100 ms re-check; the end-to-end rows above are the same-node case. Not measured: many concurrent
 producers and consumers, fetches of thousands of partitions (a single Fetch of 1,000 partitions on two backends took 0.07 s in the test suite), rebalances of large groups, retention sweeps under load. Every request is
 reported to the metrics collector under the protocol name `kafkawire` (labels `Produce`, `Fetch`, `Metadata`, `JoinGroup`, `OffsetCommit`, ...).
+
+### gremlinwire (Apache TinkerPop Gremlin Server protocol) versus a real Gremlin Server
+
+`tests/python/gremlin_conformance/gr_rtt_bench.py`: the same requests over **one persistent WebSocket, sequential, GraphSON 3.0** (raw client, so no driver overhead is timed; every answer is checked to be a 200/204), 300
+requests each (reads after one warm-up), median and p99 client-side in milliseconds, on the standard *modern* toy graph (6 vertices, 6 edges). The reference is `tinkerpop/gremlin-server:latest` (3.8.2, TinkerGraph, default
+`gremlin-server.yaml`) in Docker with `--memory 1g` and its port published to localhost; Warp is the shaded jar with one, and with two sharded, **native** Postgres 17 servers on the same machine.
+
+| request | Gremlin Server 3.8 (TinkerGraph) median / p99 (ms) | Warp, 1 Postgres median / p99 | Warp, 2 sharded Postgres median / p99 |
+|---|---|---|---|
+| script 1+1 (protocol floor) | 0.37 / 0.50 | 0.11 / 0.27 | 0.11 / 0.43 |
+| g.V().count() | 0.39 / 0.51 | 0.24 / 0.79 | 0.26 / 0.78 |
+| g.V(1).values('name') | 0.41 / 0.48 | 0.17 / 0.49 | 0.14 / 0.44 |
+| g.V(1).out().values('name') | 0.41 / 0.50 | 0.27 / 0.64 | 0.29 / 0.89 |
+| g.V().has('name','marko').out('knows').values('name') | 0.42 / 0.54 | 0.20 / 0.57 | 0.29 / 1.25 |
+| g.V(1).out().out().path() | 0.46 / 0.58 | 0.40 / 1.09 | 0.38 / 1.26 |
+| g.V(1).repeat(out()).times(2).values('name') | 0.43 / 0.81 | 0.43 / 1.40 | 0.44 / 1.16 |
+| g.V().hasLabel('person').group().by(label).by(count()) | 0.45 / 0.57 | 0.16 / 0.76 | 0.16 / 0.55 |
+| bytecode g.V(1).out().values('name') | 0.40 / 0.55 | 0.28 / 0.75 | 0.29 / 1.22 |
+| write: g.addV('b').property('i', n) | 0.44 / 0.53 | 0.27 / 1.62 | 0.18 / 0.83 |
+| write: g.V(1).property('n', n) | 0.44 / 0.59 | 0.32 / 0.70 | 0.23 / 0.77 |
+| write: addV + addE (one script) | 0.44 / 0.88 | 0.72 / 1.31 | 0.69 / 2.20 |
+| throughput, 8 clients (ops/s) | 9448 | 9786 | 8430 |
+
+How to read it. The reference pays Docker Desktop's userland port proxy (its own "protocol floor" row, a script that touches no graph, is 0.37 ms against 0.14 ms for Warp's JVM with no proxy), so the comparison is **not
+apples to apples** and says nothing about which implementation is faster in equal conditions; what it does show is that a Gremlin request costs Warp one to a few Postgres round trips on top of a sub-millisecond protocol floor (the multi-statement `addV` + `addE` script is the one row where Warp is slower than the in-memory reference). Reads: `g.V(1).values('name')` is one indexed lookup; `out()` is two (edges of the vertex, then the neighbour vertices, batched per 128 traversers, not per traverser);
+`repeat(out()).times(2)` and `path()` add one pair per hop. With **two sharded backends** an `out()` still touches one host but `in()` / `both()` ask both, which is the small extra cost visible on the multi-hop rows.
+Writes: `addV().property()` is one `INSERT` plus one `nextval()` for the generated id (the id sequence lives on the first host), a property update is `SELECT ... FOR UPDATE` plus `UPDATE` in one transaction, an
+`addV` + `addE` script does two vertex reads and three inserts. Throughput is 8 clients each running 300 `g.V(1).out().values('name')` (Developer edition caps a Warp at 25 connections; the machine also runs the Docker VM
+and other work, so treat the figure as an order of magnitude). GraphBinary and bytecode requests cost the same as the script rows within noise (one bytecode row is included).
+
+Method notes: Postgres `fsync` is on; the graph and the request strings are the ones in the golden corpus, so the bench doubles as a smoke test of the same code paths the conformance run exercises.

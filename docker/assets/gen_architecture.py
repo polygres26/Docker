@@ -20,7 +20,7 @@ FRONTENDS = [
         ("boltwire", "7687", "Neo4j"), ("influxwire", "8086", "InfluxDB"),
         ("aztable", "azure", "Azure Table"), ("firestorewire", "8080", "Firestore"),
         ("datastorewire", "8081", "Datastore"), ("bigtablewire", "8088", "Bigtable"),
-        ("cqlwire", "19042", "Cassandra")]),
+        ("cqlwire", "19042", "Cassandra"), ("gremlinwire", "8182", "Gremlin")]),
     ("Queues and streams", "amber", [
         ("sqswire", "9324", "SQS"), ("awswire", "4566", "SNS, Kinesis"),
         ("azqueue", "azure", "Azure Queue"), ("pubsubwire", "8085", "Pub/Sub")]),

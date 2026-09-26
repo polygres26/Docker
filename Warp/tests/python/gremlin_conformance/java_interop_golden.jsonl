@@ -1,0 +1,88 @@
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:count","code":200,"message":"","results":["Long:6"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:names","code":200,"message":"","results":["String:josh","String:vadas"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:valueMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=[Integer:29], String:name=[String:marko]}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:elementMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=Integer:29, String:name=String:marko}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:vertices","code":200,"message":"","results":["v[2,person,[age=Integer:27, name=String:vadas]]","v[1,person,[age=Integer:29, name=String:marko]]","v[4,person,[age=Integer:32, name=String:josh]]","v[6,person,[age=Integer:35, name=String:peter]]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:edges","code":200,"message":"","results":["e[7,knows,1->2,[weight=Double:0.5]]","e[8,knows,1->4,[weight=Double:1.0]]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:weights","code":200,"message":"","results":["Double:0.2","Double:0.4","Double:0.4","Double:0.5","Double:1.0","Double:1.0"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:path","code":200,"message":"","results":["path[String:marko, Double:0.4, String:lop]","path[String:marko, Double:0.5, String:vadas]","path[String:marko, Double:1.0, String:josh]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:pathElements","code":200,"message":"","results":["path[v[1,person,[age=Integer:29, name=String:marko]], v[2,person,[age=Integer:27, name=String:vadas]]]","path[v[1,person,[age=Integer:29, name=String:marko]], v[3,software,[lang=String:java, name=String:lop]]]","path[v[1,person,[age=Integer:29, name=String:marko]], v[4,person,[age=Integer:32, name=String:josh]]]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:group","code":200,"message":"","results":["{String:person=[String:marko, String:vadas, String:josh, String:peter], String:software=[String:lop, String:ripple]}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:groupCount","code":200,"message":"","results":["{String:person=Long:4, String:software=Long:2}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:project","code":200,"message":"","results":["{String:a=Integer:27, String:n=String:vadas}","{String:a=Integer:29, String:n=String:marko}","{String:a=Integer:32, String:n=String:josh}","{String:a=Integer:35, String:n=String:peter}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:mean","code":200,"message":"","results":["Double:30.75"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:sum","code":200,"message":"","results":["Integer:123"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:fold","code":200,"message":"","results":["[Integer:29, Integer:27, Integer:32, Integer:35]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:tree","code":200,"message":"","results":["tree{v[1,person,[age=Integer:29, name=String:marko]]=tree{v[2,person,[age=Integer:27, name=String:vadas]]=tree{}, v[3,software,[lang=String:java, name=String:lop]]=tree{}, v[4,person,[age=Integer:32, name=String:josh]]=tree{}}}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:float","code":200,"message":"","results":["Float:1.5"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:long","code":200,"message":"","results":["Long:2"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:list","code":200,"message":"","results":["Integer:1","Integer:2","Integer:3"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:map","code":200,"message":"","results":["{String:a=Integer:1}","{String:b=String:x}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:date","code":200,"message":"","results":["Date:0"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:uuid","code":200,"message":"","results":["UUID:11111111-1111-1111-1111-111111111111"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:bigdecimal","code":200,"message":"","results":["BigDecimal:1.5"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:null","code":200,"message":"","results":["null"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:empty","code":204,"message":"","results":[]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:cap","code":200,"message":"","results":["set[v[1,person,[age=Integer:29, name=String:marko]], v[2,person,[age=Integer:27, name=String:vadas]], v[4,person,[age=Integer:32, name=String:josh]], v[6,person,[age=Integer:35, name=String:peter]]]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:properties","code":200,"message":"","results":["DetachedVertexProperty:vp[age->29]","DetachedVertexProperty:vp[name->marko]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:vertexProperty","code":200,"message":"","results":["DetachedVertexProperty:vp[name->marko]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:select","code":200,"message":"","results":["{String:a=String:josh, String:b=String:lop}","{String:a=String:josh, String:b=String:ripple}","{String:a=String:marko, String:b=String:lop}","{String:a=String:peter, String:b=String:lop}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"eval:error","code":597,"message":"No signature of method: org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal.foo() is applicable for argument types: () values: []\u000aPossible solutions: lock(), any(), find(), sort(), any(groovy.lang.Closure), find(groovy.lang.Closure)","results":[]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:names","code":200,"message":"","results":["String:josh","String:vadas"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:valueMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=[Integer:29], String:name=[String:marko]}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:ordered","code":200,"message":"","results":["String:peter","String:josh","String:marko","String:vadas"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:between","code":200,"message":"","results":["String:josh","String:marko","String:vadas"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:within","code":200,"message":"","results":["Long:2"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:repeat","code":200,"message":"","results":["path[String:marko, String:josh, String:lop]","path[String:marko, String:josh, String:ripple]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:group","code":200,"message":"","results":["{String:person=Long:4, String:software=Long:2}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:project","code":200,"message":"","results":["{String:c=Long:0, String:n=String:vadas}","{String:c=Long:1, String:n=String:peter}","{String:c=Long:2, String:n=String:josh}","{String:c=Long:3, String:n=String:marko}"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:edge","code":200,"message":"","results":["e[8,knows,1->4,[weight=Double:1.0]]"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:sack","code":200,"message":"","results":["Double:0.4","Double:0.5","Double:1.0"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:choose","code":200,"message":"","results":["String:java","String:java","String:josh","String:marko","String:peter","String:vadas"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:unbulk","code":200,"message":"","results":["String:person","String:person","String:person","String:person","String:software","String:software"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:coalesce","code":200,"message":"","results":["Integer:121"]}
+{"ser":"application/vnd.graphbinary-v1.0","case":"bytecode:unknown","code":200,"message":"","results":["v[1,person,[age=Integer:29, name=String:marko]]","v[2,person,[age=Integer:27, name=String:vadas]]","v[3,software,[lang=String:java, name=String:lop]]","v[4,person,[age=Integer:32, name=String:josh]]","v[5,software,[lang=String:java, name=String:ripple]]","v[6,person,[age=Integer:35, name=String:peter]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:count","code":200,"message":"","results":["Long:6"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:names","code":200,"message":"","results":["String:josh","String:vadas"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:valueMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=[Integer:29], String:name=[String:marko]}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:elementMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=Integer:29, String:name=String:marko}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:vertices","code":200,"message":"","results":["v[2,person,[age=Integer:27, name=String:vadas]]","v[1,person,[age=Integer:29, name=String:marko]]","v[4,person,[age=Integer:32, name=String:josh]]","v[6,person,[age=Integer:35, name=String:peter]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:edges","code":200,"message":"","results":["e[7,knows,1->2,[weight=Double:0.5]]","e[8,knows,1->4,[weight=Double:1.0]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:weights","code":200,"message":"","results":["Double:0.2","Double:0.4","Double:0.4","Double:0.5","Double:1.0","Double:1.0"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:path","code":200,"message":"","results":["path[String:marko, Double:0.4, String:lop]","path[String:marko, Double:0.5, String:vadas]","path[String:marko, Double:1.0, String:josh]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:pathElements","code":200,"message":"","results":["path[v[1,person,[age=Integer:29, name=String:marko]], v[2,person,[age=Integer:27, name=String:vadas]]]","path[v[1,person,[age=Integer:29, name=String:marko]], v[3,software,[lang=String:java, name=String:lop]]]","path[v[1,person,[age=Integer:29, name=String:marko]], v[4,person,[age=Integer:32, name=String:josh]]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:group","code":200,"message":"","results":["{String:person=[String:marko, String:vadas, String:josh, String:peter], String:software=[String:lop, String:ripple]}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:groupCount","code":200,"message":"","results":["{String:person=Long:4, String:software=Long:2}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:project","code":200,"message":"","results":["{String:a=Integer:27, String:n=String:vadas}","{String:a=Integer:29, String:n=String:marko}","{String:a=Integer:32, String:n=String:josh}","{String:a=Integer:35, String:n=String:peter}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:mean","code":200,"message":"","results":["Double:30.75"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:sum","code":200,"message":"","results":["Integer:123"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:fold","code":200,"message":"","results":["[Integer:29, Integer:27, Integer:32, Integer:35]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:tree","code":200,"message":"","results":["tree{v[1,person,[age=Integer:29, name=String:marko]]=tree{v[2,person,[age=Integer:27, name=String:vadas]]=tree{}, v[3,software,[lang=String:java, name=String:lop]]=tree{}, v[4,person,[age=Integer:32, name=String:josh]]=tree{}}}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:float","code":200,"message":"","results":["Float:1.5"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:long","code":200,"message":"","results":["Long:2"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:list","code":200,"message":"","results":["Integer:1","Integer:2","Integer:3"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:map","code":200,"message":"","results":["{String:a=Integer:1}","{String:b=String:x}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:date","code":200,"message":"","results":["Date:0"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:uuid","code":200,"message":"","results":["UUID:11111111-1111-1111-1111-111111111111"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:bigdecimal","code":200,"message":"","results":["BigDecimal:1.5"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:null","code":200,"message":"","results":["null"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:empty","code":204,"message":"","results":[]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:cap","code":200,"message":"","results":["set[v[1,person,[age=Integer:29, name=String:marko]], v[2,person,[age=Integer:27, name=String:vadas]], v[4,person,[age=Integer:32, name=String:josh]], v[6,person,[age=Integer:35, name=String:peter]]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:properties","code":200,"message":"","results":["DetachedVertexProperty:vp[age->29]","DetachedVertexProperty:vp[name->marko]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:vertexProperty","code":200,"message":"","results":["DetachedVertexProperty:vp[name->marko]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:select","code":200,"message":"","results":["{String:a=String:josh, String:b=String:lop}","{String:a=String:josh, String:b=String:ripple}","{String:a=String:marko, String:b=String:lop}","{String:a=String:peter, String:b=String:lop}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"eval:error","code":597,"message":"No signature of method: org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal.foo() is applicable for argument types: () values: []\u000aPossible solutions: lock(), any(), find(), sort(), any(groovy.lang.Closure), find(groovy.lang.Closure)","results":[]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:names","code":200,"message":"","results":["String:josh","String:vadas"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:valueMap","code":200,"message":"","results":["{:id=Long:1, :label=String:person, String:age=[Integer:29], String:name=[String:marko]}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:ordered","code":200,"message":"","results":["String:peter","String:josh","String:marko","String:vadas"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:between","code":200,"message":"","results":["String:josh","String:marko","String:vadas"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:within","code":200,"message":"","results":["Long:2"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:repeat","code":200,"message":"","results":["path[String:marko, String:josh, String:lop]","path[String:marko, String:josh, String:ripple]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:group","code":200,"message":"","results":["{String:person=Long:4, String:software=Long:2}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:project","code":200,"message":"","results":["{String:c=Long:0, String:n=String:vadas}","{String:c=Long:1, String:n=String:peter}","{String:c=Long:2, String:n=String:josh}","{String:c=Long:3, String:n=String:marko}"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:edge","code":200,"message":"","results":["e[8,knows,1->4,[weight=Double:1.0]]"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:sack","code":200,"message":"","results":["Double:0.4","Double:0.5","Double:1.0"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:choose","code":200,"message":"","results":["String:java","String:java","String:josh","String:marko","String:peter","String:vadas"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:unbulk","code":200,"message":"","results":["String:person","String:person","String:person","String:person","String:software","String:software"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:coalesce","code":200,"message":"","results":["Integer:121"]}
+{"ser":"application/vnd.gremlin-v3.0+json","case":"bytecode:unknown","code":200,"message":"","results":["v[1,person,[age=Integer:29, name=String:marko]]","v[2,person,[age=Integer:27, name=String:vadas]]","v[3,software,[lang=String:java, name=String:lop]]","v[4,person,[age=Integer:32, name=String:josh]]","v[5,software,[lang=String:java, name=String:ripple]]","v[6,person,[age=Integer:35, name=String:peter]]"]}

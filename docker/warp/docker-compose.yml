@@ -65,6 +65,7 @@ services:
       - "8080:8080"   # firestorewire (Google Firestore gRPC + REST), enable with WARP_FIRESTOREWIRE_ENABLED
       - "8081:8081"   # datastorewire (Google Datastore gRPC + REST), enable with WARP_DATASTOREWIRE_ENABLED
       - "19042:19042" # cqlwire (Apache Cassandra CQL native protocol), enable with WARP_CQLWIRE_ENABLED
+      - "8182:8182"   # gremlinwire (Apache TinkerPop Gremlin Server: WebSocket + HTTP; Cosmos DB Gremlin API), enable with WARP_GREMLINWIRE_ENABLED
       - "19092:19092" # kafkawire (Apache Kafka wire protocol), enable with WARP_KAFKAWIRE_ENABLED; set WARP_KAFKAWIRE_ADVERTISED_HOST to the name clients use
       - "18010:18010" # MCP (Model Context Protocol)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
