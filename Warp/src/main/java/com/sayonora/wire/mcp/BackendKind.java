@@ -46,6 +46,8 @@ public enum BackendKind {
     DATASTORE("datastore", "datastore_"),
     /** The Warp-hosted Google Cloud Storage store (described only). */
     GCS("gcs", "gcs_"),
+    /** The Warp-hosted Google Bigtable store (described only). */
+    BIGTABLE("bigtable", "bigtable_"),
     /** The Warp-hosted Google Pub/Sub store (described only). */
     PUBSUB("pubsub", "pubsub_"),
     /** The Warp-hosted SNS, Kinesis and Secrets/SSM/KMS/STS stores (described only). */
@@ -92,6 +94,7 @@ public enum BackendKind {
             case "firestore" -> FIRESTORE;
             case "datastore" -> DATASTORE;
             case "gcs" -> GCS;
+            case "bigtable" -> BIGTABLE;
             case "pubsub" -> PUBSUB;
             case "sns" -> SNS;
             case "kinesis" -> KINESIS;

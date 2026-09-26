@@ -789,6 +789,25 @@ public final class Main {
             log.error("datastorewire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // bigtablewire: Google Cloud Bigtable gRPC frontend (data API + table admin API, default port 8087) whose data lives in
+        // the "bigtable" store of the set's Postgres backends, rows sharded by hash of table name and row key. Starts when
+        // WARP_BIGTABLEWIRE_PORT is set, the bigtable store is enabled on a backend, or WARP_BIGTABLEWIRE_ENABLED=true.
+        // Auth: none by default; WARP_BIGTABLEWIRE_TOKENS requires an "authorization: Bearer" token.
+        try {
+            boolean btStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.BIGTABLE).isEmpty();
+            boolean btPort = System.getenv("WARP_BIGTABLEWIRE_PORT") != null && !System.getenv("WARP_BIGTABLEWIRE_PORT").isBlank();
+            boolean btForced = "true".equalsIgnoreCase(System.getenv("WARP_BIGTABLEWIRE_ENABLED"));
+            if (btStore || btPort || btForced) {
+                int btGrpcPort = parseIntEnv("WARP_BIGTABLEWIRE_PORT", 8087);
+                com.sayonora.wire.bigtablewire.BigtableWireServer btWireServer = new com.sayonora.wire.bigtablewire.BigtableWireServer(
+                        btGrpcPort, backendRegistry, connectionGate, sqlMetrics);
+                btWireServer.start();
+                log.info("warp listening for Google Bigtable (bigtablewire) on gRPC port {}", btGrpcPort);
+            }
+        } catch (Exception e) {
+            log.error("bigtablewire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

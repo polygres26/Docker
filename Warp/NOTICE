@@ -64,3 +64,12 @@ harnesses in Warp/tests/python/fs_conformance/gen/) are copied unmodified from h
 00e989377b8e4bb7d4c20bbebd8ce918238a1953), Copyright Google LLC, and are licensed under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0). The google/api, google/rpc and google/type protos they import come from the
 proto-google-common-protos dependency.
+
+
+Warp's Google Cloud Bigtable frontend (Warp/src/main/java/com/sayonora/wire/bigtablewire/) serves the Bigtable v2 data API and the table admin API and
+vendors the official service definitions from https://github.com/googleapis/googleapis under the Apache License, Version 2.0 (Copyright 2015-2025
+Google LLC): Warp/src/main/proto/google/bigtable/v2/{bigtable,data,request_stats,types}.proto and
+Warp/src/main/proto/google/bigtable/admin/v2/{bigtable_table_admin,table,common,types}.proto. They differ from upstream only in `option java_package`
+(com.sayonora.wire.bigtablewire.*, so the generated classes cannot collide with proto-google-cloud-bigtable) and in that bigtable_table_admin.proto
+omits the three IAM rpcs and their imports. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 . The generated Python stubs under
+Warp/tests/python/bt_conformance/bt_stubs/ are derived from the same files (plus google/api, google/rpc, google/longrunning, google/type) under the same terms.

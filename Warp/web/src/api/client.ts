@@ -403,7 +403,7 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 
 // --- Backend sets: /api/backend-sets (the one place backends are added, edited and removed) ---
 
-export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb' | 's3' | 'redis' | 'azblob' | 'azqueue' | 'aztable' | 'gcs' | 'firestore' | 'datastore' | 'pubsub' | 'sns' | 'kinesis' | 'awsparams'
+export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb' | 's3' | 'redis' | 'azblob' | 'azqueue' | 'aztable' | 'gcs' | 'bigtable' | 'firestore' | 'datastore' | 'pubsub' | 'sns' | 'kinesis' | 'awsparams'
 
 export interface StoreInfo {
   id: StoreId

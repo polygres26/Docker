@@ -1388,3 +1388,19 @@ in the collection; median / p95 in ms. The machine was shared with other test ru
 Caveats: the emulators are in-memory Java processes behind Docker port forwarding with no durability; Warp runs natively and commits every write to Postgres (a Firestore commit is the slower row: advisory locks,
 a load, the write and the version-log row in one transaction). Warp's queries are cheap here because 200 documents are scanned and filtered in Java from one keyset page; scans grow linearly with the collection (no
 composite indexes exist) -- these numbers say nothing about large collections. Not measured: two-backend runs, Listen latency.
+
+## 2026-09-26: bigtablewire (Google Cloud Bigtable gRPC) -- RTT next to Google's official Bigtable emulator
+
+Setup: one real Warp process + native Postgres (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), the official emulator (`gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators`, `gcloud beta emulators bigtable start`) in Docker. Client: `Warp/tests/python/bt_conformance/bt_rtt_bench.py`, one gRPC channel, sequential calls, 300 per operation (fewer for the batch/scan rows), median / p95 in ms. The emulator is in-memory with no durability, Warp commits every write to Postgres: two products with different guarantees, not two implementations of one.
+
+| operation | emulator med / p95 | Warp 1 Postgres med / p95 | Warp 2 Postgres med / p95 |
+|---|---|---|---|
+| MutateRow (1 KB cell) | 0.60 / 0.69 | 1.01 / 1.58 | 0.55 / 0.75 |
+| MutateRows (10 rows) | 1.08 / 1.19 | 1.64 / 2.27 | 1.28 / 1.84 |
+| ReadRows (1 row by key) | 0.67 / 0.77 | 0.37 / 0.58 | 0.35 / 0.56 |
+| ReadRows (scan 100 rows) | 5.48 / 6.32 | 1.45 / 2.29 | 1.52 / 2.24 |
+| ReadModifyWriteRow (increment) | 0.58 / 0.68 | 0.36 / 0.64 | 0.37 / 0.72 |
+| CheckAndMutateRow | 0.57 / 0.68 | 0.32 / 0.60 | 0.28 / 0.47 |
+| GetTable | 0.53 / 0.64 | 0.16 / 0.30 | 0.16 / 0.29 |
+
+Single-run numbers on a loaded developer machine (other Warp processes were running); read them as order of magnitude. Every operation is reported to the metrics collector under the protocol name `bigtablewire`.

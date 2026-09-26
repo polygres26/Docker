@@ -195,6 +195,8 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.AWSPARAMS, backendRegistry));
         this.providers.put(BackendKind.GCS, new StoreDescribeProvider(BackendKind.GCS,
                 com.sayonora.wire.core.StoreType.GCS, backendRegistry));
+        this.providers.put(BackendKind.BIGTABLE, new StoreDescribeProvider(BackendKind.BIGTABLE,
+                com.sayonora.wire.core.StoreType.BIGTABLE, backendRegistry));
         this.providers.put(BackendKind.FIRESTORE, new StoreDescribeProvider(BackendKind.FIRESTORE,
                 com.sayonora.wire.core.StoreType.FIRESTORE, backendRegistry));
         this.providers.put(BackendKind.DATASTORE, new StoreDescribeProvider(BackendKind.DATASTORE,
@@ -885,6 +887,7 @@ public final class WarpMcpServer {
             case FIRESTORE -> com.sayonora.wire.core.StoreType.FIRESTORE;
             case DATASTORE -> com.sayonora.wire.core.StoreType.DATASTORE;
             case GCS -> com.sayonora.wire.core.StoreType.GCS;
+            case BIGTABLE -> com.sayonora.wire.core.StoreType.BIGTABLE;
             case PUBSUB -> com.sayonora.wire.core.StoreType.PUBSUB;
             default -> null;
         };

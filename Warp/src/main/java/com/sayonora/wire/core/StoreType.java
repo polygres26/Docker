@@ -45,6 +45,9 @@ public enum StoreType {
             "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey."),
     GCS("gcs", "Google Cloud Storage", "WARP_GCSWIRE_SET", true,
             "Google Cloud Storage JSON and XML APIs; objects are stored as chunked rows and sharded by bucket/object name."),
+    BIGTABLE("bigtable", "Google Bigtable", "WARP_BIGTABLEWIRE_SET", true,
+            "Google Cloud Bigtable gRPC data and table admin APIs; a row (all its cells) lives on one backend "
+                    + "(hash of table name and row key), the table catalog on the first backend of the set."),
     FIRESTORE("firestore", "Google Firestore", "WARP_FIRESTOREWIRE_SET", true,
             "Google Cloud Firestore (native mode) gRPC and REST APIs; documents are stored as rows and sharded by hash of the "
                     + "document path, queries scatter-gather over all hosts."),
