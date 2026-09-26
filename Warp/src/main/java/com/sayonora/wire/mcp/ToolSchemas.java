@@ -27,6 +27,16 @@ final class ToolSchemas {
         return prop("number", d);
     }
 
+    static JsonObject bool(String d) {
+        return prop("boolean", d);
+    }
+
+    static JsonObject strings(String d) {
+        JsonObject o = prop("array", d);
+        o.add("items", prop("string", "string"));
+        return o;
+    }
+
     static JsonObject obj(String d) {
         return prop("object", d);
     }
@@ -63,6 +73,20 @@ final class ToolSchemas {
 
     static String optString(JsonObject a, String key) {
         return a.has(key) && !a.get(key).isJsonNull() ? a.get(key).getAsString() : null;
+    }
+
+    static Long optLong(JsonObject a, String key) {
+        return a.has(key) && !a.get(key).isJsonNull() ? a.get(key).getAsLong() : null;
+    }
+
+    static boolean optBool(JsonObject a, String key, boolean dflt) {
+        return a.has(key) && !a.get(key).isJsonNull() ? a.get(key).getAsBoolean() : dflt;
+    }
+
+    /** An int argument clamped to [1, max]; {@code dflt} when absent. */
+    static int limit(JsonObject a, String key, int dflt, int max) {
+        Integer v = optInt(a, key);
+        return Math.max(1, Math.min(v == null ? dflt : v, max));
     }
 
     static Integer optInt(JsonObject a, String key) {

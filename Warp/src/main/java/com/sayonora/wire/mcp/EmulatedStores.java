@@ -3,7 +3,11 @@ package com.sayonora.wire.mcp;
 import com.sayonora.wire.core.BackendRegistry;
 import com.sayonora.wire.dynamowire.DynamoWireServer;
 import com.sayonora.wire.influxwire.InfluxEmbedded;
+import com.sayonora.wire.core.SqlMetricsCollector;
 import com.sayonora.wire.mongowire.MongoWireEmbedded;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * Handles to the Warp-emulated stores (dynamowire/influxwire/mongowire data living in Postgres)
@@ -17,8 +21,34 @@ public final class EmulatedStores {
     private volatile MongoWireEmbedded mongo;
     private volatile InfluxEmbedded influx;
 
+    private volatile SqlMetricsCollector sqlMetrics;
+    private final Map<String, Object> embedded = new ConcurrentHashMap<>();
+
     public EmulatedStores(BackendRegistry registry) {
         this.registry = registry;
+    }
+
+    /** The gateway's shared statement/operation metrics; set by {@code Main} so MCP store tools show up next to wire traffic. */
+    public void setSqlMetrics(SqlMetricsCollector sqlMetrics) {
+        this.sqlMetrics = sqlMetrics;
+    }
+
+    public SqlMetricsCollector sqlMetrics() {
+        return sqlMetrics;
+    }
+
+    public BackendRegistry registry() {
+        return registry;
+    }
+
+    /**
+     * The in-process engine of a Warp-hosted store (rediswire, azurewire, gcswire, awswire, pubsubwire, firestorewire,
+     * datastorewire, bigtablewire), created on first use from the backend registry and shared by every MCP tool call. A
+     * new store plugs in the same way: {@code stores.engine("cassandra", reg -> new ...)}.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T engine(String key, Function<BackendRegistry, T> factory) {
+        return (T) embedded.computeIfAbsent(key, k -> factory.apply(registry));
     }
 
     public void setDynamo(DynamoWireServer dynamo) {

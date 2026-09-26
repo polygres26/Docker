@@ -203,6 +203,20 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.DATASTORE, backendRegistry));
         this.providers.put(BackendKind.PUBSUB, new StoreDescribeProvider(BackendKind.PUBSUB,
                 com.sayonora.wire.core.StoreType.PUBSUB, backendRegistry));
+        // Warp-hosted stores with real data tools: each wraps the describe-only provider registered above (describe_backend is
+        // unchanged) and adds tools that call the store's own in-process service classes. A new store plugs in the same way.
+        registerStoreTools(new RedisToolProvider(describer(BackendKind.REDIS), emulatedStores));
+        registerStoreTools(new AzBlobToolProvider(describer(BackendKind.AZBLOB), emulatedStores));
+        registerStoreTools(new AzQueueToolProvider(describer(BackendKind.AZQUEUE), emulatedStores));
+        registerStoreTools(new AzTableToolProvider(describer(BackendKind.AZTABLE), emulatedStores));
+        registerStoreTools(new GcsToolProvider(describer(BackendKind.GCS), emulatedStores));
+        registerStoreTools(new SnsToolProvider(describer(BackendKind.SNS), emulatedStores));
+        registerStoreTools(new KinesisToolProvider(describer(BackendKind.KINESIS), emulatedStores));
+        registerStoreTools(new AwsParamsToolProvider(describer(BackendKind.AWSPARAMS), emulatedStores));
+        registerStoreTools(new PubsubToolProvider(describer(BackendKind.PUBSUB), emulatedStores));
+        registerStoreTools(new FirestoreToolProvider(describer(BackendKind.FIRESTORE), emulatedStores));
+        registerStoreTools(new DatastoreToolProvider(describer(BackendKind.DATASTORE), emulatedStores));
+        registerStoreTools(new BigtableToolProvider(describer(BackendKind.BIGTABLE), emulatedStores));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -251,6 +265,14 @@ public final class WarpMcpServer {
                 }
             }
         });
+    }
+
+    private StoreDescribeProvider describer(BackendKind kind) {
+        return (StoreDescribeProvider) providers.get(kind);
+    }
+
+    private void registerStoreTools(StoreToolProvider p) {
+        providers.put(p.kind(), p);
     }
 
     /** Handles to the Warp-emulated stores (dynamowire/mongowire) that the kind-specific tools

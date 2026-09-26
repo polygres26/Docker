@@ -23,6 +23,7 @@ public final class AwsWireBootstrap {
     private static final Logger log = LoggerFactory.getLogger(AwsWireBootstrap.class);
     private static final Map<String, Handler> HANDLERS = new LinkedHashMap<>();
     private static volatile SqsOperations sqsOps;
+    private static volatile AwsRuntime running;
 
     private AwsWireBootstrap() {
     }
@@ -34,6 +35,16 @@ public final class AwsWireBootstrap {
     public static synchronized void registerSqs(Handler handler, SqsOperations ops) {
         HANDLERS.put("sqs", handler);
         sqsOps = ops;
+    }
+
+    /** The in-process SQS operations registered by Main, or null when sqswire is not running. */
+    public static SqsOperations sqsOperations() {
+        return sqsOps;
+    }
+
+    /** The runtime of the AWS frontends started by {@link #start}, or null when none was configured. */
+    public static AwsRuntime runtime() {
+        return running;
     }
 
     private static String env(String n) {
@@ -63,6 +74,7 @@ public final class AwsWireBootstrap {
             rt.attachSqs(sqsOps);
         }
         rt.startAll();
+        running = rt;
         for (String[] s : singles) {
             String p = env(s[1]);
             if (p == null) {

@@ -314,7 +314,7 @@ final class Session implements Runnable {
     }
 
     String socketAddr() {
-        return socket.getRemoteSocketAddress() == null ? "?" : socket.getRemoteSocketAddress().toString().replace("/", "");
+        return socket == null || socket.getRemoteSocketAddress() == null ? "?" : socket.getRemoteSocketAddress().toString().replace("/", "");
     }
 
     private Object dispatch(Cmd cmd, String name, byte[][] a) {

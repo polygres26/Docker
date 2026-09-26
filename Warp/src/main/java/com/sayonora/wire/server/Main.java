@@ -915,6 +915,7 @@ public final class Main {
         // Backend-kind MCP tools (WARP_MCP_KIND): share the running dynamowire handlers and the
         // mongowire row cache so MCP reads/writes see and invalidate exactly what wire clients do.
         mcpServer.emulatedStores().setDynamo(dynamoForMcp);
+        mcpServer.emulatedStores().setSqlMetrics(sqlMetrics);
         mcpServer.emulatedStores().setMongo(new com.sayonora.wire.mongowire.MongoWireEmbedded(
                 backendRegistry, mongoCache, sqlMetrics));
         mcpServer.endpoints().load(config.mcpEndpoints());

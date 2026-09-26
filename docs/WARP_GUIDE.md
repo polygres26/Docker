@@ -2809,3 +2809,26 @@ Every admin route is gated by the same `WARP_ADMIN_TOKEN` bearer check.
 | Restrict which IPs/subnets can even open a connection | ACL + PPv2 | Trusted-proxy-aware, works behind a load balancer |
 | Stop config-table write access from becoming a routing-hijack vector | `WARP_TRUSTED_BACKEND_HOSTS` | Env-var-only allowlist, not itself DB-writable |
 | Try Warp locally before committing to infrastructure | Docker Compose | See §5 |
+
+### MCP data tools of the Warp-hosted stores
+
+Stores enabled on a backend (redis, azblob, azqueue, aztable, gcs, sns, kinesis, awsparams, pubsub, firestore, datastore, bigtable) are listed as `<backend>.<kind>` and now carry real data tools (previously describe-only). Tools appear automatically for the backend types in an endpoint's scope (single backend, group/backend set, or all); with several hosts of one store the `backend` argument names the host entry (a call always reaches the whole store). Each tool calls the frontend's own service classes in process on the same Postgres tables, so data is shared both ways with the wire protocol. `WARP_MCP_READ_ONLY=true` hides and refuses the write tools (marked W). Results are bounded (1000 items, 256 KiB text, 1 MiB object reads) with `truncated` flags. Endpoint expiry, scope, audit and MCP metrics apply as for every tool; wire-level operation metrics use protocol `mcp-<kind>`.
+
+Sensitive data: `secrets_get_secret_value`, `ssm_get_parameter(s_by_path)` with `withDecryption`, and `kms_decrypt` are refused on read-only endpoints unless `WARP_MCP_ALLOW_SECRET_READS=true`. No tool returns KMS key material. Defaults: `WARP_MCP_GCP_PROJECT` (default `warp-project`), `WARP_MCP_BIGTABLE_INSTANCE` (`warp-instance`); Azure tools use the configured storage account (`account` when several).
+
+| Store | Tools (W = write) |
+|---|---|
+| redis | redis_get, set W, delete W, type, expire W, ttl, rename W, incr W, scan_keys, scan_all_keys, hset W, hget, hgetall, hdel W, hexists, lpush/rpush/lpop/rpop W, lrange, llen, sadd/srem W, smembers, zadd W, zrange, zrem W, xadd W, xrange, xdel W, publish W, dbsize, info (all `redis_*`; `db` selects the logical database) |
+| azblob | list_containers, create_container W, delete_container W, list_blobs, get_blob_properties, get_blob, upload_blob W, delete_blob W |
+| azqueue | list_queues, create_queue W, delete_queue W, get_queue_metadata, send_message W, receive_messages W, peek_messages, delete_message W, clear_messages W |
+| aztable | list_tables, create_table W, delete_table W, insert_entity W, upsert_entity (replace/merge) W, get_entity, query_entities ($filter/$select/$top, continuation), delete_entity W |
+| gcs | list_buckets, get_bucket_metadata, create_bucket W, delete_bucket W, list_objects, get_object_metadata, get_object, put_object W, copy_object W, delete_object W |
+| sns | list_topics, create_topic W, delete_topic W, get/set_topic_attributes, subscribe W, unsubscribe W, list_subscriptions, publish W |
+| kinesis | list_streams, describe_stream_summary, list_shards, create_stream W, delete_stream W, put_record W, put_records W, get_records |
+| awsparams | secrets_{list_secrets, describe_secret, get_secret_value*, create_secret W, put_secret_value W, delete_secret W}, ssm_{get_parameter*, get_parameters_by_path*, describe_parameters, put_parameter W, delete_parameter W}, kms_{list_keys, describe_key, list_aliases, create_key W, encrypt, decrypt*}, sts_get_caller_identity (* sensitive) |
+| pubsub | list_topics, get_topic, create_topic W, delete_topic W, publish W, list_topic_subscriptions, list_subscriptions, get_subscription, create_subscription W, delete_subscription W, pull W (leases), ack W, modify_ack_deadline W |
+| firestore | list_collections, list_documents, get_documents, add_document W, set_document W, update_document W, delete_document W, query_collection, run_query, count (plain JSON documents) |
+| datastore | lookup, run_query (kind filters or GQL), count, upsert_entity W, insert_entity W, delete_entity W |
+| bigtable | list_tables, get_table, create_table W, delete_table W, read_rows, read_row, mutate_row W, mutate_rows W, delete_row W, increment W, drop_row_range W |
+
+Names are `<store>_<verb>` (secrets/ssm/kms/sts for awsparams). Vendor MCP tool lists (redis/mcp-redis, Azure MCP, Firebase/Google MCP, AWS labs servers) could not be verified offline; names follow those ecosystems from memory. A new store plugs in with a `StoreToolProvider` subclass plus one `registerStoreTools(...)` line.
