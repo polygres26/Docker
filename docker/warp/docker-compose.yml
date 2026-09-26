@@ -61,7 +61,7 @@ services:
       - "4443:4443"   # gcswire (Google Cloud Storage), enable with WARP_GCSWIRE_ENABLED
       - "4566:4566"   # awswire (SNS, Kinesis, Secrets Manager, SSM, KMS, STS), enable with WARP_AWSWIRE_ENABLED
       - "8085:8085"   # pubsubwire (Google Pub/Sub gRPC), enable with WARP_PUBSUBWIRE_ENABLED
-      - "8087:8087"   # bigtablewire (Google Bigtable gRPC), enable with WARP_BIGTABLEWIRE_ENABLED
+      - "8088:8088"   # bigtablewire (Google Bigtable gRPC), enable with WARP_BIGTABLEWIRE_ENABLED
       - "8080:8080"   # firestorewire (Google Firestore gRPC + REST), enable with WARP_FIRESTOREWIRE_ENABLED
       - "8081:8081"   # datastorewire (Google Datastore gRPC + REST), enable with WARP_DATASTOREWIRE_ENABLED
       - "18010:18010" # MCP (Model Context Protocol)

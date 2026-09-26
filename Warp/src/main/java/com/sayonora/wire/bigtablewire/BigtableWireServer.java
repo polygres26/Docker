@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * bigtablewire: the Google Cloud Bigtable frontend. gRPC only (google.bigtable.v2.Bigtable data API and
- * google.bigtable.admin.v2.BigtableTableAdmin) on one port (default 8087; the official emulator uses 8086), backed by the
+ * google.bigtable.admin.v2.BigtableTableAdmin) on one port (default 8088; the official emulator uses 8086), backed by the
  * {@code bigtable} store of the backend set's Postgres hosts. See {@link BtData}, {@link BtAdmin}, {@link BtStore}.
  */
 public final class BigtableWireServer {

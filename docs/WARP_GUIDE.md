@@ -2079,6 +2079,24 @@ Listen streams on a 4-connection pool. Java unit tests: `FsValuesTest` (total or
 *Not verified / not implemented:* `read_time` beyond the retention window, `ExecutePipeline` (UNIMPLEMENTED), composite-index definitions and `--require-indexes`, TTL policies, multiple databases per project other
 than by name, server-side `WriteStream` resume, Listen at scale (thousands of targets per node), the official client libraries themselves (the tests speak raw gRPC and REST; Google's client libraries are not installed here).
 
+#### The Bigtable store (bigtablewire)
+
+Enable the `bigtable` store on a backend (or set `WARP_BIGTABLEWIRE_ENABLED=true`) and Warp serves the Google Cloud
+Bigtable **gRPC data API** and **table admin API** on `WARP_BIGTABLEWIRE_PORT` (default **8088**). Point a Bigtable client
+at it the way you would at the emulator (`BIGTABLE_EMULATOR_HOST=localhost:8088`).
+
+- **Data API:** ReadRows (row keys, ranges, reversed scans, the full filter language), MutateRow, MutateRows,
+  CheckAndMutateRow, ReadModifyWriteRow, SampleRowKeys.
+- **Admin API:** tables, column families, GC rules (applied by a background sweep, `WARP_BIGTABLEWIRE_GC_INTERVAL_SECONDS`,
+  default 60), DropRowRange, consistency tokens.
+- **Sharding:** a row (all its cells) lives on one backend, chosen by hash of table name and row key; the table catalog
+  lives on the first backend of the set. Scans page through the hosts and merge in key order.
+- **Not implemented:** instance admin, change streams, backups, authorized views, prepared queries. Timestamps have
+  millisecond granularity.
+- **Verified:** against Google's Bigtable emulator, 503 recorded steps, no unexplained differences on one or two backends
+  (`Warp/tests/python/bt_conformance/`). Divergences from the emulator are listed with reasons in `bt_known.py`.
+- **Auth:** none unless `WARP_BIGTABLEWIRE_TOKENS` is set, then a bearer token is required.
+
 #### The Datastore store (datastorewire)
 
 datastorewire speaks **Google Cloud Datastore v1**: the **gRPC API** (`google.datastore.v1.Datastore`: Lookup, RunQuery incl. **GQL**, RunAggregationQuery, BeginTransaction, Commit, Rollback, AllocateIds,
