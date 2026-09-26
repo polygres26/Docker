@@ -1,12 +1,6 @@
 package com.sayonora.wire.boltwire;
 
-/** Real Bolt message signature bytes -- every one confirmed against a genuine Neo4j 5.26 server
- * capture (see {@link PackStream}'s own javadoc for the capture this investigation is grounded in),
- * not just the public spec. Bolt 4.4 (the version this handler negotiates -- see
- * {@link BoltWireSessionHandler}'s own javadoc for why) uses a single combined HELLO carrying auth
- * inline, unlike Bolt 4.3+/5.x's separate HELLO+LOGON split -- confirmed live by forcing a real
- * {@code neo4j} Python driver down to a classic 4-byte version handshake and observing it send the
- * older single-HELLO shape instead. */
+/** Bolt message signature bytes (client to server and server to client). */
 final class BoltMessages {
 
     private BoltMessages() {
@@ -22,8 +16,10 @@ final class BoltMessages {
     static final int ROLLBACK = 0x13;
     static final int DISCARD = 0x2F;
     static final int PULL = 0x3F;
-    static final int LOGON = 0x6A; // Bolt 4.3+/5.x only -- not used on the 4.4 path this handler
-                                    // negotiates, kept named here since a real capture showed it.
+    static final int TELEMETRY = 0x54; // 5.4+
+    static final int ROUTE = 0x66;     // 4.3+
+    static final int LOGON = 0x6A;     // 5.1+
+    static final int LOGOFF = 0x6B;    // 5.1+
 
     // server -> client
     static final int SUCCESS = 0x70;

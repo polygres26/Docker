@@ -1,350 +1,613 @@
 package com.sayonora.wire.boltwire;
 
 import com.sayonora.wire.core.BackendRegistry;
+import com.sayonora.wire.core.BackendTarget;
+import com.sayonora.wire.core.ConnectionRoute;
+import com.sayonora.wire.core.SessionConnectionLease;
+import com.sayonora.wire.core.SqlMetricsCollector;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * boltwire -- Neo4j's real Bolt wire protocol (a binary TCP protocol, not HTTP/JSON like
- * oswire/dynamowire/sqswire/influxwire), so a real Neo4j client driver (the official
- * {@code neo4j} Python/Java/JS/.NET/Go drivers, all speaking the same Bolt wire underneath) can
- * point at Warp directly. Shaped like {@code PgWireSessionHandler} at the accept-loop/session
- * level (one {@link Runnable} per raw {@link Socket}, no Jetty involved), but like
- * {@code MongoWireSessionHandler} at the query level: this isn't SQL passing straight through,
- * it's a different query language ({@link #translateCypher} handles Phase 1's own narrow subset)
- * translated to real Postgres SQL and executed directly via JDBC against
- * {@link BackendRegistry}'s default backend -- bypassing the shared {@code StatementPipeline} for
- * now, the same way oswire/dynamowire/influxwire do (see those classes' own javadoc for why: this
- * is Phase 1, proving the real wire protocol and PackStream framing against a real driver before
- * any serious Cypher-to-SQL translation work -- see {@link PackStream}'s own javadoc for exactly
- * what real session this implementation is grounded in).
+ * boltwire -- Neo4j's Bolt wire protocol (binary TCP), so the official Neo4j drivers can point at Warp directly. Speaks
+ * Bolt 5.0-5.4 and 4.4 (the highest version the client offers wins), the full message set (HELLO/LOGON/LOGOFF, RUN, PULL and
+ * DISCARD with {@code n} and {@code qid}, BEGIN/COMMIT/ROLLBACK, RESET with FAILED-state IGNORED semantics, ROUTE, TELEMETRY,
+ * GOODBYE) and PackStream's whole type system (see {@link PackStream}).
  *
- * <p><b>Negotiates Bolt 4.4</b>, not the newer 5.x a real client also offers -- confirmed live
- * that Neo4j's own Python driver falls back cleanly to 4.4's simpler single-HELLO-with-inline-
- * credentials shape when a server responds with the classic (non-manifest) 4-byte handshake reply,
- * rather than 5.x's HELLO+LOGON split. Simpler for this phase, still a completely real, officially
- * supported protocol version every mainstream driver speaks for backward compatibility.
+ * <p>Cypher text goes through {@link CypherParser}, {@link Analyzer} (compile-time errors, like Neo4j) and {@link Executor},
+ * which runs it over the property graph in Postgres ({@link PgGraphStore}); there is no dialect translation, so the shared
+ * StatementPipeline is not involved (metrics are reported from here). Read-only statements execute lazily at the first
+ * PULL/DISCARD (runtime errors surface there, like Neo4j); updating statements execute at RUN, in one backend transaction.
  *
- * <p><b>Phase 1 query scope, deliberately narrow</b>: {@link #translateCypher} only recognizes
- * {@code RETURN <literal> [AS <alias>]} (integer/float/string literals) -- enough to prove the
- * whole path (handshake, auth, RUN/PULL/RECORD/SUCCESS framing, GOODBYE) against a real driver
- * issuing a real query, with the literal's value round-tripped through a genuine
- * {@code SELECT <literal> AS <alias>} against Postgres, not just echoed back in Java. Any other
- * Cypher shape returns a real Bolt FAILURE message naming what wasn't understood -- the same
- * "unrecognized clause fails loudly" policy every other protocol in this codebase follows -- rather
- * than a wrong or silently-ignored translation. A real MATCH/pattern-matching Cypher-to-SQL
- * translator (recursive CTEs for variable-length paths, a node/edge schema) is a separate, later
- * phase.
+ * <p>Connection multiplexing: an auto-commit statement borrows a backend connection for its execution and returns it;
+ * an explicit transaction (BEGIN) pins one until COMMIT/ROLLBACK/RESET (see {@link SessionConnectionLease}).
  */
 public final class BoltWireSessionHandler implements Runnable {
+
+    static final String NEO4J_VERSION = "5.26.30";
 
     private static final Logger log = LoggerFactory.getLogger(BoltWireSessionHandler.class);
 
     private static final byte[] BOLT_MAGIC = {0x60, 0x60, (byte) 0xB0, 0x17};
-    // The classic (non-manifest) 4-byte version this handler always replies with when a client's
-    // handshake proposals include ANY range covering Bolt 4.4 -- confirmed live this is what a
-    // real client proposes (a range covering 4.2-4.4) alongside its newer manifest-style first
-    // proposal, and that replying with this exact classic shape makes a real driver proceed with
-    // the older single-HELLO auth flow instead of expecting the newer manifest response.
-    private static final byte[] BOLT_4_4 = {0x00, 0x00, 0x04, 0x04};
+    private static final AtomicLong CONNECTION_IDS = new AtomicLong();
+    private static final AtomicLong BOOKMARKS = new AtomicLong(System.currentTimeMillis() % 1_000_000);
 
     private final Socket clientSocket;
     private final BackendRegistry backendRegistry;
     private final PgGraphStore graphStore;
-    // Wired in so boltwire stops being the one protocol with zero server-side RTT visibility --
-    // see handleRun's own comment for exactly what span gets reported and why RUN (not PULL) is
-    // the honest boundary for it. Nullable the same way every other optional-metrics constructor
-    // param in this codebase is (tests that don't care about metrics can omit it).
-    private final com.sayonora.wire.core.SqlMetricsCollector sqlMetrics;
+    private final SqlMetricsCollector sqlMetrics;
+    private final SessionConnectionLease lease;
 
-    // Backend connection lease (connection multiplexing, WARP_MULTIPLEX_SESSIONS): borrowed when a RUN actually
-    // needs the backend and returned to the pool as soon as that RUN finished -- RUN executes the whole
-    // (translated) statement and fully materialises its rows into pendingQuery, so a later PULL serialises
-    // already-fetched, in-memory rows and holds nothing on a backend connection. Boltwire has no explicit
-    // transactions (BEGIN/COMMIT are answered with FAILURE) and no session state, so nothing ever pins a Bolt
-    // session; with WARP_MULTIPLEX_SESSIONS=false it holds one connection for its whole life as before. (History:
-    // this once opened a connection per RUN and was changed to hold one per session for latency -- the lease keeps
-    // that steady-state cost, an unpinned pool hit, but no longer starves other clients while idle.)
-    private final com.sayonora.wire.core.SessionConnectionLease lease;
+    private DataInputStream in;
+    private DataOutputStream out;
+    private int major = 4;
+    private int minor = 4;
+    private boolean utc;
+    private String routingAddress;
+    private boolean failed;
+    private boolean hello;
 
-    private Connection sessionConnection() throws SQLException {
-        return lease.acquire();
-    }
-
-    private static final Pattern RETURN_LITERAL = Pattern.compile(
-            "(?is)^\\s*RETURN\\s+(-?\\d+\\.\\d+|-?\\d+|'[^']*'|\"[^\"]*\")\\s*(?:AS\\s+(\\w+))?\\s*;?\\s*$");
-    private static final Pattern CREATE_PREFIX = Pattern.compile("(?i)^\\s*CREATE\\b");
-    private static final Pattern MATCH_PREFIX = Pattern.compile("(?i)^\\s*MATCH\\b");
+    // route of the current database (auto-commit: per RUN; in a transaction: fixed at BEGIN)
+    private ConnectionRoute route = ConnectionRoute.UNROUTED;
+    private String heldGraphBackend;
+    private boolean inTx;
+    private String txDatabase;
+    private long txDeadlineMillis;
+    private long txStartedNanos;
+    private final Map<Long, Open> results = new LinkedHashMap<>();
+    private long nextQid;
+    private Open lastOpen;
 
     public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry) {
         this(clientSocket, backendRegistry, null);
     }
 
-    public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry,
-            com.sayonora.wire.core.SqlMetricsCollector sqlMetrics) {
+    public BoltWireSessionHandler(Socket clientSocket, BackendRegistry backendRegistry, SqlMetricsCollector sqlMetrics) {
         this.clientSocket = clientSocket;
         this.backendRegistry = backendRegistry;
         this.graphStore = new PgGraphStore(backendRegistry);
-        this.lease = new com.sayonora.wire.core.SessionConnectionLease(this::openGraphConnection);
+        this.lease = new SessionConnectionLease(this::openGraphConnection);
         this.sqlMetrics = sqlMetrics;
     }
 
-    @Override
-    public void run() {
-        try (Socket socket = clientSocket) {
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            if (!performHandshake(in, out)) {
-                return;
-            }
-            sessionLoop(in, out);
-        } catch (IOException e) {
-            log.debug("boltwire: session ended ({})", e.getMessage());
-        } catch (RuntimeException e) {
-            log.warn("boltwire: session failed", e);
-        } finally {
-            lease.close();
-        }
-    }
-
-    /** @return true if a version was successfully negotiated and the caller should proceed to the
-     * real message loop; false if the connection should just be closed (bad magic, or no proposed
-     * version this handler understands). */
-    private boolean performHandshake(DataInputStream in, DataOutputStream out) throws IOException {
-        byte[] preamble = new byte[4];
-        in.readFully(preamble);
-        for (int i = 0; i < 4; i++) {
-            if (preamble[i] != BOLT_MAGIC[i]) {
-                log.warn("boltwire: bad handshake preamble (not a real Bolt client?): {}",
-                        bytesToHex(preamble));
-                return false;
-            }
-        }
-        byte[] proposals = new byte[16];
-        in.readFully(proposals);
-        for (int i = 0; i < 4; i++) {
-            int base = i * 4;
-            // [reserved, range, minor, major] -- see this class's own javadoc for why 4.x (major
-            // byte 0x04) with a range covering minor 4 is the one this handler always picks.
-            int range = proposals[base + 1] & 0xFF;
-            int minor = proposals[base + 2] & 0xFF;
-            int major = proposals[base + 3] & 0xFF;
-            if (major == 4 && minor >= 4 && (minor - range) <= 4) {
-                out.write(BOLT_4_4);
-                out.flush();
-                return true;
-            }
-        }
-        log.warn("boltwire: no proposed Bolt version this handler supports (needs 4.4 in range) -- "
-                + "proposals: {}", bytesToHex(proposals));
-        out.write(new byte[4]); // all-zero = "no acceptable version", per the real Bolt handshake spec
-        out.flush();
-        return false;
-    }
-
-    // Real Bolt semantics, confirmed necessary live (not from the spec alone): a client driver
-    // routinely pipelines RUN and PULL together in one write without waiting for RUN's own
-    // response first (see PackStream's own javadoc -- the real captured session does exactly this).
-    // Found live: when RUN fails, the pipelined PULL right behind it was being processed as its
-    // own independent request, surfacing a confusing "PULL with no prior successful RUN" error
-    // instead of the actual RUN failure the client cares about. Real Bolt servers instead enter a
-    // FAILURE state after any FAILURE response: every message except RESET gets an IGNORED
-    // response until the client explicitly sends RESET to recover the session -- letting a client
-    // tell "this whole pipelined batch failed because of the first message" apart from "each
-    // message failed independently."
-    private boolean failedState;
-
-    private void sessionLoop(DataInputStream in, DataOutputStream out) throws IOException {
-        while (true) {
-            byte[] messageBytes = readChunkedMessage(in);
-            if (messageBytes == null) {
-                return; // clean EOF between messages
-            }
-            PackStream.Struct msg = new PackStream.Reader(messageBytes).readMessage();
-            if (failedState && msg.tag() != BoltMessages.RESET && msg.tag() != BoltMessages.GOODBYE) {
-                writeIgnored(out);
-                continue;
-            }
-            switch (msg.tag()) {
-                case BoltMessages.HELLO -> handleHello(out);
-                case BoltMessages.GOODBYE -> {
-                    return;
-                }
-                case BoltMessages.RESET -> {
-                    failedState = false;
-                    pendingQuery = null;
-                    writeSuccess(out, Map.of());
-                }
-                case BoltMessages.RUN -> handleRun(out, msg);
-                case BoltMessages.PULL -> handlePull(out);
-                case BoltMessages.DISCARD -> writeSuccess(out, Map.of());
-                default -> writeFailure(out, "Neo.ClientError.Request.Invalid",
-                        "boltwire Phase 1 doesn't handle message tag 0x" + Integer.toHexString(msg.tag()));
-            }
-        }
-    }
-
-    /** Real Bolt 4.4's own SUCCESS shape for HELLO -- confirmed live against a real Neo4j 5.26
-     * server's response to the equivalent (5.x) exchange, adapted to what a 4.4 session reports
-     * (no {@code hints}/{@code patch_bolt} negotiation, since 4.4 doesn't have Bolt 5.x's later
-     * feature-flag fields).
-     *
-     * <p>Real bug, found live testing the real {@code neo4j} Python driver against an earlier
-     * version of this method that reported {@code server: "Warp/boltwire-v1"}: the driver
-     * parses this field and refuses to proceed at all -- {@code neo4j.exceptions.
-     * UnsupportedServerProduct: Warp/boltwire-v1} -- unless it matches a real
-     * {@code Neo4j/x.y.z}-shaped agent string (the official drivers hard-check this; it isn't
-     * negotiable client-side config). Reporting a real-looking Neo4j version string here is the
-     * same wire-protocol-impersonation-for-compatibility this codebase already does everywhere
-     * else (oswire's OpenSearch-shaped errors, dynamowire's AWS exception envelopes, influxwire's
-     * InfluxDB response shape) -- the whole point of a real compat shim is presenting the real
-     * product's own wire shape, not a shim announcing itself as something else and having every
-     * official client refuse to talk to it. Memgraph (a real, different graph database) does the
-     * identical thing for the identical reason -- reports itself as Neo4j-compatible in its own
-     * Bolt handshake, confirmed public knowledge, not a technique invented here. */
-    private void handleHello(DataOutputStream out) throws IOException {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("server", "Neo4j/5.26.30");
-        metadata.put("connection_id", "bolt-" + System.nanoTime());
-        writeSuccess(out, metadata);
-    }
-
-    // Connect-time backend routing: Bolt 4.x carries the database in the RUN message's "extra" map
-    // ("db"); resolved per RUN (cheap) so a driver session may address different databases. See
-    // core/ConnectionRouter. HELLO carries no database and Warp's Bolt frontend does not authenticate
-    // a user, so routes are matched on the database name alone.
-    private com.sayonora.wire.core.ConnectionRoute route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
-
-    private String heldGraphBackend;
-
     private Connection openGraphConnection() throws SQLException {
-        com.sayonora.wire.core.BackendTarget target = graphStore.targetFor(route);
+        BackendTarget target = graphStore.targetFor(route);
         if (target == null) {
-            throw new SQLException("backend " + route.description() + " cannot host a graph "
-                    + "(only Postgres backends can)");
+            throw new SQLException("backend " + route.description() + " cannot host a graph (only Postgres backends can)");
         }
         heldGraphBackend = target.name();
         return graphStore.connect(target);
     }
 
-    private ExecutedQuery pendingQuery;
-
-    private record ExecutedQuery(List<String> columns, List<List<Object>> rows) {
+    @Override
+    public void run() {
+        try (Socket socket = clientSocket) {
+            in = new DataInputStream(new java.io.BufferedInputStream(socket.getInputStream()));
+            out = new DataOutputStream(new java.io.BufferedOutputStream(socket.getOutputStream()));
+            if (!performHandshake()) {
+                return;
+            }
+            sessionLoop();
+        } catch (IOException e) {
+            log.debug("boltwire: session ended ({})", e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("boltwire: session failed", e);
+        } finally {
+            try {
+                if (inTx) {
+                    lease.rollback();
+                }
+            } catch (SQLException | RuntimeException e) {
+                log.debug("boltwire: rollback at disconnect failed: {}", e.toString());
+            }
+            lease.close();
+        }
     }
 
-    private void handleRun(DataOutputStream out, PackStream.Struct msg) throws IOException {
-        String cypher = (String) msg.fields().get(0);
-        String database = null;
-        if (msg.fields().size() > 2 && msg.fields().get(2) instanceof Map<?, ?> extra
-                && extra.get("db") instanceof String db) {
-            database = db;
+    // ------------------------------------------------------------------------------------------ handshake
+
+    /** Picks the highest version both sides speak: Bolt 5.0-5.4 or 4.4. A manifest-style proposal (0x000001FF) is skipped:
+     * the classic four-byte reply is always understood. */
+    private boolean performHandshake() throws IOException {
+        byte[] preamble = new byte[4];
+        in.readFully(preamble);
+        for (int i = 0; i < 4; i++) {
+            if (preamble[i] != BOLT_MAGIC[i]) {
+                log.warn("boltwire: bad handshake preamble (not a real Bolt client?): {}", bytesToHex(preamble));
+                return false;
+            }
         }
-        route = backendRegistry.connectionRouter().resolve(
-                com.sayonora.wire.core.ConnectionRouter.PROTO_BOLT, database, null);
+        byte[] proposals = new byte[16];
+        in.readFully(proposals);
+        int bestMajor = 0, bestMinor = 0;
+        for (int i = 0; i < 4; i++) {
+            int base = i * 4;
+            int range = proposals[base + 1] & 0xFF;
+            int pMinor = proposals[base + 2] & 0xFF;
+            int pMajor = proposals[base + 3] & 0xFF;
+            if (pMajor == 0xFF || pMajor == 0) {
+                continue;
+            }
+            int lowMinor = Math.max(0, pMinor - range);
+            int hiMinor = pMinor;
+            int m = 0, mn = -1;
+            if (pMajor == 5) {
+                int cap = Math.min(hiMinor, 4);
+                if (cap >= lowMinor) {
+                    m = 5;
+                    mn = cap;
+                }
+            } else if (pMajor == 4) {
+                if (lowMinor <= 4 && hiMinor >= 4) {
+                    m = 4;
+                    mn = 4;
+                }
+            }
+            if (m > bestMajor || (m == bestMajor && mn > bestMinor)) {
+                bestMajor = m;
+                bestMinor = mn;
+            }
+        }
+        if (bestMajor == 0) {
+            log.warn("boltwire: no proposed Bolt version this handler supports (5.0-5.4 or 4.4) -- proposals: {}",
+                    bytesToHex(proposals));
+            out.write(new byte[4]);
+            out.flush();
+            return false;
+        }
+        major = bestMajor;
+        minor = bestMinor;
+        out.write(new byte[] {0, 0, (byte) minor, (byte) major});
+        out.flush();
+        return true;
+    }
+
+    // ------------------------------------------------------------------------------------------ message loop
+
+    private void sessionLoop() throws IOException {
+        while (true) {
+            byte[] messageBytes = readChunkedMessage(in);
+            if (messageBytes == null) {
+                return;
+            }
+            PackStream.Struct msg = new PackStream.Reader(messageBytes).readMessage();
+            int tag = msg.tag();
+            if (tag == BoltMessages.GOODBYE) {
+                return;
+            }
+            if (tag == BoltMessages.RESET) {
+                handleReset();
+                continue;
+            }
+            if (failed) {
+                writeIgnored();
+                continue;
+            }
+            try {
+                switch (tag) {
+                    case BoltMessages.HELLO -> handleHello(msg);
+                    case BoltMessages.LOGON -> writeSuccess(Map.of());
+                    case BoltMessages.LOGOFF -> writeSuccess(Map.of());
+                    case BoltMessages.TELEMETRY -> writeSuccess(Map.of());
+                    case BoltMessages.RUN -> handleRun(msg);
+                    case BoltMessages.PULL -> handlePull(msg, false);
+                    case BoltMessages.DISCARD -> handlePull(msg, true);
+                    case BoltMessages.BEGIN -> handleBegin(msg);
+                    case BoltMessages.COMMIT -> handleCommit();
+                    case BoltMessages.ROLLBACK -> handleRollback();
+                    case BoltMessages.ROUTE -> handleRoute(msg);
+                    default -> writeFailure("Neo.ClientError.Request.Invalid",
+                            "boltwire: unsupported message 0x" + Integer.toHexString(tag));
+                }
+            } catch (CypherException e) {
+                failStatement(e.code(), e.getMessage());
+            } catch (SQLException e) {
+                log.warn("boltwire: backend error: {}", e.getMessage());
+                failStatement(e instanceof com.sayonora.wire.core.BackendPoolExhaustedException
+                        ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.DatabaseError.General.UnknownError",
+                        e.getMessage());
+            } catch (RuntimeException e) {
+                log.warn("boltwire: unexpected error handling message 0x{}", Integer.toHexString(tag), e);
+                failStatement("Neo.DatabaseError.General.UnknownError", String.valueOf(e));
+            }
+        }
+    }
+
+    /** A message failed: FAILURE goes out, the session ignores everything until RESET, an open transaction is rolled back. */
+    private void failStatement(String code, String message) throws IOException {
+        results.clear();
+        lastOpen = null;
+        if (inTx) {
+            try {
+                lease.rollback();
+            } catch (SQLException e) {
+                log.debug("boltwire: rollback after failure: {}", e.toString());
+            }
+            // the transaction is dead; the connection is released once RESET/ROLLBACK acknowledges it
+            inTx = false;
+            lease.releaseIfIdle();
+        }
+        writeFailure(code, message);
+    }
+
+    private void handleHello(PackStream.Struct msg) throws IOException {
+        Map<String, Object> extra = msg.fields().isEmpty() || !(msg.fields().get(0) instanceof Map<?, ?> m) ? Map.of()
+                : castMap(m);
+        if (extra.get("routing") instanceof Map<?, ?> r && r.get("address") instanceof String a) {
+            routingAddress = a;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("server", "Neo4j/" + NEO4J_VERSION);
+        metadata.put("connection_id", "bolt-" + CONNECTION_IDS.incrementAndGet());
+        if (major == 4 && extra.get("patch_bolt") instanceof List<?> patches && patches.contains("utc")) {
+            utc = true;
+            metadata.put("patch_bolt", List.of("utc"));
+        }
+        Map<String, Object> hints = new LinkedHashMap<>();
+        hints.put("telemetry.enabled", false);
+        metadata.put("hints", hints);
+        hello = true;
+        writeSuccess(metadata);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Map<?, ?> m) {
+        return (Map<String, Object>) m;
+    }
+
+    private void handleReset() throws IOException {
+        results.clear();
+        lastOpen = null;
+        try {
+            if (inTx) {
+                lease.rollback();
+            }
+        } catch (SQLException e) {
+            log.debug("boltwire: rollback at RESET: {}", e.toString());
+        }
+        inTx = false;
+        lease.releaseIfIdle();
+        failed = false;
+        writeSuccess(Map.of());
+    }
+
+    // ------------------------------------------------------------------------------------------ transactions
+
+    private void handleBegin(PackStream.Struct msg) throws IOException, SQLException {
+        Map<String, Object> extra = extraOf(msg, 0);
+        if (inTx) {
+            throw new CypherException("Neo.ClientError.Request.Invalid", "Transaction already open");
+        }
+        String db = extra.get("db") instanceof String s ? s : null;
+        resolveRoute(db);
+        txDatabase = db;
+        txDeadlineMillis = extra.get("tx_timeout") instanceof Long t ? t : 0;
+        txStartedNanos = System.nanoTime();
+        results.clear();
+        lastOpen = null;
+        if (lease.isHeld() && !sameBackend()) {
+            lease.close();
+        }
+        lease.begin();
+        inTx = true;
+        writeSuccess(Map.of());
+    }
+
+    private void handleCommit() throws IOException, SQLException {
+        if (!inTx) {
+            throw new CypherException("Neo.ClientError.Request.Invalid", "No transaction to commit");
+        }
+        drainOpenResults();
+        try {
+            lease.commit();
+        } finally {
+            inTx = false;
+            lease.releaseIfIdle();
+        }
+        Map<String, Object> md = new LinkedHashMap<>();
+        md.put("bookmark", "warp:bookmark:" + BOOKMARKS.incrementAndGet());
+        writeSuccess(md);
+    }
+
+    private void handleRollback() throws IOException, SQLException {
+        if (!inTx) {
+            throw new CypherException("Neo.ClientError.Request.Invalid", "No transaction to roll back");
+        }
+        results.clear();
+        lastOpen = null;
+        try {
+            lease.rollback();
+        } finally {
+            inTx = false;
+            lease.releaseIfIdle();
+        }
+        writeSuccess(Map.of());
+    }
+
+    /** Unexecuted (lazy) statements of the transaction run before COMMIT so their effects are not lost. */
+    private void drainOpenResults() {
+        for (Open o : new ArrayList<>(results.values())) {
+            if (!o.executed) {
+                execute(o);
+            }
+        }
+    }
+
+    private boolean sameBackend() {
+        BackendTarget want = graphStore.targetFor(route);
+        return want != null && want.name().equals(heldGraphBackend);
+    }
+
+    private void resolveRoute(String database) {
+        route = backendRegistry.connectionRouter().resolve(com.sayonora.wire.core.ConnectionRouter.PROTO_BOLT, database, null);
         if (route.isRejected()) {
-            route = com.sayonora.wire.core.ConnectionRoute.UNROUTED;
-            pendingQuery = null;
-            writeFailure(out, "Neo.ClientError.Database.DatabaseNotFound",
+            route = ConnectionRoute.UNROUTED;
+            throw new CypherException("Neo.ClientError.Database.DatabaseNotFound",
                     "Database does not exist. Database name: '" + database + "'.");
-            return;
         }
-        if (lease.isHeld()) {
-            // multiplexing off keeps the connection across RUNs: never run a RUN routed to another
-            // backend on the previous backend's connection
-            com.sayonora.wire.core.BackendTarget want = graphStore.targetFor(route);
-            if (want == null || !want.name().equals(heldGraphBackend)) {
+    }
+
+    private Map<String, Object> extraOf(PackStream.Struct msg, int idx) {
+        if (msg.fields().size() > idx && msg.fields().get(idx) instanceof Map<?, ?> m) {
+            return castMap(m);
+        }
+        return Map.of();
+    }
+
+    // ------------------------------------------------------------------------------------------ ROUTE
+
+    private void handleRoute(PackStream.Struct msg) throws IOException {
+        Map<String, Object> ctx = extraOf(msg, 0);
+        String db = null;
+        if (msg.fields().size() > 2) {
+            Object f = msg.fields().get(2);
+            if (f instanceof String s) {
+                db = s;
+            } else if (f instanceof Map<?, ?> m && m.get("db") instanceof String s) {
+                db = s;
+            }
+        }
+        if (db != null && !db.equalsIgnoreCase("neo4j") && !db.equalsIgnoreCase("system")) {
+            resolveRoute(db);
+        }
+        String addr = ctx.get("address") instanceof String a ? a : routingAddress;
+        if (addr == null) {
+            addr = clientSocket.getLocalAddress().getHostAddress() + ":" + clientSocket.getLocalPort();
+        }
+        List<Object> servers = new ArrayList<>();
+        for (String role : new String[] {"WRITE", "READ", "ROUTE"}) {
+            Map<String, Object> s = new LinkedHashMap<>();
+            s.put("addresses", List.of(addr));
+            s.put("role", role);
+            servers.add(s);
+        }
+        Map<String, Object> rt = new LinkedHashMap<>();
+        rt.put("ttl", 300L);
+        rt.put("db", db == null ? "neo4j" : db);
+        rt.put("servers", servers);
+        Map<String, Object> md = new LinkedHashMap<>();
+        md.put("rt", rt);
+        writeSuccess(md);
+    }
+
+    // ------------------------------------------------------------------------------------------ statements
+
+    /** A statement between RUN and the end of its stream. */
+    private static final class Open {
+        long qid;
+        String cypher;
+        Cy.Query query;
+        Analyzer.Info info;
+        Map<String, Object> params;
+        long deadlineMillis;
+        ConnectionRoute route;
+        boolean inTx;
+        boolean executed;
+        List<String> columns = List.of();
+        List<List<Object>> rows = List.of();
+        int pos;
+        Exec.Stats stats;
+        long tFirst;
+        String bookmark;
+        long startedNanos;
+    }
+
+    private static final int CACHE_SIZE = 512;
+    private static final Map<String, Object[]> PREPARED = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<String, Object[]>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Object[]> e) {
+                    return size() > CACHE_SIZE;
+                }
+            });
+
+    /** Parses (cached) and analyses. A statement whose analysis depends on parameter types (it uses a parameter) is analysed
+     * again per RUN with the actual parameters, like Neo4j's parameter-type-aware planning; others are cached whole. */
+    private static Object[] prepare(String cypher, Map<String, Object> params) {
+        Object[] hit = PREPARED.get(cypher);
+        if (hit != null && !(Boolean) hit[2]) {
+            return hit;
+        }
+        Cy.Query q = hit != null ? (Cy.Query) hit[0] : CypherParser.parse(cypher);
+        Analyzer.Info info = Analyzer.analyze(q, params);
+        Object[] v = {q, info, info.usesParams};
+        if (hit == null) {
+            PREPARED.put(cypher, v);
+        }
+        return v;
+    }
+
+    private void handleRun(PackStream.Struct msg) throws IOException, SQLException {
+        String cypher = (String) msg.fields().get(0);
+        Map<String, Object> params = msg.fields().size() > 1 && msg.fields().get(1) instanceof Map<?, ?> m ? castMap(m) : Map.of();
+        Map<String, Object> extra = extraOf(msg, 2);
+        Open o = new Open();
+        o.cypher = cypher;
+        o.params = params;
+        o.inTx = inTx;
+        if (!inTx) {
+            String database = extra.get("db") instanceof String db ? db : null;
+            resolveRoute(database);
+            if (lease.isHeld() && !sameBackend()) {
                 lease.close();
             }
+            o.deadlineMillis = extra.get("tx_timeout") instanceof Long t ? t : 0;
+            results.clear();
+            lastOpen = null;
         }
-        // RTT: from here (RUN's own real backend execution, including the full result-set fetch --
-        // translateAndRun/runMatch/runCreate already drain the JDBC ResultSet into ExecutedQuery
-        // before returning) through the SUCCESS write just below. Unlike pgwire's extended query
-        // protocol -- where Bind executes but Execute is the separate, client-paced message that
-        // actually streams results, so only Execute's own span is honest (see SqlMetricsCollector's
-        // class javadoc) -- Bolt's RUN already does 100% of the backend round trip: the later PULL
-        // just serializes already-fetched, already-in-memory rows with zero further backend
-        // interaction. So RUN's span here is the complete, honest "Warp's own service time" signal,
-        // the same way orawire's Fetch is -- reporting it on PULL instead would only add pure
-        // in-process serialization time that has nothing to do with the backend round trip this
-        // metric exists to surface.
+        o.route = route;
+        Object[] prepared = prepare(cypher, params);
+        o.query = (Cy.Query) prepared[0];
+        o.info = (Analyzer.Info) prepared[1];
+        o.qid = inTx ? nextQid++ : -1;
+        o.columns = o.info.columns;
+        o.startedNanos = System.nanoTime();
+        results.put(o.qid, o);
+        lastOpen = o;
+        boolean eager = o.info.updates || o.info.schema;
+        if (eager) {
+            execute(o);
+        }
+        Map<String, Object> md = new LinkedHashMap<>();
+        md.put("fields", new ArrayList<Object>(o.columns));
+        md.put("t_first", 0L);
+        if (inTx) {
+            md.put("qid", o.qid);
+        }
+        writeSuccess(md);
+    }
+
+    /** Runs the statement to completion (rows fully materialised) on the session's connection. */
+    private void execute(Open o) {
         long rttStart = System.nanoTime();
+        Connection conn = null;
+        boolean autoTx = false;
+        boolean ok = false;
         try {
-            ExecutedQuery result;
-            try {
-                result = translateAndRun(cypher);
-            } finally {
-                lease.releaseIfIdle(); // rows are fully materialised: nothing left on the backend connection
+            if (!o.inTx) {
+                if (o.route != route) {
+                    route = o.route;
+                }
+                conn = lease.acquire();
+                if (o.info.updates || o.info.schema) {
+                    conn.setAutoCommit(false);
+                    autoTx = true;
+                }
+            } else {
+                conn = lease.acquire();
             }
-            pendingQuery = result;
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            metadata.put("fields", result.columns());
-            writeSuccess(out, metadata);
-            recordMetrics(cypher, rttStart);
-        } catch (UnsupportedCypherException e) {
-            pendingQuery = null;
-            writeFailure(out, "Neo.ClientError.Statement.SyntaxError", e.getMessage());
+            BackendTarget target = graphStore.targetFor(route);
+            Exec x = new Exec(graphStore, target, conn, o.params);
+            long timeoutMs = o.inTx ? txDeadlineMillis : o.deadlineMillis;
+            if (timeoutMs > 0) {
+                x.deadlineNanos = (o.inTx ? txStartedNanos : System.nanoTime()) + timeoutMs * 1_000_000L;
+            }
+            Executor ex = new Executor(x, o.info);
+            Executor.Result r = ex.run(o.query);
+            o.columns = r.columns();
+            o.rows = r.rows();
+            o.stats = x.stats;
+            if (autoTx) {
+                conn.commit();
+                o.bookmark = "warp:bookmark:" + BOOKMARKS.incrementAndGet();
+            }
+            ok = true;
         } catch (SQLException e) {
-            pendingQuery = null;
-            log.warn("boltwire: Postgres error running translated query for \"{}\": {}", cypher, e.getMessage());
-            writeFailure(out, e instanceof com.sayonora.wire.core.BackendPoolExhaustedException
-                    ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.ClientError.Statement.ExecutionFailed",
-                    e.getMessage());
+            throw new CypherException(e instanceof com.sayonora.wire.core.BackendPoolExhaustedException
+                    ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.DatabaseError.General.UnknownError",
+                    e instanceof com.sayonora.wire.core.BackendPoolExhaustedException ? e.getMessage() : "boltwire: " + e.getMessage());
+        } finally {
+            if (autoTx && conn != null) {
+                try {
+                    if (!ok) {
+                        conn.rollback();
+                    }
+                    conn.setAutoCommit(true);
+                } catch (SQLException e) {
+                    log.debug("boltwire: transaction cleanup: {}", e.toString());
+                }
+            }
+            if (!o.inTx) {
+                lease.releaseIfIdle();
+            }
+            o.executed = true;
+            recordMetrics(o, rttStart);
         }
     }
 
-    /**
-     * Feeds the same shared {@link com.sayonora.wire.core.SqlMetricsCollector} every other wire
-     * protocol reports into, under {@code protocol="boltwire"} -- see this class's own javadoc:
-     * boltwire deliberately bypasses {@code StatementPipeline} entirely for its Cypher-to-SQL
-     * execution (no dialect translation, no cache stage, no router -- none of those apply to a
-     * graph query against {@code warp_graph_nodes}/{@code warp_graph_edges}), but that's an
-     * execution-path decision, not a reason to leave boltwire as the one protocol with zero
-     * server-side RTT visibility in {@code /api/metrics/summary} and the Prometheus
-     * {@code warp_rtt_calls_total} series. This is the narrow fix: wrap just this one call site
-     * with the same {@code recordOperation(..., elapsedNanos, rttNanos)} convenience method
-     * sqswire/dynamowire use (their own single measurement already spans the full
-     * request-to-response window the same way RUN's does here), rather than forcing Cypher
-     * execution through the full pipeline chain.
-     */
-    private void recordMetrics(String cypher, long rttStart) {
+    private void handlePull(PackStream.Struct msg, boolean discard) throws IOException {
+        Map<String, Object> extra = extraOf(msg, 0);
+        long n = extra.get("n") instanceof Long l ? l : -1;
+        long qid = extra.get("qid") instanceof Long q ? q : -1;
+        Open o = qid == -1 ? (inTx ? lastOpen : results.get(-1L)) : results.get(qid);
+        if (o == null) {
+            throw new CypherException("Neo.ClientError.Request.Invalid", "boltwire: no open result to "
+                    + (discard ? "DISCARD" : "PULL"));
+        }
+        if (!o.executed) {
+            execute(o);
+        }
+        int total = o.rows.size();
+        int take = n < 0 ? total - o.pos : (int) Math.min(n, total - o.pos);
+        if (!discard) {
+            for (int i = 0; i < take; i++) {
+                List<Object> row = o.rows.get(o.pos + i);
+                writeRecord(row);
+            }
+        }
+        o.pos += take;
+        Map<String, Object> md = new LinkedHashMap<>();
+        if (o.pos < total) {
+            md.put("has_more", true);
+            writeSuccess(md);
+            return;
+        }
+        results.remove(o.qid);
+        if (lastOpen == o) {
+            lastOpen = null;
+        }
+        if (o.bookmark != null && !o.inTx) {
+            md.put("bookmark", o.bookmark);
+        }
+        md.put("t_last", (System.nanoTime() - o.startedNanos) / 1_000_000L);
+        boolean updates = o.info.updates && o.stats != null && (o.stats.containsUpdates() || o.stats.containsSystemUpdates()
+                || true);
+        String type = o.info.schema && o.info.updates ? "s" : (o.info.updates ? (o.columns.isEmpty() ? "w" : "rw") : "r");
+        md.put("type", type);
+        if (o.stats != null && (o.stats.containsUpdates() || o.stats.containsSystemUpdates())) {
+            md.put("stats", o.stats.toMap());
+        }
+        md.put("db", txDatabase != null && o.inTx ? txDatabase : "neo4j");
+        md.put("has_more", false);
+        writeSuccess(md);
+    }
+
+    private void recordMetrics(Open o, long rttStart) {
         if (sqlMetrics == null) {
             return;
         }
         long elapsedNanos = System.nanoTime() - rttStart;
-        com.sayonora.wire.core.SqlMetricsCollector.StatementKind kind;
-        if (CREATE_PREFIX.matcher(cypher).find()) {
-            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.WRITE;
-        } else if (MATCH_PREFIX.matcher(cypher).find() || RETURN_LITERAL.matcher(cypher).matches()) {
-            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.READ;
-        } else {
-            kind = com.sayonora.wire.core.SqlMetricsCollector.StatementKind.OTHER;
-        }
-        String label = normalizeCypherForLabel(cypher);
-        sqlMetrics.recordOperation("boltwire", null, kind, label, elapsedNanos, elapsedNanos);
+        SqlMetricsCollector.StatementKind kind = o.info.updates || o.info.schema ? SqlMetricsCollector.StatementKind.WRITE
+                : SqlMetricsCollector.StatementKind.READ;
+        sqlMetrics.recordOperation("boltwire", null, kind, normalizeCypherForLabel(o.cypher), elapsedNanos, elapsedNanos);
     }
 
-    private static final Pattern STRING_LITERAL_LABEL = Pattern.compile("'[^']*'|\"[^\"]*\"");
-    private static final Pattern NUMBER_LITERAL_LABEL = Pattern.compile("\\b\\d+(?:\\.\\d+)?\\b");
+    private static final java.util.regex.Pattern STRING_LITERAL_LABEL = java.util.regex.Pattern.compile("'[^']*'|\"[^\"]*\"");
+    private static final java.util.regex.Pattern NUMBER_LITERAL_LABEL = java.util.regex.Pattern.compile("\\b\\d+(?:\\.\\d+)?\\b");
 
-    /** Same shape as {@code SqlMetricsCollector.normalize} (that method is package-private to
-     * {@code core}, not reachable from here) -- collapses literal values out of the Cypher text so
-     * e.g. every {@code RETURN 1}, {@code RETURN 2}, ... {@code RETURN <n>} call lands in one
-     * {@code topSql} bucket instead of a fresh one per distinct literal value. */
+    /** Collapses literal values out of the Cypher text so e.g. every {@code RETURN 1}, {@code RETURN 2} lands in one bucket. */
     private static String normalizeCypherForLabel(String cypher) {
         String normalized = STRING_LITERAL_LABEL.matcher(cypher).replaceAll("?");
         normalized = NUMBER_LITERAL_LABEL.matcher(normalized).replaceAll("?");
@@ -352,429 +615,68 @@ public final class BoltWireSessionHandler implements Runnable {
         return normalized.isEmpty() ? "(empty)" : normalized;
     }
 
-    private void handlePull(DataOutputStream out) throws IOException {
-        if (pendingQuery == null) {
-            writeFailure(out, "Neo.ClientError.Request.Invalid", "boltwire: PULL with no prior successful RUN");
-            return;
-        }
-        try {
-            for (List<Object> row : pendingQuery.rows()) {
-                writeMessage(out, w -> {
-                    w.writeStructHeader(1, BoltMessages.RECORD);
-                    w.writeList(row);
-                });
-            }
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            metadata.put("has_more", false);
-            writeSuccess(out, metadata);
-        } catch (RuntimeException e) {
-            // Real bug, found live: an unencodable row value (see PackStream.Writer#writeValue's
-            // own BigDecimal fix, found the exact same way) previously threw straight out of this
-            // method uncaught, killing the whole TCP connection instead of failing just this one
-            // query -- a real client driver has no way to distinguish "the server crashed" from
-            // "this one query has a problem" when the socket just dies. Sending a real Bolt
-            // FAILURE message instead keeps the session alive for the client's next query, the
-            // same "unrecognized/unencodable data fails loudly, not silently and not fatally"
-            // policy this codebase already applies everywhere else.
-            log.warn("boltwire: failed to encode PULL results", e);
-            writeFailure(out, "Neo.DatabaseError.General.UnknownError", String.valueOf(e.getMessage()));
-        } finally {
-            pendingQuery = null;
-        }
-    }
+    // ------------------------------------------------------------------------------------------ wire output
 
-    private static final class UnsupportedCypherException extends RuntimeException {
-        UnsupportedCypherException(String message) {
-            super(message);
-        }
-    }
-
-    /** Dispatches to whichever narrow translation the query text matches -- Phase 1's literal
-     * RETURN, or Phase 2's CREATE (see {@link CypherParser}) -- and fails loudly, naming what
-     * wasn't understood, when neither does. */
-    private ExecutedQuery translateAndRun(String cypher) throws SQLException {
-        if (CREATE_PREFIX.matcher(cypher).find()) {
-            try {
-                return runCreate(CypherParser.parseCreate(cypher));
-            } catch (CypherException e) {
-                throw new UnsupportedCypherException(e.getMessage());
-            }
-        }
-        if (MATCH_PREFIX.matcher(cypher).find()) {
-            try {
-                return runMatch(CypherParser.parseMatch(cypher));
-            } catch (CypherException e) {
-                throw new UnsupportedCypherException(e.getMessage());
-            }
-        }
-        return runReturnLiteral(cypher);
-    }
-
-    /**
-     * Phase 3's read path: translates a parsed {@link CypherParser.MatchStatement} into one real
-     * parameterized SQL query against {@code warp_graph_nodes}/{@code warp_graph_edges},
-     * and executes it directly (bypassing {@code PgGraphStore}'s write-path helpers, which are
-     * shaped around a single insert, not an arbitrary join) -- a single-node MATCH becomes a plain
-     * {@code SELECT ... FROM warp_graph_nodes WHERE labels @> ... AND properties->>'x' = ?};
-     * a node-rel-node MATCH becomes a real join through {@code warp_graph_edges}. Each
-     * requested variable gets its own {@code (id, labels, properties)} triple selected under a
-     * distinct SQL alias, so a RETURN referencing either side of the join gets the right node back.
-     */
-    private ExecutedQuery runMatch(CypherParser.MatchStatement stmt) throws SQLException {
-        Map<String, CypherParser.NodePattern> nodesByVariable = new LinkedHashMap<>();
-        if (stmt.first().variable() != null) {
-            nodesByVariable.put(stmt.first().variable(), stmt.first());
-        }
-        if (stmt.second() != null && stmt.second().variable() != null) {
-            nodesByVariable.put(stmt.second().variable(), stmt.second());
-        }
-        for (CypherParser.ReturnItem item : stmt.returnItems()) {
-            if (!nodesByVariable.containsKey(item.variable())) {
-                throw new UnsupportedCypherException(
-                        "boltwire: RETURN references \"" + item.variable() + "\", which isn't a matched node");
-            }
-        }
-
-        boolean variableLength = stmt.rel() != null && stmt.rel().minHops() != null;
-
-        StringBuilder sql = new StringBuilder();
-        if (variableLength) {
-            appendRecursiveCte(sql, stmt.rel());
-        }
-        // DISTINCT: a variable-length path can reach the same (start, end) node pair at more than
-        // one depth (e.g. both 2 and 3 hops) -- Cypher's own MATCH semantics return the pair once
-        // per matched path shape here, not once per row, so de-duplicate rather than surface every
-        // intermediate depth as its own result.
-        sql.append(variableLength ? "SELECT DISTINCT " : "SELECT ");
-        List<String> selectVars = new ArrayList<>(nodesByVariable.keySet());
-        List<String> selectExprs = new ArrayList<>();
-        for (String v : selectVars) {
-            selectExprs.add(v + ".id, " + v + ".labels, " + v + ".properties");
-        }
-        sql.append(String.join(", ", selectExprs));
-
-        String firstAlias = stmt.first().variable() != null ? stmt.first().variable() : "n0";
-        sql.append(" FROM warp_graph_nodes ").append(firstAlias);
-        String secondAlias = null;
-        if (stmt.second() != null) {
-            secondAlias = stmt.second().variable() != null ? stmt.second().variable() : "n1";
-            if (variableLength) {
-                // The recursive CTE ("paths") already did all the hop-following and cycle-guarding
-                // -- this join is just "attach the two real node rows to a path we already found",
-                // the same shape the fixed-hop branch below uses for its own single-hop join.
-                sql.append(" JOIN paths p ON p.start_id = ").append(firstAlias).append(".id");
-                sql.append(" JOIN warp_graph_nodes ").append(secondAlias)
-                        .append(" ON ").append(secondAlias).append(".id = p.end_id");
-            } else {
-                sql.append(" JOIN warp_graph_edges e ON e.from_id = ").append(firstAlias).append(".id");
-                if (stmt.rel().type() != null) {
-                    sql.append(" AND e.type = ").append(sqlLiteral(stmt.rel().type()));
-                }
-                sql.append(" JOIN warp_graph_nodes ").append(secondAlias)
-                        .append(" ON ").append(secondAlias).append(".id = e.to_id");
-            }
-        }
-
-        List<String> whereClauses = new ArrayList<>();
-        if (variableLength) {
-            // The recursive step already stops extending once depth reaches maxHops (see
-            // appendRecursiveCte), but the walk still keeps every depth from 1 upward along the
-            // way (e.g. minHops=2 still needs depth-1 rows to extend from) -- this is the actual
-            // [minHops, maxHops] narrowing of "paths" down to what MATCH asked for.
-            whereClauses.add("p.depth BETWEEN " + stmt.rel().minHops() + " AND " + stmt.rel().maxHops());
-        }
-        List<Object> params = new ArrayList<>();
-        addLabelFilter(whereClauses, firstAlias, stmt.first().labels());
-        // Real bug, found live testing Phase 4's variable-length paths: an inline property map on
-        // a MATCH node pattern (e.g. "MATCH (a:Person {name: 'Alice'})") was being parsed into
-        // NodePattern.properties() correctly but never actually turned into a WHERE filter here --
-        // "a" silently matched every Person, not just the one named Alice. CREATE never hit this
-        // (its own properties always go straight into an INSERT, not a filter), so it was never
-        // exercised until a MATCH anchored by name was actually tried.
-        addPropertyFilters(whereClauses, params, firstAlias, stmt.first().properties());
-        if (secondAlias != null) {
-            addLabelFilter(whereClauses, secondAlias, stmt.second().labels());
-            addPropertyFilters(whereClauses, params, secondAlias, stmt.second().properties());
-        }
-        for (CypherParser.Condition cond : stmt.where()) {
-            if (!nodesByVariable.containsKey(cond.variable())) {
-                throw new UnsupportedCypherException(
-                        "boltwire: WHERE references \"" + cond.variable() + "\", which isn't a matched node");
-            }
-            String op = switch (cond.op()) {
-                case EQ -> "=";
-                case NEQ -> "!=";
-                case GT -> ">";
-                case LT -> "<";
-                case GTE -> ">=";
-                case LTE -> "<=";
-            };
-            // Real bug, found live writing this feature's own test suite: comparing
-            // `properties->>'x'` (always text) against a numeric literal with a plain ">"/"<"
-            // compared lexically, not numerically -- "5" > "18" is true as text (since '5' > '1'),
-            // so "WHERE n.age > 18" matched age=5 right along with age=80. A numeric condition
-            // casts the extracted value to numeric instead; string/bool conditions keep the
-            // original text comparison, which is exactly what Cypher's own equality/ordering on
-            // those types means here.
-            String lhs = cond.value() instanceof Number
-                    ? "(" + cond.variable() + ".properties->>'" + cond.property() + "')::numeric"
-                    : cond.variable() + ".properties->>'" + cond.property() + "'";
-            whereClauses.add(lhs + " " + op + " ?");
-            params.add(cond.value() instanceof Number n ? n : String.valueOf(cond.value()));
-        }
-        if (!whereClauses.isEmpty()) {
-            sql.append(" WHERE ").append(String.join(" AND ", whereClauses));
-        }
-        if (stmt.limit() != null) {
-            sql.append(" LIMIT ").append(stmt.limit().intValue());
-        }
-
-        List<String> columns = new ArrayList<>();
-        List<List<Object>> rows = new ArrayList<>();
-        try (PreparedStatement ps = sessionConnection().prepareStatement(sql.toString())) {
-            for (int i = 0; i < params.size(); i++) {
-                Object p = params.get(i);
-                if (p instanceof Number n) {
-                    ps.setBigDecimal(i + 1, new java.math.BigDecimal(n.toString()));
-                } else {
-                    ps.setString(i + 1, (String) p);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    Map<String, GraphNode> rowNodes = new LinkedHashMap<>();
-                    int col = 1;
-                    for (String v : selectVars) {
-                        long id = rs.getLong(col++);
-                        java.sql.Array labelsArr = rs.getArray(col++);
-                        List<String> labels = labelsArr == null ? List.of()
-                                : List.of((String[]) labelsArr.getArray());
-                        Map<String, Object> props = jsonToMap(rs.getString(col++));
-                        rowNodes.put(v, new GraphNode(id, labels, props, GraphNode.elementId(id)));
-                    }
-                    List<Object> row = new ArrayList<>();
-                    if (columns.isEmpty()) {
-                        for (CypherParser.ReturnItem item : stmt.returnItems()) {
-                            columns.add(item.alias() != null ? item.alias()
-                                    : item.property() != null ? item.variable() + "." + item.property() : item.variable());
-                        }
-                    }
-                    for (CypherParser.ReturnItem item : stmt.returnItems()) {
-                        GraphNode node = rowNodes.get(item.variable());
-                        row.add(item.property() != null ? node.properties().get(item.property()) : node);
-                    }
-                    rows.add(row);
-                }
-            }
-        }
-        return new ExecutedQuery(columns, rows);
-    }
-
-    /** Real variable-length-path support ({@code [*1..3]}): a Postgres {@code WITH RECURSIVE} CTE
-     * that walks {@code warp_graph_edges} from {@code depth=1} up to {@code rel.maxHops()},
-     * tracking each path's visited node ids in an array so a cycle stops the recursion for that
-     * branch instead of looping forever -- {@code warp_graph_edges} has no built-in acyclic
-     * guarantee (a real graph can and does have cycles), so this guard is load-bearing, not
-     * defensive-only. {@code minHops} is enforced afterwards in the outer query's WHERE (see
-     * {@link #runMatch}) rather than here, since the recursive step still needs every depth from 1
-     * upward to have something to extend from. */
-    private static void appendRecursiveCte(StringBuilder sql, CypherParser.RelPattern rel) {
-        String typeFilter = rel.type() != null ? " AND type = " + sqlLiteral(rel.type()) : "";
-        sql.append("WITH RECURSIVE paths AS (")
-                .append("SELECT from_id AS start_id, to_id AS end_id, 1 AS depth, ARRAY[from_id, to_id] AS visited ")
-                .append("FROM warp_graph_edges WHERE true").append(typeFilter)
-                .append(" UNION ALL ")
-                .append("SELECT p.start_id, e.to_id, p.depth + 1, p.visited || e.to_id ")
-                .append("FROM paths p JOIN warp_graph_edges e ON e.from_id = p.end_id")
-                .append(typeFilter.isEmpty() ? "" : " AND e.type = " + sqlLiteral(rel.type()))
-                .append(" WHERE p.depth < ").append(rel.maxHops())
-                .append(" AND NOT (e.to_id = ANY(p.visited))")
-                .append(") ");
-    }
-
-    private static void addLabelFilter(List<String> whereClauses, String alias, List<String> labels) {
-        for (String label : labels) {
-            whereClauses.add(sqlLiteral(label) + " = ANY(" + alias + ".labels)");
-        }
-    }
-
-    /** A MATCH node pattern's own inline property map (e.g. {@code {name: 'Alice'}}) -- unlike a
-     * label, a property value is real client-supplied data, not a Cypher identifier, so it's bound
-     * as a parameter here rather than inlined like {@link #sqlLiteral} does for labels/types. */
-    private static void addPropertyFilters(List<String> whereClauses, List<Object> params, String alias,
-            Map<String, Object> properties) {
-        for (Map.Entry<String, Object> e : properties.entrySet()) {
-            whereClauses.add(alias + ".properties->>'" + e.getKey() + "' = ?");
-            params.add(String.valueOf(e.getValue()));
-        }
-    }
-
-    /** Labels/relationship types come from the parsed Cypher text, not a bind parameter -- Cypher
-     * identifiers can't contain a quote character at all (the tokenizer would have already split
-     * on one), so a literal, non-parameterized SQL string is safe here the same way this codebase's
-     * other stores inline validated identifiers (e.g. {@code PgTimeSeriesStore#pgTableName}) rather
-     * than bind them. */
-    private static String sqlLiteral(String s) {
-        return "'" + s.replace("'", "''") + "'";
-    }
-
-    private static Map<String, Object> jsonToMap(String json) {
-        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
-        Map<String, Object> map = new LinkedHashMap<>();
-        for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet()) {
-            com.google.gson.JsonElement v = e.getValue();
-            if (v.isJsonNull()) {
-                map.put(e.getKey(), null);
-            } else if (v.getAsJsonPrimitive().isBoolean()) {
-                map.put(e.getKey(), v.getAsBoolean());
-            } else if (v.getAsJsonPrimitive().isNumber()) {
-                double d = v.getAsDouble();
-                map.put(e.getKey(), d == Math.floor(d) && !Double.isInfinite(d) ? (Object) (long) d : (Object) d);
-            } else {
-                map.put(e.getKey(), v.getAsString());
-            }
-        }
-        return map;
-    }
-
-    /**
-     * Phase 2's write path: creates the node (and, if the pattern includes one, the relationship
-     * and second node) for real in Postgres via {@link PgGraphStore}, then builds each requested
-     * RETURN item -- either the whole created node (encoded as a real Bolt Node struct, see
-     * {@link GraphNode}) or one scalar property off it. Both nodes (and the edge, if present) are
-     * created in a single transaction -- see {@code PgGraphStore#withConnection}'s own javadoc for
-     * why: a failure partway through must not leave an orphaned node behind.
-     */
-    private ExecutedQuery runCreate(CypherParser.CreateStatement stmt) throws SQLException {
-        Map<String, GraphNode> createdByVariable = new LinkedHashMap<>();
-        if (stmt.second() == null) {
-            // Real bug, found live chasing boltwire's own write latency: a lone node CREATE was
-            // still paying for an explicit transaction -- setAutoCommit(false), commit(),
-            // setAutoCommit(true) -- three extra real round trips to Postgres around one INSERT
-            // that Postgres already commits atomically by itself. PgGraphStore#withConnection's
-            // transaction exists to keep a node+edge+node CREATE atomic against a partial
-            // failure (see its own javadoc) -- a single node has nothing to partially fail
-            // alongside, so it skips the wrapper entirely rather than pay for a guarantee this
-            // statement shape doesn't need.
-            GraphNode first = graphStore.createNode(sessionConnection(), stmt.first().labels(), stmt.first().properties());
-            if (stmt.first().variable() != null) {
-                createdByVariable.put(stmt.first().variable(), first);
-            }
-        } else {
-            graphStore.withConnection(sessionConnection(), c -> {
-                GraphNode first = graphStore.createNode(c, stmt.first().labels(), stmt.first().properties());
-                if (stmt.first().variable() != null) {
-                    createdByVariable.put(stmt.first().variable(), first);
-                }
-                GraphNode second = graphStore.createNode(c, stmt.second().labels(), stmt.second().properties());
-                if (stmt.second().variable() != null) {
-                    createdByVariable.put(stmt.second().variable(), second);
-                }
-                graphStore.createEdge(c, first.id(), second.id(), stmt.rel().type(), stmt.rel().properties());
-                return null;
-            });
-        }
-
-        List<String> columns = new ArrayList<>();
-        List<Object> row = new ArrayList<>();
-        for (CypherParser.ReturnItem item : stmt.returnItems()) {
-            GraphNode node = createdByVariable.get(item.variable());
-            if (node == null) {
-                throw new UnsupportedCypherException(
-                        "boltwire: RETURN references \"" + item.variable() + "\", which wasn't created by this CREATE");
-            }
-            String columnName = item.alias() != null ? item.alias()
-                    : item.property() != null ? item.variable() + "." + item.property() : item.variable();
-            columns.add(columnName);
-            row.add(item.property() != null ? node.properties().get(item.property()) : node);
-        }
-        List<List<Object>> rows = stmt.returnItems().isEmpty() ? List.of() : List.of(row);
-        return new ExecutedQuery(columns, rows);
-    }
-
-    /**
-     * Phase 1's own narrow translation: {@code RETURN <literal> [AS <alias>]} only -- see this
-     * class's own javadoc for why. Executes a genuine {@code SELECT <literal> AS <alias>} against
-     * the default backend, proving a real Postgres round trip, not just an in-Java echo.
-     */
-    private ExecutedQuery runReturnLiteral(String cypher) throws SQLException {
-        Matcher m = RETURN_LITERAL.matcher(cypher);
-        if (!m.matches()) {
-            throw new UnsupportedCypherException(
-                    "boltwire Phase 1/2 only understands \"RETURN <literal> [AS <alias>]\" and \"CREATE ...\" "
-                            + "-- got: " + cypher);
-        }
-        String literal = m.group(1);
-        String alias = m.group(2) != null ? m.group(2) : literal.replaceAll("[^A-Za-z0-9_]", "_");
-        String sql = "SELECT " + literal + " AS " + alias;
-        try (PreparedStatement ps = sessionConnection().prepareStatement(sql);
-                ResultSet rs = ps.executeQuery()) {
-            ResultSetMetaData md = rs.getMetaData();
-            List<String> columns = new ArrayList<>();
-            for (int i = 1; i <= md.getColumnCount(); i++) {
-                columns.add(md.getColumnLabel(i));
-            }
-            List<List<Object>> rows = new ArrayList<>();
-            while (rs.next()) {
-                List<Object> row = new ArrayList<>();
-                for (int i = 1; i <= md.getColumnCount(); i++) {
-                    Object v = rs.getObject(i);
-                    // PackStream.Writer#writeValue only knows Boolean/Integer/Long/Double/Float/
-                    // String/List/Map -- a plain literal SELECT only ever produces Integer/Long/
-                    // Double/String/Boolean here, so no widening beyond that is needed yet.
-                    row.add(v);
-                }
-                rows.add(row);
-            }
-            return new ExecutedQuery(columns, rows);
-        }
-    }
-
-    private void writeSuccess(DataOutputStream out, Map<String, Object> metadata) throws IOException {
-        writeMessage(out, w -> {
+    private void writeSuccess(Map<String, Object> metadata) throws IOException {
+        writeMessage(w -> {
             w.writeStructHeader(1, BoltMessages.SUCCESS);
             w.writeMap(metadata);
         });
     }
 
-    private void writeFailure(DataOutputStream out, String code, String message) throws IOException {
-        failedState = true;
-        writeMessage(out, w -> {
+    private void writeRecord(List<Object> row) throws IOException {
+        writeMessage(w -> {
+            w.writeStructHeader(1, BoltMessages.RECORD);
+            w.writeListHeader(row.size());
+            for (Object v : row) {
+                w.writeValue(v);
+            }
+        });
+    }
+
+    private void writeFailure(String code, String message) throws IOException {
+        failed = true;
+        writeMessage(w -> {
             w.writeStructHeader(1, BoltMessages.FAILURE);
             w.writeMapHeader(2);
             w.writeString("code");
             w.writeString(code);
             w.writeString("message");
-            w.writeString(message);
+            w.writeString(message == null ? "" : message);
         });
     }
 
-    private void writeIgnored(DataOutputStream out) throws IOException {
-        writeMessage(out, w -> w.writeStructHeader(0, BoltMessages.IGNORED));
+    private void writeIgnored() throws IOException {
+        writeMessage(w -> w.writeStructHeader(0, BoltMessages.IGNORED));
     }
 
     private interface WriterAction {
         void write(PackStream.Writer w);
     }
 
-    /** Wraps one PackStream-encoded message in Bolt's own chunked framing: a 2-byte big-endian
-     * length prefix, the message bytes, then a zero-length chunk marking the end of the message --
-     * confirmed against every real server-&gt;client message in the captured session (see
-     * {@link PackStream}'s javadoc). Every message this handler ever sends fits in one chunk (well
-     * under the 65535-byte chunk-size limit), so multi-chunk splitting isn't implemented. */
-    private void writeMessage(DataOutputStream out, WriterAction action) throws IOException {
-        PackStream.Writer w = new PackStream.Writer();
-        action.write(w);
+    /** One PackStream message in Bolt chunked framing: chunks of at most 65535 bytes, then a zero-length end marker. */
+    private void writeMessage(WriterAction action) throws IOException {
+        PackStream.Writer w = new PackStream.Writer(major, utc);
+        try {
+            action.write(w);
+        } catch (RuntimeException e) {
+            // an unencodable value must fail this statement, not the connection
+            log.warn("boltwire: failed to encode a message", e);
+            throw new CypherException("Neo.DatabaseError.General.UnknownError", "boltwire: cannot encode value: " + e.getMessage());
+        }
         byte[] body = w.toByteArray();
-        out.writeShort(body.length);
-        out.write(body);
+        int off = 0;
+        while (off < body.length) {
+            int n = Math.min(0xFFFF, body.length - off);
+            out.writeShort(n);
+            out.write(body, off, n);
+            off += n;
+        }
         out.writeShort(0);
         out.flush();
     }
 
-    /** Reads one full Bolt message across as many chunks as it takes, per the same framing
-     * {@link #writeMessage} produces. @return null on a clean EOF between messages (the client
-     * closed the socket without sending GOODBYE -- treated the same as GOODBYE, not an error). */
+    /** Reads one full Bolt message across chunks; null on a clean EOF between messages. */
     private static byte[] readChunkedMessage(DataInputStream in) throws IOException {
         java.io.ByteArrayOutputStream message = new java.io.ByteArrayOutputStream();
         while (true) {
@@ -785,6 +687,9 @@ public final class BoltWireSessionHandler implements Runnable {
                 return message.size() == 0 ? null : message.toByteArray();
             }
             if (chunkLen == 0) {
+                if (message.size() == 0) {
+                    continue; // NOOP chunk (keep-alive)
+                }
                 return message.toByteArray();
             }
             byte[] chunk = new byte[chunkLen];
@@ -799,5 +704,14 @@ public final class BoltWireSessionHandler implements Runnable {
             sb.append(String.format("%02x ", b));
         }
         return sb.toString().strip();
+    }
+
+    /** Kept for tests that build a handler without a live hello. */
+    boolean helloSeen() {
+        return hello;
+    }
+
+    static Map<String, Object> unusedMap() {
+        return new HashMap<>();
     }
 }

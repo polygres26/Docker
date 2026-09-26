@@ -29,3 +29,22 @@ CREATE INDEX IF NOT EXISTS warp_graph_edges_from_idx ON warp_graph_edges (from_i
 CREATE INDEX IF NOT EXISTS warp_graph_edges_to_idx ON warp_graph_edges (to_id)
 -- ### edges_type_index
 CREATE INDEX IF NOT EXISTS warp_graph_edges_type_idx ON warp_graph_edges (type)
+-- ### edges_from_type_index
+CREATE INDEX IF NOT EXISTS warp_graph_edges_from_type_idx ON warp_graph_edges (from_id, type)
+-- ### edges_to_type_index
+CREATE INDEX IF NOT EXISTS warp_graph_edges_to_type_idx ON warp_graph_edges (to_id, type)
+-- ### schema_catalog
+-- Constraints and indexes created through Cypher DDL (CREATE CONSTRAINT / CREATE INDEX): the catalog row is what SHOW
+-- CONSTRAINTS / SHOW INDEXES read; the enforcement itself is a real (unique / plain) partial expression index on
+-- warp_graph_nodes or warp_graph_edges named by pg_index.
+CREATE TABLE IF NOT EXISTS warp_graph_schema (
+    name TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    entity TEXT NOT NULL DEFAULT 'NODE',
+    label_or_type TEXT,
+    props TEXT[] NOT NULL DEFAULT '{}',
+    constraint_type TEXT,
+    index_type TEXT,
+    pg_index TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)

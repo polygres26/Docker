@@ -1,25 +1,10 @@
-"""End-to-end proof that a real Neo4j client driver (the official `neo4j` Python driver, real Bolt
-4.4 binary wire protocol) gets correct results through boltwire into a real Postgres backend --
-real subprocess, real Postgres container, no mocks.
+"""End-to-end proof that a real Neo4j client driver (the official `neo4j` Python driver, real Bolt binary wire
+protocol) gets correct results through boltwire into a real Postgres backend -- real subprocess, real Postgres, no mocks.
 
-REAL GAP, not silently worked around (matching this project's own README.md style):
-BoltWireSessionHandler.translateAndRun actually dispatches two real translations today -- Phase 1's
-narrow `RETURN <literal> [AS <alias>]` AND Phase 2's real `CREATE (n:Label {...}) RETURN ...`
-(backed by a genuine PgGraphStore node/edge schema in Postgres, single-node CREATEs skipping the
-transaction wrapper multi-node CREATEs use -- see runCreate's javadoc). So both a real literal read
-and a real literal write ARE exercised below. What is NOT supported by CypherParser is Cypher
-parameter binding (`$param`) for either RETURN or CREATE -- confirmed by grepping CypherParser.java
-for `$`, which finds nothing -- so the bind-parameter variants are xfail, not fabricated passes.
-
-FIXED (previously a real, disclosed gap): BoltWireSessionHandler still bypasses the shared
-StatementPipeline for its actual Cypher-to-SQL execution -- that part is unchanged, and correctly
-so, since dialect translation/the cache stage/the router don't apply to a graph query against
-warp_graph_nodes/warp_graph_edges. But it no longer skips SqlMetricsCollector entirely: handleRun
-now times its own RUN span (the complete backend round trip -- see its own comment) and reports it
-via SqlMetricsCollector.recordOperation("boltwire", ...), the same narrow, pipeline-independent hook
-sqswire/dynamowire already use. /api/metrics/summary's topSql[] now carries a real boltwire entry
-with a non-null avgRttMs, cross-checked against client-observed RTT below the same way every other
-protocol's own RTT test does it.
+boltwire runs a real Cypher engine (parser, semantic analysis, executor over the warp_graph_* tables) -- see
+tests/python/bolt_conformance for the openCypher TCK and the differential corpus against a real Neo4j, and
+test_boltwire_conformance.py for their offline replay. This file keeps the original smoke tests: literal RETURN, CREATE,
+`$param` binding (RETURN and CREATE) and the server-side RTT metric that /api/metrics/summary reports for boltwire.
 """
 import os
 import time
@@ -64,8 +49,7 @@ def metrics_summary(warp):
 
 
 # ---------------------------------------------------------------------------
-# 1. Simple read, literal value -- the only query shape boltwire's Phase 1
-# translator supports (see module docstring).
+# 1. Simple read, literal value.
 # ---------------------------------------------------------------------------
 
 def test_read_literal(warp):
@@ -90,13 +74,7 @@ def test_read_literal_string(warp):
         drv.close()
 
 
-@pytest.mark.xfail(
-    reason="boltwire Phase 1 (BoltWireSessionHandler.translateCypher) only recognizes literal "
-           "RETURN -- Cypher parameter binding ($param) is explicitly out of scope until the "
-           "later MATCH/pattern-matching translator phase.",
-    strict=True,
-)
-def test_read_bind_parameter_not_yet_supported(warp):
+def test_read_bind_parameter(warp):
     drv = driver(warp)
     try:
         with drv.session() as session:
@@ -123,17 +101,12 @@ def test_write_literal(warp):
         drv.close()
 
 
-@pytest.mark.xfail(
-    reason="boltwire's CypherParser has no Cypher parameter-binding support ($param) for CREATE "
-           "-- confirmed by grepping CypherParser.java for '$', which finds nothing. Every "
-           "property literal in a CREATE must be inlined into the query text today.",
-    strict=True,
-)
-def test_write_bind_parameter_not_yet_supported(warp):
+def test_write_bind_parameter(warp):
     drv = driver(warp)
     try:
         with drv.session() as session:
-            session.run("CREATE (n:Person {name: $name}) RETURN n.name AS name", name="alpha")
+            record = session.run("CREATE (n:Person {name: $name}) RETURN n.name AS name", name="alpha").single()
+            assert record["name"] == "alpha"
     finally:
         drv.close()
 

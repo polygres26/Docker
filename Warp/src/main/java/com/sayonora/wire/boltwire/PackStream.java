@@ -1,34 +1,36 @@
 package com.sayonora.wire.boltwire;
 
+import com.sayonora.wire.boltwire.Values.DurationV;
+import com.sayonora.wire.boltwire.Values.NodeV;
+import com.sayonora.wire.boltwire.Values.PathV;
+import com.sayonora.wire.boltwire.Values.PointV;
+import com.sayonora.wire.boltwire.Values.RelV;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * PackStream -- Bolt's own binary serialization format. Every byte marker and struct shape here
- * was verified against a REAL Neo4j 5.26 server, not reconstructed from the spec alone: captured
- * via {@code Warp/scratch_capture/bolt_proxy.py} between a genuine {@code neo4j} Python driver and
- * a real {@code neo4j:5-community} container, then hand-decoded and cross-checked byte-for-byte
- * (see this investigation's own commit message for the exact session -- handshake, HELLO/LOGON,
- * RUN, PULL, RECORD, three separate SUCCESS shapes, GOODBYE -- all captured from one real
- * {@code RETURN 1 AS x} query).
+ * PackStream -- Bolt's own binary serialization format, encoded and decoded here for every Bolt 4.4 / 5.x value type:
+ * null, booleans, 64-bit integers, floats, strings, byte arrays, lists, maps and the structures (Node, Relationship,
+ * UnboundRelationship, Path, Date, Time, LocalTime, DateTime (legacy and UTC forms), LocalDateTime, Duration, Point2D/3D).
+ * Message-level structures are decoded by {@link Reader#readMessage()}; struct tags nested inside a message are values (the
+ * message tags TELEMETRY 0x54 and ROUTE 0x66 collide with the Time / legacy DateTimeZoneId tags, which is why the two
+ * levels must not share one decoder).
  *
- * <p>Markers implemented (the subset a real Bolt 4.4 session for a simple query actually uses --
- * extended as real messages need more of PackStream's own type system, not implemented speculatively
- * ahead of a real need):
- * <ul>
- *   <li>{@code null} (0xC0), {@code false}/{@code true} (0xC2/0xC3)</li>
- *   <li>Tiny int (0x00-0x7F positive, 0xF0-0xFF negative -16..-1), INT_8/16/32/64
- *       (0xC8/0xC9/0xCA/0xCB)</li>
- *   <li>Tiny string (0x80-0x8F), STRING_8/16/32 (0xD0/0xD1/0xD2)</li>
- *   <li>Tiny list (0x90-0x9F), LIST_8/16/32 (0xD4/0xD5/0xD6)</li>
- *   <li>Tiny map (0xA0-0xAF), MAP_8/16/32 (0xD8/0xD9/0xDA)</li>
- *   <li>Tiny struct (0xB0-0xBF) -- a 1-byte tag/signature followed by that many fields</li>
- *   <li>FLOAT (0xC1, 8-byte IEEE-754 double)</li>
- * </ul>
+ * <p>The struct layouts were verified against a real Neo4j 5 server through the official drivers; a Node in Bolt 5.x has an
+ * extra {@code element_id} field, a Relationship three (element ids), and DateTime uses UTC-based seconds (tags 'I' and 'i').
  */
 final class PackStream {
 
@@ -39,6 +41,18 @@ final class PackStream {
 
     static final class Writer {
         private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        private final int major;
+        private final boolean utc;
+
+        Writer() {
+            this(4, false);
+        }
+
+        /** @param major Bolt major version (entity layouts differ between 4 and 5) */
+        Writer(int major, boolean utc) {
+            this.major = major;
+            this.utc = utc || major >= 5;
+        }
 
         byte[] toByteArray() {
             return buf.toByteArray();
@@ -93,15 +107,33 @@ final class PackStream {
             buf.writeBytes(bytes);
         }
 
+        void writeBytes(byte[] b) {
+            int n = b.length;
+            if (n <= 255) {
+                buf.write(0xCC);
+                buf.write(n);
+            } else if (n <= 65535) {
+                buf.write(0xCD);
+                writeBE(n, 2);
+            } else {
+                buf.write(0xCE);
+                writeBE(n, 4);
+            }
+            buf.writeBytes(b);
+        }
+
         void writeListHeader(int n) {
             if (n <= 15) {
                 buf.write(0x90 | n);
             } else if (n <= 255) {
                 buf.write(0xD4);
                 buf.write(n);
-            } else {
+            } else if (n <= 65535) {
                 buf.write(0xD5);
                 writeBE(n, 2);
+            } else {
+                buf.write(0xD6);
+                writeBE(n, 4);
             }
         }
 
@@ -118,9 +150,12 @@ final class PackStream {
             } else if (n <= 255) {
                 buf.write(0xD8);
                 buf.write(n);
-            } else {
+            } else if (n <= 65535) {
                 buf.write(0xD9);
                 writeBE(n, 2);
+            } else {
+                buf.write(0xDA);
+                writeBE(n, 4);
             }
         }
 
@@ -137,10 +172,7 @@ final class PackStream {
             buf.write(tag);
         }
 
-        /** Dispatches a plain Java value ({@code String}/{@code Long}/{@code Integer}/
-         * {@code Double}/{@code Boolean}/{@code List}/{@code Map}/{@code null}) to the matching
-         * PackStream marker -- used for message field values, whose real type varies by field
-         * (e.g. a RECORD's row values, a SUCCESS metadata map's own values). */
+        /** Dispatches a runtime value to its PackStream encoding. */
         void writeValue(Object v) {
             if (v == null) {
                 writeNull();
@@ -155,53 +187,183 @@ final class PackStream {
             } else if (v instanceof Float f) {
                 writeFloat(f);
             } else if (v instanceof java.math.BigDecimal bd) {
-                // Real bug, found live: a Postgres NUMERIC literal (e.g. the real column type
-                // `SELECT 3.14 AS pi` produces) comes back from JDBC as BigDecimal, not Double --
-                // crashed a real neo4j driver's session outright the first time this was tested
-                // live (IllegalArgumentException here, uncaught, killed the connection mid-PULL).
-                // Bolt's own FLOAT type is always a genuine 8-byte double (PackStream has no
-                // arbitrary-precision decimal type), so this is a real, honest precision-narrowing
-                // conversion, not a bug being papered over -- the same narrowing every other
-                // protocol's own float handling already accepts.
                 writeFloat(bd.doubleValue());
             } else if (v instanceof java.math.BigInteger bi) {
                 writeInt(bi.longValueExact());
             } else if (v instanceof String s) {
                 writeString(s);
+            } else if (v instanceof byte[] b) {
+                writeBytes(b);
             } else if (v instanceof List<?> list) {
                 writeList(list);
             } else if (v instanceof Map<?, ?> map) {
                 @SuppressWarnings("unchecked")
                 Map<String, ?> m = (Map<String, ?>) map;
                 writeMap(m);
-            } else if (v instanceof GraphNode node) {
-                writeNode(node);
+            } else if (v instanceof NodeV n) {
+                writeNode(n);
+            } else if (v instanceof RelV r) {
+                writeRel(r);
+            } else if (v instanceof PathV p) {
+                writePath(p);
+            } else if (v instanceof LocalDate d) {
+                writeStructHeader(1, 0x44);
+                writeInt(d.toEpochDay());
+            } else if (v instanceof LocalTime t) {
+                writeStructHeader(1, 0x74);
+                writeInt(t.toNanoOfDay());
+            } else if (v instanceof OffsetTime t) {
+                writeStructHeader(2, 0x54);
+                writeInt(t.toLocalTime().toNanoOfDay());
+                writeInt(t.getOffset().getTotalSeconds());
+            } else if (v instanceof LocalDateTime t) {
+                writeStructHeader(2, 0x64);
+                writeInt(t.toEpochSecond(ZoneOffset.UTC));
+                writeInt(t.getNano());
+            } else if (v instanceof ZonedDateTime t) {
+                writeZoned(t);
+            } else if (v instanceof DurationV d) {
+                writeStructHeader(4, 0x45);
+                writeInt(d.months());
+                writeInt(d.days());
+                writeInt(d.seconds());
+                writeInt(d.nanos());
+            } else if (v instanceof PointV p) {
+                if (p.z() == null) {
+                    writeStructHeader(3, 0x58);
+                    writeInt(p.srid());
+                    writeFloat(p.x());
+                    writeFloat(p.y());
+                } else {
+                    writeStructHeader(4, 0x59);
+                    writeInt(p.srid());
+                    writeFloat(p.x());
+                    writeFloat(p.y());
+                    writeFloat(p.z());
+                }
             } else {
                 throw new IllegalArgumentException("boltwire: no PackStream encoding for " + v.getClass());
             }
         }
 
-        /** Real Bolt Node struct: tag {@code 0x4E} ('N'), 3 fields -- id, labels, properties, in
-         * that exact order. Real bug, found live writing this feature's own Phase 5 test suite
-         * against the real {@code neo4j-java-driver} (which, unlike the Python driver, validates
-         * struct field counts strictly): a 4th {@code elementId} field was being written
-         * unconditionally, grounded in a real capture -- but that capture (re-verified against a
-         * fresh real {@code neo4j:5-community} container while chasing this bug) turned out to be
-         * of a session that had negotiated Bolt <b>5.8</b> via the newer "manifest" handshake
-         * extension, where a Node struct really does carry a 4th elementId field. This server's own
-         * {@code performHandshake} only ever replies with the classic, simpler Bolt <b>4.4</b>
-         * handshake reply (see its own javadoc) -- and Bolt 4.4's own Node struct genuinely has
-         * only 3 fields, no elementId at all (elementId was a later addition). Every message this
-         * server sends has to honor the protocol version it actually claimed during the
-         * handshake, not a newer one it never negotiated -- {@link GraphNode#elementId} stays as
-         * a real, honest internal id (still exposed as the row's own {@code id} field, which
-         * every Bolt version has), just no longer written to the wire until this server actually
-         * negotiates Bolt 5.x. */
-        void writeNode(GraphNode node) {
-            writeStructHeader(3, 0x4E);
-            writeInt(node.id());
-            writeList(node.labels());
-            writeMap(node.properties());
+        private void writeZoned(ZonedDateTime t) {
+            boolean region = !(t.getZone() instanceof ZoneOffset);
+            long utcSeconds = t.toEpochSecond();
+            long localSeconds = t.toLocalDateTime().toEpochSecond(ZoneOffset.UTC);
+            if (utc) {
+                writeStructHeader(3, region ? 0x69 : 0x49);
+                writeInt(utcSeconds);
+            } else {
+                writeStructHeader(3, region ? 0x66 : 0x46);
+                writeInt(localSeconds);
+            }
+            writeInt(t.getNano());
+            if (region) {
+                writeString(t.getZone().getId());
+            } else {
+                writeInt(t.getOffset().getTotalSeconds());
+            }
+        }
+
+        private void writeNode(NodeV n) {
+            writeStructHeader(major >= 5 ? 4 : 3, 0x4E);
+            writeInt(n.id);
+            if (n.deleted) { // a node deleted in this statement is returned empty, like Neo4j
+                writeListHeader(0);
+                writeMapHeader(0);
+            } else {
+                writeListHeader(n.labels.size());
+                for (String l : n.labels) {
+                    writeString(l);
+                }
+                writeProps(n.props);
+            }
+            if (major >= 5) {
+                writeString(Funcs.elementId(4, n.id));
+            }
+        }
+
+        private void writeProps(Map<String, Object> props) {
+            int count = 0;
+            for (Object o : props.values()) {
+                if (o != null) {
+                    count++;
+                }
+            }
+            writeMapHeader(count);
+            for (Map.Entry<String, Object> e : props.entrySet()) {
+                if (e.getValue() != null) {
+                    writeString(e.getKey());
+                    writeValue(e.getValue());
+                }
+            }
+        }
+
+        private void writeRel(RelV r) {
+            writeStructHeader(major >= 5 ? 8 : 5, 0x52);
+            writeInt(r.id);
+            writeInt(r.start);
+            writeInt(r.end);
+            writeString(r.type);
+            if (r.deleted) {
+                writeMapHeader(0);
+            } else {
+                writeProps(r.props);
+            }
+            if (major >= 5) {
+                writeString(Funcs.elementId(5, r.id));
+                writeString(Funcs.elementId(4, r.start));
+                writeString(Funcs.elementId(4, r.end));
+            }
+        }
+
+        private void writeUnboundRel(RelV r) {
+            writeStructHeader(major >= 5 ? 4 : 3, 0x72);
+            writeInt(r.id);
+            writeString(r.type);
+            writeProps(r.props);
+            if (major >= 5) {
+                writeString(Funcs.elementId(5, r.id));
+            }
+        }
+
+        private void writePath(PathV p) {
+            List<NodeV> nodes = new ArrayList<>();
+            IdentityHashMap<NodeV, Integer> nodeIdx = new IdentityHashMap<>();
+            List<RelV> rels = new ArrayList<>();
+            IdentityHashMap<RelV, Integer> relIdx = new IdentityHashMap<>();
+            List<Long> seq = new ArrayList<>();
+            for (NodeV n : p.nodes()) {
+                if (!nodeIdx.containsKey(n)) {
+                    nodeIdx.put(n, nodes.size());
+                    nodes.add(n);
+                }
+            }
+            for (int i = 0; i < p.rels().size(); i++) {
+                RelV r = p.rels().get(i);
+                if (!relIdx.containsKey(r)) {
+                    relIdx.put(r, rels.size() + 1);
+                    rels.add(r);
+                }
+                NodeV prev = p.nodes().get(i);
+                boolean forward = r.start == prev.id;
+                int ri = relIdx.get(r);
+                seq.add((long) (forward ? ri : -ri));
+                seq.add((long) nodeIdx.get(p.nodes().get(i + 1)));
+            }
+            writeStructHeader(3, 0x50);
+            writeListHeader(nodes.size());
+            for (NodeV n : nodes) {
+                writeNode(n);
+            }
+            writeListHeader(rels.size());
+            for (RelV r : rels) {
+                writeUnboundRel(r);
+            }
+            writeListHeader(seq.size());
+            for (Long l : seq) {
+                writeInt(l);
+            }
         }
 
         private void writeBE(long v, int bytes) {
@@ -213,9 +375,7 @@ final class PackStream {
 
     // ---- reader ----
 
-    /** One decoded PackStream struct: {@code tag} is the real Bolt message signature byte
-     * (e.g. 0x01 = HELLO, 0x10 = RUN, 0x3F = PULL, 0x02 = GOODBYE -- see BoltMessages), and
-     * {@code fields} are the struct's own top-level fields, already recursively decoded. */
+    /** One decoded top-level Bolt message: {@code tag} is the message signature byte. */
     record Struct(int tag, List<Object> fields) {
     }
 
@@ -229,6 +389,22 @@ final class PackStream {
 
         boolean hasRemaining() {
             return pos < data.length;
+        }
+
+        /** A top-level Bolt message (fields decoded as values). */
+        Struct readMessage() {
+            int marker = data[pos++] & 0xFF;
+            if ((marker & 0xF0) != 0xB0) {
+                throw new IllegalStateException("boltwire: expected a PackStream struct (a Bolt message), got marker 0x"
+                        + Integer.toHexString(marker));
+            }
+            int n = marker & 0x0F;
+            int tag = data[pos++] & 0xFF;
+            List<Object> fields = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                fields.add(readValue());
+            }
+            return new Struct(tag, fields);
         }
 
         Object readValue() {
@@ -261,8 +437,16 @@ final class PackStream {
                 return readBE(8, true);
             }
             if (marker == 0xC1) {
-                long bits = readBE(8, false);
-                return Double.longBitsToDouble(bits);
+                return Double.longBitsToDouble(readBE(8, false));
+            }
+            if (marker == 0xCC) {
+                return readBytes(data[pos++] & 0xFF);
+            }
+            if (marker == 0xCD) {
+                return readBytes((int) readBE(2, false));
+            }
+            if (marker == 0xCE) {
+                return readBytes((int) readBE(4, false));
             }
             if ((marker & 0xF0) == 0x80) {
                 return readString(marker & 0x0F);
@@ -303,24 +487,65 @@ final class PackStream {
             if ((marker & 0xF0) == 0xB0) {
                 int n = marker & 0x0F;
                 int tag = data[pos++] & 0xFF;
-                List<Object> fields = new ArrayList<>(n);
+                List<Object> f = new ArrayList<>(n);
                 for (int i = 0; i < n; i++) {
-                    fields.add(readValue());
+                    f.add(readValue());
                 }
-                return new Struct(tag, fields);
+                return decodeStruct(tag, f);
             }
             throw new IllegalStateException(
                     String.format("boltwire: unrecognized PackStream marker 0x%02x at position %d", marker, pos - 1));
         }
 
-        /** Convenience for the one call site that always expects a top-level message struct
-         * (every real Bolt client message is one). */
-        Struct readMessage() {
-            Object v = readValue();
-            if (!(v instanceof Struct s)) {
-                throw new IllegalStateException("boltwire: expected a PackStream struct (a Bolt message), got " + v);
+        private static Object decodeStruct(int tag, List<Object> f) {
+            switch (tag) {
+                case 0x44 -> {
+                    return LocalDate.ofEpochDay((Long) f.get(0));
+                }
+                case 0x74 -> {
+                    return LocalTime.ofNanoOfDay((Long) f.get(0));
+                }
+                case 0x54 -> {
+                    return OffsetTime.of(LocalTime.ofNanoOfDay((Long) f.get(0)), ZoneOffset.ofTotalSeconds(((Long) f.get(1)).intValue()));
+                }
+                case 0x64 -> {
+                    return LocalDateTime.ofEpochSecond((Long) f.get(0), ((Long) f.get(1)).intValue(), ZoneOffset.UTC);
+                }
+                case 0x46 -> { // legacy DateTime with offset: local seconds
+                    ZoneOffset off = ZoneOffset.ofTotalSeconds(((Long) f.get(2)).intValue());
+                    LocalDateTime l = LocalDateTime.ofEpochSecond((Long) f.get(0), ((Long) f.get(1)).intValue(), ZoneOffset.UTC);
+                    return ZonedDateTime.of(l, off);
+                }
+                case 0x66 -> { // legacy DateTime with zone id
+                    LocalDateTime l = LocalDateTime.ofEpochSecond((Long) f.get(0), ((Long) f.get(1)).intValue(), ZoneOffset.UTC);
+                    return ZonedDateTime.of(l, ZoneId.of((String) f.get(2)));
+                }
+                case 0x49 -> { // UTC DateTime with offset
+                    ZoneOffset off = ZoneOffset.ofTotalSeconds(((Long) f.get(2)).intValue());
+                    return ZonedDateTime.ofInstant(Instant.ofEpochSecond((Long) f.get(0), (Long) f.get(1)), off);
+                }
+                case 0x69 -> {
+                    return ZonedDateTime.ofInstant(Instant.ofEpochSecond((Long) f.get(0), (Long) f.get(1)),
+                            ZoneId.of((String) f.get(2)));
+                }
+                case 0x45 -> {
+                    return new DurationV((Long) f.get(0), (Long) f.get(1), (Long) f.get(2), ((Long) f.get(3)).intValue());
+                }
+                case 0x58 -> {
+                    return new PointV(((Long) f.get(0)).intValue(), (Double) f.get(1), (Double) f.get(2), null);
+                }
+                case 0x59 -> {
+                    return new PointV(((Long) f.get(0)).intValue(), (Double) f.get(1), (Double) f.get(2), (Double) f.get(3));
+                }
+                default -> throw new IllegalStateException(String.format("boltwire: unsupported PackStream struct 0x%02x", tag));
             }
-            return s;
+        }
+
+        private byte[] readBytes(int n) {
+            byte[] b = new byte[n];
+            System.arraycopy(data, pos, b, 0, n);
+            pos += n;
+            return b;
         }
 
         private String readString(int n) {
