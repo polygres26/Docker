@@ -61,7 +61,9 @@ public enum BackendKind {
     /** The Warp-hosted Apache TinkerPop Gremlin (property graph) store; data tools plus describe. */
     GREMLINSTORE("gremlinstore", "gremlinstore_"),
     /** The Warp-hosted Azure Cosmos DB (NoSQL) store (databases, containers, items, SQL queries). */
-    COSMOSSTORE("cosmosstore", "cosmosstore_");
+    COSMOSSTORE("cosmosstore", "cosmosstore_"),
+    /** The Warp-hosted AMQP 0-9-1 (RabbitMQ) store. */
+    AMQP("amqp", "amqp_");
 
     private final String id;
     private final String prefix;
@@ -111,6 +113,7 @@ public enum BackendKind {
             case "kafkastore" -> KAFKASTORE;
             case "gremlinstore" -> GREMLINSTORE;
             case "cosmosstore" -> COSMOSSTORE;
+            case "amqp", "rabbitmq" -> AMQP;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

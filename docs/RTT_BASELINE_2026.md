@@ -1516,3 +1516,37 @@ Sequential raw signed REST requests on one connection (no real Cosmos service or
 | Cross-partition ORDER BY n DESC TOP 10 (1000 items) | 2.55 / 4.39 | 2.66 / 4.62 |
 | Cross-partition GROUP BY pk COUNT (1000 items) | 2.25 / 3.76 | 2.35 / 4.07 |
 | Transactional batch of 5 creates | 1.38 / 1.59 | 1.42 / 1.68 |
+
+## 2026-09-26: amqpwire (AMQP 0-9-1 and 1.0, RabbitMQ / Service Bus / ActiveMQ clients) -- RTT next to a real RabbitMQ 4.3
+
+Setup: one real Warp process on native Postgres (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), a real RabbitMQ 4.3.6 (`rabbitmq:4`, Docker, single node, `--memory 1g`, default
+configuration, port-forwarded). Clients: pika 1.4 `BlockingConnection` for 0-9-1 and python-qpid-proton 0.39 `BlockingConnection` for 1.0, one connection, 100-byte persistent messages into a durable queue
+(`Warp/tests/python/amqp_conformance/amqp_rtt_bench.py --amqp10`, 500 samples per operation, warm-up excluded, medians and p95, milliseconds).
+
+**AMQP 0-9-1 (pika)**
+
+| operation | RabbitMQ 4.3 median / p95 | Warp, 1 Postgres median / p95 | Warp, 2 sharded Postgres median / p95 |
+|---|---|---|---|
+| publish + publisher confirm (synchronous, persistent) | 0.50 / 0.57 | 0.17 / 0.26 | 0.17 / 0.28 |
+| basic.get + ack | 0.33 / 0.43 | 0.35 / 0.48 | 0.35 / 0.51 |
+| queue.declare + queue.delete (durable) | 2.52 / 4.00 | 0.38 / 0.62 | 0.40 / 0.69 |
+| publish to an idle consumer on another connection, publisher to delivery | 0.76 / 0.83 | 0.27 / 0.57 | 0.25 / 0.45 |
+| pipelined publish, no confirms (messages per second) | 36,789 | 11,688 | 11,427 |
+| consume with prefetch 200 and multiple-acks (messages per second) | 62,770 | 55,896 | 57,955 |
+
+**AMQP 1.0 (proton)**
+
+| operation | RabbitMQ 4.3 median / p95 | Warp, 1 Postgres median / p95 | Warp, 2 sharded Postgres median / p95 |
+|---|---|---|---|
+| send + settlement (accepted) round trip, persistent | 0.56 / 0.65 | 0.24 / 0.35 | 0.24 / 0.34 |
+| send, receive and accept on one connection | 0.85 / 0.94 | 0.37 / 0.57 | 0.37 / 0.56 |
+
+Caveats, honestly: these are two products with different guarantees, not two builds of one. RabbitMQ runs in a Docker VM behind a port forward (that alone costs a few hundred
+microseconds per round trip on this machine) and confirms a persistent message only after it reached its message store; Warp writes every publish as its own Postgres transaction
+on a local Postgres whose WAL flush on macOS is cheap, so its confirm and idle-consumer latencies are at or below RabbitMQ's here and `queue.declare` / `queue.delete` are one catalog row
+instead of a queue process. That single-node, localhost setup says nothing about a clustered RabbitMQ (quorum queues replicate through Raft) or about a Postgres with a slow disk, and the machine was shared with
+other test runs (a first run of the same script measured RabbitMQ at 0.82 ms for publish + confirm and Warp at 0.35 ms: the ratios held, the absolute numbers move by 2x with load). The one place Warp is clearly slower
+is unpipelined publish without confirms (about 11k versus 37k messages per second): each publish is a synchronous insert on the connection's reader thread (deliberately: it keeps ordering and back-pressure
+honest); batching the pipelined publishes of one connection into one multi-row insert is the obvious next step and is not done. Consumption is on par because a dispatcher leases up to 200 messages per statement
+(`FOR UPDATE SKIP LOCKED`). A message published through another Warp instance reaches an idle consumer within `WARP_AMQPWIRE_POLL_MS` (200 ms); through the same instance it is immediate (the 0.25 ms above).
+Every operation is reported to the metrics collector under the protocol name `amqpwire` (labels `basic.publish`, `basic.get`, `queue.declare`, ...; AMQP 1.0 frames as `amqp10.transfer`, `amqp10.attach`, ...).

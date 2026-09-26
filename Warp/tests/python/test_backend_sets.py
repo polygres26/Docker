@@ -100,7 +100,7 @@ def test_existing_config_migrates_into_the_default_set(api):
     assert b["canHostStores"] is True and b["health"]["ok"] is True
     assert "password" not in b and "postgres:postgres" not in json.dumps(b)  # no credentials leak
     assert data["maxBackends"] == 3
-    assert {s["id"] for s in data["stores"]} == {"influxdb", "mongodb", "sqs", "neo4j", "opensearch", "dynamodb", "s3", "redis", "azblob", "azqueue", "aztable", "gcs", "bigtable", "pubsub", "firestore", "datastore", "sns", "kinesis", "awsparams", "cql", "kafka", "gremlin", "cosmos"}
+    assert {s["id"] for s in data["stores"]} == {"influxdb", "mongodb", "sqs", "neo4j", "opensearch", "dynamodb", "s3", "redis", "azblob", "azqueue", "aztable", "gcs", "bigtable", "pubsub", "firestore", "datastore", "sns", "kinesis", "awsparams", "cql", "kafka", "gremlin", "cosmos", "amqp"}
 
 
 def test_backend_without_a_set_is_rejected(api, infra):

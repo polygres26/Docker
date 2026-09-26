@@ -24,7 +24,8 @@ FRONTENDS = [
         ("cosmoswire", "18081", "Cosmos DB"), ("gremlinwire", "8182", "Gremlin")]),
     ("Queues and streams", "amber", [
         ("sqswire", "9324", "SQS"), ("awswire", "4566", "SNS, Kinesis"),
-        ("azqueue", "azure", "Azure Queue"), ("pubsubwire", "8085", "Pub/Sub")]),
+        ("azqueue", "azure", "Azure Queue"), ("pubsubwire", "8085", "Pub/Sub"),
+        ("kafkawire", "19092", "Kafka"), ("amqpwire", "5672", "RabbitMQ, AMQP")]),
     ("Objects and secrets", "slate", [
         ("s3wire", "18020", "S3"), ("azblob", "azure", "Azure Blob"),
         ("gcswire", "4443", "Cloud Storage"), ("awswire", "4566", "Secrets, SSM, KMS, STS")]),

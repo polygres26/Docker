@@ -68,6 +68,7 @@ services:
       - "8182:8182"   # gremlinwire (Apache TinkerPop Gremlin Server: WebSocket + HTTP; Cosmos DB Gremlin API), enable with WARP_GREMLINWIRE_ENABLED
       - "19092:19092" # kafkawire (Apache Kafka wire protocol), enable with WARP_KAFKAWIRE_ENABLED; set WARP_KAFKAWIRE_ADVERTISED_HOST to the name clients use
       - "18081:18081" # cosmoswire (Azure Cosmos DB NoSQL REST), enable with WARP_COSMOSWIRE_ENABLED
+      - "5672:5672"   # amqpwire (RabbitMQ clients, AMQP 0-9-1 and 1.0), enable with WARP_AMQPWIRE_ENABLED
       - "18010:18010" # MCP (Model Context Protocol)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
 

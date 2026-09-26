@@ -78,7 +78,10 @@ public enum StoreType {
     COSMOS("cosmos", "Azure Cosmos DB (NoSQL)", "WARP_COSMOSWIRE_SET", true,
             "Azure Cosmos DB for NoSQL REST API (SQL query language, master-key auth, change feed); a document lives on one backend "
                     + "(hash of database, container and partition key), the database and container catalog on the first backend of the set, "
-                    + "cross-partition queries scatter-gather over all backends.");
+                    + "cross-partition queries scatter-gather over all backends."),
+    AMQP("amqp", "AMQP (RabbitMQ)", "WARP_AMQPWIRE_SET", true,
+            "AMQP 0-9-1 (RabbitMQ clients); a queue and its messages live wholly on one backend (hash of vhost and queue name), "
+                    + "exchanges and bindings on the first backend of the set, a publish fans out to the queues of several backends.");
 
     private final String id;
     private final String label;

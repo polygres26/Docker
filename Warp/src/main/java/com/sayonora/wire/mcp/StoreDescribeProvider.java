@@ -214,7 +214,7 @@ final class StoreDescribeProvider implements BackendToolProvider {
                 out.add("edgeLabels", el);
                 out.add("shards", shards);
             }
-            case AZBLOB, AZQUEUE, AZTABLE, GCS, BIGTABLE, PUBSUB, CQL, KAFKA, COSMOS -> {
+            case AZBLOB, AZQUEUE, AZTABLE, GCS, BIGTABLE, PUBSUB, CQL, KAFKA, COSMOS, AMQP -> {
                 String[][] q = switch (store) {
                     case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},
                         {"blobs", "SELECT account || '/' || container, count(*), coalesce(sum(size),0) FROM warp_azblob_blobs WHERE snapshot='' GROUP BY 1 ORDER BY 1"}};
@@ -230,6 +230,8 @@ final class StoreDescribeProvider implements BackendToolProvider {
                         {"retainedBatches", "SELECT topic, count(*), coalesce(sum(nbytes),0) FROM warp_kafka_log GROUP BY 1 ORDER BY 1"}};
                     case COSMOS -> new String[][] {{"containers", "SELECT db || '/' || id, 0, 0 FROM warp_cosmos_colls ORDER BY 1"},
                         {"items", "SELECT db || '/' || coll, count(*), coalesce(sum(length(body)),0) FROM warp_cosmos_docs GROUP BY 1 ORDER BY 1"}};
+                    case AMQP -> new String[][] {{"queues", "SELECT CASE WHEN vhost = '/' THEN name ELSE vhost || '/' || name END, 0, 0 FROM warp_amqp_queues ORDER BY 1"},
+                        {"messages", "SELECT CASE WHEN vhost = '/' THEN queue ELSE vhost || '/' || queue END, count(*), coalesce(sum(length(body)),0) FROM warp_amqp_msgs GROUP BY 1 ORDER BY 1"}};
                     case PUBSUB -> new String[][] {{"topics", "SELECT name, 0, 0 FROM warp_pubsub_topics ORDER BY 1"},
                         {"subscriptionBacklog", "SELECT sub, count(*), coalesce(sum(length(data)),0) FROM warp_pubsub_msgs WHERE NOT acked GROUP BY 1 ORDER BY 1"}};
                     default -> new String[][] {{"tables", "SELECT account || '/' || name, 0, 0 FROM warp_aztable_tables ORDER BY 1"},

@@ -890,6 +890,26 @@ public final class Main {
             log.error("cosmoswire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // amqpwire: AMQP 0-9-1 (RabbitMQ clients: pika, amqplib, the RabbitMQ Java client; default port 5672) frontend whose data lives in
+        // the "amqp" store of the set's Postgres backends: a queue (and its messages) on hash(vhost, queue name), exchanges and bindings on
+        // the first backend. Starts when WARP_AMQPWIRE_PORT is set, the amqp store is enabled on a backend, or WARP_AMQPWIRE_ENABLED=true.
+        // Auth: none by default; WARP_AMQPWIRE_AUTH=true (or WARP_AUTH_CREDENTIALS set) requires SASL PLAIN / AMQPLAIN against the CredentialStore.
+        try {
+            boolean amqpStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.AMQP).isEmpty();
+            boolean amqpPort = System.getenv("WARP_AMQPWIRE_PORT") != null && !System.getenv("WARP_AMQPWIRE_PORT").isBlank();
+            boolean amqpForced = "true".equalsIgnoreCase(System.getenv("WARP_AMQPWIRE_ENABLED"));
+            if (amqpStore || amqpPort || amqpForced) {
+                int amqpPortNo = parseIntEnv("WARP_AMQPWIRE_PORT", 5672);
+                com.sayonora.wire.amqpwire.AmqpWireServer amqpWireServer = new com.sayonora.wire.amqpwire.AmqpWireServer(amqpPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                amqpWireServer.start();
+                Runtime.getRuntime().addShutdownHook(new Thread(amqpWireServer::close, "amqpwire-shutdown"));
+                log.info("warp listening for AMQP 0-9-1 (amqpwire) on port {}", amqpPortNo);
+            }
+        } catch (Exception e) {
+            log.error("amqpwire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

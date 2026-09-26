@@ -3250,3 +3250,72 @@ randomized differential test.
 
 **MCP.** `cosmos_list_databases`, `cosmos_list_containers`, `cosmos_query`, `cosmos_get_item` and (hidden under `WARP_MCP_READ_ONLY`)
 `cosmos_create_database`, `cosmos_create_container`, `cosmos_upsert_item`, `cosmos_delete_item` work on the same tables the REST API uses.
+
+#### The AMQP store (amqpwire)
+
+Enable the `amqp` store on a backend (or set `WARP_AMQPWIRE_ENABLED=true`, or `WARP_AMQPWIRE_PORT`) and Warp speaks **AMQP 0-9-1**, the protocol of RabbitMQ clients (pika, amqplib, the RabbitMQ Java, .NET and Go
+clients, Spring AMQP, Celery/kombu), on `WARP_AMQPWIRE_PORT` (default **5672**), and **AMQP 1.0** (Azure Service Bus, ActiveMQ / Artemis clients, qpid-proton, RabbitMQ's own 1.0 clients) on the same port by
+protocol-header sniffing (`AMQP 0 0 9 1` is 0-9-1, `AMQP 0 1 0 0` plain 1.0, `AMQP 3 1 0 0` SASL then 1.0; any other header is answered with the 0-9-1 header and the socket is closed). No RabbitMQ process
+exists: exchanges, bindings, queues and messages live in the Postgres backends of the backend set (`WARP_AMQPWIRE_SET` names the set, default the one holding `default`).
+
+- **AMQP 0-9-1.** `connection.start` / `start-ok` (PLAIN and AMQPLAIN against the shared `CredentialStore`), `tune` (channel_max 2047, frame_max 131072, heartbeat 60), `open` (vhosts: `WARP_AMQPWIRE_VHOSTS`, default
+  `/`, `*` = any, else `530 NOT_ALLOWED - vhost x not found` like RabbitMQ), heartbeats both ways (Warp sends every half interval and drops a peer that stayed silent for two), `close`; channels; `exchange.declare` /
+  `delete` / `bind` / `unbind` (direct, fanout, topic with `*` and `#`, headers with `x-match` all / any / all-with-x / any-with-x, the default exchange, the predeclared `amq.*` exchanges, internal exchanges,
+  alternate-exchange, auto-delete, exchange-to-exchange bindings); `queue.declare` (durable, exclusive, auto-delete, server-named `amq.gen-...`, passive; arguments `x-message-ttl`, `x-expires`, `x-max-length`,
+  `x-max-length-bytes`, `x-overflow` drop-head / reject-publish / reject-publish-dlx, `x-dead-letter-exchange`, `x-dead-letter-routing-key`, `x-max-priority`, `x-queue-type` classic / quorum),
+  `queue.bind` / `unbind` / `purge` / `delete` (if-unused, if-empty); `basic.publish` with `mandatory` (`basic.return`, 312 NO_ROUTE), CC and BCC headers, `basic.consume` (prefetch per consumer or per channel, consumer
+  priorities, exclusive consumers, no-ack, server-generated tags, `basic.cancel`, `consumer_cancel_notify`), `basic.get`, `ack` / `nack` / `reject` (multiple, requeue), `basic.recover`, publisher confirms
+  (`confirm.select`, ack / nack, `reject-publish` overflow is a nack), transactions (`tx.select` / `commit` / `rollback`), direct reply-to (`amq.rabbitmq.reply-to`), the 14 content header properties with
+  their exact encoding, `delivery_mode` 2, redelivery flags, per-message TTL (`expiration`), message priorities, dead-lettering with RabbitMQ's `x-death` / `x-first-death-*` / `x-last-death-*` headers and cycle
+  detection. `immediate=true`, `channel.flow active=false` and `basic.qos prefetch_size != 0` are refused with 540 like RabbitMQ. Every error carries RabbitMQ's code and text
+  (`PRECONDITION_FAILED - inequivalent arg 'x-message-ttl' for queue ...`, `RESOURCE_LOCKED - cannot obtain exclusive access to locked queue ...`, `NOT_FOUND - no queue ... in vhost '/'`).
+- **AMQP 1.0.** SASL PLAIN, AMQPLAIN and ANONYMOUS (ANONYMOUS only while no login is required), open (idle timeout with heartbeats, `hostname` = `vhost:<name>` picks the vhost), begin, attach, flow (credit, drain,
+  echo), transfer (multi-frame in both directions, 16 MiB message limit), disposition, detach, end, close. **Addresses are RabbitMQ 4's v2 forms**: a sender's target is `/queues/<q>`, `/exchanges/<x>/<key>`,
+  `/exchanges/<x>` (empty routing key) or none (anonymous relay: each message's `to` names the queue or exchange); a receiver's source is `/queues/<q>`; anything else is refused with `amqp:invalid-field`
+  (`amqp_address_v1_not_permitted`, RabbitMQ's text). A missing queue or exchange detaches the link with `amqp:not-found`. Link credit is the prefetch window; a message is leased to the link when it is delivered.
+  Outcomes: accepted deletes the message, released puts it back unchanged, modified with `delivery-failed` puts it back and counts a failed delivery (`delivery-count` in the header, `first-acquirer` false),
+  rejected dead-letters it, undeliverable-here dead-letters it; whatever is unsettled goes back when the link is detached, the session ended or the connection lost. A sender's transfer is answered with accepted (routed),
+  released (unroutable or the queue is gone) or rejected with the error RabbitMQ gives (`amqp:resource-limit-exceeded` for a `reject-publish` overflow, `amqp:precondition-failed` for a bad `to`); a wrong
+  settle mode, a `user_id` that is not the login, or an undecodable message detaches the link with RabbitMQ's condition and text. **Messages convert both ways as RabbitMQ does it**: an AMQP 1.0 message is stored
+  in its original encoding (an AMQP 1.0 consumer gets it back as sent plus `x-routing-key` / `x-exchange` annotations and the broker's header) and as properties + body for 0-9-1 consumers (`durable` = delivery_mode 2,
+  `ttl` = expiration, `creation-time` = timestamp, `group-id` = app_id, `reply-to` `/queues/x` = `x`, application properties = headers, message annotations = headers, a body that is not a data section travels as its
+  encoding with type `amqp-1.0`); a 0-9-1 message reaches a 1.0 consumer with header, annotations (`x-routing-key`, `x-exchange`, `x-basic-type`), properties and application properties built the same way.
+- **Storage.** Six tables per Postgres host (`ddl/postgres/amqpwire_store.sql`): `warp_amqp_exchanges`, `warp_amqp_bindings`, `warp_amqp_nodes` (instance heartbeats) and `warp_amqp_outbox` are only **written on the
+  first host of the set**; `warp_amqp_queues` (definition and arguments) and `warp_amqp_msgs` (one row per queued message: exact content header, body, priority, expiry, redelivery flag, the lease holder, dead-letter
+  history, the original AMQP 1.0 sections) live on the host that owns the queue. Exchanges and bindings are cached in the instance (`WARP_AMQPWIRE_TOPOLOGY_TTL_MS`, 250, invalidated at once by changes through the same instance).
+- **Delivery.** A dispatcher per queue leases up to 200 ready messages per statement (`UPDATE ... FROM (SELECT ... ORDER BY priority DESC, seq FOR UPDATE SKIP LOCKED)`, a materialized CTE because a plain `IN (... LIMIT)` may
+  lease more rows than its limit) and hands them round robin to the consumers with prefetch or link credit left, highest consumer priority first. In-process wake-ups make delivery immediate within an instance; a poll
+  every `WARP_AMQPWIRE_POLL_MS` (200) covers publishes through other instances. **No pooled JDBC connection is held while a consumer waits**: a connection is borrowed for one statement or transaction and returned
+  (`WARP_POOL_MAX_SIZE=4` stays responsive under 30 idle consumers). Acknowledgements delete the row, requeues clear the lease and keep the message in its original position. Leases of an instance that died are released
+  by the sweeper of the others once its heartbeat is 30 s old; exclusive queues of dead instances are removed the same way.
+- **Sharding.** A queue and all its messages live on **one** backend, chosen by hash of vhost and queue name over the backends of the set that enabled the store. A publish is routed against the cached topology and then
+  written per host: one host is one transaction; a publish that reaches queues on several hosts is first written to the outbox on the home host, then inserted on each host (idempotent on queue and message id), then
+  the outbox row is deleted, and the sweeper finishes anything a crash left (confirms are sent after all inserts). Dead-lettering across hosts uses the same path with deterministic message ids, so a repeat is a no-op.
+  Adding a backend is reported in `rebalanceRequired` (existing queues are not moved).
+- **TTL, limits, expiry.** `x-message-ttl` and per-message `expiration` expire only at the head of a queue, like RabbitMQ (an expired message behind a live one waits, is never delivered and is dropped or dead-lettered as
+  soon as it reaches the head); `x-expires` removes an unused queue; `x-max-length[-bytes]` drops the head (dead-lettered with reason `maxlen`) right after the publish commits or, with `reject-publish`, refuses the publish
+  inside the insert. The sweeper runs every `WARP_AMQPWIRE_SWEEP_MS` (1000).
+- **Configuration.** `WARP_AMQPWIRE_ENABLED` / `WARP_AMQPWIRE_PORT` (5672) / `WARP_AMQPWIRE_SET`, `WARP_AMQPWIRE_VHOSTS` (`/`), `WARP_AMQPWIRE_AUTH`, `WARP_AMQPWIRE_HEARTBEAT` (60 s proposed to 0-9-1 clients),
+  `WARP_AMQPWIRE_FRAME_MAX` (131072), `WARP_AMQPWIRE_MAX_MESSAGE_BYTES` (16 MiB), `WARP_AMQPWIRE_POLL_MS` (200), `WARP_AMQPWIRE_SWEEP_MS` (1000), `WARP_AMQPWIRE_TOPOLOGY_TTL_MS` (250). Port 5672 is exposed by the
+  Dockerfile and the compose file.
+- **Auth.** None by default. `WARP_AMQPWIRE_AUTH=true` (or `WARP_AUTH_CREDENTIALS` set) requires SASL PLAIN / AMQPLAIN against the shared `CredentialStore` (`WARP_AUTH_USER` / `WARP_AUTH_PASSWORD`, or the list); a
+  refused login is `403 ACCESS_REFUSED - Login was refused using authentication mechanism PLAIN...`; `user_id` properties must equal the login (406 / `amqp:unauthorized-access`); a plain AMQP 1.0 header without SASL is
+  answered with the SASL header and the socket is closed. Connections count against the licence tier's session cap like every TCP wire.
+- **MCP tools.** `amqp_list_exchanges`, `amqp_list_queues` (ready and unacknowledged counts, the host of each queue), `amqp_list_bindings`, `amqp_get_messages` (look without leasing), `amqp_publish`, `amqp_purge_queue`,
+  `amqp_declare_exchange` / `queue`, `amqp_delete_exchange` / `queue`, `amqp_bind`, `amqp_unbind`; the write tools are hidden and refused under `WARP_MCP_READ_ONLY`; `describe_backend` lists queues and backlogs. The tools run the
+  same broker code as the wire protocol.
+- **Not implemented** (each with its reason in `Warp/tests/python/amqp_conformance/amqp_known.py`): streams and other plugin exchange types (`x-consistent-hash`, `x-delayed-message`, ...), Raft-replicated quorum queues
+  (`x-queue-type=quorum` is accepted and behaves like a durable classic queue), single-active-consumer, delivery limits, memory / disk alarms and `connection.blocked`, federation and shovel, TLS on the listener,
+  SASL EXTERNAL / OAuth 2, AMQP 1.0 transactions, `rcv-settle-mode` second, dynamic nodes and selector filters (refused like RabbitMQ 4), link resume and unsettled-state exchange on re-attach, transfers whose
+  `message-format` is not 0. Non-durable and exclusive-less transient queues are accepted (RabbitMQ 4 refuses them), transient messages survive a restart, `consumer_count` counts the consumers of the answering instance,
+  and TTL / limit enforcement is not atomic with the publish across concurrent publishers.
+- **Verified against a real RabbitMQ 4.3.6** (`Warp/tests/python/amqp_conformance/`, run by `test_amqp_conformance.py`, RabbitMQ needed only to re-record). AMQP 0-9-1: `amqp_corpus.py` holds 119 cases over raw
+  frames (connection and channel exceptions, every exchange / queue / basic method and its errors, routing tables for topic and headers exchanges, confirms, transactions, dead-lettering and `x-death`, TTL, priorities,
+  limits, direct reply-to); each was recorded twice against `rabbitmq:4` (`--memory 1g`) and the answers (reply methods, codes and texts, delivery order, tags, redelivery flags, properties, returns, frame counts)
+  stored in `golden.json.gz`. The test replays the corpus offline against Warp on one and on two sharded Postgres backends: **1,581 compared steps, 1,577 identical on both, 4 documented divergences, 0 unexplained**.
+  AMQP 1.0: `amqp10_corpus.py` holds 38 cases over raw 1.0 frames (SASL, open, begin, attach with every address form and error, credit, drain, dispositions and dead-lettering, settle modes, multi-frame messages, message
+  conversion in both directions, TTL, heartbeats, session and link errors), recorded the same way in `golden10.json.gz`: **318 steps, 313 compared and identical on both topologies, 4 dropped as unstable in the recording (x-death timestamps, timing), 1 documented divergence**. Also
+  tested with real clients: pika `BlockingConnection` and `SelectConnection`, python-qpid-proton (blocking and event driven), sharding over two hosts (placement, cross-host fan-out, the outbox re-delivering a crashed
+  publisher's row exactly once, exchange-to-exchange chains, dead-lettering across hosts), auth and vhosts, `WARP_POOL_MAX_SIZE=4` with 30 idle consumers, restart durability (queues, bindings, priorities and the
+  unacknowledged message coming back flagged redelivered), a `kill -9` of the instance (its leases and exclusive queues released by the survivor), competing consumers (no loss, no duplicate), MCP tools, metrics, heartbeats, and 29 Java unit tests (codecs, topic and headers matching, argument
+  validation, AMQP 1.0 types and message conversion). RabbitMQ's own `rabbitmq-perf-test` is not in the image (no Java runtime); the RTT comparison is in `docs/RTT_BASELINE_2026.md`.
