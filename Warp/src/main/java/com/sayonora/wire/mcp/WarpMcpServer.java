@@ -187,6 +187,8 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.AZQUEUE, backendRegistry));
         this.providers.put(BackendKind.AZTABLE, new StoreDescribeProvider(BackendKind.AZTABLE,
                 com.sayonora.wire.core.StoreType.AZTABLE, backendRegistry));
+        this.providers.put(BackendKind.GCS, new StoreDescribeProvider(BackendKind.GCS,
+                com.sayonora.wire.core.StoreType.GCS, backendRegistry));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -865,6 +867,7 @@ public final class WarpMcpServer {
             case AZBLOB -> com.sayonora.wire.core.StoreType.AZBLOB;
             case AZQUEUE -> com.sayonora.wire.core.StoreType.AZQUEUE;
             case AZTABLE -> com.sayonora.wire.core.StoreType.AZTABLE;
+            case GCS -> com.sayonora.wire.core.StoreType.GCS;
             default -> null;
         };
     }

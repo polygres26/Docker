@@ -736,6 +736,24 @@ public final class Main {
             log.error("azurewire failed to start", e);
         }
 
+        // gcswire: Google Cloud Storage JSON + XML API frontend (default port 4443, like fake-gcs-server) whose data lives in the
+        // "gcs" store of the set's Postgres backends. Starts when WARP_GCSWIRE_PORT is set, the gcs store is enabled on a backend,
+        // or WARP_GCSWIRE_ENABLED=true. Auth: WARP_GCSWIRE_TOKENS / WARP_GCSWIRE_ALLOW_ANONYMOUS / HMAC keys / signed URLs.
+        try {
+            boolean gcsStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.GCS).isEmpty();
+            boolean gcsPort = System.getenv("WARP_GCSWIRE_PORT") != null && !System.getenv("WARP_GCSWIRE_PORT").isBlank();
+            boolean gcsForced = "true".equalsIgnoreCase(System.getenv("WARP_GCSWIRE_ENABLED"));
+            if (gcsStore || gcsPort || gcsForced) {
+                int gcsPortNo = parseIntEnv("WARP_GCSWIRE_PORT", 4443);
+                com.sayonora.wire.gcswire.GcsWireServer gcsWireServer = new com.sayonora.wire.gcswire.GcsWireServer(gcsPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                gcsWireServer.start();
+                log.info("warp listening for Google Cloud Storage (gcswire) on port {}", gcsPortNo);
+            }
+        } catch (Exception e) {
+            log.error("gcswire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // s3wire: Amazon S3 REST API frontend. Postgres mode (objects chunked into the Postgres backends of the
         // set that enabled the "s3" store, sharded by key) or proxy mode (one real S3-compatible backend bucket
         // via WARP_S3WIRE_BACKEND_BUCKET). It starts when either is configured now, or when

@@ -72,6 +72,7 @@ function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
                 {s.id === 'azblob' && <> Blob limits: 5000 MiB per Put Blob, 4000 MiB per block, 50,000 blocks; the container list lives on the first Azure Blob host. Accounts and keys come from WARP_AZURE_ACCOUNTS.</>}
                 {s.id === 'azqueue' && <> A queue lives wholly on one host (hash of account and queue name); messages up to 64 KiB, expiry swept every 10 s.</>}
                 {s.id === 'aztable' && <> Entities are placed by hash of table and PartitionKey; an entity group transaction must stay inside one PartitionKey. Queries without a PartitionKey filter fan out to every host.</>}
+                {s.id === 'gcs' && <> Objects are placed by hash of bucket and object name; the bucket list and HMAC keys live on the first GCS host. Auth: WARP_GCSWIRE_TOKENS (bearer), WARP_GCSWIRE_ALLOW_ANONYMOUS, HMAC keys for the XML API.</>}
                 {s.id === 's3' && <> Limits: 5 GiB per PUT, keys up to 1024 bytes; the bucket list lives on the first S3 host. For very large objects use s3wire proxy mode instead.</>}
                 {editing && wasEnabled.includes(s.id) && !checked && <> Disabling keeps the data in this database but Warp stops serving it.</>}
               </div>

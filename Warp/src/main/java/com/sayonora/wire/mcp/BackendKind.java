@@ -40,7 +40,9 @@ public enum BackendKind {
     /** Warp-hosted Azure Storage stores (described only). */
     AZBLOB("azblob", "azblob_"),
     AZQUEUE("azqueue", "azqueue_"),
-    AZTABLE("aztable", "aztable_");
+    AZTABLE("aztable", "aztable_"),
+    /** The Warp-hosted Google Cloud Storage store (described only). */
+    GCS("gcs", "gcs_");
 
     private final String id;
     private final String prefix;
@@ -78,6 +80,7 @@ public enum BackendKind {
             case "azblob" -> AZBLOB;
             case "azqueue" -> AZQUEUE;
             case "aztable" -> AZTABLE;
+            case "gcs" -> GCS;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

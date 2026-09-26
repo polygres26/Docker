@@ -42,7 +42,9 @@ public enum StoreType {
     AZQUEUE("azqueue", "Azure Queue", "WARP_AZQUEUEWIRE_SET", true,
             "Azure Queue Storage REST API; each queue lives wholly on one backend."),
     AZTABLE("aztable", "Azure Table", "WARP_AZTABLEWIRE_SET", true,
-            "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey.");
+            "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey."),
+    GCS("gcs", "Google Cloud Storage", "WARP_GCSWIRE_SET", true,
+            "Google Cloud Storage JSON and XML APIs; objects are stored as chunked rows and sharded by bucket/object name.");
 
     private final String id;
     private final String label;

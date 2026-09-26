@@ -137,12 +137,14 @@ final class StoreDescribeProvider implements BackendToolProvider {
                     }
                 }
             }
-            case AZBLOB, AZQUEUE, AZTABLE -> {
+            case AZBLOB, AZQUEUE, AZTABLE, GCS -> {
                 String[][] q = switch (store) {
                     case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},
                         {"blobs", "SELECT account || '/' || container, count(*), coalesce(sum(size),0) FROM warp_azblob_blobs WHERE snapshot='' GROUP BY 1 ORDER BY 1"}};
                     case AZQUEUE -> new String[][] {{"queues", "SELECT account || '/' || name, 0, 0 FROM warp_azqueue_queues ORDER BY 1"},
                         {"messages", "SELECT account || '/' || queue, count(*), 0 FROM warp_azqueue_messages WHERE expires_at > now() GROUP BY 1 ORDER BY 1"}};
+                    case GCS -> new String[][] {{"buckets", "SELECT name, 0, 0 FROM warp_gcs_buckets ORDER BY 1"},
+                        {"objects", "SELECT bucket, count(*), coalesce(sum(size),0) FROM warp_gcs_objects WHERE deleted_at IS NULL GROUP BY 1 ORDER BY 1"}};
                     default -> new String[][] {{"tables", "SELECT account || '/' || name, 0, 0 FROM warp_aztable_tables ORDER BY 1"},
                         {"entities", "SELECT account || '/' || tbl, count(*), 0 FROM warp_aztable_entities GROUP BY 1 ORDER BY 1"}};
                 };
