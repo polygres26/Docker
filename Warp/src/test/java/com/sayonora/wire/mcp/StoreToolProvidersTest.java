@@ -73,16 +73,12 @@ class StoreToolProvidersTest {
         for (String w : List.of("redis_set", "redis_delete", "gcs_put_object", "azblob_upload_blob", "azqueue_receive_messages",
                 "sns_publish", "kinesis_put_record", "secrets_put_secret_value", "ssm_put_parameter", "kms_create_key", "pubsub_publish",
                 "pubsub_pull", "pubsub_ack", "firestore_add_document", "datastore_upsert_entity", "bigtable_mutate_row",
-                "bigtable_drop_row_range", "kafka_create_topic", "kafka_delete_topic", "kafka_produce", "cosmos_upsert_item", "cosmos_delete_item", "cosmos_create_database", "cosmos_create_container")) {
-                "bigtable_drop_row_range", "amqp_publish", "amqp_purge_queue", "amqp_declare_queue", "amqp_delete_queue", "amqp_bind",
-                "amqp_declare_exchange")) {
+                "bigtable_drop_row_range", "kafka_create_topic", "kafka_delete_topic", "kafka_produce", "cosmos_upsert_item", "cosmos_delete_item", "cosmos_create_database", "cosmos_create_container", "amqp_publish", "amqp_purge_queue", "amqp_declare_queue", "amqp_delete_queue", "amqp_bind", "amqp_declare_exchange")) {
             assertTrue(writes.contains(w), w + " must be a write tool");
         }
         for (String r : List.of("redis_get", "gcs_get_object", "azblob_get_blob", "azqueue_peek_messages", "sns_list_topics",
                 "kinesis_get_records", "secrets_get_secret_value", "ssm_get_parameter", "kms_decrypt", "kms_encrypt", "pubsub_get_topic",
-                "firestore_query_collection", "datastore_run_query", "bigtable_read_rows", "kafka_fetch", "kafka_list_topics", "kafka_group_lag")) {
-                "firestore_query_collection", "datastore_run_query", "bigtable_read_rows", "amqp_list_queues", "amqp_list_exchanges",
-                "amqp_list_bindings", "amqp_get_messages")) {
+                "firestore_query_collection", "datastore_run_query", "bigtable_read_rows", "kafka_fetch", "kafka_list_topics", "kafka_group_lag", "amqp_list_queues", "amqp_list_exchanges", "amqp_list_bindings", "amqp_get_messages")) {
             assertFalse(writes.contains(r), r + " must not be a write tool");
         }
     }
