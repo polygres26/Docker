@@ -73,3 +73,11 @@ Warp/src/main/proto/google/bigtable/admin/v2/{bigtable_table_admin,table,common,
 (com.sayonora.wire.bigtablewire.*, so the generated classes cannot collide with proto-google-cloud-bigtable) and in that bigtable_table_admin.proto
 omits the three IAM rpcs and their imports. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 . The generated Python stubs under
 Warp/tests/python/bt_conformance/bt_stubs/ are derived from the same files (plus google/api, google/rpc, google/longrunning, google/type) under the same terms.
+
+
+Warp's Apache Cassandra frontend (Warp/src/main/java/com/sayonora/wire/cqlwire/) implements the CQL native protocol (versions 3 and 4) and the CQL language
+subset described in docs/WARP_GUIDE.md; no Apache Cassandra source code is included. Its behaviour (result and error semantics, the Murmur3 partitioner token,
+clustering order, system_schema layout) follows Apache Cassandra 5.0, and is verified by replaying, against Warp, answers recorded from a real
+Apache Cassandra 5.0 container (Apache License, Version 2.0, Copyright The Apache Software Foundation, https://cassandra.apache.org): the recorded answers are
+Warp/tests/python/cql_conformance/golden.json.gz and were produced with the DataStax python-driver (Apache License 2.0), which is a test-time dependency and is
+not redistributed. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 .

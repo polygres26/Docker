@@ -1404,3 +1404,28 @@ Setup: one real Warp process + native Postgres (`WARP_TEST_PG_LOCAL=1`, one back
 | GetTable | 0.53 / 0.64 | 0.16 / 0.30 | 0.16 / 0.29 |
 
 Single-run numbers on a loaded developer machine (other Warp processes were running); read them as order of magnitude. Every operation is reported to the metrics collector under the protocol name `bigtablewire`.
+
+## 2026-09-26: cqlwire (Apache Cassandra CQL native protocol) -- RTT next to a real Apache Cassandra 5.0
+
+Setup: one real Warp process on native Postgres (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), a real Apache Cassandra 5.0.9 (`cassandra:5.0`, Docker, single node, `--memory 1500m`,
+`MAX_HEAP_SIZE=512M`, default `commitlog_sync: periodic`). Client: the DataStax python driver 3.29.3 (`Warp/tests/python/cql_conformance/cql_rtt_bench.py`), protocol v4, one connection, prepared
+statements, consistency ONE, sequential calls, 400 per operation (100 for the LWT and count rows) after the schema was created, median / p99 in ms. The machine was a developer laptop shared with other
+test processes; single run, read as order of magnitude. Warp's default Developer edition caps a process at 25 concurrent client connections, so nothing here measures concurrency.
+
+| operation | Cassandra 5.0 median / p99 | Warp, 1 Postgres median / p99 | Warp, 2 sharded Postgres median / p99 |
+|---|---|---|---|
+| INSERT (prepared) | 0.46 / 0.62 | 0.32 / 0.81 | 0.51 / 2.19 |
+| SELECT by key (prepared) | 0.48 / 0.62 | 0.24 / 0.67 | 0.23 / 0.62 |
+| UPDATE (prepared) | 0.46 / 0.63 | 0.20 / 0.46 | 0.17 / 0.46 |
+| counter UPDATE | 0.49 / 0.72 | 0.26 / 0.53 | 0.15 / 0.29 |
+| LWT INSERT IF NOT EXISTS | 0.91 / 1.25 | 0.48 / 0.97 | 0.39 / 0.72 |
+| SELECT LIMIT 10 in a partition | 0.46 / 0.69 | 0.36 / 1.10 | 0.29 / 0.69 |
+| SELECT count(*) of a 50-row partition | 0.51 / 0.64 | 0.41 / 1.15 | 0.39 / 0.96 |
+
+Caveats, honestly: these are two products with different guarantees, not two builds of one. Cassandra here is a JVM in a Docker VM behind port forwarding whose commit log syncs periodically, and the
+python driver dominates the sub-millisecond numbers; Warp runs natively next to a local Postgres and every write is a synchronously committed Postgres transaction (one statement or transaction per
+CQL operation, no coordinator hop, no replicas). That single-node, localhost setup is why Warp is at or below Cassandra for point reads and writes; it says nothing about a real cluster, replication,
+large datasets or sustained load. The rows that cost more are the honest ones: `INSERT` writes a row marker cell plus one cell per column (one JDBC batch in one transaction), a list, set or map write adds a
+collection tombstone and a delete leaves tombstones, and a read merges cells, static cells and range tombstones in Java (`SELECT LIMIT 10`, `count(*)`). With two backends a single-partition operation
+still touches one host (the higher `INSERT` p99 on two backends is tail latency of single commits, not investigated further, not a second round trip); statements without a partition key read every host and merge. Not measured: paged full scans,
+wide partitions beyond 50 rows, concurrent clients. Every operation is reported to the metrics collector under the protocol name `cqlwire` (labels `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `BATCH`, ...).

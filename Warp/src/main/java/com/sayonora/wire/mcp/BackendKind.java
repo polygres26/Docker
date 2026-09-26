@@ -53,7 +53,9 @@ public enum BackendKind {
     /** The Warp-hosted SNS, Kinesis and Secrets/SSM/KMS/STS stores (described only). */
     SNS("sns", "sns_"),
     KINESIS("kinesis", "kinesis_"),
-    AWSPARAMS("awsparams", "awsparams_");
+    AWSPARAMS("awsparams", "awsparams_"),
+    /** The Warp-hosted Apache Cassandra (CQL) store (described only); {@link #CASSANDRA} is an external Cassandra backend. */
+    CQLSTORE("cqlstore", "cqlstore_");
 
     private final String id;
     private final String prefix;
@@ -99,6 +101,7 @@ public enum BackendKind {
             case "sns" -> SNS;
             case "kinesis" -> KINESIS;
             case "awsparams", "secretsmanager", "ssm", "kms", "sts" -> AWSPARAMS;
+            case "cqlstore" -> CQLSTORE;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

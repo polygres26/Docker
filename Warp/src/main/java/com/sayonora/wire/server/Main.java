@@ -808,6 +808,26 @@ public final class Main {
             log.error("bigtablewire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // cqlwire: Apache Cassandra CQL native protocol (v3/v4, default port 19042) frontend whose data lives in the "cql" store of the
+        // set's Postgres backends, partitions sharded by hash of the partition key (Amazon Keyspaces / Cosmos DB Cassandra API speak
+        // the same protocol). Starts when WARP_CQLWIRE_PORT is set, the cql store is enabled on a backend, or WARP_CQLWIRE_ENABLED=true.
+        // Auth: none by default; WARP_CQLWIRE_AUTH=true (or WARP_AUTH_CREDENTIALS set) requires PasswordAuthenticator SASL PLAIN
+        // against the shared CredentialStore (WARP_AUTH_USER/WARP_AUTH_PASSWORD or WARP_AUTH_CREDENTIALS).
+        try {
+            boolean cqlStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.CQL).isEmpty();
+            boolean cqlPort = System.getenv("WARP_CQLWIRE_PORT") != null && !System.getenv("WARP_CQLWIRE_PORT").isBlank();
+            boolean cqlForced = "true".equalsIgnoreCase(System.getenv("WARP_CQLWIRE_ENABLED"));
+            if (cqlStore || cqlPort || cqlForced) {
+                int cqlPortNo = parseIntEnv("WARP_CQLWIRE_PORT", 19042);
+                com.sayonora.wire.cqlwire.CqlWireServer cqlWireServer = new com.sayonora.wire.cqlwire.CqlWireServer(cqlPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                cqlWireServer.start();
+                log.info("warp listening for Apache Cassandra CQL (cqlwire) on port {}", cqlPortNo);
+            }
+        } catch (Exception e) {
+            log.error("cqlwire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

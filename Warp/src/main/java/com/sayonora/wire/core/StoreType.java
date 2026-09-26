@@ -63,7 +63,11 @@ public enum StoreType {
             "Amazon Kinesis Data Streams API (JSON and CBOR); a stream, its shards and records live wholly on one backend."),
     AWSPARAMS("awsparams", "Secrets, SSM, KMS, STS", "WARP_AWSPARAMSWIRE_SET", true,
             "Secrets Manager, SSM Parameter Store, KMS keys and STS sessions; each secret, parameter and key is placed by "
-                    + "hash of its name or key id, aliases and STS sessions on the first backend.");
+                    + "hash of its name or key id, aliases and STS sessions on the first backend."),
+    CQL("cql", "Cassandra (CQL)", "WARP_CQLWIRE_SET", true,
+            "Apache Cassandra CQL native protocol (also what Amazon Keyspaces and Cosmos DB's Cassandra API speak); a partition "
+                    + "(all its rows) lives on one backend (hash of the partition key), the schema catalog on the first backend of the set, "
+                    + "queries without a partition key scatter-gather over all backends.");
 
     private final String id;
     private final String label;

@@ -2832,3 +2832,54 @@ Sensitive data: `secrets_get_secret_value`, `ssm_get_parameter(s_by_path)` with 
 | bigtable | list_tables, get_table, create_table W, delete_table W, read_rows, read_row, mutate_row W, mutate_rows W, delete_row W, increment W, drop_row_range W |
 
 Names are `<store>_<verb>` (secrets/ssm/kms/sts for awsparams). Vendor MCP tool lists (redis/mcp-redis, Azure MCP, Firebase/Google MCP, AWS labs servers) could not be verified offline; names follow those ecosystems from memory. A new store plugs in with a `StoreToolProvider` subclass plus one `registerStoreTools(...)` line.
+
+#### The Cassandra store (cqlwire)
+
+Enable the `cql` store on a backend (or set `WARP_CQLWIRE_ENABLED=true`, or `WARP_CQLWIRE_PORT`) and Warp speaks the **Apache Cassandra CQL native protocol** (versions 3 and 4) on
+`WARP_CQLWIRE_PORT` (default **19042**). That is the protocol Amazon Keyspaces and Azure Cosmos DB's Cassandra API expose, so an unmodified Cassandra driver (or `cqlsh`) connects with
+`Cluster(["warp-host"], port=19042)`; no Cassandra process exists, the data lives in the Postgres backends of the backend set (`WARP_CQLWIRE_SET` names the set, default the one holding `default`).
+
+- **Protocol.** STARTUP / OPTIONS / READY / SUPPORTED, AUTHENTICATE + AUTH_RESPONSE (`PasswordAuthenticator`, SASL PLAIN), QUERY, PREPARE / EXECUTE (statement id = MD5 of keyspace + text, bind
+  metadata and the partition key indexes drivers use for token-aware routing, `UNPREPARED` with the id so drivers re-prepare), BATCH (logged, unlogged, counter; prepared and simple entries), REGISTER +
+  EVENT (`SCHEMA_CHANGE` pushed to every registered session), paging (`page_size`, opaque `paging_state`), named values, UNSET, default timestamps, serial consistency; consistency levels are accepted and
+  ignored. A v5 STARTUP is answered with Cassandra's "Invalid or unsupported protocol version" error so drivers negotiate down to v4; frame compression is not offered.
+- **Types.** Every native type (`ascii bigint blob boolean counter date decimal double duration float inet int smallint text time timestamp timeuuid tinyint uuid varchar varint`) with the exact
+  native-protocol type options and encodings, `list` / `set` / `map`, `tuple`, user defined types, `frozen<>`, nesting. Clustering keys of every type sort with a **type-aware order-preserving byte
+  encoding** (reverse order = inverted bytes), checked against Cassandra's own comparators for every orderable type.
+- **CQL.** `CREATE / ALTER / DROP KEYSPACE`, `TABLE` (partition + clustering keys, static columns, `CLUSTERING ORDER BY`, options, `ADD` / `DROP` / `RENAME` of primary key columns), `TYPE`, `INDEX` (secondary
+  indexes are catalog entries: indexed queries run without `ALLOW FILTERING` as in Cassandra and are answered by a filtered scan), `TRUNCATE`, `USE`, `DESCRIBE` (the server-side statement `cqlsh` 6 uses:
+  cluster, keyspaces, tables, types, index, schema, exact `CREATE` text). `INSERT` (also `JSON`), `UPDATE`, `DELETE` with `USING TTL` / `TIMESTAMP`, `IF NOT EXISTS` / `IF EXISTS` / `IF col = ..`
+  (lightweight transactions, `[applied]` rows exactly as Cassandra returns them), collection operations (`+`, `-`, `[i] =`, `[key] =`, deletes of elements), counters, `BEGIN [UNLOGGED|COUNTER] BATCH`.
+  `SELECT` with partition key restrictions (`=`, `IN`, `token()`), clustering slices / `IN` / multi-column relations, `ORDER BY`, `LIMIT`, `PER PARTITION LIMIT`, `ALLOW FILTERING`, `CONTAINS [KEY]`,
+  `DISTINCT`, `GROUP BY`, `count / sum / avg / min / max`, `writetime` / `ttl` (also of collections), `SELECT JSON`, arithmetic, `cast`, `token`, `toTimestamp`, `minTimeuuid`, `blobAs*` and friends. Cassandra's
+  restriction rules are reproduced, including which queries need `ALLOW FILTERING`.
+- **Discovery.** `system.local` (with a token ring drivers can build a token map from), `system.peers` / `peers_v2` (empty: Warp presents one node), `system_schema.*` (keyspaces, tables, columns, indexes,
+  types, views, functions, aggregates, triggers, dropped_columns, column_masks) and `system_virtual_schema.*`, all derived from the catalog, so driver metadata, `cqlsh` and schema-aware tools work.
+  `release_version` is `WARP_CQLWIRE_RELEASE_VERSION` (default 4.0.0), the cluster name `WARP_CQLWIRE_CLUSTER_NAME`.
+- **Storage.** Two tables per Postgres host (`ddl/postgres/cqlwire_store.sql`): `warp_cql_schema` (keyspaces, tables, types, indexes as JSON specs; **written only on the first host of the set**, read by
+  every node with a `WARP_CQLWIRE_SCHEMA_TTL_MS` (1000) cache, invalidated at once by DDL through the same node) and `warp_cql_cells`, Cassandra's own storage model: one row per **cell**
+  `(table id, token, partition key, clustering key, column, path, value, write timestamp, expiry)`. A row marker cell is what `INSERT` adds (so `INSERT` and `UPDATE` keep their different
+  existence rules), a collection element is a cell whose `path` is the element (set member, map key, list position), a static column is a cell at the empty clustering key. Cells resolve like Cassandra's: the
+  higher write timestamp wins, a tie goes to a tombstone, then to the greater value. Deletes leave the tombstones Cassandra leaves (cell, row, collection overwrite, clustering range and whole
+  partition), swept `gc_grace_seconds` (10 days) later; TTL expiry is hidden by every read at once and physically swept every `WARP_CQLWIRE_SWEEP_MS` (5000).
+- **Sharding.** A partition (all its cells) lives on **one** backend, chosen by hash of the serialized partition key over the backends of the set that enabled the store; the token is the real
+  `Murmur3Partitioner` token. Single-partition statements, LWTs (a Postgres advisory lock per partition) and batches are one local transaction. Queries **without a partition key**
+  (`SELECT *`, `token()` ranges, `ALLOW FILTERING`, secondary index queries, `DISTINCT`) **scatter-gather**: every host is read in keyset pages and merged in Cassandra's global order
+  `(token, partition key, clustering key)`, so results and `paging_state` are exactly what one node would return. A batch that touches partitions on several hosts is applied host by host (one
+  transaction each): it is not atomic across hosts and has no batchlog. Adding a backend is reported in `rebalanceRequired` (existing data is not moved).
+- **Auth.** None by default. `WARP_CQLWIRE_AUTH=true` (or `WARP_AUTH_CREDENTIALS` set) requires `PasswordAuthenticator` login checked against the shared `CredentialStore` (`WARP_AUTH_USER` /
+  `WARP_AUTH_PASSWORD`, or the `WARP_AUTH_CREDENTIALS` list); nothing but OPTIONS / STARTUP is accepted before authentication.
+- **Pool discipline.** A pooled JDBC connection is borrowed for one statement or transaction and returned before a response is written or a page is waited for: stalled readers and paging
+  clients pin nothing (`WARP_POOL_MAX_SIZE=4` stays responsive under 8 stalled drivers and 8 clients that never read a multi-megabyte result). Every operation is recorded under the protocol name `cqlwire`.
+- **Not implemented** (each listed with its reason in `Warp/tests/python/cql_conformance/cql_known.py`): native protocol v5 framing and compression, materialized views, user defined functions and aggregates,
+  triggers, roles and permissions, the `system_views` tables and most `system.*` tables other than `local` / `peers`, tracing, non-frozen UDT field updates (`col.f = x`), real secondary index
+  structures (SASI / SAI), cross-host batch atomicity, schema-change events for DDL executed through another Warp node (that node's clients see it after the schema cache TTL).
+  Paged `DISTINCT` / `GROUP BY` / aggregate queries re-run the whole query per page.
+- **Verified against a real Apache Cassandra 5.0.9** (`Warp/tests/python/cql_conformance/`, run by `test_cql_conformance.py`). `cql_corpus.py` holds 98 cases (DDL, every type and its clustering order, DML,
+  TTL and tombstones, LWT, counters, batches, paging, collections, UDTs, indexes, JSON, functions, `DESCRIBE`, system tables, errors, and 34 seeded random-operation cases with explicit timestamps),
+  run through the DataStax python driver against a `cassandra:5.0` container; each case was recorded twice and the answers (rows, column names and types, page sizes, error classes and texts) stored in
+  `golden.json.gz`. The test replays the corpus offline against Warp on one and on two sharded Postgres backends: **6,329 compared steps, 6,290 identical, 38 with the same error class and a cosmetic
+  difference in the text (four documented classes: ANTLR syntax-error wording, Jackson JSON errors, the `cast` overload list, role manager), 1 documented semantic difference (a deleted counter that is
+  incremented again resumes from its old value in Cassandra), 0 unexplained**, on both. The real `cqlsh` 6.2 of that image also runs `DESCRIBE`, paging and `CONSISTENCY` against Warp. Also tested: v3 / v4
+  protocol, v5 refusal, malformed and truncated frames, `UNPREPARED`, events, auth, restart durability, concurrent counters and LWT, both-host placement and cleanup, `WARP_CQLWIRE_SET`, MCP describe, and 28
+  Java unit tests (Murmur3 tokens as Cassandra computed them, type codecs, order-preserving keys against the comparators, parser, JSON, schema specs). The Cassandra driver is a test-time dependency only.

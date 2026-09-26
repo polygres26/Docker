@@ -72,6 +72,7 @@ public final class StoreBootstrap {
                 case SNS -> exec(st, "snswire_store");
                 case KINESIS -> exec(st, "kinesiswire_store");
                 case AWSPARAMS -> exec(st, "awsparamswire_store");
+                case CQL -> exec(st, "cqlwire_store");
                 default -> {
                     // per-collection tables are created on first use
                 }
