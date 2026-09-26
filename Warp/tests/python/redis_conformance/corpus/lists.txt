@@ -1,0 +1,290 @@
+## push pop basics
+LPUSH l a b c
+RPUSH l x y
+LRANGE l 0 -1
+LLEN l
+LPUSH l
+LPUSHX nol a
+RPUSHX nol a
+LPUSHX l z
+RPUSHX l w
+LRANGE l 0 -1
+LPOP l
+RPOP l
+LPOP l 2
+RPOP l 2
+LRANGE l 0 -1
+LPOP l 0
+LPOP l -1
+LPOP l abc
+LPOP nol
+LPOP nol 2
+LPOP nol 0
+RPOP nol
+RPOP nol 3
+LPOP l 100
+EXISTS l
+LLEN l
+LLEN nol
+SET s v
+LPUSH s a
+LLEN s
+LPOP s
+LRANGE s 0 -1
+LPUSHX s a
+LINDEX s 0
+LSET s 0 a
+LREM s 0 a
+LTRIM s 0 1
+LINSERT s BEFORE a b
+
+## lrange lindex lset
+RPUSH l a b c d e
+LRANGE l 0 -1
+LRANGE l 1 3
+LRANGE l -3 -1
+LRANGE l -100 100
+LRANGE l 3 1
+LRANGE l 10 20
+LRANGE l -1 -2
+LRANGE l 0 0
+LRANGE l abc 1
+LRANGE nol 0 -1
+LINDEX l 0
+LINDEX l -1
+LINDEX l 4
+LINDEX l 5
+LINDEX l -5
+LINDEX l -6
+LINDEX l abc
+LINDEX nol 0
+LSET l 0 A
+LSET l -1 E
+LSET l 5 x
+LSET l -6 x
+LSET nol 0 x
+LSET l abc x
+LRANGE l 0 -1
+
+## linsert lrem ltrim
+RPUSH l a b c b a
+LINSERT l BEFORE b X
+LINSERT l AFTER a Y
+LINSERT l BEFORE nomatch Z
+LINSERT nol BEFORE a b
+LINSERT l MIDDLE a b
+LRANGE l 0 -1
+LREM l 1 b
+LREM l -1 a
+LREM l 0 nomatch
+LRANGE l 0 -1
+LREM l 0 X
+LREM l abc a
+LREM nol 0 a
+RPUSH r a a a a a
+LREM r 2 a
+LREM r -2 a
+LREM r 0 a
+EXISTS r
+RPUSH t 1 2 3 4 5
+LTRIM t 1 -2
+LRANGE t 0 -1
+LTRIM t 5 10
+EXISTS t
+RPUSH t 1 2 3
+LTRIM t 0 0
+LRANGE t 0 -1
+LTRIM t 0 -1
+LTRIM t -100 100
+LTRIM nol 0 1
+LTRIM t abc 1
+RPUSH t2 1 2 3
+LTRIM t2 2 1
+EXISTS t2
+RPUSH ins 1
+LINSERT ins BEFORE 1 0
+LINSERT ins AFTER 1 2
+LRANGE ins 0 -1
+LINSERT ins BEFORE 1 x
+LINSERT ins BEFORE 1 y
+LINSERT ins BEFORE 1 z
+LRANGE ins 0 -1
+
+## lmove rpoplpush
+RPUSH src a b c
+LMOVE src dst LEFT RIGHT
+LMOVE src dst RIGHT LEFT
+LRANGE src 0 -1
+LRANGE dst 0 -1
+LMOVE src src LEFT RIGHT
+LRANGE src 0 -1
+LMOVE src src RIGHT LEFT
+LRANGE src 0 -1
+LMOVE nol dst LEFT LEFT
+LMOVE src dst UP LEFT
+LMOVE src dst LEFT SIDEWAYS
+LMOVE src dst LEFT
+RPOPLPUSH src dst
+LRANGE dst 0 -1
+RPOPLPUSH src src
+RPOPLPUSH nol dst
+RPOPLPUSH src2 dst2
+SET s v
+LMOVE s dst LEFT LEFT
+LMOVE src s LEFT LEFT
+LRANGE src 0 -1
+RPOPLPUSH src s
+LRANGE src 0 -1
+
+## lpos
+RPUSH l a b c 1 2 3 a b c 1 2 3
+LPOS l a
+LPOS l c
+LPOS l zz
+LPOS l a RANK 2
+LPOS l a RANK -1
+LPOS l a RANK -2
+LPOS l a RANK 3
+LPOS l a RANK 0
+LPOS l a COUNT 0
+LPOS l a COUNT 1
+LPOS l a COUNT 5
+LPOS l a COUNT -1
+LPOS l a RANK 2 COUNT 0
+LPOS l a RANK -1 COUNT 0
+LPOS l a MAXLEN 3
+LPOS l c MAXLEN 3
+LPOS l c MAXLEN 2
+LPOS l a MAXLEN -1
+LPOS l a MAXLEN 1 COUNT 0
+LPOS l a FOO 1
+LPOS l a RANK
+LPOS l a RANK abc
+LPOS nol a
+LPOS nol a COUNT 0
+LPOS l 1 COUNT 0
+LPOS l 1 RANK -1 COUNT 0 MAXLEN 4
+
+## lmpop
+RPUSH l1 a b c
+RPUSH l2 d e
+LMPOP 2 l1 l2 LEFT
+LMPOP 2 nol l2 RIGHT COUNT 5
+LMPOP 2 l1 l2 LEFT COUNT 10
+LMPOP 2 l1 l2 LEFT
+LMPOP 0 l1 LEFT
+LMPOP 1 l1 UP
+LMPOP 1 l1 LEFT COUNT 0
+LMPOP 1 l1 LEFT COUNT abc
+LMPOP 1 l1 LEFT COUNT 1 COUNT 2
+LMPOP 3 l1 l2
+LMPOP abc l1 LEFT
+SET s v
+LMPOP 2 s l1 LEFT
+
+## long list ordering and rebalance
+RPUSH l 1 2 3 4 5 6 7 8 9 10
+LINSERT l BEFORE 5 a
+LINSERT l BEFORE 5 b
+LINSERT l BEFORE 5 c
+LINSERT l BEFORE 5 d
+LINSERT l BEFORE 5 e
+LINSERT l BEFORE 5 f
+LINSERT l BEFORE 5 g
+LINSERT l BEFORE 5 h
+LINSERT l BEFORE 5 i
+LINSERT l BEFORE 5 j
+LINSERT l BEFORE 5 k
+LINSERT l BEFORE 5 l
+LINSERT l BEFORE 5 m
+LINSERT l BEFORE 5 n
+LINSERT l BEFORE 5 o
+LINSERT l BEFORE 5 p
+LINSERT l BEFORE 5 q
+LINSERT l BEFORE 5 r
+LINSERT l BEFORE 5 s
+LINSERT l BEFORE 5 t
+LINSERT l BEFORE 5 u
+LINSERT l BEFORE 5 v
+LINSERT l BEFORE 5 w
+LINSERT l BEFORE 5 x
+LINSERT l BEFORE 5 y
+LINSERT l BEFORE 5 z
+LRANGE l 0 -1
+LINDEX l 12
+LLEN l
+LPUSH l first
+RPUSH l last
+LRANGE l 0 2
+LRANGE l -3 -1
+
+## blocking lists immediate
+RPUSH l a b
+BLPOP l 1
+BRPOP l 1
+BLPOP l 1
+BLPOP nol1 nol2 0.1
+BRPOP nol 0.1
+BLPOP nol -1
+BLPOP nol abc
+BLPOP nol
+BLPOP
+LPUSH l2 x
+BLPOP nol l2 1
+BLMOVE nol dst LEFT LEFT 0.1
+LPUSH src a b
+BLMOVE src dst LEFT RIGHT 1
+BRPOPLPUSH src dst 1
+BRPOPLPUSH src dst 0.1
+BLMPOP 0.1 1 nol LEFT
+LPUSH ml a b c
+BLMPOP 1 1 ml LEFT COUNT 2
+BLMPOP 1 1 ml RIGHT
+BLPOP nol 0.01
+SET s v
+BLPOP s 1
+
+## blocking lists wake
+@c2 > BLPOP bl 5
+!sleep 100
+LPUSH bl v1
+@c2 < 2000
+@c2 > BRPOP bl 5
+!sleep 100
+RPUSH bl v2 v3
+@c2 < 2000
+LRANGE bl 0 -1
+@c3 > BLMOVE bsrc bdst LEFT RIGHT 5
+!sleep 100
+RPUSH bsrc m1
+@c3 < 2000
+LRANGE bdst 0 -1
+@c4 > BLPOP bl1 bl2 5
+!sleep 100
+LPUSH bl2 x
+@c4 < 2000
+@c5 > BLPOP bt 0.3
+@c5 < 1500
+@c6 > BLPOP bx 5
+!sleep 80
+@c7 > BLPOP bx 5
+!sleep 100
+RPUSH bx 1 2
+@c6 < 2000
+@c7 < 2000
+@c8 > BLMPOP 5 2 bm1 bm2 LEFT COUNT 2
+!sleep 100
+RPUSH bm2 a b c
+@c8 < 2000
+LRANGE bm2 0 -1
+@c9 > BRPOPLPUSH brs brd 5
+!sleep 100
+LPUSH brs q
+@c9 < 2000
+
+## multi with blocking
+MULTI
+BLPOP nol 5
+BRPOP nol 5
+BLMOVE nol dst LEFT LEFT 5
+EXEC

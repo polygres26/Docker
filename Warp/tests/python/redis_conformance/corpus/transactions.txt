@@ -1,0 +1,192 @@
+## multi exec basics
+MULTI
+SET a 1
+INCR a
+GET a
+LPUSH l x
+LRANGE l 0 -1
+EXEC
+MULTI
+EXEC
+EXEC
+DISCARD
+MULTI
+MULTI
+DISCARD
+DISCARD
+MULTI
+SET a 1
+DISCARD
+GET a
+MULTI
+SET a 1
+FOO
+SET b 2
+EXEC
+GET b
+GET a
+MULTI
+SET a
+SET b 2
+EXEC
+GET b
+MULTI
+SET a 1
+INCR lst
+LPUSH s x
+EXEC
+MULTI
+LPUSH lst x
+INCR lst
+GET lst
+EXEC
+MULTI
+SET x 1
+EXEC arg
+MULTI foo
+MULTI
+PING
+ECHO x
+EXEC
+MULTI
+SET k v
+EXPIRE k 100
+TTL k
+EXEC
+MULTI
+INCR n
+INCR n
+DEL n
+EXISTS n
+EXEC
+
+## watch unwatch
+SET a 1
+WATCH a
+MULTI
+SET a 2
+EXEC
+GET a
+WATCH a
+SET a 3
+MULTI
+SET a 4
+EXEC
+GET a
+WATCH a
+UNWATCH
+SET a 5
+MULTI
+SET a 6
+EXEC
+GET a
+WATCH nokey
+SET nokey 1
+MULTI
+SET nokey 2
+EXEC
+GET nokey
+WATCH nokey2
+MULTI
+SET nokey2 2
+EXEC
+WATCH a b c
+WATCH
+UNWATCH
+MULTI
+WATCH a
+DISCARD
+WATCH a
+MULTI
+DISCARD
+MULTI
+SET a 1
+EXEC
+
+## watch across connections
+SET a 1
+WATCH a
+@c2 SET a 2
+MULTI
+SET a 3
+EXEC
+GET a
+WATCH a
+@c2 GET a
+MULTI
+SET a 4
+EXEC
+GET a
+WATCH a
+@c2 INCR a
+MULTI
+GET a
+EXEC
+WATCH l
+@c2 LPUSH l x
+MULTI
+LPUSH l y
+EXEC
+LRANGE l 0 -1
+WATCH h
+@c2 HSET h a 1
+MULTI
+HSET h b 2
+EXEC
+WATCH z
+@c2 ZADD z 1 a
+MULTI
+ZADD z 2 b
+EXEC
+WATCH k
+@c2 EXPIRE k 100
+MULTI
+SET k 1
+EXEC
+WATCH k
+@c2 DEL k
+MULTI
+SET k 2
+EXEC
+WATCH k
+@c2 RENAME k2 k3
+MULTI
+SET k 3
+EXEC
+
+## exec with errors inside
+MULTI
+SET a 1
+LPUSH a x
+SET b 2
+EXEC
+GET a
+GET b
+MULTI
+INCRBY a abc
+INCR a
+EXEC
+MULTI
+ZADD z 1 a
+ZADD z abc b
+EXEC
+MULTI
+SET s v
+LPOP s
+SADD s a
+GETSET s x
+EXEC
+
+## multi other connections unaffected
+@c2 MULTI
+@c2 SET a 1
+GET a
+@c2 EXEC
+GET a
+@c2 MULTI
+@c2 INCR n
+@c3 INCR n
+@c2 INCR n
+@c2 EXEC
+GET n
+

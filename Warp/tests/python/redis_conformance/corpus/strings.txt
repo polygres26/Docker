@@ -1,0 +1,245 @@
+## set get basics
+SET a 1
+GET a
+GET missing
+SET a 2 NX
+SET b 2 NX
+GET b
+SET b 3 XX
+SET c 3 XX
+GET c
+SET a "x y" GET
+SET missing2 v GET
+SET a v NX GET
+SET a v XX GET
+SET a v NX XX
+SET a v EX 10 PX 100
+SET a v EX 0
+SET a v EX -1
+SET a v EX abc
+SET a v PX 9223372036854775807
+SET a v EX 9223372036854775807
+SET a
+SET a v FOO
+SET a v KEEPTTL EX 10
+SET a v GET GET
+TYPE a
+STRLEN a
+STRLEN missing
+EXISTS a b missing a
+DEL a b missing
+EXISTS a
+
+## set with expiry options
+SET k v EX 100
+!ttl TTL k
+!ttl PTTL k
+SET k v PX 100000
+!ttl TTL k
+SET k v EXAT 4102444800
+EXPIRETIME k
+PEXPIRETIME k
+SET k v PXAT 4102444800000
+PEXPIRETIME k
+SET k v KEEPTTL
+PEXPIRETIME k
+SET k2 v EX 100
+SET k2 w KEEPTTL
+!ttl TTL k2
+SET k2 w
+TTL k2
+SET k3 v EXAT 1
+GET k3
+EXISTS k3
+SET k4 v PX 50
+!sleep 120
+GET k4
+TTL k4
+EXISTS k4
+
+## getex getdel getset setex psetex setnx
+SETEX a 100 v
+!ttl TTL a
+SETEX a 0 v
+SETEX a -5 v
+SETEX a abc v
+PSETEX b 100000 v
+!ttl PTTL b
+PSETEX b 0 v
+SETNX n 1
+SETNX n 2
+GET n
+GETSET n 5
+GETSET newkey 1
+GET newkey
+GETDEL n
+GETDEL n
+EXISTS n
+SET g v
+GETEX g EX 100
+!ttl TTL g
+GETEX g PERSIST
+TTL g
+GETEX g PX 5000
+!ttl PTTL g
+GETEX g EXAT 4102444800
+EXPIRETIME g
+GETEX g EX 0
+GETEX g EX 10 PERSIST
+GETEX nokey EX 10
+GETEX g
+LPUSH lst a
+GETEX lst
+GETDEL lst
+GETSET lst x
+
+## mget mset msetnx
+MSET a 1 b 2 c 3
+MGET a b c missing
+MGET
+MSET a 1 b
+MSET
+MSETNX x 1 y 2
+MSETNX x 9 z 3
+GET z
+GET x
+MSET dup 1 dup 2
+GET dup
+LPUSH lst v
+MGET a lst b
+MSET a 5 lst overwritten
+TYPE lst
+SET e v EX 100
+MSET e w
+TTL e
+
+## incr decr
+INCR n
+INCR n
+INCRBY n 10
+DECR n
+DECRBY n 100
+INCRBY n abc
+INCRBY n 9223372036854775807
+GET n
+SET big 9223372036854775807
+INCR big
+SET small -9223372036854775808
+DECR small
+DECRBY small -9223372036854775808
+SET s abc
+INCR s
+SET sp " 1"
+INCR sp
+SET lead 01
+INCR lead
+SET plus +1
+INCR plus
+SET neg -5
+INCR neg
+INCRBY neg 5
+GET neg
+SET big2 92233720368547758070
+INCR big2
+INCRBYFLOAT f 1.5
+INCRBYFLOAT f 1.25
+INCRBYFLOAT f -0.75
+INCRBYFLOAT f abc
+INCRBYFLOAT f inf
+INCRBYFLOAT f nan
+SET f2 10.50
+INCRBYFLOAT f2 0.1
+INCRBYFLOAT f2 1e2
+INCRBYFLOAT f2 -110.6
+SET f3 1
+INCRBYFLOAT f3 5.0e3
+INCRBYFLOAT f3 0.00000001
+SET f4 xyz
+INCRBYFLOAT f4 1
+LPUSH lst v
+INCR lst
+INCRBY nokey 5
+INCR e1 e2
+DECRBY x 9223372036854775808
+
+## append strlen getrange setrange substr
+APPEND a hello
+APPEND a " world"
+STRLEN a
+GETRANGE a 0 4
+GETRANGE a -5 -1
+GETRANGE a 0 -1
+GETRANGE a 5 3
+GETRANGE a -100 100
+GETRANGE a 100 200
+GETRANGE a -3 -100
+GETRANGE a 0 x
+GETRANGE missing 0 -1
+SUBSTR a 0 4
+SETRANGE a 6 WORLD
+GET a
+SETRANGE a 20 !
+GET a
+SETRANGE z 5 x
+GET z
+SETRANGE nokey 0 ""
+EXISTS nokey
+SETRANGE a -1 x
+SETRANGE a abc x
+SETRANGE a 536870912 x
+LPUSH lst v
+APPEND lst x
+STRLEN lst
+GETRANGE lst 0 1
+SETRANGE lst 0 x
+SET bin "\x00\x01\xff\xfe"
+STRLEN bin
+GET bin
+APPEND bin "\x00"
+STRLEN bin
+
+## lcs
+MSET key1 ohmytext key2 mynewtext
+LCS key1 key2
+LCS key1 key2 LEN
+LCS key1 key2 IDX
+LCS key1 key2 IDX MINMATCHLEN 4
+LCS key1 key2 IDX MINMATCHLEN 4 WITHMATCHLEN
+LCS key1 key2 LEN IDX
+LCS key1 missing
+LCS missing missing LEN
+LPUSH lst v
+LCS key1 lst
+LCS key1
+LCS key1 key2 FOO
+
+## binary safe and big values
+SET k "a\r\nb"
+GET k
+STRLEN k
+SET empty ""
+GET empty
+STRLEN empty
+EXISTS empty
+APPEND empty ""
+SET utf8 "héllo wörld ✓"
+GET utf8
+STRLEN utf8
+
+## wrong number of arguments
+GET
+GET a b
+SET
+SET a
+SETNX a
+SETEX a 10
+GETSET a
+MGET
+INCR
+INCRBY a
+APPEND a
+STRLEN
+GETRANGE a 0
+SETRANGE a 0
+DEL
+EXISTS

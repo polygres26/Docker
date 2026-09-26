@@ -1,0 +1,143 @@
+## sadd srem sismember
+SADD s a b c
+SADD s a d
+SADD s
+SCARD s
+SISMEMBER s a
+SISMEMBER s zz
+SISMEMBER nokey a
+SMISMEMBER s a zz b
+SMISMEMBER nokey a b
+SMISMEMBER s
+!sort SMEMBERS s
+SMEMBERS nokey
+SREM s a zz
+SREM s
+SREM nokey a
+SCARD s
+SREM s b c d
+EXISTS s
+SCARD nokey
+SET str v
+SADD str a
+SMEMBERS str
+SCARD str
+SISMEMBER str a
+SREM str a
+SPOP str
+SRANDMEMBER str
+SMOVE str s a
+SINTER str s
+
+## spop srandmember smove
+SADD s a b c d e
+!type SPOP s
+SCARD s
+!len SPOP s 2
+SCARD s
+SPOP s 0
+SPOP s -1
+SPOP s abc
+!len SPOP s 10
+EXISTS s
+SPOP s
+SPOP s 3
+SPOP nokey
+SPOP nokey 3
+SADD s a b c
+!type SRANDMEMBER s
+!len SRANDMEMBER s 2
+!len SRANDMEMBER s 10
+!len SRANDMEMBER s -10
+SRANDMEMBER s 0
+SRANDMEMBER s abc
+SRANDMEMBER nokey
+SRANDMEMBER nokey 5
+SRANDMEMBER s 1 2
+SADD src a b
+SADD dst c
+SMOVE src dst a
+SMOVE src dst a
+SMOVE src dst zz
+!sort SMEMBERS src
+!sort SMEMBERS dst
+SMOVE src src b
+SMOVE nokey dst a
+SMOVE src newdst b
+EXISTS src
+SMEMBERS newdst
+SET str v
+SMOVE newdst str x
+
+## set algebra
+SADD s1 a b c d
+SADD s2 c d e f
+SADD s3 d g
+!sort SINTER s1 s2
+!sort SINTER s1 s2 s3
+!sort SINTER s1 nokey
+!sort SINTER nokey
+!sort SINTER s1
+!sort SUNION s1 s2
+!sort SUNION s1 nokey
+!sort SUNION nokey nokey2
+!sort SDIFF s1 s2
+!sort SDIFF s1 s2 s3
+!sort SDIFF nokey s1
+!sort SDIFF s1 nokey
+!sort SDIFF s1
+SINTERSTORE d1 s1 s2
+!sort SMEMBERS d1
+SUNIONSTORE d2 s1 s2 s3
+SCARD d2
+SDIFFSTORE d3 s1 s2
+!sort SMEMBERS d3
+SINTERSTORE d4 s1 nokey
+EXISTS d4
+SUNIONSTORE s1 s1 s2
+SCARD s1
+SDIFFSTORE s1 s1 s1
+EXISTS s1
+SET str v
+SINTER s2 str
+SUNION s2 str
+SDIFF s2 str
+SINTERSTORE d s2 str
+SINTER
+SINTERSTORE d
+SUNION
+SDIFF
+SINTERCARD 2 s2 s3
+SINTERCARD 2 s2 s3 LIMIT 0
+SINTERCARD 2 s2 s3 LIMIT 1
+SINTERCARD 2 s2 nokey
+SINTERCARD 1 s2
+SINTERCARD 0 s2
+SINTERCARD 3 s2 s3
+SINTERCARD 2 s2 s3 LIMIT -1
+SINTERCARD 2 s2 s3 FOO
+SINTERCARD abc s2
+
+## sscan
+SADD s a1 a2 a3 b1
+!sort SSCAN s 0
+!sort SSCAN s 0 MATCH a*
+!sort SSCAN s 0 COUNT 100
+SSCAN s 0 COUNT 0
+SSCAN s abc
+SSCAN nokey 0
+SSCAN s 0 FOO
+SSCAN s
+SET str v
+SSCAN str 0
+
+## resp3 sets resp3
+SADD s a b c
+!sort SMEMBERS s
+SMISMEMBER s a zz
+SISMEMBER s a
+SPOP s 0
+!sort SINTER s s
+SRANDMEMBER nokey 3
+!sort SSCAN s 0
+SMOVE s s a

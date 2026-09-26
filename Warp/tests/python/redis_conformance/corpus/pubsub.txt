@@ -1,0 +1,110 @@
+## subscribe publish
+@c2 > SUBSCRIBE ch1 ch2
+@c2 < 1000
+@c2 < 1000
+PUBLISH ch1 hello
+@c2 < 1000
+PUBLISH ch2 "bin\x00ary"
+@c2 < 1000
+PUBLISH ch3 nobody
+PUBLISH ch1 ""
+@c2 < 1000
+@c2 > SUBSCRIBE ch1
+@c2 < 1000
+PUBLISH ch1 dup
+@c2 < 1000
+@c2 < 200
+@c2 > UNSUBSCRIBE ch1
+@c2 < 1000
+PUBLISH ch1 gone
+@c2 < 200
+@c2 > UNSUBSCRIBE
+@c2 < 1000
+@c2 > UNSUBSCRIBE
+@c2 < 1000
+PUBLISH
+PUBLISH ch
+SUBSCRIBE
+UNSUBSCRIBE nochan
+
+## psubscribe
+@c2 > PSUBSCRIBE news.* h?llo
+@c2 < 1000
+@c2 < 1000
+PUBLISH news.sports goal
+@c2 < 1000
+PUBLISH hello x
+@c2 < 1000
+PUBLISH hallo x
+@c2 < 1000
+PUBLISH other x
+@c2 < 200
+@c2 > SUBSCRIBE news.sports
+@c2 < 1000
+PUBLISH news.sports both
+@c2 < 1000
+@c2 < 1000
+@c2 > PUNSUBSCRIBE news.*
+@c2 < 1000
+PUBLISH news.sports onlyexact
+@c2 < 1000
+@c2 < 200
+@c2 > PUNSUBSCRIBE
+@c2 < 1000
+@c2 > PUNSUBSCRIBE
+@c2 < 1000
+
+## subscribed connection restrictions
+@c2 > SUBSCRIBE ch
+@c2 < 1000
+@c2 GET a
+@c2 SET a 1
+@c2 PING
+@c2 PING hello
+@c2 MULTI
+@c2 SELECT 1
+@c2 ECHO x
+@c2 > UNSUBSCRIBE
+@c2 < 1000
+@c2 PING
+@c2 PING hello
+@c2 SET a 1
+
+## pubsub introspection
+@c2 > SUBSCRIBE a b
+@c2 < 1000
+@c2 < 1000
+@c3 > PSUBSCRIBE p*
+@c3 < 1000
+!sort PUBSUB CHANNELS
+PUBSUB CHANNELS a*
+PUBSUB CHANNELS nomatch*
+PUBSUB NUMSUB a b c
+PUBSUB NUMSUB
+PUBSUB NUMPAT
+PUBSUB FOO
+PUBSUB
+PUBSUB CHANNELS a b
+
+## resp3 pubsub resp3
+@c2 > SUBSCRIBE ch1
+@c2 < 1000
+PUBLISH ch1 hi
+@c2 < 1000
+PUBLISH ch1 hi2
+@c2 < 1000
+@c3 > PSUBSCRIBE c*
+@c3 < 1000
+PUBLISH ch1 both
+@c2 < 1000
+@c3 < 1000
+PUBSUB NUMSUB ch1
+PUBSUB CHANNELS
+
+## ping variants
+PING
+PING hello
+PING a b
+ECHO hello
+ECHO
+ECHO a b

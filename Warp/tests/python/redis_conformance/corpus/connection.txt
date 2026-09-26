@@ -1,0 +1,94 @@
+## client and server commands
+CLIENT SETNAME myname
+CLIENT GETNAME
+CLIENT SETNAME "bad name"
+CLIENT SETINFO LIB-NAME redis-py
+CLIENT SETINFO LIB-VER 1.0
+CLIENT SETINFO FOO x
+!type CLIENT ID
+CLIENT NO-EVICT ON
+CLIENT NO-EVICT maybe
+CLIENT FOO
+CLIENT
+ECHO hi
+!type TIME
+DBSIZE
+!ignore COMMAND COUNT
+!type COMMAND
+!ignore COMMAND INFO get
+COMMAND INFO nosuchcommand
+COMMAND GETKEYS SET a 1
+COMMAND GETKEYS MSET a 1 b 2
+COMMAND GETKEYS PING
+COMMAND GETKEYS FOO a
+COMMAND GETKEYS GET
+CONFIG GET maxmemory
+CONFIG GET nosuchparam
+CONFIG SET maxmemory 100
+CONFIG GET maxmemory
+CONFIG SET maxmemory 0
+CONFIG SET nosuchparam 1
+!ignore CONFIG SET maxmemory abc
+CONFIG FOO
+SLOWLOG LEN
+SLOWLOG RESET
+LATENCY RESET
+WAIT 0 0
+WAIT abc 0
+ROLE
+!ignore LASTSAVE
+!type LASTSAVE
+!ignore BGSAVE
+!ignore SAVE
+QUIT
+
+## hello resp2 resp3
+!len HELLO
+!len HELLO 2
+!len HELLO 3
+HELLO 4
+HELLO abc
+!ignore HELLO 3 SETNAME nm
+CLIENT GETNAME
+HELLO 3 FOO
+!ignore HELLO 3 AUTH default wrong
+PING
+GET x
+HGETALL nokey
+!ignore HELLO 2
+HGETALL nokey
+
+## resp3 types resp3
+HSET h a 1
+HGETALL h
+SADD s a
+SMEMBERS s
+ZADD z 1.5 a
+ZSCORE z a
+ZSCORE z none
+GET none
+LRANGE l 0 -1
+EXISTS h
+SET n 1
+INCRBYFLOAT n 1.5
+CONFIG GET maxmemory
+!type INFO
+RESET
+PING
+
+## reset
+MULTI
+SET a 1
+RESET
+GET a
+SELECT 3
+RESET
+SET a 1
+SELECT 0
+GET a
+
+## unknown and errors
+FOO
+FOO a b c
+"" 
+NOSUCH "x y"
