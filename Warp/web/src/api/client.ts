@@ -654,3 +654,69 @@ export interface NodeInfo {
 export async function listNodes(): Promise<NodeInfo[]> {
   return api('/api/nodes')
 }
+
+// ---- A/B routing (com.sayonora.wire.ab): real cloud vs local emulation, per store ----------------------------
+
+export interface AbPolicy {
+  store: string
+  mode: 'local' | 'cloud' | 'split' | 'compare'
+  target: string | null
+  cloudPercent: number
+  stickyBy: string
+  writeOwner: 'local' | 'cloud'
+  dualWrite: boolean
+  rules: Array<{ name: string; accessKey: string | null; ip: string | null; header: string | null; headerValue: string | null; route: string; pinWrites: boolean }>
+  compare: { primary: 'local' | 'cloud'; bufferSize: number; recordValues: boolean }
+  roleOverrides: Record<string, string>
+}
+
+export interface AbKill { side: 'local' | 'cloud'; reason: string | null; by: string | null; at: number }
+
+export interface AbState {
+  version: number
+  policies: Record<string, AbPolicy>
+  /** Secrets are never returned: only `<name>Set: true` flags inside `auth`. */
+  targets: Array<{ name: string; region: string; auth: { type: string } & Record<string, unknown> }>
+  killSwitch: AbKill | null
+  storeKill: Record<string, AbKill>
+  persistent: boolean
+  secretsEncryptedAtRest: boolean
+}
+
+export interface AbCompareEntry {
+  ts: number; store: string; op: string; client: string; primary: string
+  localStatus: number; cloudStatus: number; localMs: number; cloudMs: number; equal: boolean; diffs: string[]
+}
+
+export interface AbStats {
+  sides: Record<string, { requests: number; errors: number; errorRate: number; avgMs: number }>
+  compare: Record<string, { compared: number; equal: number; differ: number; secondaryFailed: number; dualWriteOk: number; dualWriteFailed: number }>
+}
+
+export async function getAbRouting(): Promise<AbState> {
+  return api<AbState>('/api/ab-routing')
+}
+
+export async function putAbPolicy(store: string, policy: Partial<AbPolicy>): Promise<AbState> {
+  return api<AbState>(`/api/ab-routing/policies/${encodeURIComponent(store)}`, { method: 'PUT', body: JSON.stringify(policy) })
+}
+
+export async function deleteAbPolicy(store: string): Promise<AbState> {
+  return api<AbState>(`/api/ab-routing/policies/${encodeURIComponent(store)}`, { method: 'DELETE' })
+}
+
+export async function setAbKillSwitch(side: 'local' | 'cloud', reason?: string): Promise<AbState> {
+  return api<AbState>('/api/ab-routing/kill-switch', { method: 'POST', body: JSON.stringify({ side, reason }) })
+}
+
+export async function clearAbKillSwitch(): Promise<AbState> {
+  return api<AbState>('/api/ab-routing/kill-switch', { method: 'DELETE' })
+}
+
+export async function getAbCompare(onlyDiff: boolean): Promise<{ entries: AbCompareEntry[] }> {
+  return api<{ entries: AbCompareEntry[] }>(`/api/ab-routing/compare?limit=100${onlyDiff ? '&onlyDiff=true' : ''}`)
+}
+
+export async function getAbStats(): Promise<AbStats> {
+  return api<AbStats>('/api/ab-routing/stats')
+}

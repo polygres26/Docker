@@ -114,7 +114,21 @@ public final class DynamoWireServer {
         com.sayonora.wire.dynamowire.auth.SigV4Verifier sigV4Verifier =
                 new com.sayonora.wire.dynamowire.auth.SigV4Verifier(awsIamCredentials);
         this.server = new Server(port);
-        server.setHandler(new AbstractHandler() {
+        // A/B routing (com.sayonora.wire.ab): the same authentication as below, run before a request leaves for the cloud
+        com.sayonora.wire.ab.AbRouting.Authenticator abAuth = (request, response, bodyBytes) -> {
+            if (!connectionGate.acceptHttp(request)) {
+                return com.sayonora.wire.ab.AbRouting.AuthResult.denied(403, "AccessDeniedException", "forbidden");
+            }
+            String b = bodyBytes == null ? "" : new String(bodyBytes, StandardCharsets.UTF_8);
+            if (awsIamCredentials.isEnabled()) {
+                com.sayonora.wire.dynamowire.auth.SigV4Verifier.Result r = sigV4Verifier.verify(request, b);
+                return r.valid() ? com.sayonora.wire.ab.AbRouting.AuthResult.ok(r.accessKeyId())
+                        : com.sayonora.wire.ab.AbRouting.AuthResult.denied(401, "UnrecognizedClientException", r.reason());
+            }
+            return oauth.enforce(request, response) == null ? com.sayonora.wire.ab.AbRouting.AuthResult.respondedAlready()
+                    : com.sayonora.wire.ab.AbRouting.AuthResult.ok(null);
+        };
+        server.setHandler(com.sayonora.wire.ab.AbRouting.wrap("dynamodb", new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException {
                 baseRequest.setHandled(true);
@@ -135,7 +149,7 @@ public final class DynamoWireServer {
                 }
                 handleRequest(request, response, body);
             }
-        });
+        }, abAuth));
     }
 
     private void handleRequest(HttpServletRequest request, HttpServletResponse response, String body) throws IOException {

@@ -128,6 +128,11 @@ public final class MetricsRenderer {
             }
         }
 
+        com.sayonora.wire.ab.AbRouting ab = com.sayonora.wire.ab.AbRouting.get();
+        if (ab != null) {
+            out.append(ab.stats().prometheus());
+        }
+
         return out.toString();
     }
 

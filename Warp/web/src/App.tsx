@@ -16,6 +16,7 @@ import Qos from './pages/Qos'
 import Rollups from './pages/Rollups'
 import LlmConfig from './pages/LlmConfig'
 import FederationPlans from './pages/FederationPlans'
+import AbRouting from './pages/AbRouting'
 
 /** Gate: redirects to /connect unless a base URL + token are already sitting in sessionStorage.
  * Unlike advisor's RequireAuth, this never calls the server to check -- Warp's admin API has
@@ -40,6 +41,7 @@ export default function App() {
       {/* Backends now live inside backend sets; the old page is gone, old links keep working */}
       <Route path="/backends" element={<Navigate to="/backend-sets" replace />} />
       <Route path="/backend-sets" element={<RequireAuth><BackendSets /></RequireAuth>} />
+      <Route path="/ab-routing" element={<RequireAuth><AbRouting /></RequireAuth>} />
       <Route path="/queues" element={<RequireAuth><Queues /></RequireAuth>} />
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
       <Route path="/router" element={<RequireAuth><RouterRules /></RequireAuth>} />

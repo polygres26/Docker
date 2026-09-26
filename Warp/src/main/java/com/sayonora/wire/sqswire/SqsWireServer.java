@@ -82,7 +82,7 @@ public final class SqsWireServer {
         ServerConnector connector = new ServerConnector(server);
         connector.setPort(port);
         server.addConnector(connector);
-        server.setHandler(new AbstractHandler() {
+        server.setHandler(com.sayonora.wire.ab.AbRouting.wrap("sqs", new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
                     throws IOException {
@@ -101,7 +101,9 @@ public final class SqsWireServer {
                     handleQuery(request, response, body, requestId);
                 }
             }
-        });
+        }, (request, response, bodyBytes) -> connectionGate.acceptHttp(request)
+                ? com.sayonora.wire.ab.AbRouting.AuthResult.ok(null)
+                : com.sayonora.wire.ab.AbRouting.AuthResult.denied(403, "AccessDenied", "forbidden")));
     }
 
     private static int threadPoolSize() {

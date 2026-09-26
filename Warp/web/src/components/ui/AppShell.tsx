@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Activity, Boxes, Cpu, GitMerge, KeyRound, Layers, LayoutDashboard, ListOrdered, LogOut,
-  Menu, Network, Route, Shield, SlidersHorizontal, TableProperties, Waypoints, X,
+  Menu, Network, Route, Shield, Split, SlidersHorizontal, TableProperties, Waypoints, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
@@ -24,6 +24,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
       { to: '/router', label: 'Router rules', icon: Route },
       { to: '/backend-sets', label: 'Backend sets', icon: Boxes },
       { to: '/queues', label: 'Queues', icon: ListOrdered },
+      { to: '/ab-routing', label: 'A/B routing', icon: Split },
     ],
   },
   {

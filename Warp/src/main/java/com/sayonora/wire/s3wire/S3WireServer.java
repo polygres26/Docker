@@ -107,14 +107,30 @@ public final class S3WireServer {
         this.api = postgresStore == null ? null : new S3Api(postgresStore, config);
         this.server = new Server(port);
         allowAmbiguousKeyPaths(server);
-        server.setHandler(new AbstractHandler() {
+        // A/B routing (com.sayonora.wire.ab): authenticate exactly like serve() does, then forward to the cloud when the policy says so
+        com.sayonora.wire.ab.AbRouting.Authenticator abAuth = (request, response, bodyBytes) -> {
+            if (!connectionGate.acceptHttp(request)) {
+                return com.sayonora.wire.ab.AbRouting.AuthResult.denied(403, "AccessDenied", "Access denied by Warp connection ACL");
+            }
+            S3SigV4Verifier.Result auth = verifier.verify(request.getMethod(), request.getRequestURI(), request.getQueryString(),
+                    headers(request), Instant.now());
+            if (!auth.valid()) {
+                return com.sayonora.wire.ab.AbRouting.AuthResult.denied(auth.status(), auth.code(), auth.message());
+            }
+            Addr addr = address(request);
+            String path = !addr.vhost() ? null : "/" + com.sayonora.wire.ab.AbSigV4.enc(addr.bucket(), false)
+                    + (addr.key().isEmpty() ? "/" : "/" + com.sayonora.wire.ab.AbSigV4.enc(addr.key(), true));
+            S3SigV4Verifier.ChunkAuth chunk = auth.chunk();
+            return com.sayonora.wire.ab.AbRouting.AuthResult.ok(auth.accessKeyId(), in -> new AwsChunkedInputStream(in, chunk), path);
+        };
+        server.setHandler(com.sayonora.wire.ab.AbRouting.wrap("s3", new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
                     HttpServletResponse response) throws IOException {
                 baseRequest.setHandled(true);
                 serve(request, response, connectionGate);
             }
-        });
+        }, abAuth));
     }
 
     /**

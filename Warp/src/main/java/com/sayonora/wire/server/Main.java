@@ -332,6 +332,8 @@ public final class Main {
         // like the SQL wire protocols do) so the traffic dashboard and every metrics export path
         // reflect all six wire protocols, not just the four that share the pipeline.
         com.sayonora.wire.core.SqlMetricsCollector sqlMetrics = new com.sayonora.wire.core.SqlMetricsCollector();
+        // A/B routing (real cloud vs local emulation) for the AWS-family frontends; hot-reloaded from the control plane
+        com.sayonora.wire.ab.AbRouting.init(options, sqlMetrics);
         if (cacheStage != null) {
             cacheStage.setSqlMetrics(sqlMetrics);
         }

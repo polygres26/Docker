@@ -543,6 +543,21 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (com.sayonora.wire.ab.AbRoutingApi.handles(target)) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    com.sayonora.wire.ab.AbRoutingApi.handle(target, request, response,
+                            accessContext.isAnonymous() ? "shared-admin-token" : accessContext.userId());
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (configStore != null && backendRegistry != null && options != null
                         && BackendSetsApi.handles(target)) {
                     if (!authorized(request.getMethod(), role)) {

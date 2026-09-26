@@ -2883,3 +2883,147 @@ Enable the `cql` store on a backend (or set `WARP_CQLWIRE_ENABLED=true`, or `WAR
   incremented again resumes from its old value in Cassandra), 0 unexplained**, on both. The real `cqlsh` 6.2 of that image also runs `DESCRIBE`, paging and `CONSISTENCY` against Warp. Also tested: v3 / v4
   protocol, v5 refusal, malformed and truncated frames, `UNPREPARED`, events, auth, restart durability, concurrent counters and LWT, both-host placement and cleanup, `WARP_CQLWIRE_SET`, MCP describe, and 28
   Java unit tests (Murmur3 tokens as Cassandra computed them, type codecs, order-preserving keys against the comparators, parser, JSON, schema specs). The Cassandra driver is a test-time dependency only.
+
+### 4.9 A/B routing: the real cloud service versus Warp's local emulation (AWS family)
+
+For A/B testing an application against both the real AWS service and Warp's Postgres-backed emulation of it. Clients keep
+pointing at Warp and keep authenticating to Warp as today. Per store, an operator configures a **routing policy** that decides,
+per request, whether it is served **locally** (Warp's own emulation), by the **cloud**, or by **both** (compare). It covers
+**S3** (s3wire), **DynamoDB** (dynamowire) and **SQS** (sqswire), and therefore also the unified **awswire** endpoint, which
+dispatches to those same handlers in process. The design leaves room for other frontends (the routing hook is one line around a
+frontend's Jetty handler, see `com.sayonora.wire.ab.AbRouting.wrap`).
+
+There is **no data copy and no mirror-write mode**: the feature assumes the data already exists on both sides.
+
+#### Concepts
+
+| Term | Meaning |
+|---|---|
+| Store | `s3`, `dynamodb` or `sqs`; one policy per store. The store is served by that frontend's backend set as usual. |
+| Cloud target | A named cloud endpoint set plus an **auth provider** (how Warp itself authenticates to the cloud). |
+| Policy | Mode (`local`, `cloud`, `split`, `compare`), split percentage, sticky key, rules, compare settings, write owner, dual-write, role overrides. |
+| Kill switch | One call that sends everything (or one store) to one side, overriding every policy and rule. |
+
+Policies, targets and the kill switch live in the control-plane database (table `warp_ab_routing`, versioned, appended on every
+change) and reach **every Warp node immediately** through a `NOTIFY` on that table (a ~10 s poll backs up a missed notification),
+the same mechanism `warp_config` uses for backend sets. A change made through any node's admin API is effective on that node at
+once and on the others within moments; **no restart**.
+
+#### Decision order
+
+1. **Kill switch** (per store, else global): local or cloud, for reads and writes.
+2. The first matching **rule** (rules are evaluated in order): route `local`, `cloud` or `compare`.
+3. Otherwise the policy **mode**: `local`, `cloud`, `compare`, or `split`.
+
+`split` is **sticky per client**: the client key (`stickyBy`: `accessKey` (default), `ip`, or `header:<Name>`; falling back to the
+access key, then the IP) is hashed together with the policy `seed` into a bucket 0..9999. A client whose bucket is below
+`cloudPercent * 100` is a cloud client. The same client always lands on the same side; raising the percentage only ever moves
+clients from local to cloud.
+
+Rule matchers: `accessKey` (exact or `*` glob; the access key id is read from the SigV4 `Authorization` header or a presigned URL,
+which Warp verifies as always), `ip` (address or CIDR, IPv4 or IPv6; the TCP peer, or the first `X-Forwarded-For` entry when
+`trustXForwardedFor` is set), `header` + `headerValue` (glob). A rule needs at least one matcher; several matchers must all match.
+
+#### Reads, writes, compare
+
+* **Reads and idempotent operations** follow the decision above.
+* **Compare** (`mode: "compare"` or a `compare` rule): a read is sent to **both** sides; the answer of `compare.primary`
+  (`local` default, or `cloud`) is returned to the client; the other side runs alongside and is only recorded. Per compared
+  request Warp records: status of each side, latency of each side, a **normalised body diff** (JSON and XML are flattened to
+  path/value pairs; key order, number formatting and volatile keys such as `RequestId`, `HostId`, `ResponseMetadata`,
+  `ConsumedCapacity` are ignored, configurable in `compare.ignoreKeys`; opaque bodies such as S3 object bytes are compared by SHA-256
+  and length), and the outcome. Diffs list paths, not values, unless `compare.recordValues` is `true`.
+  Results go into a **bounded in-memory ring buffer per node** (`compare.bufferSize`, default 500, max 5000), into counters and latency
+  histograms per store and side (`GET /api/ab-routing/stats`, and `warp_ab_*` series on `/metrics`), and into the
+  `SqlMetricsCollector` traffic dashboard (backend label `ab-cloud:<target>`, next to the local traffic). Compare buffers at most
+  `compare.maxBodyBytes` (default 4 MiB) of each body; bigger bodies are still hashed completely.
+* **Writes** (everything not idempotent: PutObject, DeleteObject, multipart, PutItem, SendMessage, ...; DynamoDB PartiQL statements and
+  SQS `ReceiveMessage` are treated as writes because they can change state) in a split-family situation go to **ONE side only**, the
+  policy's `writeOwner` (`local` default, or `cloud`). A rule with `pinWrites: true` sends that client's writes to the rule's side instead.
+  Pure `local` / `cloud` modes send everything to that side.
+* **Dual-write** is off unless `dualWrite: true`. The write owner answers the client; the same write is then sent to the other side (local
+  request bodies are buffered up to `dualWriteMaxBytes`, default 16 MiB; larger writes are refused with `EntityTooLarge`). If the second
+  write fails, Warp counts it (`dualWriteFailed`) and logs a warning, and **the two sides now differ**. Dual-write is best effort and is
+  **not** a transaction: **it drifts whenever either side fails**, and split-mode writes to one owner leave the other side stale by design.
+  Reads that are routed to the side that does not own the writes therefore return that side's (older) data. That is the point of an
+  A/B test; do not use split with a single write owner as a replication strategy.
+
+#### Passthrough (what the cloud sees)
+
+Warp first **authenticates the client exactly as it does for a local request** (connection ACL, SigV4 against the configured
+credentials, OAuth), then forwards the request at the HTTP layer:
+
+* the request is **re-signed** (SigV4) for the cloud endpoint with the cloud target's identity; the client's own credentials never
+  leave Warp;
+* **S3 bodies are streamed**, never buffered whole (the client's `aws-chunked` framing is decoded, each chunk signature verified as for a
+  local upload, and the body sent with `UNSIGNED-PAYLOAD`; a plain single-part upload keeps the client's payload hash); JSON protocols
+  (DynamoDB, SQS) are small and buffered;
+* status, headers, body and **error XML/JSON are the cloud's own** (`x-amz-request-id` and friends are preserved);
+* SQS queue URLs are translated in both directions (Warp's address and account for the cloud's; set `sqsAccountId` on the target when the cloud
+  account differs), so a client never learns a cloud URL;
+* when the cloud cannot be reached or Warp cannot obtain credentials, the client gets a `503 ServiceUnavailable` / `502 WarpCloudAuthFailure`
+  in the protocol's own error format (no secret in the message).
+
+Not supported on the cloud path: browser POST-policy uploads and CORS preflight (both local only), and S3 Select event streams beyond
+what a plain HTTP pass-through carries.
+
+#### Cloud targets and authentication
+
+A target is `{region, endpoint | endpoints{s3,dynamodb,sqs}, sqsAccountId?, timeoutSeconds?, auth{...}}`. Without an explicit endpoint the
+regional AWS endpoint is used (`https://s3.<region>.amazonaws.com`, ...). `auth.type`:
+
+| type | fields | notes |
+|---|---|---|
+| `static` | `accessKeyId`, `secretAccessKey`, `sessionToken?` | Long-lived keys. |
+| `assume-role` | `roleArn`, `externalId?`, `sessionName?`, `durationSeconds?`, `refreshSkewSeconds?` (default 300), `stsEndpoint?`, `source{static, web-identity or default-chain}` (default `default-chain`) | STS `AssumeRole` signed with the source credentials; the temporary credentials are **refreshed automatically** before they expire (and the previous credentials keep being used if a refresh fails while they are still valid). |
+| `web-identity` | `roleArn`, `tokenFile` (or `AWS_ROLE_ARN` / `AWS_WEB_IDENTITY_TOKEN_FILE`), `stsEndpoint?` | STS `AssumeRoleWithWebIdentity` (IRSA); the token file is re-read on every refresh. |
+| `default-chain` | none | IRSA environment when present, else the AWS SDK for Java v2 default chain (environment, system properties, profile, container credentials, instance/pod role). |
+| `azure-service-principal`, `azure-managed-identity`, `google-service-account`, `google-workload-identity`, `google-impersonation` | | **UNIMPLEMENTED stubs**: the `AbAuthProvider` interface is the extension point; configuring one is rejected with an `UNIMPLEMENTED` error. |
+
+**Narrowing permissions per Warp client.** Warp calls the cloud with its own configured identity (the target). A policy's `roleOverrides`
+map (`{"<client key>": "<role ARN>"}`, client key = the access key id) makes Warp assume that role, using the target's credentials as
+the base, for that client's requests, each role with its own refreshed credential cache. Use it to give a Warp client a cloud identity
+narrower than the target's.
+
+**Secrets.** Keys, session tokens and client secrets are encrypted field by field at rest with the repository's existing field cipher
+(AES-256-GCM, `SAYONORA_ENCRYPTION_KEY`, base64 of 32 bytes) and are **never returned** by the admin API (only `secretAccessKeySet: true`),
+never logged and never in metrics. Warp **refuses to store** a secret while `SAYONORA_ENCRYPTION_KEY` is not set (override only for a lab with
+`WARP_AB_ALLOW_PLAINTEXT_SECRETS=true`); the key must be set on every node. Updating a target without repeating a secret keeps the stored one.
+Targets of type `default-chain` and `web-identity` need no stored secret at all.
+
+#### Admin API and UI
+
+All under `/api/ab-routing`; reads need the read role, changes the admin role.
+
+| call | purpose |
+|---|---|
+| `GET /api/ab-routing` | policies, targets (redacted), kill switch, config version |
+| `PUT /api/ab-routing/targets/{name}` | create or replace a cloud target |
+| `POST /api/ab-routing/targets/{name}/test` | resolve credentials once; returns ok, expiry, never the credentials |
+| `DELETE /api/ab-routing/targets/{name}` | refused while a policy uses it |
+| `PUT /api/ab-routing/policies/{store}` / `DELETE` | set / remove a store's policy (`s3`, `dynamodb`, `sqs`) |
+| `POST /api/ab-routing/kill-switch` `{"side":"local"\|"cloud","store"?,"reason"?}` / `DELETE [?store=]` | engage / lift |
+| `GET /api/ab-routing/compare[?store=&onlyDiff=true&limit=]` / `DELETE` | this node's compare ring buffer |
+| `GET /api/ab-routing/stats` | per store and side: requests, errors, error rate, latency histogram; compare and dual-write counters |
+
+```bash
+curl -X PUT $WARP/api/ab-routing/targets/prod -H "Authorization: Bearer $TOKEN" -d '{
+  "region":"eu-west-1",
+  "auth":{"type":"assume-role","roleArn":"arn:aws:iam::123456789012:role/warp-ab","source":{"type":"default-chain"}}}'
+curl -X PUT $WARP/api/ab-routing/policies/s3 -H "Authorization: Bearer $TOKEN" -d '{
+  "mode":"split","target":"prod","cloudPercent":10,"stickyBy":"accessKey","writeOwner":"local",
+  "rules":[{"name":"canary","accessKey":"AKIACANARY*","route":"compare"}],
+  "roleOverrides":{"AKIAREADONLYAPP":"arn:aws:iam::123456789012:role/warp-ab-readonly"}}'
+curl -X POST $WARP/api/ab-routing/kill-switch -H "Authorization: Bearer $TOKEN" -d '{"side":"local","reason":"incident 42"}'
+```
+
+The **A/B routing** page of the admin UI shows the kill switch, edits the mode / percentage / write owner / dual-write / target per store,
+and lists compare differences and per-side counters. Rules, sticky key and role overrides are edited through the API.
+
+#### Limits and what is not covered
+
+* Kill switch and policy changes affect **new requests**; requests already running finish on the side they started on.
+* The compare ring buffer and the counters are **per node and in memory** (the dashboard shows the node it is connected to).
+* Diff samples can reveal data when `compare.recordValues` is on; it is off by default.
+* Azure and Google auth providers are interface stubs only, and Azure/Google frontends do not use this feature yet.
+* The AWS SDK default chain is used as is; IMDS/pod-role/IRSA flows against real AWS infrastructure depend on that environment.
