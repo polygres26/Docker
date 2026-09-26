@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Boxes, Check, Copy, PlugZap, Plus, Pencil, Route as RouteIcon, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { PlugZap, Route as RouteIcon, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
   type BackendDraft, type BackendSetInfo, type BackendSetsResponse, type BackendTestResult, type BackendWriteResult,
   type ConnectionRoute, type ConnectionRouting, type SetBackend, type StoreId, type StoreInfo, type WireConfig,
-  addBackendToSet, addConnectionRoute, createBackendSet, deleteBackendSet, deleteConnectionRoute, deleteSetBackend,
-  getWireConfig, listBackendSets,
+  addBackendToSet, addConnectionRoute, deleteConnectionRoute,
+  getWireConfig,
   saveWireConfig, testBackendConnection, testSetBackend, updateSetBackend,
-} from '../api/client'
-import CredentialField from '../components/CredentialField'
-import { Button, DataTable, EmptyState, Field, Loading, Notice, PageHeader, Section, StatusPill, Tag } from '../components/ui'
-import styles from './BackendSets.module.css'
+} from '../../api/client'
+import CredentialField from '../../components/CredentialField'
+import { Button, CopyButton, DataTable, EmptyState, Field, IconButton, Loading, Notice, Section, StatusPill, Tag } from '../../components/ui'
+import styles from './parts.module.css'
 
 const isPostgresUrl = (url: string) => url.trim().toLowerCase().startsWith('jdbc:postgresql:')
 
@@ -19,7 +19,7 @@ function errorText(e: unknown): string {
 }
 
 /** What the last write reported: version, stores whose shard layout changed, warnings. */
-function WriteNotice({ result, what }: { result: BackendWriteResult; what: string }) {
+export function WriteNotice({ result, what }: { result: BackendWriteResult; what: string }) {
   return (
     <>
       <Notice tone="ok">{what} — warp_config version {result.version}. Every Warp instance picks it up within a moment.</Notice>
@@ -31,12 +31,12 @@ function WriteNotice({ result, what }: { result: BackendWriteResult; what: strin
   )
 }
 
-function storeLabel(stores: StoreInfo[], id: StoreId): string {
+export function storeLabel(stores: StoreInfo[], id: StoreId): string {
   return stores.find((s) => s.id === id)?.label ?? id
 }
 
 /** "Enable stores" checkboxes for a Postgres backend, with the sharding / Neo4j-once notes. */
-function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
+export function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
   stores: StoreInfo[]; set: BackendSetInfo; editing?: SetBackend; value: StoreId[]; onChange: (v: StoreId[]) => void
   wasEnabled: StoreId[]
 }) {
@@ -96,7 +96,7 @@ function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
   )
 }
 
-function BackendEditor({ set, editing, stores, onDone, onCancel }: {
+export function BackendEditor({ set, editing, stores, onDone, onCancel }: {
   set: BackendSetInfo; editing?: SetBackend; stores: StoreInfo[]
   onDone: (r: BackendWriteResult, what: string) => void; onCancel: () => void
 }) {
@@ -164,7 +164,7 @@ function BackendEditor({ set, editing, stores, onDone, onCancel }: {
 
         {canHost
           ? <StoresFieldset stores={stores} set={set} editing={editing} value={enabled} onChange={setEnabled} wasEnabled={editing?.enabledStores ?? []} />
-          : <Notice tone="muted">Only Postgres backends can host protocol stores (InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3, Redis, Azure Blob/Queue/Table).</Notice>}
+          : <Notice tone="muted">Only Postgres backends can host protocol stores ({stores.map((s) => s.label).join(', ')}).</Notice>}
 
         {error && <Notice tone="bad">{error}</Notice>}
         {test && (
@@ -182,7 +182,7 @@ function BackendEditor({ set, editing, stores, onDone, onCancel }: {
   )
 }
 
-function StoreTags({ backend, set, stores }: { backend: SetBackend; set: BackendSetInfo; stores: StoreInfo[] }) {
+export function StoreTags({ backend, set, stores }: { backend: SetBackend; set: BackendSetInfo; stores: StoreInfo[] }) {
   if (backend.enabledStores.length === 0) return <span className={styles.sub}>{backend.canHostStores ? 'None' : '—'}</span>
   return (
     <span className={styles.tags}>
@@ -200,7 +200,7 @@ function StoreTags({ backend, set, stores }: { backend: SetBackend; set: Backend
   )
 }
 
-function Health({ b, probe, busy }: { b: SetBackend; probe?: BackendTestResult; busy: boolean }) {
+export function Health({ b, probe, busy }: { b: SetBackend; probe?: BackendTestResult; busy: boolean }) {
   if (busy) return <StatusPill tone="muted">Testing</StatusPill>
   const h = probe ?? b.health
   if (h) return <span title={h.message}><StatusPill tone={h.ok ? 'ok' : 'bad'}>{h.ok ? `Healthy · ${h.tookMs} ms` : 'Unreachable'}</StatusPill></span>
@@ -208,51 +208,25 @@ function Health({ b, probe, busy }: { b: SetBackend; probe?: BackendTestResult; 
   return <span className={styles.sub}>Checking…</span>
 }
 
-/** One-click copy with a short "Copied" confirmation; falls back to a hidden textarea when the async
- * clipboard API is unavailable (plain-http admin URLs). */
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const area = document.createElement('textarea')
-      area.value = text
-      document.body.appendChild(area)
-      area.select()
-      document.execCommand('copy')
-      area.remove()
-    }
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }
-  return (
-    <button type="button" className={styles.iconBtn} title={copied ? 'Copied' : label} aria-label={label} onClick={copy}>
-      {copied ? <Check size={15} strokeWidth={1.8} /> : <Copy size={15} strokeWidth={1.8} />}
-    </button>
-  )
-}
-
-/** Default listener ports; the real ones are whatever WARP_<PROTOCOL>_PORT is set to. */
+/** Connection examples for the frontends this Warp is really listening on (ports come from GET /api/interfaces). */
 const HOST = '<warp-host>'
-function connectSnippets(db: string): Array<{ label: string; code: string }> {
-  return [
-    { label: 'psql', code: `psql "host=${HOST} port=15432 dbname=${db} user=<user>"` },
-    { label: 'JDBC (PostgreSQL)', code: `jdbc:postgresql://${HOST}:15432/${db}` },
-    { label: 'mysql', code: `mysql -h ${HOST} -P 13306 -D ${db} -u <user> -p` },
-    { label: 'JDBC (MySQL)', code: `jdbc:mysql://${HOST}:13306/${db}` },
-    { label: 'sqlcmd', code: `sqlcmd -S ${HOST},14333 -d ${db} -U <user>` },
-    { label: 'JDBC (SQL Server)', code: `jdbc:sqlserver://${HOST}:14333;databaseName=${db}` },
-    { label: 'sqlplus', code: `sqlplus <user>@//${HOST}:11521/${db}` },
-    { label: 'JDBC (Oracle thin)', code: `jdbc:oracle:thin:@//${HOST}:11521/${db}` },
-    { label: 'mongosh', code: `mongosh "mongodb://${HOST}:27017/${db}"` },
-    { label: 'Neo4j driver', code: `driver.session(database="${db}")` },
-    { label: 'gRPC', code: `ExecuteRequest(database="${db}", ...)` },
-  ]
+function connectSnippets(db: string, ports: Record<string, number>): Array<{ label: string; code: string }> {
+  const out: Array<{ label: string; code: string }> = []
+  const pick = (...ids: string[]) => ids.map((i) => ports[i]).find((p) => p !== undefined)
+  const pg = pick('pgwire'); const my = pick('mywire', 'mywire-native'); const ms = pick('mssqlwire', 'mssqlwire-native')
+  const ora = pick('orawire', 'orawire-native'); const mongo = pick('mongowire'); const bolt = pick('boltwire'); const grpc = pick('grpc')
+  if (pg) out.push({ label: 'psql', code: `psql "host=${HOST} port=${pg} dbname=${db} user=<user>"` }, { label: 'JDBC (PostgreSQL)', code: `jdbc:postgresql://${HOST}:${pg}/${db}` })
+  if (my) out.push({ label: 'mysql', code: `mysql -h ${HOST} -P ${my} -D ${db} -u <user> -p` }, { label: 'JDBC (MySQL)', code: `jdbc:mysql://${HOST}:${my}/${db}` })
+  if (ms) out.push({ label: 'sqlcmd', code: `sqlcmd -S ${HOST},${ms} -d ${db} -U <user>` }, { label: 'JDBC (SQL Server)', code: `jdbc:sqlserver://${HOST}:${ms};databaseName=${db}` })
+  if (ora) out.push({ label: 'sqlplus', code: `sqlplus <user>@//${HOST}:${ora}/${db}` }, { label: 'JDBC (Oracle thin)', code: `jdbc:oracle:thin:@//${HOST}:${ora}/${db}` })
+  if (mongo) out.push({ label: 'mongosh', code: `mongosh "mongodb://${HOST}:${mongo}/${db}"` })
+  if (bolt) out.push({ label: 'Neo4j driver', code: `driver.session(database="${db}")  // bolt://${HOST}:${bolt}` })
+  if (grpc) out.push({ label: 'gRPC', code: `ExecuteRequest(database="${db}", ...)  // ${HOST}:${grpc}` })
+  return out
 }
 
 /** "Connect with database = <name>" for a backend or a set: the name to copy, and per-driver examples. */
-function ConnectPanel({ setName, connectAs, backends }: { setName: string; connectAs: string | null; backends: SetBackend[] }) {
+export function ConnectPanel({ setName, connectAs, backends, ports }: { setName: string; connectAs: string | null; backends: SetBackend[]; ports: Record<string, number> }) {
   const targets = [
     ...(connectAs ? [{ value: connectAs, label: `Whole set — ${connectAs}` }] : []),
     ...backends.map((b) => ({ value: b.connectAs, label: `Backend — ${b.connectAs}` })),
@@ -276,7 +250,7 @@ function ConnectPanel({ setName, connectAs, backends }: { setName: string; conne
           </select>
         </div>
         <ul className={styles.snippets}>
-          {connectSnippets(active).map((sn) => (
+          {connectSnippets(active, ports).map((sn) => (
             <li key={sn.label} className={styles.snippet}>
               <span className={styles.snippetLabel}>{sn.label}</span>
               <code className={styles.snippetCode}>{sn.code}</code>
@@ -298,7 +272,7 @@ const MODE_NOTE: Record<ConnectionRouting['mode'], string> = {
 }
 
 /** Explicit connect-time routes: first match wins; they take precedence over backend / set names. */
-function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; onChanged: () => void }) {
+export function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; onChanged: () => void }) {
   const routing = data.connectionRouting
   const [protocol, setProtocol] = useState('')
   const [database, setDatabase] = useState('')
@@ -364,8 +338,7 @@ function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; onChang
                 <td className={styles.mono}>{r.defaultBackend ?? <span className={styles.sub}>—</span>}</td>
                 <td>
                   <div className={styles.actions}>
-                    <button type="button" className={styles.iconBtn} title="Remove route" aria-label={`Remove route ${r.database}`}
-                      disabled={busy} onClick={() => remove(r)}><Trash2 size={16} strokeWidth={1.8} /></button>
+                    <IconButton danger label={`Remove route ${r.database}`} disabled={busy} onClick={() => remove(r)}><Trash2 size={16} strokeWidth={1.8} /></IconButton>
                   </div>
                 </td>
               </tr>
@@ -423,211 +396,9 @@ function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; onChang
   )
 }
 
-type Editor = { kind: 'add'; set: string } | { kind: 'edit'; set: string; backend: string }
-
-export default function BackendSets() {
-  const [data, setData] = useState<BackendSetsResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<React.ReactNode>(null)
-  const [editor, setEditor] = useState<Editor | null>(null)
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newDescription, setNewDescription] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [probes, setProbes] = useState<Record<string, BackendTestResult>>({})
-  const [testing, setTesting] = useState<Record<string, boolean>>({})
-  const [pendingDelete, setPendingDelete] = useState<{ kind: 'set' | 'backend'; set: string; backend?: string } | null>(null)
-
-  const load = useCallback(async () => {
-    try {
-      setData(await listBackendSets(false))
-      setError(null)
-      // health probes can be slow for an unreachable backend: fill them in afterwards
-      listBackendSets(true).then(setData).catch(() => undefined)
-    } catch (e) { setError(errorText(e)) }
-  }, [])
-  useEffect(() => { load() }, [load])
-
-  function done(r: BackendWriteResult, what: string) {
-    setNotice(<WriteNotice result={r} what={what} />)
-    setEditor(null)
-    setProbes({})
-    load()
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setBusy(true); setError(null)
-    try {
-      const r = await createBackendSet(newName.trim(), newDescription.trim())
-      done(r, `Created backend set ${newName.trim()}`)
-      setCreating(false); setNewName(''); setNewDescription('')
-    } catch (e2) { setError(errorText(e2)) } finally { setBusy(false) }
-  }
-
-  async function handleTest(set: string, name: string) {
-    setTesting((t) => ({ ...t, [name]: true }))
-    try {
-      const r = await testSetBackend(set, name)
-      setProbes((p) => ({ ...p, [name]: r }))
-    } catch (e) {
-      setProbes((p) => ({ ...p, [name]: { ok: false, message: errorText(e), tookMs: 0, serverVersion: null } }))
-    } finally { setTesting((t) => ({ ...t, [name]: false })) }
-  }
-
-  async function confirmDelete() {
-    if (!pendingDelete) return
-    setBusy(true); setError(null)
-    try {
-      if (pendingDelete.kind === 'set') {
-        done(await deleteBackendSet(pendingDelete.set), `Deleted backend set ${pendingDelete.set}`)
-      } else {
-        done(await deleteSetBackend(pendingDelete.set, pendingDelete.backend!), `Deleted backend ${pendingDelete.backend}`)
-      }
-      setPendingDelete(null)
-    } catch (e) { setError(errorText(e)); setPendingDelete(null) } finally { setBusy(false) }
-  }
-
-  const editingSet = editor && data ? data.sets.find((s) => s.name === editor.set) : undefined
-  const editingBackend = editor?.kind === 'edit' && editingSet ? editingSet.backends.find((b) => b.name === editor.backend) : undefined
-
-  return (
-    <div>
-      <PageHeader
-        title="Backend sets"
-        description="Every backend lives in a backend set. A Postgres backend can also host protocol stores — InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3, Redis, Azure Blob/Queue/Table — sharded across the backends of its set."
-        actions={<Button variant="primary" icon={<Plus size={14} aria-hidden="true" />} onClick={() => { setCreating(true); setEditor(null) }}>Create set</Button>}
-      />
-
-      {error && <Notice tone="bad">{error}</Notice>}
-      {notice}
-      {pendingDelete && (
-        <Notice tone="warn">
-          <div className={styles.confirm}>
-            <span>
-              {pendingDelete.kind === 'set'
-                ? <>Delete the empty backend set <strong>{pendingDelete.set}</strong>?</>
-                : <>Delete backend <strong>{pendingDelete.backend}</strong>? Data it hosts stays in its database but Warp stops serving it.</>}
-            </span>
-            <span className={styles.confirmActions}>
-              <Button variant="danger" onClick={confirmDelete} disabled={busy}>Delete</Button>
-              <Button variant="ghost" onClick={() => setPendingDelete(null)} disabled={busy}>Keep</Button>
-            </span>
-          </div>
-        </Notice>
-      )}
-
-      {creating && (
-        <Section title="Create backend set">
-          <form onSubmit={handleCreate} aria-label="Create backend set">
-            <div className={styles.formGrid}>
-              <Field label="Name" hint="Letters, digits, _ - .">
-                {(id) => <input id={id} value={newName} onChange={(e) => setNewName(e.target.value)} required autoComplete="off" />}
-              </Field>
-              <Field label="Description" hint="Optional.">
-                {(id) => <input id={id} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} autoComplete="off" />}
-              </Field>
-            </div>
-            <div className={styles.formActions}>
-              <Button variant="primary" type="submit" disabled={busy || !newName.trim()}>Create set</Button>
-              <Button variant="ghost" onClick={() => setCreating(false)} disabled={busy}>Cancel</Button>
-            </div>
-          </form>
-        </Section>
-      )}
-
-      {!data && !error && <Loading>Loading backend sets…</Loading>}
-
-      {data && (
-        <p className={styles.help}>
-          {data.backendCount} of {data.maxBackends} backends used on this license. Protocol frontends serve the set that holds
-          the <code>default</code> backend unless <code>WARP_&lt;PROTOCOL&gt;_SET</code> names another set.
-        </p>
-      )}
-
-      {data?.sets.map((set) => {
-        const removable = set.backends.length === 0 && !set.isDefaultSet
-        return (
-          <Section key={set.name} flush title={set.name} meta={`${set.backends.length} backend${set.backends.length === 1 ? '' : 's'}`}>
-            <div className={styles.toolbar}>
-              <span className={styles.setDesc}>
-                {set.description ?? (set.isDefaultSet ? 'Holds the default backend and everything not placed in another set.' : 'No description.')}
-                {' '}
-                {set.connectAs ? (
-                  <span className={styles.connectCell}>
-                    Connect to the whole set with database <code className={styles.mono}>{set.connectAs}</code>
-                    <CopyButton text={set.connectAs} label={`Copy set name ${set.connectAs}`} />
-                  </span>
-                ) : <span>Reach the whole set through a route (its name is also a backend).</span>}
-              </span>
-              <span className={styles.toolbarActions}>
-                <Button icon={<Plus size={14} aria-hidden="true" />} onClick={() => { setEditor({ kind: 'add', set: set.name }); setCreating(false) }}
-                  aria-label={`Add backend to ${set.name}`}>Add backend</Button>
-                {removable && <Button variant="danger" icon={<Trash2 size={14} aria-hidden="true" />}
-                  onClick={() => setPendingDelete({ kind: 'set', set: set.name })} aria-label={`Delete set ${set.name}`}>Delete set</Button>}
-              </span>
-            </div>
-            {set.backends.length === 0 ? (
-              <EmptyState icon={<Boxes size={18} aria-hidden="true" />} title="No backends in this set">
-                Add a backend to it{removable ? ', or delete the set' : ''}.
-              </EmptyState>
-            ) : (
-              <DataTable caption={`Backends in set ${set.name}`} minWidth={1000}>
-                <thead>
-                  <tr>
-                    <th>Name</th><th>Type</th><th>Target</th><th>Connect with database</th><th>Description</th><th>Stores</th><th>Health</th><th aria-label="Actions"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {set.backends.map((b) => (
-                    <tr key={b.name}>
-                      <td className={styles.mono}>{b.name}{b.isDefault && <> <Tag>default</Tag></>}</td>
-                      <td><Tag>{b.type}</Tag></td>
-                      <td className={styles.mono}>{b.url}</td>
-                      <td>
-                        <span className={styles.connectCell}>
-                          <code className={styles.mono}>{b.connectAs}</code>
-                          <CopyButton text={b.connectAs} label={`Copy database name ${b.connectAs}`} />
-                        </span>
-                      </td>
-                      <td>{b.description ?? <span className={styles.sub}>—</span>}</td>
-                      <td><StoreTags backend={b} set={set} stores={data.stores} /></td>
-                      <td><Health b={b} probe={probes[b.name]} busy={!!testing[b.name]} /></td>
-                      <td>
-                        <div className={styles.actions}>
-                          <button type="button" className={styles.iconBtn} title="Edit backend" aria-label={`Edit ${b.name}`}
-                            onClick={() => { setEditor({ kind: 'edit', set: set.name, backend: b.name }); setCreating(false) }}><Pencil size={16} strokeWidth={1.8} /></button>
-                          <button type="button" className={styles.iconBtn} title="Test connection" aria-label={`Test connection to ${b.name}`}
-                            disabled={!!testing[b.name]} onClick={() => handleTest(set.name, b.name)}><PlugZap size={16} strokeWidth={1.8} /></button>
-                          {!b.isDefault && <button type="button" className={styles.iconBtn} title="Delete backend" aria-label={`Delete ${b.name}`}
-                            onClick={() => setPendingDelete({ kind: 'backend', set: set.name, backend: b.name })}><Trash2 size={16} strokeWidth={1.8} /></button>}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </DataTable>
-            )}
-            {set.backends.length > 0 && <ConnectPanel setName={set.name} connectAs={set.connectAs} backends={set.backends} />}
-          </Section>
-        )
-      })}
-
-      {data && <RoutesSection data={data} onChanged={load} />}
-
-      {data && editor && editingSet && (editor.kind === 'add' || editingBackend) && (
-        <BackendEditor key={`${editor.kind}-${editor.set}-${editor.kind === 'edit' ? editor.backend : ''}`}
-          set={editingSet} editing={editingBackend} stores={data.stores} onDone={done} onCancel={() => setEditor(null)} />
-      )}
-
-      <AdvancedRouting />
-    </div>
-  )
-}
-
 /** Legacy router settings kept for existing configs: router aliases (WARP_BACKEND_SETS -- a name
  * for a list of backends usable in router rules) and the legacy WARP_SHARD_BACKENDS shard group. */
-function AdvancedRouting() {
+export function AdvancedRouting() {
   const [config, setConfig] = useState<WireConfig | null>(null)
   const [aliases, setAliases] = useState('')
   const [shardGroup, setShardGroup] = useState('')

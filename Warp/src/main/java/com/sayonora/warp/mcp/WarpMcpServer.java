@@ -555,6 +555,26 @@ public final class WarpMcpServer {
         }
     }
 
+    /**
+     * The tools an endpoint scoped to {@code endpointScope} would advertise, narrowed the same way a real
+     * request is (an endpoint can only narrow the listener's own scope). For the admin API's
+     * {@code GET /api/mcp-endpoints/{id}/tools}; returns the {@code tools/list} result object.
+     */
+    public JsonObject toolsListForEndpointScope(McpScope endpointScope) {
+        McpScope narrowed = McpEndpoints.narrow(scope, endpointScope, backendRegistry::membersOfGroup);
+        if (narrowed == null) {
+            JsonObject none = new JsonObject();
+            none.add("tools", new JsonArray());
+            return none;
+        }
+        CURRENT_SCOPE.set(narrowed);
+        try {
+            return buildToolsListResult();
+        } finally {
+            CURRENT_SCOPE.remove();
+        }
+    }
+
     private JsonObject buildToolsListResult() {
         List<McpBackend> backends = backendsInScope();
         List<McpBackend> relational = backends.stream().filter(b -> b.kind() == BackendKind.RELATIONAL).toList();

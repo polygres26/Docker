@@ -2,13 +2,17 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { getStoredConnection } from './api/client'
 import { AppShell } from './components/ui'
 import Connect from './pages/Connect'
-import Dashboard from './pages/Dashboard'
+import Overview from './pages/Overview'
+import Workloads from './pages/Workloads'
+import Infrastructure from './pages/Infrastructure'
+import SqlDrivers from './pages/interfaces/SqlDrivers'
+import ApiEndpoints from './pages/interfaces/ApiEndpoints'
+import McpServers from './pages/interfaces/McpServers'
 import Metrics from './pages/Metrics'
 import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
 import OAuth from './pages/OAuth'
-import BackendSets from './pages/BackendSets'
 import Queues from './pages/Queues'
 import DataExplorer from './pages/DataExplorer'
 import RouterRules from './pages/RouterRules'
@@ -32,15 +36,21 @@ export default function App() {
   return (
     <Routes>
       <Route path="/connect" element={<Connect />} />
-      <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/overview" element={<RequireAuth><Overview /></RequireAuth>} />
+      <Route path="/dashboard" element={<Navigate to="/overview" replace />} />
+      <Route path="/workloads" element={<RequireAuth><Workloads /></RequireAuth>} />
+      <Route path="/infrastructure" element={<RequireAuth><Infrastructure /></RequireAuth>} />
+      <Route path="/interfaces/sql" element={<RequireAuth><SqlDrivers /></RequireAuth>} />
+      <Route path="/interfaces/api" element={<RequireAuth><ApiEndpoints /></RequireAuth>} />
+      <Route path="/interfaces/mcp" element={<RequireAuth><McpServers /></RequireAuth>} />
       <Route path="/metrics" element={<RequireAuth><Metrics /></RequireAuth>} />
       <Route path="/topology" element={<RequireAuth><Topology /></RequireAuth>} />
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />
       <Route path="/oauth" element={<RequireAuth><OAuth /></RequireAuth>} />
       {/* Backends now live inside backend sets; the old page is gone, old links keep working */}
-      <Route path="/backends" element={<Navigate to="/backend-sets" replace />} />
-      <Route path="/backend-sets" element={<RequireAuth><BackendSets /></RequireAuth>} />
+      <Route path="/backends" element={<Navigate to="/infrastructure" replace />} />
+      <Route path="/backend-sets" element={<Navigate to="/infrastructure" replace />} />
       <Route path="/ab-routing" element={<RequireAuth><AbRouting /></RequireAuth>} />
       <Route path="/queues" element={<RequireAuth><Queues /></RequireAuth>} />
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
@@ -49,7 +59,8 @@ export default function App() {
       <Route path="/rollups" element={<RequireAuth><Rollups /></RequireAuth>} />
       <Route path="/federation-plans" element={<RequireAuth><FederationPlans /></RequireAuth>} />
       <Route path="/llm-config" element={<RequireAuth><LlmConfig /></RequireAuth>} />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Navigate to="/overview" replace />} />
+      <Route path="*" element={<Navigate to="/overview" replace />} />
     </Routes>
   )
 }

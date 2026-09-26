@@ -1,7 +1,0 @@
-.pad { padding: 16px; }
-.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
-.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.sub { color: var(--sy-muted); }
-.sql { font-family: var(--font-mono); font-size: 12px; max-width: 520px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.bar { width: 78px; height: 5px; background: var(--sy-line); border-radius: 3px; overflow: hidden; }
-.bar span { display: block; height: 100%; background: var(--sy-green-dot); }

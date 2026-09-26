@@ -1,61 +1,65 @@
 /*
- * Sayonora design tokens. Values are lifted from the design-direction mock (--sy-* variables in
- * direction.html); the few deliberate deviations are marked "AA" and exist only to clear WCAG AA:
- *   --accent-text / --accent-strong  #c73e1c  (mock #e4512d is 3.8:1 on white; this is 5.1:1)
- *   --muted                          #666962  (mock #6d7069 is 4.5:1 on paper; this is 5.0:1)
- * --accent (#e4512d) stays as the brand fill for rings, dots and icons on the dark rail.
+ * Sayonora Warp design tokens -- lifted from the Warp UI mock (#warp-ui-system): graphite rail,
+ * vermilion accent, paper/surface neutrals, green/amber/red status, 6px control radius.
+ *
+ * Every colour is a light-dark() pair, so the whole app follows prefers-color-scheme. The theme
+ * toggle in the top bar sets <html data-theme="light|dark"> (see components/ui/theme.ts) which
+ * overrides `color-scheme`, and light-dark() follows it. No component needs its own dark rules.
+ *
+ * Naming: --sy-* are the canonical tokens. The short legacy names at the bottom (--bg, --muted, ...)
+ * are aliases kept so older pages that still reference them pick up the palette; new code must use --sy-*.
  */
 :root {
-  /* Surfaces */
-  --sy-paper: #f4f3ef;
-  --sy-surface: #ffffff;
-  --sy-surface-2: #faf9f6;
-  --sy-ink: #20211f;
-  --sy-muted: #666962; /* AA */
-  --sy-line: #dcded7;
+  color-scheme: light dark;
 
-  /* Brand */
-  --sy-accent: #e4512d;
-  --sy-accent-strong: #c73e1c; /* AA: text + button fill */
-  --sy-accent-hover: #ad3416;
-  --sy-accent-soft: #fff0e8;
+  /* Surfaces */
+  --sy-paper: light-dark(#f5f6f3, #171916);
+  --sy-surface: light-dark(#ffffff, #22241f);
+  --sy-surface-2: light-dark(#f9faf7, #292b26);
+  --sy-ink: light-dark(#20231f, #f2f3ee);
+  --sy-muted: light-dark(#656a62, #aeb2a8);
+  --sy-line: light-dark(#dfe2da, #3d4038);
+
+  /* Brand accent (vermilion) */
+  --sy-accent: light-dark(#d94b28, #ef6c49);
+  --sy-accent-strong: light-dark(#c73e1c, #ff8663); /* text + button fill; AA on surface */
+  --sy-accent-hover: light-dark(#ad3416, #ff9c7e);
+  --sy-accent-soft: light-dark(#fff0ea, #48261e);
+  --sy-on-accent: #ffffff;
 
   /* Status */
-  --sy-green: #19725a;
-  --sy-green-soft: #e5f3ed;
-  --sy-green-dot: #2f9e7c;
-  --sy-amber: #9a6508;
-  --sy-amber-soft: #fbf1dc;
-  --sy-red: #b3261e;
-  --sy-red-soft: #fbe9e7;
+  --sy-green: light-dark(#16735a, #54c7a0);
+  --sy-green-soft: light-dark(#e5f4ed, #19392f);
+  --sy-green-dot: light-dark(#2f9e7c, #54c7a0);
+  --sy-amber: light-dark(#946008, #efb951);
+  --sy-amber-soft: light-dark(#fff5df, #433315);
+  --sy-red: light-dark(#b52d24, #ff8c82);
+  --sy-red-soft: light-dark(#fdecea, #48211e);
 
-  /* Chart series: vermilion, green, amber, graphite, then neutrals */
-  --sy-series-1: #e4512d;
-  --sy-series-2: #19725a;
-  --sy-series-3: #d9971c;
-  --sy-series-4: #4a4d45;
-  --sy-series-5: #9a9d94;
-  --sy-series-6: #2f9e7c;
+  /* Chart series */
+  --sy-series-1: var(--sy-accent);
+  --sy-series-2: light-dark(#16735a, #54c7a0);
+  --sy-series-3: light-dark(#d9971c, #efb951);
+  --sy-series-4: light-dark(#4a4d45, #c9cbc3);
+  --sy-series-5: light-dark(#9a9d94, #7d8078);
+  --sy-series-6: light-dark(#2f9e7c, #7fd8b8);
 
-  /* Rail (constant across schemes) */
-  --sy-rail: #242722;
-  --sy-rail-deep: #171816;
-  --sy-rail-text: #f4f2eb;
-  --sy-rail-muted: #a7aaa1;
-  --sy-rail-active: #373a33;
-  --sy-rail-hover: #2d302a;
-  --sy-rail-rule: #3b3e37;
-  --sy-rail-icon-active: #ff7a56;
-
-  --sy-on-accent: #ffffff;
+  /* Rail (graphite in both schemes; deeper in dark) */
+  --sy-rail: light-dark(#20231f, #10120f);
+  --sy-rail-text: #f3f4ef;
+  --sy-rail-muted: #a6aca2;
+  --sy-rail-active: #363a32;
+  --sy-rail-hover: #2b2f28;
+  --sy-rail-rule: #3b4037;
+  --sy-rail-icon-active: #ff7c58;
   --sy-logo-tile: #f4f2eb; /* light tile so the blue/violet logo reads on graphite */
   --sy-scrim: rgba(16, 17, 15, 0.5);
 
   /* Layout */
-  --sidebar-w: 218px;
-  --topbar-h: 58px;
-  --page-pad-y: 25px;
-  --page-pad-x: 28px;
+  --sidebar-w: 216px;
+  --topbar-h: 56px;
+  --page-pad-y: 23px;
+  --page-pad-x: 26px;
 
   /* Radii */
   --radius-sm: 4px;
@@ -82,14 +86,10 @@
   --fs-h1: 23px;
 
   /* Elevation */
-  --shadow-screen: 0 18px 50px rgba(32, 33, 31, 0.1);
-  --shadow-pop: 0 8px 24px rgba(32, 33, 31, 0.14);
+  --shadow-pop: 0 8px 24px light-dark(rgb(28 34 26 / 0.14), rgb(0 0 0 / 0.4));
   --focus-ring: 0 0 0 3px var(--sy-accent-soft);
 
-  color-scheme: light dark;
-
-  /* Legacy names still referenced by page-level inline styles. Kept as aliases so every page
-     picks up the new palette without carrying old hex values. */
+  /* Legacy aliases (see header) */
   --bg: var(--sy-paper);
   --panel: var(--sy-surface);
   --surface: var(--sy-surface);
@@ -108,32 +108,5 @@
   --shadow-md: var(--shadow-pop);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --sy-paper: #171816;
-    --sy-surface: #22231f;
-    --sy-surface-2: #1d1e1b;
-    --sy-ink: #f1f0ea;
-    --sy-muted: #a8aaa3;
-    --sy-line: #3a3c36;
-    --sy-accent: #f06c4b;
-    --sy-accent-strong: #ff8663;
-    --sy-accent-hover: #ff9c7e;
-    --sy-accent-soft: #46261e;
-    --sy-green: #4fc29a;
-    --sy-green-soft: #19382f;
-    --sy-green-dot: #4fc29a;
-    --sy-amber: #efb84f;
-    --sy-amber-soft: #3a2e12;
-    --sy-red: #ff8f86;
-    --sy-red-soft: #3d1f1c;
-    --sy-rail: #10110f;
-    --sy-series-1: #f06c4b;
-    --sy-series-2: #4fc29a;
-    --sy-series-3: #efb84f;
-    --sy-series-4: #c9cbc3;
-    --sy-series-5: #7d8078;
-    --sy-series-6: #7fd8b8;
-    --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4);
-  }
-}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

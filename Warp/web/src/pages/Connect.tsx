@@ -37,7 +37,7 @@ export default function Connect() {
       const baseUrl = adminUrl.trim().replace(/\/+$/, '')
       await testConnection(baseUrl, adminToken)
       storeConnection(baseUrl, adminToken, remember)
-      navigate('/dashboard')
+      navigate('/overview')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

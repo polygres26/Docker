@@ -167,4 +167,28 @@ class BackendSetModelTest {
         assertEquals("other", r.setOf("pg2"));
         assertEquals(List.of(), r.storeHosts(StoreType.MONGODB));
     }
+
+    @Test
+    void renamingASetMovesItsBackendsAndKeepsOrder() {
+        WarpConfig c = config("default=" + PG + "|u|p;a=" + PG + "a|u|p", "team=a");
+        BackendSetModel m = BackendSetModel.from(c, IMPLICIT);
+        m.renameSet("team", "squad");
+        assertEquals("squad", m.backend("a").set());
+        assertNull(m.set("team"));
+        assertEquals("squad=a", m.applyTo(c).backendGroups());
+        assertThrows(ModelException.class, () -> m.renameSet("default", "x"), "the default set is fixed");
+        assertThrows(ModelException.class, () -> m.renameSet("squad", "default"));
+    }
+
+    @Test
+    void movingABackendBetweenSetsChecksTargetAndDefaultBackend() {
+        WarpConfig c = config("default=" + PG + "|u|p;a=" + PG + "a|u|p", "team=a");
+        BackendSetModel m = BackendSetModel.from(c, IMPLICIT);
+        m.addSet("other", null);
+        m.moveBackend("a", "other");
+        assertEquals("other", m.backend("a").set());
+        assertEquals("other=a", m.applyTo(c).backendGroups());
+        assertThrows(ModelException.class, () -> m.moveBackend("a", "missing"));
+        assertThrows(ModelException.class, () -> m.moveBackend("default", "other"));
+    }
 }

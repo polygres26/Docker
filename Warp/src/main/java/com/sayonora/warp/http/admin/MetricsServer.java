@@ -100,6 +100,13 @@ public final class MetricsServer {
         this.anomalyScheduler = anomalyScheduler;
     }
 
+    // The running MCP server, for GET /api/mcp-endpoints/{id}/tools (which tools an endpoint's scope exposes).
+    private volatile com.sayonora.warp.mcp.WarpMcpServer mcpServer;
+
+    public void setMcpServer(com.sayonora.warp.mcp.WarpMcpServer mcpServer) {
+        this.mcpServer = mcpServer;
+    }
+
     public MetricsServer(int port, StatsCollectorStage statsStage, QosControlStage qosStage) {
         this(port, statsStage, qosStage, null, com.sayonora.warp.acl.ConnectionGate.DISABLED);
     }
@@ -409,6 +416,24 @@ public final class MetricsServer {
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(renderAnomalies(anomalyScheduler));
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if ("/api/interfaces".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(InterfaceRegistry.toJson(backendRegistry,
+                            statsStage.sqlMetricsSnapshot().protocolCounts(),
+                            com.sayonora.warp.core.ConnectionLimiter.activeCount()).toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1532,7 +1557,7 @@ public final class MetricsServer {
      * database hot-reloads a create/patch/revoke through the same LISTEN/NOTIFY path as backends.
      * The token is returned exactly once (POST); only its SHA-256 hash is stored.
      */
-    private static void handleMcpEndpoints(String target, HttpServletRequest request, HttpServletResponse response,
+    private void handleMcpEndpoints(String target, HttpServletRequest request, HttpServletResponse response,
             ConfigStore configStore, com.sayonora.warp.core.BackendRegistry backendRegistry, String createdBy)
             throws java.io.IOException {
         response.setContentType("application/json; charset=utf-8");
@@ -1540,6 +1565,10 @@ public final class MetricsServer {
         String rest = target.substring("/api/mcp-endpoints".length());
         String id = rest.startsWith("/") && rest.length() > 1 ? rest.substring(1).replaceAll("/+$", "") : null;
         String method = request.getMethod();
+        if (id != null && id.endsWith("/tools") && "GET".equals(method)) {
+            handleMcpEndpointTools(id.substring(0, id.length() - "/tools".length()), response, configStore);
+            return;
+        }
         try {
             synchronized (MCP_ENDPOINT_LOCK) {
                 WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
@@ -1660,6 +1689,42 @@ public final class MetricsServer {
         } catch (IllegalArgumentException | com.google.gson.JsonParseException | IllegalStateException e) {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    /** {@code GET /api/mcp-endpoints/{id}/tools}: the tools the MCP server advertises for this endpoint's scope. */
+    private void handleMcpEndpointTools(String id, HttpServletResponse response, ConfigStore configStore)
+            throws java.io.IOException {
+        try {
+            WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                    .orElseGet(WarpConfig::fromEnvDefaults);
+            com.sayonora.warp.mcp.McpEndpoints.Endpoint found = null;
+            for (var e : com.sayonora.warp.mcp.McpEndpoints.parse(current.mcpEndpoints())) {
+                if (e.id().equals(id)) {
+                    found = e;
+                }
+            }
+            if (found == null) {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such endpoint\"}");
+                return;
+            }
+            if (mcpServer == null) {
+                response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                response.getWriter().write("{\"error\":\"the MCP server is not running\"}");
+                return;
+            }
+            JsonObject list = mcpServer.toolsListForEndpointScope(found.mcpScope());
+            JsonObject out = new JsonObject();
+            out.addProperty("id", id);
+            out.addProperty("scope", found.scope());
+            out.add("tools", list.get("tools"));
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(out.toString());
+        } catch (java.sql.SQLException | RuntimeException e) {
+            log.warn("mcp-endpoints tools: failed", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(String.valueOf(e.getMessage())) + "}");
         }
     }
 

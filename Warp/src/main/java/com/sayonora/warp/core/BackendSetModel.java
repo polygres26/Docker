@@ -48,6 +48,10 @@ public final class BackendSetModel {
             return new Backend(name, url, user, password, fallback, description, stores, set);
         }
 
+        Backend inSet(String newSet) {
+            return new Backend(name, url, user, password, fallback, description, stores, newSet);
+        }
+
         public SourceDialect dialect() {
             return new BackendTarget(name, url, user, password).dialect();
         }
@@ -214,6 +218,60 @@ public final class BackendSetModel {
             sets.put(name, s);
         }
         return s;
+    }
+
+    /** Renames a set (not the default set); its backends follow. Connection routes / WARP_*_SET references that
+     * still name the old set are rejected by the caller's whole-config validation. */
+    public BackendSet renameSet(String from, String to) {
+        BackendSet old = requireSet(from);
+        if (BackendRegistry.DEFAULT_SET_NAME.equals(from)) {
+            throw new ModelException(409, "the '" + from + "' backend set cannot be renamed");
+        }
+        checkSetName(to);
+        if (from.equals(to)) {
+            return old;
+        }
+        if (sets.containsKey(to) || BackendRegistry.DEFAULT_SET_NAME.equals(to)) {
+            throw new ModelException(409, "backend set '" + to + "' already exists");
+        }
+        BackendSet renamed = new BackendSet(to, old.description(), old.sharded());
+        LinkedHashMap<String, BackendSet> rebuilt = new LinkedHashMap<>();
+        for (BackendSet s : sets.values()) {
+            rebuilt.put(s.name().equals(from) ? to : s.name(), s.name().equals(from) ? renamed : s);
+        }
+        sets.clear();
+        sets.putAll(rebuilt);
+        for (Backend b : new ArrayList<>(backends.values())) {
+            if (b.set().equals(from)) {
+                backends.put(b.name(), b.inSet(to));
+            }
+        }
+        return renamed;
+    }
+
+    /** Moves a backend to another existing set. Its own data stays where it is; the caller reports rebalanceRequired. */
+    public Backend moveBackend(String name, String toSet) {
+        Backend b = backends.get(name);
+        if (b == null) {
+            throw new ModelException(404, "backend '" + name + "' does not exist");
+        }
+        if (b.set().equals(toSet)) {
+            return b;
+        }
+        if (BackendRegistry.DEFAULT_BACKEND_NAME.equals(name)) {
+            throw new ModelException(409, "the '" + name + "' backend cannot be moved out of its set -- Warp's own "
+                    + "frontends rely on it");
+        }
+        requireSet(toSet);
+        Backend moved = b.inSet(toSet);
+        backends.put(name, moved);
+        try {
+            validateStores();
+        } catch (ModelException e) {
+            backends.put(name, b);
+            throw e;
+        }
+        return moved;
     }
 
     public void deleteSet(String name) {

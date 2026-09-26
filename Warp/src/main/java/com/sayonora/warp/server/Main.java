@@ -567,6 +567,7 @@ public final class Main {
         WarpGrpcServer grpcServer = new WarpGrpcServer(options, pipelineStages, backendRegistry, connectionGate);
         grpcServer.start();
         log.info("warp listening for gRPC on port {}", options.grpcPort());
+        com.sayonora.warp.http.admin.InterfaceRegistry.register("grpc", "Warp gRPC (native driver)", "sql", "gRPC", options.grpcPort(), null, null, "grpc");
 
         if (options.tlsEnabled()) {
             
@@ -579,6 +580,7 @@ public final class Main {
 
             grpcServer.startTls();
             log.info("warp listening for gRPC TLS on port {}", options.grpcTlsPort());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("grpc-tls", "Warp gRPC over TLS", "sql", "gRPC (TLS)", options.grpcTlsPort(), null, null, "grpc");
         } else {
             log.info("TLS disabled (set WARP_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
         }
@@ -645,6 +647,7 @@ public final class Main {
             dynamoForMcp = dynamoWireServer;
             com.sayonora.warp.awswire.AwsWireBootstrap.register("dynamodb", dynamoWireServer.handler());
             log.info("warp listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("dynamowire", "DynamoDB", "api", "DynamoDB HTTP/JSON", dynamoWirePort, "Emulate", "dynamodb", "dynamowire");
             // Cross-protocol row-cache sharing: CacheStage was built before dynamowire existed
             // (both need constructing before either can be wired to the other), so this closes
             // the loop -- a SELECT-by-primary-key against a dynamowire-backed table via
@@ -675,6 +678,7 @@ public final class Main {
             sqsWireServer.start();
             com.sayonora.warp.awswire.AwsWireBootstrap.registerSqs(sqsWireServer.handler(), sqsWireServer.operations());
             log.info("warp listening for Amazon SQS HTTP/JSON (sqswire) on port {}", sqsWirePort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("sqswire", "Amazon SQS", "api", "SQS HTTP/JSON", sqsWirePort, "Emulate", "sqs", "sqswire");
         } catch (Exception e) {
             log.error("sqswire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring sqswire back.",
@@ -693,6 +697,7 @@ public final class Main {
                         redisWirePort, backendRegistry, connectionGate, sqlMetrics);
                 redisWireServer.start();
                 log.info("warp listening for Redis RESP2/RESP3 (rediswire) on port {}", redisWirePort);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("rediswire", "Redis", "api", "RESP2/RESP3", redisWirePort, "Emulate", "redis", "rediswire");
             }
         } catch (Exception e) {
             log.error("rediswire failed to start -- every other wire protocol is still up. "
@@ -732,6 +737,7 @@ public final class Main {
                     };
                     az.start();
                     log.info("warp listening for Azure {} (azurewire) on port {}", svc[0].substring(2), azPort);
+                    com.sayonora.warp.http.admin.InterfaceRegistry.register("az" + svc[0].substring(2).toLowerCase() + "wire", "Azure " + svc[0].substring(2), "api", "Azure Storage REST", azPort, "Emulate", svc[0].toLowerCase(), "az" + svc[0].substring(2).toLowerCase() + "wire");
                 } catch (Exception e) {
                     log.error("azurewire {} failed to start -- every other wire protocol is still up.", svc[0], e);
                 }
@@ -753,6 +759,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 gcsWireServer.start();
                 log.info("warp listening for Google Cloud Storage (gcswire) on port {}", gcsPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("gcswire", "Google Cloud Storage", "api", "GCS JSON/XML", gcsPortNo, "Emulate", "gcs", "gcswire");
             }
         } catch (Exception e) {
             log.error("gcswire failed to start -- every other wire protocol is still up.", e);
@@ -772,6 +779,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 fsWireServer.start();
                 log.info("warp listening for Google Firestore (firestorewire) on port {}", fsPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("firestorewire", "Google Firestore", "api", "Firestore REST", fsPortNo, "Emulate", "firestore", "firestorewire");
             }
         } catch (Exception e) {
             log.error("firestorewire failed to start -- every other wire protocol is still up.", e);
@@ -786,6 +794,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 dsWireServer.start();
                 log.info("warp listening for Google Datastore (datastorewire) on port {}", dsPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("datastorewire", "Google Datastore", "api", "Datastore REST", dsPortNo, "Emulate", "datastore", "datastorewire");
             }
         } catch (Exception e) {
             log.error("datastorewire failed to start -- every other wire protocol is still up.", e);
@@ -805,6 +814,7 @@ public final class Main {
                         btGrpcPort, backendRegistry, connectionGate, sqlMetrics);
                 btWireServer.start();
                 log.info("warp listening for Google Bigtable (bigtablewire) on gRPC port {}", btGrpcPort);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("bigtablewire", "Google Bigtable", "api", "Bigtable gRPC", btGrpcPort, "Emulate", "bigtable", "bigtablewire");
             }
         } catch (Exception e) {
             log.error("bigtablewire failed to start -- every other wire protocol is still up.", e);
@@ -825,6 +835,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 cqlWireServer.start();
                 log.info("warp listening for Apache Cassandra CQL (cqlwire) on port {}", cqlPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("cqlwire", "Apache Cassandra", "api", "CQL native protocol", cqlPortNo, "Emulate", "cql", "cqlwire");
             }
         } catch (Exception e) {
             log.error("cqlwire failed to start -- every other wire protocol is still up.", e);
@@ -845,6 +856,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 kafkaWireServer.start();
                 log.info("warp listening for Apache Kafka (kafkawire) on port {}", kfPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("kafkawire", "Apache Kafka", "api", "Kafka protocol", kfPortNo, "Emulate", "kafka", "kafkawire");
             }
         } catch (Exception e) {
             log.error("kafkawire failed to start -- every other wire protocol is still up.", e);
@@ -866,6 +878,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 gremlinWireServer.start();
                 log.info("warp listening for Apache TinkerPop Gremlin (gremlinwire) on port {}", gremlinPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("gremlinwire", "Apache TinkerPop Gremlin", "api", "Gremlin WebSocket", gremlinPortNo, "Emulate", "gremlin", "gremlinwire");
             }
         } catch (Exception e) {
             log.error("gremlinwire failed to start -- every other wire protocol is still up.", e);
@@ -885,6 +898,7 @@ public final class Main {
                         backendRegistry, connectionGate, sqlMetrics);
                 cosmosWireServer.start();
                 log.info("warp listening for Azure Cosmos DB (cosmoswire) on port {}", cosPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("cosmoswire", "Azure Cosmos DB", "api", "Cosmos DB NoSQL REST", cosPortNo, "Emulate", "cosmos", "cosmoswire");
             }
         } catch (Exception e) {
             log.error("cosmoswire failed to start -- every other wire protocol is still up.", e);
@@ -905,6 +919,7 @@ public final class Main {
                 amqpWireServer.start();
                 Runtime.getRuntime().addShutdownHook(new Thread(amqpWireServer::close, "amqpwire-shutdown"));
                 log.info("warp listening for AMQP 0-9-1 (amqpwire) on port {}", amqpPortNo);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("amqpwire", "RabbitMQ (AMQP)", "api", "AMQP 0-9-1 / 1.0", amqpPortNo, "Emulate", "amqp", "amqpwire");
             }
         } catch (Exception e) {
             log.error("amqpwire failed to start -- every other wire protocol is still up.", e);
@@ -925,6 +940,8 @@ public final class Main {
                         psGrpcPort, psRestPort, backendRegistry, connectionGate, sqlMetrics);
                 psWireServer.start();
                 log.info("warp listening for Google Pub/Sub (pubsubwire) on gRPC port {} and REST port {}", psGrpcPort, psRestPort);
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("pubsubwire", "Google Pub/Sub (gRPC)", "api", "Pub/Sub gRPC", psGrpcPort, "Emulate", "pubsub", "pubsubwire");
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("pubsubwire-rest", "Google Pub/Sub (REST)", "api", "Pub/Sub REST", psRestPort, "Emulate", "pubsub", "pubsubwire");
             }
         } catch (Exception e) {
             log.error("pubsubwire failed to start -- every other wire protocol is still up.", e);
@@ -959,6 +976,7 @@ public final class Main {
                                 com.sayonora.warp.core.StoreType.S3) + ")"
                                 : s3Config.proxyConfigured() ? "proxy (backend bucket '" + s3Config.backendBucket() + "')"
                                 : "waiting for the s3 store to be enabled");
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("s3wire", "Amazon S3", "api", "S3 REST", s3WirePort, s3Postgres ? "Emulate" : "Relay", "s3", "s3wire");
             }
         } catch (Exception e) {
             log.error("s3wire failed to start -- every other wire protocol is still up. "
@@ -986,6 +1004,7 @@ public final class Main {
                     osWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
             osWireServer.start();
             log.info("warp listening for OpenSearch HTTP/JSON (oswire) on port {}", osWirePort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("oswire", "OpenSearch", "api", "OpenSearch HTTP/JSON", osWirePort, "Emulate", "opensearch", "oswire");
         } catch (Exception e) {
             log.error("oswire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring oswire back.",
@@ -1004,6 +1023,7 @@ public final class Main {
                             influxWirePort, backendRegistry, connectionGate, oauth, sqlMetrics);
             influxWireServer.start();
             log.info("warp listening for InfluxDB HTTP/JSON (influxwire) on port {}", influxWirePort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("influxwire", "InfluxDB", "api", "InfluxDB HTTP", influxWirePort, "Emulate", "influxdb", "influxwire");
         } catch (Exception e) {
             log.error("influxwire failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring influxwire back.",
@@ -1022,10 +1042,12 @@ public final class Main {
                 backendRegistry, mongoCache, sqlMetrics));
         mcpServer.endpoints().load(config.mcpEndpoints());
         mcpServer.start();
+        metricsServer.setMcpServer(mcpServer);
         com.sayonora.warp.mcp.McpScope mcpScope = com.sayonora.warp.mcp.McpScope.fromEnv();
         log.info("warp listening for MCP (Model Context Protocol) on port {} (scope: {}{})", mcpPort,
                 mcpScope.type().name().toLowerCase(java.util.Locale.ROOT),
                 mcpScope.isAll() ? "" : "=" + mcpScope.name());
+        com.sayonora.warp.http.admin.InterfaceRegistry.register("mcp", "MCP server", "mcp", "MCP over HTTP", mcpPort, null, null, "mcp");
 
         // A real A2A (Agent2Agent) frontend -- the gap found auditing Warp's own architecture
         // diagram against what was actually implemented (MCP was real, A2A was zero lines of
@@ -1043,6 +1065,7 @@ public final class Main {
                     a2aPort, a2aPublicUrl, mcpServer, connectionGate, oauth);
             a2aServer.start();
             log.info("warp listening for A2A (Agent2Agent Protocol) on port {}", a2aPort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("a2a", "A2A agent", "mcp", "Agent2Agent JSON-RPC", a2aPort, null, null, null);
         } catch (Exception e) {
             log.error("A2A failed to start on port {} -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring A2A back.",
@@ -1253,6 +1276,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.pgWireListenPort())) {
             log.info("warp listening for TCP (Postgres wire) on port {}, proxying to postgres {}:{}/{}",
                     options.pgWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("pgwire", "PostgreSQL", "sql", "PostgreSQL wire", options.pgWireListenPort(), "Relay", null, "pgwire");
             acceptLoop("Postgres wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new PgWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
         } catch (IOException e) {
@@ -1272,6 +1296,7 @@ public final class Main {
             com.sayonora.warp.core.SqlMetricsCollector sqlMetrics) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             log.info("warp listening for Bolt (Neo4j wire) on port {}", port);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("boltwire", "Neo4j (Bolt)", "api", "Bolt", port, "Emulate", "neo4j", "boltwire");
             acceptLoop("Bolt", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new com.sayonora.warp.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry, sqlMetrics));
         } catch (IOException e) {
@@ -1286,6 +1311,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.myWireListenPort())) {
             log.info("warp listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mywireNativeBackend() ? "mywire-native" : "mywire", "MySQL", "sql", "MySQL wire", options.myWireListenPort(), options.mywireNativeBackend() ? "Relay" : "Adapt", null, "mywire");
             acceptLoop("MySQL wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
         } catch (IOException e) {
@@ -1300,6 +1326,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("warp listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mssqlwireNativeBackend() ? "mssqlwire-native" : "mssqlwire", "SQL Server", "sql", "TDS", options.mssqlWireListenPort(), options.mssqlwireNativeBackend() ? "Relay" : "Adapt", null, "mssqlwire");
             acceptLoop("SQL Server TDS wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
         } catch (IOException e) {
@@ -1316,6 +1343,7 @@ public final class Main {
                     + "(find/insert/update/delete, plus a real [$match][$group][$sort][$limit][$project] "
                     + "aggregate pipeline -- see MongoAggregationTranslator for its exact scope)",
                     mongoPort);
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("mongowire", "MongoDB", "api", "MongoDB wire", mongoPort, "Emulate", "mongodb", "mongowire");
             acceptLoop("MongoDB wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
         } catch (IOException e) {
@@ -1329,6 +1357,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
             log.info("warp listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "orawire-native" : "orawire", "Oracle", "sql", "Oracle TNS", options.listenPort(), options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "Relay" : "Adapt", null, "orawire");
             acceptLoop("Oracle wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
         } catch (IOException e) {
@@ -1343,6 +1372,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
             log.info("warp listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("orawire-tls", "Oracle (TCPS)", "sql", "Oracle TNS over TLS", options.tlsPort(), options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "Relay" : "Adapt", null, "orawire");
             acceptLoop("Oracle wire TCPS", serverSocket, connectionGate, sessionExecutor, plainSocket -> {
                 SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
                         plainSocket, null, plainSocket.getPort(), true);

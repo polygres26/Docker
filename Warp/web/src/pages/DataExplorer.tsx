@@ -80,7 +80,7 @@ export default function DataExplorer() {
   if (backends !== null && backends.length === 0) {
     return (
       <div className={styles.page}>
-        <PageHeader title="Data explorer" description={<>No backends configured yet. Add one on the <Link to="/backend-sets">Backend sets</Link> page first.</>} />
+        <PageHeader title="Data explorer" description={<>No backends configured yet. Add one on the <Link to="/infrastructure">Backend sets</Link> page first.</>} />
       </div>
     )
   }

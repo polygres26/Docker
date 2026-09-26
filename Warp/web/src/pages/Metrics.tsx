@@ -164,7 +164,7 @@ export default function Metrics() {
 
       <Section flush title="Traffic by backend" meta={
         <>
-          <Link to="/backend-sets">Backend sets</Link>
+          <Link to="/infrastructure">Backend sets</Link>
           {backendSetNames.length > 0 && <> ({backendSetNames.join(', ')})</>}
         </>
       }>

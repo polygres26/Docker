@@ -403,7 +403,8 @@ export async function testConfiguredBackend(name: string): Promise<BackendTestRe
 
 // --- Backend sets: /api/backend-sets (the one place backends are added, edited and removed) ---
 
-export type StoreId = 'influxdb' | 'mongodb' | 'sqs' | 'neo4j' | 'opensearch' | 'dynamodb' | 's3' | 'redis' | 'azblob' | 'azqueue' | 'aztable' | 'gcs' | 'bigtable' | 'firestore' | 'datastore' | 'pubsub' | 'sns' | 'kinesis' | 'awsparams' | 'cql' | 'kafka' | 'gremlin' | 'cosmos' | 'amqp'
+/** A store id as served by GET /api/backend-stores (never hardcode the list; read `stores` from the API). */
+export type StoreId = string
 
 export interface StoreInfo {
   id: StoreId
@@ -429,6 +430,8 @@ export interface SetBackend {
   enabledStores: StoreId[]
   canHostStores: boolean
   state: string
+  /** Connection-pool gauge for this backend; absent until the first connection was borrowed. */
+  pool?: { active: number; idle: number; total: number; max: number; waiting: number }
   health?: { ok: boolean; message: string; tookMs: number; serverVersion: string | null }
 }
 
@@ -503,6 +506,22 @@ export async function listBackendSets(health = false): Promise<BackendSetsRespon
 
 export async function createBackendSet(name: string, description: string): Promise<BackendWriteResult> {
   return api('/api/backend-sets', { method: 'POST', body: JSON.stringify({ name, description: description || null }) })
+}
+
+/** GET /api/backend-stores: the stores a Postgres backend can host (single source of truth for the UI). */
+export async function listBackendStores(): Promise<StoreInfo[]> {
+  const r = await api<{ stores: StoreInfo[] }>('/api/backend-stores')
+  return r.stores
+}
+
+/** Rename and/or re-describe a set. `name` renames it (its backends follow). */
+export async function updateBackendSet(set: string, patch: { name?: string; description?: string | null }): Promise<BackendWriteResult> {
+  return api(setPath(set), { method: 'PATCH', body: JSON.stringify(patch) })
+}
+
+/** Move a backend to another existing set (its data is not moved: see rebalanceRequired). */
+export async function moveSetBackend(set: string, name: string, toSet: string): Promise<BackendWriteResult> {
+  return api(backendPath(set, name), { method: 'PATCH', body: JSON.stringify({ set: toSet }) })
 }
 
 export async function deleteBackendSet(set: string): Promise<BackendWriteResult> {
@@ -719,4 +738,97 @@ export async function getAbCompare(onlyDiff: boolean): Promise<{ entries: AbComp
 
 export async function getAbStats(): Promise<AbStats> {
   return api<AbStats>('/api/ab-routing/stats')
+}
+
+
+// --- Interfaces: /api/interfaces (every frontend this Warp is actually serving) ---
+
+export type InterfaceKind = 'sql' | 'api' | 'mcp'
+export type InterfaceMode = 'Relay' | 'Adapt' | 'Emulate'
+
+export interface InterfaceInfo {
+  id: string
+  label: string
+  kind: InterfaceKind
+  protocol: string
+  port: number
+  /** Relay: native protocol to a same-engine backend. Adapt: dialect translated. Emulate: API implemented on Postgres. null: n/a. */
+  mode: InterfaceMode | null
+  status: 'listening'
+  /** Store id for store-backed API frontends. */
+  store: string | null
+  /** Backend set this store-backed frontend is served from (WARP_<PROTOCOL>_SET), and the backends hosting it. */
+  set?: string | null
+  hosts?: string[]
+  setEnvVar?: string
+  /** Statements/operations counted since process start; null when the collector keeps no counter for this frontend. */
+  requests: number | null
+  metricsKey: string | null
+}
+
+export interface InterfacesResponse { interfaces: InterfaceInfo[]; activeSessions: number }
+
+export async function listInterfaces(): Promise<InterfacesResponse> {
+  return api('/api/interfaces')
+}
+
+// --- MCP endpoints: /api/mcp-endpoints ---
+
+export interface McpEndpoint {
+  id: string
+  name: string
+  /** "all", "group:<backend set>" or "db:<backend>" */
+  scope: string
+  description: string | null
+  createdAt: string | null
+  createdBy: string | null
+  expiresAt: string | null
+  status: 'active' | 'expired'
+  path: string
+}
+
+export interface McpEndpointCreated extends McpEndpoint { token: string; mcpPort: number; note: string }
+
+export interface McpTool { name: string; description: string; inputSchema?: unknown }
+
+export async function listMcpEndpoints(): Promise<McpEndpoint[]> {
+  return api('/api/mcp-endpoints')
+}
+
+export async function createMcpEndpoint(body: {
+  name: string; scope: string; description?: string; ttlSeconds?: number
+}): Promise<McpEndpointCreated> {
+  return api('/api/mcp-endpoints', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export async function revokeMcpEndpoint(id: string): Promise<void> {
+  await api(`/api/mcp-endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function getMcpEndpointTools(id: string): Promise<{ id: string; scope: string; tools: McpTool[] }> {
+  return api(`/api/mcp-endpoints/${encodeURIComponent(id)}/tools`)
+}
+
+// --- Anomalies + usage + config version ---
+
+export interface AnomalyNote {
+  timestamp: string; protocol: string; baselinePerSec: number; currentPerSec: number; ratio: number; narrative: string | null
+}
+
+export async function getAnomalies(): Promise<{ enabled: boolean; notes: AnomalyNote[] }> {
+  return api('/api/anomalies')
+}
+
+export interface UsageStat { calls: number; errors: number; totalMs: number; avgMs: number }
+
+export async function getUsage(): Promise<{
+  byWorkloadClass: Array<UsageStat & { workloadClass: string }>
+  byTenant: Array<UsageStat & { tenant: string }>
+}> {
+  return api('/api/usage')
+}
+
+/** GET /config: the current warp_config version (and its creation time). */
+export async function getConfigVersion(): Promise<{ configStoreEnabled: boolean; version: number | null; createdAt?: string }> {
+  return api('/config')
 }

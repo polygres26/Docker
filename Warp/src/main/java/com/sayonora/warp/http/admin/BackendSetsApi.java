@@ -7,6 +7,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.sayonora.warp.config.ConfigStore;
 import com.sayonora.warp.config.WarpConfig;
+import com.sayonora.warp.core.BackendConnectionPools;
 import com.sayonora.warp.core.BackendConnectivityTest;
 import com.sayonora.warp.core.BackendRegistry;
 import com.sayonora.warp.core.BackendSetModel;
@@ -37,11 +38,11 @@ import org.slf4j.LoggerFactory;
  *   GET    /api/backend-sets[?health=true]              every set with its backends
  *   POST   /api/backend-sets                            {name, description?}
  *   GET    /api/backend-sets/{set}
- *   PATCH  /api/backend-sets/{set}                      {description}
+ *   PATCH  /api/backend-sets/{set}                      {description?, name?}   (name renames the set)
  *   DELETE /api/backend-sets/{set}                      (empty sets only; never the default backend's set)
  *   POST   /api/backend-sets/{set}/backends             {name,url,user?,password?,description?,enabledStores?[]}
  *   GET    /api/backend-sets/{set}/backends/{name}
- *   PATCH  /api/backend-sets/{set}/backends/{name}      {description?,enabledStores?,url?,user?,password?}
+ *   PATCH  /api/backend-sets/{set}/backends/{name}      {description?,enabledStores?,url?,user?,password?,set?}   (set moves it)
  *   DELETE /api/backend-sets/{set}/backends/{name}
  *   POST   /api/backend-sets/{set}/backends/{name}/test
  *   GET    /api/backend-stores                          the stores a Postgres backend can host
@@ -302,6 +303,16 @@ public final class BackendSetsApi {
         String state = registry != null && registry.get(b.name()) != null ? registry.stateOf(b.name()).name()
                 : "PENDING";
         o.addProperty("state", state);
+        var pool = BackendConnectionPools.statsForBackend(b.name());
+        if (pool != null) {
+            JsonObject p = new JsonObject();
+            p.addProperty("active", pool.activeConnections());
+            p.addProperty("idle", pool.idleConnections());
+            p.addProperty("total", pool.totalConnections());
+            p.addProperty("max", pool.maxPoolSize());
+            p.addProperty("waiting", pool.threadsAwaitingConnection());
+            o.add("pool", p);
+        }
         if (health) {
             var r = BackendConnectivityTest.test(b.url(), b.user(), b.password());
             JsonObject h = new JsonObject();
@@ -365,8 +376,12 @@ public final class BackendSetsApi {
         synchronized (WRITE_LOCK) {
             WarpConfig before = latest(configStore);
             BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
+            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
             BackendSet s = model.patchSet(set, body.has("description"), str(body, "description"));
-            JsonObject out = commit(before, model, registry, configStore, options, List.of());
+            if (body.has("name") && str(body, "name") != null && !str(body, "name").equals(set)) {
+                s = model.renameSet(set, str(body, "name"));
+            }
+            JsonObject out = commit(before, model, registry, configStore, options, List.of(), oldModel);
             out.add("set", setJson(model, s, registry, false));
             write(response, 200, out);
         }
@@ -421,15 +436,14 @@ public final class BackendSetsApi {
             if (existing == null || !existing.set().equals(set)) {
                 throw new ModelException(404, "backend '" + name + "' does not exist in backend set '" + set + "'");
             }
-            if (body.has("set") && !set.equals(str(body, "set"))) {
-                throw new ModelException(400, "moving a backend to another set is not supported -- delete it and "
-                        + "add it to the other set");
-            }
             Backend b = model.patchBackend(name, str(body, "url"), str(body, "user"),
                     // blank password keeps the stored one (the API never returns it, so clients cannot resend it)
                     body.has("password") && !str(body, "password").isBlank() ? str(body, "password") : null,
                     body.has("description"), str(body, "description"),
                     body.has("enabledStores") ? stores(body) : null);
+            if (body.has("set") && str(body, "set") != null && !set.equals(str(body, "set"))) {
+                b = model.moveBackend(name, str(body, "set"));
+            }
             JsonObject out = commit(before, model, registry, configStore, options, List.of(), oldModel);
             out.add("backend", backendJson(model, b, registry, false));
             write(response, 200, out);
