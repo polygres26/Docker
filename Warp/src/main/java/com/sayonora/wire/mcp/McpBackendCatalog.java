@@ -118,7 +118,7 @@ final class McpBackendCatalog {
             case DYNAMODB -> stores.dynamo() != null;
             case MONGODB -> stores.mongo() != null;
             case INFLUX -> stores.influx() != null;
-            case SQS, OPENSEARCH, NEO4J, S3STORE -> true; // described straight from the hosting Postgres
+            case SQS, OPENSEARCH, NEO4J, S3STORE, REDIS, AZBLOB, AZQUEUE, AZTABLE -> true; // described straight from the hosting Postgres
             default -> false;
         };
     }
@@ -132,6 +132,10 @@ final class McpBackendCatalog {
             case OPENSEARCH -> BackendKind.OPENSEARCH;
             case DYNAMODB -> BackendKind.DYNAMODB;
             case S3 -> BackendKind.S3STORE;
+            case REDIS -> BackendKind.REDIS;
+            case AZBLOB -> BackendKind.AZBLOB;
+            case AZQUEUE -> BackendKind.AZQUEUE;
+            case AZTABLE -> BackendKind.AZTABLE;
         };
     }
 }

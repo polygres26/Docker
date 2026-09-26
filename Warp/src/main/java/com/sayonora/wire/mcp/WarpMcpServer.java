@@ -179,6 +179,14 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.NEO4J, backendRegistry));
         this.providers.put(BackendKind.S3STORE, new StoreDescribeProvider(BackendKind.S3STORE,
                 com.sayonora.wire.core.StoreType.S3, backendRegistry));
+        this.providers.put(BackendKind.REDIS, new StoreDescribeProvider(BackendKind.REDIS,
+                com.sayonora.wire.core.StoreType.REDIS, backendRegistry));
+        this.providers.put(BackendKind.AZBLOB, new StoreDescribeProvider(BackendKind.AZBLOB,
+                com.sayonora.wire.core.StoreType.AZBLOB, backendRegistry));
+        this.providers.put(BackendKind.AZQUEUE, new StoreDescribeProvider(BackendKind.AZQUEUE,
+                com.sayonora.wire.core.StoreType.AZQUEUE, backendRegistry));
+        this.providers.put(BackendKind.AZTABLE, new StoreDescribeProvider(BackendKind.AZTABLE,
+                com.sayonora.wire.core.StoreType.AZTABLE, backendRegistry));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -853,6 +861,10 @@ public final class WarpMcpServer {
             case OPENSEARCH -> com.sayonora.wire.core.StoreType.OPENSEARCH;
             case DYNAMODB -> com.sayonora.wire.core.StoreType.DYNAMODB;
             case S3STORE -> com.sayonora.wire.core.StoreType.S3;
+            case REDIS -> com.sayonora.wire.core.StoreType.REDIS;
+            case AZBLOB -> com.sayonora.wire.core.StoreType.AZBLOB;
+            case AZQUEUE -> com.sayonora.wire.core.StoreType.AZQUEUE;
+            case AZTABLE -> com.sayonora.wire.core.StoreType.AZTABLE;
             default -> null;
         };
     }

@@ -33,7 +33,16 @@ public enum StoreType {
     DYNAMODB("dynamodb", "DynamoDB", "WARP_DYNAMOWIRE_SET", true,
             "DynamoDB API; items are kept as rows, one table per DynamoDB table."),
     S3("s3", "S3", "WARP_S3WIRE_SET", true,
-            "Amazon S3 API; objects are stored as chunked rows and sharded by key.");
+            "Amazon S3 API; objects are stored as chunked rows and sharded by key."),
+    REDIS("redis", "Redis", "WARP_REDISWIRE_SET", true,
+            "Redis protocol (RESP2/RESP3); keys are spread over the hosts by Redis Cluster hash slot, so multi-key "
+                    + "commands need all keys on one host (same {hash tag}) or fail with CROSSSLOT."),
+    AZBLOB("azblob", "Azure Blob", "WARP_AZBLOBWIRE_SET", true,
+            "Azure Blob Storage REST API; blobs are stored as chunked rows and sharded by container/blob name."),
+    AZQUEUE("azqueue", "Azure Queue", "WARP_AZQUEUEWIRE_SET", true,
+            "Azure Queue Storage REST API; each queue lives wholly on one backend."),
+    AZTABLE("aztable", "Azure Table", "WARP_AZTABLEWIRE_SET", true,
+            "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey.");
 
     private final String id;
     private final String label;

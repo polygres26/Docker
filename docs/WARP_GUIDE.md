@@ -701,11 +701,49 @@ is unchanged). With one enabled backend all data lives there.
 `BatchWriteItem` is not atomic (as in real DynamoDB): on several hosts a write that fails on its host is
 returned in `UnprocessedItems` for the client to retry instead of failing the whole call.
 
-**Neo4j: one backend per set.** The graph store (`warp_graph_nodes`/`warp_graph_edges`, Cypher translated
-to SQL) cannot answer traversals correctly when nodes and relationships are spread across several
-databases, so enabling Neo4j on a second backend of the same set is rejected with a validation error
-that says why. This is the one exception to "several hosts ⇒ sharding". A different set may host Neo4j
-on its own backend.
+**Neo4j: one backend per set.** The graph store (`warp_graph_nodes`/`warp_graph_edges`) cannot answer
+traversals correctly when nodes and relationships are spread across several databases, so enabling Neo4j on
+a second backend of the same set is rejected with a validation error that says why. This is the one
+exception to "several hosts ⇒ sharding". A different set may host Neo4j on its own backend.
+
+**Neo4j / Bolt (`boltwire`) in detail.** The official Neo4j drivers connect to `WARP_BOLTWIRE_PORT` (7687).
+
+- *Protocol*: Bolt 5.0-5.4 and 4.4 (highest offered wins), HELLO/LOGON/LOGOFF (no authentication is performed),
+  RUN, PULL/DISCARD with `n` and `qid`, BEGIN/COMMIT/ROLLBACK, RESET (FAILED-state IGNORED semantics), ROUTE (a
+  routing table pointing at the address the client used, so `neo4j://` works), TELEMETRY, GOODBYE, chunked messages;
+  the server agent is `Neo4j/5.26.30`. PackStream: every value type (int64, floats incl. NaN/Inf, bytes, unicode,
+  lists, maps, Node/Relationship/Path with 4.x and 5.x layouts, Date/Time/LocalTime/DateTime/LocalDateTime/Duration,
+  Point2D/3D).
+- *Cypher*: a real parser, compile-time semantic analysis (Neo4j's SyntaxError family: undefined variables, type
+  conflicts, ambiguous aggregation, clause composition ...) and an executor over the graph tables. Supported:
+  MATCH / OPTIONAL MATCH (labels, properties, directions, type alternatives, variable-length paths, path variables,
+  shortestPath / allShortestPaths, relationship uniqueness), WHERE (all predicates, pattern predicates, EXISTS/COUNT/COLLECT
+  subqueries), WITH / RETURN (DISTINCT, ORDER BY, SKIP, LIMIT, aggregation incl. percentiles and stDev), UNWIND, UNION
+  [ALL], CALL {} subqueries, CREATE, MERGE (ON CREATE / ON MATCH), SET (`=`, `+=`, labels), REMOVE, DELETE / DETACH DELETE,
+  FOREACH, CASE, list / map / string / math / temporal (`date`, `time`, `datetime`, `localtime`, `localdatetime`,
+  `duration`, truncation, arithmetic) / point functions, comprehensions, quantifiers, `reduce`, map projections.
+  Parameters (`$param`) of every type. Procedures: `db.labels`, `db.relationshipTypes`, `db.propertyKeys`, `dbms.components`
+  and a few more; `SHOW INDEXES|CONSTRAINTS|PROCEDURES|FUNCTIONS|DATABASES`.
+- *Transactions*: auto-commit statements run in one backend transaction each; `BEGIN` pins one backend connection until
+  COMMIT / ROLLBACK / RESET / disconnect (see 4.8 "Connection multiplexing"); a failed statement rolls the transaction
+  back like Neo4j. Read-only statements run lazily at PULL (runtime errors surface there), updating ones at RUN.
+- *Schema*: `CREATE CONSTRAINT ... REQUIRE ... IS UNIQUE` (a real unique partial index; violations are
+  `Neo.ClientError.Schema.ConstraintValidationFailed`), `CREATE INDEX` (range / text; composite), `DROP`, `IF [NOT] EXISTS`.
+- *Verified against real Neo4j 5.26*: the openCypher TCK (3,810 scenario instances that pass on real Neo4j all pass on
+  Warp; error scenarios must return the same status code) and a ~950-case differential corpus replayed from recorded golden
+  answers (`Warp/tests/python/bolt_conformance/`, `test_boltwire_conformance.py`).
+- *Differences from Neo4j*: property key order follows jsonb (length, then alphabetical) instead of creation order;
+  node deletions are checked at the end of each statement, not at commit; data and schema changes may share a
+  transaction; `valueType()` prints `LIST<ANY>` for heterogeneous lists and `ANY` for byte arrays; the `system` database and
+  security commands (users, roles, `SHOW CURRENT USER`) do not exist; an unmatched Bolt `db` name goes to the default backend
+  unless strict routing rejects it. The full list is `bolt_known.py`.
+- *Not supported* (clear Neo4j-style errors): full-text and vector indexes, relationship-property indexes and constraints,
+  property-existence / node-key / property-type constraints (Enterprise features), APOC, GDS, `LOAD CSV`, `CREATE DATABASE`
+  and other multi-database administration, cluster routing beyond a single-member table, EXPLAIN / PROFILE plans, user
+  procedures. The graph lives on one Postgres backend (it is not sharded).
+- *Implementation note*: Cypher is interpreted in Java over row sets; only label scans, scalar property equality and
+  one-hop expansions are pushed to SQL (jsonb containment, `(from_id, type)` indexes). Very large traversals are therefore
+  slower than in Neo4j.
 
 #### Adding a backend does not rebalance
 
@@ -1357,6 +1395,149 @@ its table. New queues record their physical table name in the catalog so that tw
   (Floci errors on deleting an already-deleted handle, clamps an out-of-range `MaxNumberOfMessages`, ignores a per-message
   delay on FIFO queues and returns all attributes when none are requested; Warp does what real SQS does).
 
+#### The Redis store (rediswire)
+
+rediswire speaks Redis' wire protocol (RESP2 and RESP3, `HELLO 2|3`, pipelining, inline commands, binary-safe keys and values up to 512 MB) and keeps the data in
+Postgres, so one frontend serves what AWS ElastiCache/MemoryDB, Azure Cache for Redis, GCP Memorystore and Valkey clients expect. Enable the `redis` store on one or
+more Postgres backends of a set (Backend sets page or `enabledStores: ["redis"]`); it listens on `WARP_REDISWIRE_PORT` (default 16379) when that variable is set, the
+store is enabled, or `WARP_REDISWIRE_ENABLED=true`. `WARP_REDISWIRE_SET` picks the set, `WARP_REDISWIRE_PASSWORD` (or `CONFIG SET requirepass`) requires `AUTH`.
+
+**Data model** (tables `warp_redis_*`, created idempotently): `warp_redis_keys` (db, key bytea, type, expiry ms, version, hash slot, element counter `n`, string value) plus one
+table per type: hashes, lists (sparse bigint positions: head/tail push and pop are index lookups, a middle insert takes the midpoint and renumbers only when no gap is left),
+sets, sorted sets (index on key, score, member), stream entries / groups / consumers / pending list, and a pub/sub overflow table. HyperLogLog and bitmaps are strings
+(`HYLL` + 16384 one-byte registers); geo is a sorted set with Redis' 52-bit geohash score. `SELECT 0-15` is the namespace column. Each command is one statement or one short transaction on a
+pooled connection that is returned before the next command; nothing is held while a client is idle, blocked or subscribed. Durability is Postgres' (no RDB/AOF; `SAVE`/`BGSAVE` are no-ops), `maxmemory` is
+ignored (no eviction, `noeviction` policy is reported).
+
+**Sharding.** A key's hash slot is CRC16 with `{hash tags}` exactly as in Redis Cluster; the 16384 slots are cut into contiguous ranges over the redis-enabled backends of the set. Commands whose keys
+map to different backends (MSET, RENAME, SUNIONSTORE, ZUNIONSTORE, LMOVE, MULTI/EXEC ...) fail with `CROSSSLOT Keys in request don't hash to the same slot` unless all keys share a hash tag; on one backend nothing is
+restricted. `KEYS`, `SCAN`, `DBSIZE`, `FLUSHDB`, `RANDOMKEY` fan out over all hosts (not allowed inside MULTI when sharded). Existing data is not rebalanced when a host is added.
+`CLUSTER SLOTS|SHARDS|NODES|INFO|KEYSLOT|COUNTKEYSINSLOT|GETKEYSINSLOT|MYID` advertise this Warp as one node owning all slots (INFO reports `redis_mode:standalone`; `SELECT` stays available).
+
+**Connect-time routing (4.8).** Redis has no database name: the `AUTH`/`HELLO` username plays that role (`default` = none) and the numeric `SELECT n` is looked up as the name `dbN`. Add explicit routes with
+protocol `redis`, e.g. `{"protocol":"redis","database":"db3","target":"pg2"}` (SELECT 3 lives on backend `pg2`) or `{"protocol":"redis","database":"tenant-a","target":"set:a"}` (user `tenant-a`). Without a password any password is accepted and the username is only
+a routing hint; with `WARP_REDISWIRE_PASSWORD` every username needs that password. `WARP_CONNECT_ROUTING=strict` rejects connections that match no route.
+
+**Blocking and pub/sub.** `BLPOP BRPOP BLMOVE BRPOPLPUSH BLMPOP BZPOPMIN BZPOPMAX BZMPOP XREAD/XREADGROUP BLOCK` park the client thread, not a connection; a push commits a `pg_notify` and one dedicated LISTEN connection per Warp
+process and host wakes the waiter (any connection, any Warp node); blocked clients are served first come, first served. Pub/sub messages travel through `NOTIFY` (over 6 KB through a side table) to the subscribers of every Warp node; `PUBLISH` returns the number of
+receivers on the Warp that handled it. `SSUBSCRIBE/SPUBLISH` use the shard of the channel's slot. Keyspace notifications are accepted by `CONFIG SET` but not generated.
+
+**Supported commands.**
+
+| Family | Commands |
+|---|---|
+| Connection / server | HELLO AUTH PING ECHO QUIT RESET SELECT CLIENT (ID SETNAME GETNAME SETINFO INFO LIST KILL NO-EVICT REPLY UNBLOCK PAUSE) INFO CONFIG GET/SET/RESETSTAT COMMAND (COUNT INFO LIST DOCS GETKEYS) TIME DBSIZE SLOWLOG LATENCY MEMORY USAGE ACL WHOAMI/LIST/CAT/GENPASS CLUSTER WAIT ROLE LASTSAVE LOLWUT |
+| Strings | GET SET (NX XX GET EX PX EXAT PXAT KEEPTTL) SETNX SETEX PSETEX GETSET GETDEL GETEX MGET MSET MSETNX INCR DECR INCRBY DECRBY INCRBYFLOAT APPEND STRLEN GETRANGE SUBSTR SETRANGE LCS |
+| Keys | DEL UNLINK EXISTS TOUCH TYPE RENAME RENAMENX COPY MOVE EXPIRE PEXPIRE EXPIREAT PEXPIREAT (NX XX GT LT) TTL PTTL EXPIRETIME PEXPIRETIME PERSIST KEYS SCAN RANDOMKEY FLUSHDB FLUSHALL SWAPDB OBJECT DUMP RESTORE (own format) SORT SORT_RO |
+| Hashes | HSET HMSET HSETNX HGET HMGET HGETALL HDEL HEXISTS HLEN HKEYS HVALS HSTRLEN HINCRBY HINCRBYFLOAT HRANDFIELD HSCAN |
+| Lists | LPUSH RPUSH LPUSHX RPUSHX LPOP RPOP LLEN LRANGE LINDEX LSET LINSERT LREM LTRIM LMOVE RPOPLPUSH LPOS LMPOP BLPOP BRPOP BLMOVE BRPOPLPUSH BLMPOP |
+| Sets | SADD SREM SISMEMBER SMISMEMBER SMEMBERS SCARD SPOP SRANDMEMBER SMOVE SINTER SUNION SDIFF (+STORE) SINTERCARD SSCAN |
+| Sorted sets | ZADD (NX XX GT LT CH INCR) ZINCRBY ZREM ZSCORE ZMSCORE ZCARD ZCOUNT ZLEXCOUNT ZRANK ZREVRANK (WITHSCORE) ZRANGE (BYSCORE BYLEX REV LIMIT WITHSCORES) ZRANGESTORE ZREVRANGE ZRANGEBYSCORE ZREVRANGEBYSCORE ZRANGEBYLEX ZREVRANGEBYLEX ZREMRANGEBYRANK/SCORE/LEX ZPOPMIN ZPOPMAX ZMPOP BZPOPMIN BZPOPMAX BZMPOP ZUNION ZINTER ZDIFF (+STORE) ZINTERCARD ZRANDMEMBER ZSCAN |
+| Streams | XADD (NOMKSTREAM MAXLEN MINID ~) XLEN XRANGE XREVRANGE XDEL XTRIM XSETID XREAD XREADGROUP (BLOCK NOACK) XGROUP CREATE/SETID/DESTROY/CREATECONSUMER/DELCONSUMER XACK XPENDING XCLAIM XAUTOCLAIM XINFO STREAM/GROUPS/CONSUMERS |
+| Pub/sub | SUBSCRIBE UNSUBSCRIBE PSUBSCRIBE PUNSUBSCRIBE SSUBSCRIBE SUNSUBSCRIBE PUBLISH SPUBLISH PUBSUB CHANNELS/NUMSUB/NUMPAT/SHARDCHANNELS/SHARDNUMSUB |
+| Transactions | MULTI EXEC DISCARD WATCH UNWATCH (optimistic locking with per-key versions; EXEC is one Postgres transaction) |
+| HyperLogLog / bitmaps / geo | PFADD PFCOUNT PFMERGE; SETBIT GETBIT BITCOUNT BITPOS BITOP (AND OR XOR NOT) BITFIELD BITFIELD_RO; GEOADD GEOPOS GEODIST GEOHASH GEOSEARCH GEOSEARCHSTORE GEORADIUS(_RO) GEORADIUSBYMEMBER(_RO) |
+
+**Differences from real Redis / gaps.** Not supported (clear error): `EVAL EVALSHA SCRIPT LOAD FUNCTION FCALL` (no Lua engine on the classpath, none was added: `EVALSHA` answers `NOSCRIPT`, `EVAL` an `ERR scripting is not supported` --
+redis-py's `Lock` registers Lua scripts and therefore fails; plain `SET NX PX` locks work), `MONITOR`, replication (`REPLICAOF SYNC PSYNC FAILOVER`), `MODULE`, `DEBUG`, client-side caching (`CLIENT TRACKING`), ACL users beyond the single one,
+eviction, keyspace notifications, `OBJECT FREQ`. Details: hashes and sets come back ordered by field/member (Redis: insertion or hash order); `INCRBYFLOAT` computes in exact decimal (Redis in long double: `1e400` and hex floats are refused);
+scores print like Redis' fpconv except rare doubles where Grisu2 is not the shortest; stream ids use unsigned 64 bits, `XADD ... ~` trims in nodes of 100 like Redis; `SSCAN/HSCAN/ZSCAN` return small collections whole and use offset cursors beyond 128 elements; a WATCHed key that was
+missing and is created and deleted again before EXEC is not detected; GEO searches scan the key (O(n)); memory numbers in `INFO`/`MEMORY USAGE` are estimates; `PUBLISH` counts local receivers only. `redis_version` is reported as 7.2.5.
+
+**Conformance and performance.** `Warp/tests/python/redis_conformance/` holds a differential corpus (82 cases, 2,229 replies: RESP2 and RESP3 types, error texts, blocking, pub/sub, transactions) whose answers were recorded from a real Redis 7.4.11
+(`run_redis_oracle.py record`, starts a `redis:7` container) in a gzip-JSON golden file; `test_rediswire_conformance.py` replays it against Warp offline. `test_rediswire.py` covers all families on one and on two sharded backends,
+concurrency, expiry sweeper, pool starvation (`WARP_POOL_MAX_SIZE=4` with idle subscribers and blocked clients) and cluster emulation. RTT numbers: `docs/RTT_BASELINE_2026.md`.
+
+#### The Azure Storage stores (azurewire)
+
+azurewire speaks the Azure Storage REST APIs -- **Blob**, **Queue** and **Table** (OData JSON) -- and keeps the data in the Postgres backends of a
+backend set. It reuses the machinery of the other stores (chunked rows like s3wire, a visibility-timeout queue like sqswire, key/partition sharding like
+dynamowire) and is verified against Microsoft's own emulator, **Azurite 3.37**, as the oracle. Three listeners, one Jetty each:
+
+| service | port env (default) | store type | shards by |
+|---|---|---|---|
+| Blob | `WARP_AZBLOBWIRE_PORT` (10000) | `azblob` | hash(account/container/blob name); snapshots live with their blob; container catalog on the first host |
+| Queue | `WARP_AZQUEUEWIRE_PORT` (10001) | `azqueue` | hash(account/queue name): a queue lives wholly on one host; the queue catalog (ListQueues) on the first host |
+| Table | `WARP_AZTABLEWIRE_PORT` (10002) | `aztable` | hash(account/table/PartitionKey); the table catalog on the first host |
+
+**Why three store types, not one.** The services are independent products with different shard keys and different hosting needs (a blob store wants big
+disks, a queue wants fast small writes). One type per service lets an operator put blobs on two hosts and queues on a third, and keeps `rebalanceRequired`
+honest per service. Each store has its own `WARP_AZBLOBWIRE_SET` / `WARP_AZQUEUEWIRE_SET` / `WARP_AZTABLEWIRE_SET` (default: the set that holds `default`).
+A listener starts when its store is enabled on a Postgres backend, when its port variable is set, or when `WARP_AZ<BLOB|QUEUE|TABLE>WIRE_ENABLED=true`. It
+refuses to start without a storage account (logged, the other protocols stay up). Schema is idempotent (`CREATE ... IF NOT EXISTS`), tables are prefixed
+`warp_azblob_` / `warp_azqueue_` / `warp_aztable_`, disabling a store never drops data. The admin UI lists the three stores (with one-line descriptions) as
+checkboxes; MCP `describe` lists containers with blob counts and bytes, queues with message counts, tables with entity counts, per shard.
+
+**Accounts and addressing.** `WARP_AZURE_ACCOUNTS='account1:base64key;account2:base64key'`; `WARP_AZURE_DEV_ACCOUNT=true` additionally enables Azurite's
+public `devstoreaccount1` and its PUBLIC key (never enable on a reachable host). Path style (`http://host:10000/<account>/<container>/<blob>`) as Azurite, and
+host style `<account>.blob.<domain>` where the domain is `WARP_AZURE_DOMAIN` (default `localhost`). Each account is its own namespace. Connect-time routing
+(section 4.8): the storage **account name** is the routing key -- an account named like a backend or backend set stores in that backend / set; a route
+`{protocol: "http", database: "<account>", target: ...}` maps an account elsewhere; `WARP_CONNECT_ROUTING=strict` rejects unknown account names. Connections
+are borrowed per statement/chunk, never pinned across slow client I/O (see *Connection multiplexing*): a 100 MiB upload streams in 4 MiB chunk rows, each
+its own short borrow, so `WARP_POOL_MAX_SIZE=4` with many slow uploaders keeps other requests responsive (tested).
+
+**Authentication.**
+
+| mode | support |
+|---|---|
+| SharedKey, SharedKeyLite | HMAC-SHA256 over the canonicalized string-to-sign exactly as documented, per service (Blob/Queue full form; Table's shorter form; Lite forms). Both the encoded and the decoded canonical path are accepted. A wrong signature answers 403 `AuthenticationFailed` with `AuthenticationErrorDetail` carrying the string Warp expected (Table: in the message) |
+| service SAS | blob (`sr=b/c/bs`), queue, table (incl. `tn`, `spk/srk/epk/erk`); `sp`, `st`, `se`, `si` (stored access policy of the container / queue / table), `sip` (IP range), `spr` (https), response-header overrides; permission, expiry, IP and protocol checks -> `AuthorizationPermissionMismatch`, `AuthorizationSourceIPMismatch`, `AuthorizationProtocolMismatch`, `AuthenticationFailed` (time frame) |
+| account SAS | `ss`, `srt`, `sp` for all three services |
+| anonymous | Blob only, on containers whose public access level is `blob` or `container` (get blob / list) |
+| Entra ID bearer | NOT validated. One static test token is accepted (`WARP_AZURE_BEARER_TOKEN`); any other bearer gets 401 `InvalidAuthenticationInfo` |
+
+**Blob operations.** Containers: Create / Delete / Get Properties / Get+Set Metadata / Get+Set ACL (stored access policies, public access) / List (prefix, marker,
+maxresults, include=metadata) / Lease (acquire, renew, change, release, break; fixed and infinite). Blobs: Put Blob (block blob up to 5000 MiB), Put Block, Put Block
+List, Get Block List (committed / uncommitted / all), Append Blob (Create, Append Block with `appendpos` / `maxsize` conditions, Seal), Page Blob (Create, Put Page
+update/clear, Get Page Ranges, Resize, sequence numbers), Get Blob (Range / `x-ms-range`, `x-ms-range-get-content-md5`, conditional headers, 304), Get/Set Blob
+Properties, Get/Set Blob Metadata, Delete Blob (`x-ms-delete-snapshots`), Snapshot Blob + `include=snapshots`, Copy Blob and Copy Blob From URL (immediate `success`;
+same Warp only, other accounts need a valid SAS or public access), Abort Copy (always "no pending copy"), Set Blob Tier (stored), Blob Tags (Set/Get, `x-ms-tags`,
+Find Blobs by Tags with the `AND` of `= > >= < <=` terms and `@container`), List Blobs (flat and hierarchical with delimiter, prefix, marker, maxresults,
+include=metadata/snapshots/tags/copy), Get/Set Service Properties (CORS rules are stored and drive OPTIONS preflight and response headers), Get Account Information,
+Get Service Stats (always `live`), Blob Batch (Delete Blob and Set Blob Tier sub-requests), `x-ms-lease-*` and 409/412 lease errors, `Content-MD5` validation
+(`Md5Mismatch`), `x-ms-request-id` / `x-ms-client-request-id` echo, `x-ms-version` echoed. **Not supported:** soft delete / Undelete, blob versioning (`x-ms-version-id`),
+Query Blob Contents, user delegation keys, Set Blob Expiry, immutability policies, page-blob incremental copy / `prevsnapshot` diff, `x-ms-content-crc64`
+validation, `include=uncommittedblobs` (accepted, nothing extra listed), sub-request authorization inside a batch (the outer credential is used).
+
+**Queue operations.** Create (201, or 204 when it exists with the same metadata, 409 `QueueAlreadyExists` otherwise) / Delete / List (prefix, marker, maxresults,
+include=metadata) / Get+Set Metadata (`x-ms-approximate-messages-count`) / Get+Set ACL / Put Message (`visibilitytimeout`, `messagettl` incl. -1) / Get Messages
+(`numofmessages` 1-32, `visibilitytimeout`) / Peek Messages / Update Message / Delete Message / Clear Messages / service properties + CORS + stats. Messages carry
+MessageId, InsertionTime, ExpirationTime, PopReceipt, TimeNextVisible, DequeueCount; wrong pop receipts answer `PopReceiptMismatch`, unknown ids `MessageNotFound`,
+oversized bodies `MessageTooLarge` (64 KiB). Dequeue is one `UPDATE ... FOR UPDATE SKIP LOCKED` (no duplicates under 16 concurrent consumers, tested); expired
+messages are removed by a sweeper every 10 s (`WARP_AZQUEUEWIRE_SWEEP_SECONDS`) and are invisible immediately. No long polling exists in Azure Queue, none here.
+
+**Table operations.** Create / Delete / Query Tables (`$filter` on `TableName`, `$top`, `NextTableName`), Insert Entity (`Prefer: return-no-content|return-content`),
+Get Entity (`$select`), Query Entities (full `$filter` grammar: `eq ne gt ge lt le and or not`, parentheses, string / Int32 / Int64 `L` / double / bool /
+`datetime'..'` / `guid'..'` / `X'..'` / `binary'..'` literals; `$select`, `$top`, continuation via `x-ms-continuation-NextPartitionKey/NextRowKey`), Update (PUT,
+`If-Match`), Merge (MERGE and PATCH), Insert Or Replace / Insert Or Merge (PUT/MERGE without `If-Match`), Delete Entity, **Entity Group Transactions** (`$batch`
+changesets, one PartitionKey, up to 100 operations, 4 MiB, one Postgres transaction on the owning shard, all-or-nothing, error reported as `<index>:<message>`), Get/Set
+Table ACL, service properties + CORS. `application/json;odata=nometadata|minimalmetadata|fullmetadata` are honoured; Atom is refused with 415. ETags are
+`W/"datetime'<Timestamp>'"`; Timestamps have 7 fractional digits and are strictly increasing. Queries without a PartitionKey equality scatter-gather over all
+shards and merge in (PartitionKey, RowKey) byte order; the continuation token is the next entity's key pair (base64), so it is stateless and survives shard changes.
+Limits: 252 user properties, 1 MiB per entity, 32K characters per string, page size 1000. **Not supported:** the 5 s server-side query time limit, atom+xml,
+`$expand`/`$orderby`, `Edm.Decimal`.
+
+**Sharding semantics.** Same conventions as the other stores: deterministic hash over the hosts in declaration order, `rebalanceRequired` when a host is added
+(existing data is not moved), `WARP_*_PROBE_OTHER_SHARDS` is not needed because a key's owner is computed, not looked up. Every feature works on one backend and
+on two sharded backends (the whole golden corpus runs on both). Cross-partition entity group transactions are rejected like Azure; a cross-shard blob copy streams
+chunk by chunk.
+
+**Differences from real Azure / Azurite (documented, tested).** (1) Azurite is lax where real Azure is strict and Warp follows real Azure: malformed `If-*` dates, `maxresults=0`,
+unknown `x-ms-blob-public-access`, `$top=0`, batches spanning partitions, PUT with a key that differs from the URL, lease operations on a leased container. (2) Azurite has
+quirks Warp does not copy: `Range: bytes=-N` echoes `NaN`, no error body on many 400s, no SharedKeyLite for Blob, no `AuthenticationErrorDetail` (Azurite answers
+`AuthorizationFailure` for a bad signature), delimiter listings put all prefixes first. (3) Warp deliberately differs: `MessageTooLarge` is 400 (Azurite 413), `Content-MD5`
+is returned on Put Block / Append Block / Put Page, Table `odata.metadata` names the table in queries, `x-ms-version` is echoed. The classes are tracked in
+`Warp/tests/python/az_conformance/az_known.py`.
+
+**Conformance and performance.** `Warp/tests/python/az_conformance/` holds a differential corpus (36 cases, 529 REST steps: every operation above, error cases with each
+code/status, conditional requests, ranges, SharedKey / SharedKeyLite / SAS generated by the harness and verified by Azurite) replayed against Azurite and Warp with
+normalised comparison (status, meaningful headers, canonicalised XML/JSON/multipart bodies). Result: **443 identical, 49 same failing status with a different error code or
+text, 37 documented differences, 0 unexpected**, on one backend and on two sharded backends. The oracle answers are recorded in `golden.json.gz`;
+`test_azure_conformance.py` replays them offline (no Docker) on one and two backends and adds: rows really landing on both hosts, a 100 MiB block-blob upload in a JVM
+with a 300 MB heap, 16 clients hammering table upserts and queue dequeues without duplicates, `WARP_POOL_MAX_SIZE=4` with slow uploaders. The official Azure SDKs were not
+installed on the test machine, so the harness talks raw REST with its own signer (verified by Azurite). RTT: `RTT_BASELINE_2026.md`. Java unit tests:
+`AzurewireUnitTest` (string-to-sign, SAS, OData grammar, continuation tokens, XML).
+
 ### 4.8 Connecting to a specific backend or set
 
 A client driver picks **one backend** or **one whole backend set** with the database / service name it already
@@ -1655,7 +1836,7 @@ backend) are a byte relay or a dedicated connection and are unchanged.
 
 | Trigger | pgwire | mywire | mssqlwire | orawire | boltwire | Released when |
 |---|---|---|---|---|---|---|
-| Open transaction: `BEGIN`/`START TRANSACTION`, JDBC/driver autocommit=false | `BEGIN` | `START TRANSACTION`/`BEGIN`; with `SET autocommit=0` from the first statement that is not a plain read | `BEGIN TRAN`; with `SET IMPLICIT_TRANSACTIONS ON` from the first statement that is not a plain read | Oracle's implicit transaction: from an uncommitted write (a plain `SELECT` runs in autocommit mode and does not pin) | not applicable (Bolt `BEGIN` is unsupported) | `COMMIT`/`ROLLBACK` (or disconnect: rolled back) |
+| Open transaction: `BEGIN`/`START TRANSACTION`, JDBC/driver autocommit=false | `BEGIN` | `START TRANSACTION`/`BEGIN`; with `SET autocommit=0` from the first statement that is not a plain read | `BEGIN TRAN`; with `SET IMPLICIT_TRANSACTIONS ON` from the first statement that is not a plain read | Oracle's implicit transaction: from an uncommitted write (a plain `SELECT` runs in autocommit mode and does not pin) | Bolt `BEGIN` (explicit transaction) | `COMMIT`/`ROLLBACK` (or disconnect: rolled back) |
 | SQL-level cursor | `DECLARE ... CURSOR` until `CLOSE`/end of transaction | — | — | — | — | `CLOSE` / transaction end |
 | Session state on the backend | non-`LOCAL` `SET`/`RESET`, `SET ROLE`, `SET SESSION AUTHORIZATION`, `DISCARD`, `LISTEN`, SQL `PREPARE`, `CREATE TEMP TABLE`, `SELECT ... INTO TEMP`, `pg_advisory_lock*`, `set_config`, `nextval`/`currval`/`lastval`, `DECLARE ... WITH HOLD` | `SET time_zone`, `SET TRANSACTION ISOLATION LEVEL`, `CREATE TEMPORARY TABLE`, sequences | `#temp` tables, sequences | `seq.NEXTVAL/CURRVAL`, `ALTER SESSION`, `DBMS_OUTPUT`/`DBMS_SESSION` | none | **disconnect only** (irreversible) |
 

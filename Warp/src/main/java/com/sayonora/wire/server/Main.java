@@ -677,6 +677,65 @@ public final class Main {
                     sqsWirePort, e);
         }
 
+        // rediswire: Redis (RESP2/RESP3) frontend whose data lives in the "redis" store of the set's Postgres backends.
+        // Starts when WARP_REDISWIRE_PORT is set, the redis store is enabled on a backend, or WARP_REDISWIRE_ENABLED=true.
+        try {
+            boolean redisStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.REDIS).isEmpty();
+            boolean redisPort = System.getenv("WARP_REDISWIRE_PORT") != null && !System.getenv("WARP_REDISWIRE_PORT").isBlank();
+            boolean redisForced = "true".equalsIgnoreCase(System.getenv("WARP_REDISWIRE_ENABLED"));
+            if (redisStore || redisPort || redisForced) {
+                int redisWirePort = parseIntEnv("WARP_REDISWIRE_PORT", 16379);
+                com.sayonora.wire.rediswire.RedisWireServer redisWireServer = new com.sayonora.wire.rediswire.RedisWireServer(
+                        redisWirePort, backendRegistry, connectionGate, sqlMetrics);
+                redisWireServer.start();
+                log.info("warp listening for Redis RESP2/RESP3 (rediswire) on port {}", redisWirePort);
+            }
+        } catch (Exception e) {
+            log.error("rediswire failed to start -- every other wire protocol is still up. "
+                    + "Fix the config (see the cause below) and restart to bring rediswire back.", e);
+        }
+
+        // azurewire: Azure Storage REST frontends (Blob 10000, Queue 10001, Table 10002) whose data lives in the azblob /
+        // azqueue / aztable stores of the set's Postgres backends. Each starts when its port env var is set, its store is
+        // enabled on a backend, or WARP_AZ<SERVICE>WIRE_ENABLED=true. Accounts: WARP_AZURE_ACCOUNTS / WARP_AZURE_DEV_ACCOUNT.
+        try {
+            com.sayonora.wire.azurewire.AzureConfig azCfg = null;
+            String[][] azServices = {{"AZBLOB", "AZBLOBWIRE", "10000"}, {"AZQUEUE", "AZQUEUEWIRE", "10001"},
+                {"AZTABLE", "AZTABLEWIRE", "10002"}};
+            for (String[] svc : azServices) {
+                boolean store = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.valueOf(svc[0])).isEmpty();
+                String portEnv = System.getenv("WARP_" + svc[1] + "_PORT");
+                boolean forced = "true".equalsIgnoreCase(System.getenv("WARP_" + svc[1] + "_ENABLED"));
+                if (!(store || portEnv != null && !portEnv.isBlank() || forced)) {
+                    continue;
+                }
+                try {
+                    if (azCfg == null) {
+                        azCfg = com.sayonora.wire.azurewire.AzureConfig.fromEnv();
+                    }
+                    if (!azCfg.hasAccounts()) {
+                        throw new IllegalStateException("no storage account configured -- set WARP_AZURE_ACCOUNTS "
+                                + "(account:base64key;...) or WARP_AZURE_DEV_ACCOUNT=true; refusing to serve unauthenticated");
+                    }
+                    int azPort = parseIntEnv("WARP_" + svc[1] + "_PORT", Integer.parseInt(svc[2]));
+                    com.sayonora.wire.azurewire.AzureWireServer az = switch (svc[0]) {
+                        case "AZBLOB" -> com.sayonora.wire.azurewire.AzureWireServer.blob(azPort, backendRegistry, azCfg,
+                                connectionGate, sqlMetrics);
+                        case "AZQUEUE" -> com.sayonora.wire.azurewire.AzureWireServer.queue(azPort, backendRegistry, azCfg,
+                                connectionGate, sqlMetrics);
+                        default -> com.sayonora.wire.azurewire.AzureWireServer.table(azPort, backendRegistry, azCfg,
+                                connectionGate, sqlMetrics);
+                    };
+                    az.start();
+                    log.info("warp listening for Azure {} (azurewire) on port {}", svc[0].substring(2), azPort);
+                } catch (Exception e) {
+                    log.error("azurewire {} failed to start -- every other wire protocol is still up.", svc[0], e);
+                }
+            }
+        } catch (RuntimeException e) {
+            log.error("azurewire failed to start", e);
+        }
+
         // s3wire: Amazon S3 REST API frontend. Postgres mode (objects chunked into the Postgres backends of the
         // set that enabled the "s3" store, sharded by key) or proxy mode (one real S3-compatible backend bucket
         // via WARP_S3WIRE_BACKEND_BUCKET). It starts when either is configured now, or when

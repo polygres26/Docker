@@ -100,7 +100,7 @@ def test_existing_config_migrates_into_the_default_set(api):
     assert b["canHostStores"] is True and b["health"]["ok"] is True
     assert "password" not in b and "postgres:postgres" not in json.dumps(b)  # no credentials leak
     assert data["maxBackends"] == 3
-    assert {s["id"] for s in data["stores"]} == {"influxdb", "mongodb", "sqs", "neo4j", "opensearch", "dynamodb", "s3"}
+    assert {s["id"] for s in data["stores"]} == {"influxdb", "mongodb", "sqs", "neo4j", "opensearch", "dynamodb", "s3", "redis", "azblob", "azqueue", "aztable"}
 
 
 def test_backend_without_a_set_is_rejected(api, infra):
@@ -188,7 +188,7 @@ def test_stores_only_on_postgres_backends(api):
     _, b = api.find("legacy-mysql")
     assert b is None
     # unknown store names are rejected with the valid list
-    r = api.call("PATCH", "/api/backend-sets/analytics/backends/pg2", {"enabledStores": ["redis"]})
+    r = api.call("PATCH", "/api/backend-sets/analytics/backends/pg2", {"enabledStores": ["cassandra"]})
     assert r.status_code == 400 and "influxdb" in r.json()["error"]
     # raw config route cannot bypass the rule either
     cfg = api.call("GET", "/api/config", expect=200).json()

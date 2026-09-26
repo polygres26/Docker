@@ -60,6 +60,10 @@ public final class StoreBootstrap {
                 case SQS -> exec(st, "sqswire_catalog");
                 case NEO4J -> exec(st, "boltwire_graph_schema");
                 case S3 -> exec(st, "s3wire_store");
+                case REDIS -> exec(st, "rediswire_store");
+                case AZBLOB -> exec(st, "azblobwire_store");
+                case AZQUEUE -> exec(st, "azqueuewire_store");
+                case AZTABLE -> exec(st, "aztablewire_store");
                 default -> {
                     // per-collection tables are created on first use
                 }

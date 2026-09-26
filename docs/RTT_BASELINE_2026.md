@@ -1211,3 +1211,61 @@ No regression beyond noise (about +0.03 ms on PUT, GET and LIST unchanged). A fi
 row and stored a default `AES256` marker in every object; the commit now locks a narrow row (blob ids, annotation flag) when the bucket is unversioned and the implicit SSE-S3
 default is not stored. The new work adds per-object CRC64NVME (slicing-by-8) when the client names no checksum, the additional-checksum columns and the bucket row fetch (one
 query, cached 2 s, joined with the encryption default), all inside the same transaction shape (lock / insert / upsert). 100 MiB PUT stayed 200-250 MB/s, GET 1250-1500 MB/s.
+
+## 2026-09-25: boltwire Neo4j conformance work -- openCypher TCK and differential corpus, RTT before/after
+
+**Conformance** (real Neo4j 5.26 community as oracle; `Warp/tests/python/bolt_conformance/`). openCypher TCK (3,897 scenario instances after expanding
+outlines; 50 need client-registered test procedures and are skipped, 37 more are invalid on real Neo4j, mostly TCK side-effect accounting that Neo4j's
+counters do not reproduce): scenarios valid on Neo4j **3,810**; Warp before -> after, pass: **0 -> 3,810** (the previous CypherParser knew only
+`RETURN <literal>`, `CREATE` and a single-hop `MATCH`; it failed every scenario, starting with the graph reset `MATCH (n) DETACH DELETE n`). Differential corpus (952 cases:
+expressions, parameters of every type, matching, aggregation, writes, DDL, procedures, transactions, streaming, driver/protocol facts): **926 identical, 26
+documented differences (`bolt_known.py`), 0 unexpected**; the first run against the new engine was 889 identical / 55 different, all fixed or documented.
+Warp-side: `test_boltwire_conformance.py` (replays the recorded oracle answers, needs no Docker; the TCK part runs when `BOLT_TCK_DIR` is set) and
+`CypherParserAnalyzerTest` pass; `test_boltwire.py` passes with its two `$param` xfails removed (the features now exist).
+
+**RTT** (one session, neo4j Python driver, 300 measured requests after 50 warm-up, native Postgres, client p50 ms, before = jar of the previous commit, two runs each):
+
+| | CREATE (RETURN n.v) | MATCH by label+property | RETURN literal |
+|---|---|---|---|
+| before | 0.249, 0.246 | 0.211, 0.219 | 0.166, 0.170 |
+| after | 0.320, 0.303 | 0.209, 0.216 | 0.134, 0.142 |
+
+MATCH and literal reads are unchanged or faster (statements are parsed once and cached); a write now costs about +0.06 ms because it runs in an explicit backend transaction
+(commit round trip) so that a multi-step Cypher statement is atomic; the single-INSERT shortcut of the old CREATE could not be kept for MERGE/SET/DELETE.
+
+## 2026-09-25: rediswire (Redis frontend) -- RTT and throughput next to real Redis 7.4.11
+
+Setup: one real Warp process + native Postgres 17 (`WARP_TEST_PG_LOCAL=1`), raw-socket RESP client (`Warp/tests/python/redis_rtt_bench.py`), loopback, 3,000 measured requests after 300 warm-up; the
+comparison Redis is the `redis:7` container (Docker Desktop VM, so its loopback path is slower than a native Redis: about 0.19 ms per request). Single client p50/p99 ms, pipelined 100 commands, 16 client threads.
+
+| command | Warp p50 | Warp p99 | Warp pipe-100 ops/s | Warp 16 clients ops/s | Redis p50 | Redis pipe-100 ops/s | Redis 16 clients ops/s |
+|---|---|---|---|---|---|---|---|
+| SET | 0.064 | 0.111 | 21,392 | 29,550 | 0.193 | 276,642 | 26,263 |
+| GET | 0.044 | 0.069 | 43,268 | 34,692 | 0.192 | 285,802 | 26,852 |
+| INCR | 0.096 | 0.177 | 12,275 | 7,801 | 0.189 | 311,469 | 26,930 |
+| LPUSH | 0.173 | 0.286 | 6,549 | 4,934 | 0.193 | 278,234 | 26,995 |
+| ZADD | 0.198 | 0.309 | 4,052 | 3,560 | 0.191 | 255,224 | 26,235 |
+
+GET and SET are one Postgres statement (well inside the 0.3 ms target); INCR, LPUSH and ZADD are a short transaction (row lock, write, counter, commit). The Docker path adds latency to Redis that a native Redis would not have.
+Pipelining does not batch backend round trips (each command is its own statement), so pipelined throughput is bounded by Postgres, not by the protocol.
+
+## 2026-09-26: azurewire (Azure Blob / Queue / Table) -- RTT next to Azurite 3.37
+
+Setup: one real Warp process + one native Postgres 17 (`WARP_TEST_PG_LOCAL=1`), the three azurewire listeners, `Warp/tests/python/az_conformance/az_rtt_bench.py`
+(Python `requests`, one keep-alive connection, sequential, every request SharedKey-signed by the same code for both sides, 300 measured requests per operation,
+client-side median / p95 in ms). The comparison is Azurite 3.37.0 (`mcr.microsoft.com/azure-storage/azurite`, in-memory persistence) in the Docker Desktop VM:
+its loopback path adds a fraction of a millisecond that a native Azurite would not have, and Azurite keeps everything in memory while Warp commits every write to
+Postgres, so read this as "same order of magnitude, Warp is not slower", not as a claim about Azure itself.
+
+| operation | Azurite median / p95 | Warp median / p95 |
+|---|---|---|
+| blob PUT 1 KiB (Put Blob) | 1.94 / 2.74 | 1.78 / 2.94 |
+| blob GET 1 KiB | 2.74 / 3.79 | 0.98 / 1.12 |
+| queue put message | 2.57 / 4.23 | 1.10 / 1.34 |
+| queue get message (dequeue) | 4.99 / 7.13 | 1.01 / 1.17 |
+| table insert entity | 2.92 / 4.43 | 1.01 / 1.16 |
+| table get entity | 2.06 / 2.75 | 0.87 / 0.95 |
+| table query (PartitionKey eq, top 20) | 3.34 / 4.59 | 0.92 / 1.05 |
+
+Every operation is reported to the metrics collector under the protocol names `azblobwire` / `azqueuewire` / `aztablewire`. Also measured (test suite, 2026-09-26):
+a 100 MiB Put Blob through a Warp started with `-Xmx300m` (25 chunk rows of 4 MiB, MD5 verified on download) completes in about 0.5 s on loopback.

@@ -68,6 +68,10 @@ function StoresFieldset({ stores, set, editing, value, onChange, wasEnabled }: {
                 {blocked && <>Already enabled on <code>{on.join(', ')}</code>. Neo4j runs on one backend per set: graph traversals cannot be answered correctly when the graph is spread over several databases.</>}
                 {!blocked && s.shardable && on.length > 0 && <>Also enabled on <code>{on.join(', ')}</code>: data will be sharded across {on.length + (checked ? 1 : 0)} backend{on.length + (checked ? 1 : 0) === 1 ? '' : 's'}{checked ? '' : ' if you enable it'}. Existing data is not moved.</>}
                 {!blocked && !s.shardable && on.length === 0 && <>One backend per set.</>}
+                {s.id === 'redis' && <> Keys are spread over the hosts by Redis Cluster hash slot: multi-key commands and MULTI/EXEC need every key on one host (use a {'{hash tag}'}) or fail with CROSSSLOT. Scripting (Lua) is not available.</>}
+                {s.id === 'azblob' && <> Blob limits: 5000 MiB per Put Blob, 4000 MiB per block, 50,000 blocks; the container list lives on the first Azure Blob host. Accounts and keys come from WARP_AZURE_ACCOUNTS.</>}
+                {s.id === 'azqueue' && <> A queue lives wholly on one host (hash of account and queue name); messages up to 64 KiB, expiry swept every 10 s.</>}
+                {s.id === 'aztable' && <> Entities are placed by hash of table and PartitionKey; an entity group transaction must stay inside one PartitionKey. Queries without a PartitionKey filter fan out to every host.</>}
                 {s.id === 's3' && <> Limits: 5 GiB per PUT, keys up to 1024 bytes; the bucket list lives on the first S3 host. For very large objects use s3wire proxy mode instead.</>}
                 {editing && wasEnabled.includes(s.id) && !checked && <> Disabling keeps the data in this database but Warp stops serving it.</>}
               </div>
@@ -147,7 +151,7 @@ function BackendEditor({ set, editing, stores, onDone, onCancel }: {
 
         {canHost
           ? <StoresFieldset stores={stores} set={set} editing={editing} value={enabled} onChange={setEnabled} wasEnabled={editing?.enabledStores ?? []} />
-          : <Notice tone="muted">Only Postgres backends can host protocol stores (InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3).</Notice>}
+          : <Notice tone="muted">Only Postgres backends can host protocol stores (InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3, Redis, Azure Blob/Queue/Table).</Notice>}
 
         {error && <Notice tone="bad">{error}</Notice>}
         {test && (
@@ -478,7 +482,7 @@ export default function BackendSets() {
     <div>
       <PageHeader
         title="Backend sets"
-        description="Every backend lives in a backend set. A Postgres backend can also host protocol stores — InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3 — sharded across the backends of its set."
+        description="Every backend lives in a backend set. A Postgres backend can also host protocol stores — InfluxDB, MongoDB, SQS, Neo4j, OpenSearch, DynamoDB, S3, Redis, Azure Blob/Queue/Table — sharded across the backends of its set."
         actions={<Button variant="primary" icon={<Plus size={14} aria-hidden="true" />} onClick={() => { setCreating(true); setEditor(null) }}>Create set</Button>}
       />
 

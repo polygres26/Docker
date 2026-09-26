@@ -10,23 +10,23 @@ import java.util.List;
  * chunk of a blob may be short). Complete-multipart therefore never copies bytes: the object row just
  * lists its parts' blobs.
  */
-final class ChunkMath {
+public final class ChunkMath {
 
     private ChunkMath() {
     }
 
-    record Segment(String blobId, long size, int chunkSize) {
+    public record Segment(String blobId, long size, int chunkSize) {
     }
 
     /** {@code length} bytes starting at {@code offset} within chunk {@code seq} of blob {@code blobId}. */
-    record Slice(String blobId, int seq, int offset, int length) {
+    public record Slice(String blobId, int seq, int offset, int length) {
     }
 
     /**
      * @param start inclusive byte offset within the whole object
      * @param end   inclusive byte offset within the whole object
      */
-    static List<Slice> slices(List<Segment> segments, long start, long end) {
+    public static List<Slice> slices(List<Segment> segments, long start, long end) {
         List<Slice> out = new ArrayList<>();
         long segStart = 0;
         for (Segment s : segments) {
@@ -51,7 +51,7 @@ final class ChunkMath {
         return out;
     }
 
-    static int chunkCount(long size, int chunkSize) {
+    public static int chunkCount(long size, int chunkSize) {
         return (int) ((size + chunkSize - 1) / chunkSize);
     }
 }

@@ -57,8 +57,10 @@ public final class ConnectionRouter {
     public static final String PROTO_BOLT = "bolt";
     public static final String PROTO_GRPC = "grpc";
     public static final String PROTO_HTTP = "http";
+    /** Redis has no database name: the AUTH/HELLO username stands in for it; a numeric SELECT n is looked up as "dbN". */
+    public static final String PROTO_REDIS = "redis";
     private static final java.util.Set<String> PROTOCOLS = java.util.Set.of(PROTO_POSTGRES, PROTO_MYSQL,
-            PROTO_SQLSERVER, PROTO_ORACLE, PROTO_MONGODB, PROTO_BOLT, PROTO_GRPC, PROTO_HTTP);
+            PROTO_SQLSERVER, PROTO_ORACLE, PROTO_MONGODB, PROTO_BOLT, PROTO_GRPC, PROTO_HTTP, PROTO_REDIS);
 
     public enum Mode {
         /** Routes + implicit backend/set names; unknown names fall back to today's behavior. */

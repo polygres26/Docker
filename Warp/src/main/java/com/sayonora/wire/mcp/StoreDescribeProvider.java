@@ -137,6 +137,49 @@ final class StoreDescribeProvider implements BackendToolProvider {
                     }
                 }
             }
+            case AZBLOB, AZQUEUE, AZTABLE -> {
+                String[][] q = switch (store) {
+                    case AZBLOB -> new String[][] {{"containers", "SELECT account || '/' || name, 0, 0 FROM warp_azblob_containers ORDER BY 1"},
+                        {"blobs", "SELECT account || '/' || container, count(*), coalesce(sum(size),0) FROM warp_azblob_blobs WHERE snapshot='' GROUP BY 1 ORDER BY 1"}};
+                    case AZQUEUE -> new String[][] {{"queues", "SELECT account || '/' || name, 0, 0 FROM warp_azqueue_queues ORDER BY 1"},
+                        {"messages", "SELECT account || '/' || queue, count(*), 0 FROM warp_azqueue_messages WHERE expires_at > now() GROUP BY 1 ORDER BY 1"}};
+                    default -> new String[][] {{"tables", "SELECT account || '/' || name, 0, 0 FROM warp_aztable_tables ORDER BY 1"},
+                        {"entities", "SELECT account || '/' || tbl, count(*), 0 FROM warp_aztable_entities GROUP BY 1 ORDER BY 1"}};
+                };
+                java.util.TreeMap<String, long[]> counts = new java.util.TreeMap<>();
+                JsonArray names = new JsonArray();
+                for (int i = 0; i < hosts.size(); i++) {
+                    String h = hosts.get(i);
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement()) {
+                        if (i == 0) {
+                            try (ResultSet rs = st.executeQuery(q[0][1])) {
+                                while (rs.next()) {
+                                    names.add(rs.getString(1));
+                                }
+                            }
+                        }
+                        try (ResultSet rs = st.executeQuery(q[1][1])) {
+                            while (rs.next()) {
+                                long[] t = counts.computeIfAbsent(rs.getString(1), k -> new long[2]);
+                                t[0] += rs.getLong(2);
+                                t[1] += rs.getLong(3);
+                            }
+                        }
+                    } catch (SQLException e) {
+                        out.addProperty("note", "azure tables not readable yet: " + e.getMessage());
+                    }
+                }
+                out.add(q[0][0], names);
+                JsonArray cs = new JsonArray();
+                counts.forEach((k, v) -> {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("name", k);
+                    o.addProperty("count", v[0]);
+                    o.addProperty("bytes", v[1]);
+                    cs.add(o);
+                });
+                out.add(q[1][0], cs);
+            }
             case S3 -> {
                 // per-host object/byte counts (from the fixed catalog tables); buckets come from the first host
                 JsonArray shards = new JsonArray();
@@ -189,6 +232,38 @@ final class StoreDescribeProvider implements BackendToolProvider {
                 }
                 out.addProperty("bucketCount", buckets.size());
                 out.add("buckets", buckets);
+                out.add("shards", shards);
+            }
+            case REDIS -> {
+                // keys per type and a rough memory estimate, per host (fixed catalog queries only)
+                java.util.TreeMap<String, Long> byType = new java.util.TreeMap<>();
+                long bytes = 0;
+                JsonArray shards = new JsonArray();
+                String[] names = {"string", "hash", "list", "set", "zset", "stream"};
+                for (String h : hosts) {
+                    JsonObject sh = new JsonObject();
+                    sh.addProperty("host", h);
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement();
+                            ResultSet rs = st.executeQuery("SELECT type, count(*), COALESCE(sum(octet_length(k) + coalesce(octet_length(sv), 0) + 48), 0) "
+                                    + "FROM warp_redis_keys WHERE exp IS NULL OR exp > (extract(epoch FROM clock_timestamp()) * 1000)::bigint GROUP BY type")) {
+                        long keys = 0;
+                        while (rs.next()) {
+                            String tn = names[Math.min(rs.getInt(1), names.length - 1)];
+                            byType.merge(tn, rs.getLong(2), Long::sum);
+                            keys += rs.getLong(2);
+                            bytes += rs.getLong(3);
+                        }
+                        sh.addProperty("keys", keys);
+                    } catch (SQLException e) {
+                        sh.addProperty("note", "redis tables not readable yet: " + e.getMessage());
+                    }
+                    shards.add(sh);
+                }
+                JsonObject types = new JsonObject();
+                byType.forEach(types::addProperty);
+                out.add("keysByType", types);
+                out.addProperty("keyCount", byType.values().stream().mapToLong(Long::longValue).sum());
+                out.addProperty("estimatedMemoryBytes", bytes);
                 out.add("shards", shards);
             }
             default -> {
