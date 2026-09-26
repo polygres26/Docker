@@ -1429,3 +1429,39 @@ large datasets or sustained load. The rows that cost more are the honest ones: `
 collection tombstone and a delete leaves tombstones, and a read merges cells, static cells and range tombstones in Java (`SELECT LIMIT 10`, `count(*)`). With two backends a single-partition operation
 still touches one host (the higher `INSERT` p99 on two backends is tail latency of single commits, not investigated further, not a second round trip); statements without a partition key read every host and merge. Not measured: paged full scans,
 wide partitions beyond 50 rows, concurrent clients. Every operation is reported to the metrics collector under the protocol name `cqlwire` (labels `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `BATCH`, ...).
+
+## 2026-09-26: kafkawire (Apache Kafka wire protocol) -- RTT next to a real Apache Kafka 4.3.1
+
+Setup: one real Warp process on native Postgres (`WARP_TEST_PG_LOCAL=1`, one backend, then two sharded backends), a real Apache Kafka 4.3.1 (`apache/kafka:latest`, Docker, KRaft, one node combined
+broker/controller, `--memory 1g`, `KAFKA_HEAP_OPTS=-Xmx512m`, `group.initial.rebalance.delay.ms=0`, default `acks`/flush settings, `-p 29092:9092`). Client for the rows above the last two: the raw-protocol
+client of `Warp/tests/python/kafka_conformance/kafka_raw_client.py` (official Kafka message schemas, one TCP connection, requests sent one at a time, so the numbers are broker round trips and not
+client-library overhead), 300 requests per row (75 for the 100-record produce, 75 end-to-end samples) after 20 warm-up produces; the last two rows use the real `kafka-python` 3.0.11 producer/consumer.
+Median / p99 in ms, `Warp/tests/python/kafka_conformance/kf_rtt_bench.py`. The machine was a developer laptop shared with other test processes (other Warp instances and containers were running);
+single run, read as order of magnitude. Warp's default Developer edition caps a process at 25 concurrent client connections, so nothing here measures concurrency.
+
+| operation | Apache Kafka 4.3.1 median / p99 | Warp, 1 Postgres median / p99 | Warp, 2 sharded Postgres median / p99 |
+|---|---|---|---|
+| Produce 1 record, acks=all | 0.42 / 0.76 | 0.22 / 0.51 | 0.23 / 0.51 |
+| Produce 1 record, acks=1 | 0.38 / 0.53 | 0.18 / 0.31 | 0.18 / 0.33 |
+| Produce 10 records, acks=all | 0.39 / 0.53 | 0.17 / 0.26 | 0.17 / 0.26 |
+| Produce 100 records, acks=all | 0.44 / 0.76 | 0.19 / 0.24 | 0.20 / 0.25 |
+| Fetch 1 batch of 10 records (existing data) | 0.71 / 1.18 | 0.44 / 0.67 | 0.45 / 0.65 |
+| Fetch 100 records (existing data) | 1.88 / 2.84 | 0.68 / 0.91 | 0.68 / 0.87 |
+| Fetch at the end (empty, max_wait=0) | 0.57 / 1.14 | 0.10 / 0.17 | 0.10 / 0.18 |
+| ListOffsets latest | 0.36 / 0.61 | 0.08 / 0.17 | 0.09 / 0.14 |
+| Metadata (one topic) | 0.39 / 0.47 | 0.13 / 0.24 | 0.13 / 0.21 |
+| Heartbeat | 0.38 / 0.62 | 0.07 / 0.14 | 0.07 / 0.15 |
+| OffsetCommit | 0.50 / 0.71 | 0.13 / 0.23 | 0.13 / 0.24 |
+| OffsetFetch | 0.60 / 0.75 | 0.11 / 0.18 | 0.11 / 0.23 |
+| produce, then a long-polling consumer's Fetch returns it (end to end) | 3.87 / 5.49 | 2.54 / 3.60 | 2.47 / 3.67 |
+| kafka-python `send().get()`, acks=all | 1.36 / 2.97 | 0.71 / 0.87 | 0.71 / 0.80 |
+| kafka-python produce, then `poll()` sees it (end to end) | 4.34 / 113.69 | 3.57 / 114.11 | 1.51 / 3.21 |
+
+Caveats, honestly: these are two products with different guarantees, not two builds of one. Kafka here is a JVM in a Docker VM behind port forwarding and replicates nothing (one node) while Warp runs natively
+next to a local Postgres; every Warp produce is a synchronously committed Postgres transaction (one row lock on the partition, one insert per batch, one update of the log end), which on a local, fsync-cheap
+Postgres is as fast as or faster than the Docker-hosted broker. That says nothing about a real cluster, replication, disks that fsync slowly, large batches, hundreds of partitions per request or sustained
+load; Kafka's strength (sequential log appends, zero-copy fetch, consumers spread over brokers) is not measured. The end-to-end rows are dominated by the client: the raw client's two connections and a thread
+hand-off (about 2.5 ms on both brokers' order of magnitude), and `kafka-python`'s fetch and poll loop, whose p99 of about 114 ms is a client wait, identical for Kafka and Warp, not broker time. A Fetch that has to wait is
+woken by an in-process signal when the produce came through the same Warp node and otherwise notices an append within its 100 ms re-check; the end-to-end rows above are the same-node case. Not measured: many concurrent
+producers and consumers, fetches of thousands of partitions (a single Fetch of 1,000 partitions on two backends took 0.07 s in the test suite), rebalances of large groups, retention sweeps under load. Every request is
+reported to the metrics collector under the protocol name `kafkawire` (labels `Produce`, `Fetch`, `Metadata`, `JoinGroup`, `OffsetCommit`, ...).

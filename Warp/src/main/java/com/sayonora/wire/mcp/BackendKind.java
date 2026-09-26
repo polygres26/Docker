@@ -55,7 +55,9 @@ public enum BackendKind {
     KINESIS("kinesis", "kinesis_"),
     AWSPARAMS("awsparams", "awsparams_"),
     /** The Warp-hosted Apache Cassandra (CQL) store (described only); {@link #CASSANDRA} is an external Cassandra backend. */
-    CQLSTORE("cqlstore", "cqlstore_");
+    CQLSTORE("cqlstore", "cqlstore_"),
+    /** The Warp-hosted Apache Kafka store (topics, produce/fetch, consumer groups); {@link #KAFKA} is an external Kafka backend. */
+    KAFKASTORE("kafkastore", "kafkastore_");
 
     private final String id;
     private final String prefix;
@@ -102,6 +104,7 @@ public enum BackendKind {
             case "kinesis" -> KINESIS;
             case "awsparams", "secretsmanager", "ssm", "kms", "sts" -> AWSPARAMS;
             case "cqlstore" -> CQLSTORE;
+            case "kafkastore" -> KAFKASTORE;
             default -> throw new IllegalArgumentException("WARP_MCP_KIND has an unknown kind \"" + name
                     + "\" -- expected one or more of " + String.join(", ", ids()));
         };

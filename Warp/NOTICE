@@ -81,3 +81,12 @@ clustering order, system_schema layout) follows Apache Cassandra 5.0, and is ver
 Apache Cassandra 5.0 container (Apache License, Version 2.0, Copyright The Apache Software Foundation, https://cassandra.apache.org): the recorded answers are
 Warp/tests/python/cql_conformance/golden.json.gz and were produced with the DataStax python-driver (Apache License 2.0), which is a test-time dependency and is
 not redistributed. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 .
+
+
+Warp's Apache Kafka frontend (Warp/src/main/java/com/sayonora/wire/kafkawire/) implements the Kafka wire protocol (request versions listed by its ApiVersions
+answer) and the broker-side behaviour described in docs/WARP_GUIDE.md; no Apache Kafka source code is included. Its message layouts follow the Kafka protocol
+message definitions and its behaviour (error codes, offsets and watermarks, consumer group state machine, defaults of the topic configurations) follows Apache
+Kafka 4.3, and is verified by replaying, against Warp, answers recorded from a real Apache Kafka container (Apache License, Version 2.0, Copyright The Apache
+Software Foundation, https://kafka.apache.org): the recorded answers are Warp/tests/python/kafka_conformance/golden.json.gz and were produced with kafka-python
+(Apache License 2.0), whose bundled copy of the Kafka protocol message definitions is also used by the test-time raw client (Warp/tests/python/kafka_conformance/kafka_raw_client.py).
+Neither is redistributed. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 .

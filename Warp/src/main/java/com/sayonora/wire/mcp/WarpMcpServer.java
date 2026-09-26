@@ -199,6 +199,8 @@ public final class WarpMcpServer {
                 com.sayonora.wire.core.StoreType.BIGTABLE, backendRegistry));
         this.providers.put(BackendKind.CQLSTORE, new StoreDescribeProvider(BackendKind.CQLSTORE,
                 com.sayonora.wire.core.StoreType.CQL, backendRegistry));
+        this.providers.put(BackendKind.KAFKASTORE, new StoreDescribeProvider(BackendKind.KAFKASTORE,
+                com.sayonora.wire.core.StoreType.KAFKA, backendRegistry));
         this.providers.put(BackendKind.FIRESTORE, new StoreDescribeProvider(BackendKind.FIRESTORE,
                 com.sayonora.wire.core.StoreType.FIRESTORE, backendRegistry));
         this.providers.put(BackendKind.DATASTORE, new StoreDescribeProvider(BackendKind.DATASTORE,
@@ -219,6 +221,7 @@ public final class WarpMcpServer {
         registerStoreTools(new FirestoreToolProvider(describer(BackendKind.FIRESTORE), emulatedStores));
         registerStoreTools(new DatastoreToolProvider(describer(BackendKind.DATASTORE), emulatedStores));
         registerStoreTools(new BigtableToolProvider(describer(BackendKind.BIGTABLE), emulatedStores));
+        registerStoreTools(new KafkaToolProvider(describer(BackendKind.KAFKASTORE), emulatedStores));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         this.server = new Server(port);
@@ -913,6 +916,7 @@ public final class WarpMcpServer {
             case GCS -> com.sayonora.wire.core.StoreType.GCS;
             case BIGTABLE -> com.sayonora.wire.core.StoreType.BIGTABLE;
             case CQLSTORE -> com.sayonora.wire.core.StoreType.CQL;
+            case KAFKASTORE -> com.sayonora.wire.core.StoreType.KAFKA;
             case PUBSUB -> com.sayonora.wire.core.StoreType.PUBSUB;
             default -> null;
         };

@@ -830,6 +830,26 @@ public final class Main {
             log.error("cqlwire failed to start -- every other wire protocol is still up.", e);
         }
 
+        // kafkawire: Apache Kafka wire protocol (default port 19092) frontend whose log lives in the "kafka" store of the set's Postgres
+        // backends: a partition on the host owning hash(topic-partition), topic metadata / consumer groups / committed offsets on the first.
+        // Starts when WARP_KAFKAWIRE_PORT is set, the kafka store is enabled on a backend, or WARP_KAFKAWIRE_ENABLED=true.
+        // Clients reconnect to WARP_KAFKAWIRE_ADVERTISED_HOST:WARP_KAFKAWIRE_ADVERTISED_PORT (default localhost and the listening port).
+        // Auth: none by default; WARP_KAFKAWIRE_AUTH=true (or WARP_AUTH_CREDENTIALS set) requires SASL/PLAIN against the shared CredentialStore.
+        try {
+            boolean kfStore = !backendRegistry.storeHosts(com.sayonora.wire.core.StoreType.KAFKA).isEmpty();
+            boolean kfPort = System.getenv("WARP_KAFKAWIRE_PORT") != null && !System.getenv("WARP_KAFKAWIRE_PORT").isBlank();
+            boolean kfForced = "true".equalsIgnoreCase(System.getenv("WARP_KAFKAWIRE_ENABLED"));
+            if (kfStore || kfPort || kfForced) {
+                int kfPortNo = parseIntEnv("WARP_KAFKAWIRE_PORT", 19092);
+                com.sayonora.wire.kafkawire.KafkaWireServer kafkaWireServer = new com.sayonora.wire.kafkawire.KafkaWireServer(kfPortNo,
+                        backendRegistry, connectionGate, sqlMetrics);
+                kafkaWireServer.start();
+                log.info("warp listening for Apache Kafka (kafkawire) on port {}", kfPortNo);
+            }
+        } catch (Exception e) {
+            log.error("kafkawire failed to start -- every other wire protocol is still up.", e);
+        }
+
         // pubsubwire: Google Cloud Pub/Sub gRPC (default port 8085, like the official emulator) and REST/JSON (default 8087,
         // WARP_PUBSUBWIRE_REST_PORT=0 disables) frontends whose data lives in the "pubsub" store of the set's Postgres backends.
         // Starts when WARP_PUBSUBWIRE_PORT is set, the pubsub store is enabled on a backend, or WARP_PUBSUBWIRE_ENABLED=true.

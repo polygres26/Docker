@@ -31,6 +31,7 @@ class StoreToolProvidersTest {
         out.add(new FirestoreToolProvider(null, stores));
         out.add(new DatastoreToolProvider(null, stores));
         out.add(new BigtableToolProvider(null, stores));
+        out.add(new KafkaToolProvider(null, stores));
         return out;
     }
 
@@ -54,7 +55,7 @@ class StoreToolProvidersTest {
         // names carry their store: redis_*, azblob_*, ... (awsparams tools use the AWS service prefix instead)
         for (StoreToolProvider p : providers()) {
             String kind = p.kind().id();
-            Set<String> prefixes = kind.equals("awsparams") ? Set.of("secrets_", "ssm_", "kms_", "sts_") : Set.of(kind + "_");
+            Set<String> prefixes = kind.equals("awsparams") ? Set.of("secrets_", "ssm_", "kms_", "sts_") : kind.equals("kafkastore") ? Set.of("kafka_") : Set.of(kind + "_");
             for (BackendToolProvider.Tool t : p.tools()) {
                 assertTrue(prefixes.stream().anyMatch(t.name()::startsWith), t.name());
             }
@@ -70,12 +71,12 @@ class StoreToolProvidersTest {
         for (String w : List.of("redis_set", "redis_delete", "gcs_put_object", "azblob_upload_blob", "azqueue_receive_messages",
                 "sns_publish", "kinesis_put_record", "secrets_put_secret_value", "ssm_put_parameter", "kms_create_key", "pubsub_publish",
                 "pubsub_pull", "pubsub_ack", "firestore_add_document", "datastore_upsert_entity", "bigtable_mutate_row",
-                "bigtable_drop_row_range")) {
+                "bigtable_drop_row_range", "kafka_create_topic", "kafka_delete_topic", "kafka_produce")) {
             assertTrue(writes.contains(w), w + " must be a write tool");
         }
         for (String r : List.of("redis_get", "gcs_get_object", "azblob_get_blob", "azqueue_peek_messages", "sns_list_topics",
                 "kinesis_get_records", "secrets_get_secret_value", "ssm_get_parameter", "kms_decrypt", "kms_encrypt", "pubsub_get_topic",
-                "firestore_query_collection", "datastore_run_query", "bigtable_read_rows")) {
+                "firestore_query_collection", "datastore_run_query", "bigtable_read_rows", "kafka_fetch", "kafka_list_topics", "kafka_group_lag")) {
             assertFalse(writes.contains(r), r + " must not be a write tool");
         }
     }

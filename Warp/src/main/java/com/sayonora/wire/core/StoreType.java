@@ -67,7 +67,10 @@ public enum StoreType {
     CQL("cql", "Cassandra (CQL)", "WARP_CQLWIRE_SET", true,
             "Apache Cassandra CQL native protocol (also what Amazon Keyspaces and Cosmos DB's Cassandra API speak); a partition "
                     + "(all its rows) lives on one backend (hash of the partition key), the schema catalog on the first backend of the set, "
-                    + "queries without a partition key scatter-gather over all backends.");
+                    + "queries without a partition key scatter-gather over all backends."),
+    KAFKA("kafka", "Apache Kafka", "WARP_KAFKAWIRE_SET", true,
+            "Apache Kafka wire protocol (Produce, Fetch, consumer groups, admin); a partition's log lives on one backend "
+                    + "(hash of topic and partition), topic metadata, consumer groups and committed offsets on the first backend of the set.");
 
     private final String id;
     private final String label;

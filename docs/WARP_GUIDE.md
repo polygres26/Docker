@@ -3027,3 +3027,87 @@ and lists compare differences and per-side counters. Rules, sticky key and role 
 * Diff samples can reveal data when `compare.recordValues` is on; it is off by default.
 * Azure and Google auth providers are interface stubs only, and Azure/Google frontends do not use this feature yet.
 * The AWS SDK default chain is used as is; IMDS/pod-role/IRSA flows against real AWS infrastructure depend on that environment.
+
+#### The Kafka store (kafkawire)
+
+Enable the `kafka` store on a backend (or set `WARP_KAFKAWIRE_ENABLED=true`, or `WARP_KAFKAWIRE_PORT`) and Warp speaks the **Apache Kafka wire protocol** on `WARP_KAFKAWIRE_PORT` (default **19092**).
+Unmodified Kafka clients connect with `bootstrap.servers=warp-host:19092`: the Java client, librdkafka (`confluent-kafka`, `kcat`), `kafka-python`, and the console tools (`kafka-topics.sh`,
+`kafka-console-producer.sh` / `-consumer.sh`, `kafka-consumer-groups.sh`, `kafka-producer-perf-test.sh`, ...). No Kafka process exists: the log lives in the Postgres backends of the backend set
+(`WARP_KAFKAWIRE_SET` names the set, default the one holding `default`).
+
+- **Advertised listener.** Kafka clients reconnect to whatever the broker advertises, so set `WARP_KAFKAWIRE_ADVERTISED_HOST` (default `localhost`) to the name clients can reach, and
+  `WARP_KAFKAWIRE_ADVERTISED_PORT` when a proxy or a published port differs from the listening port (default: the listening port). Every Warp node registers `host:port` in the `warp_kafka_brokers`
+  table of the first host and heartbeats it (a node is live for 15 s after its last beat); Metadata and FindCoordinator list the live nodes, node ids are handed out from 0 in registration order and a
+  restarted node gets its id back. Any node serves any partition (the log is shared through Postgres); the partition "leader" reported in Metadata is spread over the live nodes by hash and only
+  balances client connections.
+- **Protocol.** Non-flexible and flexible versions as clients negotiate them. ApiVersions advertises exactly what is implemented: Produce 3-9, Fetch 4-12, ListOffsets 1-7, Metadata 1-12, OffsetCommit 2-8,
+  OffsetFetch 1-7, FindCoordinator 0-3, JoinGroup 0-7, Heartbeat 0-4, LeaveGroup 0-4, SyncGroup 0-5, DescribeGroups 0-5, ListGroups 0-4, SaslHandshake 0-1, ApiVersions 0-3, CreateTopics 2-7, DeleteTopics 1-5,
+  DeleteRecords 0-2, InitProducerId 0-4, OffsetForLeaderEpoch 2-4, DescribeConfigs 1-4, AlterConfigs 0-2, IncrementalAlterConfigs 0-1, SaslAuthenticate 0-2, CreatePartitions 0-3, DeleteGroups 0-2,
+  DescribeCluster 0-1 (topic ids are answered by Metadata v10+ and DeleteTopics by name; Fetch stays name based). A request for an unknown API or version closes the connection, as Kafka does;
+  an ApiVersions version newer than the broker knows is answered in the v0 format with `UNSUPPORTED_VERSION` so the client retries lower. Requests on one connection are answered in order.
+- **Produce.** `acks` 0 (no response), 1 and all (always durable: one Postgres transaction per partition batch). Record batches are magic 2 only; the CRC32C is verified, the base offset and the
+  leader epoch are assigned by the broker (neither is covered by the CRC), and the batch is stored **exactly as sent**: gzip, snappy, lz4 and zstd batches are opaque to the broker and returned
+  byte for byte on fetch, so headers, timestamps, producer ids and sequence numbers survive. One batch per partition per request (Kafka 4 rejects more with `INVALID_RECORD`), `max.message.bytes` is enforced
+  per topic (`MESSAGE_TOO_LARGE`). Idempotent producers: `InitProducerId` hands out a fresh producer id (epoch 0) as Kafka does for a non-transactional producer; per (partition, producer id) the last
+  sequence is kept in the partition's transaction, a retry of the last batch is answered with its original offset and nothing is appended, a gap or a repeat is `OUT_OF_ORDER_SEQUENCE_NUMBER`, an older
+  epoch `INVALID_PRODUCER_EPOCH`; a producer the partition has no state for is accepted at any sequence (Kafka 4 does the same).
+- **Fetch.** Offsets, `max_bytes` / `partition_max_bytes` (the first batch is always returned, whatever its size), `min_bytes` / `max_wait_ms` long polling, high watermark == last stable offset == log end (single
+  replica, no transactions; `read_committed` and `read_uncommitted` answer alike), out-of-range errors with Kafka's `-1` watermarks. A Fetch that has to wait **holds no database connection**: it waits on
+  an in-process signal that every local append raises (a produce through this node wakes the fetch at once) and re-checks the partitions every 100 ms so an append made through another Warp node is seen
+  within that time; each check borrows a pooled connection for one query and returns it (`WARP_POOL_MAX_SIZE=3` stays responsive under twelve fetches that wait). Fetch sessions (KIP-227) are not created:
+  the broker answers `session_id` 0 and clients send full requests.
+- **ListOffsets / DeleteRecords / OffsetForLeaderEpoch.** Earliest, latest, max timestamp (v7) and by-timestamp (the first record at or after the time; exact for uncompressed and gzip batches, batch granularity for
+  snappy / lz4 / zstd); DeleteRecords moves the log start (`-1` = high watermark) and drops whole batches below it; the leader epoch is always 0.
+- **Topics and configs.** CreateTopics (all validation rules and error codes of Kafka: name syntax, partitions, replication factor above the live brokers, assignments, `validate_only`, unknown or invalid configs),
+  DeleteTopics, CreatePartitions (grow only), DescribeConfigs (the 33 topic configurations of Kafka 4.3 with its defaults and types, plus a handful of broker configs), AlterConfigs (replaces the override set) and
+  IncrementalAlterConfigs (set, delete, append, subtract). `retention.ms`, `retention.bytes`, `cleanup.policy`, `max.message.bytes` are enforced; the others are stored and reported. Metadata auto-creates a topic
+  the way `auto.create.topics.enable=true` does (`WARP_KAFKAWIRE_AUTO_CREATE=false` disables, `WARP_KAFKAWIRE_NUM_PARTITIONS` sets the count, default 1). Replication factor is always 1 (Metadata reports the
+  hash-chosen node as the only replica and in-sync replica).
+- **Consumer groups** (classic protocol). FindCoordinator, JoinGroup (member id assignment with `MEMBER_ID_REQUIRED` from v4, session and rebalance timeouts, protocol vote), SyncGroup, Heartbeat, LeaveGroup (single and
+  batched), OffsetCommit / OffsetFetch, DescribeGroups, ListGroups (with state filter), DeleteGroups. The broker only coordinates: range, roundrobin, sticky and cooperative-sticky assignors run in the
+  clients; the leader's assignment bytes are relayed verbatim. The state machine is Kafka's (Empty, PreparingRebalance, CompletingRebalance, Stable): a member that joins or leaves, a leader that rejoins or a
+  changed subscription starts a rebalance, `Heartbeat` answers `REBALANCE_IN_PROGRESS`, the rebalance completes when every member has rejoined or the rebalance timeout passed, the generation increments, silent members
+  are expired after their session timeout, the chosen protocol is the first maximum of the members' votes in `java.util.HashMap` order (which is what Kafka's coordinator does, so ties break identically).
+  `WARP_KAFKAWIRE_GROUP_INITIAL_REBALANCE_DELAY_MS` (default 0) delays the first rebalance of an empty group. Static membership (`group.instance.id`) is accepted (a rejoin with the instance id reuses the member id; a different member id for the same instance is `FENCED_INSTANCE_ID`) but is not
+  optimized to avoid rebalances and is not covered by the corpus. The new consumer protocol (KIP-848, `ConsumerGroupHeartbeat`) is not advertised, so clients use the classic one.
+- **Multiple Warp nodes.** The in-flight group state (members, rebalance in progress) lives in the memory of the node that coordinates the group, chosen deterministically: `hash(group id)` over the live node
+  list. Every node answers FindCoordinator with the same node; group requests that reach another node get `NOT_COORDINATOR` and the client asks again. A group snapshot (state, generation, protocol) is
+  persisted every 200 ms when it changes, so DescribeGroups / ListGroups / MCP see it from any node and the generation keeps counting after a restart; the members of a restarted or moved group must rejoin
+  (Kafka does the same when a coordinator moves). Committed offsets are in Postgres, so they are seen by every node at once.
+- **Storage.** Nine tables per Postgres host (`ddl/postgres/kafkawire_store.sql`): `warp_kafka_log` (one row per record batch: topic, partition, base offset, last offset, size, first and max timestamp, the batch bytes),
+  `warp_kafka_parts` (log start and log end per partition; the row lock of an append is what serializes writers of one partition), `warp_kafka_pseq` (idempotence state) on the host that owns the partition;
+  `warp_kafka_topics` (name, topic id, partition count, config overrides), `warp_kafka_brokers`, `warp_kafka_producers`, `warp_kafka_groups`, `warp_kafka_offsets`, `warp_kafka_meta` (cluster id) **written only on the
+  first host of the set**.
+- **Sharding.** A partition's log lives on **one** backend, chosen by `hash(topic + "-" + partition)` over the backends of the set that enabled the store, so a Produce or Fetch of one partition touches one
+  host, and a Fetch of many partitions issues one short query per partition. Topic metadata, groups and offsets are on the first backend. Adding a backend is reported in `rebalanceRequired` (existing partitions are
+  not moved and would be looked up on the host they now hash to).
+- **Retention.** `retention.ms` (by the batch's largest record timestamp) and `retention.bytes` are applied every `WARP_KAFKAWIRE_SWEEP_MS` (default 300000, Kafka's `log.retention.check.interval.ms`) to topics whose
+  `cleanup.policy` contains `delete`; expired batches are deleted and the log start moves to the first remaining batch. Records with old timestamps are therefore removed at the next sweep (as in Kafka once their segment is
+  closed). Log compaction (`cleanup.policy=compact`) is **not** performed: compacted topics keep every record (a valid, if space-hungry, reading of "compaction is best effort").
+- **Auth.** None by default. `WARP_KAFKAWIRE_AUTH=true` (or `WARP_AUTH_CREDENTIALS` set) requires SASL/PLAIN (`SaslHandshake` v0 and v1, `SaslAuthenticate`) against the shared `CredentialStore`
+  (`WARP_AUTH_USER` / `WARP_AUTH_PASSWORD`, or the `WARP_AUTH_CREDENTIALS` list); nothing but ApiVersions and the SASL exchange is accepted before authentication and a failed login closes the connection
+  (`SASL_AUTHENTICATION_FAILED`). There is no TLS listener: put a TLS terminating proxy in front and advertise its name and port.
+- **MCP tools.** `kafka_list_topics`, `kafka_describe_topic`, `kafka_create_topic`, `kafka_delete_topic`, `kafka_produce` (Kafka's default partitioner: murmur2 of the key), `kafka_fetch` (by offset, no group, text or base64),
+  `kafka_list_groups`, `kafka_group_lag`. The three write tools are hidden and refused under `WARP_MCP_READ_ONLY`. The tools use the same tables, batches and validation as the wire protocol.
+- **Pool discipline and metrics.** A pooled connection is borrowed for one statement or transaction and returned before a response is written or a wait begins. Every request is recorded under the protocol name
+  `kafkawire` (label = API name; writes: Produce, OffsetCommit, JoinGroup, SyncGroup, LeaveGroup, topic and config changes).
+- **Not implemented** (each listed with its reason in `Warp/tests/python/kafka_conformance/kf_known.py`): transactions and exactly-once (`InitProducerId` with a `transactional.id` answers `UNSUPPORTED_VERSION`;
+  AddPartitionsToTxn, AddOffsetsToTxn, EndTxn, TxnOffsetCommit are not advertised), log compaction, `message.timestamp.type=LogAppendTime` rewriting, produce down-conversion of magic 0 / 1 (rejected with
+  `INVALID_RECORD`, as Kafka 4 does for Produce v3+), fetch sessions, the new consumer group protocol and share groups, ACLs, quotas, `DescribeTopicPartitions`, `DescribeLogDirs`, partition reassignment,
+  replication factors above 1, consumer offset expiry, TLS.
+- **Verified against a real Apache Kafka 4.3.1** (`Warp/tests/python/kafka_conformance/`, run by `test_kafka_conformance.py`). `kf_corpus.py` holds 32 cases: raw-protocol requests built at explicit versions (the
+  official Kafka message schemas shipped with kafka-python are used to encode and decode them) for ApiVersions, Metadata (v1-12, topic ids, auto creation), CreateTopics / DeleteTopics / CreatePartitions,
+  DescribeConfigs / AlterConfigs / IncrementalAlterConfigs, Produce (acks, validation, all four codecs, idempotent sequences and epochs), Fetch (versions 4-12, limits, long polls, out-of-range), ListOffsets
+  (including by timestamp), DeleteRecords, OffsetForLeaderEpoch, and the whole consumer group surface (join / sync / heartbeat / leave at versions 0-7, member id required, rebalance with two members, protocol
+  vote, session and rebalance timeouts, describe / list states, OffsetCommit / OffsetFetch / DeleteGroups error codes), plus real `kafka-python` clients (producer and consumer with headers and timestamps,
+  compression, idempotence, commits and resume, two-consumer rebalance, admin client). It was recorded against a `apache/kafka` KRaft container (`--memory 1g`, `-Xmx512m`) twice; the 435 recorded steps (error
+  codes, offsets, watermarks, ordering, state transitions, rebalance results) are replayed **offline** against Warp on one Postgres and on two sharded Postgres backends: **431 identical, 4 documented differences
+  (`kf_known.py`), 0 unexplained**, on both. The documented differences are the transactional `InitProducerId` (`UNSUPPORTED_VERSION`) and the source label of `min.insync.replicas` in DescribeConfigs. Normalized away
+  because they differ by construction: broker and node ids, hosts and ports, member and producer ids, topic ids, timestamps of the server, throttle times and the text of error messages. The test suite also drives
+  the real tools of the `apache/kafka` image against Warp (`kafka-topics.sh`, `kafka-console-producer.sh` / `-consumer.sh`, `kafka-consumer-groups.sh` including `--reset-offsets`, `kafka-producer-perf-test.sh`,
+  `kafka-consumer-perf-test.sh`, `kafka-get-offsets.sh`, `kafka-delete-records.sh`, `kafka-configs.sh`, `kafka-broker-api-versions.sh`), librdkafka through `confluent-kafka` (idempotent producer with every codec,
+  consumer group, admin), a 16-partition topic over two Postgres hosts (each partition on exactly one, metadata and offsets on the first), 100 topics x 10 partitions (1,000 topic-partitions: one Fetch of all of
+  them in 0.1 s, 514 / 486 split over two hosts), eight concurrent producers (dense, unique offsets), restart durability, retention by time and size, SASL/PLAIN, the advertised listener, two Warp nodes
+  on one database, twelve waiting Fetches on a pool of three connections, the MCP tools and read-only mode, and 20 Java unit tests (`KBatchTest`, `KWireTest`, `GroupCoordinatorTest`).
+  To re-record: start `apache/kafka` (see the header of `kf_harness.py`) and run `python3 kf_harness.py localhost 29092`; `python3 kf_diff_dev.py HOST PORT [case]` prints the differences against a running broker.
+  `python3 kf_rtt_bench.py --kafka-port 29092` prints the RTT table of `docs/RTT_BASELINE_2026.md`.

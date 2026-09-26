@@ -73,6 +73,7 @@ public final class StoreBootstrap {
                 case KINESIS -> exec(st, "kinesiswire_store");
                 case AWSPARAMS -> exec(st, "awsparamswire_store");
                 case CQL -> exec(st, "cqlwire_store");
+                case KAFKA -> exec(st, "kafkawire_store");
                 default -> {
                     // per-collection tables are created on first use
                 }
