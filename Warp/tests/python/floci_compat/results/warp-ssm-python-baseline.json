@@ -1,0 +1,122 @@
+{
+ "service": "ssm",
+ "suite": "python",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 0.3,
+ "counts": {
+  "pass": 0,
+  "fail": 12,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_ssm.py": {
+   "pass": 0,
+   "fail": 12,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_ssm.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/results/awsx-baseline-ssm-python.junit.xml --timeout=60",
+ "failures": [
+  {
+   "file": "test_ssm.py",
+   "test": "test_put_parameter",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the DeleteParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.DeleteParameter",
+   "time": 0.041,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_get_parameter",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_label_parameter_version",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_get_parameter_history",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_get_parameters",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_describe_parameters",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_get_parameters_by_path",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_add_tags_to_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_list_tags_for_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_remove_tags_from_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_delete_parameter",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_ssm.py",
+   "test": "test_delete_parameters",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the PutParameter operation: Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter",
+   "time": 0.005,
+   "class": "a"
+  }
+ ]
+}

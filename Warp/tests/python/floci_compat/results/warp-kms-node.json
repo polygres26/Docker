@@ -1,0 +1,31 @@
+{
+ "service": "kms",
+ "suite": "node",
+ "endpoint": "http://localhost:60641",
+ "tag": "warp",
+ "date": "2026-09-25 21:45",
+ "runner_rc": 0,
+ "seconds": 0.5,
+ "counts": {
+  "pass": 13,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/kms-features.test.ts": {
+   "pass": 6,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/kms.test.ts": {
+   "pass": 7,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/kms.test.ts tests/kms-features.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/final/warp-kms-node.junit.xml",
+ "failures": []
+}

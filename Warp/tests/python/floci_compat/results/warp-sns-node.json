@@ -1,0 +1,25 @@
+{
+ "service": "sns",
+ "suite": "node",
+ "endpoint": "http://localhost:60641",
+ "tag": "warp",
+ "date": "2026-09-25 21:45",
+ "runner_rc": 0,
+ "seconds": 0.6,
+ "counts": {
+  "pass": 10,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/sns.test.ts": {
+   "pass": 10,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/sns.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/final/warp-sns-node.junit.xml",
+ "failures": []
+}

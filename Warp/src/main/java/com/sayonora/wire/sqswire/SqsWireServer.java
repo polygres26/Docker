@@ -280,6 +280,16 @@ public final class SqsWireServer {
         }
     }
 
+    /** The request handler this server's own listener uses, so the unified AWS endpoint can dispatch to it in process. */
+    public org.eclipse.jetty.server.Handler handler() {
+        return server.getHandler();
+    }
+
+    /** The in-process operations, for services (SNS) that deliver into queues without a network hop. */
+    public SqsOperations operations() {
+        return ops;
+    }
+
     public void start() throws Exception {
         server.start();
         ops.moveTasks().resumeRunning();

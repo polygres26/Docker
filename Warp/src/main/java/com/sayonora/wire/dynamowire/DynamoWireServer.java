@@ -275,6 +275,11 @@ public final class DynamoWireServer {
         response.getWriter().write(err.toString());
     }
 
+    /** The request handler this server's own listener uses, so the unified AWS endpoint can dispatch to it in process. */
+    public org.eclipse.jetty.server.Handler handler() {
+        return server.getHandler();
+    }
+
     public void start() throws Exception {
         server.start();
         ttlSweeper.start();

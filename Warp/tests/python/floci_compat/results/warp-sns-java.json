@@ -1,0 +1,25 @@
+{
+ "service": "sns",
+ "suite": "java",
+ "endpoint": "http://localhost:60641",
+ "tag": "warp",
+ "date": "2026-09-25 21:45",
+ "runner_rc": 0,
+ "seconds": 6.7,
+ "counts": {
+  "pass": 16,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.SnsTest": {
+   "pass": 16,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=SnsTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": []
+}

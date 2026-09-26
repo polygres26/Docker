@@ -641,6 +641,7 @@ public final class Main {
                     connectionGate, oauth, awsIamCredentials, sqlMetrics);
             dynamoWireServer.start();
             dynamoForMcp = dynamoWireServer;
+            com.sayonora.wire.awswire.AwsWireBootstrap.register("dynamodb", dynamoWireServer.handler());
             log.info("warp listening for DynamoDB HTTP/JSON (dynamowire) on port {}", dynamoWirePort);
             // Cross-protocol row-cache sharing: CacheStage was built before dynamowire existed
             // (both need constructing before either can be wired to the other), so this closes
@@ -670,6 +671,7 @@ public final class Main {
             com.sayonora.wire.sqswire.SqsWireServer sqsWireServer = new com.sayonora.wire.sqswire.SqsWireServer(
                     sqsWirePort, backendRegistry, connectionGate, sqlMetrics);
             sqsWireServer.start();
+            com.sayonora.wire.awswire.AwsWireBootstrap.registerSqs(sqsWireServer.handler(), sqsWireServer.operations());
             log.info("warp listening for Amazon SQS HTTP/JSON (sqswire) on port {}", sqsWirePort);
         } catch (Exception e) {
             log.error("sqswire failed to start on port {} -- every other wire protocol is still up. "
@@ -777,6 +779,7 @@ public final class Main {
                         s3WirePort, s3Config, connectionGate, sqlMetrics, backendRegistry,
                         com.sayonora.wire.s3wire.S3StoreOptions.fromEnv());
                 s3WireServer.start();
+                com.sayonora.wire.awswire.AwsWireBootstrap.register("s3", s3WireServer.handler());
                 log.info("warp listening for Amazon S3 REST API (s3wire) on port {}, mode {}", s3WirePort,
                         s3Postgres ? "postgres (hosts " + backendRegistry.storeHosts(
                                 com.sayonora.wire.core.StoreType.S3) + ")"
@@ -786,6 +789,16 @@ public final class Main {
         } catch (Exception e) {
             log.error("s3wire failed to start -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring s3wire back.", e);
+        }
+
+        // awswire: Amazon SNS, Kinesis, Secrets Manager, SSM, KMS and STS on Postgres, each on its own port
+        // (WARP_SNSWIRE_PORT, WARP_KINESISWIRE_PORT, WARP_SECRETSWIRE_PORT, WARP_SSMWIRE_PORT, WARP_KMSWIRE_PORT,
+        // WARP_STSWIRE_PORT) and/or behind ONE unified AWS endpoint (WARP_AWSWIRE_PORT, default 4566) that also dispatches
+        // to dynamowire, sqswire and s3wire in process. Off unless configured; started last so it sees the handlers above.
+        try {
+            com.sayonora.wire.awswire.AwsWireBootstrap.start(backendRegistry, connectionGate, sqlMetrics);
+        } catch (RuntimeException e) {
+            log.error("awswire failed to start -- every other wire protocol is still up.", e);
         }
 
         int osWirePort = parseIntEnv("WARP_OSWIRE_PORT", 9200);

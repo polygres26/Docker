@@ -182,6 +182,34 @@ final class StoreDescribeProvider implements BackendToolProvider {
                 });
                 out.add(q[1][0], cs);
             }
+            case SNS, KINESIS, AWSPARAMS -> {
+                // topics / streams / secrets, parameters, keys: counted on every host (each item lives on one host)
+                String[][] q = switch (store) {
+                    case SNS -> new String[][] {{"topics", "SELECT count(*) FROM warp_sns_topics"},
+                        {"subscriptions", "SELECT count(*) FROM warp_sns_subscriptions"}};
+                    case KINESIS -> new String[][] {{"streams", "SELECT count(*) FROM warp_kinesis_streams"},
+                        {"records", "SELECT count(*) FROM warp_kinesis_records"}};
+                    default -> new String[][] {{"secrets", "SELECT count(*) FROM warp_awsparams_secrets"},
+                        {"parameters", "SELECT count(*) FROM warp_awsparams_ssm_params"},
+                        {"kmsKeys", "SELECT count(*) FROM warp_awsparams_kms_keys"}};
+                };
+                long[] totals = new long[q.length];
+                for (String h : hosts) {
+                    try (Connection c = registry.get(h).open(); Statement st = c.createStatement()) {
+                        for (int i = 0; i < q.length; i++) {
+                            try (ResultSet rs = st.executeQuery(q[i][1])) {
+                                rs.next();
+                                totals[i] += rs.getLong(1);
+                            }
+                        }
+                    } catch (SQLException e) {
+                        out.addProperty("note", "tables not readable yet: " + e.getMessage());
+                    }
+                }
+                for (int i = 0; i < q.length; i++) {
+                    out.addProperty(q[i][0], totals[i]);
+                }
+            }
             case S3 -> {
                 // per-host object/byte counts (from the fixed catalog tables); buckets come from the first host
                 JsonArray shards = new JsonArray();

@@ -1,0 +1,90 @@
+{
+ "service": "sts",
+ "suite": "python",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 0.3,
+ "counts": {
+  "pass": 1,
+  "fail": 8,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_sts.py": {
+   "pass": 1,
+   "fail": 8,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_sts.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/results/awsx-baseline-sts-python.junit.xml --timeout=60",
+ "failures": [
+  {
+   "file": "test_sts.py",
+   "test": "test_get_caller_identity",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the GetCallerIdentity operation: sqswire does not implement GetCallerIdentity",
+   "time": 0.033,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_get_caller_identity_account_id",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the GetCallerIdentity operation: sqswire does not implement GetCallerIdentity",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_assume_role",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the AssumeRole operation: sqswire does not implement AssumeRole",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_assume_role_assumed_role_user",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the AssumeRole operation: sqswire does not implement AssumeRole",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_assume_role_with_web_identity",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the AssumeRoleWithWebIdentity operation: sqswire does not implement AssumeRoleWithWebIdentity",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_get_session_token",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the GetSessionToken operation: sqswire does not implement GetSessionToken",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_get_federation_token",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the GetFederationToken operation: sqswire does not implement GetFederationToken",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sts.py",
+   "test": "test_decode_authorization_message",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the DecodeAuthorizationMessage operation: sqswire does not implement DecodeAuthorizationMessage",
+   "time": 0.003,
+   "class": "a"
+  }
+ ]
+}

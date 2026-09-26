@@ -44,7 +44,14 @@ public enum StoreType {
     AZTABLE("aztable", "Azure Table", "WARP_AZTABLEWIRE_SET", true,
             "Azure Table Storage REST API (OData JSON); entities are sharded by table and PartitionKey."),
     GCS("gcs", "Google Cloud Storage", "WARP_GCSWIRE_SET", true,
-            "Google Cloud Storage JSON and XML APIs; objects are stored as chunked rows and sharded by bucket/object name.");
+            "Google Cloud Storage JSON and XML APIs; objects are stored as chunked rows and sharded by bucket/object name."),
+    SNS("sns", "SNS", "WARP_SNSWIRE_SET", true,
+            "Amazon SNS API (Query and JSON); a topic and its subscriptions live wholly on one backend (hash of the topic name)."),
+    KINESIS("kinesis", "Kinesis", "WARP_KINESISWIRE_SET", true,
+            "Amazon Kinesis Data Streams API (JSON and CBOR); a stream, its shards and records live wholly on one backend."),
+    AWSPARAMS("awsparams", "Secrets, SSM, KMS, STS", "WARP_AWSPARAMSWIRE_SET", true,
+            "Secrets Manager, SSM Parameter Store, KMS keys and STS sessions; each secret, parameter and key is placed by "
+                    + "hash of its name or key id, aliases and STS sessions on the first backend.");
 
     private final String id;
     private final String label;

@@ -1,0 +1,25 @@
+{
+ "service": "sts",
+ "suite": "java",
+ "endpoint": "http://localhost:60641",
+ "tag": "warp",
+ "date": "2026-09-25 21:45",
+ "runner_rc": 0,
+ "seconds": 2.2,
+ "counts": {
+  "pass": 20,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.StsTest": {
+   "pass": 20,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=StsTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": []
+}
