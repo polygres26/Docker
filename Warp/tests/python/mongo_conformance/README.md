@@ -21,7 +21,7 @@ and MongoDB's own **driver-spec tests** (`mongodb/specifications`, Apache-2.0) a
 ```sh
 docker run -d --name warp-mongo-oracle -m 1g -p 0:27017 mongo:7.0        # note the mapped port
 git clone --depth 1 https://github.com/mongodb/specifications /tmp/mongo-specs
-export WARP_TEST_JAR=/path/to/sayonora-wire.jar WARP_TEST_PG_LOCAL=1
+export WARP_TEST_JAR=/path/to/sayonora-warp.jar WARP_TEST_PG_LOCAL=1
 export WARP_CLUSTER_ENABLED=true WARP_CLUSTER_DISCOVERY=static WARP_CLUSTER_SEED_NODES=127.0.0.1:<free port in 47500..47599>
 python3 mongo_harness.py --oracle mongodb://localhost:<port> --start-warp [--shards 2] [--filter agg_] [--show diff|msg|all]
 python3 mongo_harness.py --oracle mongodb://localhost:<port> --record golden/oracle_7.0.json.gz        # re-record after corpus changes

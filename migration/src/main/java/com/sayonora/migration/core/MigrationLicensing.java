@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
  * lets give serial way to move data, for a real massively parallel way to move data [that's the
  * paid tier]." Deliberately reuses Warp's OWN {@link License}/{@link LicenseTier} machinery
  * (already a compile-scope dependency of this module -- see {@code migration/pom.xml}'s own
- * comment on reusing {@code sayonora-wire}) rather than inventing a second, separate licensing
+ * comment on reusing {@code sayonora-warp}) rather than inventing a second, separate licensing
  * system for this module: one {@code WARP_LICENSE_KEY} unlocks both Warp's own
  * Enterprise-tier caps AND massively-parallel migration, one key, one offline Ed25519-signature
  * trust model, one thing for a customer to buy. See {@link License}'s own javadoc for the full

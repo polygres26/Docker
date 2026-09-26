@@ -15,7 +15,7 @@ import java.util.Base64;
  *
  * <p>Usage:
  * <pre>
- * java -cp sayonora-wire.jar com.sayonora.wire.license.LicenseKeyGenTool \
+ * java -cp sayonora-warp.jar com.sayonora.wire.license.LicenseKeyGenTool \
  *     --private-key &lt;base64 PKCS8 Ed25519 private key&gt; \
  *     --tier ENTERPRISE \
  *     --licensed-to "Acme Corp" \

@@ -709,7 +709,7 @@ the hidden bucket marker.
 
 Question: N client connections against a Warp whose pool to Postgres is `WARP_POOL_MAX_SIZE=10`; when
 all 10 are in use, does the client WAIT or get an ERROR? Real Postgres 16 container, real Warp jar
-(`target/sayonora-wire.jar`, built 2026-09-24 22:50), real drivers, no mocks. Harness:
+(`target/sayonora-warp.jar`, built 2026-09-24 22:50), real drivers, no mocks. Harness:
 `Warp/tests/python/test_connection_pooling.py` (opt-in: `WARP_RUN_POOL_TESTS=1`, run as a script,
 `--help` lists `--protocols/--n/--mode/--env/--fresh/--idle-holders/--release-probe`). Fresh Postgres and
 Warp per case, Ignite discovery pinned to one seed port, QoS `RATE/BURST=100000` so only the pool is

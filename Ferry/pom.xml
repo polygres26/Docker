@@ -143,7 +143,7 @@
     <!-- Lets Sayonora DMS's Migration Service half actually LAUNCH a sayonora-migration run
          (MigrationJobRunner), not just read
          its bookkeeping tables the way MigrationStatusStore already did before this dependency
-         existed. Brings in sayonora-wire, every connector's real vendor client (mongodb-driver-
+         existed. Brings in sayonora-warp, every connector's real vendor client (mongodb-driver-
          sync, the AWS SDK dynamodb/sqs modules, the mysql-binlog-connector, neo4j-java-driver,
          mssql-jdbc/ojdbc11) transitively; deliberately the exact same jars every Migrate*Cli
          entry point already runs against, not a second copy pinned to different versions. -->
@@ -217,7 +217,7 @@
       <!-- Same add-opens set sayonora-migration's own pom.xml carries for its test JVM (see that
            pom's own comment); needed here too now that this module's tests (via the new
            sayonora-migration test dependency, MigrationJobRunnerIntegrationTest) pull in
-           ignite-core transitively through sayonora-wire, and IgniteJdbcThinDriver's static
+           ignite-core transitively through sayonora-warp, and IgniteJdbcThinDriver's static
            initializer throws under the module system's default reflection restrictions without
            these; confirmed live, not hypothetical: every DriverManager.getConnection call in
            this module's tests failed with NoClassDefFoundError before this was added. -->

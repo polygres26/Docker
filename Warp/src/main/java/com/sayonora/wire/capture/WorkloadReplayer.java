@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
  * this tool takes one pull per node, per run -- it is not a durable log; run it before an
  * instance's buffer wraps if you need everything currently held.
  *
- * <p>Run via {@code java -cp sayonora-wire.jar com.sayonora.wire.capture.WorkloadReplayer}, using
+ * <p>Run via {@code java -cp sayonora-warp.jar com.sayonora.wire.capture.WorkloadReplayer}, using
  * the same {@code WARP_PG_*}/{@code WARP_ADMIN_TOKEN} options the server itself uses.
  */
 public final class WorkloadReplayer {

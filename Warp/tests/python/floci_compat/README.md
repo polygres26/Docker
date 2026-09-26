@@ -13,7 +13,7 @@ working tree (dynamowire/sqswire), native Postgres 17.
 
 ## Re-run
 ```
-export WARP_TEST_PG_LOCAL=1 WARP_TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin WARP_TEST_JAR=<path>/sayonora-wire.jar
+export WARP_TEST_PG_LOCAL=1 WARP_TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin WARP_TEST_JAR=<path>/sayonora-warp.jar
 ulimit -n 8192
 # Warp with dynamodb+sqs (+ s3wire backed by MinIO; needs Docker disk):
 python3 launch_warp.py --state /tmp/warp_state.json [--minio | --s3-backend-endpoint URL --s3-backend-bucket B --s3-backend-key K --s3-backend-secret S] &

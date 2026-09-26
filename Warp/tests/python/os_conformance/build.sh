@@ -1,5 +1,5 @@
 #!/bin/sh
-# Private build copy so a dev Warp running target/sayonora-wire.jar is never disturbed.
+# Private build copy so a dev Warp running target/sayonora-warp.jar is never disturbed.
 # usage: build.sh <scratch-build-dir> [mvn goal, default package]
 set -e
 SRC="$(cd "$(dirname "$0")/../../.." && pwd)"

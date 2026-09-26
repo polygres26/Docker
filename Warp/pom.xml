@@ -5,10 +5,10 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.sayonora</groupId>
-  <artifactId>sayonora-wire</artifactId>
+  <artifactId>sayonora-warp</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
-  <name>sayonora-wire</name>
+  <name>sayonora-warp</name>
   <description>Warp: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
     (com.omnigate.*) into com.sayonora.wire.*, independent standalone module, sibling to
@@ -616,7 +616,7 @@
   </dependencies>
 
   <build>
-    <finalName>sayonora-wire</finalName>
+    <finalName>sayonora-warp</finalName>
     <extensions>
       <extension>
         <groupId>kr.motd.maven</groupId>
@@ -679,7 +679,7 @@
         </configuration>
       </plugin>
       <plugin>
-        <!-- Produces a runnable target/sayonora-wire.jar (all deps bundled) with
+        <!-- Produces a runnable target/sayonora-warp.jar (all deps bundled) with
              com.sayonora.wire.server.Main as the entry point. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>

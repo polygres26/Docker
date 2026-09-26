@@ -12,7 +12,7 @@ import uuid
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # WARP_TEST_JAR lets a test run use a jar built elsewhere (e.g. while another Warp still runs target/).
-JAR_PATH = os.environ.get("WARP_TEST_JAR") or os.path.join(REPO_ROOT, "target", "sayonora-wire.jar")
+JAR_PATH = os.environ.get("WARP_TEST_JAR") or os.path.join(REPO_ROOT, "target", "sayonora-warp.jar")
 
 ADD_OPENS = [
     "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",

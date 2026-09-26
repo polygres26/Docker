@@ -16,7 +16,7 @@ request sequences against a real InfluxDB 1.8 (the oracle) and against Warp and 
 
 ```sh
 docker run -d --name warp-influx-oracle -m 2g -p 0:8086 -e INFLUXDB_HTTP_AUTH_ENABLED=false influxdb:1.8   # note the mapped port
-export WARP_TEST_JAR=/path/to/sayonora-wire.jar WARP_TEST_PG_LOCAL=1    # local Postgres instead of Docker
+export WARP_TEST_JAR=/path/to/sayonora-warp.jar WARP_TEST_PG_LOCAL=1    # local Postgres instead of Docker
 # Warps started from a shell that has other Warps running need a free Ignite seed port:
 export WARP_CLUSTER_ENABLED=true WARP_CLUSTER_DISCOVERY=static WARP_CLUSTER_SEED_NODES=127.0.0.1:<free port in 47500..47599>
 python3 harness.py --oracle http://localhost:<port> --start-warp [--shards 2] [--filter agg_] [--show diff|msg|all] [--out results.json]

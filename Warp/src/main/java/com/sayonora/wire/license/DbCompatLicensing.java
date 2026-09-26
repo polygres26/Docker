@@ -6,7 +6,7 @@ import org.slf4j.LoggerFactory;
 /**
  * The paid/free line for the Shim DB compatibility layer (the {@code pg_oracle}/{@code
  * pg_mysql}/{@code pg_sqlserver} Postgres extensions, {@code db/} in this repo, published
- * separately at {@code github.com/polygres26/DB}) -- gated here, in {@code sayonora-wire}, rather
+ * separately at {@code github.com/polygres26/DB}) -- gated here, in {@code sayonora-warp}, rather
  * than inside the extensions themselves: a Postgres C extension has no way to check a JVM
  * license, but every session that would actually BENEFIT from it (orawire/mywire/mssqlwire)
  * already passes through this module's own {@code NativeRlsSessionInitializer}, which is exactly
