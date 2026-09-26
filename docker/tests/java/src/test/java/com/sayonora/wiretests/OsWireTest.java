@@ -1,4 +1,4 @@
-package com.sayonora.wiretests;
+package com.sayonora.warptests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,7 +16,7 @@ import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBui
 
 /** oswire: real OpenSearch HTTP/JSON API (_search/documents/_bulk), the real official
  * opensearch-java client, translated to Postgres underneath -- see
- * com.sayonora.wire.oswire's package for the internal Search IR this is staged around. No auth
+ * com.sayonora.warp.oswire's package for the internal Search IR this is staged around. No auth
  * configured in the test compose file. */
 class OsWireTest {
 

@@ -1,4 +1,4 @@
-"""A/B routing between a "cloud" and Warp's local Postgres-backed emulation (com.sayonora.wire.ab), for the
+"""A/B routing between a "cloud" and Warp's local Postgres-backed emulation (com.sayonora.warp.ab), for the
 AWS-family frontends s3wire, dynamowire, sqswire and the unified awswire endpoint.
 
 The real cloud is NOT reachable from the test machine, so the stand-in "cloud" is a SECOND real Warp process

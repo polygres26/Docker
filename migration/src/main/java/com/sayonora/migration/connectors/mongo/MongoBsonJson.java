@@ -8,7 +8,7 @@ import org.bson.json.JsonWriterSettings;
 
 /**
  * A faithful reproduction of mongowire's own {@code BsonJson} serialization convention (see
- * {@code com.sayonora.wire.mongowire.BsonJson} in the {@code wire} module) -- NOT independent
+ * {@code com.sayonora.warp.mongowire.BsonJson} in the {@code wire} module) -- NOT independent
  * reinvention. This has to produce byte-identical output to what mongowire itself writes for the
  * exact same document, or a document written via mongowire and the same document replicated via
  * this connector would land under two different {@code id}/{@code doc} text representations in

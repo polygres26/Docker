@@ -1,0 +1,12 @@
+package com.sayonora.warp.grpc;
+
+import io.grpc.Attributes;
+
+final class GrpcProxyProtocol {
+
+    static final Attributes.Key<java.net.InetAddress> PROXIED_REMOTE_ADDRESS =
+            Attributes.Key.create("com.sayonora.warp.grpc.proxied-remote-address");
+
+    private GrpcProxyProtocol() {
+    }
+}

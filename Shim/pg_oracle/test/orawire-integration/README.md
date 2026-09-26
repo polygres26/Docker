@@ -20,7 +20,7 @@ overload all failed with `ORA-00942`/`ORA-00904` ("table or view does not exist"
 identifier"), while schema-qualified calls like `DBMS_RANDOM.STRING(...)` (which don't depend on
 `search_path` at all) worked throughout -- that contrast is what pointed at the real cause instead
 of a pg_oracle bug. Fixed with a `runEvenWhenAnonymous()` override
-(`Warp/src/main/java/com/sayonora/wire/core/access/NativeRlsSessionInitializer.java` and
+(`Warp/src/main/java/com/sayonora/warp/core/access/NativeRlsSessionInitializer.java` and
 `OraclePgEmulationSessionInitializer.java`).
 
 ## Bug 2: the SAME db_emulation GUC was still unreliable across separate connections

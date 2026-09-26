@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 

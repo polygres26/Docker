@@ -5,7 +5,7 @@ package com.sayonora.dms.secrets;
  * Written inline wherever a plaintext password could go (a target connection's stored
  * credential), recognized by a scheme prefix so a plain password (no prefix) keeps working
  * exactly as before. Vault/CyberArk match the same grammar and resolver shape as Warp's own
- * {@code com.sayonora.wire.secrets} package -- no shared library between the two Maven modules,
+ * {@code com.sayonora.warp.secrets} package -- no shared library between the two Maven modules,
  * so this is a deliberate small duplication rather than a new inter-module dependency. The three
  * hyperscaler schemes ({@code awssm:}/{@code azurekv:}/{@code gcpsm:}) are new to this module,
  * not ported from wire.

@@ -1,4 +1,4 @@
-package com.sayonora.wiretests;
+package com.sayonora.warptests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /** influxwire: real InfluxDB v1 line-protocol write path plus a bounded InfluxQL read path
  * (WHERE/GROUP BY time()/aggregates), the real official {@code influxdb-java} v1 client (not the
- * v2 client -- see com.sayonora.wire.influxwire.InfluxWireServer's own javadoc for why this speaks
+ * v2 client -- see com.sayonora.warp.influxwire.InfluxWireServer's own javadoc for why this speaks
  * v1, not Flux), translated to Postgres underneath. No auth configured in the test compose file. */
 class InfluxWireTest {
 

@@ -30,7 +30,7 @@ import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
  * #streamChanges} runs the identical loop forever until {@link #close}.
  *
  * <p>Writes into the target's real sqswire physical schema (see {@code
- * com.sayonora.wire.sqswire.PgQueueStore} in the {@code wire} module: {@code sqs_queue_<name>}
+ * com.sayonora.warp.sqswire.PgQueueStore} in the {@code wire} module: {@code sqs_queue_<name>}
  * with {@code msg_id bigserial}/{@code receipt_handle text}/{@code vt timestamptz}/{@code
  * enqueued_at timestamptz}/{@code read_ct int}/{@code body text}/{@code message_group_id text}/
  * {@code dedup_id text}, plus a row in the shared {@code sqs_queues_catalog} table) -- same

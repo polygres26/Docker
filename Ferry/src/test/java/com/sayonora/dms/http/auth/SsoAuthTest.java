@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sayonora.dms.core.DmsLicensingTestSupport;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;

@@ -1,4 +1,4 @@
-package com.sayonora.wiretests;
+package com.sayonora.warptests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

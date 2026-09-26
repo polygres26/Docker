@@ -21,7 +21,7 @@ option csharp_namespace = "Google.Cloud.Iam.V1";
 option go_package = "cloud.google.com/go/iam/apiv1/iampb;iampb";
 option java_multiple_files = true;
 option java_outer_classname = "OptionsProto";
-option java_package = "com.sayonora.wire.pubsubwire.iam";
+option java_package = "com.sayonora.warp.pubsubwire.iam";
 option php_namespace = "Google\\Cloud\\Iam\\V1";
 
 // Encapsulates settings provided to GetIamPolicy.

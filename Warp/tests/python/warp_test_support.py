@@ -201,7 +201,7 @@ class WarpProcess:
             # config-primary/backend Postgres connection (see README.md's own env var table and
             # ServerOptions.parse) -- WARP_PG_HOST/WARP_PG_PORT/etc, the names previously set here,
             # are never read anywhere in the Java source (confirmed by grepping
-            # src/main/java/com/sayonora/wire for them -- zero hits). Every WarpProcess launched by
+            # src/main/java/com/sayonora/warp for them -- zero hits). Every WarpProcess launched by
             # this harness was therefore silently ignoring its own disposable RealPostgres
             # container and falling back to ServerOptions' own default (localhost:5432, i.e.
             # whatever real Postgres happens to be listening on the dev machine's default port) --

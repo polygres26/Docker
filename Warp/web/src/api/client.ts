@@ -1,5 +1,5 @@
 // This SPA talks directly to Warp's own admin API (see
-// Warp/src/main/java/com/sayonora/wire/http/admin/MetricsServer.java) -- there is no advisor
+// Warp/src/main/java/com/sayonora/warp/http/admin/MetricsServer.java) -- there is no advisor
 // backend in between. That server is explicitly documented as designed for server-to-server use
 // ("no CORS handling and no session/cookie machinery on purpose"), so the browser has to supply
 // its own base URL + bearer token on every request instead of relying on a cookie-backed session.
@@ -191,7 +191,7 @@ export async function draftFirewallRule(prompt: string): Promise<{
 
 // --- Full config: /api/config ---
 // One GET/PUT(-partial) resource over every field of WarpConfig -- see
-// com.sayonora.wire.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
+// com.sayonora.warp.config.WarpConfig and MetricsServer#handleConfig. A PUT only needs to
 // carry the fields a page actually edits; everything else is carried forward from the latest
 // warp_config version untouched.
 
@@ -655,7 +655,7 @@ export async function listNodes(): Promise<NodeInfo[]> {
   return api('/api/nodes')
 }
 
-// ---- A/B routing (com.sayonora.wire.ab): real cloud vs local emulation, per store ----------------------------
+// ---- A/B routing (com.sayonora.warp.ab): real cloud vs local emulation, per store ----------------------------
 
 export interface AbPolicy {
   store: string

@@ -53,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * is treated as a field.
  *
  * <p>Writes into the target's real influxwire physical schema (see {@code
- * com.sayonora.wire.influxwire.PgTimeSeriesStore} in the {@code wire} module: {@code
+ * com.sayonora.warp.influxwire.PgTimeSeriesStore} in the {@code wire} module: {@code
  * warp_influx_<measurement>} with {@code time timestamptz}/{@code tags jsonb}/{@code fields
  * jsonb}) -- same "match the wire's own physical schema exactly" principle as every document/
  * key-value connector in this project. <b>Known, scoped gap</b>: that physical schema has NO

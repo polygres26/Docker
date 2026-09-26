@@ -17,7 +17,7 @@ projects that happen to live together.
   also run in native-backend mode instead, proxying straight through to a real Oracle/MySQL/SQL
   Server database of your own with no translation, for keeping the engine you already run. See
   `docs/WARP_GUIDE.md` §8.1.1. Ported from Omnigate (`~/Projects/Omnigate`, package
-  `com.omnigate.*` -> `com.sayonora.wire.*`).
+  `com.omnigate.*` -> `com.sayonora.warp.*`).
 - **[migration/](migration/)** -- `sayonora-migration`: massively-parallel, low-downtime migration
   connectors (MongoDB, MySQL, SQL Server, Oracle, DynamoDB, SQS, Neo4j, InfluxDB) writing into a
   running Warp instance over its own native gRPC driver. Used both standalone (`Migrate*Cli`)

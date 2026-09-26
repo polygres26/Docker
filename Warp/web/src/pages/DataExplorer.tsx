@@ -11,7 +11,7 @@ import { PageHeader } from '../components/ui'
 /**
  * Object browser + ad-hoc SQL console for Warp's configured backends -- pick a backend,
  * browse its schemas/tables in the left pane, click one to preview it, or write any SQL in the
- * console and run it. Talks straight to com.sayonora.wire.core.DataExplorer via the admin API;
+ * console and run it. Talks straight to com.sayonora.warp.core.DataExplorer via the admin API;
  * see that class's javadoc for why this bypasses SQL Firewall/ACL by design (it's an admin tool,
  * not a client-facing wire protocol) and is gated by the same admin token as the rest of
  * Warp's config surface.

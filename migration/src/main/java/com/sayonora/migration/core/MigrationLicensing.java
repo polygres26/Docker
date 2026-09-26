@@ -1,7 +1,7 @@
 package com.sayonora.migration.core;
 
-import com.sayonora.wire.license.License;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.License;
+import com.sayonora.warp.license.LicenseTier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

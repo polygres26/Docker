@@ -1,7 +1,7 @@
 package com.sayonora.dms.core;
 
-import com.sayonora.wire.license.License;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.License;
+import com.sayonora.warp.license.LicenseTier;
 
 /**
  * The paid/free line for Sayonora DMS's own admin-console features -- the RBAC/audit/SSO row of

@@ -73,7 +73,7 @@ def connect(proc):
 
 def joined_cluster_size(proc):
     """Scrapes the real "warp cluster joined, current size=N" log line WarpCluster.start()
-    prints (com.sayonora.wire.cluster.WarpCluster), from this process's own captured stdout."""
+    prints (com.sayonora.warp.cluster.WarpCluster), from this process's own captured stdout."""
     for line in proc._output_lines:
         if "warp cluster joined" in line:
             try:

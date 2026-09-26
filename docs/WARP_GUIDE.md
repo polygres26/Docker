@@ -615,7 +615,7 @@ Postgres itself gets without the extension.
 
 ### 4.6 Multi-AZ distributed cache
 
-The distributed cache (Ignite, `com.sayonora.wire.cluster.WarpCluster`) is cloud-native and
+The distributed cache (Ignite, `com.sayonora.warp.cluster.WarpCluster`) is cloud-native and
 AZ-aware: cluster discovery via `WARP_CLUSTER_DISCOVERY=static|s3|gcs|azure` (not just a
 static IP list), a configurable backup count (`WARP_CLUSTER_CACHE_BACKUPS`, default 1) whose
 placement is AZ-aware — a cache entry's backup never lands on a node in the same
@@ -1949,7 +1949,7 @@ Per-run summaries with every failure are in `Warp/tests/python/floci_compat/resu
 
 Warp's own tests: `Warp/tests/python/test_awsextras_conformance.py` (boto3 against a real Warp and native Postgres, **one backend and two sharded backends**): SNS-to-SQS fan-out end to end (envelope, raw delivery, attributes, filter policies of both scopes, FIFO dedup and ordering, dead-letter redrive), real HTTP endpoints (confirmation flow, headers, retries without blocking Publish),
 topics and streams and keys and secrets landing on both hosts, Kinesis iterators of every type and 16 concurrent producers with strictly increasing sequence numbers, split / merge / UpdateShardCount, the retention sweeper, SubscribeToShard, KMS crypto / grants / aliases / lifecycle, that secrets and SecureString values and key material are never in Postgres in clear, KMS failing
-closed and a changed master key, SigV4 validation with STS temporary credentials (and their expiry), IAM roles and SAML, each service on its own port and SNS's JSON protocol, Kinesis over cleartext HTTP/2 with the JavaScript SDK (2.7 MB uploaded in 900 KB requests and 40 concurrent 2.7 MB responses on one session -- exercises HTTP/2 flow control in both directions; needs `node` and `FLOCI_DIR`, skipped otherwise), `WARP_POOL_MAX_SIZE=4` under a mixed load with slow HTTP subscribers. Java unit tests (`Warp/src/test/java/com/sayonora/wire/awswire/`): hash-range math and sequence numbers, filter-policy matching, SNS envelope rendering, KMS envelope crypto and algorithms,
+closed and a changed master key, SigV4 validation with STS temporary credentials (and their expiry), IAM roles and SAML, each service on its own port and SNS's JSON protocol, Kinesis over cleartext HTTP/2 with the JavaScript SDK (2.7 MB uploaded in 900 KB requests and 40 concurrent 2.7 MB responses on one session -- exercises HTTP/2 flow control in both directions; needs `node` and `FLOCI_DIR`, skipped otherwise), `WARP_POOL_MAX_SIZE=4` under a mixed load with slow HTTP subscribers. Java unit tests (`Warp/src/test/java/com/sayonora/warp/awswire/`): hash-range math and sequence numbers, filter-policy matching, SNS envelope rendering, KMS envelope crypto and algorithms,
 Query and CBOR codecs, event-stream framing. Latency: `RTT_BASELINE_2026.md`.
 
 #### The unified AWS endpoint (awswire)
@@ -2891,7 +2891,7 @@ pointing at Warp and keep authenticating to Warp as today. Per store, an operato
 per request, whether it is served **locally** (Warp's own emulation), by the **cloud**, or by **both** (compare). It covers
 **S3** (s3wire), **DynamoDB** (dynamowire) and **SQS** (sqswire), and therefore also the unified **awswire** endpoint, which
 dispatches to those same handlers in process. The design leaves room for other frontends (the routing hook is one line around a
-frontend's Jetty handler, see `com.sayonora.wire.ab.AbRouting.wrap`).
+frontend's Jetty handler, see `com.sayonora.warp.ab.AbRouting.wrap`).
 
 There is **no data copy and no mirror-write mode**: the feature assumes the data already exists on both sides.
 

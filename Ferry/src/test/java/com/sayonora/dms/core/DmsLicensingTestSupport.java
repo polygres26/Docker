@@ -1,6 +1,6 @@
 package com.sayonora.dms.core;
 
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 
 /**
  * Test-only seam into {@link DmsLicensing}'s package-private override -- same shape and same

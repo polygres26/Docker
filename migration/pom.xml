@@ -15,7 +15,7 @@
     to the target Postgres, so every migration write goes through Warp's real firewall/QoS/
     cache-invalidation pipeline like any other client. Independent standalone module, sibling to
     sayonora-warp and sayonora-dms in this repo; depends on sayonora-warp only to reuse its
-    already-generated QueryService gRPC stub classes (com.sayonora.wire.grpc.proto.*), not any of
+    already-generated QueryService gRPC stub classes (com.sayonora.warp.grpc.proto.*), not any of
     wire's internal package-private classes.</description>
 
   <properties>
@@ -39,7 +39,7 @@
 
   <dependencies>
     <!-- Reuses sayonora-warp's already-generated QueryService/ExecuteRequest/ExecuteResponse gRPC
-         stub classes (com.sayonora.wire.grpc.proto.*) and transitively brings in the matching
+         stub classes (com.sayonora.warp.grpc.proto.*) and transitively brings in the matching
          grpc-stub/grpc-netty-shaded/grpc-protobuf runtime, org.mongodb:bson, the postgresql JDBC
          driver, and slf4j-simple, all real, compile-scope dependencies of wire's own pom.xml,
          not duplicated here. Deliberately depends on the WHOLE wire jar rather than a

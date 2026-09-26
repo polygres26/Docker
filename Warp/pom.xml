@@ -11,7 +11,7 @@
   <name>sayonora-warp</name>
   <description>Warp: a mid-tier, Postgres-only database gateway speaking Oracle TNS/TTC,
     Postgres wire protocol v3, and MySQL client/server protocol to clients — ported from Omnigate
-    (com.omnigate.*) into com.sayonora.wire.*, independent standalone module, sibling to
+    (com.omnigate.*) into com.sayonora.warp.*, independent standalone module, sibling to
     sayonora-dms in this repo.</description>
 
   <properties>
@@ -69,7 +69,7 @@
          NoSuchMethodError (org.bson.ByteBuf.putInt(int)) at runtime, not a compile-time error,
          caught by MongoErrorMappingIntegrationTest actually running against a real driver. -->
     <bson.version>5.5.1</bson.version>
-    <!-- S3/Kafka/Cassandra/Splunk connector work (com.sayonora.wire.core.connector.{s3,kafka,
+    <!-- S3/Kafka/Cassandra/Splunk connector work (com.sayonora.warp.core.connector.{s3,kafka,
          cassandra,splunk}), ported from the sibling ThinkingSense project's own real, tested
          connectors, same versions ThinkingSense pinned, reconciled against Warp's own existing
          pins where they already overlap (S3 reuses awssdk.version above, since the DynamoDB work
@@ -133,7 +133,7 @@
       <version>${gson.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.http.auth.AccessContextResolver — real JWT parsing/signature
+      <!-- com.sayonora.warp.http.auth.AccessContextResolver — real JWT parsing/signature
            verification (JWS/JWK/JWKS) for OAuth2/OIDC bearer tokens (Okta, Auth0, Azure AD, any
            standards-compliant IdP) — the standard JVM library for this, not a hand-rolled JWT
            parser (Apache-2.0). -->
@@ -142,14 +142,14 @@
       <version>${nimbus-jose-jwt.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.rollup.RollupConfig — real YAML parsing for the rollup definitions
+      <!-- com.sayonora.warp.rollup.RollupConfig — real YAML parsing for the rollup definitions
            config file, not a hand-rolled subset parser (Apache-2.0). -->
       <groupId>org.yaml</groupId>
       <artifactId>snakeyaml</artifactId>
       <version>${snakeyaml.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.core.RollupStage: reuses Calcite's own materialized-view substitution
+      <!-- com.sayonora.warp.core.RollupStage: reuses Calcite's own materialized-view substitution
            machinery (RelOptMaterialization/RelOptMaterializations) to decide whether an incoming
            aggregate query can be rewritten to hit a rollup table instead of the full source table —
            real, tested query-rewrite logic, not hand-rolled SQL rewriting. Apache-2.0. -->
@@ -241,7 +241,7 @@
       <version>${mysqlconnector.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.mongowire's BSON codec — the official MongoDB Java driver's small,
+      <!-- com.sayonora.warp.mongowire's BSON codec — the official MongoDB Java driver's small,
            standalone BSON library (Apache-2.0), NOT the mongo-java-driver client itself (that
            would be a MongoDB *client* dependency, nonsensical for something acting as a MongoDB
            *server*). Used purely for OP_MSG document (de)serialization; the wire-protocol framing
@@ -253,7 +253,7 @@
       <version>${bson.version}</version>
     </dependency>
     <dependency>
-      <!-- Apache Ignite core (com.sayonora.wire.cluster), Apache-2.0 — embedded in-process
+      <!-- Apache Ignite core (com.sayonora.warp.cluster), Apache-2.0 — embedded in-process
            (Ignition.start(), not a separate server) for CacheStage's cluster-aware cache-aside
            result cache. Pinned to the 2.x line deliberately, not 3.x (see WarpCluster's javadoc). -->
       <groupId>org.apache.ignite</groupId>
@@ -329,7 +329,7 @@
       <version>${hikaricp.version}</version>
     </dependency>
     <dependency>
-      <!-- Embedded Jetty for the /metrics endpoint only (com.sayonora.wire.http, once ported) —
+      <!-- Embedded Jetty for the /metrics endpoint only (com.sayonora.warp.http, once ported) —
            admin UI/API/auth/SCIM pieces of Omnigate's http package are explicitly out of scope. -->
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
@@ -368,7 +368,7 @@
          decoder; see MssqlJdbcIntegrationTest/MySqlJdbcIntegrationTest) is covered by those same
          compile-scope dependencies now, no separate test-scope copies needed. -->
     <dependency>
-      <!-- Compile scope (was test-only): com.sayonora.wire.core.connector.dynamodb reads a real
+      <!-- Compile scope (was test-only): com.sayonora.warp.core.connector.dynamodb reads a real
            DynamoDB table as a federated SchemaFederationStage mount. Same 2.46.7 version the
            ported ThinkingSense connector was proven against, and the same awssdk.version property
            sqs/dynamowire's own test clients already use, so there is exactly one AWS SDK v2
@@ -384,7 +384,7 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <!-- Compile scope: com.sayonora.wire.core.connector.s3.S3CompatibleObjectFetcher needs real
+      <!-- Compile scope: com.sayonora.warp.core.connector.s3.S3CompatibleObjectFetcher needs real
            S3 object download (SigV4 request signing), same AWS SDK v2 line/version the DynamoDB
            connector above already established on this classpath (awssdk.version), reused verbatim
            rather than introducing ThinkingSense's own separate aws.sdk.s3.version pin. -->
@@ -433,7 +433,7 @@
       <version>${hadoop.common.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.core.connector.kafka.KafkaTable: real, bounded-snapshot Kafka topic
+      <!-- com.sayonora.warp.core.connector.kafka.KafkaTable: real, bounded-snapshot Kafka topic
            reads (see that package's javadoc for why this is bounded, not continuous-streaming
            SQL). Apache Kafka's official Java client, no Scala/Spark dependency. Apache-2.0. -->
       <groupId>org.apache.kafka</groupId>
@@ -441,7 +441,7 @@
       <version>${kafka.clients.version}</version>
     </dependency>
     <dependency>
-      <!-- com.sayonora.wire.core.connector.cassandra: DataStax's official Cassandra Java driver,
+      <!-- com.sayonora.warp.core.connector.cassandra: DataStax's official Cassandra Java driver,
            real column-metadata introspection (see that package's javadoc for why Cassandra doesn't
            need Mongo/DynamoDB's declared-field-list workaround). Apache-2.0. -->
       <groupId>com.datastax.oss</groupId>
@@ -453,7 +453,7 @@
       <artifactId>java-driver-query-builder</artifactId>
       <version>${cassandra.driver.version}</version>
     </dependency>
-    <!-- com.sayonora.wire.core.connector.splunk needs no dependency of its own beyond Gson, which
+    <!-- com.sayonora.warp.core.connector.splunk needs no dependency of its own beyond Gson, which
          is already a main-scope dependency above (TranslationCache's HTTP client); Splunk access
          is plain java.net.http.HttpClient + Gson JSON parsing, same as ThinkingSense's own
          SplunkTable. -->
@@ -497,7 +497,7 @@
       <version>${bson.version}</version>
     </dependency>
     <dependency>
-      <!-- Compile scope again: com.sayonora.wire.core.connector.mongo is a real Mongo backend
+      <!-- Compile scope again: com.sayonora.warp.core.connector.mongo is a real Mongo backend
            connector (a plain ScannableTable over the sync driver's find(), NOT calcite-mongodb,
            whose 4.10.2-driver binary incompatibility described above is exactly why that adapter
            was reverted). Pinned to bson.version (5.5.1), not the 5.11.0 ThinkingSense's ported
@@ -680,7 +680,7 @@
       </plugin>
       <plugin>
         <!-- Produces a runnable target/sayonora-warp.jar (all deps bundled) with
-             com.sayonora.wire.server.Main as the entry point. -->
+             com.sayonora.warp.server.Main as the entry point. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
         <version>3.6.0</version>
@@ -693,7 +693,7 @@
             <configuration>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>com.sayonora.wire.server.Main</mainClass>
+                  <mainClass>com.sayonora.warp.server.Main</mainClass>
                   <!-- Real bug found via test harness instrumentation: dnsjava ships as a
                        multi-release jar, with its java.net.spi.InetAddressResolverProvider impl
                        under META-INF/versions/18/, but ManifestResourceTransformer doesn't carry

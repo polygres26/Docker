@@ -131,7 +131,7 @@ disposable `RealPostgres` docker container.
 **Root cause**: `ServerOptions.java` (confirmed by reading `ServerOptions.parse` directly, lines
 ~230-234) never reads any of those names -- it reads `WARP_HOST` / `WARP_PORT` / `WARP_DATABASE` /
 `WARP_USER` / `WARP_PASSWORD` (also confirmed against `README.md`'s own documented env var table).
-Grepping the entire `src/main/java/com/sayonora/wire` tree for `WARP_PG_HOST`, `WARP_PG_PORT`,
+Grepping the entire `src/main/java/com/sayonora/warp` tree for `WARP_PG_HOST`, `WARP_PG_PORT`,
 etc. returns zero hits anywhere in the actual server code.
 
 **Effect**: every `WarpProcess` launched by this harness silently ignored the disposable
@@ -532,7 +532,7 @@ subprocess Warp, same real Postgres 16 container, single-row autocommit INSERT a
 SELECT by PK, bind params, 3000 warmup + 2000 samples, legs interleaved with alternating order),
 plus temporary `System.nanoTime()` instrumentation (since removed) in `QueryServiceImpl`,
 `PgWireSessionHandler`, `StatementPipeline` and `JdbcBackendExecutor`. Harness (opt-in, run via its
-`main`): `src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java`. Note pgwire's own
+`main`): `src/test/java/com/sayonora/warp/grpc/GrpcVsPgwireRttBenchTest.java`. Note pgwire's own
 `recordRtt` only spans the Execute-message response write (the query runs at Bind), so pgwire
 server time here is measured from first message of the batch to the Sync/flush instead.
 
@@ -651,8 +651,8 @@ batching/pipelining several statements per RPC so the fixed ~40us amortizes.
 | SELECT | 328 / 391 / 620 | 326,323 / 396,397 / 627,645 | 286 / 393 / 669 | 252,251 / 292,293 / 423,444 |
 
 Default gRPC is unchanged in performance (no safe change helped); only the classpath fix and the
-opt-in knob shipped. Files: `Warp/pom.xml`, `Warp/src/main/java/com/sayonora/wire/grpc/WarpGrpcServer.java`,
-`Warp/src/test/java/com/sayonora/wire/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
+opt-in knob shipped. Files: `Warp/pom.xml`, `Warp/src/main/java/com/sayonora/warp/grpc/WarpGrpcServer.java`,
+`Warp/src/test/java/com/sayonora/warp/grpc/GrpcVsPgwireRttBenchTest.java` (client-knob system
 properties, p99, `-Dserver.direct`). The earlier "known bug" note above is resolved.
 
 ## 2026-09-23: s3wire (S3 frontend over a MinIO backend bucket)

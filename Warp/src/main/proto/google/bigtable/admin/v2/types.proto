@@ -22,7 +22,7 @@ option csharp_namespace = "Google.Cloud.Bigtable.Admin.V2";
 option go_package = "cloud.google.com/go/bigtable/admin/apiv2/adminpb;adminpb";
 option java_multiple_files = true;
 option java_outer_classname = "TypesProto";
-option java_package = "com.sayonora.wire.bigtablewire.admin.v2";
+option java_package = "com.sayonora.warp.bigtablewire.admin.v2";
 option php_namespace = "Google\\Cloud\\Bigtable\\Admin\\V2";
 option ruby_package = "Google::Cloud::Bigtable::Admin::V2";
 

@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Encrypts individual credential columns before they hit disk (AES-256-GCM, key from
  * {@code SAYONORA_ENCRYPTION_KEY} -- base64, 32 raw bytes; same env var name and format as
- * Warp's twin {@code com.sayonora.wire.secrets.FieldCipher}, so one key covers both modules).
+ * Warp's twin {@code com.sayonora.warp.secrets.FieldCipher}, so one key covers both modules).
  * Applied to {@code connections.password} and {@code wire_connection.admin_token} -- the two
  * columns in Advisor's own HSQLDB store that hold a real credential.
  *

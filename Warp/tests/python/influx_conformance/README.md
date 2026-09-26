@@ -1,6 +1,6 @@
 # influxwire differential conformance
 
-Defines "behaves like InfluxDB" for Warp's InfluxDB frontend (`Warp/src/main/java/com/sayonora/wire/influxwire/`) by replaying the **same**
+Defines "behaves like InfluxDB" for Warp's InfluxDB frontend (`Warp/src/main/java/com/sayonora/warp/influxwire/`) by replaying the **same**
 request sequences against a real InfluxDB 1.8 (the oracle) and against Warp and diffing the normalised answers.
 
 | file | purpose |

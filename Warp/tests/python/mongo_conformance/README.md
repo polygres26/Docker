@@ -1,6 +1,6 @@
 # mongowire conformance
 
-Defines "behaves like MongoDB" for Warp's MongoDB frontend (`Warp/src/main/java/com/sayonora/wire/mongowire/`) two ways: the same pymongo
+Defines "behaves like MongoDB" for Warp's MongoDB frontend (`Warp/src/main/java/com/sayonora/warp/mongowire/`) two ways: the same pymongo
 operation sequences are run against a **real mongod 7.0** (the oracle) and against Warp and the normalised answers are diffed,
 and MongoDB's own **driver-spec tests** (`mongodb/specifications`, Apache-2.0) are run against both.
 

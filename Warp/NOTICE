@@ -5,10 +5,10 @@ This product includes software adapted from the projects below.
 ------------------------------------------------------------------------------
 Floci (https://github.com/floci-io/floci)
 ------------------------------------------------------------------------------
-Portions of Warp's Amazon SQS frontend (Warp/src/main/java/com/sayonora/wire/sqswire/, notably
+Portions of Warp's Amazon SQS frontend (Warp/src/main/java/com/sayonora/warp/sqswire/, notably
 SqsOperations.java, SqsQueryProtocol.java and SqsMoveTasks.java: request validation rules and messages, the
 AWS Query protocol parameter naming and XML shapes, and the message-move-task behaviour) are adapted from Floci,
-as are portions of Warp's DynamoDB frontend (Warp/src/main/java/com/sayonora/wire/dynamowire/: ReservedWords.java, the
+as are portions of Warp's DynamoDB frontend (Warp/src/main/java/com/sayonora/warp/dynamowire/: ReservedWords.java, the
 DynamoDB reserved-word list, and the request-validation limits and message conventions that were developed against
 Floci's DynamoDB compatibility tests), which is distributed under the following licence:
 
@@ -35,23 +35,23 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Portions of Warp's Amazon S3 frontend (Warp/src/main/java/com/sayonora/wire/s3wire/: S3PostForm.java, the presigned
+Portions of Warp's Amazon S3 frontend (Warp/src/main/java/com/sayonora/warp/s3wire/: S3PostForm.java, the presigned
 POST policy verification and condition checks, and S3Select.java, the SelectObjectContent SQL subset and event-stream
 framing) are likewise adapted from Floci and are covered by the MIT licence reproduced above.
 
 
-Warp's Google Cloud Pub/Sub frontend (Warp/src/main/java/com/sayonora/wire/pubsubwire/) serves the Pub/Sub v1 API and vendors the
+Warp's Google Cloud Pub/Sub frontend (Warp/src/main/java/com/sayonora/warp/pubsubwire/) serves the Pub/Sub v1 API and vendors the
 official service definitions from https://github.com/googleapis/googleapis under the Apache License, Version 2.0
 (Copyright 2015-2025 Google LLC): Warp/src/main/proto/google/pubsub/v1/pubsub.proto and schema.proto, and
 Warp/src/main/proto/google/iam/v1/iam_policy.proto, policy.proto and options.proto. The IAM files differ from upstream only in
-their `option java_package`, which points at com.sayonora.wire.pubsubwire.iam so the generated classes do not collide with the
+their `option java_package`, which points at com.sayonora.warp.pubsubwire.iam so the generated classes do not collide with the
 protobuf-4 build of proto-google-iam-v1 that is on the classpath. The Apache License 2.0 text is at
 https://www.apache.org/licenses/LICENSE-2.0 . The generated Python stubs under Warp/tests/python/ps_conformance/ps_stubs/ are
 derived from the same files and the same terms apply.
 
 
 Warp's AWS frontends for SNS, Kinesis Data Streams, Secrets Manager, SSM Parameter Store, KMS, STS and IAM basics, and the unified AWS endpoint
-(Warp/src/main/java/com/sayonora/wire/awswire/) were written against, and are verified with, the MIT-licensed SDK compatibility suites of Floci
+(Warp/src/main/java/com/sayonora/warp/awswire/) were written against, and are verified with, the MIT-licensed SDK compatibility suites of Floci
 (https://github.com/floci-io/floci, compatibility-tests/), whose behaviour (operation coverage, error codes and messages, edge cases) they follow. No Floci source
 file is copied into this repository: the suites are run from a separate checkout by Warp/tests/python/floci_compat/. The SNS message envelope and delivery
 rules (SnsEnvelope.java, SnsService.java) and the STS operation semantics (StsService.java) are adapted from Floci's implementation and are covered by the MIT
@@ -66,16 +66,16 @@ harnesses in Warp/tests/python/fs_conformance/gen/) are copied unmodified from h
 proto-google-common-protos dependency.
 
 
-Warp's Google Cloud Bigtable frontend (Warp/src/main/java/com/sayonora/wire/bigtablewire/) serves the Bigtable v2 data API and the table admin API and
+Warp's Google Cloud Bigtable frontend (Warp/src/main/java/com/sayonora/warp/bigtablewire/) serves the Bigtable v2 data API and the table admin API and
 vendors the official service definitions from https://github.com/googleapis/googleapis under the Apache License, Version 2.0 (Copyright 2015-2025
 Google LLC): Warp/src/main/proto/google/bigtable/v2/{bigtable,data,request_stats,types}.proto and
 Warp/src/main/proto/google/bigtable/admin/v2/{bigtable_table_admin,table,common,types}.proto. They differ from upstream only in `option java_package`
-(com.sayonora.wire.bigtablewire.*, so the generated classes cannot collide with proto-google-cloud-bigtable) and in that bigtable_table_admin.proto
+(com.sayonora.warp.bigtablewire.*, so the generated classes cannot collide with proto-google-cloud-bigtable) and in that bigtable_table_admin.proto
 omits the three IAM rpcs and their imports. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 . The generated Python stubs under
 Warp/tests/python/bt_conformance/bt_stubs/ are derived from the same files (plus google/api, google/rpc, google/longrunning, google/type) under the same terms.
 
 
-Warp's Apache Cassandra frontend (Warp/src/main/java/com/sayonora/wire/cqlwire/) implements the CQL native protocol (versions 3 and 4) and the CQL language
+Warp's Apache Cassandra frontend (Warp/src/main/java/com/sayonora/warp/cqlwire/) implements the CQL native protocol (versions 3 and 4) and the CQL language
 subset described in docs/WARP_GUIDE.md; no Apache Cassandra source code is included. Its behaviour (result and error semantics, the Murmur3 partitioner token,
 clustering order, system_schema layout) follows Apache Cassandra 5.0, and is verified by replaying, against Warp, answers recorded from a real
 Apache Cassandra 5.0 container (Apache License, Version 2.0, Copyright The Apache Software Foundation, https://cassandra.apache.org): the recorded answers are
@@ -83,7 +83,7 @@ Warp/tests/python/cql_conformance/golden.json.gz and were produced with the Data
 not redistributed. The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0 .
 
 
-Warp's Apache Kafka frontend (Warp/src/main/java/com/sayonora/wire/kafkawire/) implements the Kafka wire protocol (request versions listed by its ApiVersions
+Warp's Apache Kafka frontend (Warp/src/main/java/com/sayonora/warp/kafkawire/) implements the Kafka wire protocol (request versions listed by its ApiVersions
 answer) and the broker-side behaviour described in docs/WARP_GUIDE.md; no Apache Kafka source code is included. Its message layouts follow the Kafka protocol
 message definitions and its behaviour (error codes, offsets and watermarks, consumer group state machine, defaults of the topic configurations) follows Apache
 Kafka 4.3, and is verified by replaying, against Warp, answers recorded from a real Apache Kafka container (Apache License, Version 2.0, Copyright The Apache

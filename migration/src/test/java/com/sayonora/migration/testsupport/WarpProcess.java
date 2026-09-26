@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Launches a real {@code com.sayonora.wire.server.Main} as a subprocess, pointed at a real
+ * Launches a real {@code com.sayonora.warp.server.Main} as a subprocess, pointed at a real
  * Postgres backend (typically a Testcontainers {@code PostgreSQLContainer}), for integration
  * tests that connect through an actual protocol frontend rather than instantiating internal
  * classes directly -- matches this project's own "real infra, no mocks" verification style.
@@ -113,7 +113,7 @@ public final class WarpProcess implements AutoCloseable {
             String javaBin = System.getProperty("java.home") + "/bin/java";
             java.util.List<String> command = new java.util.ArrayList<>(java.util.List.of(javaBin));
             command.addAll(ADD_OPENS);
-            command.addAll(java.util.List.of("-cp", System.getProperty("java.class.path"), "com.sayonora.wire.server.Main"));
+            command.addAll(java.util.List.of("-cp", System.getProperty("java.class.path"), "com.sayonora.warp.server.Main"));
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.environment().putAll(env);
             pb.redirectErrorStream(true);

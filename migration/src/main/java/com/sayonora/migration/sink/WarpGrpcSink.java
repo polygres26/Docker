@@ -2,9 +2,9 @@ package com.sayonora.migration.sink;
 
 import com.sayonora.migration.core.ChangeEvent;
 import com.sayonora.migration.core.Sink;
-import com.sayonora.wire.grpc.proto.ExecuteRequest;
-import com.sayonora.wire.grpc.proto.ExecuteResponse;
-import com.sayonora.wire.grpc.proto.QueryServiceGrpc;
+import com.sayonora.warp.grpc.proto.ExecuteRequest;
+import com.sayonora.warp.grpc.proto.ExecuteResponse;
+import com.sayonora.warp.grpc.proto.QueryServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;

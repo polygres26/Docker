@@ -25,7 +25,7 @@ import java.util.List;
  *
  * <p>Classic token-bucket via a monotonic "next free instant," not a fixed-window counter (which
  * would allow a burst right at every window boundary) -- the same style rate limiter as {@code
- * com.sayonora.wire.qos}'s own admission controller, scaled down to one dimension (events/sec, no
+ * com.sayonora.warp.qos}'s own admission controller, scaled down to one dimension (events/sec, no
  * separate burst capacity) since a migration's own read loop is already naturally bursty per
  * partition/batch and doesn't need a second burst allowance layered on top.
  */

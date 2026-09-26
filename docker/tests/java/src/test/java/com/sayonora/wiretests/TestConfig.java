@@ -1,4 +1,4 @@
-package com.sayonora.wiretests;
+package com.sayonora.warptests;
 
 /**
  * Connection details for a Warp instance already running (via ../../docker-compose.test.yml,

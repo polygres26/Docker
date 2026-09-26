@@ -1,6 +1,6 @@
 package com.sayonora.migration.core;
 
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 
 /**
  * Test-only seam into {@link MigrationLicensing}'s package-private override -- lives in this

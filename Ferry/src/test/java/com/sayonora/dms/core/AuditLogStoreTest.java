@@ -3,7 +3,7 @@ package com.sayonora.dms.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
