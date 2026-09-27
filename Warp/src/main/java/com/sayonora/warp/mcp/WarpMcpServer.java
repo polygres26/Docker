@@ -233,7 +233,9 @@ public final class WarpMcpServer {
         registerStoreTools(new AmqpToolProvider(describer(BackendKind.AMQP), emulatedStores));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
-        this.server = new Server(port);
+        com.sayonora.warp.tls.TlsListeners.Listener listener = com.sayonora.warp.tls.TlsListeners.jetty("MCP", port, 18443,
+                System.getenv());
+        this.server = listener.server();
         server.setHandler(new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
@@ -250,7 +252,7 @@ public final class WarpMcpServer {
                     // consulted); expiry is evaluated against server time on EVERY request.
                     McpEndpoints.Auth auth = endpoints.authenticate(reqPath, request.getHeader("Authorization"));
                     if (!auth.ok()) {
-                        log.info("MCP endpoint request refused: {}", auth.reason());
+                        log.info("MCP endpoint request refused: {} (path {})", auth.reason(), McpEndpoints.redactPath(reqPath));
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         response.setHeader("WWW-Authenticate", "Bearer");
                         writeError(response, null, -32001, McpEndpoints.CLIENT_MESSAGE);
@@ -273,6 +275,14 @@ public final class WarpMcpServer {
                     }
                 }
                 try {
+                    String httpMethod = request.getMethod();
+                    if ("GET".equals(httpMethod) || "DELETE".equals(httpMethod)) {
+                        // Streamable HTTP: a server that has no server-initiated SSE stream / sessions answers 405 (this
+                        // listener is stateless JSON-over-POST). Clients such as Claude's connectors probe with GET.
+                        response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+                        response.setHeader("Allow", "POST");
+                        return;
+                    }
                     handleRequest(request, response, accessContext);
                 } finally {
                     CURRENT_ENDPOINT.remove();

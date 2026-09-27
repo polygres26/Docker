@@ -44,6 +44,16 @@ services:
       # (see com.sayonora.warp.auth.PgRoleAuthCache's javadoc).
       WARP_AUTH_USER: postgres
       WARP_AUTH_PASSWORD: postgres
+      # HTTPS for the admin console, MCP and A2A (served IN ADDITION to plaintext). Mount the PEM files
+      # (for example Let's Encrypt fullchain.pem/privkey.pem) and uncomment; the certificate hot-reloads
+      # when the files change. WARP_MCP_PUBLIC_URL is what the admin console tells users to paste into
+      # Claude when a tunnel or reverse proxy terminates TLS in front of Warp.
+      # WARP_TLS_CERT: /certs/fullchain.pem
+      # WARP_TLS_KEY: /certs/privkey.pem
+      # WARP_MCP_PUBLIC_URL: https://warp.example.com
+      # WARP_MCP_HTTPS_PORT: "18443"
+      # WARP_ADMIN_HTTPS_PORT: "19443"
+      # WARP_MCP_HTTP_DISABLED: "true"   # serve MCP over HTTPS only
     ports:
       - "15432:15432" # pgwire (Postgres wire protocol)
       - "13306:13306" # mywire (MySQL wire protocol)
@@ -70,7 +80,10 @@ services:
       - "18081:18081" # cosmoswire (Azure Cosmos DB NoSQL REST), enable with WARP_COSMOSWIRE_ENABLED
       - "5672:5672"   # amqpwire (RabbitMQ clients, AMQP 0-9-1 and 1.0), enable with WARP_AMQPWIRE_ENABLED
       - "18010:18010" # MCP (Model Context Protocol)
+      - "18443:18443" # MCP over HTTPS (Claude connectors need https), enable with WARP_MCP_TLS_CERT + WARP_MCP_TLS_KEY (or WARP_TLS_CERT/KEY)
+      - "18444:18444" # A2A over HTTPS, enable with WARP_A2A_TLS_CERT + WARP_A2A_TLS_KEY (or WARP_TLS_CERT/KEY)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
+      - "19443:19443" # admin app + API over HTTPS, enable with WARP_ADMIN_TLS_CERT + WARP_ADMIN_TLS_KEY (or WARP_TLS_CERT/KEY)
 
 volumes:
   warp-postgres-data:

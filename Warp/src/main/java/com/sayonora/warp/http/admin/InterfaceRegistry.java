@@ -72,6 +72,13 @@ public final class InterfaceRegistry {
             // The collector only has an entry for a protocol once it served something: no entry means 0 so far.
             // No metrics key at all (e.g. A2A) means the count is unknown, reported as null.
             Long count = protocolCounts == null || e.metricsKey() == null ? null : protocolCounts.getOrDefault(e.metricsKey(), 0L);
+            com.sayonora.warp.tls.TlsListeners.Info tls = "mcp".equals(e.id()) ? com.sayonora.warp.tls.TlsListeners.info("MCP")
+                    : "a2a".equals(e.id()) ? com.sayonora.warp.tls.TlsListeners.info("A2A") : null;
+            if (tls != null) {
+                o.addProperty("tlsEnabled", tls.tlsEnabled());
+                o.addProperty("httpsPort", tls.tlsEnabled() ? tls.httpsPort() : null);
+                o.addProperty("selfSigned", tls.selfSigned());
+            }
             o.addProperty("requests", count);
             o.addProperty("metricsKey", e.metricsKey());
             arr.add(o);

@@ -1065,7 +1065,9 @@ public final class Main {
         mcpServer.start();
         metricsServer.setMcpServer(mcpServer);
         com.sayonora.warp.mcp.McpScope mcpScope = com.sayonora.warp.mcp.McpScope.fromEnv();
-        log.info("warp listening for MCP (Model Context Protocol) on port {} (scope: {}{})", mcpPort,
+        com.sayonora.warp.tls.TlsListeners.Info mcpTls = com.sayonora.warp.tls.TlsListeners.info("MCP");
+        log.info("warp listening for MCP (Model Context Protocol) on port {}{} (scope: {}{})", mcpPort,
+                mcpTls != null && mcpTls.tlsEnabled() ? " + HTTPS " + mcpTls.httpsPort() : "",
                 mcpScope.type().name().toLowerCase(java.util.Locale.ROOT),
                 mcpScope.isAll() ? "" : "=" + mcpScope.name());
         com.sayonora.warp.http.admin.InterfaceRegistry.register("mcp", "MCP server", "mcp", "MCP over HTTP", mcpPort, null, null, "mcp");
@@ -1081,7 +1083,7 @@ public final class Main {
         // thread before it ever reached orawire/pgwire/etc. below -- now it just logs and leaves
         // A2A off, matching every other optional wire protocol's failure behavior.
         try {
-            String a2aPublicUrl = System.getenv().getOrDefault("WARP_A2A_PUBLIC_URL", "http://localhost:" + a2aPort + "/");
+            String a2aPublicUrl = System.getenv("WARP_A2A_PUBLIC_URL");
             com.sayonora.warp.a2a.A2AServer a2aServer = new com.sayonora.warp.a2a.A2AServer(
                     a2aPort, a2aPublicUrl, mcpServer, connectionGate, oauth);
             a2aServer.start();

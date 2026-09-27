@@ -764,6 +764,10 @@ export interface InterfaceInfo {
   /** Statements/operations counted since process start; null when the collector keeps no counter for this frontend. */
   requests: number | null
   metricsKey: string | null
+  /** Set for the MCP and A2A listeners: is a native HTTPS port served next to the plaintext one. */
+  tlsEnabled?: boolean
+  httpsPort?: number | null
+  selfSigned?: boolean
 }
 
 export interface InterfacesResponse { interfaces: InterfaceInfo[]; activeSessions: number }
@@ -785,9 +789,43 @@ export interface McpEndpoint {
   expiresAt: string | null
   status: 'active' | 'expired'
   path: string
+  /** Opt-in: the token may also be given as /e/<id>/t/<token> (no Authorization header). */
+  urlToken?: boolean
 }
 
-export interface McpEndpointCreated extends McpEndpoint { token: string; mcpPort: number; note: string }
+export interface McpEndpointCreated extends McpEndpoint {
+  token: string; mcpPort: number; note: string
+  /** Best connection URL (https / WARP_MCP_PUBLIC_URL when available), without the token. */
+  url?: string
+  /** Only when the endpoint was created with urlToken: the header-less connector URL, token included (shown once). */
+  urlWithToken?: string
+  mcpHttpsPort?: number | null
+}
+
+/** GET /api/mcp-config: how a user should reach the MCP listener. */
+export interface McpConfig {
+  publicUrl: string | null
+  tlsEnabled: boolean
+  selfSigned: boolean
+  httpsPort: number | null
+  httpPort: number | null
+  tlsError: string | null
+  certSubject: string | null
+  certNotAfter: string | null
+  /** scheme://host[:port] to put in front of the endpoint path. */
+  baseUrl: string
+  https: boolean
+  /** https:// and not a self-signed certificate: what a Claude custom connector requires. */
+  claudeConnectorReady: boolean
+}
+
+export async function getMcpConfig(): Promise<McpConfig> {
+  return api('/api/mcp-config')
+}
+
+export async function setMcpEndpointUrlToken(id: string, enabled: boolean): Promise<McpEndpoint> {
+  return api(`/api/mcp-endpoints/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ urlToken: enabled }) })
+}
 
 export interface McpTool { name: string; description: string; inputSchema?: unknown }
 
@@ -796,7 +834,7 @@ export async function listMcpEndpoints(): Promise<McpEndpoint[]> {
 }
 
 export async function createMcpEndpoint(body: {
-  name: string; scope: string; description?: string; ttlSeconds?: number
+  name: string; scope: string; description?: string; ttlSeconds?: number; urlToken?: boolean
 }): Promise<McpEndpointCreated> {
   return api('/api/mcp-endpoints', { method: 'POST', body: JSON.stringify(body) })
 }

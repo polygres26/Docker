@@ -51,6 +51,7 @@ public final class A2AServer {
     private final ConnectionGate connectionGate;
     private final com.sayonora.warp.http.auth.AccessContextResolver oauth;
     private final String publicUrl;
+    private final int port;
 
     public A2AServer(int port, String publicUrl, WarpMcpServer mcpServer, ConnectionGate connectionGate,
             com.sayonora.warp.http.auth.AccessContextResolver oauth) {
@@ -58,7 +59,8 @@ public final class A2AServer {
         this.connectionGate = connectionGate;
         this.oauth = oauth;
         this.publicUrl = publicUrl;
-        this.server = new Server(port);
+        this.port = port;
+        this.server = com.sayonora.warp.tls.TlsListeners.jetty("A2A", port, 18444, System.getenv()).server();
         server.setHandler(new AbstractHandler() {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
@@ -108,7 +110,10 @@ public final class A2AServer {
                 + "Warp gateway; get back a real, read-only SQL query result. The query is drafted "
                 + "and judged by an LLM but always executed read-only, through the same SQL "
                 + "firewall/QoS/audit pipeline every other client of this gateway goes through.");
-        card.addProperty("url", publicUrl);
+        com.sayonora.warp.tls.TlsListeners.Info tls = com.sayonora.warp.tls.TlsListeners.info("A2A");
+        card.addProperty("url", publicUrl != null ? publicUrl
+                : tls != null && tls.tlsEnabled() ? "https://localhost:" + tls.httpsPort() + "/"
+                : "http://localhost:" + port + "/");
         card.addProperty("preferredTransport", "JSONRPC");
         card.addProperty("version", "1.0.0");
 

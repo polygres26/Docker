@@ -303,7 +303,7 @@ public final class MetricsServer {
         // PgQueueStore instance (its own small ensured-table cache, nothing else stateful) rather
         // than threading sqswire's own store across process wiring just for this read-only page.
         this.queueStore = backendRegistry == null ? null : new com.sayonora.warp.sqswire.PgQueueStore(backendRegistry);
-        this.server = new Server(port);
+        this.server = com.sayonora.warp.tls.TlsListeners.jetty("ADMIN", port, 19443, System.getenv()).server();
         boolean servesSpa = adminWebDir != null && !adminWebDir.isBlank()
                 && java.nio.file.Files.isDirectory(java.nio.file.Path.of(adminWebDir));
         if (adminWebDir != null && !adminWebDir.isBlank() && !servesSpa) {
@@ -453,6 +453,23 @@ public final class MetricsServer {
                         return;
                     }
                     insightsApi.handle(target, request, response);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if ("/api/mcp-config".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(com.sayonora.warp.mcp.McpConnectionInfo.toJson(request, System.getenv(),
+                            parseIntEnvOr("WARP_MCP_PORT", 18010)).toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1658,14 +1675,26 @@ public final class MetricsServer {
                             com.sayonora.warp.mcp.McpEndpoints.newId(), name, scope.type() == com.sayonora.warp.mcp.McpScope.Type.ALL
                                     ? "all" : (scope.type() == com.sayonora.warp.mcp.McpScope.Type.DATABASE ? "db:" : "group:") + scope.name(),
                             optionalString(body, "description"), now, createdBy, expiresAt,
-                            com.sayonora.warp.mcp.McpEndpoints.hash(token));
+                            com.sayonora.warp.mcp.McpEndpoints.hash(token),
+                            body.has("urlToken") && !body.get("urlToken").isJsonNull() && body.get("urlToken").getAsBoolean());
                     all.add(created);
                     writeMcpEndpoints(configStore, current, all);
                     JsonObject out = com.sayonora.warp.mcp.McpEndpoints.view(created, now);
                     out.addProperty("token", token);
                     out.addProperty("mcpPort", parseIntEnvOr("WARP_MCP_PORT", 18010));
-                    out.addProperty("note", "Connect with POST <host>:<mcpPort>" + com.sayonora.warp.mcp.McpEndpoints.PATH_PREFIX
-                            + created.id() + " and header Authorization: Bearer <token>. The token is shown only now.");
+                    com.sayonora.warp.tls.TlsListeners.Info mcpInfo = com.sayonora.warp.tls.TlsListeners.info("MCP");
+                    String base = com.sayonora.warp.mcp.McpConnectionInfo.bestBase(request, System.getenv(), mcpInfo,
+                            parseIntEnvOr("WARP_MCP_PORT", 18010));
+                    out.addProperty("mcpHttpsPort", mcpInfo != null && mcpInfo.tlsEnabled() ? mcpInfo.httpsPort() : null);
+                    out.addProperty("url", base + com.sayonora.warp.mcp.McpEndpoints.PATH_PREFIX + created.id());
+                    if (created.urlToken()) {
+                        out.addProperty("urlWithToken", base + com.sayonora.warp.mcp.McpEndpoints.PATH_PREFIX + created.id()
+                                + com.sayonora.warp.mcp.McpEndpoints.URL_TOKEN_SEGMENT + token);
+                    }
+                    out.addProperty("note", "Connect with POST " + base + com.sayonora.warp.mcp.McpEndpoints.PATH_PREFIX
+                            + created.id() + " and header Authorization: Bearer <token>"
+                            + (created.urlToken() ? ", or (URL-token mode) POST urlWithToken with no header" : "")
+                            + ". The token is shown only now.");
                     response.setStatus(HttpServletResponse.SC_CREATED);
                     response.getWriter().write(out.toString());
                     return;
@@ -1708,6 +1737,9 @@ public final class MetricsServer {
                         }
                         if (body.has("description")) {
                             e = e.withDescription(optionalString(body, "description"));
+                        }
+                        if (body.has("urlToken") && !body.get("urlToken").isJsonNull()) {
+                            e = e.withUrlToken(body.get("urlToken").getAsBoolean());
                         }
                         all.set(idx, e);
                         writeMcpEndpoints(configStore, current, all);

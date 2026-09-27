@@ -78,8 +78,8 @@ below for pointing it at a real backend.
 | kafkawire | Apache Kafka wire protocol: unmodified Kafka clients (Java, librdkafka / confluent-kafka, kafka-python, kcat, the console tools) produce, fetch and consume; Produce (acks 0/1/all, record batch v2 with CRC32C check, gzip / snappy / lz4 / zstd stored as sent, idempotent producers with sequence checks), Fetch (long poll, `max_bytes`, watermarks), ListOffsets, consumer groups (classic protocol, any assignor, static membership only minimally), OffsetCommit / OffsetFetch, topic / partition / config administration, DeleteRecords, retention sweeper, SASL/PLAIN; the log lives in the Postgres backends of a backend set (the `kafka` store), a partition on the host owning hash(topic, partition), topic metadata / groups / offsets on the first host; transactions and log compaction are not implemented; verified against a real Apache Kafka 4.3 (`tests/python/kafka_conformance/`); env `WARP_KAFKAWIRE_PORT` / `_SET` / `_ENABLED` / `_ADVERTISED_HOST` / `_ADVERTISED_PORT` / `_AUTH` / `_AUTO_CREATE` / `_NUM_PARTITIONS` / `_SWEEP_MS` / `_GROUP_INITIAL_REBALANCE_DELAY_MS` | 19092 |
 | cosmoswire | Azure Cosmos DB for NoSQL (SQL/Core) REST API over plain HTTP: the official SDKs work (databases, containers with partition key paths incl. hierarchical keys, indexing policy stored, default TTL, unique keys; item create/upsert/replace/patch/delete with ETags and session tokens; SQL queries with joins, subqueries, aggregates, GROUP BY, ORDER BY, OFFSET/LIMIT and the system functions; cross-partition queries, query plan and pkranges endpoints, transactional batch, incremental change feed, TTL sweeper); master-key HMAC auth. Stored procedures, triggers and UDFs are stored but never executed. Port 18081 (`WARP_COSMOSWIRE_PORT`), store `cosmos`; see `tests/python/cosmos_conformance/cosmos_known.md` |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) |
-| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 |
-| Admin / metrics | HTTP | 19090 |
+| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 (HTTPS 18443) |
+| Admin / metrics | HTTP | 19090 (HTTPS 19443) |
 
 Every frontend feeds the same shared pipeline: `FirewallStage → RouterStage → QosControlStage →
 DialectTranslationStage → RollupStage → CacheStage → StatsCollectorStage`.
@@ -92,6 +92,7 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | Variable | Purpose |
 |---|---|
 | `WARP_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PASSWORD` | The config-primary Postgres — holds `warp_config`, `warp_firewall_rules`, and control-plane state |
+| `WARP_TLS_CERT` + `WARP_TLS_KEY` / `WARP_TLS_KEYSTORE` (+ `_PASSWORD`) / `WARP_TLS_SELF_SIGNED` | HTTPS for the HTTP listeners (admin 19443, MCP 18443, A2A 18444, in addition to plaintext): PEM chain + key, or PKCS12/JKS, or a dev-only self-signed cert; per-listener overrides `WARP_MCP_TLS_*`, `WARP_ADMIN_TLS_*`, `WARP_A2A_TLS_*`; `WARP_TLS_CA` / `WARP_TLS_CLIENT_AUTH=none\|want\|need` (mTLS), `WARP_TLS_MIN_VERSION`, `WARP_TLS_RELOAD_SECONDS` (certificate hot reload). `WARP_MCP_HTTPS_PORT`, `WARP_ADMIN_HTTPS_PORT`, `WARP_A2A_HTTPS_PORT`, `WARP_<NAME>_HTTP_DISABLED=true`, `WARP_MCP_PUBLIC_URL`. See WARP_GUIDE §8.5.3 |
 | `WARP_AUTH_USER` / `_PASSWORD` | Default credential for wire-protocol frontend auth |
 | `WARP_STANDBY_HOST` / `_PORT` | Optional standby for automatic config-primary failover |
 | `WARP_BACKENDS` / `WARP_SHARD_BACKENDS` | Additional named Postgres data-plane targets and shard groups. Backends are managed inside **backend sets** (admin UI *Backend sets*, `/api/backend-sets`); `WARP_BACKEND_GROUPS` are the sets (a backend with no group is in the implicit `default` set) |

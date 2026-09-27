@@ -41,7 +41,17 @@ public final class McpEndpoints {
 
     /** One stored endpoint. {@code expiresAt == null} means it never expires. */
     public record Endpoint(String id, String name, String scope, String description, Instant createdAt,
-            String createdBy, Instant expiresAt, String tokenHash) {
+            String createdBy, Instant expiresAt, String tokenHash, boolean urlToken) {
+
+        /** Header-token-only endpoint (URL tokens off): the default. */
+        public Endpoint(String id, String name, String scope, String description, Instant createdAt,
+                String createdBy, Instant expiresAt, String tokenHash) {
+            this(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, false);
+        }
+
+        public Endpoint withUrlToken(boolean enabled) {
+            return new Endpoint(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, enabled);
+        }
 
         public boolean expiredAt(Instant now) {
             return expiresAt != null && !now.isBefore(expiresAt);
@@ -52,15 +62,15 @@ public final class McpEndpoints {
         }
 
         public Endpoint withExpiresAt(Instant newExpiry) {
-            return new Endpoint(id, name, scope, description, createdAt, createdBy, newExpiry, tokenHash);
+            return new Endpoint(id, name, scope, description, createdAt, createdBy, newExpiry, tokenHash, urlToken);
         }
 
         public Endpoint withDescription(String d) {
-            return new Endpoint(id, name, scope, d, createdAt, createdBy, expiresAt, tokenHash);
+            return new Endpoint(id, name, scope, d, createdAt, createdBy, expiresAt, tokenHash, urlToken);
         }
 
         public Endpoint withName(String n) {
-            return new Endpoint(id, n, scope, description, createdAt, createdBy, expiresAt, tokenHash);
+            return new Endpoint(id, n, scope, description, createdAt, createdBy, expiresAt, tokenHash, urlToken);
         }
     }
 
@@ -126,7 +136,18 @@ public final class McpEndpoints {
         if (e == null) {
             return new Auth(null, "unknown or revoked endpoint " + id);
         }
-        String token = bearer(authorizationHeader);
+        // Opt-in header-less mode: /e/<id>/t/<token>. Only honoured when the endpoint enabled it; the token is then
+        // checked exactly like the header token (same hash, same expiry, revoked = endpoint removed).
+        String urlTok = urlTokenFromPath(path);
+        String token;
+        if (urlTok != null) {
+            if (!e.urlToken()) {
+                return new Auth(null, "URL token presented but URL tokens are not enabled for endpoint " + id);
+            }
+            token = urlTok;
+        } else {
+            token = bearer(authorizationHeader);
+        }
         if (token == null || !MessageDigest.isEqual(hash(token).getBytes(StandardCharsets.UTF_8),
                 e.tokenHash().getBytes(StandardCharsets.UTF_8))) {
             return new Auth(null, "bad token for endpoint " + id);
@@ -145,6 +166,31 @@ public final class McpEndpoints {
         int slash = rest.indexOf('/');
         String id = slash < 0 ? rest : rest.substring(0, slash);
         return id.isBlank() ? null : id;
+    }
+
+    /** Path marker between the endpoint id and the token: {@code /e/<id>/t/<token>}. */
+    public static final String URL_TOKEN_SEGMENT = "/t/";
+
+    /** The token in {@code /e/<id>/t/<token>[/...]}, or null when the path carries none. */
+    public static String urlTokenFromPath(String path) {
+        if (path == null || !path.startsWith(PATH_PREFIX)) {
+            return null;
+        }
+        String rest = path.substring(PATH_PREFIX.length());
+        int slash = rest.indexOf('/');
+        if (slash < 0 || !rest.startsWith("t/", slash + 1)) {
+            return null;
+        }
+        String tail = rest.substring(slash + 3);
+        int end = tail.indexOf('/');
+        String tok = end < 0 ? tail : tail.substring(0, end);
+        return tok.isEmpty() ? null : tok;
+    }
+
+    /** {@code path} with any URL token replaced by {@code ***}: the only form of the path safe to log or audit. */
+    public static String redactPath(String path) {
+        String tok = urlTokenFromPath(path);
+        return tok == null ? path : path.replace(URL_TOKEN_SEGMENT + tok, URL_TOKEN_SEGMENT + "***");
     }
 
     private static String bearer(String header) {
@@ -248,7 +294,8 @@ public final class McpEndpoints {
                     o.has("createdAt") && !o.get("createdAt").isJsonNull() ? Instant.parse(str(o, "createdAt")) : null,
                     str(o, "createdBy"),
                     o.has("expiresAt") && !o.get("expiresAt").isJsonNull() ? Instant.parse(str(o, "expiresAt")) : null,
-                    str(o, "tokenHash")));
+                    str(o, "tokenHash"), o.has("urlToken") && !o.get("urlToken").isJsonNull()
+                            && o.get("urlToken").getAsBoolean()));
         }
         return out;
     }
@@ -265,6 +312,7 @@ public final class McpEndpoints {
             o.addProperty("createdBy", e.createdBy());
             o.addProperty("expiresAt", e.expiresAt() == null ? null : e.expiresAt().toString());
             o.addProperty("tokenHash", e.tokenHash());
+            o.addProperty("urlToken", e.urlToken());
             arr.add(o);
         }
         return arr.toString();
@@ -282,6 +330,7 @@ public final class McpEndpoints {
         o.addProperty("expiresAt", e.expiresAt() == null ? null : e.expiresAt().toString());
         o.addProperty("status", e.expiredAt(now) ? "expired" : "active");
         o.addProperty("path", PATH_PREFIX + e.id());
+        o.addProperty("urlToken", e.urlToken());
         return o;
     }
 

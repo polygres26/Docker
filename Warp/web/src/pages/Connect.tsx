@@ -16,10 +16,17 @@ import styles from './Connect.module.css'
  * attaches `Authorization: Bearer <token>` and is prefixed with the stored base URL; a 401 anywhere
  * clears the stored token and bounces back here (see src/api/client.ts).
  */
+/** The console is normally served by the admin listener itself: when it was opened over https, default to that origin
+ * (WARP_ADMIN_TLS_CERT/KEY enable the https listener, default port 19443); otherwise the plaintext default. */
+function defaultAdminUrl(): string {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') return window.location.origin
+  return 'http://localhost:19090'
+}
+
 export default function Connect() {
   const navigate = useNavigate()
   const existing = getStoredConnection()
-  const [adminUrl, setAdminUrl] = useState(existing?.baseUrl ?? 'http://localhost:19090')
+  const [adminUrl, setAdminUrl] = useState(existing?.baseUrl ?? defaultAdminUrl())
   const [adminToken, setAdminToken] = useState('')
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -114,7 +121,7 @@ export default function Connect() {
             {testing ? 'Connecting…' : 'Connect'}
           </button>
           {error && <div role="alert" className={styles.error}>{error}</div>}
-          <p className={styles.helpline}>Having trouble? Check that WARP_ADMIN_TOKEN is set on the Warp process.</p>
+          <p className={styles.helpline}>Having trouble? Check that WARP_ADMIN_TOKEN is set on the Warp process. For an encrypted connection use https://&lt;host&gt;:19443 (enabled with WARP_ADMIN_TLS_CERT and WARP_ADMIN_TLS_KEY, or the global WARP_TLS_CERT and WARP_TLS_KEY).</p>
         </form>
       </main>
     </div>

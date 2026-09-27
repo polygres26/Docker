@@ -244,6 +244,7 @@ flowchart LR
 - `orawire` has a dedicated TLS listener (TCPS, port 2484) alongside plaintext TNS (1521).
 - gRPC has a dedicated TLS listener (17071) alongside plaintext (7070).
 - All built from one shared keystore — one cert to rotate, not one per frontend.
+- HTTP frontends serve HTTPS in addition to plaintext when `WARP_TLS_CERT`/`WARP_TLS_KEY` (PEM) or `WARP_TLS_KEYSTORE` are set: admin console/API 19443, MCP 18443, A2A 18444, hot-reloading the certificate; see §8.5.3.
 
 ---
 
@@ -2313,7 +2314,7 @@ flowchart TB
 | Image | 1 — `docker/warp/Dockerfile` |
 | Base (build) | `maven:3.9-eclipse-temurin-21` |
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` |
-| Published ports | 15432 (pgwire), 13306 (mywire), 11521/2484 (orawire plaintext/TLS), 14333 (mssqlwire), 27017 (mongowire), 7070/17071 (gRPC plaintext/TLS), 18000 (dynamowire), 9324 (sqswire), 18010 (MCP), 19090 (admin/metrics) |
+| Published ports | 15432 (pgwire), 13306 (mywire), 11521/2484 (orawire plaintext/TLS), 14333 (mssqlwire), 27017 (mongowire), 7070/17071 (gRPC plaintext/TLS), 18000 (dynamowire), 9324 (sqswire), 18010/18443 (MCP plaintext/HTTPS), 19090/19443 (admin/metrics plaintext/HTTPS), 18030/18444 (A2A plaintext/HTTPS) |
 | Persistent state | none in the image — all state lives in the external config-primary Postgres |
 | `.dockerignore` | repo-root only — `docker-compose.yml` sets `context: ../..`, and classic Docker only honors a root-level `.dockerignore` |
 
@@ -2346,7 +2347,7 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | datastorewire | Google Cloud Datastore v1: gRPC + REST/JSON (incl. GQL), one port | 8081 | the `datastore` store (entities as rows, sharded by root ancestor key so entity groups stay on one host); queries, projections, transactions, aggregations, ids; `DATASTORE_EMULATOR_HOST` works; verified against the official emulator (see "The Datastore store") |
 | awswire | one unified AWS endpoint (DynamoDB, SQS, S3 in process, plus SNS, Kinesis, Secrets Manager, SSM, KMS, STS and IAM basics) with SigV4 dispatch; HTTP/1.1 and cleartext HTTP/2 | 4566 (off unless `WARP_AWSWIRE_PORT` / `WARP_AWSWIRE_ENABLED`) | the new services live in the `sns`, `kinesis` and `awsparams` stores (sharded by topic / stream / secret / parameter / key); each also has its own optional port (`WARP_SNSWIRE_PORT`, `WARP_KINESISWIRE_PORT`, `WARP_SECRETSWIRE_PORT`, `WARP_SSMWIRE_PORT`, `WARP_KMSWIRE_PORT`, `WARP_STSWIRE_PORT`) -- §4.7 *The SNS, Kinesis, Secrets, SSM and KMS stores*, *The unified AWS endpoint* |
 | gRPC | gRPC | 7070 (plaintext), 17071 (TLS) | both listeners run together, one shared keystore |
-| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` switches to native mode — see §8.1.1 and §8.5 |
+| MCP | JSON-RPC 2.0 over Streamable HTTP | 18010 (HTTPS 18443, §8.5.3) | dialect-translated to Postgres by default; `WARP_MCP_BACKEND=oracle/mysql/sqlserver` switches to native mode — see §8.1.1 and §8.5 |
 | Admin / metrics | HTTP | 19090 | health, metrics, read-only config introspection (never returns passwords) |
 
 #### 8.1.1 Native-backend mode: proxy straight to Oracle, MySQL, or SQL Server instead of translating
@@ -2711,6 +2712,49 @@ credentials the operator registered (the firewall/QoS pipeline governs SQL types
 Cassandra/Splunk data tools; `describe_backend` of Splunk lists only declared searches; a
 Developer-edition process registers at most 3 `WARP_BACKENDS` (the license cap), so `default` + two
 more; descriptions/endpoints are not yet editable in the admin web UI (API/config only).
+
+#### 8.5.3 HTTPS for MCP
+
+Claude (Claude Desktop and claude.ai custom connectors) only connects to **remote MCP servers over `https://`
+with a certificate a public CA signed**. Warp serves MCP over plaintext HTTP on `WARP_MCP_PORT` (18010) and can, in
+addition, serve HTTPS natively on `WARP_MCP_HTTPS_PORT` (18443). Plaintext keeps working unless you turn it off.
+
+**Option 1: native HTTPS.** Give Warp a certificate:
+
+| Variable | Meaning |
+|---|---|
+| `WARP_MCP_TLS_CERT` + `WARP_MCP_TLS_KEY` | PEM certificate chain (Let's Encrypt `fullchain.pem`) and PEM private key (`privkey.pem`; PKCS#8, PKCS#1 `RSA PRIVATE KEY`, SEC1 `EC PRIVATE KEY`, or PKCS#8-encrypted with `WARP_TLS_KEY_PASSWORD`) |
+| `WARP_MCP_TLS_KEYSTORE` + `WARP_MCP_TLS_KEYSTORE_PASSWORD` | PKCS12 or JKS keystore instead of PEM files |
+| `WARP_MCP_TLS_SELF_SIGNED=true` | development only: an in-memory self-signed certificate for localhost (Claude will **not** trust it) |
+| `WARP_MCP_HTTPS_PORT` | HTTPS port (default 18443) |
+| `WARP_MCP_HTTP_DISABLED=true` | do not serve plaintext at all |
+| `WARP_MCP_PUBLIC_URL` | the URL users should paste, e.g. `https://warp.example.com` (also the value shown in the admin console) |
+
+The same settings exist globally (`WARP_TLS_CERT`, `WARP_TLS_KEY`, `WARP_TLS_KEYSTORE`, `WARP_TLS_SELF_SIGNED`, plus
+`WARP_TLS_CA`, `WARP_TLS_CLIENT_AUTH=none|want|need`, `WARP_TLS_MIN_VERSION`, `WARP_TLS_RELOAD_SECONDS`) and apply to every
+listener that supports HTTPS (admin console/API on 19443, MCP on 18443, A2A on 18444); a `WARP_<NAME>_TLS_*` variable
+overrides the global one for that listener, and `WARP_<NAME>_TLS_DISABLED=true` opts a listener out.
+A wrong keystore password, a missing file or a key that does not match the certificate is logged as one clear error
+(`MCP HTTPS is NOT enabled: ...`) and Warp still starts with plaintext MCP. The certificate is re-read when the files change
+(mtime poll every `WARP_TLS_RELOAD_SECONDS`, default 30; set 0 to disable), so a certbot renewal needs no restart; a broken
+renewal keeps the previous certificate.
+
+**Option 2: tunnel or reverse proxy.** Terminate TLS in front of Warp (Cloudflare Tunnel, ngrok, Caddy, an ALB) and forward to
+`http://localhost:18010`; set `WARP_MCP_PUBLIC_URL=https://warp.example.com` so the admin console shows that address.
+`X-Forwarded-Proto` / `X-Forwarded-Host` are honoured only to build the URLs displayed by the admin console.
+
+**Authentication.** An endpoint's token is checked as `Authorization: Bearer <token>` (Claude Code, the MCP SDKs and API clients
+send headers). claude.ai custom connectors accept only a URL (plus OAuth), so an endpoint can opt in, per endpoint, to
+also accept the token as a path segment: `https://host/e/<endpointId>/t/<token>` (create with `"urlToken": true` or
+`PATCH /api/mcp-endpoints/{id} {"urlToken": true}`, hot-reloaded). It is **off by default**; the URL token is the same
+credential as the header token (same hash, same expiry, revoked by deleting the endpoint), is redacted in Warp's own logs, and
+can still leak through proxy access logs, browser history and referrers, so prefer the header whenever the client supports it.
+OAuth for MCP clients (protected-resource metadata, dynamic client registration) is not implemented: Warp validates bearer JWTs
+from an external OIDC issuer (§3.4) but is not itself an authorization server.
+
+`GET /api/mcp-config` returns `{publicUrl, httpsPort, httpPort, tlsEnabled, selfSigned, baseUrl, claudeConnectorReady, ...}`
+and the admin console's *MCP servers* page builds its `claude mcp add --transport http ...`, `.mcp.json` and connector-URL
+snippets from it, with a notice when only plaintext HTTP is available.
 
 ---
 

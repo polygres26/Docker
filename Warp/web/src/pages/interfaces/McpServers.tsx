@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
 import { Plus, Trash2, Wrench } from 'lucide-react'
 import {
-  type McpEndpoint, type McpEndpointCreated, type McpTool,
-  createMcpEndpoint, getMcpEndpointTools, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints, revokeMcpEndpoint,
+  type McpConfig, type McpEndpoint, type McpEndpointCreated, type McpTool,
+  createMcpEndpoint, getMcpConfig, getMcpEndpointTools, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints,
+  revokeMcpEndpoint, setMcpEndpointUrlToken,
 } from '../../api/client'
 import {
   Button, CodeBlock, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, NameCell, Notice, PageHeader, Section, StatusPill, Tag, Tabs,
@@ -23,13 +24,41 @@ function scopeLabel(scope: string): string {
   return scope
 }
 
-/** Connection snippet for an endpoint. The token is only known right after creation, so it is a placeholder unless supplied. */
-function snippets(host: string, port: number | undefined, path: string, token: string): Array<{ label: string; code: string }> {
-  const url = `http://${host}:${port ?? '<mcp-port>'}${path}`
-  return [
-    { label: 'HTTP (curl)', code: `curl -X POST ${url} \\\n  -H "Authorization: Bearer ${token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` },
-    { label: 'MCP client config', code: JSON.stringify({ mcpServers: { warp: { url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2) },
+/** Connection snippets for an endpoint. The token is only known right after creation, so it is a placeholder unless supplied.
+ * `base` is scheme://host[:port] from GET /api/mcp-config (https / WARP_MCP_PUBLIC_URL when configured). */
+function snippets(base: string, path: string, token: string, urlToken: boolean): Array<{ label: string; code: string }> {
+  const url = `${base}${path}`
+  const out = [
+    { label: 'Claude Code (CLI)', code: `claude mcp add --transport http warp ${url} \\\n  --header "Authorization: Bearer ${token}"` },
+    { label: 'Claude Code (.mcp.json) / API clients', code: JSON.stringify({ mcpServers: { warp: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2) },
+    { label: 'curl', code: `curl -X POST ${url} \\\n  -H "Authorization: Bearer ${token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` },
   ]
+  if (urlToken) {
+    out.push({ label: 'Claude Desktop / claude.ai custom connector (Settings, Connectors, Add custom connector: paste this URL, no other auth)', code: `${url}/t/${token}` })
+  }
+  return out
+}
+
+/** The plain-language fix for an MCP listener that Claude cannot use yet. */
+function HttpsNotice({ cfg }: { cfg: McpConfig }) {
+  if (cfg.tlsError) {
+    return <Notice tone="bad">HTTPS could not be enabled: {cfg.tlsError}. Plaintext HTTP is still served.</Notice>
+  }
+  if (cfg.claudeConnectorReady) {
+    return <Notice tone="ok">Claude connectors can use <code>{cfg.baseUrl}</code>{cfg.publicUrl ? ' (WARP_MCP_PUBLIC_URL)' : ''}.</Notice>
+  }
+  if (cfg.selfSigned) {
+    return <Notice tone="warn">This listener serves a self-signed development certificate. Claude will not trust it: use it only with curl -k or clients that accept it, and use a real certificate (WARP_MCP_TLS_CERT and WARP_MCP_TLS_KEY) or a tunnel for Claude.</Notice>
+  }
+  return (
+    <Notice tone="warn">
+      <strong>Claude connectors need an HTTPS URL.</strong> This MCP listener is plaintext HTTP only. Two ways to fix it:
+      {' '}(1) serve HTTPS directly: set <code>WARP_MCP_TLS_CERT</code> and <code>WARP_MCP_TLS_KEY</code> (PEM, for example Let's Encrypt
+      fullchain.pem and privkey.pem) or <code>WARP_MCP_TLS_KEYSTORE</code>, then restart (default HTTPS port 18443);
+      or (2) put a tunnel or reverse proxy in front (Cloudflare Tunnel, ngrok, Caddy, a load balancer) and set{' '}
+      <code>WARP_MCP_PUBLIC_URL</code> to its https address, for example <code>https://warp.example.com</code>.
+    </Notice>
+  )
 }
 
 /** MCP servers: the MCP listener (from /api/interfaces), user-created endpoints scoped to a backend or set (/api/mcp-endpoints),
@@ -39,12 +68,14 @@ export default function McpServers() {
   const endpoints = useLoad(listMcpEndpoints, 15_000)
   const metrics = useLoad(getWireMetrics, 15_000)
   const sets = useLoad(useCallback(() => listBackendSets(false), []))
+  const cfg = useLoad(getMcpConfig, 30_000)
   const [tab, setTab] = useState('endpoints')
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [scope, setScope] = useState('all')
   const [expiry, setExpiry] = useState(0)
   const [description, setDescription] = useState('')
+  const [urlToken, setUrlToken] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<McpEndpointCreated | null>(null)
@@ -56,6 +87,7 @@ export default function McpServers() {
   const mcp = ifaces.data?.interfaces.find((i) => i.id === 'mcp')
   const a2a = ifaces.data?.interfaces.find((i) => i.id === 'a2a')
   const host = typeof window === 'undefined' ? 'localhost' : window.location.hostname
+  const base = cfg.data?.baseUrl ?? `http://${host}:${mcp?.port ?? '<mcp-port>'}`
   const list = endpoints.data ?? []
   const active = list.filter((e) => e.status === 'active').length
   const toolStats = metrics.data?.mcpTools ?? []
@@ -70,8 +102,16 @@ export default function McpServers() {
     ev.preventDefault()
     setBusy(true); setError(null)
     try {
-      const r = await createMcpEndpoint({ name: name.trim(), scope, description: description.trim() || undefined, ttlSeconds: EXPIRIES[expiry].seconds })
-      setCreated(r); setCreating(false); setName(''); setDescription(''); endpoints.reload()
+      const r = await createMcpEndpoint({ name: name.trim(), scope, description: description.trim() || undefined, ttlSeconds: EXPIRIES[expiry].seconds, urlToken })
+      setCreated(r); setCreating(false); setName(''); setDescription(''); setUrlToken(false); endpoints.reload()
+    } catch (err) { setError(errorText(err)) } finally { setBusy(false) }
+  }
+
+  async function toggleUrlToken(e: McpEndpoint) {
+    setBusy(true); setError(null)
+    try {
+      const updated = await setMcpEndpointUrlToken(e.id, !e.urlToken)
+      setSelected(updated); endpoints.reload()
     } catch (err) { setError(errorText(err)) } finally { setBusy(false) }
   }
 
@@ -88,7 +128,7 @@ export default function McpServers() {
   }
 
   const kpis: KpiItem[] = [
-    { label: 'MCP listener', value: mcp ? 'Listening' : ifaces.loading ? '…' : 'Not running', tone: mcp ? 'ok' : 'muted', wide: true, hint: mcp ? `port ${mcp.port}` : undefined },
+    { label: 'MCP listener', value: mcp ? 'Listening' : ifaces.loading ? '…' : 'Not running', tone: mcp ? 'ok' : 'muted', wide: true, hint: mcp ? (cfg.data?.tlsEnabled ? `https ${cfg.data.httpsPort}${cfg.data.httpPort ? ` · http ${cfg.data.httpPort}` : ''}` : `http ${mcp.port}`) : undefined },
     { label: 'Endpoints', value: list.length, hint: `${active} active · ${list.length - active} expired` },
     { label: 'Tool calls', value: compact(toolCalls), hint: `${toolStats.length} tool${toolStats.length === 1 ? '' : 's'} used since start` },
     { label: 'A2A agent', value: a2a ? `:${a2a.port}` : 'Off', hint: a2a ? 'Agent2Agent JSON-RPC' : 'not listening' },
@@ -101,13 +141,15 @@ export default function McpServers() {
       {ifaces.error && <Notice tone="bad">Could not load interfaces: {ifaces.error}</Notice>}
       {endpoints.error && <Notice tone="bad">Could not load endpoints: {endpoints.error}</Notice>}
       {error && <Notice tone="bad">{error}</Notice>}
+      {cfg.data && <HttpsNotice cfg={cfg.data} />}
       {ifaces.loading ? <Loading /> : <KpiStrip items={kpis} label="MCP figures" />}
 
       {created && (
         <Section title={`Endpoint “${created.name}” created`} meta="The token is shown once">
           <Notice tone="warn">Copy the token now: only its hash is stored and it cannot be shown again.</Notice>
           <CodeBlock label="Bearer token">{created.token}</CodeBlock>
-          {snippets(host, created.mcpPort, created.path, created.token).map((s) => <CodeBlock key={s.label} label={s.label}>{s.code}</CodeBlock>)}
+          {created.urlWithToken && <Notice tone="warn">URL-token mode is on for this endpoint: anyone holding the URL below can use the endpoint. It can leak through logs, proxies and referrers; revoke the endpoint if it does.</Notice>}
+          {snippets(base, created.path, created.token, !!created.urlWithToken).map((s) => <CodeBlock key={s.label} label={s.label}>{s.code}</CodeBlock>)}
           <Button variant="ghost" onClick={() => setCreated(null)}>I have copied the token</Button>
         </Section>
       )}
@@ -138,7 +180,16 @@ export default function McpServers() {
               <Field label="Description" hint="Optional.">
                 {(id) => <input id={id} value={description} onChange={(e) => setDescription(e.target.value)} autoComplete="off" />}
               </Field>
+              <Field label="Header-less URL token" hint="Off by default. For connectors that only take a URL (claude.ai custom connectors cannot send a fixed Authorization header).">
+                {(id) => (
+                  <label className={styles.help}>
+                    <input id={id} type="checkbox" checked={urlToken} onChange={(e) => setUrlToken(e.target.checked)} />{' '}
+                    Also accept the token in the URL path
+                  </label>
+                )}
+              </Field>
             </div>
+            {urlToken && <Notice tone="warn">A token in a URL can leak through access logs, proxies, browser history and referrers. Warp redacts it in its own logs and audit trail, and the endpoint can be revoked or expire like any other, but prefer the Authorization header whenever the client supports it.</Notice>}
             <div className={styles.formActions}>
               <Button variant="primary" type="submit" disabled={busy || !name.trim()}>{busy ? 'Creating…' : 'Create endpoint'}</Button>
               <Button variant="ghost" onClick={() => setCreating(false)} disabled={busy}>Cancel</Button>
@@ -159,7 +210,7 @@ export default function McpServers() {
 
       {tab === 'endpoints' && (
         <>
-          <Section flush title="Endpoints" meta={mcp ? `MCP listener on port ${mcp.port}` : undefined}>
+          <Section flush title="Endpoints" meta={cfg.data ? cfg.data.baseUrl : mcp ? `MCP listener on port ${mcp.port}` : undefined}>
             {endpoints.loading ? <div className={styles.pad}><Loading /></div>
               : list.length === 0 ? <EmptyState title="No MCP endpoints">Create one to give an agent a scoped, expiring token. The built-in listener still serves the deployment-wide scope.</EmptyState>
               : (
@@ -169,7 +220,7 @@ export default function McpServers() {
                     {list.map((e) => (
                       <tr key={e.id} className={selected?.id === e.id ? styles.selected : undefined}>
                         <td><NameCell name={<button type="button" className={styles.rowBtn} onClick={() => pick(e)}>{e.name}</button>} sub={e.description ?? e.path} /></td>
-                        <td><Tag>{scopeLabel(e.scope)}</Tag></td>
+                        <td><Tag>{scopeLabel(e.scope)}</Tag>{e.urlToken && <> <Tag>URL token</Tag></>}</td>
                         <td>{e.createdAt ? new Date(e.createdAt).toLocaleString() : '—'}<div className={styles.sub}>{e.createdBy ?? ''}</div></td>
                         <td>{e.expiresAt ? new Date(e.expiresAt).toLocaleString() : <span className={styles.sub}>never</span>}</td>
                         <td><StatusPill tone={e.status === 'active' ? 'ok' : 'muted'}>{e.status === 'active' ? 'Active' : 'Expired'}</StatusPill></td>
@@ -195,7 +246,12 @@ export default function McpServers() {
               )}
               <h3 style={{ margin: '16px 0 8px' }}>Connect</h3>
               <p className={styles.help}>The token was shown once at creation; put it where the placeholder is.</p>
-              {snippets(host, mcp?.port, selected.path, '<token>').map((s) => <CodeBlock key={s.label} label={s.label}>{s.code}</CodeBlock>)}
+              <p className={styles.help}>
+                Header-less URL token: {selected.urlToken ? 'enabled' : 'disabled'}.{' '}
+                <Button variant="ghost" onClick={() => toggleUrlToken(selected)} disabled={busy}>{selected.urlToken ? 'Disable URL token' : 'Enable URL token'}</Button>
+                {' '}Tokens in URLs can leak via logs and referrers.
+              </p>
+              {snippets(base, selected.path, '<token>', !!selected.urlToken).map((s) => <CodeBlock key={s.label} label={s.label}>{s.code}</CodeBlock>)}
             </Section>
           )}
         </>
