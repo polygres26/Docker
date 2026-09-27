@@ -48,10 +48,25 @@ public final class SessionHandler implements Runnable {
 
     @Override
     public void run() {
-        
-        if (options.dualExecEnabled()
-                && options.dualExecAuthority() == ServerOptions.DualExecAuthority.ORACLE
-                && options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE) {
+
+        // Real bug found live by the sqlpaths matrix framework (Warp/tests/sqlpaths, oracle
+        // engine plug-in): this bypass used to also require options.dualExecEnabled() &&
+        // dualExecAuthority()==ORACLE on top of oracleBackendMode()==NATIVE. But
+        // docs/WARP_GUIDE.md §8.1.1 documents WARP_ORACLE_BACKEND_MODE=native, by itself, as the
+        // switch to native-backend (transparent-proxy) mode -- dual-exec is an unrelated,
+        // independent feature (shadow-executing against both backends for comparison). With the
+        // old guard, setting only WARP_ORACLE_BACKEND_MODE=native (as the docs say to) fell
+        // through to the ordinary runPlain() path below, which borrows a *Postgres* backend
+        // connection and authenticates the client's real Oracle username/password against
+        // CredentialStore's Postgres-oriented shared secret instead of the real Oracle instance
+        // -- every relay login failed with a real, reproducible ORA-01017 "invalid credential"
+        // even though the exact same credentials worked directly against the real Oracle
+        // database. NativeSessionRelay's raw byte-pump bypass never got a chance to run.
+        // oracleBackendMode()==NATIVE alone is now sufficient and sole condition, matching the
+        // documented contract; dual-exec (shadow execution against Postgres for comparison while
+        // Oracle is authoritative) still works unchanged under oracleBackendMode()==JDBC via
+        // openDualExecOracleConnection() below, which is a separate feature.
+        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE) {
             try (Socket socket = clientSocket) {
                 com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
                         socket, options.oracleHost(), options.oraclePort());

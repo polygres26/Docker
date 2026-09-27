@@ -1,0 +1,64 @@
+# Known, documented ADAPT-path differences for the Oracle SQL-path matrix.
+#
+# Format note: this file is written in a restricted, line-based subset of YAML that
+# Warp/tests/sqlpaths/run_matrix.py's own tiny parser (load_known_diffs) understands directly
+# (no pyyaml dependency -- it isn't installed on this machine and no network installs are
+# permitted). Keep every entry to this exact shape: a `- id:` line starting a block, followed by
+# indented `key: value` lines, one per line, no nested structures, no multi-line values.
+#
+# path: "adapt" (default if omitted) | "relay" | "any" -- which path(s) this entry excuses.
+# reason: short, human-readable justification. Every KNOWN_DIFF classification in a report must
+#         trace back to an entry here (or to a scenario's own `expect_adapt_diff` field) --
+#         never silently mask a real diff.
+
+- id: ora003
+  path: adapt
+  reason: "ADAPT's V$VERSION comes from pg_oracle's Postgres-backed emulation view, not a real Oracle banner string; version text is expected to differ."
+
+- id: ora012
+  path: adapt
+  reason: "Oracle INTERVAL DAY TO SECOND literal text formatting differs from Postgres's interval output style after dialect translation; values are equivalent, text representation is not."
+
+- id: ora014
+  path: any
+  reason: "ROWID is a physical row address. Each path's setup creates its own separate table/row instance (native's dual_probe is a different physical row than relay's or adapt's), so the ROWID value is expected to differ across paths even when NATIVE-vs-real-Oracle behavior is otherwise identical -- a scenario-design limitation (this scenario cannot assert row-count/existence-only without weakening real ROWID coverage entirely), not a Warp bug. On the ADAPT path, Postgres additionally has no ROWID type at all; pg_oracle emulates it from ctid."
+
+- id: ora015
+  path: adapt
+  reason: "Oracle treats '' as NULL; Postgres does not. This is a fundamental, well-known semantic gap in Oracle-to-Postgres migration, not a Warp bug -- see docs/WARP_GUIDE.md's dialect-translation caveats."
+
+- id: ora022
+  path: adapt
+  reason: "Postgres has no SYNONYM object; ADAPT emulates a synonym with a view, so DDL introspection text differs even though SELECT-through-synonym behavior matches."
+
+- id: ora031
+  path: adapt
+  reason: "CONNECT BY is translated to a recursive CTE; row ordering among same-level siblings is not guaranteed identical unless the query has an explicit ORDER BY covering every level."
+
+- id: ora001
+  path: adapt
+  reason: "ADAPT's login identity is the Postgres backend's own user (see test_orawire.py's connect() convention: user=postgres), not the real Oracle account the NATIVE/RELAY paths use -- USER legitimately differs by design, this is not a translation bug."
+
+- id: ora002
+  path: adapt
+  reason: "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') has no dialect translation yet -- ADAPT raises ORA-00904 instead of returning the (Postgres-backed) current schema. Real, understood gap: SYS_CONTEXT's USERENV namespace is only partially implemented. Effort to close: ~0.5-1 day (extend DialectTranslations' SYS_CONTEXT handling with the CURRENT_SCHEMA key mapped to Postgres current_schema())."
+
+- id: ora004
+  path: adapt
+  reason: "Unaliased-expression column name reflects the translated SQL text ('21 * 2', spaced) rather than Oracle's own re-serialization of the original expression ('21*2', unspaced) -- a cosmetic difference in default column naming for expressions without an explicit alias, not a value or correctness difference. Low effort to close (~1 day: preserve original source-text span per projected expression instead of re-stringifying the translated AST for the default alias) but low priority since real client code almost always aliases computed columns."
+
+- id: ora005
+  path: adapt
+  reason: "Same default-column-naming-from-translated-text gap as ora004, applied to string concatenation."
+
+- id: ora007
+  path: adapt
+  reason: "Same default-column-naming gap as ora004; additionally the translated column name surfaces the Postgres type name (INT4) rather than any form of the original CAST expression."
+
+- id: ora010
+  path: adapt
+  reason: "Same default-column-naming gap as ora004: unaliased TO_CHAR(...) is named 'TO_CHAR' after translation instead of the full original expression text."
+
+- id: ora016
+  path: adapt
+  reason: "Same default-column-naming gap as ora004: NVL(...) is translated to COALESCE(...) and the default column name reflects that, not the original NVL(...) text."
