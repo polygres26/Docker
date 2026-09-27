@@ -147,7 +147,7 @@ public final class SessionHandler implements Runnable {
             O5LogonHandler.AuthResult auth, com.sayonora.warp.core.AccessContext accessContext,
             com.sayonora.warp.core.ConnectionRoute route) throws Exception {
         try (com.sayonora.warp.core.LazyPooledConnection pgConnection = backendPool.borrowConnection(descriptor, auth.username());
-                com.sayonora.warp.core.LazyPooledConnection oracleConnection = openDualExecOracleConnection()) {
+                com.sayonora.warp.core.LazyPooledConnection oracleConnection = openOracleConnectionForRequestLoop()) {
             RequestLoop loop = new RequestLoop(reader, out, pgConnection, oracleConnection, null, null, options,
                     sharedStages, backendRegistry, null, null, accessContext);
             loop.setConnectionRoute(route);
@@ -180,6 +180,41 @@ public final class SessionHandler implements Runnable {
                 + "/" + options.oracleServiceName();
         return new com.sayonora.warp.core.LazyPooledConnection(
                 () -> java.sql.DriverManager.getConnection(url, options.oracleUser(), options.oraclePassword()), null);
+    }
+
+    /** Bridge mode's ({@code WARP_ORACLE_BACKEND_MODE=bridge}) shared, bounded, process-wide pool
+     * of real Oracle JDBC connections (see {@link com.sayonora.warp.orawire.backend.OracleBridgePool}):
+     * one pool per Warp process, lazily created on first Bridge-mode session, shared by every
+     * client session afterward (many-to-few, unlike NATIVE's 1:1 raw relay or a fresh {@code
+     * DriverManager.getConnection} per dual-exec session). */
+    private static volatile com.sayonora.warp.orawire.backend.OracleBridgePool bridgePool;
+
+    private static com.sayonora.warp.orawire.backend.OracleBridgePool bridgePool(ServerOptions options) {
+        com.sayonora.warp.orawire.backend.OracleBridgePool pool = bridgePool;
+        if (pool == null) {
+            synchronized (SessionHandler.class) {
+                pool = bridgePool;
+                if (pool == null) {
+                    pool = com.sayonora.warp.orawire.backend.OracleBridgePool.fromServerOptions(options);
+                    bridgePool = pool;
+                }
+            }
+        }
+        return pool;
+    }
+
+    /** Chooses the real {@link java.sql.Connection} {@link RequestLoop} runs the client's parsed
+     * SQL against, for whichever non-JDBC-default Oracle-execution feature applies to this session:
+     * Bridge mode's pooled connection (this method's own new case) if {@code
+     * WARP_ORACLE_BACKEND_MODE=bridge}, else dual-exec's one-off Oracle connection (unchanged,
+     * existing behavior) if that separate feature is configured, else {@code null} (the ordinary
+     * single-Postgres-backend case, also unchanged). */
+    private com.sayonora.warp.core.LazyPooledConnection openOracleConnectionForRequestLoop() {
+        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.BRIDGE) {
+            com.sayonora.warp.orawire.backend.OracleBridgePool pool = bridgePool(options);
+            return new com.sayonora.warp.core.LazyPooledConnection(pool::checkout, null);
+        }
+        return openDualExecOracleConnection();
     }
 
     private void runReplicated(TnsPacketReader reader, OutputStream out, ConnectDescriptor descriptor,

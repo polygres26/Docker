@@ -6,8 +6,18 @@ public final class ServerOptions {
         POSTGRES, ORACLE
     }
 
+    /** JDBC (default): dialect-translate to the configured Postgres backend, same as before Bridge/
+     * NATIVE existed. NATIVE: raw-byte relay straight to a real Oracle instance, 1 socket per
+     * client session, no SQL parsing at all (see NativeSessionRelay). BRIDGE: parse the client's
+     * real TTC protocol (reusing Adapt mode's own RequestLoop/ExecuteRequestReader/ResponseWriter
+     * machinery -- no second parser), run the parsed statement through Warp's full shared pipeline
+     * (firewall, QoS, audit/metrics) same as Adapt mode, but skip dialect translation and execute
+     * the verbatim Oracle SQL against a real Oracle backend via a small, bounded, shared JDBC
+     * connection pool (see orawire.backend.OracleBridgePool) instead of either NATIVE's 1:1 raw
+     * relay or JDBC's dialect-translated Postgres backend. See docs/WARP_GUIDE.md Section 8.1.1
+     * for the full Relay/Adapt/Bridge feature-coverage comparison. */
     public enum OracleBackendMode {
-        JDBC, NATIVE
+        JDBC, NATIVE, BRIDGE
     }
 
     /** Which real backend the MCP frontend's tools (execute_sql, list_tables, etc.) target.
@@ -168,9 +178,12 @@ public final class ServerOptions {
         String oracleHost = System.getenv().getOrDefault("WARP_ORACLE_HOST", "localhost");
         int oraclePort = parseIntEnv("WARP_ORACLE_PORT", 1521);
         String oracleServiceName = System.getenv().getOrDefault("WARP_ORACLE_SERVICE", "orcl");
-        OracleBackendMode oracleBackendMode = "native".equalsIgnoreCase(
-                System.getenv().getOrDefault("WARP_ORACLE_BACKEND_MODE", "jdbc"))
-                ? OracleBackendMode.NATIVE : OracleBackendMode.JDBC;
+        OracleBackendMode oracleBackendMode = switch (System.getenv()
+                .getOrDefault("WARP_ORACLE_BACKEND_MODE", "jdbc").toLowerCase(java.util.Locale.ROOT)) {
+            case "native" -> OracleBackendMode.NATIVE;
+            case "bridge" -> OracleBackendMode.BRIDGE;
+            default -> OracleBackendMode.JDBC;
+        };
         // Gateway-held Oracle credentials, needed only by MCP's own native-backend mode below --
         // orawire's own native mode (WARP_ORACLE_BACKEND_MODE=native, just above) sources Oracle
         // credentials from the client's own O5LOGON login instead, since it's a real orawire
@@ -299,6 +312,18 @@ public final class ServerOptions {
     private static boolean parseBoolEnv(String name, boolean defaultValue) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? defaultValue : Boolean.parseBoolean(value);
+    }
+
+    /** Bound on the number of real, pooled Oracle JDBC connections Bridge mode (see {@link
+     * OracleBackendMode#BRIDGE}) shares across every client session -- many client sessions to a
+     * few real backend connections, unlike NATIVE's 1 raw socket per session. Read directly from
+     * the environment (same pattern as {@code WARP_REPLICATION_BACKENDS} elsewhere in this
+     * codebase) rather than threaded through this class's constructor, since it's consumed only by
+     * {@code orawire.backend.OracleBridgePool} at pool-construction time, not per-request. See
+     * NOTES.md (Bridge mode design doc) for why a small hand-rolled bounded pool was chosen here
+     * over Oracle UCP. */
+    public static int oracleBridgePoolSize() {
+        return parseIntEnv("WARP_ORACLE_BRIDGE_POOL_SIZE", 10);
     }
 
     public int listenPort() {

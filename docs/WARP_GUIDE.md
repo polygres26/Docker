@@ -2375,7 +2375,7 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 |---|---|---|---|
 | pgwire | Postgres wire protocol v3 | 15432 | native passthrough, no translation needed |
 | mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default; `WARP_MYWIRE_BACKEND=mysql` switches to native mode — see §8.1.1 |
-| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native mode — see §8.1.1 |
+| orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native (Relay) mode — see §8.1.1; `WARP_ORACLE_BACKEND_MODE=bridge` switches to Bridge mode (real protocol parse, verbatim SQL, pooled Oracle backend) — see §8.1.2 |
 | mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default; `WARP_MSSQLWIRE_BACKEND=sqlserver` switches to native mode — see §8.1.1 |
 | mongowire | MongoDB wire protocol (OP_MSG, OP_QUERY handshake, OP_COMPRESSED/zlib) | 27017 | a MongoDB 7.0-compatible server over Postgres: CRUD, all query/update/aggregation operators, indexes with unique enforcement, collection and database administration, validators, cursors; sharded over the `mongodb` store hosts -- see *The MongoDB store* in §4.7 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
@@ -2434,6 +2434,37 @@ returns a clear "not supported" error rather than silently running SQL that's wr
 configured backend. `WARP_MCP_TOOLS` (real Postgres functions/procedures registered as MCP tools
 via `pg_proc` introspection) is Postgres-only for the same reason and isn't introspected at all in
 native mode.
+
+#### 8.1.2 Bridge mode (orawire only): real protocol, verbatim SQL, pooled Oracle backend
+
+`WARP_ORACLE_BACKEND_MODE=bridge` is a third orawire mode, distinct from both `native` (Relay,
+§8.1.1) and the `jdbc` default (Adapt): Warp parses the client's real TTC protocol itself, reusing
+Adapt mode's own `RequestLoop`/`ExecuteRequestReader`/`ResponseWriter` machinery (no second parser),
+runs the parsed statement through the full shared pipeline (§8.2) exactly as Adapt mode does, but
+skips `DialectTranslationStage` and executes the parsed SQL **verbatim, unmodified Oracle dialect**
+against a real Oracle backend — via `WARP_ORACLE_HOST`/`_PORT`/`_SERVICE` and a shared
+`WARP_ORACLE_USER`/`WARP_ORACLE_PASSWORD` service account, same as native mode's backend config.
+Unlike native mode's 1-raw-socket-per-session relay, Bridge pools a small, bounded number of real
+Oracle JDBC connections (`WARP_ORACLE_BRIDGE_POOL_SIZE`, default 10) shared across many client
+sessions — many-to-few, the same shape orawire's own Adapt-mode Postgres pool already uses.
+
+| Mode | Firewall / QoS / audit | Connection pooling | Dialect translation |
+|---|---|---|---|
+| Relay (`native`) | No — bypasses the shared pipeline entirely (§8.1.1) | No — 1 dedicated raw socket per client session | No — raw byte relay, no SQL parsing at all |
+| Adapt (`jdbc`, default) | Yes | Yes — many clients share `WARP_POOL_MAX_SIZE` Postgres connections | Yes — Oracle SQL rewritten to Postgres dialect |
+| **Bridge** | **Yes** — real TTC parse feeds the same pipeline Adapt uses | **Yes, many-to-few** — `WARP_ORACLE_BRIDGE_POOL_SIZE` pooled Oracle connections | **No — pass-through**: verbatim Oracle SQL reaches Oracle unmodified |
+
+Bridge mode's session-state handling and its one known gap: a pooled Oracle connection is reset on
+checkout/return (any open transaction rolled back, any open statement/cursor closed) before it can
+reach a different client session, but ALTER SESSION settings, `DBMS_SESSION` package state, temp
+table contents, and NLS settings are **not** reset in this slice — see the Bridge implementation's
+own `NOTES.md` (checked in alongside `orawire.backend.OracleBridgePool`) for the full list and the
+credential-sharing tradeoff this implies. `CacheStage`/`PrimaryKeyCatalog` (the distributed
+row-cache/rollup stages, built against dynamowire's/mongowire's own fixed Postgres physical table
+shapes) are not Oracle-SQL-shaped and so do not cleanly generalize to Bridge's arbitrary,
+untranslated Oracle SQL; in practice their regex-matched physical shapes essentially never match
+real Oracle SQL, but this has not been proven against a real Oracle instance — see that same
+NOTES.md for the explicit "not verified without live Oracle" list.
 
 ### 8.2 Statement pipeline stages
 

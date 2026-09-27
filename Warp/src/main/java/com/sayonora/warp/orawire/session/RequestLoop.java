@@ -1122,11 +1122,25 @@ public final class RequestLoop {
                 bindTypes[i] = request.bindParams.get(i).oraTypeNum;
             }
         }
+        // Bridge mode (WARP_ORACLE_BACKEND_MODE=bridge) reuses this exact dual-exec-with-
+        // Oracle-authority seam -- oracleConnection is set (to a pooled Oracle connection, see
+        // SessionHandler#openOracleConnectionForRequestLoop) and this statement's real,
+        // untranslated Oracle SQL must run straight against it, same as
+        // dualExecAuthority==ORACLE below -- but it is an unrelated, independent feature from
+        // dual-exec (shadow-executing against both backends for comparison): a Bridge session
+        // never has WARP_DUAL_EXEC_ENABLED/WARP_DUAL_EXEC_AUTHORITY configured at all, so without
+        // this explicit check authoritativeIsOracle would be false and Bridge's pooled Oracle
+        // connection would sit unused while every statement ran, translated, against a Postgres
+        // connection that plain Bridge-mode sessions don't even have. Also force shadow
+        // execution off for Bridge regardless of WARP_DUAL_EXEC_SHADOW_ENABLED: Bridge has
+        // nothing to shadow-compare against (no second backend configured for it) and must
+        // never touch the shared Postgres pool at all.
+        boolean bridgeMode = options.oracleBackendMode() == ServerOptions.OracleBackendMode.BRIDGE;
         boolean dual = oracleConnection != null;
         boolean authoritativeIsOracle = dual
-                && options.dualExecAuthority() == ServerOptions.DualExecAuthority.ORACLE;
+                && (bridgeMode || options.dualExecAuthority() == ServerOptions.DualExecAuthority.ORACLE);
 
-        boolean shadowEnabled = options.dualExecShadowEnabled();
+        boolean shadowEnabled = !bridgeMode && options.dualExecShadowEnabled();
         if (dual && shadowEnabled) {
             if (authoritativeIsOracle) {
                 executeShadow(pgConnection::get, DualTableRewriter.rewrite(request.sqlText), request);

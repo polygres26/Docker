@@ -157,6 +157,8 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_MCP_UPSTREAM_TIMEOUT_MS` | Per-call timeout (ms, default 10000) for a registered MCP upstream — see WARP_GUIDE §13 |
 | `WARP_MCP_UPSTREAM_INSECURE_SKIP_VERIFY` | `true` = allow (only alongside a per-upstream `insecureSkipVerify` flag) skipping TLS certificate verification to an MCP upstream; never default |
 | `WARP_ORACLE_BACKEND_MODE` / `WARP_MYWIRE_BACKEND` / `WARP_MSSQLWIRE_BACKEND` / `WARP_MCP_BACKEND` | Native-backend mode per frontend — proxy straight to a real Oracle/MySQL/SQL Server backend instead of dialect-translating into Postgres (§8.1.1) |
+| `WARP_ORACLE_BACKEND_MODE=bridge` | orawire Bridge mode: parses the real TTC protocol and runs the shared pipeline (firewall/QoS/audit) like the default `jdbc` mode, but skips dialect translation and executes the verbatim Oracle SQL against a pooled real Oracle backend instead — see WARP_GUIDE §8.1.2 |
+| `WARP_ORACLE_BRIDGE_POOL_SIZE` | Bound on real, pooled Oracle JDBC connections Bridge mode shares across client sessions (default 10) — see WARP_GUIDE §8.1.2 |
 | `WARP_TLS_KEYSTORE` | Shared keystore (PKCS12/JKS) for orawire TCPS / gRPC TLS / pgwire, mywire, mssqlwire in-band TLS; the global PEM pair `WARP_TLS_CERT` + `WARP_TLS_KEY` now works for these too |
 | `WARP_TLS_PORT` / `WARP_GRPC_TLS_PORT` | orawire TCPS port (2484) / native gRPC TLS port (17071) |
 | `WARP_REDISWIRE_TLS_PORT` / `WARP_KAFKAWIRE_TLS_PORT` / `WARP_AMQPWIRE_TLS_PORT` | TLS ports of rediswire (17379, `rediss://`), kafkawire (19093, `SSL` listener) and amqpwire (5671, AMQPS); `0` disables. `WARP_KAFKAWIRE_TLS_ADVERTISED_HOST` / `_PORT` set the address Kafka advertises to SSL clients |

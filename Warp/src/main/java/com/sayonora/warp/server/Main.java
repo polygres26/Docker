@@ -1395,13 +1395,25 @@ public final class Main {
         }
     }
 
+    /** orawire's admin-console/API mode label: "Relay" (NATIVE's raw-byte passthrough), "Bridge"
+     * (BRIDGE's real-TTC-parse + verbatim-SQL-against-pooled-Oracle mode -- firewall/QoS/audit
+     * still apply, dialect translation does not, see docs/WARP_GUIDE.md Section 8.1.1), or
+     * "Adapt" (JDBC's dialect-translated-to-Postgres default, unchanged). */
+    private static String oracleWireModeLabel(ServerOptions options) {
+        return switch (options.oracleBackendMode()) {
+            case NATIVE -> "Relay";
+            case BRIDGE -> "Bridge";
+            case JDBC -> "Adapt";
+        };
+    }
+
     private static void acceptOraWireLoop(ServerOptions options, PgBackendPool backendPool,
             List<PipelineStage> pipelineStages, BackendRegistry backendRegistry, ExecutorService sessionExecutor,
             com.sayonora.warp.acl.ConnectionGate connectionGate, com.sayonora.warp.audit.AuditLog auditLog) {
         try (ServerSocket serverSocket = new ServerSocket(options.listenPort())) {
             log.info("warp listening for TCP (Oracle wire) on port {}, proxying to postgres {}:{}/{}",
                     options.listenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "orawire-native" : "orawire", "Oracle", "sql", "Oracle TNS", options.listenPort(), options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "Relay" : "Adapt", null, "orawire");
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "orawire-native" : "orawire", "Oracle", "sql", "Oracle TNS", options.listenPort(), oracleWireModeLabel(options), null, "orawire");
             acceptLoop("Oracle wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new SessionHandler(clientSocket, backendPool, options, pipelineStages, backendRegistry, auditLog));
         } catch (IOException e) {
@@ -1416,7 +1428,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.tlsPort())) {
             log.info("warp listening for TCPS (Oracle wire over TLS) on port {}, proxying to postgres {}:{}/{}",
                     options.tlsPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            com.sayonora.warp.http.admin.InterfaceRegistry.register("orawire-tls", "Oracle (TCPS)", "sql", "Oracle TNS over TLS", options.tlsPort(), options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE ? "Relay" : "Adapt", null, "orawire");
+            com.sayonora.warp.http.admin.InterfaceRegistry.register("orawire-tls", "Oracle (TCPS)", "sql", "Oracle TNS over TLS", options.tlsPort(), oracleWireModeLabel(options), null, "orawire");
             acceptLoop("Oracle wire TCPS", serverSocket, connectionGate, sessionExecutor, plainSocket -> {
                 SSLSocket tlsSocket = (SSLSocket) tlsSocketFactory.createSocket(
                         plainSocket, null, plainSocket.getPort(), true);

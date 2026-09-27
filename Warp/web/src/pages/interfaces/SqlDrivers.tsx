@@ -26,7 +26,7 @@ export default function SqlDrivers() {
   ]
   return (
     <div>
-      <PageHeader title="SQL drivers" description="Relational protocols Warp speaks to clients. Relay forwards the native protocol to a same-engine backend; Adapt translates the client's dialect."
+      <PageHeader title="SQL drivers" description="Relational protocols Warp speaks to clients. Relay forwards the native protocol to a same-engine backend; Adapt translates the client's dialect; Bridge parses the native protocol but runs the SQL verbatim (no translation) against a pooled same-engine backend."
         actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { ifaces.reload(); metrics.reload() }}>Refresh</Button>} />
       {ifaces.error && <Notice tone="bad">Could not load interfaces: {ifaces.error}</Notice>}
       {ifaces.loading ? <Loading>Loading drivers…</Loading> : <KpiStrip items={kpis} label="SQL driver figures" />}
