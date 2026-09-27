@@ -287,10 +287,7 @@ class ConnectionRouterTest {
                 groups.append(b > 0 ? "," : "").append(name);
             }
         }
-        com.sayonora.warp.config.WarpConfig cfg = new com.sayonora.warp.config.WarpConfig(null, null, null, null,
-                null, null, null, spec.toString(), null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, groups.toString(), null, null, null, null,
-                null, null);
+        com.sayonora.warp.config.WarpConfig cfg = new com.sayonora.warp.config.WarpConfig(null, null, null, null, null, null, null, spec.toString(), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, groups.toString(), null, null, null, null, null, null, null);
         BackendSetModel model = BackendSetModel.from(cfg, null);
         assertEquals(100, model.allBackends().size());
         assertEquals(10, model.sets().size());

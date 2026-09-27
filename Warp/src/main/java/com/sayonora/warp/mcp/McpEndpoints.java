@@ -41,16 +41,33 @@ public final class McpEndpoints {
 
     /** One stored endpoint. {@code expiresAt == null} means it never expires. */
     public record Endpoint(String id, String name, String scope, String description, Instant createdAt,
-            String createdBy, Instant expiresAt, String tokenHash, boolean urlToken) {
+            String createdBy, Instant expiresAt, String tokenHash, boolean urlToken, List<String> upstreamIds) {
 
-        /** Header-token-only endpoint (URL tokens off): the default. */
+        /** Header-token-only endpoint (URL tokens off), no MCP upstreams included: the default. */
         public Endpoint(String id, String name, String scope, String description, Instant createdAt,
                 String createdBy, Instant expiresAt, String tokenHash) {
-            this(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, false);
+            this(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, false, List.of());
+        }
+
+        /** Compact constructor form used before {@code upstreamIds} existed -- no upstreams included. */
+        public Endpoint(String id, String name, String scope, String description, Instant createdAt,
+                String createdBy, Instant expiresAt, String tokenHash, boolean urlToken) {
+            this(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, urlToken, List.of());
+        }
+
+        public Endpoint {
+            upstreamIds = upstreamIds == null ? List.of() : List.copyOf(upstreamIds);
         }
 
         public Endpoint withUrlToken(boolean enabled) {
-            return new Endpoint(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, enabled);
+            return new Endpoint(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, enabled, upstreamIds);
+        }
+
+        /** MCP upstream ids (see {@code com.sayonora.warp.mcp.upstream.McpUpstream}) whose tools this
+         * endpoint merges into {@code tools/list}/{@code tools/call}, namespaced, alongside its native
+         * backend tools. Empty = no upstreams included (existing endpoints are unaffected). */
+        public Endpoint withUpstreamIds(List<String> ids) {
+            return new Endpoint(id, name, scope, description, createdAt, createdBy, expiresAt, tokenHash, urlToken, ids);
         }
 
         public boolean expiredAt(Instant now) {
@@ -62,15 +79,15 @@ public final class McpEndpoints {
         }
 
         public Endpoint withExpiresAt(Instant newExpiry) {
-            return new Endpoint(id, name, scope, description, createdAt, createdBy, newExpiry, tokenHash, urlToken);
+            return new Endpoint(id, name, scope, description, createdAt, createdBy, newExpiry, tokenHash, urlToken, upstreamIds);
         }
 
         public Endpoint withDescription(String d) {
-            return new Endpoint(id, name, scope, d, createdAt, createdBy, expiresAt, tokenHash, urlToken);
+            return new Endpoint(id, name, scope, d, createdAt, createdBy, expiresAt, tokenHash, urlToken, upstreamIds);
         }
 
         public Endpoint withName(String n) {
-            return new Endpoint(id, n, scope, description, createdAt, createdBy, expiresAt, tokenHash, urlToken);
+            return new Endpoint(id, n, scope, description, createdAt, createdBy, expiresAt, tokenHash, urlToken, upstreamIds);
         }
     }
 
@@ -290,12 +307,16 @@ public final class McpEndpoints {
         JsonArray arr = JsonParser.parseString(json).getAsJsonArray();
         for (JsonElement el : arr) {
             JsonObject o = el.getAsJsonObject();
+            List<String> upstreamIds = new ArrayList<>();
+            if (o.has("upstreamIds") && o.get("upstreamIds").isJsonArray()) {
+                o.getAsJsonArray("upstreamIds").forEach(e -> upstreamIds.add(e.getAsString()));
+            }
             out.add(new Endpoint(str(o, "id"), str(o, "name"), str(o, "scope"), str(o, "description"),
                     o.has("createdAt") && !o.get("createdAt").isJsonNull() ? Instant.parse(str(o, "createdAt")) : null,
                     str(o, "createdBy"),
                     o.has("expiresAt") && !o.get("expiresAt").isJsonNull() ? Instant.parse(str(o, "expiresAt")) : null,
                     str(o, "tokenHash"), o.has("urlToken") && !o.get("urlToken").isJsonNull()
-                            && o.get("urlToken").getAsBoolean()));
+                            && o.get("urlToken").getAsBoolean(), upstreamIds));
         }
         return out;
     }
@@ -313,6 +334,9 @@ public final class McpEndpoints {
             o.addProperty("expiresAt", e.expiresAt() == null ? null : e.expiresAt().toString());
             o.addProperty("tokenHash", e.tokenHash());
             o.addProperty("urlToken", e.urlToken());
+            JsonArray upstreamIds = new JsonArray();
+            e.upstreamIds().forEach(upstreamIds::add);
+            o.add("upstreamIds", upstreamIds);
             arr.add(o);
         }
         return arr.toString();
@@ -331,6 +355,9 @@ public final class McpEndpoints {
         o.addProperty("status", e.expiredAt(now) ? "expired" : "active");
         o.addProperty("path", PATH_PREFIX + e.id());
         o.addProperty("urlToken", e.urlToken());
+        JsonArray upstreamIds = new JsonArray();
+        e.upstreamIds().forEach(upstreamIds::add);
+        o.add("upstreamIds", upstreamIds);
         return o;
     }
 

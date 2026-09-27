@@ -66,6 +66,11 @@ public final class WarpMcpServer {
     private final EmulatedStores emulatedStores;
     private final McpBackendCatalog catalog;
     private final McpEndpoints endpoints = new McpEndpoints();
+    // MCP-gateway-for-other-servers: registered upstream MCP servers whose tools this server can
+    // merge (namespaced) into tools/list and forward tools/call to. A separate concept from
+    // McpBackend/StoreToolProvider (Warp's own backends) -- see McpUpstreamGateway's own javadoc.
+    private com.sayonora.warp.mcp.upstream.McpUpstreamGateway upstreamGateway =
+            new com.sayonora.warp.mcp.upstream.McpUpstreamGateway();
     private final ExternalClients externalClients = new ExternalClients();
     private final boolean requireEndpoint;
     private final Map<BackendKind, BackendToolProvider> providers = new java.util.EnumMap<>(BackendKind.class);
@@ -232,6 +237,11 @@ public final class WarpMcpServer {
         registerStoreTools(new CosmosToolProvider(describer(BackendKind.COSMOSSTORE), emulatedStores));
         registerStoreTools(new AmqpToolProvider(describer(BackendKind.AMQP), emulatedStores));
         this.providerReadOnly = "true".equalsIgnoreCase(System.getenv("WARP_MCP_READ_ONLY"));
+        // Reconstructed now that providerReadOnly is known: an upstream tool without
+        // annotations.readOnlyHint:true must be hidden from tools/list under WARP_MCP_READ_ONLY,
+        // exactly like Warp's own write-tagged native tools (see McpUpstreamGateway's constructor).
+        this.upstreamGateway = new com.sayonora.warp.mcp.upstream.McpUpstreamGateway(
+                java.time.Clock.systemUTC(), providerReadOnly);
         this.functionTools = introspectRegisteredTools(options, toolsSpec);
         com.sayonora.warp.tls.TlsListeners.Listener listener = com.sayonora.warp.tls.TlsListeners.jetty("MCP", port, 18443,
                 System.getenv());
@@ -309,6 +319,13 @@ public final class WarpMcpServer {
      * and on every config reload. */
     public McpEndpoints endpoints() {
         return endpoints;
+    }
+
+    /** The live registered MCP-upstream set; {@code Main} loads it from {@code warp_config} at
+     * startup and on every config reload, and the admin API ({@code /api/mcp-upstreams}) uses it
+     * for test/refresh-tools/health. */
+    public com.sayonora.warp.mcp.upstream.McpUpstreamGateway upstreams() {
+        return upstreamGateway;
     }
 
     /** {@code WARP_MCP_EMULATED_STORES} = comma list of dynamodb/mongodb/influx, {@code all}, or
@@ -668,6 +685,12 @@ public final class WarpMcpServer {
                     + "topics ... whatever that type can list). \"backend\" may be omitted when the endpoint has "
                     + "exactly one backend.",
                     objectSchema(Map.of("backend", stringSchema("Backend name from list_backends")), List.of())));
+        }
+        McpEndpoints.Endpoint ep = CURRENT_ENDPOINT.get();
+        if (ep != null && !ep.upstreamIds().isEmpty()) {
+            // Namespaced passthrough: merge in each included MCP upstream's tools (60s cache; a
+            // failing/slow upstream never blocks this list -- see McpUpstreamGateway).
+            upstreamGateway.namespacedToolsFor(ep.upstreamIds()).forEach(tools::add);
         }
         JsonObject result = new JsonObject();
         result.add("tools", tools);
@@ -1365,6 +1388,52 @@ public final class WarpMcpServer {
         return schema;
     }
 
+    /**
+     * Routes a {@code tools/call} to a registered MCP upstream when {@code toolName} resolves
+     * against the endpoint's included upstream set (namespaced passthrough). Returns {@code true}
+     * when handled (result or error already written) so the caller falls through to native
+     * dispatch otherwise. Governance: an upstream tool without an explicit
+     * {@code annotations.readOnlyHint: true} is treated as write/mutating, so
+     * {@code WARP_MCP_READ_ONLY} blocks it here exactly as it hides unknown-safety provider tools
+     * from {@code tools/list}.
+     */
+    private boolean handleUpstreamToolCall(HttpServletResponse response, JsonElement id, String toolName,
+            JsonObject arguments, java.util.List<String> upstreamIds) throws IOException {
+        com.sayonora.warp.mcp.upstream.McpUpstreamGateway.CallTarget target = upstreamGateway.resolve(toolName, upstreamIds);
+        if (target == null) {
+            return false;
+        }
+        long startNanos = System.nanoTime();
+        if (providerReadOnly && !target.readOnlyHint()) {
+            writeError(response, id, -32001, "tool \"" + toolName + "\" is blocked under WARP_MCP_READ_ONLY: "
+                    + "upstream \"" + target.upstream().name() + "\" does not mark it readOnlyHint:true, so it is "
+                    + "treated as write/mutating");
+            metrics.record(toolName, System.nanoTime() - startNanos, true);
+            return true;
+        }
+        try {
+            JsonObject result = upstreamGateway.callTool(target, arguments);
+            writeResult(response, id, result);
+            boolean isError = result.has("isError") && !result.get("isError").isJsonNull() && result.get("isError").getAsBoolean();
+            metrics.record(toolName, System.nanoTime() - startNanos, isError);
+        } catch (com.sayonora.warp.mcp.upstream.UpstreamRpcException e) {
+            // Relay the upstream's own JSON-RPC error verbatim (code/message/data), not wrapped.
+            writeError(response, id, e.code(), e.getMessage());
+            metrics.record(toolName, System.nanoTime() - startNanos, true);
+        } catch (com.sayonora.warp.mcp.upstream.UpstreamAuthException e) {
+            writeError(response, id, -32001, "upstream \"" + target.upstream().name() + "\" rejected Warp's "
+                    + "credentials: " + e.getMessage());
+            metrics.record(toolName, System.nanoTime() - startNanos, true);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            writeError(response, id, -32000, "upstream \"" + target.upstream().name() + "\" call failed: " + e.getMessage());
+            metrics.record(toolName, System.nanoTime() - startNanos, true);
+        }
+        return true;
+    }
+
     private void handleToolsCall(HttpServletResponse response, JsonElement id, JsonObject params,
             com.sayonora.warp.core.AccessContext accessContext) throws IOException {
         if (!params.has("name")) {
@@ -1374,6 +1443,13 @@ public final class WarpMcpServer {
         String toolName = params.get("name").getAsString();
         JsonObject arguments = params.has("arguments") && params.get("arguments").isJsonObject()
                 ? params.getAsJsonObject("arguments") : new JsonObject();
+
+        McpEndpoints.Endpoint upstreamEndpoint = CURRENT_ENDPOINT.get();
+        if (upstreamEndpoint != null && !upstreamEndpoint.upstreamIds().isEmpty()) {
+            if (handleUpstreamToolCall(response, id, toolName, arguments, upstreamEndpoint.upstreamIds())) {
+                return;
+            }
+        }
 
         long startNanos = System.nanoTime();
         boolean isError = true;

@@ -650,6 +650,25 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && target.startsWith("/api/mcp-upstreams")) {
+                    // The OAuth callback is hit by the operator's browser after a redirect from the
+                    // upstream's own authorization server -- it carries no Warp admin credentials, so
+                    // it is (like any OAuth redirect_uri) authenticated by the unguessable, single-use
+                    // "state" value instead, not the admin bearer token/role.
+                    boolean isCallback = "GET".equals(request.getMethod()) && target.endsWith("/oauth/callback");
+                    if (!isCallback && !authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    handleMcpUpstreams(target, request, response, configStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (com.sayonora.warp.ab.AbRoutingApi.handles(target)) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
@@ -1505,7 +1524,8 @@ public final class MetricsServer {
                         field(body, "mcpEndpoints", current.mcpEndpoints()),
                         field(body, "backendStores", current.backendStores()),
                         field(body, "backendSetNames", current.backendSetNames()),
-                        field(body, "connectionRoutes", current.connectionRoutes()));
+                        field(body, "connectionRoutes", current.connectionRoutes()),
+                        field(body, "mcpUpstreams", current.mcpUpstreams()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
@@ -1603,7 +1623,8 @@ public final class MetricsServer {
                         current.oauthRolesClaim(), current.awsIamCredentials(),
                         newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
-                        current.backendStores(), current.backendSetNames(), current.connectionRoutes());
+                        current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
+                        current.mcpUpstreams());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -1705,6 +1726,11 @@ public final class MetricsServer {
                             optionalString(body, "description"), now, createdBy, expiresAt,
                             com.sayonora.warp.mcp.McpEndpoints.hash(token),
                             body.has("urlToken") && !body.get("urlToken").isJsonNull() && body.get("urlToken").getAsBoolean());
+                    if (body.has("upstreamIds") && body.get("upstreamIds").isJsonArray()) {
+                        java.util.List<String> ids = new java.util.ArrayList<>();
+                        body.getAsJsonArray("upstreamIds").forEach(e -> ids.add(e.getAsString()));
+                        created = created.withUpstreamIds(ids);
+                    }
                     all.add(created);
                     writeMcpEndpoints(configStore, current, all);
                     JsonObject out = com.sayonora.warp.mcp.McpEndpoints.view(created, now);
@@ -1769,6 +1795,11 @@ public final class MetricsServer {
                         if (body.has("urlToken") && !body.get("urlToken").isJsonNull()) {
                             e = e.withUrlToken(body.get("urlToken").getAsBoolean());
                         }
+                        if (body.has("upstreamIds") && body.get("upstreamIds").isJsonArray()) {
+                            java.util.List<String> ids = new java.util.ArrayList<>();
+                            body.getAsJsonArray("upstreamIds").forEach(el -> ids.add(el.getAsString()));
+                            e = e.withUpstreamIds(ids);
+                        }
                         all.set(idx, e);
                         writeMcpEndpoints(configStore, current, all);
                         response.setStatus(HttpServletResponse.SC_OK);
@@ -1825,6 +1856,403 @@ public final class MetricsServer {
         }
     }
 
+    private static final Object MCP_UPSTREAM_LOCK = new Object();
+    // In-process OAuth "connect" state -> upstream id, so the callback (GET, no body) knows which
+    // upstream to attach the exchanged tokens to. Single-node scoped; see NOTES.md gap re: a
+    // multi-node cluster where the "Connect" click and the callback land on different nodes.
+    private final java.util.Map<String, String> mcpOauthStateToUpstreamId = new java.util.concurrent.ConcurrentHashMap<>();
+    private final com.sayonora.warp.mcp.upstream.UpstreamOAuthClient mcpOauthClient =
+            new com.sayonora.warp.mcp.upstream.UpstreamOAuthClient();
+
+    /**
+     * {@code /api/mcp-upstreams}: register/list/get/edit/delete other people's MCP servers that
+     * Warp re-exposes (namespaced) through its own MCP endpoints (see
+     * {@link com.sayonora.warp.mcp.upstream.McpUpstream}). Persisted as the {@code mcpUpstreams}
+     * field of the versioned {@code warp_config} document -- same hot-reload path as backends and
+     * mcp-endpoints. Secrets (bearer token, OAuth client secret/tokens) are accepted write-only and
+     * NEVER echoed back (see {@link com.sayonora.warp.mcp.upstream.McpUpstream#view}).
+     */
+    private void handleMcpUpstreams(String target, HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore) throws java.io.IOException {
+        response.setContentType("application/json; charset=utf-8");
+        java.time.Clock clock = java.time.Clock.systemUTC();
+        String rest = target.substring("/api/mcp-upstreams".length());
+        String id = rest.startsWith("/") && rest.length() > 1 ? rest.substring(1).replaceAll("/+$", "") : null;
+        String method = request.getMethod();
+        String action = null;
+        if (id != null) {
+            for (String suffix : new String[] {"/test", "/refresh-tools", "/oauth/start", "/oauth/callback"}) {
+                if (id.endsWith(suffix)) {
+                    action = suffix.substring(1);
+                    id = id.substring(0, id.length() - suffix.length());
+                    break;
+                }
+            }
+        }
+        try {
+            if (id != null && "test".equals(action) && "POST".equals(method)) {
+                handleMcpUpstreamTest(id, response, configStore);
+                return;
+            }
+            if (id != null && "refresh-tools".equals(action) && "POST".equals(method)) {
+                handleMcpUpstreamRefresh(id, response, configStore);
+                return;
+            }
+            if (id != null && "oauth/start".equals(action) && "POST".equals(method)) {
+                handleMcpUpstreamOauthStart(id, request, response, configStore);
+                return;
+            }
+            if (id != null && "oauth/callback".equals(action) && "GET".equals(method)) {
+                handleMcpUpstreamOauthCallback(id, request, response, configStore);
+                return;
+            }
+            synchronized (MCP_UPSTREAM_LOCK) {
+                WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                        .orElseGet(WarpConfig::fromEnvDefaults);
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
+                        new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.time.Instant now = clock.instant();
+                if (id == null && "GET".equals(method)) {
+                    com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+                    all.forEach(u -> arr.add(u.view()));
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.getWriter().write(arr.toString());
+                    return;
+                }
+                if (id == null && "POST".equals(method)) {
+                    JsonObject body = readJsonBody(request);
+                    String name = optionalString(body, "name");
+                    if (name == null || name.isBlank()) {
+                        throw new IllegalArgumentException("name is required");
+                    }
+                    String baseUrl = optionalString(body, "baseUrl");
+                    if (baseUrl == null || baseUrl.isBlank()) {
+                        throw new IllegalArgumentException("baseUrl is required");
+                    }
+                    String prefix = optionalString(body, "prefix");
+                    if (prefix == null || prefix.isBlank()) {
+                        prefix = com.sayonora.warp.mcp.upstream.McpUpstream.suggestPrefix(name);
+                    }
+                    if (!com.sayonora.warp.mcp.upstream.NamespaceUtil.isValidPrefix(prefix)) {
+                        throw new IllegalArgumentException("prefix \"" + prefix + "\" is not valid -- must match "
+                                + "[a-z][a-z0-9_]{0,31}");
+                    }
+                    final String finalPrefix = prefix;
+                    if (all.stream().anyMatch(u -> u.prefix().equalsIgnoreCase(finalPrefix))) {
+                        response.setStatus(HttpServletResponse.SC_CONFLICT);
+                        response.getWriter().write("{\"error\":" + jsonString("prefix \"" + finalPrefix
+                                + "\" is already used by another upstream") + "}");
+                        return;
+                    }
+                    com.sayonora.warp.mcp.upstream.McpUpstream.Transport transport =
+                            com.sayonora.warp.mcp.upstream.McpUpstream.Transport.valueOf(
+                                    optionalString(body, "transport") == null ? "STREAMABLE_HTTP"
+                                            : optionalString(body, "transport").toUpperCase(java.util.Locale.ROOT));
+                    com.sayonora.warp.mcp.upstream.McpUpstream.AuthMode authMode =
+                            com.sayonora.warp.mcp.upstream.McpUpstream.AuthMode.valueOf(
+                                    optionalString(body, "authMode") == null ? "NONE"
+                                            : optionalString(body, "authMode").toUpperCase(java.util.Locale.ROOT));
+                    com.sayonora.warp.mcp.upstream.McpUpstream created = new com.sayonora.warp.mcp.upstream.McpUpstream(
+                            com.sayonora.warp.mcp.upstream.McpUpstream.newId(), name, prefix, baseUrl, transport, authMode,
+                            !body.has("enabled") || body.get("enabled").isJsonNull() || body.get("enabled").getAsBoolean(),
+                            body.has("insecureSkipVerify") && !body.get("insecureSkipVerify").isJsonNull()
+                                    && body.get("insecureSkipVerify").getAsBoolean(),
+                            com.sayonora.warp.secrets.FieldCipher.encrypt(optionalString(body, "bearerToken")),
+                            optionalString(body, "oauthAuthorizeUrl"), optionalString(body, "oauthTokenUrl"),
+                            optionalString(body, "oauthClientId"),
+                            com.sayonora.warp.secrets.FieldCipher.encrypt(optionalString(body, "oauthClientSecret")),
+                            optionalString(body, "oauthScope"), null, null, null,
+                            "unknown", null, 0, now, now);
+                    all.add(created);
+                    writeMcpUpstreams(configStore, current, all);
+                    response.setStatus(HttpServletResponse.SC_CREATED);
+                    response.getWriter().write(created.view().toString());
+                    return;
+                }
+                if (id != null) {
+                    int idx = -1;
+                    for (int i = 0; i < all.size(); i++) {
+                        if (all.get(i).id().equals(id)) {
+                            idx = i;
+                        }
+                    }
+                    if (idx < 0) {
+                        response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                        response.getWriter().write("{\"error\":\"no such upstream\"}");
+                        return;
+                    }
+                    com.sayonora.warp.mcp.upstream.McpUpstream u = all.get(idx);
+                    if ("GET".equals(method)) {
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(u.view().toString());
+                        return;
+                    }
+                    if ("DELETE".equals(method)) {
+                        all.remove(idx);
+                        writeMcpUpstreams(configStore, current, all);
+                        if (mcpServer != null) {
+                            mcpServer.upstreams().invalidate(id);
+                        }
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write("{\"deleted\":true,\"id\":" + jsonString(id) + "}");
+                        return;
+                    }
+                    if ("PATCH".equals(method) || "PUT".equals(method)) {
+                        JsonObject body = readJsonBody(request);
+                        String bearerEnc = body.has("bearerToken") && !optionalString(body, "bearerToken").isBlank()
+                                ? com.sayonora.warp.secrets.FieldCipher.encrypt(optionalString(body, "bearerToken"))
+                                : u.bearerTokenEncrypted();
+                        String clientSecretEnc = body.has("oauthClientSecret") && !optionalString(body, "oauthClientSecret").isBlank()
+                                ? com.sayonora.warp.secrets.FieldCipher.encrypt(optionalString(body, "oauthClientSecret"))
+                                : u.oauthClientSecretEncrypted();
+                        com.sayonora.warp.mcp.upstream.McpUpstream updated = new com.sayonora.warp.mcp.upstream.McpUpstream(
+                                u.id(),
+                                body.has("name") ? optionalString(body, "name") : u.name(),
+                                body.has("prefix") ? optionalString(body, "prefix") : u.prefix(),
+                                body.has("baseUrl") ? optionalString(body, "baseUrl") : u.baseUrl(),
+                                body.has("transport") ? com.sayonora.warp.mcp.upstream.McpUpstream.Transport.valueOf(
+                                        optionalString(body, "transport").toUpperCase(java.util.Locale.ROOT)) : u.transport(),
+                                body.has("authMode") ? com.sayonora.warp.mcp.upstream.McpUpstream.AuthMode.valueOf(
+                                        optionalString(body, "authMode").toUpperCase(java.util.Locale.ROOT)) : u.authMode(),
+                                body.has("enabled") && !body.get("enabled").isJsonNull() ? body.get("enabled").getAsBoolean() : u.enabled(),
+                                body.has("insecureSkipVerify") && !body.get("insecureSkipVerify").isJsonNull()
+                                        ? body.get("insecureSkipVerify").getAsBoolean() : u.insecureSkipVerify(),
+                                bearerEnc,
+                                body.has("oauthAuthorizeUrl") ? optionalString(body, "oauthAuthorizeUrl") : u.oauthAuthorizeUrl(),
+                                body.has("oauthTokenUrl") ? optionalString(body, "oauthTokenUrl") : u.oauthTokenUrl(),
+                                body.has("oauthClientId") ? optionalString(body, "oauthClientId") : u.oauthClientId(),
+                                clientSecretEnc,
+                                body.has("oauthScope") ? optionalString(body, "oauthScope") : u.oauthScope(),
+                                u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(), u.oauthTokenExpiresAt(),
+                                u.healthStatus(), u.lastError(), u.discoveredToolCount(), u.createdAt(), clock.instant());
+                        all.set(idx, updated);
+                        writeMcpUpstreams(configStore, current, all);
+                        if (mcpServer != null) {
+                            mcpServer.upstreams().invalidate(id);
+                        }
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(updated.view().toString());
+                        return;
+                    }
+                }
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such route\"}");
+            }
+        } catch (java.sql.SQLException e) {
+            log.warn("mcp-upstreams admin API: database error", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        } catch (IllegalArgumentException | com.google.gson.JsonParseException | IllegalStateException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    /** {@code POST /api/mcp-upstreams/{id}/test}: connect + initialize + tools/list ONLY -- never
+     * calls a tool. Updates the stored health/lastError/discoveredToolCount so the console list
+     * reflects it without a separate refresh. */
+    private void handleMcpUpstreamTest(String id, HttpServletResponse response, ConfigStore configStore)
+            throws java.io.IOException {
+        try {
+            synchronized (MCP_UPSTREAM_LOCK) {
+                WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                        .orElseGet(WarpConfig::fromEnvDefaults);
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
+                        new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                int idx = indexOfUpstream(all, id);
+                if (idx < 0) {
+                    response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                    response.getWriter().write("{\"error\":\"no such upstream\"}");
+                    return;
+                }
+                com.sayonora.warp.mcp.upstream.McpUpstream u = all.get(idx);
+                com.sayonora.warp.mcp.upstream.McpUpstreamGateway.TestResult result =
+                        (mcpServer != null ? mcpServer.upstreams() : new com.sayonora.warp.mcp.upstream.McpUpstreamGateway()).test(u);
+                java.time.Instant now = java.time.Clock.systemUTC().instant();
+                com.sayonora.warp.mcp.upstream.McpUpstream updated = u.withHealth(
+                        result.ok() ? "ok" : "error", result.error(), result.toolCount(), now);
+                all.set(idx, updated);
+                writeMcpUpstreams(configStore, current, all);
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", result.ok());
+                out.addProperty("error", result.error());
+                out.addProperty("toolCount", result.toolCount());
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write(out.toString());
+            }
+        } catch (java.sql.SQLException e) {
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    private void handleMcpUpstreamRefresh(String id, HttpServletResponse response, ConfigStore configStore)
+            throws java.io.IOException {
+        if (mcpServer != null) {
+            mcpServer.upstreams().refreshTools(id);
+        }
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write("{\"refreshed\":true,\"id\":" + jsonString(id) + "}");
+    }
+
+    /** {@code POST /api/mcp-upstreams/{id}/oauth/start}: builds the upstream's authorize URL
+     * (discovering it via RFC 9728/8414, or falling back to the upstream's configured
+     * authorize/token URLs; performs RFC 7591 dynamic client registration if the upstream has no
+     * {@code oauthClientId} yet and the AS advertises a registration endpoint) for the admin
+     * console to redirect/popup the operator to. */
+    private void handleMcpUpstreamOauthStart(String id, HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore) throws java.io.IOException {
+        try {
+            WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                    .orElseGet(WarpConfig::fromEnvDefaults);
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
+                    com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams());
+            int idx = indexOfUpstream(all, id);
+            if (idx < 0) {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.getWriter().write("{\"error\":\"no such upstream\"}");
+                return;
+            }
+            com.sayonora.warp.mcp.upstream.McpUpstream u = all.get(idx);
+            String redirectUri = adminBaseUrl(request) + "/api/mcp-upstreams/" + id + "/oauth/callback";
+            String authorizeUrl = u.oauthAuthorizeUrl();
+            String tokenUrl = u.oauthTokenUrl();
+            String clientId = u.oauthClientId();
+            String clientSecret = u.oauthClientSecretPlain();
+            com.sayonora.warp.mcp.upstream.UpstreamOAuthClient.AuthServerMetadata discovered =
+                    mcpOauthClient.discover(u.baseUrl());
+            if (discovered != null) {
+                authorizeUrl = discovered.authorizeUrl() != null ? discovered.authorizeUrl() : authorizeUrl;
+                tokenUrl = discovered.tokenUrl() != null ? discovered.tokenUrl() : tokenUrl;
+                boolean registered = false;
+                if ((clientId == null || clientId.isBlank()) && discovered.registrationEndpoint() != null) {
+                    String[] reg = mcpOauthClient.registerClient(discovered.registrationEndpoint(), redirectUri);
+                    clientId = reg[0];
+                    clientSecret = reg[1];
+                    registered = true;
+                }
+                // Persist whatever discovery (and, if it happened, dynamic client registration)
+                // found -- NOT only on the DCR branch -- so the callback (a separate HTTP request,
+                // possibly on the request's own state but re-reading warp_config fresh) sees the
+                // same authorizeUrl/tokenUrl/clientId this "start" call is about to redirect to.
+                // Without this, an upstream that already HAD a manually-configured clientId (so DCR
+                // never ran) would discover a tokenUrl here but never save it, and the callback's
+                // token exchange would NPE on a null token endpoint.
+                if (!java.util.Objects.equals(authorizeUrl, u.oauthAuthorizeUrl())
+                        || !java.util.Objects.equals(tokenUrl, u.oauthTokenUrl()) || registered) {
+                    java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> updatedAll = new java.util.ArrayList<>(all);
+                    updatedAll.set(idx, new com.sayonora.warp.mcp.upstream.McpUpstream(u.id(), u.name(), u.prefix(), u.baseUrl(),
+                            u.transport(), u.authMode(), u.enabled(), u.insecureSkipVerify(), u.bearerTokenEncrypted(),
+                            authorizeUrl, tokenUrl, clientId,
+                            registered ? com.sayonora.warp.secrets.FieldCipher.encrypt(clientSecret) : u.oauthClientSecretEncrypted(),
+                            u.oauthScope(), u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(),
+                            u.oauthTokenExpiresAt(), u.healthStatus(), u.lastError(), u.discoveredToolCount(),
+                            u.createdAt(), java.time.Clock.systemUTC().instant()));
+                    writeMcpUpstreams(configStore, current, updatedAll);
+                }
+            }
+            if (authorizeUrl == null || tokenUrl == null || clientId == null) {
+                throw new IllegalStateException("upstream has no OAuth authorize/token URL and client_id -- "
+                        + "configure them manually (oauthAuthorizeUrl/oauthTokenUrl/oauthClientId) since this "
+                        + "upstream does not advertise RFC 9728/8414 discovery");
+            }
+            String state = java.util.UUID.randomUUID().toString();
+            mcpOauthStateToUpstreamId.put(state, id);
+            String url = mcpOauthClient.buildAuthorizeUrl(authorizeUrl, clientId, redirectUri, u.oauthScope(), state);
+            JsonObject out = new JsonObject();
+            out.addProperty("authorizeUrl", url);
+            out.addProperty("state", state);
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(out.toString());
+        } catch (java.sql.SQLException | java.io.IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("{\"error\":" + jsonString(String.valueOf(e.getMessage())) + "}");
+        } catch (IllegalStateException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":" + jsonString(e.getMessage()) + "}");
+        }
+    }
+
+    /** {@code GET /api/mcp-upstreams/{id}/oauth/callback?code=...&state=...}: the upstream's
+     * authorization server redirects the operator's browser here after consent; exchanges the code
+     * for tokens and stores them encrypted. */
+    private void handleMcpUpstreamOauthCallback(String id, HttpServletRequest request, HttpServletResponse response,
+            ConfigStore configStore) throws java.io.IOException {
+        response.setContentType("text/html; charset=utf-8");
+        String code = request.getParameter("code");
+        String state = request.getParameter("state");
+        String expectedUpstream = state == null ? null : mcpOauthStateToUpstreamId.remove(state);
+        if (code == null || state == null || expectedUpstream == null || !expectedUpstream.equals(id)) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("<html><body>OAuth callback: missing/invalid code or state.</body></html>");
+            return;
+        }
+        try {
+            synchronized (MCP_UPSTREAM_LOCK) {
+                WarpConfig current = configStore.readLatest().map(ConfigStore.Version::payload)
+                        .orElseGet(WarpConfig::fromEnvDefaults);
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
+                        new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                int idx = indexOfUpstream(all, id);
+                if (idx < 0) {
+                    response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                    response.getWriter().write("<html><body>no such upstream.</body></html>");
+                    return;
+                }
+                com.sayonora.warp.mcp.upstream.McpUpstream u = all.get(idx);
+                String redirectUri = adminBaseUrl(request) + "/api/mcp-upstreams/" + id + "/oauth/callback";
+                com.sayonora.warp.mcp.upstream.UpstreamOAuthClient.TokenResult tokens = mcpOauthClient.exchangeCode(
+                        u.oauthTokenUrl(), u.oauthClientId(), u.oauthClientSecretPlain(), redirectUri, code, state);
+                java.time.Instant now = java.time.Clock.systemUTC().instant();
+                com.sayonora.warp.mcp.upstream.McpUpstream updated = u.withOAuthTokens(
+                        com.sayonora.warp.secrets.FieldCipher.encrypt(tokens.accessToken()),
+                        com.sayonora.warp.secrets.FieldCipher.encrypt(tokens.refreshToken()),
+                        tokens.expiresAt(), now);
+                all.set(idx, updated);
+                writeMcpUpstreams(configStore, current, all);
+                if (mcpServer != null) {
+                    mcpServer.upstreams().invalidate(id);
+                }
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("<html><body>Connected \"" + escapeHtml(u.name())
+                        + "\" to Warp. You can close this window.</body></html>");
+            }
+        } catch (java.sql.SQLException | java.io.IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            log.warn("mcp-upstreams oauth callback: token exchange failed", e);
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.getWriter().write("<html><body>OAuth token exchange failed: " + escapeHtml(String.valueOf(e.getMessage()))
+                    + "</body></html>");
+        }
+    }
+
+    private static String escapeHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String adminBaseUrl(HttpServletRequest request) {
+        return request.getScheme() + "://" + request.getServerName() + ":" + request.getServerPort();
+    }
+
+    private static int indexOfUpstream(java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all, String id) {
+        for (int i = 0; i < all.size(); i++) {
+            if (all.get(i).id().equals(id)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static void writeMcpUpstreams(ConfigStore configStore, WarpConfig current,
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all) throws java.sql.SQLException {
+        configStore.write(current.withMcpUpstreams(all.isEmpty() ? null : com.sayonora.warp.mcp.upstream.McpUpstream.serialize(all)));
+    }
+
     private static void writeMcpEndpoints(ConfigStore configStore, WarpConfig current,
             java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all) throws java.sql.SQLException {
         WarpConfig updated = new WarpConfig(
@@ -1841,7 +2269,8 @@ public final class MetricsServer {
                 current.llmProvider(), current.llmApiKey(), current.llmBaseUrl(), current.llmModel(),
                 current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
-                current.backendStores(), current.backendSetNames(), current.connectionRoutes());
+                current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
+                current.mcpUpstreams());
         configStore.write(updated);
     }
 

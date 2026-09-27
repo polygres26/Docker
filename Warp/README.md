@@ -153,6 +153,9 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_MCP_REQUIRE_ENDPOINT` | `true` = the MCP listener serves only user-created endpoints (`/e/<id>` + bearer token) |
 | `WARP_MCP_KIND` | **Legacy override/filter only** (tools are now associated automatically from the backend types in scope): restrict an endpoint to families (`relational`, `dynamodb`, `influx`, `mongodb`, `s3`, ...; comma list); several families → `<kind>_`-prefixed tools, `/kinds/<kind>` paths |
 | *(admin API)* `/api/mcp-endpoints` | Create/list/get/PATCH/DELETE MCP endpoints with optional expiry (`expiresAt` ISO-8601 with offset, or `ttlSeconds`; null = never); stored in `warp_config.mcpEndpoints`, hot-reloaded — see WARP_GUIDE §8.5.2 |
+| *(admin API)* `/api/mcp-upstreams` | Register/list/get/PATCH/DELETE other MCP servers ("upstreams") that Warp re-exposes, namespaced, through its own MCP endpoints; `/{id}/test`, `/{id}/refresh-tools`, `/{id}/oauth/start`, `/{id}/oauth/callback`; stored in `warp_config.mcpUpstreams`, hot-reloaded — see WARP_GUIDE §13 |
+| `WARP_MCP_UPSTREAM_TIMEOUT_MS` | Per-call timeout (ms, default 10000) for a registered MCP upstream — see WARP_GUIDE §13 |
+| `WARP_MCP_UPSTREAM_INSECURE_SKIP_VERIFY` | `true` = allow (only alongside a per-upstream `insecureSkipVerify` flag) skipping TLS certificate verification to an MCP upstream; never default |
 | `WARP_ORACLE_BACKEND_MODE` / `WARP_MYWIRE_BACKEND` / `WARP_MSSQLWIRE_BACKEND` / `WARP_MCP_BACKEND` | Native-backend mode per frontend — proxy straight to a real Oracle/MySQL/SQL Server backend instead of dialect-translating into Postgres (§8.1.1) |
 | `WARP_TLS_KEYSTORE` | Shared keystore (PKCS12/JKS) for orawire TCPS / gRPC TLS / pgwire, mywire, mssqlwire in-band TLS; the global PEM pair `WARP_TLS_CERT` + `WARP_TLS_KEY` now works for these too |
 | `WARP_TLS_PORT` / `WARP_GRPC_TLS_PORT` | orawire TCPS port (2484) / native gRPC TLS port (17071) |

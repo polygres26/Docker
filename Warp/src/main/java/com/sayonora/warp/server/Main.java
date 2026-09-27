@@ -1079,6 +1079,7 @@ public final class Main {
         mcpServer.emulatedStores().setMongo(new com.sayonora.warp.mongowire.MongoWireEmbedded(
                 backendRegistry, mongoCache, sqlMetrics));
         mcpServer.endpoints().load(config.mcpEndpoints());
+        mcpServer.upstreams().load(config.mcpUpstreams());
         mcpServer.start();
         metricsServer.setMcpServer(mcpServer);
         com.sayonora.warp.mcp.McpScope mcpScope = com.sayonora.warp.mcp.McpScope.fromEnv();
@@ -1130,6 +1131,7 @@ public final class Main {
             backendRegistry.connectionRouter().load(c.connectionRoutes());
             com.sayonora.warp.core.StoreBootstrap.ensureAll(backendRegistry);
             mcpServer.endpoints().load(c.mcpEndpoints());
+            mcpServer.upstreams().load(c.mcpUpstreams());
             if (schemaAutoDiscoveryStage != null) {
                 schemaAutoDiscoveryStage.invalidateCatalogCache();
             }

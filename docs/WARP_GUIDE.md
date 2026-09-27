@@ -3581,3 +3581,118 @@ exists: exchanges, bindings, queues and messages live in the Postgres backends o
   publisher's row exactly once, exchange-to-exchange chains, dead-lettering across hosts), auth and vhosts, `WARP_POOL_MAX_SIZE=4` with 30 idle consumers, restart durability (queues, bindings, priorities and the
   unacknowledged message coming back flagged redelivered), a `kill -9` of the instance (its leases and exclusive queues released by the survivor), competing consumers (no loss, no duplicate), MCP tools, metrics, heartbeats, and 29 Java unit tests (codecs, topic and headers matching, argument
   validation, AMQP 1.0 types and message conversion). RabbitMQ's own `rabbitmq-perf-test` is not in the image (no Java runtime); the RTT comparison is in `docs/RTT_BASELINE_2026.md`.
+
+## 13. Warp as an MCP gateway for other MCP servers
+
+Separate from Warp's own MCP server (which exposes tools over Warp's *own* backends — SQL stores,
+Redis, GCS, Pub/Sub, etc., see §8), Warp can also register **other people's MCP servers** as
+"upstreams" and re-expose their tools through its own governed MCP endpoints, namespaced so several
+upstreams can combine on one endpoint without name collisions. This is Warp acting as an MCP
+*client* (and, for OAuth-secured upstreams, an OAuth *client*) — the opposite role from
+`WARP_OAUTH_ISSUER` (Warp as an OAuth *resource server* validating tokens presented by MCP callers).
+
+**Transport supported**: remote HTTP MCP servers only — Streamable HTTP (2025-03-26+ MCP spec) with
+a best-effort legacy HTTP+SSE fallback. A stdio/local-process upstream is a deliberately
+unimplemented extension point (`UpstreamTransport`), not built in this pass.
+
+### Data model
+
+An upstream is `{id, name, prefix, baseUrl, transport, authMode, enabled, insecureSkipVerify,
+healthStatus, lastError, discoveredToolCount, createdAt, updatedAt}` plus mode-specific credentials
+(bearer token, or OAuth authorize/token URLs + client id/secret + access/refresh tokens). Secrets are
+stored individually encrypted at rest (AES-256-GCM, `SAYONORA_ENCRYPTION_KEY`, the same
+`FieldCipher` scheme already used for backend passwords and AWS IAM credentials) and are **never**
+returned by the admin API — only a `hasBearerToken`/`oauthConnected` presence flag is. Upstreams
+persist as the `mcpUpstreams` field of the versioned `warp_config` document, so a create/edit/delete
+hot-reloads across every Warp node sharing that config database, the same LISTEN/NOTIFY path used
+for backends and MCP endpoints.
+
+An MCP endpoint (§8's user-created `/e/<id>` endpoints) gains an optional `upstreamIds: string[]`:
+the upstreams whose tools that endpoint merges into `tools/list`/`tools/call`, in addition to its
+native backend tools.
+
+### Namespacing rules
+
+An upstream registers with a short **prefix**, auto-suggested from its name (lowercased,
+non-`[a-z0-9]` runs collapsed to `_`, capped at 24 chars) and overridable by the operator; the admin
+API rejects a prefix that collides (case-insensitively) with another upstream already on the same
+endpoint. Its tool `t` is then advertised as `<prefix>_<sanitized t>` (sanitized to `[A-Za-z0-9_]`,
+illegal runs collapsed to `_`), and its description gets a short `" (via MCP upstream \"<name>\")"`
+suffix. Resolving a call back to the original (pre-sanitization) tool name is done by matching the
+namespaced name against the upstream's own live tool list, not by naive prefix-stripping, since
+sanitization is lossy. **Resources and prompts are not namespaced/passed through in this pass** —
+noted as a gap; only `tools/list`/`tools/call` are covered.
+
+### Auth modes
+
+- **`NONE`** — trusted/no-auth upstream, no credentials sent.
+- **`BEARER`** — a static token/API key, sent as `Authorization: Bearer <token>` on every call.
+- **`OAUTH`** — Warp performs the OAuth 2.0 authorization-code flow (with PKCE, S256) as the
+  client, against the upstream's own authorization server:
+  1. **`POST /api/mcp-upstreams/{id}/oauth/start`** — Warp attempts discovery: RFC 9728
+     protected-resource-metadata at the upstream's origin (`/.well-known/oauth-protected-resource`)
+     to find the authorization server, then RFC 8414 authorization-server-metadata
+     (`/.well-known/oauth-authorization-server`) for the authorize/token endpoints. If the upstream
+     doesn't advertise either, register it with manually-configured `oauthAuthorizeUrl`,
+     `oauthTokenUrl`, and `oauthClientId`/`oauthClientSecret` up front instead — discovery only fills
+     in what's missing, it never overrides a value the operator already configured other than
+     backfilling it into storage.
+  2. If discovery succeeded and no `oauthClientId` is configured, Warp performs RFC 7591 dynamic
+     client registration against the discovered `registration_endpoint`, storing the issued
+     client id/secret.
+  3. The response's `authorizeUrl` is where the operator's browser needs to go once (a "Connect"
+     step) — the admin console would open it in a popup/redirect; a `curl`/script flow can just
+     `GET` it and follow the redirect.
+  4. The upstream's authorization server redirects back to Warp's own
+     **`GET /api/mcp-upstreams/{id}/oauth/callback?code=...&state=...`** (no Warp admin credentials
+     needed on this one request — it is authenticated by the single-use, unguessable `state` value,
+     the same trust model as any OAuth `redirect_uri`). Warp exchanges the code for tokens and
+     stores them encrypted.
+  5. Tokens auto-refresh transparently (using the stored `refresh_token`) the next time a namespaced
+     tool on that upstream is discovered or called after the access token expires (30s skew).
+     **Known gap**: the refreshed token is currently swapped in-memory only, not immediately
+     re-persisted to `warp_config` — self-healing (it refreshes again next time) but not optimal on
+     a multi-node cluster or across a restart before the next independent refresh.
+
+### Governance
+
+An upstream tool is treated as **write/mutating unless it explicitly carries
+`annotations.readOnlyHint: true`** in its own `tools/list` definition. Under `WARP_MCP_READ_ONLY`,
+such a tool is hidden from `tools/list` and (defense in depth) also rejected at `tools/call` with a
+JSON-RPC error, exactly like Warp's own write-tagged native tools.
+
+### Resilience
+
+Each upstream is discovered/cached independently (60s TTL) behind its own timeout
+(`WARP_MCP_UPSTREAM_TIMEOUT_MS`, default 10s) and circuit breaker (3 consecutive failures opens it;
+cooldown backs off 5s→60s) — a down or slow upstream never blocks `tools/list` or other
+upstreams'/native tools on the same endpoint; its status is visible via the admin API instead.
+TLS to an upstream verifies certificates by default; `insecureSkipVerify` on the upstream plus the
+process-wide `WARP_MCP_UPSTREAM_INSECURE_SKIP_VERIFY=true` env flag are BOTH required to skip
+verification — there is no default-on insecure mode.
+
+### Admin API
+
+`GET/POST /api/mcp-upstreams`, `GET/PATCH/DELETE /api/mcp-upstreams/{id}`,
+`POST /api/mcp-upstreams/{id}/test` (connect + `initialize` + `tools/list` only — never calls a
+tool), `POST /api/mcp-upstreams/{id}/refresh-tools` (busts the 60s cache), `POST
+/api/mcp-upstreams/{id}/oauth/start`, `GET /api/mcp-upstreams/{id}/oauth/callback`.
+`POST/PATCH /api/mcp-endpoints` takes an additional `upstreamIds: string[]`.
+
+### Worked example (against the test fixture)
+
+The fake upstream fixture (`Warp/tests/python/mcp_gateway/mcpgw_fake_upstream.py`, used only by
+`tests/python/test_mcp_gateway.py`) exposes tools `add`, `get_time` (both `readOnlyHint: true`),
+`delete_thing` and `slow` (no safety annotation), plus an optional static bearer-token requirement
+and a minimal RFC 8414 authorization server. Registering it with prefix `demo` and including it on an
+endpoint advertises `demo_add`, `demo_get_time`, `demo_delete_thing`, `demo_slow` alongside that
+endpoint's native tools; calling `demo_add` with `{"a": 2, "b": 40}` forwards `add({"a": 2, "b": 40})`
+to the fixture and relays its `{"content": [{"type": "text", "text": "42"}]}` back verbatim.
+
+### Protocol uncertainties / what's verified only against the fixture
+
+Session-id (`Mcp-Session-Id`) handling, protocol-version negotiation, and the legacy HTTP+SSE
+fallback were exercised only against this project's own minimal fixture, not against a real
+third-party MCP server implementation — a production rollout should validate against the actual
+vendor server(s) it will register before relying on this in anger. Console UI for this feature was
+not built in this pass (see the admin API above for direct/scripted use in the meantime).
