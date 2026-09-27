@@ -40,7 +40,9 @@ export const NAV_GROUPS: NavGroup[] = [
         { to: '/access', label: 'Access rules' }, { to: '/access/identities', label: 'Identities' }, { to: '/access/authentication', label: 'Authentication' },
         { to: '/access/denied', label: 'Denied activity' }, { to: '/acl', label: 'ACL editor' }, { to: '/oauth', label: 'OAuth' },
       ] },
-      { label: 'Infrastructure', icon: Server, to: '/infrastructure', tabs: [{ to: '/infrastructure', label: 'Backend sets' }] },
+      { label: 'Infrastructure', icon: Server, to: '/infrastructure', tabs: [
+        { to: '/infrastructure', label: 'Backend sets' }, { to: '/certificates', label: 'Certificates' },
+      ] },
     ],
   },
   {

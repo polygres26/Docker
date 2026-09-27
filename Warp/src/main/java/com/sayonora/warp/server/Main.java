@@ -87,6 +87,9 @@ public final class Main {
             log.info("license: Enterprise edition verified for '{}'{} -- no Developer-tier limits apply",
                     license.licensedTo(), license.expiresAt() == null ? " (perpetual)" : " (expires " + license.expiresAt() + ")");
         }
+        // Built-in ACME (Let's Encrypt): must run before any HTTPS listener resolves its TLS material. Never throws;
+        // a bad configuration logs "ACME is NOT enabled: <reason>" and Warp continues.
+        com.sayonora.warp.tls.acme.AcmeService.start(options, System.getenv());
         ConfigStore.Version initialVersion = configStore.readLatest().orElse(null);
         if (initialVersion == null) {
             

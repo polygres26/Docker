@@ -35,6 +35,17 @@ public record TlsSettings(Source source, Path keystore, String keystorePassword,
         TlsSettings s = fromPrefix(p, "WARP_" + listener.toUpperCase(Locale.ROOT) + "_TLS_*", p, env);
         if (s == null) {
             s = fromPrefix("WARP_TLS_", "WARP_TLS_*", p, env);
+            // Built-in ACME supplies the global material unless the operator pointed WARP_TLS_CERT/KEY (or a keystore) at
+            // their own files; a dev-only WARP_TLS_SELF_SIGNED does not override a real ACME certificate.
+            java.nio.file.Path[] acme = com.sayonora.warp.tls.acme.AcmeService.managedPaths();
+            if (acme != null && (s == null || s.source() == Source.SELF_SIGNED)) {
+                Map<String, String> synth = new java.util.HashMap<>(env);
+                synth.remove("WARP_TLS_KEYSTORE");
+                synth.remove("WARP_TLS_SELF_SIGNED");
+                synth.put("WARP_TLS_CERT", acme[0].toString());
+                synth.put("WARP_TLS_KEY", acme[1].toString());
+                s = fromPrefix("WARP_TLS_", "ACME (WARP_ACME_DIR)", p, synth);
+            }
         }
         return s;
     }

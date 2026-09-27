@@ -44,8 +44,23 @@ function HttpsNotice({ cfg }: { cfg: McpConfig }) {
   if (cfg.tlsError) {
     return <Notice tone="bad">HTTPS could not be enabled: {cfg.tlsError}. Plaintext HTTP is still served.</Notice>
   }
+  if (cfg.acmeEnabled && cfg.acmePending) {
+    return (
+      <Notice tone="warn">
+        Built-in ACME (Let's Encrypt) is enabled but has not issued a real certificate yet
+        {cfg.acmeError ? <>: {cfg.acmeError}</> : ' (still working on it)'}. HTTPS is up with a temporary self-signed
+        certificate that Claude will not trust -- see the Certificates page under Infrastructure for status.
+      </Notice>
+    )
+  }
   if (cfg.claudeConnectorReady) {
-    return <Notice tone="ok">Claude connectors can use <code>{cfg.baseUrl}</code>{cfg.publicUrl ? ' (WARP_MCP_PUBLIC_URL)' : ''}.</Notice>
+    return (
+      <Notice tone="ok">
+        Claude connectors can use <code>{cfg.baseUrl}</code>
+        {cfg.publicUrl ? ' (WARP_MCP_PUBLIC_URL)' : cfg.acmeEnabled ? ' (built-in ACME certificate)' : ''}. Claude connectors
+        connect from Anthropic's cloud, so this hostname must resolve publicly to a host where this HTTPS port is reachable.
+      </Notice>
+    )
   }
   if (cfg.selfSigned) {
     return <Notice tone="warn">This listener serves a self-signed development certificate. Claude will not trust it: use it only with curl -k or clients that accept it, and use a real certificate (WARP_MCP_TLS_CERT and WARP_MCP_TLS_KEY) or a tunnel for Claude.</Notice>

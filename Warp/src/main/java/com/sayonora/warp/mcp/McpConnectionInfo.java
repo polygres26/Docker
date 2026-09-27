@@ -37,6 +37,10 @@ public final class McpConnectionInfo {
         if (pub != null) {
             return pub;
         }
+        String acme = acmeBase(info);
+        if (acme != null) {
+            return acme;
+        }
         String fwdHost = firstToken(req == null ? null : req.getHeader("X-Forwarded-Host"));
         String fwdProto = firstToken(req == null ? null : req.getHeader("X-Forwarded-Proto"));
         if (fwdHost != null) {
@@ -48,6 +52,19 @@ public final class McpConnectionInfo {
         }
         int hp = info != null && info.httpPort() > 0 ? info.httpPort() : httpPort;
         return "http://" + host + ":" + hp;
+    }
+
+    /** {@code https://<first ACME domain>[:port]} (port omitted when 443) when built-in ACME manages the certificate, else null. */
+    public static String acmeBase(TlsListeners.Info info) {
+        com.sayonora.warp.tls.acme.AcmeService a = com.sayonora.warp.tls.acme.AcmeService.instance();
+        if (a == null || !a.enabled() || info == null || info.httpsPort() <= 0) {
+            return null;
+        }
+        String host = a.config().domains().get(0);
+        if (host.startsWith("*.")) {
+            return null; // a wildcard is not a connectable host name
+        }
+        return "https://" + host + (info.httpsPort() == 443 ? "" : ":" + info.httpsPort());
     }
 
     public static JsonObject toJson(HttpServletRequest req, Map<String, String> env, int defaultHttpPort) {
@@ -69,7 +86,14 @@ public final class McpConnectionInfo {
         // Claude connectors need https:// AND a certificate that a public CA signed; self-signed never qualifies.
         boolean httpsBase = base.startsWith("https://");
         o.addProperty("https", httpsBase);
-        o.addProperty("claudeConnectorReady", httpsBase && !(pub == null && info != null && info.selfSigned()));
+        com.sayonora.warp.tls.acme.AcmeService acme = com.sayonora.warp.tls.acme.AcmeService.instance();
+        com.sayonora.warp.tls.acme.CertInfo acmeCert = acme != null && acme.enabled() ? acme.certificate() : null;
+        boolean acmePlaceholder = acmeCert != null && acmeCert.placeholder();
+        o.addProperty("acmeEnabled", acme != null && acme.enabled());
+        o.addProperty("acmePending", acmePlaceholder);
+        o.addProperty("acmeError", acme != null && acme.enabled() ? acme.statusJson().get("lastError").isJsonNull() ? null
+                : acme.statusJson().get("lastError").getAsString() : null);
+        o.addProperty("claudeConnectorReady", httpsBase && !(pub == null && info != null && info.selfSigned()) && !acmePlaceholder);
         return o;
     }
 

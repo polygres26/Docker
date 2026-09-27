@@ -456,6 +456,34 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (("/api/tls/certificates".equals(target) && "GET".equals(request.getMethod()))
+                        || ("/api/tls/renew".equals(target) && "POST".equals(request.getMethod()))) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setContentType("application/json; charset=utf-8");
+                    if ("POST".equals(request.getMethod())) {
+                        Object[] r = com.sayonora.warp.tls.acme.TlsAdminApi.renew();
+                        response.setStatus((Integer) r[0]);
+                        if ((Integer) r[0] == 429 && ((com.google.gson.JsonObject) r[1]).has("retryAt")) {
+                            long secs = Math.max(1, java.time.Duration.between(java.time.Instant.now(),
+                                    java.time.Instant.parse(((com.google.gson.JsonObject) r[1]).get("retryAt").getAsString())).getSeconds());
+                            response.setHeader("Retry-After", Long.toString(secs));
+                        }
+                        response.getWriter().write(r[1].toString());
+                    } else {
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(com.sayonora.warp.tls.acme.TlsAdminApi.certificates(System.getenv()).toString());
+                    }
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if ("/api/mcp-config".equals(target) && "GET".equals(request.getMethod())) {
                     if (!authorized(request.getMethod(), role)) {
                         response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);

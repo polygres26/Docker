@@ -104,6 +104,15 @@ public final class TlsProvider {
         }
     }
 
+    /** Reloads every file-based provider now (used after the ACME service writes a renewed certificate). */
+    public static void reloadAll() {
+        for (TlsProvider p : CACHE.values()) {
+            if (p.settings.source() == TlsSettings.Source.PEM) {
+                p.reloadNow();
+            }
+        }
+    }
+
     /** For tests: drops the shared-provider cache. */
     public static void clearCache() {
         CACHE.clear();

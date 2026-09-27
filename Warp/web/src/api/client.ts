@@ -823,6 +823,11 @@ export interface McpConfig {
   https: boolean
   /** https:// and not a self-signed certificate: what a Claude custom connector requires. */
   claudeConnectorReady: boolean
+  /** Built-in ACME (Let's Encrypt) is enabled and manages this listener's certificate. */
+  acmeEnabled: boolean
+  /** ACME is enabled but has not issued a real certificate yet (still serving the temporary self-signed placeholder). */
+  acmePending: boolean
+  acmeError: string | null
 }
 
 export async function getMcpConfig(): Promise<McpConfig> {
@@ -875,4 +880,72 @@ export async function getUsage(): Promise<{
 /** GET /config: the current warp_config version (and its creation time). */
 export async function getConfigVersion(): Promise<{ configStoreEnabled: boolean; version: number | null; createdAt?: string }> {
   return api('/config')
+}
+
+// --- TLS / built-in ACME (Let's Encrypt): /api/tls/certificates, /api/tls/renew ---
+
+export interface AcmeStatus {
+  enabled: boolean
+  reason?: string
+  domains?: string[]
+  directory?: string
+  staging?: boolean
+  challenge?: 'http-01' | 'dns-01'
+  dnsProvider?: string | null
+  renewDays?: number
+  keyType?: string
+  shared?: boolean
+  issuing?: boolean
+  lastRenewal?: string | null
+  lastAttempt?: string | null
+  lastError?: string | null
+  lastErrorAt?: string | null
+  lastOutcome?: string | null
+  failures?: number
+  nextCheck?: string | null
+  backoffUntil?: string | null
+  ordersPlaced?: number
+  httpPort?: number
+  httpError?: string | null
+  certificate?: TlsCertificate
+  renewalDue?: string | null
+}
+
+export interface TlsCertificate {
+  subject: string
+  issuer: string
+  domainNames: string[]
+  notBefore: string
+  notAfter: string
+  daysLeft: number
+  placeholder: boolean
+  sha256: string
+  serial: string
+  /** Where this certificate came from: built-in ACME, a file the operator pointed to, or a dev self-signed cert. */
+  source: 'acme' | 'file' | 'self-signed' | 'unavailable'
+  origin?: string
+  /** Comma-separated listener names (ADMIN, MCP, A2A) serving this exact certificate. */
+  listeners: string
+  lastRenewal?: string | null
+  lastError?: string | null
+  nextCheck?: string | null
+  challenge?: string
+  directory?: string
+  staging?: boolean
+  issuing?: boolean
+  failures?: number
+}
+
+export interface TlsCertificatesResponse {
+  acme: AcmeStatus
+  certificates: TlsCertificate[]
+}
+
+export async function getTlsCertificates(): Promise<TlsCertificatesResponse> {
+  return api('/api/tls/certificates')
+}
+
+/** POST /api/tls/renew: admin-only, force a renewal now. Guarded (429 + Retry-After) against hammering the CA. */
+export async function renewTlsCertificate(): Promise<{ status?: string; message?: string; error?: string; retryAt?: string }> {
+  return api('/api/tls/renew', { method: 'POST' })
 }

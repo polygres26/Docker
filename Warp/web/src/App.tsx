@@ -5,6 +5,7 @@ import Connect from './pages/Connect'
 import Overview from './pages/Overview'
 import Workloads from './pages/Workloads'
 import Infrastructure from './pages/Infrastructure'
+import Certificates from './pages/Certificates'
 import SqlDrivers from './pages/interfaces/SqlDrivers'
 import ApiEndpoints from './pages/interfaces/ApiEndpoints'
 import McpServers from './pages/interfaces/McpServers'
@@ -46,6 +47,7 @@ export default function App() {
       <Route path="/dashboard" element={<Navigate to="/overview" replace />} />
       <Route path="/workloads" element={<RequireAuth><Workloads /></RequireAuth>} />
       <Route path="/infrastructure" element={<RequireAuth><Infrastructure /></RequireAuth>} />
+      <Route path="/certificates" element={<RequireAuth><Certificates /></RequireAuth>} />
       <Route path="/interfaces/sql" element={<RequireAuth><SqlDrivers /></RequireAuth>} />
       <Route path="/interfaces/api" element={<RequireAuth><ApiEndpoints /></RequireAuth>} />
       <Route path="/interfaces/mcp" element={<RequireAuth><McpServers /></RequireAuth>} />

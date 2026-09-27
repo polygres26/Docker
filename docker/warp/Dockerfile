@@ -64,8 +64,14 @@ USER warp
 # docker-compose.yml's own port list for which ones this compose setup actually exposes).
 # SQL: 15432 pg, 13306 my, 14333 mssql, 11521 ora (2484 ora TLS). Stores: 27017 mongo, 18000 dynamo,
 # 16379 redis, 9200 opensearch, 8086 influx, 7687 bolt, 9324 sqs, 18020 s3, 4443 gcs, 4566 aws (sns,
-# kinesis, secrets, ssm, kms, sts), 8085 pubsub gRPC, 8088 bigtable, 8080 firestore, 8081 datastore, 19042 cassandra (CQL), 8182 gremlin (TinkerPop Gremlin Server: WebSocket + HTTP), 19092 kafka. Native: 7070/17071 gRPC, 18010 MCP, 19090 admin. HTTPS (only when WARP_TLS_CERT/KEY, WARP_TLS_KEYSTORE or WARP_<NAME>_TLS_* is set): 18443 MCP, 19443 admin, 18444 A2A, 18445 dynamodb, 18446 sqs, 18447 opensearch, 18448 influx, 18449 s3, 18450 gcs, 18451 aws unified, 18452 pubsub REST, 18457 cosmos, 18458/18459/18460 azure blob/queue/table, 18461 gremlin (https+wss).
-EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090 16379 8086 7687 18020 4443 4566 8085 8087 8088 8080 8081 19042 18030 19092 8182 18081 5672 18443 19443 18444 18445 18446 18447 18448 18449 18450 18451 18452 18457 18458 18459 18460 18461 5671 17379 19093 18453 18454 18455 18456
+# kinesis, secrets, ssm, kms, sts), 8085 pubsub gRPC, 8088 bigtable, 8080 firestore, 8081 datastore, 19042 cassandra (CQL), 8182 gremlin (TinkerPop Gremlin Server: WebSocket + HTTP), 19092 kafka. Native: 7070/17071 gRPC, 18010 MCP, 19090 admin. HTTPS (only when WARP_TLS_CERT/KEY, WARP_TLS_KEYSTORE, WARP_<NAME>_TLS_* or built-in ACME is set): 18443 MCP, 19443 admin, 18444 A2A, 18445 dynamodb, 18446 sqs, 18447 opensearch, 18448 influx, 18449 s3, 18450 gcs, 18451 aws unified, 18452 pubsub REST, 18457 cosmos, 18458/18459/18460 azure blob/queue/table, 18461 gremlin (https+wss).
+# ACME (WARP_ACME_DOMAINS): 8880 is the CONTAINER-side http-01 challenge port (WARP_ACME_HTTP_PORT default) -- a
+# non-privileged port so the container need not run as root or with cap_net_bind_service; map it to the HOST's
+# port 80 with `-p 80:8880` (Let's Encrypt's http-01 validator always connects to port 80, so the host side must
+# be 80 even though the container listens on 8880). Set WARP_ACME_HTTP_PORT=80 instead only if the container is
+# run with enough privilege to bind it directly. See docs/WARP_GUIDE.md "Automatic certificates (ACME / Let's
+# Encrypt)" for the full docker run / compose examples.
+EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090 16379 8086 7687 18020 4443 4566 8085 8087 8088 8080 8081 19042 18030 19092 8182 18081 5672 18443 19443 18444 18445 18446 18447 18448 18449 18450 18451 18452 18457 18458 18459 18460 18461 5671 17379 19093 18453 18454 18455 18456 8880
 
 # --add-opens flags: required by embedded Apache Ignite (CacheStage, only actually started when
 # WARP_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base

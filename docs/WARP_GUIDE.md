@@ -2834,6 +2834,146 @@ own sections. Clients trust the CA the usual way, for example `AWS_CA_BUNDLE` / 
 Azure and Google Python SDKs, `connection_verify` for `azure-cosmos`, `ca_certs` for `opensearch-py`, an `ssl_options` context for
 gremlinpython.
 
+#### 8.5.4 Automatic certificates (ACME / Let's Encrypt)
+
+Option 1 above (native HTTPS) needs a certificate. Rather than running certbot or another external ACME client
+alongside Warp, Warp can obtain and renew that certificate itself: a built-in RFC 8555 client (JDK-only, no
+external process) that talks to Let's Encrypt (or any RFC 8555-compliant CA) directly. This is what makes
+Option 1 self-contained: no tunnel, no reverse proxy, no separate renewal cron job — Warp presents a publicly
+trusted certificate straight from the container or host it runs on, which is exactly what a `claude.ai` custom
+connector needs (it connects from Anthropic's cloud, so the certificate must be signed by a CA every browser and
+server already trusts, and the hostname must resolve to a host where Warp's HTTPS port is actually reachable from
+the public internet).
+
+**Requirements before you turn this on:**
+
+- A DNS name you control, with an **A/AAAA record pointing at this host's public IP** (Let's Encrypt validates by
+  connecting to that name from the public internet; a name that resolves only on a private network cannot be validated
+  with http-01 or the CA's own DNS lookup for dns-01).
+- Either **port 80 reachable** from the public internet for the http-01 challenge (Let's Encrypt always connects to
+  port 80 for it, regardless of what port your MCP/admin HTTPS listener uses), or, for a host that cannot open port 80
+  (common behind NAT/CGNAT, e.g. a home network), **dns-01** through a DNS provider Warp can update on your behalf.
+- `WARP_ACME_TERMS_ACCEPTED=true` — an explicit acknowledgement that you accept the CA's subscriber agreement
+  (Let's Encrypt's is at <https://letsencrypt.org/repository/>); Warp refuses to proceed without it.
+
+**Minimal setup (http-01, the default):**
+
+```
+WARP_ACME_DOMAINS=warp.example.com
+WARP_ACME_EMAIL=ops@example.com
+WARP_ACME_TERMS_ACCEPTED=true
+```
+
+That alone is enough once DNS and port 80 are in place: Warp requests a certificate from Let's Encrypt's production
+directory, serves it on every HTTPS listener (admin 19443, MCP 18443, A2A 18444, and every API frontend in the table
+above — the ACME-managed material becomes the same as setting the global `WARP_TLS_CERT`/`WARP_TLS_KEY`, so nothing
+else needs to change), and keeps renewing it. `WARP_ACME_DOMAINS` is a comma list; the **first** name is the
+certificate's CN, and every name in the list becomes a SAN — so if you want `https://warp.example.com` for the MCP
+connector, put it first (or alone).
+
+**Strongly recommended first run: staging.** Let's Encrypt's production CA has tight, non-negotiable rate limits (a
+handful of certificates per exact domain set per week; far fewer duplicate orders); a misconfiguration discovered
+against production can lock you out of new certificates for days. Prove the setup against the **staging** CA first
+(untrusted certificates, much higher limits), then switch to production:
+
+```
+WARP_ACME_STAGING=true   # https://acme-staging-v02.api.letsencrypt.org/directory
+# ... once /api/tls/certificates shows a staging certificate issued cleanly and renewing:
+# remove WARP_ACME_STAGING (or set it to false) and restart to get a real, browser-trusted certificate.
+```
+
+**All the settings:**
+
+| Variable | Meaning |
+|---|---|
+| `WARP_ACME_DOMAINS` | Comma-separated DNS names; first = certificate CN, all = SANs. A wildcard (`*.example.com`) needs `WARP_ACME_CHALLENGE=dns-01` — public CAs cannot validate a wildcard, or any IP address or `localhost`, with http-01 |
+| `WARP_ACME_EMAIL` | Contact address the CA may use for expiry/problem notices (optional but recommended) |
+| `WARP_ACME_TERMS_ACCEPTED=true` | Required, explicit |
+| `WARP_ACME_DIRECTORY` | ACME directory URL (default Let's Encrypt production); `WARP_ACME_STAGING=true` selects the Let's Encrypt staging directory instead |
+| `WARP_ACME_DIR` | State directory: account key, `fullchain.pem`, `privkey.pem` (mode 600), `state.json` (default under Warp's working directory — mount a volume here in Docker, e.g. `-v warp-acme-state:/acme -e WARP_ACME_DIR=/acme`, so the account and certificate survive a restart instead of re-ordering) |
+| `WARP_ACME_CHALLENGE=http-01\|dns-01` | Default `http-01` |
+| `WARP_ACME_HTTP_PORT` | Port for the dedicated http-01 challenge listener (default 8880 in the published image — a non-privileged port so the container needs no extra capability; map the **host's** port 80 to it, e.g. `-p 80:8880`, since Let's Encrypt always connects to port 80). `WARP_ACME_HTTP_BIND` (default `0.0.0.0`), `WARP_ACME_HTTP_REDIRECT=true` (308 everything else to https) |
+| `WARP_ACME_RENEW_DAYS` | Renew when this many days remain (default 30) |
+| `WARP_ACME_KEY_TYPE=ec256\|rsa2048` | Certificate key type (default ec256) |
+| `WARP_ACME_DNS_PROVIDER=hook\|cloudflare\|route53` | dns-01 only (see below) |
+
+**dns-01**, for a host that cannot open port 80 (a home network behind a router, most CGNAT/mobile connections, a
+locked-down security zone) or for a wildcard certificate. Three provider modes, so it works wherever your DNS is
+actually hosted:
+
+- **`hook`** (works with *any* DNS host): `WARP_ACME_DNS_HOOK=/path/to/script.sh` runs your own script/command with
+  `ACME_DOMAIN`, `ACME_TXT_NAME` (`_acme-challenge.<domain>`), `ACME_TXT_VALUE` and `ACME_ACTION=present|cleanup` in
+  its environment; Warp waits `WARP_ACME_DNS_WAIT_SECONDS` (default 30) for propagation, optionally self-checking with
+  `WARP_ACME_DNS_CHECK=system` (the JVM's own resolver) or `WARP_ACME_DNS_CHECK=doh` (a DNS-over-HTTPS JSON query,
+  `WARP_ACME_DOH_URL`, default Cloudflare's `1.1.1.1` DoH endpoint) before asking the CA to validate. A non-zero exit
+  from the script fails the order.
+- **`cloudflare`**: `CLOUDFLARE_API_TOKEN` (a token scoped to `Zone:DNS:Edit` on the zone that owns the domain); Warp
+  finds the zone by walking the name's labels (`sub.example.com` → tries `sub.example.com`, then `example.com`) and
+  creates/deletes the TXT record through the Cloudflare v4 API.
+  **Not exercised against the real Cloudflare API** — verified here only against a local fake HTTP server that
+  implements the same `GET /zones`, `POST/GET/DELETE /zones/{id}/dns_records` shapes (see Testing below); the request
+  shapes are built from Cloudflare's published v4 API docs, not observed against a live account.
+- **`route53`**: standard AWS credential env vars (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
+  `AWS_SESSION_TOKEN`); Warp signs the request with SigV4 (reusing the same signing math as the existing
+  `awswire`/`ab` packages, extended to *produce* signed requests, not just verify them) and finds the hosted zone the
+  same way. **Not exercised against the real Route 53 API** — verified only against a local fake that independently
+  re-derives the SigV4 signature and checks it matches, plus hand-checked against the AWS SigV4 spec and Route 53's
+  published REST API.
+
+**Lifecycle.** On startup, an existing certificate in `WARP_ACME_DIR` with more than `WARP_ACME_RENEW_DAYS` left is
+used as-is (no new order); otherwise Warp issues one, serving a short-lived temporary self-signed certificate on every
+HTTPS listener in the meantime so nothing fails to bind (the admin console's *Certificates* page and
+`GET /api/mcp-config`'s `acmePending`/`acmeError` fields say so plainly — Claude will not trust this placeholder, by
+design). Warp checks daily, renews when `WARP_ACME_RENEW_DAYS` remain, and on any failure keeps the previous
+certificate and retries with exponential backoff (starting at 60s, doubling up to a 6-hour cap; a `rateLimited`
+response from the CA is honored via its `Retry-After` header, or waits at least an hour). **Multi-node**: when
+several Warp nodes share one control-plane Postgres (`WARP_HOST`/`_PORT`/... pointed at the same database) and
+`SAYONORA_ENCRYPTION_KEY` is set, a Postgres advisory lock elects exactly one node to talk to the CA; the account key
+and issued certificate are stored **encrypted** (`FieldCipher`, the same field-level AES-256-GCM already used for
+backend credentials) in a `warp_acme_state` table, and every node picks up the shared certificate within
+`WARP_ACME_SYNC_SECONDS` (default 60) — all nodes end up serving byte-identical HTTPS certificates. Without a shared
+control plane (or without the encryption key), each node manages its own certificate independently in its own
+`WARP_ACME_DIR`.
+
+**Admin API and console.** `GET /api/tls/certificates` returns every listener's certificate (source: `acme`, `file` or
+`self-signed`; domain names, issuer, `notBefore`/`notAfter`, days left, last renewal, last error, next check,
+challenge type, directory, staging flag) plus the ACME service's own status. `POST /api/tls/renew` (admin role only)
+forces a renewal now; it is rate-limit guarded (a repeat call within a few minutes, or while the CA is itself
+rate-limiting Warp, gets `429` with `Retry-After` instead of hammering the CA). The console's **Infrastructure →
+Certificates** tab shows all of this with a *Renew now* button (confirm dialog), and the **Interfaces → MCP servers**
+page's connector-URL panel explains that claude.ai connectors reach Warp from Anthropic's cloud, so the ACME domain
+must resolve publicly with the HTTPS port open, and shows `WARP_MCP_PUBLIC_URL` when set, else
+`https://<first ACME domain>[:port]` (port omitted when 443).
+
+**Adding the connector in claude.ai**, once `/api/tls/certificates` shows a real (non-placeholder, non-staging)
+certificate:
+
+1. Create a URL-token MCP endpoint: `POST /api/mcp-endpoints {"name": "claude", "scope": "all", "urlToken": true}`
+   (or the *Add endpoint* button on the MCP servers page, with the "URL token" checkbox on) — the response's
+   `urlWithToken` is `https://<host>/e/<endpointId>/t/<token>`.
+2. In claude.ai: **Settings → Connectors → Add custom connector**, paste that URL, choose **"No sign-in"** (there is
+   no separate authentication step — the token is already in the URL).
+3. Claude validates the endpoint (an internal `tools/list`) and the connector is ready.
+
+Warp has **no OAuth authorization server** (§8.5.3): the header-less URL token above is the *only* way a claude.ai
+custom connector can authenticate to Warp today, since claude.ai's connector UI offers just a URL and, optionally,
+OAuth. That also means the URL itself is a bearer credential — treat it like a password (it can leak through proxy
+access logs, browser history, and referrers; see §8.5.3's own caveat about the same header-less-token feature).
+
+**Never talks to a real CA in this repository's own tests.** Everything above was verified against a **local, scripted
+fake ACME server** (`Warp/tests/python/acme_fake_server.py`) implementing the RFC 8555 endpoints Warp actually calls —
+directory, new-nonce, new-account (JWS signature verified), new-order, authorizations, http-01 validation (fetches the
+challenge from Warp's own http-01 listener), dns-01 validation (reads the TXT value a hook/Cloudflare-fake/Route53-fake
+wrote), finalize (parses and validates the CSR), a real certificate signed by a generated test CA, and injectable
+failures (`badNonce`, `rateLimited`, arbitrary problem+json) — used as `WARP_ACME_DIRECTORY` in `Warp/tests/python/
+test_acme.py`. That proves the protocol implementation, the CSR/JWS/PEM handling, the hot-reload wiring, the
+multi-node control-plane path, and the failure/backoff behavior are all correct. It does **not** prove anything about
+Let's Encrypt's actual production behavior that only shows up against the real service: exact rate-limit thresholds
+and their exact reset semantics, ARI (`draft-ietf-acme-ari`, renewal-info hints Warp does not read), CA-side
+certificate profile selection or alternate chain offers (`?alt-chain`), and External Account Binding requirements for
+non-Let's-Encrypt CAs that need it. Run against the **staging** directory first in any environment you actually
+control, exactly as recommended above, before trusting this against production.
+
 ---
 
 ## 9. Caching

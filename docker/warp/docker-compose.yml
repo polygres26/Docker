@@ -54,6 +54,16 @@ services:
       # WARP_MCP_HTTPS_PORT: "18443"
       # WARP_ADMIN_HTTPS_PORT: "19443"
       # WARP_MCP_HTTP_DISABLED: "true"   # serve MCP over HTTPS only
+      #
+      # Built-in ACME (Let's Encrypt) -- automatically issues and renews a PUBLICLY TRUSTED certificate, so
+      # Claude's claude.ai custom connectors can connect DIRECTLY to this container with no tunnel/proxy.
+      # Requires a real DNS name pointing at this host and port 80 reachable for http-01 (mapped below to the
+      # container's WARP_ACME_HTTP_PORT default 8880); see docs/WARP_GUIDE.md "Automatic certificates".
+      # WARP_ACME_DOMAINS: warp.example.com
+      # WARP_ACME_EMAIL: ops@example.com
+      # WARP_ACME_TERMS_ACCEPTED: "true"
+      # WARP_ACME_STAGING: "true"   # remove once a staging run has proven the setup (real Let's Encrypt rate limits are tight)
+      # WARP_ACME_DIR: /acme        # mount a volume here so the certificate and account key survive a restart
     ports:
       - "15432:15432" # pgwire (Postgres wire protocol)
       - "13306:13306" # mywire (MySQL wire protocol)
@@ -107,6 +117,14 @@ services:
       - "18456:18456" # bigtablewire gRPC over TLS
       - "18454:18454" # firestorewire HTTPS + gRPC over TLS
       - "18455:18455" # datastorewire HTTPS + gRPC over TLS
+      # Built-in ACME http-01: Let's Encrypt always validates on port 80, so the HOST side must be 80 even
+      # though the container's own WARP_ACME_HTTP_PORT default is the non-privileged 8880 (uncomment with
+      # WARP_ACME_DOMAINS above; on a host that already uses port 80, use WARP_ACME_CHALLENGE=dns-01 instead
+      # and drop this mapping).
+      # - "80:8880"
+    # volumes:
+    #   - warp-acme-state:/acme   # account key + certificate + private key; survives restarts (mode 600 files)
 
 volumes:
   warp-postgres-data:
+  warp-acme-state:
