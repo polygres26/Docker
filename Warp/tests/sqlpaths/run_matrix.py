@@ -12,12 +12,18 @@ sp_engine_base.py, so the same driver runs MySQL/SQL Server plug-ins unmodified.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import importlib
 import json
 import os
 import sys
 import time
 import traceback
+
+# Per-scenario hard timeout (seconds). Protects the whole run from a single hung ADAPT scenario
+# (LLM-fallback-translator calls with no network access can otherwise hang indefinitely). Generous
+# enough for legitimate slow scenarios (100k-row fetch, 10MB LOB) but well under a minute.
+SCENARIO_TIMEOUT_SECS = float(os.environ.get("SP_SCENARIO_TIMEOUT", "45"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -57,12 +63,36 @@ def load_known_diffs(path):
     return diffs
 
 
+TIMEOUT = "TIMEOUT"  # distinct verdict from WARP_BUG -- see SCENARIO_TIMEOUT_SECS above
+
+
+class ScenarioTimeout(Exception):
+    pass
+
+
 def run_one(client_adapter, scenario, target, retries=1):
     last = None
     for _ in range(retries):
         try:
-            last = client_adapter.run(scenario, target)
-            return last
+            # Run in a fresh single-use worker thread with a hard wall-clock timeout so one
+            # scenario that hangs (e.g. ADAPT's LLM-fallback translator with no network access)
+            # cannot stall the whole 4-client x 3-path run. The worker thread is a daemon-ish
+            # throwaway: if it times out we abandon it (it may finish later in the background;
+            # its result is simply discarded) rather than blocking on it.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            fut = ex.submit(client_adapter.run, scenario, target)
+            try:
+                last = fut.result(timeout=SCENARIO_TIMEOUT_SECS)
+                ex.shutdown(wait=False)
+                return last
+            except concurrent.futures.TimeoutError:
+                ex.shutdown(wait=False)
+                last = sp_core.CanonicalResult(
+                    ok=False, error_code="SCENARIO_TIMEOUT",
+                    error_text=f"scenario exceeded {SCENARIO_TIMEOUT_SECS}s hard timeout "
+                               f"(possible ADAPT LLM-fallback hang or genuinely slow client)")
+                last._sp_timeout = True  # marker consumed by main() to force TIMEOUT verdict
+                return last
         except Exception as e:  # noqa: BLE001 -- adapter crash becomes an ERROR result, not a hard stop
             last = sp_core.CanonicalResult(ok=False, error_code="ADAPTER_EXCEPTION",
                                             error_text=f"{e}\n{traceback.format_exc()[-800:]}")
@@ -80,6 +110,12 @@ def main():
     ap.add_argument("--out-dir", default=os.path.join(HERE, "reports"))
     ap.add_argument("--reuse-oracle", default=None,
                      help="name:port of an already-running, healthy Oracle container to reuse")
+    ap.add_argument("--relay-oracle", default=None,
+                     help="name:port of a SEPARATE already-running Oracle container for RELAY's "
+                          "backend, distinct from the NATIVE-path/baseline container given via "
+                          "--reuse-oracle. Keeps native and relay from competing for Oracle "
+                          "Free's small session/process limit when both are exercised in the "
+                          "same run. If omitted, relay reuses the native container (old behavior).")
     ap.add_argument("--limit", type=int, default=None, help="cap number of scenarios (smoke runs)")
     ap.add_argument("--tags", default=None, help="comma list: only run scenarios with any of these tags/categories")
     args = ap.parse_args()
@@ -121,7 +157,13 @@ def main():
         if "relay" in paths:
             print("[run_matrix] starting Warp (RELAY: native-backend proxy mode)...")
             pg_for_relay = RealPostgres()  # relay still needs *a* Postgres primary for Warp itself
-            env = {**isolated_ports(engine.ENGINE.frontend_env_var), **engine.ENGINE.relay_env(native_handle)}
+            if args.relay_oracle:
+                rname, rport = args.relay_oracle.split(":")
+                relay_backend_handle = engine.use_existing(rname, int(rport))
+                print(f"[run_matrix] RELAY backend uses SEPARATE Oracle container: {relay_backend_handle}")
+            else:
+                relay_backend_handle = native_handle
+            env = {**isolated_ports(engine.ENGINE.frontend_env_var), **engine.ENGINE.relay_env(relay_backend_handle)}
             warp_procs["relay"] = (WarpProcess(pg_for_relay, engine.ENGINE.frontend_env_var,
                                                 frontend_name=f"{args.engine}-relay", extra_env=env),
                                     pg_for_relay)
@@ -167,14 +209,18 @@ def main():
                         target = engine.make_target(native_handle, warp_frontend_port=wp.frontend_port,
                                                      path=path, via_docker_host=via_docker)
                     res = run_one(adapter, scenario, target)
+                    timed_out = getattr(res, "_sp_timeout", False)
                     if path == "native":
                         per_client_native[cname] = res
+                        verdict = TIMEOUT if timed_out else ("PASS" if res.ok or scenario.expect == "error" else "ERROR")
                         results.append({"scenario": scenario.id, "client": cname, "path": path,
-                                         "verdict": "PASS" if res.ok or scenario.expect == "error" else "ERROR",
+                                         "verdict": verdict,
                                          "result": res.to_dict()})
                         continue
                     native_res = per_client_native.get(cname)
-                    if native_res is None:
+                    if timed_out:
+                        verdict, reason = TIMEOUT, f"scenario exceeded {SCENARIO_TIMEOUT_SECS}s hard timeout"
+                    elif native_res is None:
                         verdict, reason = "SKIP", "no native baseline for this client"
                     else:
                         verdict, reason = sp_core.classify(path, native_res, res, known_diffs, scenario)
