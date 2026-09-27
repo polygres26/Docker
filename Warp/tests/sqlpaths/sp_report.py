@@ -87,8 +87,8 @@ def render_markdown(engine, results) -> str:
 
 
 def _severity(r):
-    if r["path"] == "relay":
-        return "HIGH (RELAY should be a transparent proxy to real Oracle)"
+    if r["path"] in ("relay", "bridge"):
+        return f"HIGH ({r['path'].upper()} should be a transparent proxy to real Oracle)"
     if r["scenario"].startswith(("ora050", "ora051", "ora052", "ora053", "ora054")):
         return "MEDIUM (error-shape mismatch in ADAPT)"
     return "LOW-MEDIUM (ADAPT dialect-translation gap)"

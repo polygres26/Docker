@@ -85,6 +85,22 @@ def relay_env(handle: OracleHandle) -> dict:
     }
 
 
+def bridge_env(handle: OracleHandle) -> dict:
+    """Same env-var shape as relay_env -- Warp's orawire "Bridge" backend mode is (by design of
+    this slice) wired generically alongside "native": same startup, same real-Oracle-backend
+    pointer, only WARP_ORACLE_BACKEND_MODE differs. Bridge mode's Java implementation does not
+    exist yet at the time this was written (a separate, parallel effort is building it) -- this
+    just lets `--paths bridge` start a Warp instance and get graceful per-scenario CLIENT/WARP_BUG
+    results (most likely connection/login failures) rather than the CLI crashing outright. Once
+    Bridge mode lands in orawire, this function needs no changes to become meaningful."""
+    return {
+        "WARP_ORACLE_BACKEND_MODE": "bridge",
+        "WARP_ORACLE_HOST": handle.host,
+        "WARP_ORACLE_PORT": str(handle.port),
+        "WARP_ORACLE_SERVICE": ORACLE_SERVICE,
+    }
+
+
 def adapt_env(postgres_handle) -> dict:
     # Default mode ("jdbc") -- no WARP_ORACLE_BACKEND_MODE needed. PgOracleSupport (see
     # Warp/src/main/java/com/sayonora/warp/core/PgOracleSupport.java) probes for the pg_oracle
@@ -118,9 +134,11 @@ ENGINE = EnginePlugin(
     stop_native_db=stop_native_db,
     relay_env=relay_env,
     adapt_env=adapt_env,
+    bridge_env=bridge_env,
     clients=CLIENTS,
     frontend_env_var="WARP_ORAWIRE_PORT",
     known_diffs_path=os.path.join(SQLPATHS_DIR, "known", "oracle_adapt.yaml"),
+    golden_native_path=os.path.join(HERE, "golden", "golden_native.json.gz"),
 )
 
 
@@ -139,7 +157,10 @@ def make_target(native_handle, warp_frontend_port=None, path="native", tls=False
                        password=ORACLE_PASSWORD,
                        extra={"service": ORACLE_SERVICE, "tls": tls, "via_docker_host": False,
                               "is_native": True, "native_internal_port": 1521})
-    if path == "relay":
+    if path in ("relay", "bridge"):
+        # Both RELAY (native-backend proxy) and BRIDGE point at the same real Oracle backend with
+        # the same real Oracle creds -- structurally identical Target shape, just a different
+        # WARP_ORACLE_BACKEND_MODE at Warp startup (see relay_env/bridge_env above).
         return Target(host="localhost", port=warp_frontend_port, user=ORACLE_USER,
                        password=ORACLE_PASSWORD,
                        extra={"service": ORACLE_SERVICE, "tls": tls, "via_docker_host": via_docker_host,

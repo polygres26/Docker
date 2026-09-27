@@ -87,6 +87,17 @@ class CanonicalResult:
     def to_dict(self):
         return dataclasses.asdict(self)
 
+    @staticmethod
+    def from_dict(d: Optional[dict]) -> Optional["CanonicalResult"]:
+        """Inverse of to_dict(); used to reconstruct a golden-file entry (see golden_native.py)
+        back into a CanonicalResult for classify()/compare(). None passes through unchanged --
+        golden files use None to mark a case+client combination that was unstable at record time
+        (differed between the two recording runs) and is therefore not compared."""
+        if d is None:
+            return None
+        known = {f.name for f in dataclasses.fields(CanonicalResult)}
+        return CanonicalResult(**{k: v for k, v in d.items() if k in known})
+
 
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 _WS_RE = re.compile(r"\s+")

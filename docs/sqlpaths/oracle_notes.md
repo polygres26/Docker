@@ -8,12 +8,60 @@ real client tools against three real-backend paths (NATIVE / RELAY / ADAPT), nor
 result to a comparable canonical form, and classifies every RELAY/ADAPT result against that same
 client's own NATIVE result.
 
+## NATIVE is a frozen golden baseline, not a live path (methodology update)
+
+**As of this slice, no ordinary run of this framework live-executes a Warp-bypassing "native"
+connection any more.** Previously `--paths native,relay,adapt` freshly re-queried a real,
+directly-connected Oracle client on every single run as the "truth" to diff RELAY/ADAPT against.
+That is now recorded **once** into a frozen golden file and every ordinary run replays/diffs
+against it instead -- the exact same convention every other emulated-protocol conformance harness
+in this repo already uses (`Warp/tests/python/*_conformance/golden.json.gz`, e.g.
+`bt_conformance/bt_harness.py`'s `record()`/`replay_golden()`).
+
+- **Golden file**: `Warp/tests/sqlpaths/engines/oracle/golden/golden_native.json.gz` -- gzip JSON,
+  `{"engine", "recorded_at", "clients", "cases": {scenario_id: {client: CanonicalResult|null}}}`.
+  `null` marks a (scenario, client) pair that was unstable across the two recording runs (dropped,
+  same as `bt_harness.record()`'s `times=2` convention) and is never compared. Implementation:
+  `Warp/tests/sqlpaths/sp_golden.py` (`record_native`/`write_golden`/`load_golden`/`golden_result`).
+- **Recording it (rare, deliberate, one-time-ish operation)** -- run this only when you believe
+  Oracle's true behavior needs re-capturing (e.g. after an Oracle version upgrade), never as part
+  of routine CI/dev runs:
+  ```sh
+  python3 Warp/tests/sqlpaths/run_matrix.py --engine oracle --clients python,jdbc,sqlcl,sqlplus \
+      --record-native --reuse-oracle sp-oracle:11522
+  ```
+  This is the one deliberately-live-Oracle-direct step left in the whole framework. It runs each
+  scenario against each requested client's real, Warp-bypassing native connection, twice, keeps
+  only the stable (reproducing) results, and writes the golden file (`--golden-out` to override the
+  path, `--record-times` to change the re-run count).
+- **Ordinary runs** (`--paths relay,adapt,bridge`) load that frozen file once at startup
+  (`sp_golden.load_golden`) and classify every RELAY/ADAPT/BRIDGE result against the golden
+  per-client entry, via the same `sp_core.classify()` used before -- nothing about the
+  PASS/KNOWN_DIFF/WARP_BUG logic itself changed, only where the baseline comes from. Passing
+  `--paths native` explicitly is accepted but a no-op: `run_matrix.py` prints a note and drops it,
+  since NATIVE is never live-executed in this mode any more.
+- **What still touches the real Oracle container in an ordinary run**: it is still started/reused
+  as RELAY's and BRIDGE's real backend (Warp proxies to it) and, where applicable, as ADAPT's
+  translation target -- that is a connection **from Warp**, not a separate client bypassing Warp.
+  The thing that's gone is a second, direct client-to-Oracle-listener connection made purely to
+  produce the native/baseline diff.
+- **"bridge" as a `--paths` value**: wired generically, structurally identical to how "relay" is
+  handled (same env-var-driven Warp startup shape, `WARP_ORACLE_BACKEND_MODE=bridge` instead of
+  `=native`; see `sp_oracle_engine.bridge_env`/`EnginePlugin.bridge_env`). Orawire's Bridge mode
+  Java implementation does not exist yet as of this slice (a separate, parallel effort is building
+  it) -- running `--paths bridge` today starts a Warp instance in bridge mode and produces real,
+  per-scenario CLIENT/WARP_BUG-classified failures (most likely connection/login errors), which is
+  expected and not a framework crash. Nothing else needs to change here once Bridge mode lands.
+- **`test_sqlpaths_oracle.py`** now diffs RELAY against the golden file's `python` entries instead
+  of a live native connection (see that file's docstring).
+
 ## Layout
 
 ```
 Warp/tests/sqlpaths/
   sp_core.py            -- Scenario, CanonicalResult, normalization, comparison, classification
   sp_engine_base.py      -- the EnginePlugin/ClientAdapter/Target plug-in contract
+  sp_golden.py            -- golden native-baseline recording/loading (engine-neutral)
   sp_report.py           -- turns results into <engine>_matrix.md / .html (engine-neutral)
   run_matrix.py           -- CLI driver (generic; imports engines.<name>.sp_<name>_engine)
   known/oracle_adapt.yaml -- documented ADAPT (and a couple of any-path) differences, with reasons
@@ -24,8 +72,9 @@ Warp/tests/sqlpaths/
     sp_sqlcl_client.py     -- drives `sqlcl -S -L`, SET SQLFORMAT json
     sp_sqlplus_client.py   -- drives `docker exec <oracle-container> sqlplus -S`, SET MARKUP CSV ON
   engines/oracle/
-    sp_oracle_engine.py    -- container start/stop, RELAY/ADAPT env wiring, Target builder
+    sp_oracle_engine.py    -- container start/stop, RELAY/ADAPT/BRIDGE env wiring, Target builder
     scenarios.json          -- 70 engine-neutral scenarios across every category in the spec
+    golden/golden_native.json.gz  -- frozen NATIVE baseline (see above); recorded, not live
 Warp/tests/python/test_sqlpaths_oracle.py  -- pytest smoke wrapper (8 scenarios, python client,
                                               native+relay only -- fast enough for routine runs)
 ```
@@ -38,7 +87,7 @@ Warp first):
 ```sh
 cd Warp && mvn -q -o -Dmaven.test.skip=true package   # build the jar once
 python3 tests/sqlpaths/run_matrix.py --engine oracle \
-    --clients python,jdbc,sqlcl,sqlplus --paths native,relay,adapt
+    --clients python,jdbc,sqlcl,sqlplus --paths relay,adapt,bridge
 ```
 
 Faster iteration against an already-running, already-healthy Oracle container (skips the 1-3 min
@@ -49,8 +98,11 @@ docker run -d --name sp-oracle --memory 2500m -e ORACLE_PASSWORD=OraPass1 -p 115
     gvenzl/oracle-free:23-slim
 # wait for it healthy (see sp_oracle_engine._wait_ready for the exact readiness probe), then:
 python3 tests/sqlpaths/run_matrix.py --engine oracle --clients python \
-    --paths native,relay,adapt --reuse-oracle sp-oracle:11522
+    --paths relay,adapt,bridge --reuse-oracle sp-oracle:11522
 ```
+
+Note: `--paths` no longer needs (or live-executes) `native` -- see "NATIVE is a frozen golden
+baseline" above. Re-record the golden file (rare) with `--record-native` instead.
 
 Useful flags: `--limit N` (cap scenario count, smoke runs), `--tags cat1,cat2` (filter by
 category), `--clients python` (single client while iterating on one adapter).
