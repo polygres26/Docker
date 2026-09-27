@@ -768,6 +768,10 @@ export interface InterfaceInfo {
   tlsEnabled?: boolean
   httpsPort?: number | null
   selfSigned?: boolean
+  /** Protocol frontends (gRPC / raw TCP): off | in-band | sniff-allow | sniff-require | separate-port, and the TLS port. */
+  tlsMode?: 'off' | 'in-band' | 'sniff-allow' | 'sniff-require' | 'separate-port'
+  tlsPort?: number
+  tlsClientAuth?: boolean
   /** Why HTTPS is off although TLS was configured (bad certificate, missing file, ...). */
   tlsError?: string
 }

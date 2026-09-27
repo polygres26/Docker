@@ -153,7 +153,12 @@ Every setting is readable from **either** an env var or the `warp_config` Postgr
 | `WARP_MCP_KIND` | **Legacy override/filter only** (tools are now associated automatically from the backend types in scope): restrict an endpoint to families (`relational`, `dynamodb`, `influx`, `mongodb`, `s3`, ...; comma list); several families → `<kind>_`-prefixed tools, `/kinds/<kind>` paths |
 | *(admin API)* `/api/mcp-endpoints` | Create/list/get/PATCH/DELETE MCP endpoints with optional expiry (`expiresAt` ISO-8601 with offset, or `ttlSeconds`; null = never); stored in `warp_config.mcpEndpoints`, hot-reloaded — see WARP_GUIDE §8.5.2 |
 | `WARP_ORACLE_BACKEND_MODE` / `WARP_MYWIRE_BACKEND` / `WARP_MSSQLWIRE_BACKEND` / `WARP_MCP_BACKEND` | Native-backend mode per frontend — proxy straight to a real Oracle/MySQL/SQL Server backend instead of dialect-translating into Postgres (§8.1.1) |
-| `WARP_TLS_KEYSTORE` | Shared keystore for orawire TCPS / gRPC TLS |
+| `WARP_TLS_KEYSTORE` | Shared keystore (PKCS12/JKS) for orawire TCPS / gRPC TLS / pgwire, mywire, mssqlwire in-band TLS; the global PEM pair `WARP_TLS_CERT` + `WARP_TLS_KEY` now works for these too |
+| `WARP_TLS_PORT` / `WARP_GRPC_TLS_PORT` | orawire TCPS port (2484) / native gRPC TLS port (17071) |
+| `WARP_REDISWIRE_TLS_PORT` / `WARP_KAFKAWIRE_TLS_PORT` / `WARP_AMQPWIRE_TLS_PORT` | TLS ports of rediswire (17379, `rediss://`), kafkawire (19093, `SSL` listener) and amqpwire (5671, AMQPS); `0` disables. `WARP_KAFKAWIRE_TLS_ADVERTISED_HOST` / `_PORT` set the address Kafka advertises to SSL clients |
+| `WARP_PUBSUBWIRE_TLS_PORT` / `WARP_BIGTABLEWIRE_TLS_PORT` / `WARP_FIRESTOREWIRE_TLS_PORT` / `WARP_DATASTOREWIRE_TLS_PORT` | gRPC-over-TLS ports (18453 / 18456); Firestore (18454) and Datastore (18455) serve HTTPS and gRPC-over-TLS on the one port; `0` disables |
+| `WARP_MONGOWIRE_TLS_MODE` / `WARP_BOLTWIRE_TLS_MODE` / `WARP_CQLWIRE_TLS_MODE` | `disabled\|allow\|require` — TLS on the same port as plaintext (ClientHello sniffing); default `allow` when TLS material is configured |
+| `WARP_<NAME>_TLS_*` / `WARP_<NAME>_TLS_DISABLED` | per-protocol override (`NAME` = `GRPC`, `ORAWIRE`, `PGWIRE`, `MYWIRE`, `MSSQLWIRE`, `MONGOWIRE`, `REDISWIRE`, `BOLTWIRE`, `CQLWIRE`, `KAFKAWIRE`, `AMQPWIRE`, `PUBSUBWIRE`, `BIGTABLEWIRE`, `FIRESTOREWIRE`, `DATASTOREWIRE`) of the global `WARP_TLS_*` material; see WARP_GUIDE §3.5.1 |
 
 ## Security
 

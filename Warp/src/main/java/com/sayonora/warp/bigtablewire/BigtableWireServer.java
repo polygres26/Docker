@@ -27,6 +27,7 @@ public final class BigtableWireServer {
     private final BtConfig cfg;
     private final BtAdmin admin;
     private final Server grpc;
+    private final Server tlsGrpc;
     private final ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "bigtablewire-gc");
         t.setDaemon(true);
@@ -45,14 +46,19 @@ public final class BigtableWireServer {
         BtStore store = new BtStore(shards);
         this.admin = new BtAdmin(store);
         BtData data = new BtData(store, admin, cfg);
-        NettyServerBuilder b = NettyServerBuilder.forPort(grpcPort).maxInboundMessageSize(256 * 1024 * 1024)
-                .permitKeepAliveTime(1, TimeUnit.SECONDS).permitKeepAliveWithoutCalls(true)
-                .intercept(BtGrpc.auth(cfg.tokens));
-        new BtGrpc(data, admin, this::record).services().forEach(b::addService);
-        if (gate != null) {
-            b.intercept(new com.sayonora.warp.grpc.AclInterceptor(gate.acl()));
-        }
-        this.grpc = b.build();
+        java.util.function.IntFunction<NettyServerBuilder> mk = port -> {
+            NettyServerBuilder b = NettyServerBuilder.forPort(port).maxInboundMessageSize(256 * 1024 * 1024)
+                    .permitKeepAliveTime(1, TimeUnit.SECONDS).permitKeepAliveWithoutCalls(true)
+                    .intercept(BtGrpc.auth(cfg.tokens));
+            new BtGrpc(data, admin, this::record).services().forEach(b::addService);
+            if (gate != null) {
+                b.intercept(new com.sayonora.warp.grpc.AclInterceptor(gate.acl()));
+            }
+            return b;
+        };
+        this.grpc = mk.apply(grpcPort).build();
+        this.tlsGrpc = grpcPort == 0 ? null : com.sayonora.warp.tls.WireTls.grpcTwin("bigtablewire", "BIGTABLEWIRE", 18456,
+                System.getenv(), mk, com.sayonora.warp.tls.NettyTls::grpc);
     }
 
     private void record(String op, boolean write, long nanos) {
@@ -70,6 +76,7 @@ public final class BigtableWireServer {
 
     public void start() throws Exception {
         grpc.start();
+        com.sayonora.warp.tls.WireTls.startTwin("bigtablewire", "BIGTABLEWIRE", tlsGrpc);
         if (cfg.gcIntervalSeconds > 0) {
             sweeper.scheduleWithFixedDelay(() -> {
                 try {
@@ -87,6 +94,14 @@ public final class BigtableWireServer {
     public void stop() throws Exception {
         sweeper.shutdownNow();
         grpc.shutdownNow();
+        if (tlsGrpc != null) {
+            tlsGrpc.shutdownNow();
+        }
+    }
+
+    /** The gRPC TLS port, or -1. */
+    public int grpcTlsPort() {
+        return tlsGrpc == null ? -1 : tlsGrpc.getPort();
     }
 
     public int grpcPort() {

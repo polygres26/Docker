@@ -12,12 +12,24 @@ export function latencyFor(m: WireMetricsSummary | null, key: string | null): { 
   return { avgMs: rows.reduce((s, r) => s + r.totalMs, 0) / calls, samples: calls }
 }
 
-/** The HTTPS column: the https port when served, an honest "TLS not enabled" when the frontend could serve it but is not
- * configured (or the certificate failed to load), and a dash for protocols without an HTTP(S) listener. */
-function TlsCell({ i }: { i: InterfaceInfo }) {
-  if (i.tlsEnabled === undefined) return <span className={styles.sub} title="This protocol has no separate HTTPS listener">n/a</span>
-  if (i.tlsEnabled) return <span className={styles.mono} title={i.selfSigned ? 'Self-signed development certificate: clients will not trust it' : 'TLS'}>{i.httpsPort}{i.selfSigned ? ' (self-signed)' : ''}</span>
-  return <span className={styles.sub} title={i.tlsError ?? 'Set WARP_TLS_CERT and WARP_TLS_KEY (or WARP_TLS_KEYSTORE) to serve HTTPS'}>{i.tlsError ? 'TLS error' : 'TLS not enabled'}</span>
+/** The TLS column: port and convention when served; "TLS not enabled" (or "TLS error", with the reason on hover) when the frontend could
+ * serve TLS but is not configured or its certificate failed to load; a dash for frontends that report no TLS state at all. */
+export function TlsCell({ i }: { i: InterfaceInfo }) {
+  if (i.tlsEnabled === undefined) return <span className={styles.sub} title="This protocol reports no TLS state">n/a</span>
+  if (!i.tlsEnabled) {
+    return <span className={styles.sub} title={i.tlsError ?? 'Set WARP_TLS_CERT and WARP_TLS_KEY (or WARP_TLS_KEYSTORE) to enable TLS'}>{i.tlsError ? 'TLS error' : 'TLS not enabled'}</span>
+  }
+  const port = i.httpsPort ?? i.tlsPort
+  const how = i.tlsMode === 'in-band' ? 'in-band, same port'
+    : i.tlsMode === 'sniff-allow' ? 'same port, plaintext also allowed'
+    : i.tlsMode === 'sniff-require' ? 'same port, TLS required'
+    : i.tlsMode === 'separate-port' ? 'TLS port' : 'HTTPS'
+  return (
+    <span title={i.selfSigned ? 'Self-signed development certificate: clients will not trust it' : 'TLS'}>
+      <span className={styles.mono}>{port}</span>
+      <span className={styles.sub}> {how}{i.tlsClientAuth ? ', client cert' : ''}{i.selfSigned ? ', self-signed' : ''}</span>
+    </span>
+  )
 }
 
 /** Table of frontends: name/protocol, port, mode, serving set/backends, traffic, status. */
@@ -26,9 +38,9 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
 }) {
   if (rows.length === 0) return <EmptyState title={emptyTitle}>{emptyText}</EmptyState>
   return (
-    <DataTable caption="Interfaces" minWidth={940}>
+    <DataTable caption="Interfaces" minWidth={960}>
       <thead>
-        <tr><th>Interface</th><th>Port</th><th>HTTPS port</th><th>Mode</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
+        <tr><th>Interface</th><th>Port</th><th>TLS</th><th>Mode</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
       </thead>
       <tbody>
         {rows.map((i) => {

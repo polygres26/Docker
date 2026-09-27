@@ -591,19 +591,33 @@ public final class Main {
         com.sayonora.warp.http.admin.InterfaceRegistry.register("grpc", "Warp gRPC (native driver)", "sql", "gRPC", options.grpcPort(), null, null, "grpc");
 
         if (options.tlsEnabled()) {
-            
-            SSLSocketFactory tlsSocketFactory = TlsSupport.buildTlsContext(options).getSocketFactory();
-            log.info("TLS enabled (WARP_TLS_KEYSTORE={}): orawire TCPS on {}, pgwire+mywire negotiate TLS "
-                            + "in-band on their existing plain ports ({}, {})",
-                    options.tlsKeystorePath(), options.tlsPort(), options.pgWireListenPort(), options.myWireListenPort());
-
-            listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
-
-            grpcServer.startTls();
-            log.info("warp listening for gRPC TLS on port {}", options.grpcTlsPort());
-            com.sayonora.warp.http.admin.InterfaceRegistry.register("grpc-tls", "Warp gRPC over TLS", "sql", "gRPC (TLS)", options.grpcTlsPort(), null, null, "grpc");
+            log.info("SQL-side TLS requested (WARP_TLS_KEYSTORE / WARP_TLS_CERT+WARP_TLS_KEY / WARP_<NAME>_TLS_*): "
+                    + "orawire TCPS on {}, gRPC TLS on {}, pgwire+mywire+mssqlwire negotiate TLS in-band on their plain ports",
+                    options.tlsPort(), options.grpcTlsPort());
+            com.sayonora.warp.tls.TlsProvider oraTls = TlsSupport.provider(options, "ORAWIRE");
+            if (oraTls != null) {
+                SSLSocketFactory tlsSocketFactory = oraTls.sslContext().getSocketFactory();
+                listenerExecutor.submit(() -> acceptOraWireTlsLoop(options, tlsSocketFactory, backendPool, pipelineStages, backendRegistry, sessionExecutor, connectionGate, auditLog));
+            }
+            if (TlsSupport.enabled(options, "GRPC")) {
+                grpcServer.startTls();
+                log.info("warp listening for gRPC TLS on port {}", options.grpcTlsPort());
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("grpc-tls", "Warp gRPC over TLS", "sql", "gRPC (TLS)", options.grpcTlsPort(), null, null, "grpc");
+            }
+            Object[][] sqlTls = {{"grpc", "GRPC", "separate-port", options.grpcTlsPort()},
+                    {"orawire", "ORAWIRE", "separate-port", options.tlsPort()},
+                    {"pgwire", "PGWIRE", "in-band", options.pgWireListenPort()},
+                    {"mywire", "MYWIRE", "in-band", options.myWireListenPort()},
+                    {"mssqlwire", "MSSQLWIRE", "in-band", options.mssqlWireListenPort()}};
+            for (Object[] w : sqlTls) {
+                com.sayonora.warp.tls.TlsProvider p = TlsSupport.provider(options, (String) w[1]);
+                com.sayonora.warp.tls.WireTls.register(new com.sayonora.warp.tls.WireTls.Info((String) w[0], p != null,
+                        p == null ? "off" : (String) w[2], p == null ? -1 : (Integer) w[3], p != null && p.selfSigned(),
+                        p != null && p.settings().clientAuth() != com.sayonora.warp.tls.TlsSettings.ClientAuth.NONE,
+                        p == null ? "TLS not enabled for this listener (disabled or unusable configuration, see the log)" : null));
+            }
         } else {
-            log.info("TLS disabled (set WARP_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire in-band TLS / gRPC TLS)");
+            log.info("SQL-side TLS disabled (set WARP_TLS_CERT+WARP_TLS_KEY or WARP_TLS_KEYSTORE to enable orawire TCPS / pgwire+mywire+mssqlwire in-band TLS / gRPC TLS)");
         }
 
         final com.sayonora.warp.auth.PgRoleAuthCache roleAuthCache =
@@ -1320,8 +1334,9 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             log.info("warp listening for Bolt (Neo4j wire) on port {}", port);
             com.sayonora.warp.http.admin.InterfaceRegistry.register("boltwire", "Neo4j (Bolt)", "api", "Bolt", port, "Emulate", "neo4j", "boltwire");
+            com.sayonora.warp.tls.WireTls.Sniff boltTls = com.sayonora.warp.tls.WireTls.sniff("boltwire", "BOLTWIRE", port, System.getenv());
             acceptLoop("Bolt", serverSocket, connectionGate, sessionExecutor,
-                    clientSocket -> new com.sayonora.warp.boltwire.BoltWireSessionHandler(clientSocket, backendRegistry, sqlMetrics));
+                    clientSocket -> boltTls.wrap(clientSocket, s -> new com.sayonora.warp.boltwire.BoltWireSessionHandler(s, backendRegistry, sqlMetrics)));
         } catch (IOException e) {
             log.error("Bolt (boltwire) listener on port {} failed -- every other wire protocol is still up. "
                     + "Fix the config (see the cause below) and restart to bring boltwire back.", port, e);
@@ -1367,8 +1382,9 @@ public final class Main {
                     + "aggregate pipeline -- see MongoAggregationTranslator for its exact scope)",
                     mongoPort);
             com.sayonora.warp.http.admin.InterfaceRegistry.register("mongowire", "MongoDB", "api", "MongoDB wire", mongoPort, "Emulate", "mongodb", "mongowire");
+            com.sayonora.warp.tls.WireTls.Sniff mongoTls = com.sayonora.warp.tls.WireTls.sniff("mongowire", "MONGOWIRE", mongoPort, System.getenv());
             acceptLoop("MongoDB wire", serverSocket, connectionGate, sessionExecutor,
-                    clientSocket -> new MongoWireSessionHandler(clientSocket, backendRegistry, mongoCache, sqlMetrics));
+                    clientSocket -> mongoTls.wrap(clientSocket, s -> new MongoWireSessionHandler(s, backendRegistry, mongoCache, sqlMetrics)));
         } catch (IOException e) {
             log.error("MongoDB wire listener on port {} failed", mongoPort, e);
         }

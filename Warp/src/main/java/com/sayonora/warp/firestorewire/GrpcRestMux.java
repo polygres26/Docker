@@ -4,6 +4,7 @@ import io.grpc.Attributes;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcHttp2ConnectionHandler;
 import io.grpc.netty.shaded.io.grpc.netty.InternalProtocolNegotiationEvent;
 import io.grpc.netty.shaded.io.grpc.netty.InternalProtocolNegotiator;
+import io.grpc.netty.shaded.io.grpc.netty.InternalProtocolNegotiators;
 import io.grpc.netty.shaded.io.grpc.netty.ProtocolNegotiationEvent;
 import io.grpc.netty.shaded.io.netty.buffer.ByteBuf;
 import io.grpc.netty.shaded.io.netty.buffer.Unpooled;
@@ -74,6 +75,12 @@ public final class GrpcRestMux implements InternalProtocolNegotiator.ProtocolNeg
         this.rest = rest;
     }
 
+    /** The same gRPC + REST mux behind a TLS handshake (ALPN h2 / http/1.1), on the shared hot-reloading provider. */
+    public static InternalProtocolNegotiator.ProtocolNegotiator overTls(com.sayonora.warp.tls.TlsProvider provider, Rest rest) {
+        return com.sayonora.warp.tls.NettyTls.mux(provider, InternalProtocolNegotiators.serverPlaintext(),
+                h2 -> new Sniffer(h2, rest));
+    }
+
     @Override
     public AsciiString scheme() {
         return delegate.scheme();
@@ -134,7 +141,9 @@ public final class GrpcRestMux implements InternalProtocolNegotiator.ProtocolNeg
                 ctx.pipeline().replace(this, "http-codec", new HttpServerCodec());
                 ctx.pipeline().addAfter("http-codec", "http-agg", new HttpObjectAggregator(64 << 20));
                 ctx.pipeline().addAfter("http-agg", "http-rest", new RestHandler(rest));
-                ctx.pipeline().fireChannelRead(leftover);
+                // NOT pipeline().fireChannelRead: that starts at the head and would push already-decrypted bytes through a
+                // SslHandler again when this mux runs behind TLS. A replaced context forwards to its replacement (the codec).
+                ctx.fireChannelRead(leftover);
             }
         }
 

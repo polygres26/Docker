@@ -239,12 +239,13 @@ public final class MssqlWireSessionHandler implements Runnable {
         }
         Map<Integer, byte[]> clientOptions = PreLoginHandshake.parse(preloginReq.payload());
         byte requestedEncryption = PreLoginHandshake.requestedEncryption(clientOptions);
-        boolean willUpgrade = options.tlsEnabled()
+        boolean mssqlTls = TlsSupport.enabled(options, "MSSQLWIRE");
+        boolean willUpgrade = mssqlTls
                 && (requestedEncryption == PreLoginHandshake.ENCRYPT_ON
                         || requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED);
-        if (!options.tlsEnabled() && requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED) {
+        if (!mssqlTls && requestedEncryption == PreLoginHandshake.ENCRYPT_REQUIRED) {
             
-            log.warn("mssqlwire: client requires encryption but TLS isn't configured (set WARP_TLS_KEYSTORE)");
+            log.warn("mssqlwire: client requires encryption but TLS isn't configured (set WARP_TLS_CERT/WARP_TLS_KEY or WARP_TLS_KEYSTORE)");
             return null;
         }
         byte negotiatedEncryption = willUpgrade
@@ -256,14 +257,13 @@ public final class MssqlWireSessionHandler implements Runnable {
         if (willUpgrade) {
             
             try {
-                SSLContext sslContext = SSLContext.getInstance("TLS");
-                sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
+                SSLContext sslContext = TlsSupport.contextFor(options, "MSSQLWIRE");
                 
-                TdsTlsChannel tls = new TdsTlsChannel(sslContext, activeSocket);
+                TdsTlsChannel tls = new TdsTlsChannel(sslContext, activeSocket, TlsSupport.provider(options, "MSSQLWIRE").settings().clientAuth());
                 tls.handshake();
                 in = new DataInputStream(tls.inputStream());
                 out = tls.outputStream();
-            } catch (GeneralSecurityException e) {
+            } catch (RuntimeException e) {
                 throw new IOException("mssqlwire TLS upgrade failed", e);
             }
         }

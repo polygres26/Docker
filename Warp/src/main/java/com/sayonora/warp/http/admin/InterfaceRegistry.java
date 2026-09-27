@@ -91,6 +91,21 @@ public final class InterfaceRegistry {
                     o.addProperty("tlsError", tls.tlsError());
                 }
             }
+            // Protocol frontends (gRPC / raw TCP): WireTls.Info. Absent = never set up = TLS not enabled.
+            if (tls == null) {
+                String wid = e.id().endsWith("-native") ? e.id().substring(0, e.id().length() - 7) : e.id();
+                com.sayonora.warp.tls.WireTls.Info wt = com.sayonora.warp.tls.WireTls.info(wid);
+                o.addProperty("tlsEnabled", wt != null && wt.tlsEnabled());
+                o.addProperty("tlsMode", wt == null ? "off" : wt.mode());
+                if (wt != null && wt.tlsEnabled()) {
+                    o.addProperty("tlsPort", wt.tlsPort());
+                    o.addProperty("selfSigned", wt.selfSigned());
+                    o.addProperty("tlsClientAuth", wt.clientAuth());
+                }
+                if (wt != null && wt.error() != null) {
+                    o.addProperty("tlsError", wt.error());
+                }
+            }
             o.addProperty("requests", count);
             o.addProperty("metricsKey", e.metricsKey());
             arr.add(o);

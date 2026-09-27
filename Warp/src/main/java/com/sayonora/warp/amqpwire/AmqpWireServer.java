@@ -33,6 +33,7 @@ public final class AmqpWireServer {
     private final CredentialStore credentials = new CredentialStore();
     private final int port;
     private volatile ServerSocket serverSocket;
+    private volatile ServerSocket tlsSocket;
     private final ExecutorService sessions = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "amqpwire-session");
         t.setDaemon(true);
@@ -86,11 +87,35 @@ public final class AmqpWireServer {
         Thread t = new Thread(this::acceptLoop, "amqpwire-accept");
         t.setDaemon(true);
         t.start();
+        startTlsListener();
         broker.start();
         log.info("warp amqpwire listening on port {}", ss.getLocalPort());
     }
 
+    /** The TLS port, or -1 when no TLS listener is running. */
+    public int tlsPort() {
+        ServerSocket s = tlsSocket;
+        return s == null ? -1 : s.getLocalPort();
+    }
+
+    private void startTlsListener() {
+        ServerSocket ts = com.sayonora.warp.tls.WireTls.tlsServerSocket("amqpwire", "AMQPWIRE", 5671, System.getenv());
+        if (ts != null) {
+            tlsSocket = ts;
+            Thread t = new Thread(() -> acceptLoop(ts), "amqpwire-tls-accept");
+            t.setDaemon(true);
+            t.start();
+        }
+    }
+
     public void close() {
+        try {
+            if (tlsSocket != null) {
+                tlsSocket.close();
+            }
+        } catch (IOException ignored) {
+            // closing
+        }
         try {
             if (serverSocket != null) {
                 serverSocket.close();
@@ -103,7 +128,10 @@ public final class AmqpWireServer {
     }
 
     private void acceptLoop() {
-        ServerSocket ss = serverSocket;
+        acceptLoop(serverSocket);
+    }
+
+    private void acceptLoop(ServerSocket ss) {
         while (!ss.isClosed()) {
             Socket client;
             try {

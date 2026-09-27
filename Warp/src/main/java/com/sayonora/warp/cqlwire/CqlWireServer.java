@@ -38,6 +38,7 @@ public final class CqlWireServer {
     private final int port;
     private final long sweepMs;
     private volatile ServerSocket serverSocket;
+    private volatile com.sayonora.warp.tls.WireTls.Sniff sniff = new com.sayonora.warp.tls.WireTls.Sniff(com.sayonora.warp.tls.WireTls.Mode.DISABLED, null);
     private final ExecutorService sessions = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "cqlwire-session");
         t.setDaemon(true);
@@ -143,6 +144,7 @@ public final class CqlWireServer {
         ss.setReuseAddress(true);
         ss.bind(new InetSocketAddress(port), 1024);
         serverSocket = ss;
+        sniff = com.sayonora.warp.tls.WireTls.sniff("cqlwire", "CQLWIRE", ss.getLocalPort(), System.getenv());
         Thread t = new Thread(this::acceptLoop, "cqlwire-accept");
         t.setDaemon(true);
         t.start();
@@ -193,7 +195,7 @@ public final class CqlWireServer {
                     continue;
                 }
                 gated = true;
-                sessions.execute(new CqlSession(this, client, gate::release));
+                sessions.execute(sniff.wrap(client, s -> new CqlSession(this, s, gate::release), gate::release));
                 gated = false;
             } catch (Exception e) {
                 log.warn("cqlwire: dropping a connection that could not be served: {}", e.toString());

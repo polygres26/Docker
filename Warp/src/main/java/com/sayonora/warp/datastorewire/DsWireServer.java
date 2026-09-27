@@ -36,6 +36,7 @@ public final class DsWireServer {
     private final BackendRegistry registry;
     private final SqlMetricsCollector metrics;
     private final Server server;
+    private final Server tlsServer;
 
     public DsWireServer(int port, BackendRegistry registry, ConnectionGate gate, SqlMetricsCollector metrics) {
         this(port, registry, gate, metrics, DsConfig.fromEnv());
@@ -68,12 +69,14 @@ public final class DsWireServer {
                 return next.startCall(call, headers);
             }
         };
-        this.server = NettyServerBuilder.forPort(port)
+        DsRest rest = new DsRest(svc, cfg, hooks);
+        java.util.function.IntFunction<NettyServerBuilder> mk = p -> NettyServerBuilder.forPort(p)
                 .addService(new DsGrpc(svc, hooks))
                 .intercept(auth)
-                .maxInboundMessageSize(32 << 20)
-                .protocolNegotiator(new GrpcRestMux(InternalProtocolNegotiators.serverPlaintext(), new DsRest(svc, cfg, hooks)))
-                .build();
+                .maxInboundMessageSize(32 << 20);
+        this.server = mk.apply(port).protocolNegotiator(new GrpcRestMux(InternalProtocolNegotiators.serverPlaintext(), rest)).build();
+        this.tlsServer = port == 0 ? null : com.sayonora.warp.tls.WireTls.grpcTwin("datastorewire", "DATASTOREWIRE", 18455,
+                System.getenv(), mk, tp -> GrpcRestMux.overTls(tp, rest));
     }
 
     private void record(String op, boolean write, long nanos) {
@@ -91,7 +94,13 @@ public final class DsWireServer {
 
     public void start() throws Exception {
         server.start();
+        com.sayonora.warp.tls.WireTls.startTwin("datastorewire", "DATASTOREWIRE", tlsServer);
         log.info("warp datastorewire (gRPC + REST) listening on port {}", server.getPort());
+    }
+
+    /** The HTTPS + gRPC-over-TLS port, or -1. */
+    public int tlsPort() {
+        return tlsServer == null ? -1 : tlsServer.getPort();
     }
 
     public int port() {
@@ -100,5 +109,8 @@ public final class DsWireServer {
 
     public void stop() {
         server.shutdownNow();
+        if (tlsServer != null) {
+            tlsServer.shutdownNow();
+        }
     }
 }

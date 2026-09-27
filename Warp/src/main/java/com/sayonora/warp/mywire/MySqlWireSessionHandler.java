@@ -288,23 +288,19 @@ public final class MySqlWireSessionHandler implements Runnable {
         byte[] scramble = new byte[20];
         new SecureRandom().nextBytes(scramble);
         long connectionId = NEXT_CONNECTION_ID.getAndIncrement();
-        packets.writePayload(out, MySqlMessages.handshakeV10(connectionId, scramble, options.tlsEnabled()));
+        packets.writePayload(out, MySqlMessages.handshakeV10(connectionId, scramble, TlsSupport.enabled(options, "MYWIRE")));
 
         byte[] response = packets.readPayload(in);
         int clientCapabilities = (response[0] & 0xFF) | ((response[1] & 0xFF) << 8)
                 | ((response[2] & 0xFF) << 16) | ((response[3] & 0xFF) << 24);
-        if (options.tlsEnabled() && (clientCapabilities & MySqlMessages.CLIENT_SSL) != 0) {
+        if (TlsSupport.enabled(options, "MYWIRE") && (clientCapabilities & MySqlMessages.CLIENT_SSL) != 0) {
             try {
-                SSLContext sslContext = SSLContext.getInstance("TLS");
-                sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
-                SSLSocketFactory factory = sslContext.getSocketFactory();
-                SSLSocket sslSocket = (SSLSocket) factory.createSocket(activeSocket, null, activeSocket.getPort(), true);
-                sslSocket.setUseClientMode(false);
+                SSLSocket sslSocket = TlsSupport.provider(options, "MYWIRE").wrapServer(activeSocket, null);
                 sslSocket.startHandshake();
                 activeSocket = sslSocket;
                 in = new DataInputStream(sslSocket.getInputStream());
                 out = sslSocket.getOutputStream();
-            } catch (GeneralSecurityException e) {
+            } catch (RuntimeException e) {
                 throw new IOException("mywire TLS upgrade failed", e);
             }
             response = packets.readPayload(in);

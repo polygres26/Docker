@@ -154,7 +154,7 @@ public final class ServerOptions {
     public static ServerOptions parse(String[] args) {
         
         String keystorePath = System.getenv("WARP_TLS_KEYSTORE");
-        boolean tlsEnabled = keystorePath != null && !keystorePath.isBlank();
+        boolean tlsEnabled = TlsSupport.configured(System.getenv());
         int tlsPort = parseIntEnv("WARP_TLS_PORT", 2484);
         int grpcTlsPort = parseIntEnv("WARP_GRPC_TLS_PORT", 17071);
         String keystorePassword = System.getenv("WARP_TLS_KEYSTORE_PASSWORD");

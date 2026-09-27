@@ -26,8 +26,19 @@ public final class TdsTlsChannel {
     private final ChannelOutputStream out = new ChannelOutputStream();
 
     public TdsTlsChannel(SSLContext sslContext, Socket socket) throws IOException {
+        this(sslContext, socket, com.sayonora.warp.tls.TlsSettings.ClientAuth.NONE);
+    }
+
+    public TdsTlsChannel(SSLContext sslContext, Socket socket, com.sayonora.warp.tls.TlsSettings.ClientAuth clientAuth)
+            throws IOException {
         this.engine = sslContext.createSSLEngine();
         engine.setUseClientMode(false);
+        switch (clientAuth) {
+            case NEED -> engine.setNeedClientAuth(true);
+            case WANT -> engine.setWantClientAuth(true);
+            default -> {
+            }
+        }
         
         engine.setEnabledProtocols(new String[] {"TLSv1.2"});
         this.rawIn = new DataInputStream(socket.getInputStream());

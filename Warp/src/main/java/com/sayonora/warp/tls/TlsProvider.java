@@ -230,6 +230,62 @@ public final class TlsProvider {
         }
     }
 
+    private volatile int nettyCacheGeneration = -1;
+    private volatile SslContext nettyCache;
+    private volatile SslContext nettyCacheMux;
+
+    /**
+     * A Netty context that follows reloads: rebuilt lazily when {@link #generation()} changed. {@code mux=true} advertises
+     * ALPN {@code h2} and {@code http/1.1} (gRPC + REST on one port); otherwise gRPC's default ({@code h2} only).
+     */
+    public synchronized SslContext nettyContext(boolean mux) {
+        if (nettyCacheGeneration != generation) {
+            nettyCache = nettySslContext();
+            nettyCacheMux = buildNettyMux();
+            nettyCacheGeneration = generation;
+        }
+        return mux ? nettyCacheMux : nettyCache;
+    }
+
+    private SslContext buildNettyMux() {
+        try {
+            TlsMaterial m = material;
+            SslContextBuilder b = SslContextBuilder.forServer(m.keyManagerFactory()).protocols(settings.protocols());
+            if (m.trustManagerFactory() != null) {
+                b.trustManager(m.trustManagerFactory());
+            }
+            b.clientAuth(switch (settings.clientAuth()) {
+                case NEED -> ClientAuth.REQUIRE;
+                case WANT -> ClientAuth.OPTIONAL;
+                default -> ClientAuth.NONE;
+            });
+            GrpcSslContexts.configure(b);
+            b.applicationProtocolConfig(new io.grpc.netty.shaded.io.netty.handler.ssl.ApplicationProtocolConfig(
+                    io.grpc.netty.shaded.io.netty.handler.ssl.ApplicationProtocolConfig.Protocol.ALPN,
+                    io.grpc.netty.shaded.io.netty.handler.ssl.ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
+                    io.grpc.netty.shaded.io.netty.handler.ssl.ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT,
+                    "h2", "http/1.1"));
+            return b.build();
+        } catch (javax.net.ssl.SSLException e) {
+            throw new TlsException("cannot build Netty SslContext: " + e.getMessage(), e);
+        }
+    }
+
+    /** Wraps an accepted plain socket in a server-mode TLS socket; {@code consumed} are bytes already read from it. */
+    public javax.net.ssl.SSLSocket wrapServer(Socket raw, byte[] consumed) throws IOException {
+        javax.net.ssl.SSLSocket s = (javax.net.ssl.SSLSocket) sslContext.getSocketFactory().createSocket(raw,
+                new java.io.ByteArrayInputStream(consumed == null ? new byte[0] : consumed), true);
+        s.setUseClientMode(false);
+        s.setEnabledProtocols(settings.protocols());
+        switch (settings.clientAuth()) {
+            case NEED -> s.setNeedClientAuth(true);
+            case WANT -> s.setWantClientAuth(true);
+            default -> {
+            }
+        }
+        return s;
+    }
+
     // ---- (c) JDK / raw TCP ----
 
     public SSLContext sslContext() {

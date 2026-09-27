@@ -39,6 +39,7 @@ public final class KafkaWireServer {
     private final long sweepMs;
     private final int maxRequestBytes;
     private volatile ServerSocket serverSocket;
+    private volatile ServerSocket tlsSocket;
     private final ExecutorService sessions = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "kafkawire-session");
         t.setDaemon(true);
@@ -131,6 +132,15 @@ public final class KafkaWireServer {
         Thread t = new Thread(this::acceptLoop, "kafkawire-accept");
         t.setDaemon(true);
         t.start();
+        startTlsListener();
+        if (tlsSocket != null) {
+            String th = System.getenv("WARP_KAFKAWIRE_TLS_ADVERTISED_HOST");
+            String tp = System.getenv("WARP_KAFKAWIRE_TLS_ADVERTISED_PORT");
+            liveBroker.advertisedTlsHost = th == null || th.isBlank() ? advertisedHost : th.trim();
+            liveBroker.advertisedTlsPort = tp == null || tp.isBlank() ? tlsSocket.getLocalPort() : Integer.parseInt(tp.trim());
+            log.info("warp kafkawire SSL listener on port {} (advertised {}:{}, clients on it get SSL addresses)",
+                    tlsSocket.getLocalPort(), liveBroker.advertisedTlsHost, liveBroker.advertisedTlsPort);
+        }
         scheduler.scheduleWithFixedDelay(this::registerSelf, 0, 3, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(groups::sweep, 200, 200, TimeUnit.MILLISECONDS);
         if (sweepMs > 0) {
@@ -160,7 +170,30 @@ public final class KafkaWireServer {
         }
     }
 
+    /** The TLS port, or -1 when no TLS listener is running. */
+    public int tlsPort() {
+        ServerSocket s = tlsSocket;
+        return s == null ? -1 : s.getLocalPort();
+    }
+
+    private void startTlsListener() {
+        ServerSocket ts = com.sayonora.warp.tls.WireTls.tlsServerSocket("kafkawire", "KAFKAWIRE", 19093, System.getenv());
+        if (ts != null) {
+            tlsSocket = ts;
+            Thread t = new Thread(() -> acceptLoop(ts), "kafkawire-tls-accept");
+            t.setDaemon(true);
+            t.start();
+        }
+    }
+
     public void close() {
+        try {
+            if (tlsSocket != null) {
+                tlsSocket.close();
+            }
+        } catch (IOException ignored) {
+            // closing
+        }
         try {
             if (serverSocket != null) {
                 serverSocket.close();
@@ -176,7 +209,10 @@ public final class KafkaWireServer {
     }
 
     private void acceptLoop() {
-        ServerSocket ss = serverSocket;
+        acceptLoop(serverSocket);
+    }
+
+    private void acceptLoop(ServerSocket ss) {
         while (!ss.isClosed()) {
             Socket client;
             try {

@@ -61,11 +61,12 @@ public final class WarpGrpcServer {
     }
 
     public void startTls() throws IOException, GeneralSecurityException {
-        KeyManagerFactory kmf = TlsSupport.buildKeyManagerFactory(options);
-        SslContext sslContext = GrpcSslContexts.configure(SslContextBuilder.forServer(kmf)).build();
-        
+        com.sayonora.warp.tls.TlsProvider provider = TlsSupport.provider(options, "GRPC");
+        if (provider == null) {
+            throw new IOException("gRPC TLS is not enabled");
+        }
         NettyServerBuilder builder = NettyServerBuilder.forPort(options.grpcTlsPort())
-                .sslContext(sslContext)
+                .protocolNegotiator(com.sayonora.warp.tls.NettyTls.grpc(provider))
                 .addService(new QueryServiceImpl(options, sharedStages, backendRegistry))
                 .intercept(new ConnectionLimitInterceptor())
                 .intercept(new AclInterceptor(connectionGate.acl()));

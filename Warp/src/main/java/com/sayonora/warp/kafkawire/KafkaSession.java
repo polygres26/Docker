@@ -130,6 +130,7 @@ final class KafkaSession implements Runnable {
                 return false; // Kafka closes connections that skip SASL
             }
             try {
+                KafkaListeners.setTls(socket instanceof javax.net.ssl.SSLSocket);
                 body = server.broker().handle(api, ver, r, conn);
             } catch (KafkaError e) {
                 log.debug("kafkawire: request api {} v{} rejected: {}", api, ver, e.getMessage());

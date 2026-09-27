@@ -40,6 +40,7 @@ public final class FsWireServer {
     private final FsStore store;
     private final FsStreams streams;
     private final Server server;
+    private final Server tlsServer;
     private final int port;
     private final ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "firestorewire-sweeper");
@@ -82,12 +83,13 @@ public final class FsWireServer {
                 return next.startCall(call, headers);
             }
         };
-        NettyServerBuilder b = NettyServerBuilder.forPort(port)
+        java.util.function.IntFunction<NettyServerBuilder> mk = p -> NettyServerBuilder.forPort(p)
                 .addService(new FsGrpc(svc, streams, hooks))
                 .intercept(auth)
-                .maxInboundMessageSize(32 << 20)
-                .protocolNegotiator(new GrpcRestMux(InternalProtocolNegotiators.serverPlaintext(), rest));
-        this.server = b.build();
+                .maxInboundMessageSize(32 << 20);
+        this.server = mk.apply(port).protocolNegotiator(new GrpcRestMux(InternalProtocolNegotiators.serverPlaintext(), rest)).build();
+        this.tlsServer = port == 0 ? null : com.sayonora.warp.tls.WireTls.grpcTwin("firestorewire", "FIRESTOREWIRE", 18454,
+                System.getenv(), mk, tp -> GrpcRestMux.overTls(tp, rest));
     }
 
     private void record(String op, boolean write, long nanos) {
@@ -105,6 +107,7 @@ public final class FsWireServer {
 
     public void start() throws Exception {
         server.start();
+        com.sayonora.warp.tls.WireTls.startTwin("firestorewire", "FIRESTOREWIRE", tlsServer);
         sweeper.scheduleWithFixedDelay(() -> {
             try {
                 if (registry != null && !registry.storeHosts(StoreType.FIRESTORE).isEmpty()) {
@@ -117,6 +120,11 @@ public final class FsWireServer {
         log.info("warp firestorewire (gRPC + REST) listening on port {}", server.getPort());
     }
 
+    /** The HTTPS + gRPC-over-TLS port, or -1. */
+    public int tlsPort() {
+        return tlsServer == null ? -1 : tlsServer.getPort();
+    }
+
     public int port() {
         return server.getPort();
     }
@@ -125,5 +133,8 @@ public final class FsWireServer {
         sweeper.shutdownNow();
         streams.close();
         server.shutdownNow();
+        if (tlsServer != null) {
+            tlsServer.shutdownNow();
+        }
     }
 }

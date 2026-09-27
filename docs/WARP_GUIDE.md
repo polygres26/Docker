@@ -243,8 +243,49 @@ flowchart LR
 
 - `orawire` has a dedicated TLS listener (TCPS, port 2484) alongside plaintext TNS (1521).
 - gRPC has a dedicated TLS listener (17071) alongside plaintext (7070).
-- All built from one shared keystore — one cert to rotate, not one per frontend.
+- All built from one shared certificate configuration (PEM or keystore, hot-reloaded) — one cert to rotate, not one per frontend. Every gRPC / raw-TCP protocol has a TLS endpoint: §3.5.1.
 - HTTP frontends serve HTTPS in addition to plaintext when `WARP_TLS_CERT`/`WARP_TLS_KEY` (PEM) or `WARP_TLS_KEYSTORE` are set: admin console/API 19443, MCP 18443, A2A 18444, hot-reloading the certificate; see §8.5.3.
+
+#### 3.5.1 TLS for every gRPC and raw-TCP protocol
+
+One certificate configuration covers all of them. Set the global variables once (`WARP_TLS_CERT` + `WARP_TLS_KEY` as PEM, or the
+historic `WARP_TLS_KEYSTORE` + `WARP_TLS_KEYSTORE_PASSWORD` PKCS12/JKS) and every protocol below gets its TLS endpoint next to its plaintext
+port; plaintext keeps working everywhere. A frontend can override the material with `WARP_<NAME>_TLS_CERT` / `_KEY` / `_KEYSTORE` /
+`_CLIENT_AUTH` / `_CA`, or opt out with `WARP_<NAME>_TLS_DISABLED=true`. `WARP_TLS_CLIENT_AUTH=need` (with `WARP_TLS_CA`) turns on mutual TLS
+and `WARP_TLS_RELOAD_SECONDS` (default 30) hot-reloads renewed certificates for every listener without a restart. A configuration Warp cannot
+use (missing file, wrong password, key/certificate mismatch) is logged as `<NAME> TLS is NOT enabled: <reason>` and that frontend simply stays
+plaintext-only; Warp never fails to start over TLS. `GET /api/interfaces` and the console's *SQL drivers* / *API endpoints* pages show, per
+frontend, the TLS port and convention or an honest "not enabled".
+
+Each protocol follows its own convention:
+
+| Protocol (`NAME`) | Plaintext port | TLS endpoint | Convention | Client settings |
+|---|---|---|---|---|
+| Native gRPC (`GRPC`) | 7070 | **17071** (`WARP_GRPC_TLS_PORT`) | gRPC over TLS, ALPN `h2` | `grpc.secure_channel(..., ssl_channel_credentials(root_certificates=ca))` |
+| PostgreSQL (`PGWIRE`) | 15432 | same port | `SSLRequest` upgrade | `sslmode=verify-full sslrootcert=ca.pem` |
+| MySQL (`MYWIRE`) | 13306 | same port | `CLIENT_SSL` capability | `ssl_ca=ca.pem` (`--ssl-mode=VERIFY_IDENTITY`) |
+| SQL Server (`MSSQLWIRE`) | 14333 | same port | TDS pre-login encryption negotiation (`ENCRYPT_ON`/`REQ` upgrade, TLS 1.2 inside TDS packets) | `Encrypt=true;TrustServerCertificate=false` and the CA in the client trust store |
+| Oracle (`ORAWIRE`) | 11521 | **2484** (`WARP_TLS_PORT`) | TCPS | `protocol=tcps`, `ssl_context` / wallet holding the CA |
+| MongoDB (`MONGOWIRE`) | 27017 | same port | direct TLS (`tls=true`), ClientHello sniffing; `WARP_MONGOWIRE_TLS_MODE=disabled\|allow\|require` (default `allow` once TLS is configured, like mongod `preferTLS`; `require` = `requireTLS`) | `tls=true&tlsCAFile=ca.pem` |
+| Redis (`REDISWIRE`) | 16379 | **17379** (`WARP_REDISWIRE_TLS_PORT`) | `rediss://` on a dedicated port | `ssl=True, ssl_ca_certs=ca.pem` / `rediss://host:17379` |
+| Neo4j Bolt (`BOLTWIRE`) | 7687 | same port | `bolt+s` / `neo4j+s`, ClientHello sniffing, `WARP_BOLTWIRE_TLS_MODE` as for MongoDB | driver `encrypted=True, trusted_certificates=TrustCustomCAs(ca.pem)` (a private CA cannot ride the `+s` scheme, which uses the system store; a public CA can) |
+| Cassandra CQL (`CQLWIRE`) | 19042 | same port | client-side SSL on the native-protocol port, ClientHello sniffing, `WARP_CQLWIRE_TLS_MODE` | `Cluster(..., ssl_context=ctx)` / `cqlsh --ssl` |
+| Kafka (`KAFKAWIRE`) | 19092 | **19093** (`WARP_KAFKAWIRE_TLS_PORT`) | a second `SSL` listener; Metadata / FindCoordinator / DescribeCluster advertise the SSL address to SSL clients and the PLAINTEXT address to plaintext clients (`WARP_KAFKAWIRE_TLS_ADVERTISED_HOST` / `_PORT` override this node's SSL address; peers use the same port offset) | `security.protocol=SSL`, `ssl.ca.location` / `ssl_cafile` (or `ssl.truststore.type=PEM` for the Java tools) |
+| AMQP 0-9-1 and 1.0 (`AMQPWIRE`) | 5672 | **5671** (`WARP_AMQPWIRE_TLS_PORT`) | AMQPS (both protocol versions) | `amqps://`, pika `ssl_options`, proton `amqps://` with a trusted CA |
+| Google Pub/Sub gRPC (`PUBSUBWIRE`) | 8085 | **18453** (`WARP_PUBSUBWIRE_TLS_PORT`) | gRPC over TLS (the REST API's HTTPS is the HTTP-frontend work) | `secure_channel` with the CA; unset `PUBSUB_EMULATOR_HOST` |
+| Google Bigtable (`BIGTABLEWIRE`) | 8088 | **18456** (`WARP_BIGTABLEWIRE_TLS_PORT`) | gRPC over TLS | `secure_channel` with the CA |
+| Google Firestore (`FIRESTOREWIRE`) | 8080 | **18454** (`WARP_FIRESTOREWIRE_TLS_PORT`) | HTTPS **and** gRPC-over-TLS on one port (ALPN `h2` / `http/1.1`) | `https://host:18454/v1/...` or a gRPC `secure_channel` |
+| Google Datastore (`DATASTOREWIRE`) | 8081 | **18455** (`WARP_DATASTOREWIRE_TLS_PORT`) | HTTPS **and** gRPC-over-TLS on one port (ALPN `h2` / `http/1.1`) | `https://host:18455/v1/projects/p:lookup` or a gRPC `secure_channel` |
+
+Setting a `WARP_<NAME>_TLS_PORT` to `0` switches that TLS twin off. For MongoDB, Bolt and CQL, `WARP_<NAME>_TLS_MODE=require` makes the port
+reject plaintext clients; the mode decision reads the first bytes of the connection (a TLS record header `16 03 0x`), which none of these
+protocols can start with. HTTP-style frontends (Dynamo, SQS, S3, OpenSearch, Influx, GCS, Azure, Cosmos, Gremlin, Pub/Sub REST) are covered
+by the HTTPS listeners described in §8.5.3. Cluster/peer traffic keeps its own settings (`WARP_PEER_TLS_KEYSTORE`, `WARP_TLS_KEYSTORE` for Ignite).
+
+Behaviour change to know about: because the global variables are now a superset of the old keystore setting, a deployment that already sets
+`WARP_TLS_KEYSTORE` also gets the new TLS endpoints above (the first key entry of that keystore) and an `SSLRequest` accepted on pgwire /
+`CLIENT_SSL` on mywire exactly as before. Opt a listener out with `WARP_<NAME>_TLS_DISABLED=true`. The old orawire/pgwire/mywire/mssqlwire/gRPC
+TLS required a PKCS12 keystore; they now also accept the global PEM certificate and hot-reload it.
 
 ---
 
@@ -3167,7 +3208,7 @@ Unmodified Kafka clients connect with `bootstrap.servers=warp-host:19092`: the J
   closed). Log compaction (`cleanup.policy=compact`) is **not** performed: compacted topics keep every record (a valid, if space-hungry, reading of "compaction is best effort").
 - **Auth.** None by default. `WARP_KAFKAWIRE_AUTH=true` (or `WARP_AUTH_CREDENTIALS` set) requires SASL/PLAIN (`SaslHandshake` v0 and v1, `SaslAuthenticate`) against the shared `CredentialStore`
   (`WARP_AUTH_USER` / `WARP_AUTH_PASSWORD`, or the `WARP_AUTH_CREDENTIALS` list); nothing but ApiVersions and the SASL exchange is accepted before authentication and a failed login closes the connection
-  (`SASL_AUTHENTICATION_FAILED`). There is no TLS listener: put a TLS terminating proxy in front and advertise its name and port.
+  (`SASL_AUTHENTICATION_FAILED`). TLS: a second `SSL` listener on `WARP_KAFKAWIRE_TLS_PORT` (19093) when TLS is configured (§3.5.1); clients that bootstrap on it are advertised the SSL address of every broker.
 - **MCP tools.** `kafka_list_topics`, `kafka_describe_topic`, `kafka_create_topic`, `kafka_delete_topic`, `kafka_produce` (Kafka's default partitioner: murmur2 of the key), `kafka_fetch` (by offset, no group, text or base64),
   `kafka_list_groups`, `kafka_group_lag`. The three write tools are hidden and refused under `WARP_MCP_READ_ONLY`. The tools use the same tables, batches and validation as the wire protocol.
 - **Pool discipline and metrics.** A pooled connection is borrowed for one statement or transaction and returned before a response is written or a wait begins. Every request is recorded under the protocol name
@@ -3386,7 +3427,7 @@ exists: exchanges, bindings, queues and messages live in the Postgres backends o
   `amqp_declare_exchange` / `queue`, `amqp_delete_exchange` / `queue`, `amqp_bind`, `amqp_unbind`; the write tools are hidden and refused under `WARP_MCP_READ_ONLY`; `describe_backend` lists queues and backlogs. The tools run the
   same broker code as the wire protocol.
 - **Not implemented** (each with its reason in `Warp/tests/python/amqp_conformance/amqp_known.py`): streams and other plugin exchange types (`x-consistent-hash`, `x-delayed-message`, ...), Raft-replicated quorum queues
-  (`x-queue-type=quorum` is accepted and behaves like a durable classic queue), single-active-consumer, delivery limits, memory / disk alarms and `connection.blocked`, federation and shovel, TLS on the listener,
+  (`x-queue-type=quorum` is accepted and behaves like a durable classic queue), single-active-consumer, delivery limits, memory / disk alarms and `connection.blocked`, federation and shovel,
   SASL EXTERNAL / OAuth 2, AMQP 1.0 transactions, `rcv-settle-mode` second, dynamic nodes and selector filters (refused like RabbitMQ 4), link resume and unsettled-state exchange on re-attach, transfers whose
   `message-format` is not 0. Non-durable and exclusive-less transient queues are accepted (RabbitMQ 4 refuses them), transient messages survive a restart, `consumer_count` counts the consumers of the answering instance,
   and TTL / limit enforcement is not atomic with the publish across concurrent publishers.

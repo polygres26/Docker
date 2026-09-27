@@ -62,6 +62,9 @@ final class KafkaBroker {
     final boolean autoCreate;
     final int defaultPartitions;
     final boolean saslEnabled;
+    /** SSL listener advertisement of this node; port <= 0 means there is no SSL listener. */
+    volatile String advertisedTlsHost;
+    volatile int advertisedTlsPort = -1;
 
     KafkaBroker(KafkaStore store, GroupCoordinator groups, String advertisedHost, int advertisedPort, boolean autoCreate, int defaultPartitions,
             boolean saslEnabled) {
@@ -91,6 +94,18 @@ final class KafkaBroker {
             return List.of(new KafkaStore.Broker(nodeId, advertisedHost, advertisedPort));
         }
         return b;
+    }
+
+    /** The brokers as the current client's listener should see them (SSL address when it connected on the SSL port). */
+    List<KafkaStore.Broker> brokersForClient() {
+        List<KafkaStore.Broker> b = brokers();
+        return KafkaListeners.onTls()
+                ? KafkaListeners.toTls(b, advertisedHost, advertisedPort, advertisedTlsHost, advertisedTlsPort) : b;
+    }
+
+    KafkaStore.Broker forClient(KafkaStore.Broker b) {
+        return KafkaListeners.onTls()
+                ? KafkaListeners.toTls(b, advertisedHost, advertisedPort, advertisedTlsHost, advertisedTlsPort) : b;
     }
 
     int leaderOf(String topic, int part) {
@@ -271,7 +286,7 @@ final class KafkaBroker {
         if (ver >= 3) {
             w.i32(0);
         }
-        List<KafkaStore.Broker> bs = brokers();
+        List<KafkaStore.Broker> bs = brokersForClient();
         w.arr(bs.size());
         for (KafkaStore.Broker b : bs) {
             w.i32(b.id()).str(b.host()).i32(b.port());
@@ -801,7 +816,7 @@ final class KafkaBroker {
             msg = "The group id is invalid";
         } else {
             try {
-                b = coordinatorFor(key);
+                b = forClient(coordinatorFor(key));
             } catch (RuntimeException e) {
                 err = KafkaError.COORDINATOR_NOT_AVAILABLE;
             }
@@ -1776,7 +1791,7 @@ final class KafkaBroker {
             w.i8(endpointType);
         }
         w.str(store.clusterId());
-        List<KafkaStore.Broker> bs = brokers();
+        List<KafkaStore.Broker> bs = brokersForClient();
         w.i32(bs.get(0).id());
         w.arr(bs.size());
         for (KafkaStore.Broker b : bs) {

@@ -34,6 +34,7 @@ public final class PubsubWireServer {
     private final PsPush push;
     private final PsRest rest;
     private final Server grpc;
+    private final Server tlsGrpc;
     private final ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "pubsubwire-sweeper");
         t.setDaemon(true);
@@ -56,14 +57,19 @@ public final class PubsubWireServer {
         this.push = new PsPush(service);
         PsRpc rpc = new PsRpc(service);
         PsGrpc.Recorder rec = this::record;
-        NettyServerBuilder b = NettyServerBuilder.forPort(grpcPort).maxInboundMessageSize(20 * 1024 * 1024)
-                .permitKeepAliveTime(1, TimeUnit.SECONDS).permitKeepAliveWithoutCalls(true)
-                .intercept(PsGrpc.auth(cfg.tokens));
-        new PsGrpc(rpc, streams, rec).services().forEach(b::addService);
-        if (gate != null) {
-            b.intercept(new com.sayonora.warp.grpc.AclInterceptor(gate.acl()));
-        }
-        this.grpc = b.build();
+        java.util.function.IntFunction<NettyServerBuilder> mk = port -> {
+            NettyServerBuilder b = NettyServerBuilder.forPort(port).maxInboundMessageSize(20 * 1024 * 1024)
+                    .permitKeepAliveTime(1, TimeUnit.SECONDS).permitKeepAliveWithoutCalls(true)
+                    .intercept(PsGrpc.auth(cfg.tokens));
+            new PsGrpc(rpc, streams, rec).services().forEach(b::addService);
+            if (gate != null) {
+                b.intercept(new com.sayonora.warp.grpc.AclInterceptor(gate.acl()));
+            }
+            return b;
+        };
+        this.grpc = mk.apply(grpcPort).build();
+        this.tlsGrpc = grpcPort == 0 ? null : com.sayonora.warp.tls.WireTls.grpcTwin("pubsubwire", "PUBSUBWIRE", 18453,
+                System.getenv(), mk, com.sayonora.warp.tls.NettyTls::grpc);
         this.rest = restPort > 0 ? new PsRest(rpc, cfg, rec, gate) : null;
     }
 
@@ -82,6 +88,7 @@ public final class PubsubWireServer {
 
     public void start() throws Exception {
         grpc.start();
+        com.sayonora.warp.tls.WireTls.startTwin("pubsubwire", "PUBSUBWIRE", tlsGrpc);
         if (rest != null) {
             rest.start(restPort);
         }
@@ -106,6 +113,14 @@ public final class PubsubWireServer {
             rest.stop();
         }
         grpc.shutdownNow();
+        if (tlsGrpc != null) {
+            tlsGrpc.shutdownNow();
+        }
+    }
+
+    /** The gRPC TLS port, or -1. */
+    public int grpcTlsPort() {
+        return tlsGrpc == null ? -1 : tlsGrpc.getPort();
     }
 
     public int grpcPort() {

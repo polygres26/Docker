@@ -388,20 +388,16 @@ public final class PgWireSessionHandler implements Runnable {
             int len = in.readInt();
             int code = in.readInt();
             if (code == PgMessages.SSL_REQUEST_CODE) {
-                if (options.tlsEnabled()) {
+                if (TlsSupport.enabled(options, "PGWIRE")) {
                     out.writeByte('S');
                     out.flush();
                     try {
-                        SSLContext sslContext = SSLContext.getInstance("TLS");
-                        sslContext.init(TlsSupport.buildKeyManagerFactory(options).getKeyManagers(), null, null);
-                        SSLSocketFactory factory = sslContext.getSocketFactory();
-                        SSLSocket sslSocket = (SSLSocket) factory.createSocket(activeSocket, null, activeSocket.getPort(), true);
-                        sslSocket.setUseClientMode(false);
+                        SSLSocket sslSocket = TlsSupport.provider(options, "PGWIRE").wrapServer(activeSocket, null);
                         sslSocket.startHandshake();
                         activeSocket = sslSocket;
                         in = new DataInputStream(sslSocket.getInputStream());
                         out = new DataOutputStream(sslSocket.getOutputStream());
-                    } catch (GeneralSecurityException e) {
+                    } catch (RuntimeException e) {
                         throw new IOException("pgwire TLS upgrade failed", e);
                     }
                 } else {

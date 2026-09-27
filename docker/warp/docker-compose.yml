@@ -97,6 +97,16 @@ services:
       - "18459:18459" # azurewire queue over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
       - "18460:18460" # azurewire table over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
       - "18461:18461" # gremlinwire (https + wss) over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      # TLS twins of the protocol frontends (WARP_TLS_CERT + WARP_TLS_KEY); mongowire/boltwire/cqlwire/pgwire/mywire/mssqlwire negotiate TLS on their plain port
+      - "17071:17071" # gRPC over TLS
+      - "2484:2484"   # orawire TCPS
+      - "17379:17379" # rediswire over TLS (rediss://)
+      - "19093:19093" # kafkawire SSL listener
+      - "5671:5671"   # amqpwire AMQPS
+      - "18453:18453" # pubsubwire gRPC over TLS
+      - "18456:18456" # bigtablewire gRPC over TLS
+      - "18454:18454" # firestorewire HTTPS + gRPC over TLS
+      - "18455:18455" # datastorewire HTTPS + gRPC over TLS
 
 volumes:
   warp-postgres-data:

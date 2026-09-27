@@ -14,6 +14,71 @@ public final class TlsSupport {
     private TlsSupport() {
     }
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TlsSupport.class);
+    private static final java.util.Set<String> REPORTED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final String[] SQL_LISTENERS = {"GRPC", "ORAWIRE", "PGWIRE", "MYWIRE", "MSSQLWIRE"};
+
+    /**
+     * Does the environment ask for the SQL-side TLS (orawire TCPS, pgwire/mywire/mssqlwire in-band TLS, gRPC TLS)? True
+     * for the historic {@code WARP_TLS_KEYSTORE}, and now also for global PEM ({@code WARP_TLS_CERT} + {@code WARP_TLS_KEY}),
+     * {@code WARP_TLS_SELF_SIGNED=true}, or a per-listener {@code WARP_<PGWIRE|MYWIRE|MSSQLWIRE|ORAWIRE|GRPC>_TLS_*} set.
+     */
+    public static boolean configured(java.util.Map<String, String> env) {
+        for (String l : SQL_LISTENERS) {
+            if (com.sayonora.warp.tls.WireTls.requested(l, env)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The environment TLS settings are resolved from: the process env, plus a keystore given through {@link ServerOptions}. */
+    static java.util.Map<String, String> envFor(ServerOptions options) {
+        java.util.Map<String, String> env = new java.util.HashMap<>(System.getenv());
+        String ks = options.tlsKeystorePath();
+        if (ks != null && !ks.isBlank() && !env.containsKey("WARP_TLS_KEYSTORE")) {
+            env.put("WARP_TLS_KEYSTORE", ks);
+            if (options.tlsKeystorePassword() != null) {
+                env.put("WARP_TLS_KEYSTORE_PASSWORD", options.tlsKeystorePassword());
+            }
+        }
+        return env;
+    }
+
+    /**
+     * The shared, hot-reloading TLS provider for a SQL-side listener ({@code GRPC}, {@code ORAWIRE}, {@code PGWIRE},
+     * {@code MYWIRE}, {@code MSSQLWIRE}), or null when TLS is off for it or its configuration is unusable (then one
+     * {@code TLS is NOT enabled: <reason>} line is logged and plaintext keeps working).
+     */
+    public static com.sayonora.warp.tls.TlsProvider provider(ServerOptions options, String listener) {
+        if (!options.tlsEnabled()) {
+            return null;
+        }
+        try {
+            com.sayonora.warp.tls.TlsSettings s = com.sayonora.warp.tls.TlsSettings.resolve(listener, envFor(options));
+            return s == null ? null : com.sayonora.warp.tls.TlsProvider.get(s);
+        } catch (RuntimeException e) {
+            if (REPORTED.add(listener + "|" + e.getMessage())) {
+                log.error("{} TLS is NOT enabled: {}. Plaintext keeps working.", listener,
+                        e instanceof com.sayonora.warp.tls.TlsException ? e.getMessage() : e.toString());
+            }
+            return null;
+        }
+    }
+
+    public static boolean enabled(ServerOptions options, String listener) {
+        return provider(options, listener) != null;
+    }
+
+    /** The JDK context of the shared provider for an in-band-TLS listener (hot reload: the key manager is swapped live). */
+    public static SSLContext contextFor(ServerOptions options, String listener) throws IOException {
+        com.sayonora.warp.tls.TlsProvider p = provider(options, listener);
+        if (p == null) {
+            throw new IOException(listener + " TLS is not enabled");
+        }
+        return p.sslContext();
+    }
+
     public static KeyManagerFactory buildKeyManagerFactory(ServerOptions options)
             throws GeneralSecurityException, IOException {
         char[] password = options.tlsKeystorePassword() == null
