@@ -224,7 +224,7 @@ final class CosmosHttp {
 
     private JsonObject account(Req q) {
         String host = q.h("host");
-        String url = cfg.advertisedUrl != null ? cfg.advertisedUrl : "http://" + (host == null ? "localhost" : host) + "/";
+        String url = cfg.advertisedUrl != null ? cfg.advertisedUrl : com.sayonora.warp.tls.RequestScheme.of(q.r) + "://" + (host == null ? "localhost" : host) + "/";
         if (!url.endsWith("/")) {
             url += "/";
         }

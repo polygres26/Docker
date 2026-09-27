@@ -157,6 +157,7 @@ public final class GcsWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "GCSWIRE", 18450, System.getenv());
         server.start();
         sweeper.scheduleWithFixedDelay(() -> {
             try {

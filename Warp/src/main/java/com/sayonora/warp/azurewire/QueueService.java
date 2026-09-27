@@ -91,7 +91,7 @@ final class QueueService {
     }
 
     private String endpoint(AzReq r) {
-        return r.raw.getScheme() + "://" + r.header("Host") + (r.hostStyle ? "/" : "/" + r.account);
+        return com.sayonora.warp.tls.RequestScheme.of(r.raw) + "://" + r.header("Host") + (r.hostStyle ? "/" : "/" + r.account);
     }
 
     private void serviceLevel(AzReq r, HttpServletResponse resp, AzureAuth.Result auth, String comp) throws IOException {

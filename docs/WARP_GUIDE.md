@@ -2756,6 +2756,43 @@ from an external OIDC issuer (§3.4) but is not itself an authorization server.
 and the admin console's *MCP servers* page builds its `claude mcp add --transport http ...`, `.mcp.json` and connector-URL
 snippets from it, with a notice when only plaintext HTTP is available.
 
+##### HTTPS for the API frontends
+
+Every HTTP-style frontend serves HTTPS on an additional port, next to its plaintext port, with the same variables as above
+(`WARP_TLS_*` globally, `WARP_<NAME>_TLS_*` per listener, `WARP_<NAME>_HTTPS_PORT`, `WARP_<NAME>_HTTP_DISABLED=true`,
+`WARP_<NAME>_TLS_DISABLED=true`). Set `WARP_TLS_CERT` + `WARP_TLS_KEY` once and all of them come up. Bad TLS settings log
+`<NAME> HTTPS is NOT enabled: <reason>` and that frontend keeps serving plaintext; the *SQL drivers* and *API endpoints* pages
+show an *HTTPS port* column with the port, or "TLS not enabled" / "TLS error". Absolute URLs Warp puts in responses (SQS queue
+URLs, S3 POST-object `Location`, Azure and Cosmos self-links, the awswire unified endpoint's queue URLs) use the scheme the
+request arrived on, or `X-Forwarded-Proto` behind a proxy. SigV4 signs the `Host` header including the port, so clients sign for
+`https://host:18449` exactly as for the plaintext URL. The AWS unified endpoint accepts HTTP/1.1 over TLS (cleartext HTTP/2
+"h2c" remains a plaintext-port feature).
+
+| Frontend | `<NAME>` | Plaintext port | HTTPS port (default) |
+|---|---|---|---|
+| Admin console/API | `ADMIN` | 19090 | 19443 |
+| MCP | `MCP` | 18010 | 18443 |
+| A2A | `A2A` | 18030 | 18444 |
+| DynamoDB (dynamowire) | `DYNAMOWIRE` | 18000 | 18445 |
+| SQS (sqswire) | `SQSWIRE` | 9324 | 18446 |
+| OpenSearch (oswire) | `OSWIRE` | 9200 | 18447 |
+| InfluxDB (influxwire) | `INFLUXWIRE` | 8086 | 18448 |
+| S3 (s3wire) | `S3WIRE` | 18020 | 18449 |
+| Google Cloud Storage (gcswire) | `GCSWIRE` | 4443 | 18450 |
+| AWS unified endpoint (SNS, Kinesis, Secrets, SSM, KMS, STS, S3, SQS, DynamoDB) | `AWSWIRE` | 4566 | 18451 |
+| Pub/Sub REST (pubsubwire) | `PUBSUBWIRE_REST` | 8087 | 18452 |
+| Cosmos DB (cosmoswire) | `COSMOSWIRE` | 18081 | 18457 |
+| Azure Blob (azurewire) | `AZBLOBWIRE` | 10000 | 18458 |
+| Azure Queue (azurewire) | `AZQUEUEWIRE` | 10001 | 18459 |
+| Azure Table (azurewire) | `AZTABLEWIRE` | 10002 | 18460 |
+| Gremlin, `https` and `wss` on one port (gremlinwire) | `GREMLINWIRE` | 8182 | 18461 |
+
+The per-service AWS ports (`WARP_SNSWIRE_PORT`, `WARP_KINESISWIRE_PORT`, ...) stay plaintext; use the unified endpoint for
+HTTPS. Pub/Sub gRPC, Firestore, Datastore, Bigtable, the gRPC query service and the raw-TCP protocols are described in their
+own sections. Clients trust the CA the usual way, for example `AWS_CA_BUNDLE` / `verify=` for boto3, `REQUESTS_CA_BUNDLE` for the
+Azure and Google Python SDKs, `connection_verify` for `azure-cosmos`, `ca_certs` for `opensearch-py`, an `ssl_options` context for
+gremlinpython.
+
 ---
 
 ## 9. Caching

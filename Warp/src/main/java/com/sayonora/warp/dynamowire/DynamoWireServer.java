@@ -295,6 +295,7 @@ public final class DynamoWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "DYNAMOWIRE", 18445, System.getenv());
         server.start();
         ttlSweeper.start();
         log.info("warp dynamowire (DynamoDB HTTP/JSON) listening on port {}",

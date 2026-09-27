@@ -629,6 +629,7 @@ public final class InfluxWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "INFLUXWIRE", 18448, System.getenv());
         server.start();
         log.info("warp listening for InfluxDB HTTP/JSON (influxwire) on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());

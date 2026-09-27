@@ -1612,7 +1612,7 @@ final class S3Api {
         if (b.versioned() && m.versionId() != null) {
             resp.setHeader("x-amz-version-id", m.versionId());
         }
-        String location = "http://" + req.getHeader("Host") + "/" + bucket + "/" + key;
+        String location = com.sayonora.warp.tls.RequestScheme.of(req) + "://" + req.getHeader("Host") + "/" + bucket + "/" + key;
         if (redirect != null && !redirect.isEmpty()) {
             String sep = redirect.contains("?") ? "&" : "?";
             resp.setHeader("Location", redirect + sep + "bucket=" + S3SigV4Verifier.encode(bucket, true) + "&key="

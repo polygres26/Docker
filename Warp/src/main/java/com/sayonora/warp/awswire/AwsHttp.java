@@ -33,7 +33,7 @@ public final class AwsHttp {
         if (host == null || host.isBlank()) {
             host = request.getLocalName() + ":" + request.getLocalPort();
         }
-        return request.getScheme() + "://" + host;
+        return com.sayonora.warp.tls.RequestScheme.of(request) + "://" + host;
     }
 
     /** @param metricsProtocol the protocol label operations are recorded under ({@code snswire}, or {@code awswire}) */

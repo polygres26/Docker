@@ -30,6 +30,14 @@ public final class InterfaceRegistry {
 
     private static final Map<String, Entry> ENTRIES = new ConcurrentHashMap<>();
 
+    /** Interface id to the TlsListeners name of the HTTP-style frontends that serve HTTPS in addition to plaintext. */
+    private static final Map<String, String> TLS_NAMES = Map.ofEntries(Map.entry("dynamowire", "DYNAMOWIRE"),
+            Map.entry("sqswire", "SQSWIRE"), Map.entry("oswire", "OSWIRE"), Map.entry("influxwire", "INFLUXWIRE"),
+            Map.entry("s3wire", "S3WIRE"), Map.entry("gcswire", "GCSWIRE"), Map.entry("awswire", "AWSWIRE"),
+            Map.entry("pubsubwire-rest", "PUBSUBWIRE_REST"), Map.entry("cosmoswire", "COSMOSWIRE"),
+            Map.entry("azblobwire", "AZBLOBWIRE"), Map.entry("azqueuewire", "AZQUEUEWIRE"), Map.entry("aztablewire", "AZTABLEWIRE"),
+            Map.entry("gremlinwire", "GREMLINWIRE"));
+
     private InterfaceRegistry() {
     }
 
@@ -73,11 +81,15 @@ public final class InterfaceRegistry {
             // No metrics key at all (e.g. A2A) means the count is unknown, reported as null.
             Long count = protocolCounts == null || e.metricsKey() == null ? null : protocolCounts.getOrDefault(e.metricsKey(), 0L);
             com.sayonora.warp.tls.TlsListeners.Info tls = "mcp".equals(e.id()) ? com.sayonora.warp.tls.TlsListeners.info("MCP")
-                    : "a2a".equals(e.id()) ? com.sayonora.warp.tls.TlsListeners.info("A2A") : null;
+                    : "a2a".equals(e.id()) ? com.sayonora.warp.tls.TlsListeners.info("A2A")
+                    : TLS_NAMES.containsKey(e.id()) ? com.sayonora.warp.tls.TlsListeners.info(TLS_NAMES.get(e.id())) : null;
             if (tls != null) {
                 o.addProperty("tlsEnabled", tls.tlsEnabled());
                 o.addProperty("httpsPort", tls.tlsEnabled() ? tls.httpsPort() : null);
                 o.addProperty("selfSigned", tls.selfSigned());
+                if (tls.tlsError() != null) {
+                    o.addProperty("tlsError", tls.tlsError());
+                }
             }
             o.addProperty("requests", count);
             o.addProperty("metricsKey", e.metricsKey());

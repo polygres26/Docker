@@ -89,7 +89,10 @@ public final class AwsWireBootstrap {
         if (unified) {
             try {
                 String p = env("WARP_AWSWIRE_PORT");
-                new AwsWireServer(p == null ? 4566 : Integer.parseInt(p), rt, new LinkedHashMap<>(HANDLERS)).start();
+                int unifiedPort = p == null ? 4566 : Integer.parseInt(p);
+                new AwsWireServer(unifiedPort, rt, new LinkedHashMap<>(HANDLERS)).start();
+                com.sayonora.warp.http.admin.InterfaceRegistry.register("awswire", "AWS unified endpoint", "api",
+                        "AWS JSON/Query/REST", unifiedPort, "Emulate", null, "awswire");
             } catch (Exception e) {
                 log.error("awswire failed to start -- every other wire protocol is still up.", e);
             }

@@ -84,6 +84,19 @@ services:
       - "18444:18444" # A2A over HTTPS, enable with WARP_A2A_TLS_CERT + WARP_A2A_TLS_KEY (or WARP_TLS_CERT/KEY)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
       - "19443:19443" # admin app + API over HTTPS, enable with WARP_ADMIN_TLS_CERT + WARP_ADMIN_TLS_KEY (or WARP_TLS_CERT/KEY)
+      - "18445:18445" # dynamowire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18446:18446" # sqswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18447:18447" # oswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18448:18448" # influxwire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18449:18449" # s3wire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18450:18450" # gcswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18451:18451" # awswire unified endpoint over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18452:18452" # pubsubwire REST over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18457:18457" # cosmoswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18458:18458" # azurewire blob over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18459:18459" # azurewire queue over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18460:18460" # azurewire table over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18461:18461" # gremlinwire (https + wss) over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
 
 volumes:
   warp-postgres-data:

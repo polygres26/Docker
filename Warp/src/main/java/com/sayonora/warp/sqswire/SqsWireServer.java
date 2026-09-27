@@ -120,7 +120,7 @@ public final class SqsWireServer {
         if (host == null || host.isBlank()) {
             host = "localhost:" + port;
         }
-        return request.getScheme() + "://" + host;
+        return com.sayonora.warp.tls.RequestScheme.of(request) + "://" + host;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -293,6 +293,7 @@ public final class SqsWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "SQSWIRE", 18446, System.getenv());
         server.start();
         ops.moveTasks().resumeRunning();
         long every = 30;

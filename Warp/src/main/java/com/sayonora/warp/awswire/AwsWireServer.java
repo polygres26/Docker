@@ -293,6 +293,7 @@ public final class AwsWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "AWSWIRE", 18451, System.getenv());
         server.start();
         log.info("warp awswire (unified AWS endpoint: {} delegated + {}) listening on port {}", delegated.keySet(),
                 rt.services().keySet(), ((ServerConnector) server.getConnectors()[0]).getPort());

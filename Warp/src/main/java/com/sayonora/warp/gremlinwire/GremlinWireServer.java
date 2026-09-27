@@ -51,6 +51,7 @@ public final class GremlinWireServer {
     private final ConnectionGate gate;
     private final Processor processor;
     private volatile ServerSocket serverSocket;
+    private volatile ServerSocket tlsSocket;
     private final ExecutorService sessions = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "gremlinwire-session");
         t.setDaemon(true);
@@ -82,15 +83,52 @@ public final class GremlinWireServer {
         return s == null ? port : s.getLocalPort();
     }
 
+    /** The TLS (https / wss) port, or -1 when HTTPS is not enabled. */
+    public int tlsPort() {
+        ServerSocket s = tlsSocket;
+        return s == null ? -1 : s.getLocalPort();
+    }
+
     public void start() throws IOException {
-        ServerSocket ss = new ServerSocket();
-        ss.setReuseAddress(true);
-        ss.bind(new InetSocketAddress(port), 1024);
-        serverSocket = ss;
-        Thread t = new Thread(this::acceptLoop, "gremlinwire-accept");
-        t.setDaemon(true);
-        t.start();
-        log.info("warp gremlinwire listening on port {}", ss.getLocalPort());
+        java.util.Map<String, String> env = System.getenv();
+        boolean httpDisabled = "true".equalsIgnoreCase(env.get("WARP_GREMLINWIRE_HTTP_DISABLED"));
+        int httpsPort = com.sayonora.warp.tls.TlsListeners.httpsPort("GREMLINWIRE", port, 18461, env);
+        String[] err = new String[1];
+        com.sayonora.warp.tls.TlsProvider tls = com.sayonora.warp.tls.TlsListeners.providerOrNull("GREMLINWIRE", port,
+                httpDisabled, err, env);
+        if (httpDisabled && tls == null) {
+            throw new com.sayonora.warp.tls.TlsException("GREMLINWIRE: WARP_GREMLINWIRE_HTTP_DISABLED=true but no TLS material "
+                    + "is configured (set WARP_GREMLINWIRE_TLS_CERT/KEY, WARP_GREMLINWIRE_TLS_KEYSTORE or WARP_TLS_*)");
+        }
+        if (!httpDisabled) {
+            ServerSocket ss = new ServerSocket();
+            ss.setReuseAddress(true);
+            ss.bind(new InetSocketAddress(port), 1024);
+            serverSocket = ss;
+            Thread t = new Thread(() -> acceptLoop(ss), "gremlinwire-accept");
+            t.setDaemon(true);
+            t.start();
+            log.info("warp gremlinwire listening on port {}", ss.getLocalPort());
+        }
+        String subject = null;
+        String notAfter = null;
+        if (tls != null) {
+            ServerSocket ts = tls.serverSocketFactory().createServerSocket();
+            ts.setReuseAddress(true);
+            ts.bind(new InetSocketAddress(httpsPort), 1024);
+            tlsSocket = ts;
+            Thread t = new Thread(() -> acceptLoop(ts), "gremlinwire-tls-accept");
+            t.setDaemon(true);
+            t.start();
+            subject = tls.material().leaf().getSubjectX500Principal().getName();
+            notAfter = tls.material().leaf().getNotAfter().toInstant().toString();
+            log.info("GREMLINWIRE HTTPS/WSS enabled on port {} ({}{}) {}", ts.getLocalPort(), tls.settings().origin(),
+                    tls.selfSigned() ? ", SELF-SIGNED dev certificate -- clients will not trust it" : "", tls.material().describe());
+        }
+        com.sayonora.warp.tls.TlsListeners.publish(new com.sayonora.warp.tls.TlsListeners.Info("GREMLINWIRE",
+                httpDisabled ? -1 : port, tls == null ? -1 : tlsPort(), tls != null, tls != null && tls.selfSigned(),
+                tls != null && tls.settings().clientAuth() != com.sayonora.warp.tls.TlsSettings.ClientAuth.NONE, err[0], subject,
+                notAfter));
     }
 
     public void close() {
@@ -98,14 +136,16 @@ public final class GremlinWireServer {
             if (serverSocket != null) {
                 serverSocket.close();
             }
+            if (tlsSocket != null) {
+                tlsSocket.close();
+            }
         } catch (IOException ignored) {
             // closing
         }
         sessions.shutdownNow();
     }
 
-    private void acceptLoop() {
-        ServerSocket ss = serverSocket;
+    private void acceptLoop(ServerSocket ss) {
         while (!ss.isClosed()) {
             Socket client;
             try {

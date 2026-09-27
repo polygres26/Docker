@@ -66,7 +66,7 @@ final class TableService {
     }
 
     private String base(AzReq r) {
-        return r.raw.getScheme() + "://" + r.header("Host") + (r.hostStyle ? "/" : "/" + r.account + "/");
+        return com.sayonora.warp.tls.RequestScheme.of(r.raw) + "://" + r.header("Host") + (r.hostStyle ? "/" : "/" + r.account + "/");
     }
 
     private void json(AzReq r, HttpServletResponse resp, int status, String level, JsonObject body) throws IOException {

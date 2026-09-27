@@ -104,6 +104,7 @@ public final class CosmosWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "COSMOSWIRE", 18457, System.getenv());
         server.start();
         sweeper.scheduleWithFixedDelay(() -> {
             try {

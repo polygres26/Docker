@@ -335,7 +335,7 @@ final class BlobService {
 
     String endpoint(AzReq r) {
         String host = r.header("Host");
-        String scheme = r.raw.getScheme();
+        String scheme = com.sayonora.warp.tls.RequestScheme.of(r.raw);
         if (r.hostStyle) {
             return scheme + "://" + host + "/";
         }

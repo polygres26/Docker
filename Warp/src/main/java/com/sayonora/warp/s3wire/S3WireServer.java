@@ -161,6 +161,7 @@ public final class S3WireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "S3WIRE", 18449, System.getenv());
         server.start();
     }
 

@@ -208,6 +208,7 @@ public final class OpenSearchWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "OSWIRE", 18447, System.getenv());
         server.start();
         log.info("warp listening for OpenSearch HTTP/JSON (oswire) on port {}",
                 ((org.eclipse.jetty.server.ServerConnector) server.getConnectors()[0]).getPort());

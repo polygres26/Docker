@@ -137,6 +137,7 @@ final class PsRest {
                 serve(req, resp);
             }
         });
+        com.sayonora.warp.tls.TlsListeners.attach(server, "PUBSUBWIRE_REST", 18452, System.getenv());
         server.start();
     }
 

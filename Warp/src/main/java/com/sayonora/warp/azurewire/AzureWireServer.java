@@ -218,6 +218,8 @@ public final class AzureWireServer {
     }
 
     public void start() throws Exception {
+        com.sayonora.warp.tls.TlsListeners.attach(server, "AZ" + service.toUpperCase(java.util.Locale.ROOT) + "WIRE",
+                "blob".equals(service) ? 18458 : "queue".equals(service) ? 18459 : 18460, System.getenv());
         server.start();
         sweeper.scheduleWithFixedDelay(() -> {
             try {

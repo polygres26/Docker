@@ -764,10 +764,12 @@ export interface InterfaceInfo {
   /** Statements/operations counted since process start; null when the collector keeps no counter for this frontend. */
   requests: number | null
   metricsKey: string | null
-  /** Set for the MCP and A2A listeners: is a native HTTPS port served next to the plaintext one. */
+  /** Set for HTTP-style listeners (MCP, A2A and the API frontends): is a native HTTPS port served next to the plaintext one. */
   tlsEnabled?: boolean
   httpsPort?: number | null
   selfSigned?: boolean
+  /** Why HTTPS is off although TLS was configured (bad certificate, missing file, ...). */
+  tlsError?: string
 }
 
 export interface InterfacesResponse { interfaces: InterfaceInfo[]; activeSessions: number }
