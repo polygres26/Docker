@@ -449,6 +449,15 @@ public final class RequestLoop {
                 // nativeOciExecuteCount (already 1 again by this point in *either* case, since it
                 // resets per-query -- see its own reset site) since what actually matters here is
                 // "first query in this session" vs "not," not "how many Executes so far."
+                // KNOWN GAP, not yet fixed: a genuine row-returning dblink SELECT (confirmed live
+                // via a fresh real Oracle-to-Oracle self-loop capture of a real 2-column, 2-row
+                // query) needs a completely different, row-carrying response here instead of this
+                // fixed, row-free template -- see [[warp-orawire-native-oci-gap]] for the capture
+                // evidence. A first attempt at fixing this in-place (reusing
+                // writeNativeOciExecuteTailWithRows the same way a plain non-dblink client's own
+                // row-carrying Execute response does) did not get the client past this call in live
+                // testing and was reverted rather than shipped half-verified; left as this
+                // pre-existing, row-free template until the real cause is found and confirmed live.
                 byte[] response = java.util.Base64.getDecoder()
                         .decode(nativeOciFirstQueryComplete ? FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64
                                 : FUNC_UNKNOWN_68_RESPONSE_B64);
@@ -833,8 +842,38 @@ public final class RequestLoop {
                         : openColumns.get(0).bufferSize;
                 tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET] = (byte) (bufSizeHint & 0xFF);
                 tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET + 1] = (byte) ((bufSizeHint >> 8) & 0xFF);
+            } else if (openColumns != null && openColumns.size() > 1) {
+                // Real bug this fixes, found live: every offset above was derived from, and only
+                // ever confirmed against, single-column real captures -- a genuine multi-column
+                // native-OCI query (id NUMBER, name VARCHAR2) hangs the client even with all of
+                // those applied, byte-diffed against a fresh real Oracle-to-Oracle self-loop
+                // capture of the identical 2-column query. Four of this template's own offsets
+                // that the single-column path treats as fixed/unconditional are wrong for this
+                // 2+-column case specifically: tail[9..12] (part of
+                // NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH's own span, applied
+                // unconditionally above) needs 0x15/0x0d/0x1f/0x01 here instead, and tail[20]/[24]
+                // (NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PREFIX_PATCH_OFFSETS, gated
+                // above to the single-VARCHAR-column case only) need 0x30 at both. Confirmed live
+                // by patching exactly these bytes at the wire level (bypassing this method
+                // entirely, to isolate the response shape from any other variable) and observing a
+                // real sqlplus client correctly print both rows afterward -- not yet independently
+                // confirmed to generalize beyond this exact (NUMBER, VARCHAR2) two-column shape;
+                // may need revisiting for 3+ columns or other type combinations.
+                tail[9] = 0x15;
+                tail[10] = 0x0d;
+                tail[11] = 0x1f;
+                tail[12] = 0x01;
+                tail[20] = 0x30;
+                tail[24] = 0x30;
             }
         }
+        // KNOWN GAP, not yet fixed: the multi-column tail patches above (found live against a
+        // plain non-dblink client's real capture) are scoped to !nativeOciDblinkClient only. A real
+        // dblink client's own row-carrying response for a multi-column query needs its own,
+        // independently-confirmed set of values at these same offsets (a fresh real capture showed
+        // some of them genuinely differ from the non-dblink values above) -- not yet landed here
+        // since the call site that would exercise this (FUNC_UNKNOWN_68's row-carrying response,
+        // see its own comment) isn't fixed yet either; see [[warp-orawire-native-oci-gap]].
         byte[] preRowBlock = NATIVE_OCI_PRE_ROW_BLOCK.clone();
         if (!nativeOciDblinkClient) {
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1, 0, preRowBlock,
@@ -842,7 +881,13 @@ public final class RequestLoop {
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2, 0, preRowBlock,
                     NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_2, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2.length);
             preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
-            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
+            // Real bug this fixes, found the same way as the tail offsets above: byte 4 of this
+            // block was treated as a fixed 0x01 constant (confirmed identical across two
+            // single-column real captures), but a fresh 2-column (NUMBER, VARCHAR2) real capture
+            // needs 0x02 here instead -- genuinely column-count/type-dependent, not fixed. Confirmed
+            // live via the same wire-level patch test as the tail offsets above.
+            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = (openColumns != null && openColumns.size() > 1)
+                    ? (byte) 0x02 : NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
         }
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
         w.writeRaw(preRowBlock);
@@ -1486,7 +1531,19 @@ public final class RequestLoop {
                 // a real non-dblink native-OCI client, confirmed live, never sends that second call and expects
                 // its one and only Execute to carry the row directly.
                 if (nativeOciExecuteCount > 1 || !nativeOciDblinkClient) {
-                    writeNativeOciExecuteTailWithRows(w, request.numIters);
+                    // Real bug this fixes, found live: this call site used to embed up to
+                    // request.numIters rows directly inline into this same fixed-shape tail
+                    // template -- correct for exactly one row (the only shape ever captured and
+                    // verified before now), but a real Oracle-to-Oracle self-loop capture of a
+                    // genuinely two-row result shows real Oracle embeds only the FIRST row inline
+                    // here, then answers the client's own separate, subsequent real FETCH request
+                    // (which handleFetch/writeRows below already handles correctly, including the
+                    // empty-fetch end-of-data case) for every row after that. Embedding more than
+                    // one row here corrupts the tail template's own fixed trailing bytes (sized for
+                    // exactly one row's worth of content) enough to crash a real client outright
+                    // (confirmed live: a real 2-row SELECT segfaulted real sqlplus, not just a TNS
+                    // MARKER/hang the way a wrong-shape response usually manifests).
+                    writeNativeOciExecuteTailWithRows(w, Math.min(request.numIters, 1));
                 } else {
                     writeNativeOciExecuteTail(w);
                 }
@@ -2061,6 +2118,39 @@ public final class RequestLoop {
         }
         if (openRows == null) {
             throw new IllegalStateException("fetch requested with no open cursor");
+        }
+        // Real bug this fixes, found live: a real non-dblink native-OCI client's own FETCH for the
+        // LAST remaining row of a multi-row result needs the combined row+end-of-data response
+        // ResponseWriter.writeFetchLastRowResponseNativeOci constructs (see its own javadoc) --
+        // genuinely different from, and not constructible by patching, the plain per-row writer
+        // writeRows below already uses for every other FETCH. Has to intercept here, BEFORE
+        // writeRows runs, since writeRows would otherwise already have written this exact row via
+        // the wrong (too-short, row-free) shape by the time anything downstream could tell the
+        // fetch was about to exhaust the cursor. Scoped to exactly one remaining row (the only
+        // shape confirmed against a real capture so far) AND the client asking for MORE than that
+        // one row -- confirmed live that a client asking for EXACTLY the one remaining row
+        // (fetchArraySize == 1, an exact match, not an over-fetch) does NOT get this combined
+        // shape: a real capture of that exact scenario still hung the client when answered this
+        // way. Real Oracle presumably only combines the last row with the end-of-data signal when
+        // the request's own over-fetch already implies "and tell me if that's everything"; an
+        // exact-size request gets the row alone, via the ordinary path below, and the client's own
+        // subsequent (now genuinely empty) FETCH naturally lands on NATIVE_OCI_EMPTY_FETCH_RESPONSE
+        // instead.
+        //
+        // KNOWN GAP, not yet fixed: a fresh real Oracle-to-Oracle self-loop capture of a genuine
+        // 2-row dblink SELECT suggests a real dblink client's own last-row FETCH response may need
+        // this SAME combined row+ORA-01403 shape too (both captures' final FETCH response contain
+        // the last row's real value immediately followed by "ORA-01403: no data found\n") -- not
+        // yet extended to dblink here since the call site that would actually exercise this for a
+        // dblink client (FUNC_UNKNOWN_68's row-carrying response) isn't fixed yet either; see
+        // [[warp-orawire-native-oci-gap]].
+        if (usedNativeOciExecuteFallback && !nativeOciDblinkClient
+                && openRows.size() - fetchPosition == 1 && request.fetchArraySize > 1) {
+            List<Object> lastRow = openRows.get(fetchPosition++);
+            ResponseWriter.writeFetchLastRowResponseNativeOci(w, openColumns, lastRow.toArray());
+            nativeOciExecuteCount = 0;
+            nativeOciFirstQueryComplete = true;
+            return;
         }
         long rowsWritten = writeRows(w, request.fetchArraySize);
         // A real distributed-database-link connection's native OCI client's Execute response uses

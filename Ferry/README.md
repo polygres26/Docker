@@ -1,6 +1,6 @@
-# Sayonora DMS
+# Sayonora Ferry
 
-Sayonora DMS (Database Migration Service) — formerly "Polyadvisor"/Sayonora Advisor — is two
+Sayonora Ferry (Database Migration Service) — formerly "Polyadvisor"/Sayonora Advisor — is two
 tools in one module:
 
 - **Migration Advisor** answers "how hard is it to migrate this database to Postgres, and how much
@@ -11,7 +11,7 @@ tools in one module:
 - **Migration Service** actually moves the data: launches and monitors real, massively-parallel
   [`sayonora-migration`](../migration/) runs (the Data Sync section) — real change-data-capture
   connectors for MongoDB, MySQL, SQL Server, Oracle, DynamoDB, SQS, Neo4j, and InfluxDB, writing
-  into Postgres exclusively through [Warp](../wire/README.md)'s own gRPC driver.
+  into Postgres exclusively through [Warp](../Warp/README.md)'s own gRPC driver.
 
 ## Migration Advisor: two ways to get an assessment
 
@@ -63,14 +63,14 @@ straight to the Data Sync section to launch a real migration job (Migration Serv
 ## A note on credentials
 
 Connection credentials are stored server-side so the browser never sees them again after you
-enter them — but they're currently stored **unencrypted** in DMS's local data directory (see
+enter them — but they're currently stored **unencrypted** in Ferry's local data directory (see
 `SAYONORA_ENCRYPTION_KEY` to opt into encryption at rest for the ones this module itself controls).
 Keep that in mind before pointing this at a production credential you wouldn't want sitting in
 plaintext on disk.
 
 ## Where to go next
 
-- Companion tool: [Warp](../wire/README.md) — once you know what you're migrating, Warp
+- Companion tool: [Warp](../Warp/README.md) — once you know what you're migrating, Warp
   lets your existing application keep talking its native protocol (Oracle, MySQL, SQL Server,
   MongoDB, DynamoDB, Amazon SQS) while the data actually lives in Postgres, either as a permanent
   compatibility layer or a temporary bridge during the migration itself.

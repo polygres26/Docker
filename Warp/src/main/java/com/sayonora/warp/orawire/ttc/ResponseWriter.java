@@ -87,7 +87,7 @@ public final class ResponseWriter {
             ColumnMetadata col = columns.get(i);
             if (nativeOciColumnFormat && (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_NUMBER
                     || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR)) {
-                writeColumnMetadataNativeOci(w, col, i);
+                writeColumnMetadataNativeOci(w, col, i, i == columns.size() - 1 && columns.size() > 1);
             } else {
                 writeColumnMetadata(w, col, i);
             }
@@ -196,7 +196,22 @@ public final class ResponseWriter {
     private static final int[] NATIVE_OCI_NAME_LENGTH_OFFSETS = { 50, 51, 55 };
     private static final int NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET = 12;
 
-    private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex) {
+    // Real bug this fixes, found live diffing a fresh 2-column (id NUMBER, name VARCHAR2) real
+    // Oracle-to-Oracle self-loop capture against this codebase's own output for the identical
+    // query: this suffix's own byte 8 (always 0, this array's own zero-filled default) and byte 12
+    // (previously assumed to always hold the plain 0-based column index -- true for every
+    // single-column capture this was ever built/confirmed against, where index is always 0) are
+    // BOTH wrong specifically for the LAST column of a multi-column list -- real Oracle sends 1 at
+    // byte 8 and 0 (not the real index) at byte 12 there, confirmed live via a wire-level patch
+    // test that took a real sqlplus client from hanging to correctly printing every row. Every
+    // non-last column keeps the plain 0-based index at byte 12 and 0 at byte 8, matching the
+    // single-column case exactly (there, the one column IS the last column, but with only one
+    // column ever captured before now, this last-column-specific shape was indistinguishable from
+    // "byte 12 is always just the index").
+    private static final int NATIVE_OCI_COLUMN_SUFFIX_LAST_COLUMN_MARKER_OFFSET = 8;
+
+    private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex,
+            boolean isLastOfMultiple) {
         byte[] prefix = (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR
                 ? NATIVE_OCI_COLUMN_PREFIX_VARCHAR
                 : NATIVE_OCI_COLUMN_PREFIX_NUMBER).clone();
@@ -215,7 +230,11 @@ public final class ResponseWriter {
             prefix[offset] = (byte) nameBytes.length;
         }
         byte[] suffix = NATIVE_OCI_COLUMN_SUFFIX.clone();
-        suffix[NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET] = (byte) columnIndex;
+        if (isLastOfMultiple) {
+            suffix[NATIVE_OCI_COLUMN_SUFFIX_LAST_COLUMN_MARKER_OFFSET] = 1;
+        } else {
+            suffix[NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET] = (byte) columnIndex;
+        }
         w.writeRaw(prefix);
         w.writeRaw(nameBytes);
         w.writeRaw(suffix);
@@ -560,6 +579,39 @@ public final class ResponseWriter {
         w.writeUint8(messageBytes.length);
         w.writeRaw(messageBytes);
         w.writeRaw(NATIVE_OCI_ERROR_SUFFIX);
+    }
+
+    // Real bug this fixes, found live: a real non-dblink native-OCI client's own FETCH request for
+    // the LAST batch of a multi-row result (a real row combined with the end-of-data signal in one
+    // response) used this codebase's own generic writeErrorEnd shape -- far too short (real
+    // Oracle's own equivalent response is 241 bytes, not writeErrorEnd's much shorter one) and
+    // missing the row value entirely, corrupting the byte count enough that a real client simply
+    // stopped responding rather than continuing (confirmed live: a real 2-row SELECT's second,
+    // last row never got past this exact response). This template + two splice points (the row
+    // value, and NATIVE_OCI_ROW_PREFIX before it) come from a real Oracle-to-Oracle self-loop
+    // capture of the identical scenario (a real, plain non-dblink client, a real 2-column,
+    // 2-row SELECT, fetching its second and final row) -- the trailing message text is the SAME
+    // fixed "ORA-01403: no data found\n" this codebase's own writeErrorEnd call for the
+    // genuinely-empty-fetch case already uses, confirmed by this capture's own length-prefixed
+    // string byte-matching it exactly.
+    private static final byte[] NATIVE_OCI_FETCH_LAST_ROW_PREFIX = java.util.Base64.getDecoder().decode(
+        "BgEaAAIAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAJr1cPQAAAAAAAAAAAAAAACZ9XD0AAA=");
+    private static final byte[] NATIVE_OCI_FETCH_LAST_ROW_SUFFIX = java.util.Base64.getDecoder().decode(
+        "BAEAAADfAAECAAAAewUAAAAABQAAAAMAIAAAAAMgAQAABAAAuZIAAAEAAAAAAAAAABYAAAAAAAA2AQAAAAAAAAAAAAAAAAAA0PpJ9nD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAIAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
+
+    public static void writeFetchLastRowResponseNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
+        w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_PREFIX);
+        w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
+        // NATIVE_OCI_ROW_PREFIX only confirmed (both here and at writeRowNativeOci's own, separate
+        // call site) for a 2+-column row -- not yet captured for a single-column FETCH-continuation
+        // to know whether it applies there too, so scoped the same conservative way.
+        if (columns.size() > 1) {
+            w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+        }
+        for (int i = 0; i < columns.size(); i++) {
+            writeColumnValue(w, columns.get(i), values[i]);
+        }
+        w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_SUFFIX);
     }
 
     private static void writeZeroRowid(TtcWriter w) {

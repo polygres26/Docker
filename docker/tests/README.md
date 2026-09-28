@@ -65,7 +65,7 @@ docstring/javadoc for detail):
   `.transactionRollback` are `@Disabled` — a real, confirmed, currently-reproducible bug found
   while writing this suite: a real ojdbc client's `SELECT` against an actual table gets
   `ORA-01403: no data found` even when the row is there and committed. Deterministic, and also
-  breaks wire's own private `OracleJdbcIntegrationTest` — unrelated to this test suite or the
+  breaks Warp's own private `OracleJdbcIntegrationTest` — unrelated to this test suite or the
   published image. python-oracledb (the Python suite) is unaffected. `SELECT ... FROM DUAL` is
   unaffected too — the bug is specific to real-table `SELECT`s via ojdbc's combined
   describe+execute call.
