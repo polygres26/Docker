@@ -202,4 +202,63 @@ class OraclePlsqlCallIntegrationTest {
             }
         }
     }
+
+    /**
+     * Real regression test for a genuine bug found live: a procedure whose ONLY parameter is a
+     * single scalar OUT (no IN params, total bind count 1, not 2) failed client-side with a real
+     * ORA-17401 protocol violation even though {@code cs.execute()} ran fine server-side -- see
+     * {@code ResponseWriter#writeOutBindValues}'s own updated javadoc for the real byte-diff root
+     * cause (a hardcoded bind-count-2 IO-vector preamble that was silently wrong for any other
+     * bind count).
+     */
+    @Test
+    @Timeout(120)
+    void callableStatementWithASingleOutOnlyParameterWorks() throws Exception {
+        try (RealOracle oracle = RealOracle.start();
+                RealPostgres postgres = RealPostgres.start()) {
+
+            try (Connection setup = DriverManager.getConnection(
+                    oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                    Statement stmt = setup.createStatement()) {
+                try {
+                    stmt.execute("DROP PROCEDURE plsql_call_only_out_it_proc");
+                } catch (SQLException ignored) {
+                }
+                stmt.execute("CREATE PROCEDURE plsql_call_only_out_it_proc(p_out OUT NUMBER) AS "
+                        + "BEGIN p_out := 42; END;");
+            }
+
+            try (WarpProcess warp = WarpProcess.builder()
+                    .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(), postgres.password())
+                    .frontend("orawire", "WARP_ORAWIRE_PORT")
+                    .env("WARP_DUAL_EXEC_ENABLED", "true")
+                    .env("WARP_DUAL_EXEC_AUTHORITY", "oracle")
+                    .env("WARP_DUAL_EXEC_SHADOW_ENABLED", "false")
+                    .env("WARP_ORACLE_HOST", oracle.host())
+                    .env("WARP_ORACLE_PORT", String.valueOf(oracle.port()))
+                    .env("WARP_ORACLE_SERVICE", oracle.serviceName())
+                    .env("WARP_ORACLE_USER", oracle.sysUsername())
+                    .env("WARP_ORACLE_PASSWORD", oracle.sysPassword())
+                    .env("WARP_OTEL_ENDPOINT", "disabled")
+                    .start()) {
+
+                String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
+                try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
+                        CallableStatement cs = conn.prepareCall("{call plsql_call_only_out_it_proc(?)}")) {
+                    cs.registerOutParameter(1, Types.NUMERIC);
+                    cs.execute();
+                    assertEquals(42, cs.getInt(1),
+                            "a procedure whose ONLY parameter is a single scalar OUT must work, not fail "
+                                    + "client-side with ORA-17401");
+                }
+            } finally {
+                try (Connection cleanup = DriverManager.getConnection(
+                        oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                        Statement stmt = cleanup.createStatement()) {
+                    stmt.execute("DROP PROCEDURE plsql_call_only_out_it_proc");
+                } catch (SQLException ignored) {
+                }
+            }
+        }
+    }
 }

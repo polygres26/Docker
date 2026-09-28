@@ -126,6 +126,46 @@ class OracleBridgePlsqlCallIntegrationTest {
         }
     }
 
+    /** Real regression test for a genuine bug found live: a procedure whose ONLY parameter is a
+     * single scalar OUT (no IN params, total bind count 1, not 2) failed client-side with a real
+     * ORA-17401 protocol violation under Bridge mode too, even though {@code cs.execute()} ran
+     * fine server-side -- see {@code ResponseWriter#writeOutBindValues}'s own updated javadoc for
+     * the real byte-diff root cause (a hardcoded bind-count-2 IO-vector preamble that was silently
+     * wrong for any other bind count). */
+    @Test
+    @Timeout(180)
+    void bridgeModeSingleOutOnlyParameterWorks() throws Exception {
+        try (RealOracle oracle = RealOracle.start();
+                RealPostgres postgres = RealPostgres.start()) {
+
+            try (Connection setup = DriverManager.getConnection(
+                    oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                    Statement stmt = setup.createStatement()) {
+                stmt.execute("CREATE PROCEDURE bridge_only_out_proc(p_out OUT NUMBER) AS "
+                        + "BEGIN p_out := 42; END;");
+                try {
+                    stmt.execute("CREATE USER app_user1 IDENTIFIED BY \"" + oracle.sysPassword() + "\"");
+                } catch (SQLException ignored) {
+                }
+                stmt.execute("GRANT CREATE SESSION TO app_user1");
+                stmt.execute("GRANT EXECUTE ON bridge_only_out_proc TO app_user1");
+            }
+
+            try (WarpProcess warp = bridgeWarp(oracle, postgres).start()) {
+                String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
+
+                try (Connection conn = DriverManager.getConnection(url, "app_user1", oracle.sysPassword());
+                        CallableStatement cs = conn.prepareCall("{call bridge_only_out_proc(?)}")) {
+                    cs.registerOutParameter(1, Types.NUMERIC);
+                    cs.execute();
+                    assertEquals(42, cs.getInt(1),
+                            "a procedure whose ONLY parameter is a single scalar OUT must work under "
+                                    + "Bridge mode too, not fail client-side with ORA-17401");
+                }
+            }
+        }
+    }
+
     @Test
     @Timeout(180)
     void bridgeModeRefCursorAndMultiOutAreRefusedCleanly() throws Exception {

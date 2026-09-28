@@ -1775,7 +1775,7 @@ public final class RequestLoop {
             if (outArg != null) {
                 ColumnMetadata outColumn = new ColumnMetadata("OUT_" + outPosition,
                         oraTypeNumForOracleDataType(outArg.dataType()), 0, 0, 4000, true);
-                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { outValue });
+                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { outValue }, args.size());
             }
 
             openCursorId = nextCursorId++;

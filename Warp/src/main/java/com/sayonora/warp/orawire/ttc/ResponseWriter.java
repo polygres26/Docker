@@ -247,21 +247,58 @@ public final class ResponseWriter {
         }
     }
 
-    // Confirmed live via a real Oracle 23c self-loop capture (a real JDBC CallableStatement
-    // call, one IN NUMBER + one OUT NUMBER parameter): the response's OUT-bind-carrying block is
-    // NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that shape produced a real
-    // ORA-17401 protocol violation against a real client, confirmed live) -- it's this fixed
-    // 10-byte preamble, whose individual field meanings aren't independently confirmed (no public
-    // TTC spec available to cross-check against), followed by a MSG_TYPE_DESCRIBE_INFO (0x10) tag
-    // byte, then one ROW_DATA-tagged value per OUT parameter in call-position order. This exact
-    // byte sequence for exactly ONE scalar OUT parameter is what was captured and is what's
-    // shipped here -- untested/unconfirmed for more than one OUT parameter in the same call (see
-    // RequestLoop#handlePlSqlExecute's own scope notes).
-    private static final byte[] IO_VECTOR_PREAMBLE = { 0x05, 0x01, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x20 };
+    // Originally confirmed live via a real Oracle 23c self-loop capture (a real JDBC
+    // CallableStatement call, one IN NUMBER + one OUT NUMBER parameter): the response's
+    // OUT-bind-carrying block is NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that
+    // shape produced a real ORA-17401 protocol violation against a real client, confirmed live)
+    // -- it's a fixed-shape preamble, whose individual field meanings aren't independently
+    // confirmed (no public TTC spec available to cross-check against), followed by a
+    // MSG_TYPE_DESCRIBE_INFO (0x10) tag byte, then one ROW_DATA-tagged value per OUT parameter in
+    // call-position order.
+    //
+    // That original preamble was hardcoded as a 10-byte CONSTANT -- { 0x01, 0x02, 0x00, 0x01,
+    // 0x01, 0x00, 0x00, 0x00, 0x20 } after the leading MSG_TYPE_IO_VECTOR tag byte -- and shipped
+    // as correct for ANY single-scalar-OUT call. That was WRONG: a second real capture (a
+    // procedure whose ONLY parameter is the single OUT, i.e. total bind count 1, not 2) produced
+    // a real client-side ORA-17401 through this server while the identical call succeeded direct
+    // against real Oracle, and a byte-for-byte diff of a real-Oracle capture against this same
+    // call's real-Oracle response nailed the exact divergence:
+    //
+    //   1 IN NUMBER + 1 OUT NUMBER (2 total binds), real Oracle: 05 01 02 00 01 01 00 00 00 20 10 07 ...
+    //   1 OUT NUMBER only          (1 total bind),  real Oracle: 05 01 01 00 01 01 00 00 00    10 07 ...
+    //
+    // The fixed 9-byte header { 0x05, 0x01, <totalBindCount>, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00 } is
+    // the same in both captures except for the bind-count field at index 1 -- but the 2-bind
+    // capture carries exactly ONE extra trailing byte (0x20) that the 1-bind capture does not.
+    // That extra byte's count tracks (totalBindCount - 1), i.e. one io-vector entry per IN bind
+    // in the call -- read as one io-vector entry per IN bind, describing it back to the client,
+    // with the OUT bind needing no such entry since its value follows separately as ROW_DATA. The
+    // old code always hardcoded totalBindCount=2 and always appended exactly one 0x20 byte
+    // regardless of the real call shape, which happened to match the only shape ever captured (1
+    // IN + 1 OUT) and was silently wrong for every other bind count -- confirmed live via the
+    // second capture above, which shows Warp emitting the stale "05 01 02 00 01 01 00 00 00 20"
+    // preamble for a 1-total-bind call, exactly the wrong-bind-count bytes a real ojdbc client
+    // then rejects with ORA-17401. Still unconfirmed for more than one OUT parameter in the same
+    // call (see RequestLoop#handlePlSqlExecute's own scope notes, which refuses that shape
+    // outright).
+    private static final byte IO_VECTOR_HEADER_TAIL_BYTE = 0x20;
 
-    public static void writeOutBindValues(TtcWriter w, List<ColumnMetadata> outColumns, Object[] outValues) {
+    public static void writeOutBindValues(TtcWriter w, List<ColumnMetadata> outColumns, Object[] outValues,
+            int totalBindCount) {
         w.writeUint8(TtcConstants.MSG_TYPE_IO_VECTOR);
-        w.writeRaw(IO_VECTOR_PREAMBLE);
+        w.writeUint8(0x05);
+        w.writeUint8(0x01);
+        w.writeUint8(totalBindCount);
+        w.writeUint8(0x00);
+        w.writeUint8(0x01);
+        w.writeUint8(0x01);
+        w.writeUint8(0x00);
+        w.writeUint8(0x00);
+        w.writeUint8(0x00);
+        int inBindCount = Math.max(0, totalBindCount - 1);
+        for (int i = 0; i < inBindCount; i++) {
+            w.writeUint8(IO_VECTOR_HEADER_TAIL_BYTE);
+        }
         w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
         for (int i = 0; i < outColumns.size(); i++) {
