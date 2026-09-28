@@ -13,7 +13,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 
 /**
- * Real Kafka access as a federated Warp schema -- a port of the sibling ThinkingSense project's
+ * Real Kafka access as a federated Warp schema -- a port of a prior internal reference implementation's
  * {@code com.omnigate.calcite.kafka.KafkaSchemaFactory} (real, tested there), so a Kafka topic's
  * bounded snapshot can be JOINed against a Postgres/Oracle/etc. table in one statement through
  * {@code SchemaFederationStage}. Operand shape (built from a {@code kafka://} {@code WARP_BACKENDS}

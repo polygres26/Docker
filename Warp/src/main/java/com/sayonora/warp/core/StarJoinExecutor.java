@@ -13,7 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * Executes a {@link ParallelJoinPlanner.StarPlan} -- ported from the sibling ThinkingSense project's
+ * Executes a {@link ParallelJoinPlanner.StarPlan} -- ported from a prior internal reference implementation's
  * own {@code com.omnigate.core.StarJoinExecutor} (see {@link ParallelJoinPlanner}'s own star-topology
  * section header for the full design and provenance).
  *
@@ -27,7 +27,7 @@ import java.util.concurrent.Future;
  * <p><b>Real, disclosed scope narrowing carried over from the port</b>: unlike {@link
  * ParallelJoinExecutor}'s own build/probe phases, neither the hub scan nor any spoke's build is
  * itself partitioned across multiple local threads or spilled to disk -- each is one connection, one
- * scan, matching ThinkingSense's own current scope. The real, additional parallelism this class adds
+ * scan, matching that reference implementation's own current scope. The real, additional parallelism this class adds
  * over a left-deep chain is spokes building CONCURRENTLY with each other and with nothing else
  * blocking on them, not intra-spoke partitioning.
  */

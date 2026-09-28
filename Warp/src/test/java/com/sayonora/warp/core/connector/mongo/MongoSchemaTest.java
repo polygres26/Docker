@@ -18,7 +18,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-/** Real MongoDB container, same shape as ThinkingSense's {@code MongoSchemaFactoryTest}: real
+/** Real MongoDB container, same shape as that reference implementation's {@code MongoSchemaFactoryTest}: real
  * documents with a known count and heterogeneous field types, read back through the real
  * connector built from a real {@code mongodb://} pseudo-URL. */
 class MongoSchemaTest {

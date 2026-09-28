@@ -19,14 +19,14 @@ import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 /**
- * One Cassandra table exposed as a queryable SQL table -- ported from the sibling ThinkingSense
+ * One Cassandra table exposed as a queryable SQL table -- ported from a prior internal reference implementation
  * project's real, tested {@code com.omnigate.calcite.cassandra.CassandraTable}. Real per-column
  * types (from the driver's own {@link ColumnMetadata}), unlike {@code
  * com.sayonora.warp.core.connector.mongo.MongoTable}'s blanket {@code VARCHAR}. Plain {@link
  * ScannableTable} (no predicate pushdown) -- CQL's own {@code WHERE} restrictions (partition-key-
  * or-{@code ALLOW FILTERING} only) make correct pushdown real, separate work, not attempted here.
  *
- * <p><b>REQUIRED full-scan guard, new work beyond the ThinkingSense port</b>: {@code scan()} there is
+ * <p><b>REQUIRED full-scan guard, new work beyond the that reference implementation port</b>: {@code scan()} there is
  * a genuine full-cluster table scan with zero predicate pushdown -- unsafe to expose unguarded. A
  * plain {@link ScannableTable} gives this class no visibility at all into the query's own WHERE
  * clause (only {@link org.apache.calcite.schema.FilterableTable}/{@link

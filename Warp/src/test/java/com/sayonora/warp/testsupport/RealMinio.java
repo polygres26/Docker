@@ -17,7 +17,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  * A real, disposable MinIO container ({@code minio/minio}) managed via the plain {@code docker}
  * CLI -- deliberately not Testcontainers, same reasoning as {@link RealPostgres}'s javadoc and
  * every other {@code Real*} helper in this package. MinIO is a real, S3-API-compatible object
- * store -- the same live surface ThinkingSense's own {@code S3CompatibleObjectFetcher} was verified
+ * store -- the same live surface that reference implementation's own {@code S3CompatibleObjectFetcher} was verified
  * against, and the connector's own {@code provider=s3-compatible}/{@code endpoint=}/{@code
  * pathStyleAccess=true} config path exists specifically for it.
  */

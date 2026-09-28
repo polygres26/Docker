@@ -414,7 +414,7 @@ public final class Main {
                         : "background refresh enabled");
 
         // Real native RLS/VPD session-context propagation into federated backend connections --
-        // WARP_ACCESS_NATIVE_RLS_DIALECTS is a comma list (not ThinkingSense/Omnigate's single
+        // WARP_ACCESS_NATIVE_RLS_DIALECTS is a comma list (not that reference implementation's single
         // boolean this was ported from), since Warp's own federation already spans 3+ simultaneous
         // backend dialects in one statement (the star/chain parallel-join engine), unlike the
         // single-boolean design's implicit 2-dialect assumption. Empty/unset means every existing

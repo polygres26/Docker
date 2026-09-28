@@ -51,7 +51,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /**
- * One S3 object exposed as a queryable SQL table -- ported from the sibling ThinkingSense project's
+ * One S3 object exposed as a queryable SQL table -- ported from a prior internal reference implementation's
  * real, tested {@code com.omnigate.calcite.s3.S3Table} (same "download once per connection, let
  * Calcite's own query engine run real SQL over the rows" design). <b>Real, structural predicate
  * pushdown -- Parquet only</b> (this class implements {@link ProjectableFilterableTable}): a
@@ -61,7 +61,7 @@ import org.w3c.dom.NodeList;
  * row-group/dictionary-stats skip, not a Calcite-side filter. CSV/XML have no such structure: every
  * call parses the whole object (cached after the first parse).
  *
- * <p>Not a {@code DynamicallyFilterableTable} here -- that ThinkingSense-only optimization interface
+ * <p>Not a {@code DynamicallyFilterableTable} here -- that that reference implementation's own optimization interface
  * has no Warp analog; this port keeps only the real, load-bearing {@link ProjectableFilterableTable}
  * contract.
  */

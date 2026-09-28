@@ -18,7 +18,7 @@ import org.bson.Document;
  * {@code VARCHAR} -- a schemaless document field has no single static type -- with each value
  * converted via {@code String.valueOf}.
  *
- * <p><b>No predicate pushdown, deliberately</b> (kept from the ThinkingSense source, where the risk
+ * <p><b>No predicate pushdown, deliberately</b> (kept from that reference implementation's source, where the risk
  * was found and rejected before shipping): because every column is declared {@code VARCHAR}
  * regardless of the field's real per-document BSON type, translating {@code field = 'literal'} into
  * {@code Filters.eq(field, "literal")} would silently match zero documents wherever that field is
@@ -46,9 +46,9 @@ public final class MongoTable extends AbstractTable implements ScannableTable {
         return builder.build();
     }
 
-    /** A plain whole-collection {@code find()}. Sequential only: ThinkingSense's version splits the
+    /** A plain whole-collection {@code find()}. Sequential only: that reference implementation's version splits the
      * collection into disjoint {@code _id} ranges via a {@code $bucketAuto} aggregation and reads
-     * them concurrently (ThinkingSense {@code com/omnigate/calcite/mongo/MongoTable.java}, {@code
+     * them concurrently (that reference implementation's {@code com/omnigate/calcite/mongo/MongoTable.java}, {@code
      * idRangeFiltersOrEmpty}) -- a deliberate fast-follow, not ported for v1. */
     @Override
     public Enumerable<Object[]> scan(DataContext root) {

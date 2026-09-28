@@ -10,7 +10,7 @@ import org.apache.calcite.schema.SchemaFactory;
 import org.apache.calcite.schema.SchemaPlus;
 
 /**
- * Real MongoDB collection access as a federated Warp schema -- a port of the sibling ThinkingSense
+ * Real MongoDB collection access as a federated Warp schema -- a port of a prior internal reference implementation
  * project's {@code com.omnigate.calcite.mongo.MongoSchemaFactory} (real, tested there). Deliberately
  * NOT Calcite's own calcite-mongodb adapter: that one is compiled against mongodb-driver-sync 4.10.2
  * and throws a real NoSuchMethodError against the 5.x driver this project's mongowire/bson lockstep
@@ -23,7 +23,7 @@ import org.apache.calcite.schema.SchemaPlus;
  * }</pre>
  * {@code fields} is required and explicit: collections are schemaless, so there's no catalog to
  * introspect columns from. Every field surfaces as {@code VARCHAR} -- see {@link MongoTable}.
- * ThinkingSense's {@code statisticsFor} ({@code estimatedDocumentCount}) isn't ported: Warp's
+ * that reference implementation's {@code statisticsFor} ({@code estimatedDocumentCount}) isn't ported: Warp's
  * {@code StatisticsStore} is JDBC/{@code pg_class}-based, so there's no seam for it yet.
  */
 public final class MongoSchemaFactory implements SchemaFactory {

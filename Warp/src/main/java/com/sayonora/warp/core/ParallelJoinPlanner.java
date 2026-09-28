@@ -819,7 +819,7 @@ final class ParallelJoinPlanner {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Star-topology join support (ported from the sibling ThinkingSense project's own
+    // Star-topology join support (ported from a prior internal reference implementation's
     // `com.omnigate.core.ParallelJoinPlanner`, which itself was originally ported FROM this class --
     // see that project's own javadoc). A real BUSHY join shape: one HUB leaf (in practice, almost
     // always the large fact table) joined directly to two or more independent SPOKES (in practice,

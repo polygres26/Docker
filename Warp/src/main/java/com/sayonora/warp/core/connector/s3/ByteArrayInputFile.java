@@ -8,7 +8,7 @@ import org.apache.parquet.io.SeekableInputStream;
 /**
  * {@link InputFile} over an already-downloaded {@code byte[]} -- the seam that lets
  * {@link org.apache.parquet.hadoop.ParquetFileReader} read a Parquet object with no Hadoop
- * {@code FileSystem}/{@code Path} involved. Ported verbatim from the sibling ThinkingSense project.
+ * {@code FileSystem}/{@code Path} involved. Ported verbatim from a prior internal reference implementation.
  * {@link S3Table} downloads one S3 object fully into memory first, then wraps it here -- fine for
  * the object sizes this connector's scope targets, not a streaming reader for very large files.
  */

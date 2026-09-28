@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * Turns a DynamoDB/MongoDB {@code WARP_BACKENDS} pseudo-URL into the operand map its connector's
  * schema factory takes -- the same {@code {..., "tables": {sqlName -> {..., "fields": [...]}}}}
- * shape the ported ThinkingSense factories were built around, just derived from Warp's own text
+ * shape the ported reference factories were built around, just derived from Warp's own text
  * config instead of a JSON model file.
  *
  * <p><b>Grammar</b> (one {@code WARP_BACKENDS} entry is still {@code name=URL|user|password|fallback},
