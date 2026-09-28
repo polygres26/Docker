@@ -1,9 +1,11 @@
 package com.sayonora.warp.orawire;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sayonora.warp.core.SqlStateErrorMapper;
 import com.sayonora.warp.testsupport.RealPostgres;
 import com.sayonora.warp.testsupport.WarpProcess;
 import java.sql.CallableStatement;
@@ -98,6 +100,33 @@ class AdaptPlainModePlsqlIntegrationTest {
                             + "so it must not depend on the procedure actually existing");
             assertTrue(e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
                     "the refusal message must clearly explain WHY, not just fail generically: " + e.getMessage());
+        }
+    }
+
+    /** Locks in the fix for a real, separate, pre-existing usability bug found while confirming
+     * the refusal shape above: {@code RequestLoop}'s generic {@code catch (RuntimeException e)}
+     * handler used to hardcode Oracle error code 942 (ORA-00942, "table or view does not exist")
+     * for EVERY uncaught {@code RuntimeException} anywhere in the request-handling path, not just
+     * this one -- so any application branching on {@code SQLException.getErrorCode() == 942} (a
+     * common real-world pattern for "handle missing table") would misfire on this completely
+     * unrelated refusal. It now reports {@link SqlStateErrorMapper#ORACLE_INTERNAL_ERROR}
+     * (ORA-00600, Oracle's own convention for an internal error) instead, while the real, correct,
+     * helpful message text still comes through intact via {@code SQLException.getMessage()}. */
+    @Test
+    @Timeout(60)
+    void plsqlRefusalReportsInternalErrorCodeNotTheUnrelatedMissingTableCode() throws Exception {
+        try (Connection conn = connect(); Statement st = conn.createStatement()) {
+            SQLException e = assertThrows(SQLException.class, () -> st.execute("BEGIN NULL; END;"));
+            assertNotEquals(SqlStateErrorMapper.ORACLE_DEFAULT, e.getErrorCode(),
+                    "an unrelated internal RuntimeException (here, the PL/SQL refusal) must not be "
+                            + "reported as ORA-00942 'table or view does not exist' -- real "
+                            + "application code commonly branches on getErrorCode() == 942 "
+                            + "specifically to detect a missing table, and would misfire on this");
+            assertEquals(SqlStateErrorMapper.ORACLE_INTERNAL_ERROR, e.getErrorCode(),
+                    "an uncaught RuntimeException with no mapped SQLSTATE should report Oracle's "
+                            + "own real 'internal error' convention (ORA-00600)");
+            assertTrue(e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
+                    "the real, helpful message text must still come through unchanged: " + e.getMessage());
         }
     }
 }

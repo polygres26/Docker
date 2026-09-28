@@ -500,9 +500,9 @@ public final class RequestLoop {
             sendNativeOciErrorMarkerHandshakeIfNeeded();
             String runtimeMessage = e.getMessage() == null ? e.toString() : e.getMessage();
             if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
-                ResponseWriter.writeErrorEndNativeOci(w, 942, runtimeMessage);
+                ResponseWriter.writeErrorEndNativeOci(w, SqlStateErrorMapper.ORACLE_INTERNAL_ERROR, runtimeMessage);
             } else {
-                ResponseWriter.writeErrorEnd(w, 942, runtimeMessage, openCursorId, callNumber);
+                ResponseWriter.writeErrorEnd(w, SqlStateErrorMapper.ORACLE_INTERNAL_ERROR, runtimeMessage, openCursorId, callNumber);
             }
         }
         sendData(w.toByteArray());
