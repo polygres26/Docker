@@ -53,14 +53,13 @@ import org.slf4j.LoggerFactory;
  *
  * <h2>What is reset on checkout/return, and what is NOT</h2>
  * Reset, on every return to the pool (and defensively again on checkout, in case a caller's {@code
- * close()} was skipped by a crash/interrupt): any open transaction is rolled back, and every {@link
+ * close()} was skipped by a crash/interrupt): any open transaction is rolled back, every {@link
  * Statement} (or subtype: {@code PreparedStatement}/{@code CallableStatement}) opened through this
  * connection since its last checkout is closed (closing an open {@code ResultSet}/cursor along
- * with it, per the JDBC contract). See NOTES.md for the explicit list of Oracle session state this
- * slice does NOT reset (ALTER SESSION settings, DBMS_SESSION package state, temp table contents,
- * NLS settings, sequence caches, etc) -- full session reset would need either a real {@code
- * DBMS_SESSION.RESET_PACKAGE}-style call against a live Oracle instance (out of scope: no live
- * Oracle in this slice) or a driver-level reset hook this class does not attempt.
+ * with it, per the JDBC contract), and -- since 2026-09-28, see {@link #resetForReuse}'s own
+ * javadoc for the real cross-session leak this closes -- {@code DBMS_SESSION.RESET_PACKAGE} is run
+ * to clear PL/SQL package-body global-variable state. Still NOT reset (see NOTES.md for the fuller
+ * list): ALTER SESSION settings, temp table contents, NLS settings, sequence caches.
  */
 public final class OracleBridgePool implements AutoCloseable {
 
@@ -134,10 +133,26 @@ public final class OracleBridgePool implements AutoCloseable {
 
     /** Resets session state that this slice can cheaply and reliably reset before a connection
      * (freshly opened, or reused from the pool) is handed to a client session: rolls back any open
-     * transaction. See class javadoc for what is intentionally NOT reset. */
+     * transaction, then calls real Oracle's own {@code DBMS_SESSION.RESET_PACKAGE} -- confirmed
+     * live (2026-09-28) via a real cross-session leak: a bare-bones PL/SQL package with a single
+     * global variable, SET in one client session then read (with no SET of its own) in a second,
+     * later client session against a pool of size 1 (forcing physical-connection reuse) -- the
+     * second session's read returned the FIRST session's value, not a fresh/default one. Real
+     * Oracle package state lives on the physical database session, and this class's own earlier
+     * javadoc (see the class-level "What is reset" section) explicitly named this as NOT reset,
+     * with the reasoning "out of scope: no live Oracle in this slice" -- i.e. genuinely untested at
+     * the time, not a deliberate design choice. `DBMS_SESSION.RESET_PACKAGE` is real Oracle's own,
+     * purpose-built call for exactly this connection-pooling scenario (confirmed live: it resets a
+     * package variable back to its declared initial value, without needing a real LOGOFF/LOGON
+     * round trip) -- verified live to close the leak end-to-end. See class javadoc for what is
+     * still intentionally NOT reset (ALTER SESSION settings, temp table contents, NLS settings,
+     * sequence caches). */
     private void resetForReuse(Connection connection) throws SQLException {
         if (!connection.getAutoCommit()) {
             connection.rollback();
+        }
+        try (Statement resetPackages = connection.createStatement()) {
+            resetPackages.execute("BEGIN DBMS_SESSION.RESET_PACKAGE; END;");
         }
     }
 
@@ -164,6 +179,9 @@ public final class OracleBridgePool implements AutoCloseable {
         try {
             if (!raw.getAutoCommit()) {
                 raw.rollback();
+            }
+            try (Statement resetPackages = raw.createStatement()) {
+                resetPackages.execute("BEGIN DBMS_SESSION.RESET_PACKAGE; END;");
             }
         } catch (SQLException e) {
             log.warn("Oracle bridge pool: connection failed to reset cleanly on return: {}", e.getMessage());

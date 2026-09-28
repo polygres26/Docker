@@ -39,6 +39,10 @@ import org.junit.jupiter.api.Timeout;
 class OracleBridgePlsqlCallIntegrationTest {
 
     private static WarpProcess.Builder bridgeWarp(RealOracle oracle, RealPostgres postgres) {
+        return bridgeWarp(oracle, postgres, 10);
+    }
+
+    private static WarpProcess.Builder bridgeWarp(RealOracle oracle, RealPostgres postgres, int poolSize) {
         return WarpProcess.builder()
                 .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(),
                         postgres.password())
@@ -50,6 +54,7 @@ class OracleBridgePlsqlCallIntegrationTest {
                 .env("WARP_ORACLE_USER", oracle.sysUsername())
                 .env("WARP_ORACLE_PASSWORD", oracle.sysPassword())
                 .env("WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS", "app_user1=" + oracle.sysPassword())
+                .env("WARP_ORACLE_BRIDGE_POOL_SIZE", String.valueOf(poolSize))
                 .env("WARP_OTEL_ENDPOINT", "disabled");
     }
 
@@ -209,6 +214,82 @@ class OracleBridgePlsqlCallIntegrationTest {
                     cs.setInt(2, 10);
                     assertThrows(SQLException.class, cs::execute,
                             "a function-return-value call must be refused cleanly, not silently wrong");
+                }
+            }
+        }
+    }
+
+    /** Real bug this locks in as a regression, found live (2026-09-28) while testing what the user
+     * flagged as a real architectural concern before any of this class existed: PL/SQL PACKAGE-body
+     * global-variable state lives on the real, physical Oracle session -- but {@code
+     * OracleBridgePool} pools/shares a BOUNDED set of physical connections across UNRELATED client
+     * sessions. With the pool forced to size 1 (guaranteeing the second client session reuses the
+     * exact physical connection the first one used), a package variable set in session A was
+     * visible, unchanged, to session B -- which never set it itself. Real Oracle's own
+     * {@code DBMS_SESSION.RESET_PACKAGE} (confirmed live to genuinely reset package state, without
+     * needing a full LOGOFF/LOGON) is now run in {@code OracleBridgePool.resetForReuse}/{@code
+     * returnConnection} -- see that class's own updated javadoc. This test proves the fix: with the
+     * same pool-size-1 forcing, session B now sees FRESH package state, not session A's leftover
+     * value. */
+    @Test
+    @Timeout(180)
+    void bridgeModePackageStateDoesNotLeakAcrossSessionsWithPoolSizeOne() throws Exception {
+        try (RealOracle oracle = RealOracle.start();
+                RealPostgres postgres = RealPostgres.start()) {
+
+            try (Connection setup = DriverManager.getConnection(
+                    oracle.sysJdbcUrl(), oracle.sysUsername(), oracle.sysPassword());
+                    Statement stmt = setup.createStatement()) {
+                stmt.execute("CREATE PACKAGE bridge_pkg_state AS "
+                        + "v_counter NUMBER := 0; "
+                        + "PROCEDURE set_val(p_val IN NUMBER); "
+                        + "PROCEDURE get_val(p_out OUT NUMBER); "
+                        + "END bridge_pkg_state;");
+                stmt.execute("CREATE PACKAGE BODY bridge_pkg_state AS "
+                        + "PROCEDURE set_val(p_val IN NUMBER) AS BEGIN v_counter := p_val; END; "
+                        + "PROCEDURE get_val(p_out OUT NUMBER) AS BEGIN p_out := v_counter; END; "
+                        + "END bridge_pkg_state;");
+                // Bare (non-package-qualified) wrapper procedures -- package-qualified calls are
+                // refused today (see bridgeModePackageQualifiedAndFunctionCallsAreRefusedCleanly
+                // above), so these are the client-facing shape that actually reaches real package
+                // state underneath. get_pkg_state_val takes a dummy leading IN parameter to route
+                // around a separate, real, already-flagged bug (a procedure whose ONLY parameter is
+                // a single OUT parameter fails with ORA-17401 -- see the follow-up task filed for
+                // that; unrelated to package state, not worked around by accident).
+                stmt.execute("CREATE PROCEDURE set_pkg_state_val(p_val IN NUMBER) AS "
+                        + "BEGIN bridge_pkg_state.set_val(p_val); END;");
+                stmt.execute("CREATE PROCEDURE get_pkg_state_val(p_dummy IN NUMBER, p_out OUT NUMBER) AS "
+                        + "BEGIN bridge_pkg_state.get_val(p_out); END;");
+                try {
+                    stmt.execute("CREATE USER app_user1 IDENTIFIED BY \"" + oracle.sysPassword() + "\"");
+                } catch (SQLException ignored) {
+                }
+                stmt.execute("GRANT CREATE SESSION TO app_user1");
+                stmt.execute("GRANT EXECUTE ON set_pkg_state_val TO app_user1");
+                stmt.execute("GRANT EXECUTE ON get_pkg_state_val TO app_user1");
+            }
+
+            // Pool size 1: guarantees session B's checkout reuses the exact physical connection
+            // session A just returned -- the only way to make this leak deterministic rather than
+            // dependent on real pool-scheduling luck.
+            try (WarpProcess warp = bridgeWarp(oracle, postgres, 1).start()) {
+                String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
+
+                try (Connection conn = DriverManager.getConnection(url, "app_user1", oracle.sysPassword());
+                        CallableStatement cs = conn.prepareCall("{call set_pkg_state_val(?)}")) {
+                    cs.setInt(1, 777);
+                    cs.execute();
+                }
+
+                try (Connection conn = DriverManager.getConnection(url, "app_user1", oracle.sysPassword());
+                        CallableStatement cs = conn.prepareCall("{call get_pkg_state_val(?, ?)}")) {
+                    cs.setInt(1, 0);
+                    cs.registerOutParameter(2, Types.NUMERIC);
+                    cs.execute();
+                    assertEquals(0, cs.getInt(2),
+                            "session B must see FRESH package state (0, the declared initial value), "
+                                    + "not session A's leftover 777 -- a value of 777 here means "
+                                    + "package state leaked across unrelated client sessions");
                 }
             }
         }
