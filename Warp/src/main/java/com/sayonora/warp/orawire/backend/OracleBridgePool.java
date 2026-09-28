@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  * HikariCP is already a compile-scope dependency of this project (see Warp/pom.xml's {@code
  * HikariCP} artifact, used elsewhere in Warp) and is already cached in the local Maven repository,
  * so it needs no new dependency and works fully offline. Oracle UCP was considered first (it is
- * Oracle's own pool, with Oracle-specific validation/harvesting/labeling support), but ojdbc11 does
+ * Oracle's own pool, with Oracle-specific validation/harvesting/labeling support), but the Oracle JDBC driver does
  * not transitively pull in {@code ucp.jar} -- confirmed via a read-only {@code mvn
  * dependency:tree} against the real repo; UCP ships as its own separate Maven artifact ({@code
  * com.oracle.database.jdbc:ucp}), not declared anywhere in this project's pom.xml -- so using it

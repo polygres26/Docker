@@ -14,7 +14,7 @@ public final class ResponseWriter {
     // The DESCRIBE_INFO header (msgtype through the trailing byte right before the first column)
     // a real Oracle server sends the same real dblink native-OCI client this whole fallback series
     // is for -- 7 bytes longer than the plain all-zero-filler version above (this codebase's own,
-    // correct for and unchanged for JDBC/sqlplus/SQLcl), confirmed via a real Oracle 23c self-loop
+    // correct for and unchanged for every legacy (non-native-OCI) client), confirmed via a real Oracle 23c self-loop
     // capture. Used verbatim (its own filler content isn't understood field-by-field, only that
     // its LENGTH matters) with just the column-count byte patched -- confirmed at the same offset
     // in a second real capture with a different column count.
@@ -36,9 +36,28 @@ public final class ResponseWriter {
         for (ColumnMetadata col : columns) {
             rowSize += col.bufferSize;
         }
-        header[NATIVE_OCI_DESCRIBE_INFO_HEADER_ROW_SIZE_OFFSET] = (byte) rowSize;
+        // Real bug, found live: this field is 4 bytes wide (little-endian), confirmed by the
+        // captured template itself already holding "2c 00 00 00" (0x0000002c = 44, the 2-NUMBER-
+        // column capture's own row size) at this offset, not a single byte -- but the code only
+        // ever wrote the LOW byte via a naive (byte) cast, silently truncating anything above 255.
+        // Never caught by an earlier NUMBER-only capture (max 22 bytes/column, always < 256), but
+        // fatal for a VARCHAR2(4000) column (rowSize=4000, (byte) 4000 == 160): the client received
+        // a declared row size 25x smaller than the real data that followed and silently hung
+        // waiting for bytes sized to its own, correct, larger expectation.
+        writeLittleEndianUb4(header, NATIVE_OCI_DESCRIBE_INFO_HEADER_ROW_SIZE_OFFSET, rowSize);
         header[NATIVE_OCI_DESCRIBE_INFO_HEADER_COLUMN_COUNT_OFFSET] = (byte) columns.size();
         w.writeRaw(header);
+    }
+
+    // Shared helper for patching a 4-byte little-endian field inside an otherwise-opaque captured
+    // byte template -- see writeDescribeInfoHeaderNativeOci and writeColumnMetadataNativeOci's own
+    // javadoc for the real bug this replaces (a naive single-byte (byte) cast, silently truncating
+    // any value above 255).
+    private static void writeLittleEndianUb4(byte[] buf, int offset, long value) {
+        buf[offset] = (byte) (value & 0xFF);
+        buf[offset + 1] = (byte) ((value >> 8) & 0xFF);
+        buf[offset + 2] = (byte) ((value >> 16) & 0xFF);
+        buf[offset + 3] = (byte) ((value >> 24) & 0xFF);
     }
 
     public static void writeDescribeInfo(TtcWriter w, List<ColumnMetadata> columns) {
@@ -47,7 +66,7 @@ public final class ResponseWriter {
 
     /**
      * @param nativeOciColumnFormat Use {@link #writeColumnMetadataNativeOci} instead of the normal
-     * (correct for, and unchanged for, JDBC/sqlplus/SQLcl) {@link #writeColumnMetadata} -- see that
+     * (correct for, and unchanged for, every legacy (non-native-OCI) client) {@link #writeColumnMetadata} -- see that
      * method's javadoc. Only {@code RequestLoop}'s native-OCI fallback path should ever pass
      * {@code true} here; every other caller uses the default, two-arg overload.
      */
@@ -75,7 +94,7 @@ public final class ResponseWriter {
         }
 
         // The real dblink native-OCI client needs a completely different (and much larger) tail
-        // here than the plain currentDate+zeros this codebase's own JDBC/sqlplus/SQLcl-correct
+        // here than the plain currentDate+zeros this codebase's own every legacy (non-native-OCI) client-correct
         // format writes -- see RequestLoop.writeNativeOciExecuteTail's javadoc, which writes that
         // tail (and skips this codebase's own row-data/success-end writing entirely) instead, right
         // after this method returns, only for that same fallback path.
@@ -140,7 +159,7 @@ public final class ResponseWriter {
     // 0-based column index, always at the same offset relative to the suffix's own start,
     // regardless of the name's length). writeColumnMetadata above produces a much shorter, 31-byte
     // block instead -- correct for, and confirmed live unaffected by this method's existence,
-    // JDBC/sqlplus/SQLcl. Confirmed byte-for-byte against two real Oracle 23c self-loop captures
+    // every legacy (non-native-OCI) client. Confirmed byte-for-byte against two real Oracle 23c self-loop captures
     // (a 2-column and a 3-column SELECT, three differently-named columns total): diffing the
     // fixed-width prefix/suffix portions against each other across all three real columns isolates
     // exactly which bytes are fixed/structural versus column-specific (the name length, written
@@ -164,7 +183,7 @@ public final class ResponseWriter {
     // the safer assumption than leaving either one as a guessed constant). This generalizes what
     // was previously a NUMBER-only native-OCI column format (see writeColumnMetadataNativeOci's
     // own javadoc) to also cover VARCHAR -- confirmed live to fix a real hang: a native-OCI client
-    // sending any single-VARCHAR-column query (including, notably, SQL*Plus's own unavoidable
+    // sending any single-VARCHAR-column query (including, notably, the client's own unavoidable
     // startup probe query, `select current_user`) previously got this codebase's plain,
     // JDBC-shaped column block here instead of this one, and silently aborted with a TNS
     // BREAK/RESET rather than ever showing an error.
@@ -182,8 +201,14 @@ public final class ResponseWriter {
                 ? NATIVE_OCI_COLUMN_PREFIX_VARCHAR
                 : NATIVE_OCI_COLUMN_PREFIX_NUMBER).clone();
         if (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
-            prefix[NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_1] = (byte) col.bufferSize;
-            prefix[NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_2] = (byte) col.bufferSize;
+            // Real bug, found live: both offsets are 4-byte little-endian fields (confirmed by the
+            // captured template itself holding "14 00 00 00" = 20 at both, the original capture's
+            // own short VARCHAR2 column length), not single bytes -- a naive (byte) cast here
+            // silently truncated anything above 255, exactly like NATIVE_OCI_DESCRIBE_INFO_HEADER's
+            // own row-size field (see writeDescribeInfoHeaderNativeOci's javadoc for the live
+            // scenario -- a VARCHAR2(4000) column -- that exposed both instances of this bug).
+            writeLittleEndianUb4(prefix, NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_1, col.bufferSize);
+            writeLittleEndianUb4(prefix, NATIVE_OCI_VARCHAR_BUFFER_SIZE_OFFSET_2, col.bufferSize);
         }
         byte[] nameBytes = col.name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         for (int offset : NATIVE_OCI_NAME_LENGTH_OFFSETS) {
@@ -203,7 +228,7 @@ public final class ResponseWriter {
         }
     }
 
-    // Confirmed live via a real Oracle 23c self-loop capture (a real ojdbc CallableStatement
+    // Confirmed live via a real Oracle 23c self-loop capture (a real JDBC CallableStatement
     // call, one IN NUMBER + one OUT NUMBER parameter): the response's OUT-bind-carrying block is
     // NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that shape produced a real
     // ORA-17401 protocol violation against a real client, confirmed live) -- it's this fixed
@@ -233,8 +258,8 @@ public final class ResponseWriter {
     // A REF CURSOR OUT parameter's column-description response was ATTEMPTED here TWICE and found
     // wrong live both times: first, reusing writeDescribeInfo's generic column-description shape;
     // second, replaying the REAL captured OAC/DCB bytes for a real 2-column (NUMBER, VARCHAR2)
-    // cursor VERBATIM (byte-for-byte from a genuine Oracle-to-ojdbc capture). Both attempts crashed
-    // a real ojdbc CallableStatement client-side with the IDENTICAL ArrayIndexOutOfBoundsException
+    // cursor VERBATIM (byte-for-byte from a genuine Oracle-to-JDBC-client capture). Both attempts crashed
+    // a real JDBC CallableStatement client-side with the IDENTICAL ArrayIndexOutOfBoundsException
     // inside its own T4CTTIoac/T4C8TTIuds unmarshalling. The second failure is the more telling one:
     // since the bytes were genuinely correct Oracle content (not a guess), the gap isn't in the
     // column-block encoding itself -- it's in something about framing, sequencing, or session state
@@ -242,7 +267,7 @@ public final class ResponseWriter {
     // packets, or context from earlier in a real session a synthetic replay doesn't reproduce).
     // Deliberately not implemented (removed rather than left as dead/broken code) -- see
     // RequestLoop#handlePlSqlExecute's own REF CURSOR refusal for the full writeup. Needs a live
-    // protocol trace/debugger session against ojdbc's own OAC unmarshaller, not just wire captures,
+    // protocol trace/debugger session against a real JDBC driver's own OAC unmarshaller, not just wire captures,
     // before further attempts are worthwhile.
 
     // A real distributed-database-link connection's native OCI client's own real row data --
@@ -259,7 +284,7 @@ public final class ResponseWriter {
     // isn't understood field-by-field (a per-row descriptor of some kind, plausibly ROWID/slot-like
     // housekeeping data a real backing table would have and this codebase's own rows don't) -- kept
     // separate from writeRow, not merged into it, since every other tested client's real captures
-    // have never shown it and JDBC/sqlplus/SQLcl's rows must stay exactly as they were.
+    // have never shown it and every legacy (non-native-OCI) client's rows must stay exactly as they were.
     private static final byte[] NATIVE_OCI_ROW_PREFIX = { 0x0a, 0x2c, 0x01, 0x02 };
 
     // A real single-VARCHAR-column native-OCI row is NOT prefix-free the way a real
@@ -277,8 +302,23 @@ public final class ResponseWriter {
     private static final byte[] NATIVE_OCI_SINGLE_VARCHAR_ROW_MARKER = { 0x2c, 0x01, 0x01 };
 
     public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
+        writeRowNativeOci(w, columns, values, true);
+    }
+
+    // Real bug this fixes, found live: NATIVE_OCI_SINGLE_VARCHAR_ROW_MARKER/NATIVE_OCI_ROW_PREFIX
+    // were both captured against the real Oracle distributed-database-link (dblink) native-OCI
+    // client (see each constant's own javadoc: NATIVE_OCI_ROW_PREFIX's already explicitly says
+    // "every other tested client's real captures have never shown it"). A fresh raw TNS packet
+    // capture of a real Oracle server's response to a real, PLAIN (non-dblink) native-OCI session's
+    // own internal login-time probe query ("SELECT DECODE(USER,...) FROM SYS.DUAL", a single
+    // VARCHAR2 column) confirms the same thing for the single-VARCHAR marker: the real wire bytes
+    // are just [ROW_DATA tag][length-prefixed value] -- 0x07 0x06 "SYSTEM" -- with NO
+    // {0x2c,0x01,0x01} marker and no extra total-length byte before it. Gated on dblinkClient so
+    // the two real dblink captures this marker/prefix WERE verified against stay unaffected.
+    public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values,
+            boolean dblinkClient) {
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
-        if (columns.size() == 1 && columns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
+        if (dblinkClient && columns.size() == 1 && columns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
             TtcWriter valueWriter = new TtcWriter();
             writeColumnValue(valueWriter, columns.get(0), values[0]);
             byte[] encodedValue = valueWriter.toByteArray();
@@ -287,7 +327,7 @@ public final class ResponseWriter {
             w.writeRaw(encodedValue);
             return;
         }
-        if (columns.size() > 1) {
+        if (dblinkClient && columns.size() > 1) {
             w.writeRaw(NATIVE_OCI_ROW_PREFIX);
         }
         for (int i = 0; i < columns.size(); i++) {
@@ -394,7 +434,7 @@ public final class ResponseWriter {
      * real rowcount, not as a separate no-rows-at-all error response. This is a genuinely
      * different shape from the old, since-removed writeInlineExhaustionEnd: that one was a
      * hardcoded, captured byte blob with error 1403 baked in and NO row-count/row-data field at
-     * all, so a real ojdbc client correctly read it as "zero rows" and raised ORA-01403 to the
+     * all, so a real JDBC client correctly read it as "zero rows" and raised ORA-01403 to the
      * application even though the row was legitimately there -- a real, reproducible bug (see
      * docker/tests/java's OraWireTest javadoc). This writer keeps writeSuccessEnd's real
      * rowcount field (the actual row(s) already written via writeRows/similar are unaffected;
@@ -473,6 +513,53 @@ public final class ResponseWriter {
         w.writeUb4(0);
         w.writeUb4(0);
         w.writeStrWithLength(message);
+    }
+
+    // Real bug this fixes, found live: this codebase's only error response
+    // (writeErrorEnd above) is correct for, and unchanged for, every legacy (non-native-OCI)
+    // client -- but a real non-dblink native-OCI client that receives it after a genuine backend
+    // error (e.g. DROP TABLE on a nonexistent table) never sends another statement afterward,
+    // even though the SAME client, against real Oracle, continues normally. A raw TNS packet
+    // capture of a real Oracle server's own ERROR response to the identical error showed a
+    // completely different, much larger structure (230 bytes vs writeErrorEnd's much shorter
+    // shape) -- not a variant of writeErrorEnd's own field layout at all. Used as a fixed template
+    // with two splice points, the same pattern already established for other native-OCI response
+    // shapes in this file/RequestLoop: the numeric error code appears TWICE in the template, both
+    // times as a 2-byte little-endian value (confirmed: 0x03ae = 942 decimal, matching ORA-00942
+    // exactly) -- patched at both offsets; the message text itself is length-prefixed (1 byte)
+    // immediately before it, confirmed by the byte immediately preceding the message text
+    // matching the message's own UTF-8 length (66) exactly. Real Oracle's own wire content ends
+    // immediately after the message's trailing newline plus one terminator byte (0x1d) -- no
+    // "Help: https://..." URL on the wire at all; that text is SQL*Plus's own client-side
+    // addition based on the numeric error code, not something Warp ever sent or needs to
+    // replicate.
+    // NOTE: the first 2 bytes of the real capture this was extracted from ("20 00") are TNS's own
+    // DATA-packet "end of response" flag prefix, already added automatically by
+    // TnsPacket.encode() for every DATA-type packet -- an earlier version of this constant
+    // included them as if they were part of the TTC content itself, producing a corrupted,
+    // doubled-up "20 00 20 00 04 01..." wire response (confirmed live: a real non-dblink
+    // native-OCI client broke the connection right after receiving it). Stripped here so this
+    // template holds only the genuine TTC payload, matching every other captured template in this
+    // file/RequestLoop.
+    private static final byte[] NATIVE_OCI_ERROR_PREFIX = java.util.Base64.getDecoder().decode(
+        "BAEAAQAbAAEAAAAArgMAAAAAAgALAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAsAAAAAAAA2AQAAAAAAAAAAAAAAAAAA0Cp9A1vnAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAArgMAAAAAAAAAAAAADAAAAAAAAAA=");
+    private static final int[] NATIVE_OCI_ERROR_CODE_OFFSETS = { 12, 132 };
+    private static final byte[] NATIVE_OCI_ERROR_SUFFIX = { 0x1d };
+
+    public static void writeErrorEndNativeOci(TtcWriter w, int errorNum, String message) {
+        byte[] prefix = NATIVE_OCI_ERROR_PREFIX.clone();
+        for (int offset : NATIVE_OCI_ERROR_CODE_OFFSETS) {
+            prefix[offset] = (byte) (errorNum & 0xFF);
+            prefix[offset + 1] = (byte) ((errorNum >> 8) & 0xFF);
+        }
+        // Real Oracle's own message text always ends with a trailing newline on the wire
+        // (confirmed live) -- callers pass the plain rendered message without one.
+        String terminated = message.endsWith("\n") ? message : message + "\n";
+        byte[] messageBytes = terminated.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        w.writeRaw(prefix);
+        w.writeUint8(messageBytes.length);
+        w.writeRaw(messageBytes);
+        w.writeRaw(NATIVE_OCI_ERROR_SUFFIX);
     }
 
     private static void writeZeroRowid(TtcWriter w) {

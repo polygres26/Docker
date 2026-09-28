@@ -30,7 +30,7 @@ public final class OracleDateCodec {
     }
 
     /**
-     * TIMESTAMP WITH TIME ZONE (13 real bytes) -- confirmed live (a real ojdbc {@code
+     * TIMESTAMP WITH TIME ZONE (13 real bytes) -- confirmed live (a real JDBC {@code
      * PreparedStatement.setObject(1, OffsetDateTime.now())} call): the SAME 7-byte
      * century/year/month/day/hour/minute/second fields {@link #decode} already reads, then 4
      * bytes of fractional-second nanoseconds (big-endian unsigned), then 2 bytes of timezone: an

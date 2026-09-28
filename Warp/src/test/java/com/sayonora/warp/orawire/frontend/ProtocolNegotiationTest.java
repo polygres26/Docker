@@ -24,20 +24,21 @@ import org.junit.jupiter.api.Test;
  *
  * The PROTOCOL response is unconditional (same real capture regardless of
  * client), but the DATA_TYPES response is not: {@link
- * ProtocolNegotiation#pythonThinClient} picks a minimal 3-byte empty-list
- * shape for python-oracledb (which this test's {@code sendProtocolRequest}
- * declares itself as, matching real python-oracledb traffic) versus the
- * full DATA_TYPES_RESPONSE_B64 real-capture replay for everything else
- * (ojdbc11) — see that field's javadoc for why the two clients need
- * different shapes here. This test only exercises the python-thin-client
- * path; there's no equivalent test yet for the ojdbc11-shaped branch.
+ * ProtocolNegotiation#legacyThinProtocolClient} picks a minimal 3-byte empty-list
+ * shape for a driver name containing "python-oracledb" (a real, literal driver-name
+ * substring a legacy thin-protocol client sends over the wire -- this test's
+ * {@code sendProtocolRequest} declares itself with that exact string, matching real
+ * traffic) versus the full DATA_TYPES_RESPONSE_B64 real-capture replay for every
+ * other (non-thin-protocol) client — see that field's javadoc for why the two need
+ * different shapes here. This test only exercises the legacy-thin-protocol
+ * path; there's no equivalent test yet for the other, real-JDBC-driver-shaped branch.
  *
  * field_version's expected value was updated once, live, this session:
  * ProtocolNegotiation's PROTOCOL response used to be a hand-assembled,
  * minimal placeholder pinning field_version at plain 12.2 (8) — since
  * replaced with a byte-exact replay of a real Oracle Database 23 Free
  * session's own response (see PROTOCOL_RESPONSE_B64's javadoc for why:
- * it's what finally got ojdbc11 past O5LOGON). This test's assertion was
+ * it's what finally got a real JDBC client past O5LOGON). This test's assertion was
  * still pinned to the old, no-longer-true value — caught by `mvn test`
  * failing after that swap landed. 27 is read directly off the real
  * capture, not chosen; if PROTOCOL_RESPONSE_B64 is ever byte-diffed
@@ -71,7 +72,7 @@ class ProtocolNegotiationTest {
                 "ttc_field_version byte must match PROTOCOL_RESPONSE_B64's real capture (see class javadoc)");
 
         TnsPacket dataTypesResponse = new TnsPacketReader(serverBytes).readPacket();
-        assertEquals(3, dataTypesResponse.payload().length, "DATA_TYPES response should be msgType byte + 2-byte empty-list terminator (python-thin-client shape, see class javadoc)");
+        assertEquals(3, dataTypesResponse.payload().length, "DATA_TYPES response should be msgType byte + 2-byte empty-list terminator (legacy-thin-protocol shape, see class javadoc)");
         assertEquals(2, dataTypesResponse.payload()[0] & 0xFF); // MSG_TYPE_DATA_TYPES
         assertEquals(0, dataTypesResponse.payload()[1] & 0xFF); // uint16BE(0) high byte
         assertEquals(0, dataTypesResponse.payload()[2] & 0xFF); // uint16BE(0) low byte

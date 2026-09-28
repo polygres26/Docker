@@ -18,8 +18,8 @@ final class ServerOptionsBridgeModeTest {
 
     @Test
     void bridgeIsADistinctThirdValueFromJdbcAndNative() {
-        assertNotEquals(ServerOptions.OracleBackendMode.JDBC, ServerOptions.OracleBackendMode.BRIDGE);
-        assertNotEquals(ServerOptions.OracleBackendMode.NATIVE, ServerOptions.OracleBackendMode.BRIDGE);
+        assertNotEquals(ServerOptions.OracleBackendMode.ADAPT, ServerOptions.OracleBackendMode.BRIDGE);
+        assertNotEquals(ServerOptions.OracleBackendMode.RELAY, ServerOptions.OracleBackendMode.BRIDGE);
         assertEquals(3, ServerOptions.OracleBackendMode.values().length);
     }
 

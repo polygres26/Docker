@@ -103,7 +103,31 @@ public final class License {
     }
 
     static License fromEnv() {
+        // TEMPORARY, explicitly requested by the product owner (2026-09-27): the Developer-tier
+        // connection/instance/backend caps are meant to gate the PUBLIC Docker/GitHub
+        // distribution, not this team's own internal development and testing -- every internal
+        // Warp instance should behave as the commercial (Enterprise) edition by default until the
+        // Docker packaging work needs the paywall back. WARP_ENFORCE_DEVELOPER_TIER is the single
+        // switch that work will flip (set it to "true" in the Docker image's own env, or wherever
+        // the public build is assembled) to restore the real fails-closed "no key -> Developer"
+        // behavior for that distribution -- nothing else in this file needs to change. Explicitly
+        // setting WARP_LICENSE_KEY (a real customer key, good or bad) is untouched either way:
+        // it still always goes through fromKey's genuine signature verification below, so the
+        // "fails closed on a bad/expired key" contract that protects a real paying customer's
+        // license is unaffected -- only the *no-key-at-all* default changes here.
+        if (!isTruthy(System.getenv("WARP_ENFORCE_DEVELOPER_TIER"))
+                && (System.getenv("WARP_LICENSE_KEY") == null || System.getenv("WARP_LICENSE_KEY").isBlank())) {
+            log.info("license: no WARP_LICENSE_KEY and WARP_ENFORCE_DEVELOPER_TIER not set -- running "
+                    + "as internal Enterprise-equivalent dev/test build (no Developer-tier caps). Set "
+                    + "WARP_ENFORCE_DEVELOPER_TIER=true to restore Developer-tier enforcement (the "
+                    + "public Docker/GitHub distribution's build should set this).");
+            return new License(LicenseTier.ENTERPRISE, "Internal Dev/Test (no license key)", null);
+        }
         return fromKey(System.getenv("WARP_LICENSE_KEY"));
+    }
+
+    private static boolean isTruthy(String value) {
+        return value != null && (value.equalsIgnoreCase("true") || value.equals("1"));
     }
 
     /** The actual verify-and-apply-expiry logic {@link #fromEnv()} runs, taking the key as a

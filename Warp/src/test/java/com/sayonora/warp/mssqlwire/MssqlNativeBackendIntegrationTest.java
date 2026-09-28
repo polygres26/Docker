@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unlike every other mssqlwire test (which proves T-SQL dialect translation into a Postgres
  * backend), this proves {@code WARP_MSSQLWIRE_BACKEND=sqlserver} -- the new native-backend mode,
- * mirroring {@code WARP_ORACLE_BACKEND_MODE=native}/{@code WARP_MYWIRE_BACKEND=mysql} -- actually
+ * mirroring {@code WARP_ORACLE_BACKEND_MODE=relay}/{@code WARP_MYWIRE_BACKEND=mysql} -- actually
  * reaches a REAL SQL Server instance, not a translated-into-Postgres one. Proof: create a table
  * and insert a row directly against the real backend (bypassing Warp entirely), then read it back
  * through a real mssql-jdbc client connected to Warp -- only possible if the native-mode

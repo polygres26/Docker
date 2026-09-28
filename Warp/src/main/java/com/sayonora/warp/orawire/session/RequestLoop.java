@@ -76,6 +76,22 @@ public final class RequestLoop {
     // work without it, so this stays opt-in per-session rather than unconditional.
     private boolean usedNativeOciExecuteFallback;
 
+    // Real, native-OCI non-dblink login confirmed at login time (negotiated TNS protocol version
+    // >= 320 -- see ConnectHandshake's own comment on the real, captured version split: a
+    // legacy-protocol client negotiates 319 and never sets this, real native-OCI non-dblink negotiates
+    // 320 and always does). Deliberately kept SEPARATE from usedNativeOciExecuteFallback, which controls the
+    // Execute/Fetch REQUEST/RESPONSE wire shape and is only proven correct for the real
+    // distributed-database-link client that shape was originally reverse-engineered against --
+    // using it for a plain real non-dblink session's own simple queries was tried and found to
+    // desync the Execute response's own tail/checksum-shaped fields (an area this codebase's own
+    // comments already flag as needing a proper TNS dissector to get fully right, not more
+    // guess-and-check byte patching). This narrower flag is used ONLY where it's been separately
+    // confirmed correct: the FUNC_COMMIT/FUNC_LOGOFF ack shape a real non-dblink session's bundled
+    // close-cursors/set-end-to-end-attr/commit-or-logoff piggyback actually needs (see those
+    // branches below) -- real Oracle sends the same compact/piggyback-shaped ack there regardless
+    // of whether this SAME session's Execute traffic happens to need the native-OCI fallback.
+    private boolean nativeOciAckShape;
+
     // Counts native-OCI-fallback Execute calls in this session. This client sends TWO Executes for
     // one query (see the piggyback/chained-FUNCTION comments elsewhere in this class): a first,
     // prepare-shaped one carrying no real data (confirmed live: real Oracle's own response to it is
@@ -103,7 +119,7 @@ public final class RequestLoop {
     // WHEN they expect row data: a dblink client always sends a second, chained Execute (via a
     // FUNC_UNKNOWN_68 round trip) before it wants any row content, and its first Execute must stay
     // row-free (confirmed repeatedly, including a live TNS BREAK/RESET when this was tried); a
-    // real SQL*Plus client, confirmed live via a real Oracle-to-Oracle capture showing its query's
+    // real non-dblink native-OCI client, confirmed live via a real Oracle-to-Oracle capture showing its query's
     // actual result value already embedded in that capture's own single Execute response, never
     // sends that second chained call at all for a simple query -- it expects its one and only
     // Execute to carry the row directly.
@@ -217,6 +233,9 @@ public final class RequestLoop {
                 com.sayonora.warp.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.warp.core.RouterStage.tableShardRulesIn(sharedStages))
                 .withFederationSupport(com.sayonora.warp.core.RouterStage.statisticsStoreIn(sharedStages),
                         com.sayonora.warp.core.RouterStage.planStoreIn(sharedStages)));
+        // See nativeOciAckShape's own javadoc: known correct at login time (unlike
+        // usedNativeOciExecuteFallback, which stays reactive-only -- see its own javadoc history).
+        this.nativeOciAckShape = reader.isAnoEligible();
     }
 
     public void run() throws IOException {
@@ -272,7 +291,7 @@ public final class RequestLoop {
         int wireSequenceNumber = r.readUint8();
 
         // This field is normally a chunked (length-prefixed) UB8 -- real for every previously
-        // tested client (JDBC/sqlplus/SQLcl), which always sends 0 here regardless of function
+        // tested client (every legacy (non-native-OCI) client), which always sends 0 here regardless of function
         // code, so a chunked-zero read (1 byte, value 0) has always been indistinguishable from
         // whatever the field's true width actually is. A real distributed-database-link
         // connection's native OCI client breaks that: confirmed live against a real Oracle 23c
@@ -321,7 +340,7 @@ public final class RequestLoop {
                 handleReexecute(r, w, callNumber, functionCode == TtcConstants.FUNC_REEXECUTE_AND_FETCH);
             } else if (functionCode == TtcConstants.FUNC_LOGOFF) {
                 handleLogoff();
-                if (usedNativeOciExecuteFallback) {
+                if (usedNativeOciExecuteFallback || nativeOciAckShape) {
                     // Real bytes, captured live from a real Oracle-to-Oracle self-loop's own
                     // response to this same client's LOGOFF: a STATUS message (tag 9), not the
                     // ERROR-tagged (tag 4) writeSuccessEnd this codebase's other clients get --
@@ -334,21 +353,14 @@ public final class RequestLoop {
                 logoff = true;
             } else if (functionCode == TtcConstants.FUNC_COMMIT) {
                 commitAll();
-                if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
-                    // A real SQL*Plus client's own FUNC_COMMIT arrives as the tail of the bundled
-                    // close-cursors/set-end-to-end-attr/commit piggyback (see the scan-based
-                    // recovery in skipPiggyback above), and a live side-by-side comparison against
-                    // a genuine real Oracle-to-Oracle capture of this exact bundle found this
-                    // codebase's normal writeSuccessEnd-based COMMIT reply is the wrong shape for
-                    // it: real Oracle replies with the same compact STATUS ack (tag 9, zero
-                    // retcode, trailing 0x1d) already established and confirmed live for this same
-                    // client's own LOGOFF above -- not writeSuccessEnd's own ERROR-tagged (tag 4)
-                    // shape. Sending the wrong shape here was confirmed live to be exactly why a
-                    // real SQL*Plus client went silent after Warp's own COMMIT response instead
-                    // of proceeding to its final close marker. A dblink native OCI client's own
-                    // standalone COMMIT (never part of this bundle) is unaffected -- it keeps using
-                    // the writeSuccessEnd shape below, already confirmed correct for it.
-                    w.writeRaw(NATIVE_OCI_LOGOFF_RESPONSE);
+                if ((usedNativeOciExecuteFallback || nativeOciAckShape) && !nativeOciDblinkClient) {
+                    // See NATIVE_OCI_COMMIT_PIGGYBACK_RESPONSE's own javadoc for the real shape
+                    // here (a PIGGYBACK-tagged response, not a STATUS ack) and how the earlier,
+                    // wrong assumption in this comment was found and corrected live. A dblink
+                    // native OCI client's own standalone COMMIT (never part of this bundle) is
+                    // unaffected -- it keeps using the writeSuccessEnd shape below, already
+                    // confirmed correct for it.
+                    w.writeRaw(NATIVE_OCI_COMMIT_PIGGYBACK_RESPONSE);
                 } else {
                     ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
                     if (usedNativeOciExecuteFallback) {
@@ -356,7 +368,7 @@ public final class RequestLoop {
                         // this client (every native-OCI response this investigation has captured
                         // ends in one more byte, 0x1d, after its own real content) --
                         // writeSuccessEnd is generic, hand-written code shared with
-                        // JDBC/sqlplus/SQLcl and doesn't append it.
+                        // every legacy (non-native-OCI) client and doesn't append it.
                         w.writeUint8(0x1d);
                     }
                 }
@@ -460,18 +472,29 @@ public final class RequestLoop {
             failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             rollbackAfterStatementError();
+            sendNativeOciErrorMarkerHandshakeIfNeeded();
             // The client sees the dialect-native ORA-xxxxx wording (real Oracle message text,
             // not Postgres's) when one exists for this SQLSTATE -- the audit log line above still
             // records Postgres's own raw message, since that's the more useful text for debugging
             // the real backend failure.
             String clientMessage = e.getMessage() == null ? "backend error"
                     : DialectErrorMessages.render(SourceDialect.ORACLE, e.getSQLState(), e.getMessage());
-            ResponseWriter.writeErrorEnd(w, nativeError, clientMessage, openCursorId, callNumber);
+            if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
+                ResponseWriter.writeErrorEndNativeOci(w, nativeError, stripJdbcHelpLink(clientMessage));
+            } else {
+                ResponseWriter.writeErrorEnd(w, nativeError, clientMessage, openCursorId, callNumber);
+            }
         } catch (RuntimeException e) {
-            
+
             log.warn("unexpected error executing statement: {}", e.toString(), e);
             rollbackAfterStatementError();
-            ResponseWriter.writeErrorEnd(w, 942, e.getMessage() == null ? e.toString() : e.getMessage(), openCursorId, callNumber);
+            sendNativeOciErrorMarkerHandshakeIfNeeded();
+            String runtimeMessage = e.getMessage() == null ? e.toString() : e.getMessage();
+            if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
+                ResponseWriter.writeErrorEndNativeOci(w, 942, runtimeMessage);
+            } else {
+                ResponseWriter.writeErrorEnd(w, 942, runtimeMessage, openCursorId, callNumber);
+            }
         }
         sendData(w.toByteArray());
         if (sqlMetrics != null && lastRewrittenSqlText != null && isStatementShaped(functionCode)) {
@@ -483,7 +506,7 @@ public final class RequestLoop {
     /**
      * A real distributed-database-link connection's native OCI client sends Execute requests that
      * are NOT field-compatible with {@link ExecuteRequestReader#read}'s layout (tuned against
-     * JDBC/sqlplus/SQLcl, confirmed live to keep working correctly against a real Oracle 23c
+     * every legacy (non-native-OCI) client, confirmed live to keep working correctly against a real Oracle 23c
      * instance -- this fallback only ever triggers on a request shape none of those clients send).
      * On the {@link ArrayIndexOutOfBoundsException} that shape causes, retry with
      * {@link ExecuteRequestReader#readByScanningForSql}, a content-scanning reader built
@@ -511,10 +534,25 @@ public final class RequestLoop {
             // trying to regex-match null SQL text. Retry via the same raw-scanning fallback used
             // for the exception case, against this same packet's own raw bytes (not `r`, whose
             // position reflects the structured reader's own, differently-wrong parse this time).
-            if (parsed.sqlText == null && parsed.cursorId == 0) {
-                log.info("Execute request parsed without error but produced no SQL text and no cursor "
-                        + "id (real dblink native-OCI client, different query shape?) -- falling back "
-                        + "to scanning its raw bytes for a SQL statement");
+            // Real bug, found live once the error-continuation fix above started letting a real
+            // non-dblink native-OCI session actually proceed to its NEXT statement after a genuine
+            // backend error: this same structured reader can ALSO misparse a fresh Execute (this
+            // client's own next statement, e.g. a CREATE TABLE, carrying real SQL text) into
+            // sqlText==null with a garbage NONZERO cursorId (confirmed live: -16777216 == 0xFF000000,
+            // clearly not a real cursor id -- some byte read landing at the wrong shift position for
+            // this client's shape) -- the original `cursorId == 0` check above only caught the
+            // all-zero misparse shape, not this one. A genuine re-execute of a cached statement
+            // always has a cursorId this session itself actually issued and cached a signature for
+            // (see statementSignatures); a nonzero cursorId with NO cached signature is exactly as
+            // illegitimate as sqlText==null && cursorId==0 was, so it gets the same raw-scanning
+            // fallback instead of reaching handleExecute's cursor-reuse path unguarded (which used
+            // to throw IllegalStateException and permanently stall the client on every subsequent
+            // statement in the same script).
+            if (parsed.sqlText == null
+                    && (parsed.cursorId == 0 || statementSignatures.get((int) parsed.cursorId) == null)) {
+                log.info("Execute request parsed without error but produced no SQL text and no usable "
+                        + "cursor id to reuse (real dblink native-OCI client, different query shape?) "
+                        + "-- falling back to scanning its raw bytes for a SQL statement");
                 usedNativeOciExecuteFallback = true;
                 return ExecuteRequestReader.readByScanningForSql(packet.payload());
             }
@@ -633,8 +671,31 @@ public final class RequestLoop {
     // real Oracle always sends -- confirmed identical across two sequential real queries on the
     // same link, diffed against each other. A second query over the same connection needs these to
     // be right; a first query apparently doesn't notice they're wrong.
+    //
+    // Documented above but never actually applied in code until now (this array's own bytes at
+    // 28-31/44-47 were still the original all-zero template when finally diffed against a real,
+    // fresh two-query same-session capture -- see writeNativeOciExecuteTailWithRows's own patching
+    // below). Confirmed live: offset 28-31 ("38 99 34 f0") is identical across BOTH queries in that
+    // session, safe as a fixed constant; offset 44-45 ("11 97") is also identical across both, but
+    // 46-47 genuinely differs between them (0x0100 vs 0x34f0) -- a real per-statement value, not
+    // patched, left as this template's own default rather than guessed.
     private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK = java.util.Base64.getDecoder().decode(
         "BgEaAAIAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEbH//8AAAAAAAAAAAAAAAAswSTuAAA=");
+    private static final int NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_1 = 28;
+    private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1 = { 0x38, (byte) 0x99, 0x34, (byte) 0xf0 };
+    private static final int NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_2 = 44;
+    private static final byte[] NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2 = { 0x11, (byte) 0x97 };
+    // Real bug, found the same way, one more diff pass later against a fresh capture of the
+    // client's own internal login-time probe query (a single-VARCHAR2-column result): offset 2 and
+    // 4 here (this template's own untouched "1a 00 02") are ALSO wrong, confirmed by cross-checking
+    // both the NUMBER- and VARCHAR-column real captures against each other -- byte 2 (0x22) and
+    // byte 4 (0x01) are identical between them, safe as fixed constants; byte 3 (0x15 for NUMBER,
+    // 0xe9 for VARCHAR) genuinely differs, the same "one real per-statement byte, not patchable"
+    // shape as offset 46-47 above -- left at this template's own default rather than guessed.
+    private static final int NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3 = 2;
+    private static final byte NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A = 0x22;
+    private static final int NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4 = 4;
+    private static final byte NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A = 0x01;
 
     // Tried (2026-08-26) and reverted: writing a fresh AL8O4 vector here (tag 0x08 +
     // AL8O4_LENGTH(6) + six chunked fields -- SCN low/high, cursor id, XA flags, cached row count,
@@ -646,10 +707,10 @@ public final class RequestLoop {
     // it regressed the startup-probe query (this same code path, nativeOciExecuteCount==1), which
     // worked fine with this template's original fixed zeros -- a real client that previously got
     // past this response now breaks on it instead. Reverted rather than left half-verified. See
-    // [[warp-orawire-sqlplus-gap]] for why: getting this field-by-field, rather than by more
+    // [[warp-orawire-native-oci-gap]] for why: getting this field-by-field, rather than by more
     // guess-and-check byte patching, needs a real Oracle-Net-aware capture tool (a proper TNS
     // dissector) to pin down this vector's true field boundaries and semantics with confidence.
-    // Real bug, found live for a genuine SQL*Plus (non-dblink) client via a careful, verified byte
+    // Real bug, found live for a genuine non-dblink native-OCI client via a careful, verified byte
     // accounting rather than a guess: computed this exact template's absolute byte offset for the
     // AL8O4 tag from first principles (DESCRIBE_INFO header + one NUMBER column's own real,
     // already-verified-correct encoded length + this template's own row-insertion-point/pre-row
@@ -661,7 +722,7 @@ public final class RequestLoop {
     // real Oracle sends 0x01/0x00/0x01 there instead. Confirmed these three offsets sit inside a
     // span already proven, separately, to be session-invariant (byte-for-byte identical across two
     // real, sequential queries in the same real session -- see
-    // [[warp-orawire-sqlplus-gap]]'s own update #10/#11), so this is a fixed content
+    // [[warp-orawire-native-oci-gap]]'s own update #10/#11), so this is a fixed content
     // correction, not a per-session/per-cursor value needing to be computed at request time -- the
     // same kind of fixed patch already applied to this same template at offset 35-37
     // (NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH) above. Scoped to non-dblink clients only: a dblink
@@ -670,7 +731,7 @@ public final class RequestLoop {
     // diffed at these specific offsets and may need different (or no) correction there.
     // Extended the same way, same live-vs-real diff at the same session-invariant offsets: found
     // two more wrong bytes past the first three, at offsets 85 and 92 (0x07/0x08 in this template,
-    // real Oracle sends 0x01/0x00) -- also inside the span [[warp-orawire-sqlplus-gap]]'s
+    // real Oracle sends 0x01/0x00) -- also inside the span [[warp-orawire-native-oci-gap]]'s
     // update #10 proved session-invariant.
     // Two more single-byte flags found the same way, at offsets 119 and 203 (both 0x00 in this
     // template, real Oracle sends 0x01) -- NOT yet independently confirmed session-invariant the
@@ -681,26 +742,129 @@ public final class RequestLoop {
     // ~119-123) that looks like a genuine per-session value (an elapsed-call-time or similar) --
     // deliberately NOT patched, since it's plausible for that to legitimately differ between any
     // two real Oracle connections regardless of correctness.
-    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH = { 0x01, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01 };
-    private static final int[] NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS = { 43, 47, 68, 85, 92, 119, 203 };
+    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_PATCH = { 0x01, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01 };
+    private static final int[] NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_PATCH_OFFSETS = { 43, 47, 68, 85, 92, 119, 203 };
+
+    // Real bug, found live diffing a real Bridge-mode single-VARCHAR-column response (the client's own
+    // login-time probe query) against a real Oracle-to-Oracle capture of the identical query: two of
+    // the seven offsets above (43 and 85 -- indices 0 and 3 in the patch array) are NOT the fixed
+    // 0x01 every other tested single-column query has needed -- this VARCHAR2 case needs 0x02 there
+    // instead. The NUMBER-column capture this patch array was originally built from (see this
+    // array's own history above) is still correctly 0x01 at both -- so this genuinely varies by the
+    // fetched column's own Oracle type, not a constant, matching TtcConstants.ORA_TYPE_NUM_NUMBER's
+    // own value (2) at these two positions specifically (every other tested column type here has
+    // still only ever been NUMBER, so VARCHAR is the one data point confirmed to need something
+    // other than 1; scoped to exactly {NUMBER->1, VARCHAR->2} until a DATE/RAW capture is available
+    // to confirm or refute the "equals ORA_TYPE_NUM" theory more broadly).
+    private static final int[] NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PATCH_OFFSETS = { 43, 85 };
+
+    // Real bug, found the same way, one more diff pass later: two more offsets, this time inside
+    // the pre-row-insertion span (tail[0:32], written verbatim/unpatched until now) -- the
+    // template's own captured value at both (0x5d/93, evidently just this template's own original
+    // capture's leftover content, not anything type-related) is wrong for this VARCHAR2 case too;
+    // real Oracle sends 0x02 (again matching ORA_TYPE_NUM_NUMBER's own value) at both. Scoped the
+    // same way as the two offsets above -- until a DATE/RAW capture exists to confirm or refute
+    // the pattern more broadly.
+    private static final int[] NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PREFIX_PATCH_OFFSETS = { 20, 24 };
+
+    // Real bug, found the same way, cross-checked against a SECOND real capture (a fresh real
+    // Oracle capture of "SELECT 1 FROM DUAL", the NUMBER case) at these same offsets, specifically
+    // to tell apart "genuinely type-dependent" from "just never caught because it happened to work
+    // anyway" -- offsets 75 and 87 turned out IDENTICAL between the NUMBER and VARCHAR real
+    // captures (0x01 and 0x00 respectively), meaning these were never type-dependent at all: the
+    // template's own captured values (0x00 and 0x1e/30) are simply wrong, unconditionally, for
+    // EVERY single-column native-OCI query -- including the NUMBER case this whole fallback series
+    // was originally built and "confirmed working end-to-end" against. Apparently a real client
+    // doesn't strictly validate these two particular bytes for a NUMBER column but does for
+    // VARCHAR2, which is why this went unnoticed until the VARCHAR case exposed it. Applied
+    // unconditionally (not gated on column type at all), unlike the two patch arrays above.
+    private static final int[] NATIVE_OCI_EXECUTE_TAIL_UNCONDITIONAL_PATCH_OFFSETS = { 75, 87 };
+    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_UNCONDITIONAL_PATCH = { 0x01, 0x00 };
+
+    // Real bug, found the same cross-check pass: offset 72-73 (a 2-byte little-endian field) is
+    // ALSO wrong unconditionally (template has 0x0bdd = 3037, neither real capture's value), but
+    // genuinely varies BY TYPE this time, unlike 75/87 above -- the NUMBER-column real capture's
+    // own value there (22) is an exact match for this codebase's own NUMBER bufferSize constant
+    // (see toColumnMetadata's `oraType == ORA_TYPE_NUM_DATE ? 7 : 22`), strongly suggesting this
+    // field really is a column buffer-size hint; the VARCHAR real capture's value (18) does NOT
+    // match this VARCHAR2(4000) column's own bufferSize, so the formula for VARCHAR isn't
+    // understood yet -- scoped to this single observed VARCHAR data point until a second VARCHAR
+    // capture (different string length) can reveal the real formula.
+    private static final int NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET = 72;
+    private static final int NATIVE_OCI_EXECUTE_TAIL_VARCHAR_BUFSIZE_HINT_VALUE = 18;
+
+    // Real bug, found the same cross-check pass: offsets 7-12 (6 bytes, right after this template's
+    // own leading "07 00 00 00 07 78 7e" preamble) are IDENTICAL between the NUMBER and VARCHAR real
+    // captures (09 1c 05 08 05 00 in both) -- unlike this same byte pattern's OTHER occurrence, in
+    // the DESCRIBE_INFO header itself (a few bytes before this template even starts), which DOES
+    // differ between the two captures and is left alone as presumed content-dependent. This
+    // occurrence, being identical across two differently-typed/differently-named real queries, is a
+    // genuine, unconditional template bug -- not session-random, not type-dependent.
+    private static final int NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH_OFFSET = 7;
+    private static final byte[] NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH =
+            { 0x09, 0x1c, 0x05, 0x08, 0x05, 0x00 };
 
     private void writeNativeOciExecuteTailWithRows(TtcWriter w, long maxRows) {
         byte[] tail = java.util.Base64.getDecoder().decode(NATIVE_OCI_EXECUTE_TAIL_B64);
         System.arraycopy(NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH, 0, tail,
                 NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH_OFFSET, NATIVE_OCI_EXECUTE_TAIL_CHAINED_PATCH.length);
         if (!nativeOciDblinkClient) {
-            for (int i = 0; i < NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS.length; i++) {
-                tail[NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH_OFFSETS[i]] = NATIVE_OCI_EXECUTE_TAIL_SQLPLUS_PATCH[i];
+            for (int i = 0; i < NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_PATCH_OFFSETS.length; i++) {
+                tail[NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_PATCH_OFFSETS[i]] = NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_PATCH[i];
+            }
+            for (int i = 0; i < NATIVE_OCI_EXECUTE_TAIL_UNCONDITIONAL_PATCH_OFFSETS.length; i++) {
+                tail[NATIVE_OCI_EXECUTE_TAIL_UNCONDITIONAL_PATCH_OFFSETS[i]] = NATIVE_OCI_EXECUTE_TAIL_UNCONDITIONAL_PATCH[i];
+            }
+            System.arraycopy(NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH, 0, tail,
+                    NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH_OFFSET,
+                    NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH.length);
+            if (openColumns != null && openColumns.size() == 1) {
+                boolean isVarchar = openColumns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR;
+                if (isVarchar) {
+                    for (int offset : NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PATCH_OFFSETS) {
+                        tail[offset] = (byte) TtcConstants.ORA_TYPE_NUM_NUMBER;
+                    }
+                    for (int offset : NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PREFIX_PATCH_OFFSETS) {
+                        tail[offset] = (byte) TtcConstants.ORA_TYPE_NUM_NUMBER;
+                    }
+                }
+                long bufSizeHint = isVarchar
+                        ? NATIVE_OCI_EXECUTE_TAIL_VARCHAR_BUFSIZE_HINT_VALUE
+                        : openColumns.get(0).bufferSize;
+                tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET] = (byte) (bufSizeHint & 0xFF);
+                tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET + 1] = (byte) ((bufSizeHint >> 8) & 0xFF);
             }
         }
+        byte[] preRowBlock = NATIVE_OCI_PRE_ROW_BLOCK.clone();
+        if (!nativeOciDblinkClient) {
+            System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1, 0, preRowBlock,
+                    NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_1, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1.length);
+            System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2, 0, preRowBlock,
+                    NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_2, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2.length);
+            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
+            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
+        }
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
-        w.writeRaw(NATIVE_OCI_PRE_ROW_BLOCK);
+        w.writeRaw(preRowBlock);
         writeRows(w, maxRows);
         w.writeRaw(java.util.Arrays.copyOfRange(tail, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, tail.length));
     }
 
     // See the FUNC_LOGOFF branch's comment above for where this was captured.
     private static final byte[] NATIVE_OCI_LOGOFF_RESPONSE = java.util.Base64.getDecoder().decode("CQEAAAAAAB0=");
+
+    // Real bug this fixes, found live: the FUNC_COMMIT branch used to reuse NATIVE_OCI_LOGOFF_RESPONSE
+    // (a compact STATUS-tag ack) for a real non-dblink native-OCI client's bundled close-cursors/set-end-to-end-
+    // attr/commit piggyback -- an assumption from whoever wrote that fix that was never actually
+    // verified against a live capture of THIS scenario specifically (only the genuine standalone
+    // LOGOFF case was). A raw TNS packet capture of a real Oracle server's actual response to the
+    // identical bundle showed it is NOT a STATUS ack at all: it's a PIGGYBACK-tagged (0x17) response
+    // echoing the client's own program-name value back, byte-for-byte captured here. Confirmed
+    // live: sending the wrong (STATUS-tag) shape here was exactly why a real non-dblink native-OCI client went
+    // silent after Warp's COMMIT response and eventually aborted the session with TNS MARKER
+    // (break/reset) packets instead of proceeding to its next real request.
+    private static final byte[] NATIVE_OCI_COMMIT_PIGGYBACK_RESPONSE =
+        java.util.Base64.getDecoder().decode("FwUBABACAAAAFggAAAAIU1FMKlBsdXMAAAAAuAAAAAAAAAAAALkAAAAAAAkFAAEABwAd");
 
     private static boolean isStatementShaped(int functionCode) {
         return functionCode == TtcConstants.FUNC_EXECUTE || functionCode == TtcConstants.FUNC_FETCH
@@ -772,7 +936,7 @@ public final class RequestLoop {
             // trying to semantically parse any of the fields in between, sidesteps the whole fragile
             // chunked-vs-raw ambiguity the same way the DESCRIBE_INFO header/Execute tail templates
             // already do elsewhere in this class. Scoped to the native-OCI Execute fallback
-            // specifically -- JDBC/sqlplus/SQLcl's own FUNC_CLOSE_CURSORS piggybacks are handled by
+            // specifically -- every legacy (non-native-OCI) client's own FUNC_CLOSE_CURSORS piggybacks are handled by
             // the ordinary numCursors-based parse below and have never been observed to need this.
             r.skip(35);
             return;
@@ -781,23 +945,23 @@ public final class RequestLoop {
         r.readUb8();
         if (piggybackFunctionCode == FUNC_CLIENT_BANNER_REQUEST) {
             // A real distributed-database-link connection's native OCI client sends this piggyback
-            // (function code 107, undocumented publicly; its payload includes a plain "SQL*Plus" or
-            // "oracle" client-program-name string) right after login and, unlike every other
+            // (function code 107, undocumented publicly; its payload includes a plain
+            // client-program-name string) right after login and, unlike every other
             // piggyback this codebase handles, actually expects a reply -- confirmed live via a
             // real capture against a real Oracle 23c instance: the real server replies with the
-            // connection banner text sqlplus prints right after "Connected to:" (a real Oracle
+            // connection banner text the client prints right after "Connected to:" (a real Oracle
             // server sent "Oracle AI Database 26ai Free Release 23.26.2.0.0 - ..."). Not replying
             // at all left the client waiting forever for this banner instead of proceeding to its
             // real query.
             //
             // The real banner content itself differs by client type -- confirmed live, not
-            // guessed: a genuine SQL*Plus client needs the fuller two-line banner (see
+            // guessed: a genuine non-dblink native-OCI client needs the fuller two-line banner (see
             // STATIC_BANNER_PAYLOAD_B64's own javadoc) or it silently aborts with a TNS BREAK/RESET
             // after receiving the shorter one; a dblink native OCI client does the opposite --
             // sending it that same fuller banner is what makes IT abort instead, while the original
             // shorter, one-line banner is what it actually expects. Distinguishing them here by the
             // banner-request piggyback's own payload length (confirmed live: a dblink client's is
-            // ~263 bytes, a real SQL*Plus client's is ~86) rather than by client-program-name text,
+            // ~263 bytes, a real non-dblink native-OCI client's is ~86) rather than by client-program-name text,
             // since that name was already discarded upstream by the time this call happens and
             // isn't worth re-plumbing just for this one branch.
             byte[] piggybackPayload = r.readRemaining();
@@ -807,8 +971,8 @@ public final class RequestLoop {
                 || piggybackFunctionCode == TtcConstants.FUNC_CANCEL_ALL) {
             // The native-OCI dblink fallback case is handled entirely above, before the generic
             // seq+UB8 preamble. This ordinary numCursors-based parse was written for, and stays
-            // correct for, a real SQL*Plus client's own STANDALONE close-cursors piggyback -- but a
-            // real SQL*Plus client was confirmed live to also send a genuinely different, bundled
+            // correct for, a real non-dblink native-OCI client's own STANDALONE close-cursors piggyback -- but a
+            // real non-dblink native-OCI client was confirmed live to also send a genuinely different, bundled
             // shape for this same function code: FUNC_CLOSE_CURSORS immediately followed, in the
             // very same TNS packet, by a FUNC_SET_END_TO_END_ATTR piggyback and then a real
             // FUNC_COMMIT function call -- confirmed via a real capture showing this exact
@@ -846,7 +1010,7 @@ public final class RequestLoop {
             r.skip((int) featureBytesLength);
         } else if (piggybackFunctionCode == TtcConstants.FUNC_SET_END_TO_END_ATTR) {
             // Same scan-first safety net as the FUNC_CLOSE_CURSORS branch above, added for the
-            // same reason: confirmed live that a real SQL*Plus client can send this piggyback
+            // same reason: confirmed live that a real non-dblink native-OCI client can send this piggyback
             // bundled together with others in one packet (immediately after a FUNC_CLOSE_CURSORS
             // piggyback, immediately before a real FUNC_COMMIT call), a context this field-by-field
             // parse below was never verified against. Try the scan first since it's already
@@ -888,13 +1052,25 @@ public final class RequestLoop {
                 fr.readRawOrLengthPrefixedBytes((int) dbopLength);
             }
         } else {
-            // An unrecognized piggyback function code. Rather than fail the whole session over a
-            // best-effort piggyback this codebase doesn't have specific field-level parsing for,
-            // consume the rest of this packet and move on -- every piggyback this client has been
-            // observed sending occupies the entirety of its own TNS packet with nothing further to
-            // read afterward (see the caller's hasRemaining() check), so discarding an unrecognized
-            // one's trailing bytes is no worse than not understanding its fields would already be.
-            r.readRemaining();
+            // An unrecognized piggyback function code. Real bug this fixes, found live: this used
+            // to unconditionally consume the rest of the packet on the assumption that every
+            // piggyback this client sends occupies the entirety of its own TNS packet with nothing
+            // chained after it -- true often enough to have gone unnoticed, but a real non-dblink
+            // native-OCI client's LOGOFF is bundled behind an unrecognized piggyback code (0xc0/192,
+            // undocumented) in the exact same packet, and blindly discarding "the rest" silently
+            // swallowed that real FUNC_LOGOFF call along with it: the caller's hasRemaining() check
+            // then saw nothing left and returned early ("nothing to reply to"), so no response was
+            // ever sent for a LOGOFF the client legitimately sent and was waiting on -- a real,
+            // reproducible mutual deadlock (server idle waiting for a new packet, client idle
+            // waiting for its logoff ack). Same scan-first safety net as the FUNC_CLOSE_CURSORS/
+            // FUNC_SET_END_TO_END_ATTR branches above: look for a real message boundary before
+            // giving up and discarding everything, so a genuinely standalone unrecognized piggyback
+            // (still consumed in full, unchanged) doesn't regress.
+            byte[] rest = r.readRemaining();
+            int boundary = findNextMessageBoundary(rest);
+            if (boundary >= 0) {
+                r.skip(-(rest.length - boundary));
+            }
         }
     }
 
@@ -952,7 +1128,7 @@ public final class RequestLoop {
     // The exact real reply bytes captured from a genuine Oracle-to-Oracle self-loop dblink
     // session's response to this same call: echoes each NLS_* setting from the client's ALTER
     // SESSION statement back individually (as real Oracle values -- AMERICAN/AMERICA/AL32UTF8/etc,
-    // not whatever the client actually asked for), plus a "SQL*Plus" client-name echo and the same
+    // not whatever the client actually asked for), plus a client-name echo and the same
     // kind of fixed trailer/marker structure seen elsewhere in this series. Used verbatim rather
     // than reconstructed field-by-field: this call's real wire format is a different, undocumented
     // shape from the ordinary EXECUTE/DEFINE response format ResponseWriter otherwise builds, and
@@ -1029,11 +1205,11 @@ public final class RequestLoop {
     // need this revisited the same way.
     private static final String FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64 = "CAIAo5rUywcCAAABAAIJAwAAAJgAHQ==";
 
-    // Real bug, found live testing a genuine SQL*Plus client (not just a dblink native OCI
+    // Real bug, found live testing a genuine non-dblink native-OCI client (not just a dblink native OCI
     // connection): this template was missing the banner's second line entirely -- a real Oracle
     // server's banner text is "Oracle AI Database ... Free\nVersion 23.26.2.0.0", not just the
     // first line, confirmed byte-for-byte against a real Oracle 23c self-loop capture that went
-    // past login all the way through a real query. A real SQL*Plus client silently aborts with a
+    // past login all the way through a real query. A real non-dblink native-OCI client silently aborts with a
     // TNS BREAK/RESET marker pair after receiving the truncated one-line version -- it doesn't
     // error visibly, it just never proceeds to send its own query, which is why this was hard to
     // spot without a capture that went all the way through a successful real query for comparison.
@@ -1046,18 +1222,18 @@ public final class RequestLoop {
     // text length as both a leading UB1 and, for this longer text, a duplicated length byte again
     // right before the text itself) is captured verbatim rather than re-derived, same as this
     // file's other static-template constants.
-    private static final String SQLPLUS_BANNER_PAYLOAD_B64 =
+    private static final String NON_DBLINK_BANNER_PAYLOAD_B64 =
         "CGcAZ09yYWNsZSBBSSBEYXRhYmFzZSAyNmFpIEZyZWUgUmVsZWFzZSAyMy4yNi4yLjAuMCAtIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlClZlcnNpb24gMjMuMjYuMi4wLjAAIBoXCQEAAACjAB0=";
 
     // The original, shorter one-line banner template -- a dblink native OCI client's own expected
-    // shape, confirmed to still work for that client after SQLPLUS_BANNER_PAYLOAD_B64 above was
+    // shape, confirmed to still work for that client after NON_DBLINK_BANNER_PAYLOAD_B64 above was
     // found to break it (see that constant's own javadoc).
     private static final String DBLINK_BANNER_PAYLOAD_B64 =
         "CFMAT3JhY2xlIEFJIERhdGFiYXNlIDI2YWkgRnJlZSBSZWxlYXNlIDIzLjI2LjIuMC4wIC0gRGV2ZWxvcCwgTGVhcm4sIGFuZCBSdW4gZm9yIEZyZWUAAAAXCQEAAAAiDB0=";
 
     private void sendBanner(boolean dblinkClient) throws IOException {
         byte[] payload = java.util.Base64.getDecoder()
-                .decode(dblinkClient ? DBLINK_BANNER_PAYLOAD_B64 : SQLPLUS_BANNER_PAYLOAD_B64);
+                .decode(dblinkClient ? DBLINK_BANNER_PAYLOAD_B64 : NON_DBLINK_BANNER_PAYLOAD_B64);
         TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, payload);
         out.write(packet.encode(reader.isLargeSdu()));
         out.flush();
@@ -1091,7 +1267,7 @@ public final class RequestLoop {
         }
         closeOpenCursor();
         
-        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE
+        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.RELAY
                 && oracleConnection != null
                 && options.dualExecAuthority() == ServerOptions.DualExecAuthority.ORACLE
                 && request.sqlText != null
@@ -1163,7 +1339,7 @@ public final class RequestLoop {
         terminalExecutor.rebind(primaryConn);
 
         // The client's own EXEC_OPTION_COMMIT bit says exactly what it wants for THIS statement
-        // (oracledb sets it when the caller's connection.autocommit is True) -- when nothing else
+        // (a legacy-protocol client sets it when the caller's connection.autocommit is True) -- when nothing else
         // needs primaryConn's explicit-transaction mode (no dual Oracle connection, no shadow
         // replicas, no XA transaction: none of which apply here since dual implies
         // authoritativeIsOracle or a different primaryConn entirely), honor that per-statement
@@ -1182,7 +1358,7 @@ public final class RequestLoop {
         boolean pureRead = canMultiplex && !transactionDirty
                 && com.sayonora.warp.core.SessionStatePins.isPureRead(SourceDialect.ORACLE, request.sqlText);
         boolean useNativeAutocommit = (wantsCommit || pureRead) && !dual && replicaConnections.isEmpty() && xaTransaction == null;
-        // A real DML array-execute (ojdbc's PreparedStatement.addBatch()/executeBatch(), confirmed
+        // A real DML array-execute (the JDBC driver's PreparedStatement.addBatch()/executeBatch(), confirmed
         // live -- see ExecuteRequest#bindRows's own javadoc) carries one bind row per batched
         // statement. This codebase's execution pipeline has no native JDBC-batch path, so each row
         // runs through the ordinary single-statement path in sequence instead -- correct (every
@@ -1206,8 +1382,8 @@ public final class RequestLoop {
         // REAL ORACLE CONNECTION), not Postgres at all. The translated-for-Postgres text then runs
         // against real Oracle: syntactically valid there in this case only because Oracle 23c
         // happens to support FROM-less SELECT, but it describes differently on the wire than the
-        // real "select 1 from dual" would -- malformed enough that a strict client (ojdbc thin) hard
-        // crashes on it while a looser one (python-oracledb) tolerates it. Marking this ONE
+        // real "select 1 from dual" would -- malformed enough that a strict client hard
+        // crashes on it while a looser one tolerates it. Marking this ONE
         // authoritative-Oracle Statement's dialect as already matching the pipeline's resolved
         // "default" target dialect (Postgres) is exactly the same no-translate mechanism
         // native-mode mywire/mssqlwire statements already rely on (see Main's own comment) -- it
@@ -1272,14 +1448,14 @@ public final class RequestLoop {
             // real Oracle's own response to a "prepare once, execute twice" SELECT that returns
             // its one matching row embeds "ORA-01403: no data found" as a trailing warning on
             // that SAME response, not just a plain success. Withholding it (as this call site
-            // used to, always sending a plain writeSuccessEnd) left a real ojdbc11 client's
+            // used to, always sending a plain writeSuccessEnd) left a real the Oracle JDBC driver client's
             // internal cursor-exhaustion state unset, so a second executeQuery() on the same
             // PreparedStatement (attempting to reissue against the same cursor slot) hung
             // forever waiting on state the client believed the server still owed it -- see
             // OracleRepeatedQueryIsolationTest. This is a genuinely different shape from the old,
             // since-removed writeInlineExhaustionEnd: that one was a hardcoded, captured byte
             // blob with error 1403 baked in and NO row-count/row-data field at all, so a real
-            // ojdbc client read it as "zero rows" and incorrectly raised ORA-01403 to the
+            // JDBC client read it as "zero rows" and incorrectly raised ORA-01403 to the
             // application even though a row was legitimately returned -- a real, reproducible
             // bug (see docker/tests/java's OraWireTest javadoc). writeSuccessEndWithWarning
             // keeps the real row data and real rowcount (via writeRows below, unaffected) while
@@ -1307,7 +1483,7 @@ public final class RequestLoop {
                 // and both broke it specifically, confirmed live via a TNS BREAK/RESET.
                 // A dblink client's first Execute must stay row-free (it always sends a second,
                 // chained Execute for the actual rows -- see nativeOciDblinkClient's own javadoc);
-                // a real SQL*Plus client, confirmed live, never sends that second call and expects
+                // a real non-dblink native-OCI client, confirmed live, never sends that second call and expects
                 // its one and only Execute to carry the row directly.
                 if (nativeOciExecuteCount > 1 || !nativeOciDblinkClient) {
                     writeNativeOciExecuteTailWithRows(w, request.numIters);
@@ -1329,12 +1505,77 @@ public final class RequestLoop {
             if (wantsCommit && !useNativeAutocommit) {
                 commitAll();
             }
-            ResponseWriter.writeSuccessEnd(w, totalUpdateCount, openCursorId, callNumber);
+            if (usedNativeOciExecuteFallback) {
+                // Real bug this fixes, found live: this DDL/DML (non-query) success path always
+                // used the generic writeSuccessEnd shape (tag 4, TtcConstants.MSG_TYPE_ERROR with
+                // error code 0), the same one every other tested client's own DDL/DML success
+                // already gets correctly -- but a raw TNS packet capture of a real Oracle server's
+                // response to the IDENTICAL "CREATE TABLE ..." statement from a real, native-OCI
+                // non-dblink session showed it's actually tag 8 (TTIRPA/PARAMETER), the same family
+                // of response NATIVE_OCI_COMMIT_PIGGYBACK_RESPONSE already uses for this client's
+                // bundled commit/logoff piggybacks -- not writeSuccessEnd's shape at all. Sending
+                // the wrong one here was confirmed live to be exactly why a real non-dblink session
+                // went silent (no further requests at all) immediately after its first successful
+                // DDL statement instead of proceeding to its next one.
+                //
+                // Real bug this ALSO fixes, found the same way once the error-continuation fix
+                // above let a real session actually run more than one DDL/DML statement per
+                // script: this ONE fixed template (captured from a CREATE TABLE) was reused
+                // unconditionally for every non-query statement type -- confirmed live via a real
+                // capture set (CREATE/INSERT/UPDATE/COMMIT/DROP, each run as its own statement) that
+                // Oracle's own response genuinely differs by statement type (188 bytes for
+                // CREATE/DROP/COMMIT, 204 for INSERT/UPDATE, plus real content differences beyond
+                // length), and the client's own printed feedback text ("Table created."/"1 row
+                // created."/etc.) is driven by that response content, not decided client-side from
+                // the SQL it sent -- reusing the CREATE shape for everything is exactly why every
+                // statement type printed "Table created." regardless of what it actually was.
+                w.writeRaw(nativeOciDdlDmlSuccessResponseFor(request.sqlText));
+            } else {
+                ResponseWriter.writeSuccessEnd(w, totalUpdateCount, openCursorId, callNumber);
+            }
         }
     }
 
+    // Real, captured Oracle server bytes for each statement type's own DDL/DML success response --
+    // see this method's one call site for the real bug this fixes and how these were found (a real
+    // capture set: CREATE/INSERT/UPDATE/COMMIT/DROP, each its own statement, against a real
+    // non-dblink native-OCI session). CREATE's own template is reused as the default for any other
+    // DDL not separately captured (ALTER/TRUNCATE/etc, presumed same "no row count" shape family as
+    // CREATE/DROP); DELETE reuses UPDATE's template (presumed same "has a row count" shape family
+    // as INSERT/UPDATE) -- both best-effort until their own real captures exist.
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE = java.util.Base64.getDecoder().decode(
+        "CAYA73giAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAQABAJMAAQAAAAAAAAAAAAACAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADQAAAQAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAB0=");
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_DROP = java.util.Base64.getDecoder().decode(
+        "CAYABHkiAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAQABAJsAAQAAAAAAAAAAAAADAAsADAAAAAAAASABAAAAAACpkgAAAAAAAAAAAAAAFQAAAQAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAB0=");
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_COMMIT = java.util.Base64.getDecoder().decode(
+        "CAYA9HgiAAAAAAAFAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAEBQABAJkAAQAAAAAAAAAAAAAFAAAALAAAAAAAASABAAAAAACpkgAAAAAAAAAAAAAAEwAAAAAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAsAAAAAAAAAB0=");
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_INSERT = java.util.Base64.getDecoder().decode(
+        "CAYA73giAAAAAAADAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAEAgAAAJUAAQEAAAAAAAAAAAADAAwAAgAAAAAAASABAAAEAACpkgAAAAAAAAAAAAAADwAAAQAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAACAAAAAAAAAA0ADQEAASABBAAAAJKpAAAd");
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_UPDATE = java.util.Base64.getDecoder().decode(
+        "CAYA8ngiAAAAAAACAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAEAgAAAJcAAQEAAAAAAAAAAAACAAcABgAAAAAAASABAAAAAACpkgAAAAAAAAAAAAAAEQAAAQAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAGAAAAAAAAAA0ADQEAASABAAAAAJKpAAAd");
+
+    private static byte[] nativeOciDdlDmlSuccessResponseFor(String sqlText) {
+        if (sqlText == null) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE;
+        }
+        String trimmed = sqlText.stripLeading();
+        if (trimmed.regionMatches(true, 0, "DROP", 0, 4)) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_DROP;
+        }
+        if (trimmed.regionMatches(true, 0, "COMMIT", 0, 6)) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_COMMIT;
+        }
+        if (trimmed.regionMatches(true, 0, "INSERT", 0, 6)) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_INSERT;
+        }
+        if (trimmed.regionMatches(true, 0, "UPDATE", 0, 6) || trimmed.regionMatches(true, 0, "DELETE", 0, 6)) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_UPDATE;
+        }
+        return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE;
+    }
+
     /** True for a PL/SQL anonymous block -- {@code BEGIN ... END;} or {@code DECLARE ... END;} --
-     * confirmed live via byte capture that a real ojdbc {@code CallableStatement} call (e.g.
+     * confirmed live via byte capture that a real JDBC {@code CallableStatement} call (e.g.
      * {@code {call proc(?, ?, ?)}}) arrives at orawire as ordinary SQL TEXT shaped exactly this
      * way ({@code "BEGIN proc(:1, :2, :3); END;"}), through the SAME {@code FUNC_EXECUTE} path a
      * plain statement uses -- no separate wire-level "this is PL/SQL" signal is needed to detect
@@ -1413,7 +1654,7 @@ public final class RequestLoop {
                         "orawire: procedure \"" + procName + "\" has a REF CURSOR OUT parameter -- "
                                 + "not yet supported. Two real attempts were tried live and both "
                                 + "failed with the identical client-side ArrayIndexOutOfBoundsException "
-                                + "inside ojdbc's own T4CTTIoac/T4C8TTIuds unmarshalling: first, "
+                                + "inside a real JDBC driver's own T4CTTIoac/T4C8TTIuds unmarshalling: first, "
                                 + "reusing writeDescribeInfo's generic column-description shape; "
                                 + "second, replaying the REAL captured OAC/DCB bytes for this exact "
                                 + "2-column shape VERBATIM. The second failure is the more telling "
@@ -1424,7 +1665,7 @@ public final class RequestLoop {
                                 + "how the response is split across TNS packets, or state carried "
                                 + "from earlier in a real session that a synthetic replay doesn't "
                                 + "reproduce). Needs a live protocol trace/debugger session against "
-                                + "ojdbc's own OAC unmarshaller, not just wire captures, before "
+                                + "a real JDBC driver's own OAC unmarshaller, not just wire captures, before "
                                 + "further attempts are worthwhile.");
             }
         }
@@ -1598,7 +1839,7 @@ public final class RequestLoop {
             // ever reverse-engineered against POSTGRES-sourced NUMERIC columns (every other backend
             // this frontend has ever executed against until dual-exec's Oracle-authoritative path
             // existed), where an equivalent unconstrained column reports scale=0, never a negative
-            // sentinel -- confirmed correct for JDBC/sqlplus/SQLcl only in that shape. Passing -127
+            // sentinel -- confirmed correct for every legacy (non-native-OCI) client only in that shape. Passing -127
             // through unchanged sends a wire byte no real Oracle server would ever send for this
             // case, malformed enough that a strict client's DESCRIBE parsing corrupts downstream.
             // Normalizing Oracle's own sentinel to the SAME 0 this encoder already sends correctly
@@ -1608,18 +1849,46 @@ public final class RequestLoop {
             if (scale < 0) {
                 scale = 0;
             }
-            long bufferSize = oraType == TtcConstants.ORA_TYPE_NUM_VARCHAR
-                    ? Math.max(1, col.displaySize())
-                    : (oraType == TtcConstants.ORA_TYPE_NUM_DATE ? 7 : 22);
             // Real bug, found live diffing a native-OCI dblink client's DESCRIBE_INFO response
             // against a real Oracle-to-Oracle self-loop capture: real Oracle reports column names
             // in uppercase ("AMOUNT"), matching its own default unquoted-identifier convention --
             // this codebase's own column name comes straight from Postgres's catalog, which folds
             // the other way (lowercase), so it reached the client as "amount" unchanged. Scoped to
             // the native-OCI fallback specifically since it's the only client this has been
-            // confirmed to matter for live; JDBC/sqlplus/SQLcl keep getting Postgres's own case
+            // confirmed to matter for live; every legacy (non-native-OCI) client keep getting Postgres's own case
             // exactly as before.
             String name = uppercaseNames ? col.name().toUpperCase(java.util.Locale.ROOT) : col.name();
+            // Real bug, found live diffing a real Bridge-mode (real Oracle JDBC backend) native-OCI
+            // client's DESCRIBE_INFO response for a computed/expression VARCHAR2 column against a
+            // real Oracle-to-Oracle self-loop capture of the identical query (the client's own
+            // internal login-time probe, "SELECT DECODE(USER,'XS$NULL',
+            // XS_SYS_CONTEXT('XS$SESSION','USERNAME'), USER) FROM SYS.DUAL"): real Oracle's native
+            // OCI DESCRIBE reports this column's max length as 4000 (VARCHAR2's legacy max --
+            // Oracle's own convention for an expression result with no explicit length bound), but
+            // Oracle's OWN JDBC driver's ResultSetMetaData.getColumnDisplaySize()/getPrecision() for
+            // the SAME query report a much smaller, driver-computed value (confirmed live: 256, not
+            // 4000) -- a genuine JDBC-vs-native-OCI metadata gap for expression columns, not
+            // something trusting JDBC's own metadata more carefully will ever close, since the two
+            // client paths ask Oracle for different things. A too-small declared length here is
+            // silent and fatal for a real native-OCI client: it doesn't error, it just waits
+            // forever for bytes sized to its own (correct, larger) expectation, since the value
+            // itself already round-trips fine either way. Scoped narrowly to native-OCI fallback
+            // clients (the only ones confirmed live to need Oracle's own native convention here)
+            // and to a column whose name isn't a plain Oracle identifier -- a real column or table
+            // reference always keeps its real backend-reported length; only a computed expression's
+            // column (whose name, in Bridge mode, is the raw expression source text itself, e.g.
+            // this exact query's "DECODE(USER,...)") gets Oracle's own unconstrained-expression
+            // convention applied instead of the driver's own narrower guess.
+            boolean looksLikeComputedExpression = oraType == TtcConstants.ORA_TYPE_NUM_VARCHAR
+                    && !name.matches("\"?[A-Za-z][A-Za-z0-9_$#]*\"?");
+            long bufferSize;
+            if (oraType == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
+                bufferSize = uppercaseNames && looksLikeComputedExpression
+                        ? 4000
+                        : Math.max(1, col.displaySize());
+            } else {
+                bufferSize = oraType == TtcConstants.ORA_TYPE_NUM_DATE ? 7 : 22;
+            }
             // Real bug, found live diffing an ordinary query's ("SELECT 1 FROM dual") DESCRIBE_INFO
             // response against a real Oracle-to-Oracle capture of the identical query: an unaliased
             // expression's column name comes straight from Postgres's own catalog too, same as the
@@ -1629,7 +1898,7 @@ public final class RequestLoop {
             // after the expression's own source text verbatim (uppercased, truncated to its
             // identifier length limit), e.g. this exact query's column is really named "1", not any
             // placeholder at all. Sending Postgres's placeholder straight through was confirmed live
-            // to be exactly why a real SQL*Plus client sent a TNS break right after receiving this
+            // to be exactly why a real non-dblink native-OCI client sent a TNS break right after receiving this
             // query's row -- it never got a shape it recognized as a valid column name. This is a
             // genuine protocol-correctness gap in the dialect boundary itself, not a client-type
             // quirk -- real Oracle would never send "?column?" to ANY client -- so it's fixed here
@@ -1738,7 +2007,7 @@ public final class RequestLoop {
                 // Real bug, found live (matches the "A result was returned when none was expected"
                 // pgjdbc warning seen alongside the ArrayIndexOutOfBoundsException investigation):
                 // request.isQuery() reflects the wire's own EXEC_OPTION_FETCH bit, which a real
-                // ojdbc thin driver's combined describe/execute (OALL8) RPC for a plain SELECT does
+                // a legacy-protocol JDBC client's combined describe/execute (OALL8) RPC for a plain SELECT does
                 // NOT always set -- so this used to call executeUpdate() on a genuine SELECT,
                 // and pgjdbc rightly refuses that once it sees a ResultSet come back. Using
                 // PreparedStatement.execute()'s own return value (whether THIS execution actually
@@ -1815,7 +2084,7 @@ public final class RequestLoop {
         // a real Oracle-to-Oracle self-loop capture of this exact call from earlier in this
         // investigation: the real server DID send a combined real-row + ORA-01403 response, and
         // the real client handled it fine, continuing on to send a further request afterward. So
-        // this method's original, JDBC/sqlplus/SQLcl-shared rowsWritten<fetchArraySize=>error
+        // this method's original, every legacy (non-native-OCI) client-shared rowsWritten<fetchArraySize=>error
         // behavior below is correct as-is and applies unconditionally again -- the actual next gap
         // is figuring out what that further real request is and replying to it, not this.
         if (rowsWritten < request.fetchArraySize) {
@@ -1831,7 +2100,7 @@ public final class RequestLoop {
                 // echo point was found in it either (unlike Execute's tail, its only 0x07 byte is
                 // part of a fixed span, not an echoed value) -- used verbatim rather than patched.
                 // Real bug, found live: reusing the SAME dblink connection for a second query in
-                // the same sqlplus session sends a differently-shaped exchange than the very first
+                // the same session sends a differently-shaped exchange than the very first
                 // query does (its own chained Execute arrives immediately, without a repeat of the
                 // first-query-only prepare/describe/piggyback dance) -- but nativeOciExecuteCount
                 // was a monotonic, session-wide counter that never reset, so by the second query it
@@ -1854,7 +2123,7 @@ public final class RequestLoop {
             // exactly "ORA-01403: no data found\n".length() (24 without the newline, matching what
             // an intermediate version of this fix that added only the prefix produced and still
             // wasn't enough to un-stick the client -- the newline turned out to matter too).
-            // JDBC/sqlplus/SQLcl apparently never cared (they key off the numeric error code, 1403,
+            // every legacy (non-native-OCI) client apparently never cared (they key off the numeric error code, 1403,
             // not this string) enough for the difference to have been noticed before -- but is
             // otherwise a plain, harmless completeness fix worth making unconditionally: this
             // message goes to every client, native-OCI or not, and the fuller, more correct text
@@ -1870,7 +2139,7 @@ public final class RequestLoop {
             // byte, 0x1d, after its own last real content, confirmed by this codebase's own static
             // NATIVE_OCI_EXECUTE_TAIL_B64 template already carrying it verbatim as its last byte
             // (it's a raw real-capture copy, not hand-written). writeErrorEnd/writeSuccessEnd are
-            // hand-written, generic code shared with JDBC/sqlplus/SQLcl and don't append it --
+            // hand-written, generic code shared with every legacy (non-native-OCI) client and don't append it --
             // apparently harmless for them, but this pickier native-OCI client needs it: without it
             // here, it received an otherwise byte-correct Fetch response and never proceeded.
             w.writeUint8(0x1d);
@@ -1889,7 +2158,7 @@ public final class RequestLoop {
         while (count < maxRows && fetchPosition < openRows.size()) {
             List<Object> row = openRows.get(fetchPosition++);
             if (usedNativeOciExecuteFallback) {
-                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray());
+                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray(), nativeOciDblinkClient);
             } else {
                 ResponseWriter.writeRow(w, openColumns, row.toArray());
             }
@@ -1913,6 +2182,62 @@ public final class RequestLoop {
         TnsPacket packet = new TnsPacket(TnsPacketType.DATA, 0, payload);
         out.write(packet.encode(reader.isLargeSdu()));
         out.flush();
+    }
+
+    // Real bug this fixes, found live: a real non-dblink native-OCI client sent no further
+    // statements at all after receiving a genuine backend error mid-script (e.g. DROP TABLE on a
+    // table that doesn't exist), even though the SAME client, against real Oracle, continues
+    // normally to the next statement. A raw TNS packet capture of a real Oracle server's own
+    // response to the identical error scenario showed it never sends the ERROR response directly
+    // the way this codebase always has -- it first sends TWO TNS MARKER packets (out-of-band
+    // "attention" signaling, type 12, flags 0x20, 3-byte payloads {0x01,0x00,0x01} then
+    // {0x01,0x00,0x02}), which the client immediately and synchronously echoes back with ONE
+    // MARKER packet of its own, and only THEN does the server send the real ERROR response. This
+    // codebase skipped that whole handshake and sent the error directly -- a real client waits
+    // for the handshake it expects before it will process anything further, silently, no visible
+    // symptom beyond "the script just stops." Scoped to native-OCI fallback, non-dblink clients
+    // only (the only ones confirmed live to need this dance); a dblink client's own two real
+    // captures never showed it, and the ordinary (non-native-OCI) writeErrorEnd path used for
+    // every other client is untouched.
+    private static final byte[] NATIVE_OCI_ERROR_MARKER_PAYLOAD_1 = { 0x01, 0x00, 0x01 };
+    private static final byte[] NATIVE_OCI_ERROR_MARKER_PAYLOAD_2 = { 0x01, 0x00, 0x02 };
+    private static final int NATIVE_OCI_ERROR_MARKER_FLAGS = 0x20;
+
+    // Real bug this fixes, found live: Bridge mode's real Oracle JDBC driver appends a
+    // client-side-only "Help: <url>" line (confirmed live: "\n\nhttps://docs.oracle.com/
+    // error-help/db/ora-XXXXX/\n") to a real ORA exception's own getMessage() -- a genuine
+    // driver-side convenience feature, never part of real Oracle's own wire protocol. Sending it
+    // through unchanged doubled up with the length-prefixed message field
+    // writeErrorEndNativeOci constructs, corrupting the byte count a real non-dblink native-OCI
+    // client expects and causing it to break the connection right after receiving the error.
+    // Never an issue for the ordinary (non-native-OCI) writeErrorEnd path, whose length-prefixed
+    // string field isn't as strictly validated by the clients it's used for -- scoped to just this
+    // one call site rather than DialectErrorMessages.render() itself, which has no other confirmed
+    // callers that see this real-Oracle-JDBC-specific message shape.
+    private static String stripJdbcHelpLink(String message) {
+        int idx = message.indexOf("\n\nhttps://docs.oracle.com/error-help/");
+        return idx < 0 ? message : message.substring(0, idx);
+    }
+
+    private void sendNativeOciErrorMarkerHandshakeIfNeeded() {
+        if (!usedNativeOciExecuteFallback || nativeOciDblinkClient) {
+            return;
+        }
+        try {
+            out.write(new TnsPacket(TnsPacketType.MARKER, NATIVE_OCI_ERROR_MARKER_FLAGS,
+                    NATIVE_OCI_ERROR_MARKER_PAYLOAD_1).encode(reader.isLargeSdu()));
+            out.write(new TnsPacket(TnsPacketType.MARKER, NATIVE_OCI_ERROR_MARKER_FLAGS,
+                    NATIVE_OCI_ERROR_MARKER_PAYLOAD_2).encode(reader.isLargeSdu()));
+            out.flush();
+            // The client's own marker echo -- confirmed live to always be exactly one packet,
+            // synchronous, before it sends anything else. Its content isn't consulted (real
+            // Oracle's own behavior after this point doesn't appear to depend on it either); just
+            // draining it off the wire is what keeps the stream in sync for the real ERROR
+            // response that follows this call.
+            reader.readPacket();
+        } catch (IOException e) {
+            log.warn("native-OCI error-marker handshake failed: {}", e.getMessage());
+        }
     }
 
 }

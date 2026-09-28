@@ -17,7 +17,7 @@ public final class ExecuteRequestReader {
      *
      *      <p>Real bug, found live via byte-level capture (see {@link ExecuteRequest#bindRows}'s
      *      own javadoc for the sibling array-execute finding from the same investigation): when a
-     *      client re-executes an already-parsed cursor with NEW bind values (real ojdbc shape,
+     *      client re-executes an already-parsed cursor with NEW bind values (real JDBC shape,
      *      confirmed live -- {@code cursorId != 0}, {@code sqlText == null}, this is a genuine
      *      {@code FUNC_EXECUTE}, NOT a {@code FUNC_REEXECUTE}, for reusing one statement across
      *      calls that aren't literally the same {@code PreparedStatement.addBatch()} run),
@@ -149,7 +149,7 @@ public final class ExecuteRequestReader {
 
     /** Reads one row of bind values, then keeps reading more for as long as the wire genuinely has
      * another one -- see {@link ExecuteRequest#bindRows}'s javadoc for how live byte-capture
-     * confirmed a real DML array-execute (ojdbc's {@code addBatch()}/{@code executeBatch()}) sends
+     * confirmed a real DML array-execute (the JDBC driver's {@code addBatch()}/{@code executeBatch()}) sends
      * N rows this way, each self-delimited by its own {@code ROW_DATA} ({@code 0x07}) tag with no
      * count field anywhere, rather than a single row plus a separate {@code numIters}-driven count
      * (confirmed live NOT to carry it: it read 0 for every Execute observed, batched or not). Used
@@ -211,7 +211,7 @@ public final class ExecuteRequestReader {
     /**
      * Fallback Execute-request reader for a real distributed-database-link connection's native OCI
      * client, whose Execute request is NOT field-compatible with {@link #read}'s layout (tuned
-     * against JDBC/sqlplus/SQLcl, all of which parse correctly with it -- confirmed by this
+     * against every legacy (non-native-OCI) client, all of which parse correctly with it -- confirmed by this
      * codebase's existing, passing test/integration coverage, none of it touched by adding this
      * method). Confirmed live against a real Oracle 23c instance: {@code sqlPointer} reads as 0
      * (which {@link #read} takes as "not a fresh parse, no SQL text follows") even on a real dblink
@@ -232,7 +232,7 @@ public final class ExecuteRequestReader {
      * by Oracle's own dblink layer, not authored by an end user) actually needs. Only used as an
      * explicit fallback in {@code RequestLoop} when {@link #read} throws
      * {@link ArrayIndexOutOfBoundsException} parsing an Execute request -- something the existing
-     * JDBC/sqlplus/SQLcl-shaped traffic this codebase already handles has never been observed to do.
+     * every legacy (non-native-OCI) client-shaped traffic this codebase already handles has never been observed to do.
      */
     public static ExecuteRequest readByScanningForSql(byte[] rawPayload) {
         int sqlStart = findSqlStatementStart(rawPayload);
@@ -267,29 +267,71 @@ public final class ExecuteRequestReader {
 
     private static final long FALLBACK_NUM_ITERS = 100;
 
-    private static final String[] SQL_STATEMENT_KEYWORDS =
-            { "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE", "BEGIN", "CALL" };
-
     private static int findSqlStatementStart(byte[] payload) {
-        for (String keyword : SQL_STATEMENT_KEYWORDS) {
+        // Real bug this fixes, found live: this used to scan for its own separate, narrower
+        // keyword list (SELECT/INSERT/UPDATE/DELETE/WITH/MERGE/BEGIN/CALL only) instead of the
+        // fuller SQL_LEADING_KEYWORDS set declared just below in this same class (already used by
+        // looksLikeRealSql for an analogous purpose) -- missing CREATE/ALTER/DROP/TRUNCATE/GRANT/
+        // REVOKE/COMMIT/ROLLBACK/SET/DECLARE/EXPLAIN/ANALYZE/COMMENT/LOCK/SAVEPOINT/RENAME meant
+        // every DDL statement (confirmed live: a real non-dblink native-OCI client's "CREATE TABLE ..." login-session
+        // scenario) threw "could not locate a SQL statement in this Execute request by scanning"
+        // instead of ever reaching the SQL server, since this narrower fallback reader is the one
+        // ALL of a real, native-OCI client's Execute calls go through (see readExecuteRequest's own
+        // catch blocks) -- not just the dblink-specific SELECT-shaped case this list was originally
+        // written for.
+        // Real bug this fixes, found live: SQL_LEADING_KEYWORDS is a Set (unspecified iteration
+        // order), and this used to return on the FIRST keyword in that arbitrary order that
+        // matched ANYWHERE in the payload -- not the keyword whose match starts at the SMALLEST
+        // byte offset. For "UPDATE t SET col = val ...", "SET" is also a member of this same
+        // keyword set (a real, valid leading keyword for a standalone SET statement) and matches
+        // later in the payload than "UPDATE" does; if the set happened to iterate to "SET" before
+        // "UPDATE", this returned SET's own (later, wrong) offset, so the extracted "SQL text"
+        // became just "SET col = val ..." -- a real ORA-00922/ORA-00942 syntax error confirmed
+        // live once a real non-dblink native-OCI client's script actually reached an UPDATE
+        // statement after an earlier statement's error (see this class's own readByScanningForSql
+        // and RequestLoop's error-continuation fix for why that scenario only recently became
+        // reachable at all). Fixed by scanning every keyword and keeping the match with the
+        // smallest starting offset, not the first keyword the Set happens to iterate to.
+        int bestOffset = -1;
+        for (String keyword : SQL_LEADING_KEYWORDS) {
             byte[] needle = keyword.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             outer:
             for (int i = 0; i <= payload.length - needle.length; i++) {
+                if (bestOffset >= 0 && i >= bestOffset) {
+                    // Already have a match starting earlier than anything this keyword could still
+                    // find (positions only increase from here) -- no need to keep scanning for it.
+                    break;
+                }
                 for (int j = 0; j < needle.length; j++) {
                     if (payload[i + j] != needle[j]) {
                         continue outer;
                     }
                 }
                 // Require the match to start a "word" (not be a substring of a longer identifier,
-                // e.g. matching "SELECT" inside "MULTISELECT") -- the preceding byte, if any, must
-                // not itself be a plain ASCII letter/digit/underscore.
-                boolean wordStart = i == 0 || !isIdentifierByte(payload[i - 1]);
+                // e.g. matching "SELECT" inside "MULTISELECT"). Real bug this fixes, found live: a
+                // single preceding identifier-looking byte isn't reliable evidence of that here --
+                // this scan runs over raw BINARY protocol framing, not real adjacent text, and the
+                // byte immediately before the SQL text is routinely a length-prefix byte whose
+                // VALUE can coincidentally render as a printable ASCII letter/digit (confirmed
+                // live: a 54-character "CREATE TABLE ..." statement's own 1-byte length prefix is
+                // 0x36, the ASCII digit '6', which made the old single-byte check wrongly treat
+                // "CREATE" as starting mid-identifier and reject the only real match in the whole
+                // payload). A genuine identifier suffix like "...ULTI" before "SELECT" is at least
+                // two real letters long; a coincidental length-prefix byte is not (whatever comes
+                // before IT is unrelated binary framing, essentially never also identifier-shaped)
+                // -- requiring TWO consecutive preceding identifier bytes, not just one, keeps
+                // rejecting genuine embedded-in-an-identifier matches while no longer rejecting
+                // this real one.
+                boolean wordStart = i < 2
+                        || !isIdentifierByte(payload[i - 1])
+                        || !isIdentifierByte(payload[i - 2]);
                 if (wordStart) {
-                    return i;
+                    bestOffset = i;
+                    break;
                 }
             }
         }
-        return -1;
+        return bestOffset;
     }
 
     private static boolean isIdentifierByte(byte b) {
@@ -325,14 +367,14 @@ public final class ExecuteRequestReader {
 
     /**
      * Real bug, found live against two genuine Oracle clients with opposite behavior at this exact
-     * field: a real SQLcl session showed NO redundant length-prefix byte before SQL text (a fixed
+     * field: a real legacy-protocol session showed NO redundant length-prefix byte before SQL text (a fixed
      * {@code readRawBytes(sqlLength)} read was correct there -- see this method's git history for
-     * the original investigation), but a real {@code python-oracledb} (thin-mode) session DOES send
+     * the original investigation), but a real {@code a legacy-protocol client} (thin-mode) session DOES send
      * one -- confirmed live via byte-level tracing: the byte immediately before a {@code "SELECT
      * ..."} statement's real content was {@code 0x26}, exactly equal to {@code sqlLength}, i.e. a
      * genuine redundant echo of the length just parsed, not a coincidental first-character match.
-     * Skipping it unconditionally (the pre-regression behavior) broke SQLcl; never skipping it (the
-     * regression this replaces) breaks python-oracledb. Neither client's own identity is available
+     * Skipping it unconditionally (the pre-regression behavior) broke that legacy-protocol client; never skipping it (the
+     * regression this replaces) breaks a legacy-protocol client. Neither client's own identity is available
      * here to key off of (and using one would be the wrong signal regardless -- Oracle's wire
      * protocol is opcode-driven, not client-driven), so this reads BOTH candidate windows -- with
      * the marker skipped and without -- and keeps whichever one actually decodes to a real SQL

@@ -57,6 +57,13 @@ COPY --from=web-build --chown=warp:warp /build/dist /app/web
 # run API-only (the JSON admin API still works either way; this only controls whether the browser
 # UI is also served on the same port).
 ENV WARP_ADMIN_WEB_DIR=/app/web
+# The public Docker/GitHub distribution is the one place the Developer-tier license caps (25
+# connections/3 instances/3 backends, see License.java) must still apply by default -- internal
+# engineering builds/tests default the other way (Enterprise-equivalent with no WARP_LICENSE_KEY)
+# specifically because THIS image is the boundary where the free tier's limits actually matter.
+# A real customer's WARP_LICENSE_KEY (docker run -e WARP_LICENSE_KEY=...) still overrides this
+# exactly as before -- this only restores the "no key -> Developer" default this image needs.
+ENV WARP_ENFORCE_DEVELOPER_TIER=true
 USER warp
 
 # Every TCP/HTTP frontend Warp can start -- see ServerOptions.java/Main.java for the full,

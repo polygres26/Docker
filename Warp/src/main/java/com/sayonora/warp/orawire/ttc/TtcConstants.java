@@ -8,7 +8,7 @@ public final class TtcConstants {
     public static final int MSG_TYPE_ROW_DATA = 7;
     public static final int MSG_TYPE_PARAMETER = 8;
     public static final int MSG_TYPE_STATUS = 9;
-    // Confirmed live via a real Oracle 23c self-loop capture of a real ojdbc CallableStatement
+    // Confirmed live via a real Oracle 23c self-loop capture of a real JDBC CallableStatement
     // call with a scalar OUT parameter: the response carries the OUT value in a block whose own
     // leading byte is 11, distinct from every other message type this codebase already decodes
     // (3/4/6/7/8/9/15/16/17/21/29/34). Not independently confirmed against Oracle's own public TTC
@@ -65,7 +65,7 @@ public final class TtcConstants {
     public static final int ORA_TYPE_NUM_RAW = 23;
     
     public static final int ORA_TYPE_NUM_TIMESTAMP = 180;
-    // Confirmed live (a real ojdbc PreparedStatement.setObject(1, OffsetDateTime.now())):
+    // Confirmed live (a real JDBC PreparedStatement.setObject(1, OffsetDateTime.now())):
     // TIMESTAMP WITH TIME ZONE arrives as this exact type code, with a real 13-byte value (the
     // same 7-byte DATE fields, +4 bytes fractional-second nanos, +2 bytes timezone: hour offset
     // +20, minute offset +60) -- see OracleDateCodec#decodeWithTimeZone's own javadoc for the
@@ -74,7 +74,7 @@ public final class TtcConstants {
     // unsupported rather than guessed at.
     public static final int ORA_TYPE_NUM_TIMESTAMP_WITH_TIME_ZONE = 181;
     // Well-known Oracle TTC type codes for LOB bind values (matching every other Oracle wire
-    // client implementation's own constants, e.g. cx_Oracle/python-oracledb) -- the VALUE bytes
+    // client implementation's own constants, e.g. other legacy-protocol client implementations) -- the VALUE bytes
     // themselves use the SAME length-prefixed/PLP-chunked encoding as VARCHAR/RAW already, so
     // TtcReader#readBytesWithLength needs no change at all; only the type-code dispatch below is
     // new.

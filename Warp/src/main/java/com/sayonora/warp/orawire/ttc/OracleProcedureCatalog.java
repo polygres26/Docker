@@ -15,13 +15,13 @@ import java.util.regex.Pattern;
  * Resolves a PL/SQL procedure or function's parameter directions (IN/OUT/IN OUT) from Oracle's own
  * data dictionary ({@code ALL_ARGUMENTS}), since orawire's TTC bind descriptors don't carry
  * direction on the wire -- confirmed live via byte-level capture (see {@code
- * RequestLoop#handlePlSqlExecute}'s own javadoc): a real ojdbc {@code CallableStatement} call's
+ * RequestLoop#handlePlSqlExecute}'s own javadoc): a real JDBC {@code CallableStatement} call's
  * bind descriptors for an IN, an OUT, and an OUT REF CURSOR parameter are byte-for-byte identical
  * except for the type code itself. Without knowing which positions are OUT/IN OUT, {@code
  * java.sql.CallableStatement.registerOutParameter} can't be called correctly.
  *
  * <p>Scope, deliberately narrow: resolves by {@code OBJECT_NAME} alone (no owner/package
- * qualification), matching the simple {@code BEGIN proc_name(:1, :2, :3); END;} shape ojdbc
+ * qualification), matching the simple {@code BEGIN proc_name(:1, :2, :3); END;} shape a JDBC client
  * produces for {@code {call proc_name(?, ?, ?)}}. A name that resolves to more than one procedure
  * (overloaded, or the same name in multiple schemas visible to this connection) is refused rather
  * than guessed at -- same "refuse rather than risk a wrong decode" discipline used throughout this
@@ -54,7 +54,7 @@ public final class OracleProcedureCatalog {
     private final Map<String, List<ArgumentInfo>> cache = new ConcurrentHashMap<>();
 
     /** Extracts the called procedure's bare name from a PL/SQL anonymous block shaped like
-     * {@code BEGIN proc_name(:1, :2, :3); END;} -- the shape ojdbc's own {@code CallableStatement}
+     * {@code BEGIN proc_name(:1, :2, :3); END;} -- the shape a real JDBC driver's own {@code CallableStatement}
      * produces for {@code {call proc_name(?, ?, ?)}}, confirmed live via byte capture. Returns
      * {@code null} for any other shape (a real anonymous block with actual PL/SQL logic, not a
      * single procedure call) -- those aren't resolvable against a single procedure's signature and

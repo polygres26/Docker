@@ -51,7 +51,7 @@ import org.junit.jupiter.api.Test;
  * {@code WARP_MSSQLWIRE_BACKEND=sqlserver} register a real reserved-name backend
  * ({@code mysql-native}/{@code mssql-native}) that {@code RouterStage}'s shared no-rule-matched
  * fallback resolves to for that dialect, going through the full pipeline (capture, metrics,
- * firewall all still apply). {@code WARP_ORACLE_BACKEND_MODE=native} is a DIFFERENT, narrower
+ * firewall all still apply). {@code WARP_ORACLE_BACKEND_MODE=relay} is a DIFFERENT, narrower
  * mechanism entirely -- it only does anything when {@code WARP_DUAL_EXEC_ENABLED} +
  * {@code WARP_DUAL_EXEC_AUTHORITY=oracle} are ALSO set (see {@code RequestLoop#handleExecute}'s
  * native-execute guard), and even then either runs a real Oracle/Postgres shadow-comparison

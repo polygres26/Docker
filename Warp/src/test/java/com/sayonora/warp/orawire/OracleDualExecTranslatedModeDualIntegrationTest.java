@@ -62,7 +62,7 @@ class OracleDualExecTranslatedModeDualIntegrationTest {
                     .pgBackend(postgres.host(), postgres.port(), postgres.database(), postgres.username(),
                             postgres.password())
                     .frontend("orawire", "WARP_ORAWIRE_PORT")
-                    // Deliberately NOT setting WARP_ORACLE_BACKEND_MODE=native -- this is exactly
+                    // Deliberately NOT setting WARP_ORACLE_BACKEND_MODE=relay -- this is exactly
                     // the TRANSLATED-mode + dual-exec-authority=oracle combination the bugs above
                     // were only reachable through.
                     .env("WARP_DUAL_EXEC_ENABLED", "true")

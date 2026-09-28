@@ -11,9 +11,9 @@ public final class ExecuteRequest {
      * own field since most call sites only ever care about one row. Equal to
      * {@code bindRows.get(0)}, or empty if there are no binds at all. */
     public final List<BindParam> bindParams;
-    /** One entry per row for a real array-execute (ojdbc's {@code PreparedStatement.addBatch()} +
+    /** One entry per row for a real array-execute (the JDBC driver's {@code PreparedStatement.addBatch()} +
      * {@code executeBatch()} being the ordinary way a client produces this shape). Real bug, found
-     * live via a byte-level capture of a real ojdbc client's batch INSERT against orawire
+     * live via a byte-level capture of a real JDBC client's batch INSERT against orawire
      * (OracleReexecuteBindCountDebugTest): each row is its OWN self-delimited {@code ROW_DATA}
      * ({@code 0x07}) -tagged block, back-to-back with NO row-count field anywhere in the
      * message -- confirmed by diffing a genuinely 1-row Execute against a genuinely 2-row batch

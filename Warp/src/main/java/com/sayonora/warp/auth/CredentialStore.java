@@ -26,6 +26,15 @@ import java.util.TreeMap;
  *       there into {@link com.sayonora.warp.core.access.PostgresRlsSessionInitializer}.
  * </ul>
  *
+ * <p>Every password value (single-user or per-entry in the multi-user spec) is a {@link
+ * com.sayonora.warp.secrets.SecretRef} string, resolved fresh on every lookup via {@link
+ * com.sayonora.warp.secrets.SecretResolver} -- a plain literal keeps working unchanged
+ * (backward compatible), but {@code vault:...}/{@code cyberark:...} references now work here too,
+ * exactly as they already do for {@code WARP_BACKENDS} entries (see {@code
+ * com.sayonora.warp.core.BackendTarget#borrow}). This is what lets Bridge-mode logins (see {@link
+ * #fromEnv}) verify a migrated app's *real* Oracle password sourced from Vault/CyberArk, instead
+ * of a separate Warp-managed secret the app was never given.
+ *
  * <p>{@link #isMultiUser()} tells a caller (see {@code orawire.session.SessionHandler}) which
  * shape is active, exactly the same role {@code roleAuthCache != null} plays for pgwire/mssqlwire
  * deciding whether a login is worth propagating as a real identity.
@@ -33,25 +42,56 @@ import java.util.TreeMap;
 public final class CredentialStore {
 
     private final String singleUsername;
-    private final byte[] singlePassword;
-    private final Map<String, byte[]> passwordsByUsername;
+    private final String singlePasswordRef;
+    private final Map<String, String> passwordRefsByUsername;
 
     public CredentialStore() {
         this(System.getenv("WARP_AUTH_CREDENTIALS"), System.getenv("WARP_AUTH_USER"),
-                System.getenv("WARP_AUTH_PASSWORD"));
+                System.getenv("WARP_AUTH_PASSWORD"), true);
+    }
+
+    /**
+     * A separate, independently-configured credential set read from its own env var names instead
+     * of the global {@code WARP_AUTH_*} ones -- e.g. Bridge mode's {@code
+     * WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS}/{@code _USER}/{@code _PASSWORD}, which must verify a
+     * migrated app's real Oracle password, not the separate credential {@code WARP_AUTH_*}
+     * configures for ordinary (JDBC/Adapt) sessions. Unlike the no-arg constructor, an entirely
+     * unconfigured set here denies every login rather than silently accepting the {@code
+     * orapg}/{@code orapg} default -- that default isn't a real backend account for this use case,
+     * so falling back to it would let an operator believe Bridge logins are secured when nothing
+     * has actually been configured.
+     */
+    public static CredentialStore fromEnv(String multiUserEnvVar, String singleUsernameEnvVar,
+            String singlePasswordEnvVar) {
+        return new CredentialStore(System.getenv(multiUserEnvVar), System.getenv(singleUsernameEnvVar),
+                System.getenv(singlePasswordEnvVar), false);
     }
 
     CredentialStore(String multiUserSpec, String singleUsernameEnv, String singlePasswordEnv) {
-        this.singleUsername = singleUsernameEnv == null ? "orapg" : singleUsernameEnv;
-        this.singlePassword = (singlePasswordEnv == null ? "orapg" : singlePasswordEnv).getBytes(StandardCharsets.UTF_8);
-        this.passwordsByUsername = parseMultiUserSpec(multiUserSpec);
+        this(multiUserSpec, singleUsernameEnv, singlePasswordEnv, true);
     }
 
-    private static Map<String, byte[]> parseMultiUserSpec(String spec) {
+    // Package-private (not private) so CredentialStoreTest can exercise the secure-by-default
+    // "nothing configured" deny path directly, without going through real env vars.
+    CredentialStore(String multiUserSpec, String singleUsernameEnv, String singlePasswordEnv,
+            boolean allowInsecureDefault) {
+        boolean nothingConfigured = singleUsernameEnv == null && singlePasswordEnv == null
+                && (multiUserSpec == null || multiUserSpec.isBlank());
+        if (nothingConfigured && !allowInsecureDefault) {
+            this.singleUsername = null;
+            this.singlePasswordRef = null;
+        } else {
+            this.singleUsername = singleUsernameEnv == null ? "orapg" : singleUsernameEnv;
+            this.singlePasswordRef = singlePasswordEnv == null ? "orapg" : singlePasswordEnv;
+        }
+        this.passwordRefsByUsername = parseMultiUserSpec(multiUserSpec);
+    }
+
+    private static Map<String, String> parseMultiUserSpec(String spec) {
         // Case-insensitive, matching Oracle's own unquoted-identifier semantics -- a real Oracle
         // client (ojdbc, sqlplus, python-oracledb) uppercases an unquoted username before it ever
-        // reaches the wire, so a lowercase WARP_AUTH_CREDENTIALS entry must still match it.
-        Map<String, byte[]> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        // reaches the wire, so a lowercase *_CREDENTIALS entry must still match it.
+        Map<String, String> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         if (spec == null || spec.isBlank()) {
             return result;
         }
@@ -63,23 +103,32 @@ public final class CredentialStore {
             int eq = trimmed.indexOf('=');
             if (eq <= 0) {
                 throw new IllegalArgumentException(
-                        "WARP_AUTH_CREDENTIALS entry must be \"username=password\", got: " + trimmed);
+                        "credential spec entry must be \"username=password\", got: " + trimmed);
             }
-            result.put(trimmed.substring(0, eq), trimmed.substring(eq + 1).getBytes(StandardCharsets.UTF_8));
+            result.put(trimmed.substring(0, eq), trimmed.substring(eq + 1));
         }
         return result;
     }
 
-    /** True once {@code WARP_AUTH_CREDENTIALS} configures real, distinguishable per-user
-     * credentials instead of the single shared fallback. */
+    /** True once the multi-user spec configures real, distinguishable per-user credentials
+     * instead of the single shared fallback. */
     public boolean isMultiUser() {
-        return !passwordsByUsername.isEmpty();
+        return !passwordRefsByUsername.isEmpty();
     }
 
     public byte[] lookupPassword(String username) {
+        String ref;
         if (isMultiUser()) {
-            return passwordsByUsername.get(username);
+            ref = passwordRefsByUsername.get(username);
+        } else if (singleUsername != null && singleUsername.equalsIgnoreCase(username)) {
+            ref = singlePasswordRef;
+        } else {
+            ref = null;
         }
-        return this.singleUsername.equalsIgnoreCase(username) ? singlePassword : null;
+        if (ref == null) {
+            return null;
+        }
+        String resolved = com.sayonora.warp.secrets.SecretResolver.resolve(ref);
+        return resolved == null ? null : resolved.getBytes(StandardCharsets.UTF_8);
     }
 }

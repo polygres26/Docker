@@ -16,7 +16,7 @@ public final class BackendRegistry {
 
     /** Reserved names for each protocol's own single native-backend-mode default target,
      * registered by {@code Main.java} only when that protocol's own native-mode flag
-     * (WARP_MYWIRE_BACKEND=mysql / WARP_MSSQLWIRE_BACKEND=sqlserver / WARP_ORACLE_BACKEND_MODE=native)
+     * (WARP_MYWIRE_BACKEND=mysql / WARP_MSSQLWIRE_BACKEND=sqlserver / WARP_ORACLE_BACKEND_MODE=relay)
      * is on. {@link RouterStage}'s no-rule-matched fallback checks these BY NAME, not by "the sole
      * backend of a matching dialect" -- deliberately: an operator can ALSO register other real
      * Oracle/MySQL/SQL Server backends under arbitrary names via WARP_BACKENDS purely for router-

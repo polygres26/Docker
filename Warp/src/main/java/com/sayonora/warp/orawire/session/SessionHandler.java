@@ -52,10 +52,10 @@ public final class SessionHandler implements Runnable {
         // Real bug found live by the sqlpaths matrix framework (Warp/tests/sqlpaths, oracle
         // engine plug-in): this bypass used to also require options.dualExecEnabled() &&
         // dualExecAuthority()==ORACLE on top of oracleBackendMode()==NATIVE. But
-        // docs/WARP_GUIDE.md §8.1.1 documents WARP_ORACLE_BACKEND_MODE=native, by itself, as the
+        // docs/WARP_GUIDE.md §8.1.1 documents WARP_ORACLE_BACKEND_MODE=relay, by itself, as the
         // switch to native-backend (transparent-proxy) mode -- dual-exec is an unrelated,
         // independent feature (shadow-executing against both backends for comparison). With the
-        // old guard, setting only WARP_ORACLE_BACKEND_MODE=native (as the docs say to) fell
+        // old guard, setting only WARP_ORACLE_BACKEND_MODE=relay (as the docs say to) fell
         // through to the ordinary runPlain() path below, which borrows a *Postgres* backend
         // connection and authenticates the client's real Oracle username/password against
         // CredentialStore's Postgres-oriented shared secret instead of the real Oracle instance
@@ -66,7 +66,7 @@ public final class SessionHandler implements Runnable {
         // documented contract; dual-exec (shadow execution against Postgres for comparison while
         // Oracle is authoritative) still works unchanged under oracleBackendMode()==JDBC via
         // openDualExecOracleConnection() below, which is a separate feature.
-        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.NATIVE) {
+        if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.RELAY) {
             try (Socket socket = clientSocket) {
                 com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
                         socket, options.oracleHost(), options.oraclePort());
@@ -92,7 +92,7 @@ public final class SessionHandler implements Runnable {
             // Connect-time backend routing: the TNS service name (and the verified login user) select a
             // backend or backend set. Resolved inside authentication, after the password is verified.
             final com.sayonora.warp.core.ConnectionRoute[] routed = {com.sayonora.warp.core.ConnectionRoute.UNROUTED};
-            O5LogonHandler.AuthResult auth = new O5LogonHandler().authenticate(reader, out, user -> {
+            O5LogonHandler.AuthResult auth = new O5LogonHandler(bridgeLoginCredentials(options)).authenticate(reader, out, user -> {
                 if (backendRegistry == null) {
                     return null;
                 }
@@ -164,7 +164,7 @@ public final class SessionHandler implements Runnable {
      * against a real server: only reachable from a test that constructs {@code RequestLoop}
      * directly, never from a real client connection. This wires it up for the one combination that
      * needs a real, directly-usable {@code java.sql.Connection} here: dual-exec enabled, Oracle as
-     * authority, and {@code WARP_ORACLE_BACKEND_MODE=jdbc} (the default) -- the {@code native} mode
+     * authority, and {@code WARP_ORACLE_BACKEND_MODE=adapt} (the default) -- the {@code relay} mode
      * is handled entirely separately, above, via {@link
      * com.sayonora.warp.orawire.backend.NativeSessionRelay}'s raw byte relay, which never
      * constructs a {@code RequestLoop} (or any oracleConnection) at all. Returns {@code null} (same
@@ -173,7 +173,7 @@ public final class SessionHandler implements Runnable {
     private com.sayonora.warp.core.LazyPooledConnection openDualExecOracleConnection() {
         if (!options.dualExecEnabled()
                 || options.dualExecAuthority() != ServerOptions.DualExecAuthority.ORACLE
-                || options.oracleBackendMode() != ServerOptions.OracleBackendMode.JDBC) {
+                || options.oracleBackendMode() != ServerOptions.OracleBackendMode.ADAPT) {
             return null;
         }
         String url = "jdbc:oracle:thin:@//" + options.oracleHost() + ":" + options.oraclePort()
@@ -188,6 +188,32 @@ public final class SessionHandler implements Runnable {
      * client session afterward (many-to-few, unlike NATIVE's 1:1 raw relay or a fresh {@code
      * DriverManager.getConnection} per dual-exec session). */
     private static volatile com.sayonora.warp.orawire.backend.OracleBridgePool bridgePool;
+
+    /** Bridge mode's client-facing login must accept the migrated app's OWN real Oracle
+     * username/password (that's what "transparent" means for an app pointed at Warp instead of
+     * straight at Oracle) -- never the ordinary {@code WARP_AUTH_*} secret every other mode
+     * verifies against, since the app was never given that separate credential and was never
+     * meant to be. {@code WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS} (multi-user,
+     * {@code username=ref;username2=ref2}) or the single-account
+     * {@code WARP_ORACLE_BRIDGE_LOGIN_USER}/{@code WARP_ORACLE_BRIDGE_LOGIN_PASSWORD} fallback
+     * hold the real per-app-user Oracle password as a {@link com.sayonora.warp.secrets.SecretRef}
+     * (a plain literal, or a {@code vault:}/{@code cyberark:} reference resolved fresh per login --
+     * see CredentialStore#lookupPassword). This is deliberately independent of the pooled backend
+     * connection Bridge queries actually run over (see {@link #bridgePool}), which authenticates to
+     * the real Oracle instance as its OWN separate, shared service account (WARP_ORACLE_USER/
+     * WARP_ORACLE_PASSWORD) -- login identity and query-execution identity are two different
+     * credentials by design (see docs/WARP_GUIDE.md's Bridge-mode section): this keeps Bridge's
+     * bounded many-to-few pool sized by concurrency, not by the number of distinct real Oracle
+     * app accounts that may log in over time. If nothing is configured here, every Bridge login is
+     * denied (CredentialStore#fromEnv's secure-by-default behavior) rather than silently accepting
+     * an unrelated shared secret. */
+    private static CredentialStore bridgeLoginCredentials(ServerOptions options) {
+        if (options.oracleBackendMode() != ServerOptions.OracleBackendMode.BRIDGE) {
+            return new CredentialStore();
+        }
+        return CredentialStore.fromEnv("WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS",
+                "WARP_ORACLE_BRIDGE_LOGIN_USER", "WARP_ORACLE_BRIDGE_LOGIN_PASSWORD");
+    }
 
     private static com.sayonora.warp.orawire.backend.OracleBridgePool bridgePool(ServerOptions options) {
         com.sayonora.warp.orawire.backend.OracleBridgePool pool = bridgePool;

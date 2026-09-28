@@ -6,18 +6,26 @@ public final class ServerOptions {
         POSTGRES, ORACLE
     }
 
-    /** JDBC (default): dialect-translate to the configured Postgres backend, same as before Bridge/
-     * NATIVE existed. NATIVE: raw-byte relay straight to a real Oracle instance, 1 socket per
+    /** ADAPT (default): dialect-translate to the configured Postgres backend, same as before
+     * Bridge/RELAY existed. RELAY: raw-byte relay straight to a real Oracle instance, 1 socket per
      * client session, no SQL parsing at all (see NativeSessionRelay). BRIDGE: parse the client's
      * real TTC protocol (reusing Adapt mode's own RequestLoop/ExecuteRequestReader/ResponseWriter
      * machinery -- no second parser), run the parsed statement through Warp's full shared pipeline
      * (firewall, QoS, audit/metrics) same as Adapt mode, but skip dialect translation and execute
      * the verbatim Oracle SQL against a real Oracle backend via a small, bounded, shared JDBC
-     * connection pool (see orawire.backend.OracleBridgePool) instead of either NATIVE's 1:1 raw
-     * relay or JDBC's dialect-translated Postgres backend. See docs/WARP_GUIDE.md Section 8.1.1
-     * for the full Relay/Adapt/Bridge feature-coverage comparison. */
+     * connection pool (see orawire.backend.OracleBridgePool) instead of either RELAY's 1:1 raw
+     * relay or Adapt's dialect-translated Postgres backend. See docs/WARP_GUIDE.md Section 8.1.1
+     * for the full Relay/Adapt/Bridge feature-coverage comparison.
+     *
+     * <p>Bridge mode's client-facing login is a SEPARATE credential from its backend connection
+     * pool's, so a migrated Oracle app can log in "transparently" with its own real Oracle
+     * username/password (verified via {@code WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS} -- see {@code
+     * orawire.session.SessionHandler#bridgeLoginCredentials}, backed by {@link
+     * com.sayonora.warp.auth.CredentialStore}, itself resolvable from Vault/CyberArk via {@link
+     * com.sayonora.warp.secrets.SecretRef}) while queries still run through the pool's own shared
+     * service account ({@code WARP_ORACLE_USER}/{@code WARP_ORACLE_PASSWORD}, below). */
     public enum OracleBackendMode {
-        JDBC, NATIVE, BRIDGE
+        ADAPT, RELAY, BRIDGE
     }
 
     /** Which real backend the MCP frontend's tools (execute_sql, list_tables, etc.) target.
@@ -179,13 +187,13 @@ public final class ServerOptions {
         int oraclePort = parseIntEnv("WARP_ORACLE_PORT", 1521);
         String oracleServiceName = System.getenv().getOrDefault("WARP_ORACLE_SERVICE", "orcl");
         OracleBackendMode oracleBackendMode = switch (System.getenv()
-                .getOrDefault("WARP_ORACLE_BACKEND_MODE", "jdbc").toLowerCase(java.util.Locale.ROOT)) {
-            case "native" -> OracleBackendMode.NATIVE;
+                .getOrDefault("WARP_ORACLE_BACKEND_MODE", "adapt").toLowerCase(java.util.Locale.ROOT)) {
+            case "relay" -> OracleBackendMode.RELAY;
             case "bridge" -> OracleBackendMode.BRIDGE;
-            default -> OracleBackendMode.JDBC;
+            default -> OracleBackendMode.ADAPT;
         };
         // Gateway-held Oracle credentials, needed only by MCP's own native-backend mode below --
-        // orawire's own native mode (WARP_ORACLE_BACKEND_MODE=native, just above) sources Oracle
+        // orawire's own Relay mode (WARP_ORACLE_BACKEND_MODE=relay, just above) sources Oracle
         // credentials from the client's own O5LOGON login instead, since it's a real orawire
         // session; MCP has no equivalent per-caller login step to source them from.
         String oracleUser = System.getenv("WARP_ORACLE_USER");
@@ -296,7 +304,7 @@ public final class ServerOptions {
                 false, 0, 0, null, null,
                 false, DualExecAuthority.POSTGRES, false,
                 false,
-                "localhost", 1521, "orcl", OracleBackendMode.JDBC,
+                "localhost", 1521, "orcl", OracleBackendMode.ADAPT,
                 null, null, McpBackendMode.POSTGRES,
                 false, "localhost", 3306, "mysql", null, null,
                 0,
@@ -540,7 +548,7 @@ public final class ServerOptions {
                 tlsEnabled, tlsPort, grpcTlsPort, tlsKeystorePath, tlsKeystorePassword,
                 dualExecEnabled, dualExecAuthority, dualExecRequireBoth,
                 dualExecShadowEnabled,
-                oracleHost, oraclePort, oracleServiceName, OracleBackendMode.NATIVE,
+                oracleHost, oraclePort, oracleServiceName, OracleBackendMode.RELAY,
                 oracleUser, oraclePassword, mcpBackendMode,
                 mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,

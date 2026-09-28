@@ -78,7 +78,7 @@ def stop_native_db(handle: OracleHandle):
 
 def relay_env(handle: OracleHandle) -> dict:
     return {
-        "WARP_ORACLE_BACKEND_MODE": "native",
+        "WARP_ORACLE_BACKEND_MODE": "relay",
         "WARP_ORACLE_HOST": handle.host,
         "WARP_ORACLE_PORT": str(handle.port),
         "WARP_ORACLE_SERVICE": ORACLE_SERVICE,
@@ -87,7 +87,7 @@ def relay_env(handle: OracleHandle) -> dict:
 
 def bridge_env(handle: OracleHandle) -> dict:
     """Same env-var shape as relay_env -- Warp's orawire "Bridge" backend mode is (by design of
-    this slice) wired generically alongside "native": same startup, same real-Oracle-backend
+    this slice) wired generically alongside "relay": same startup, same real-Oracle-backend
     pointer, only WARP_ORACLE_BACKEND_MODE differs. Bridge mode's Java implementation does not
     exist yet at the time this was written (a separate, parallel effort is building it) -- this
     just lets `--paths bridge` start a Warp instance and get graceful per-scenario CLIENT/WARP_BUG
@@ -102,7 +102,7 @@ def bridge_env(handle: OracleHandle) -> dict:
 
 
 def adapt_env(postgres_handle) -> dict:
-    # Default mode ("jdbc") -- no WARP_ORACLE_BACKEND_MODE needed. PgOracleSupport (see
+    # Default mode ("adapt") -- no WARP_ORACLE_BACKEND_MODE needed. PgOracleSupport (see
     # Warp/src/main/java/com/sayonora/warp/core/PgOracleSupport.java) probes for the pg_oracle
     # extension and degrades gracefully when it's absent, so ADAPT still runs standard dialect
     # translation without it; see NOTES.md for what that means for this run's ADAPT coverage.

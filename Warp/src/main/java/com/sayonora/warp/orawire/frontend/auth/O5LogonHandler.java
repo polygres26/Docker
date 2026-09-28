@@ -23,7 +23,23 @@ public final class O5LogonHandler {
     private static final int VFR_DATA_LENGTH = 16;
     private static final int CSK_SALT_LENGTH = 16;
 
-    private final CredentialStore credentials = new CredentialStore();
+    private final CredentialStore credentials;
+
+    public O5LogonHandler() {
+        this(new CredentialStore());
+    }
+
+    /** Bridge mode (see {@code orawire.session.SessionHandler}) needs a different credential set
+     * here than every other mode -- one that verifies a migrated app's real Oracle password
+     * (sourced from Vault/CyberArk/config via {@link CredentialStore#fromEnv}), not Warp's own
+     * separate {@code WARP_AUTH_*} secret. The O5LOGON challenge-response protocol itself is
+     * unchanged either way: it always needs *some* plaintext password known server-side to derive
+     * the same session-key material the client derived (Oracle's real listener has the same
+     * requirement, via its own stored password verifier) -- only where that plaintext comes from
+     * differs per credential store. */
+    public O5LogonHandler(CredentialStore credentials) {
+        this.credentials = credentials;
+    }
 
     public AuthResult authenticate(TnsPacketReader reader, OutputStream out) throws IOException {
         return authenticate(reader, out, null);
@@ -170,9 +186,10 @@ public final class O5LogonHandler {
      *
      * <p>This preamble is NOT fixed-width -- confirmed live, not guessed. An earlier version of
      * this method assumed one of two fixed byte-offset layouts (one derived from a dblink native
-     * OCI client capture, one from a SQL*Plus capture), selected by which one self-validated. That
-     * worked for the dblink capture it was built from, but a second, otherwise-identical SQL*Plus
-     * login (same user, same client, moments apart) put the username 3 bytes further into the
+     * OCI client capture, one from a non-dblink native-OCI capture), selected by which one
+     * self-validated. That worked for the dblink capture it was built from, but a second,
+     * otherwise-identical non-dblink login (same user, same client, moments apart) put the
+     * username 3 bytes further into the
      * record than the first one did -- i.e. this preamble contains at least one genuinely
      * variable-length field before the username, not just a client-type-dependent fixed shape.
      * Guessing further fixed offsets risks silently misreading the username (or worse, the
@@ -193,7 +210,7 @@ public final class O5LogonHandler {
      * either -- confirmed live: a distributed-database-link connection's native OCI client sends
      * its username pre-quoted (e.g. the wire bytes are literally {@code "POSTGRES"}, quote
      * characters included -- see {@link #readRichUsername}) with several other bytes of preamble
-     * content between the length byte and the quote, while SQL*Plus's own length byte sits
+     * content between the length byte and the quote, while the client's own length byte sits
      * immediately before its (unquoted) username with no gap at all. Rather than locate that length
      * byte at all, this scans backward from the pairs anchor for the longest contiguous run of
      * plausible username characters (see {@link #isPlausibleUsername}) -- since the preamble in
@@ -333,16 +350,16 @@ public final class O5LogonHandler {
 
     /**
      * A real distributed-database-link connection identifies itself in its phase-one
-     * {@code AUTH_PROGRAM_NM} pair as {@code oracle@<host>...} -- every other real client seen so
-     * far (native OCI {@code sqlplus}, {@code sqlcl}, JDBC) identifies as {@code sqlplus@...},
-     * {@code sqlcl@...}, or a JDBC driver name instead. This distinguishes the two phase-one
-     * terminator shapes below: confirmed via a byte-for-byte capture of a real, plain (non-dblink)
-     * {@code sqlplus} login against a real Oracle 23c instance, whose server used the SHORT
-     * (81-byte) terminator -- not the 154-byte one this codebase had generalized to every
-     * ANO-eligible/"rich" client after the dblink capture that originally produced it. The 154-byte
-     * shape is real, but it's dblink-specific, not universal; sending it to a plain sqlplus client
-     * corrupts the phase-one response from its point of view and crashes its native OCI session-key
-     * derivation (confirmed live: OCI incident oci-10847 in kpugskey, immediately after receiving
+     * {@code AUTH_PROGRAM_NM} pair with the fixed {@code oracle@<host>...} prefix -- every other
+     * real client seen so far identifies with its own client-specific program-name string instead,
+     * never that prefix. This distinguishes the two phase-one terminator shapes below: confirmed
+     * via a byte-for-byte capture of a real, plain (non-dblink) native-OCI login against a real
+     * Oracle 23c instance, whose server used the SHORT (81-byte) terminator -- not the 154-byte one
+     * this codebase had generalized to every ANO-eligible/"rich" client after the dblink capture
+     * that originally produced it. The 154-byte shape is real, but it's dblink-specific, not
+     * universal; sending it to a plain non-dblink native-OCI client corrupts the phase-one response
+     * from its point of view and crashes its native OCI session-key derivation (confirmed live: OCI
+     * incident oci-10847 in kpugskey, immediately after receiving
      * this response, with no phase-two call ever sent).
      */
     private static boolean isDblinkProgram(Map<String, String> phaseOnePairs) {
@@ -431,21 +448,27 @@ public final class O5LogonHandler {
         "AAQBAAAAdgUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAANgEAAAAAAAAAAAAAAAAAALDU"
             + "IBGN6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
-    // Real bytes captured from an actual Oracle Database 23c Free instance responding to a real,
-    // PLAIN (non-dblink) `sqlplus` login -- via a raw TCP-proxy capture, same technique used
-    // elsewhere in this file. This is the short terminator every ordinary rich/ANO-eligible client
-    // (native OCI sqlplus, and presumably sqlcl/JDBC if they ever negotiate rich auth) actually
-    // gets; PHASE_ONE_TERMINATOR_RICH_B64 above is real too, but it's specific to a distributed-
-    // database-link session (see isDblinkProgram) -- sending IT to a plain sqlplus login corrupts
-    // the phase-one response from that client's point of view and crashes its native OCI
-    // session-key derivation before it ever sends a phase-two call (confirmed live: OCI incident
-    // oci-10847 in kpugskey immediately after receiving the wrong-shaped response). No "varying"
-    // byte offset is patched into this one -- unlike the dblink terminator, only a single real
-    // capture of this shape exists so far, and there's no evidence yet of which (if any) byte
-    // within it varies per-session; used verbatim, the same approach already applied to
+    // Was 81 bytes (truncated right after the lone 0x02 marker byte, exactly the same
+    // truncation shape PHASE_ONE_TERMINATOR_RICH_B64 above had before ITS fix) until this fix --
+    // that shorter terminator was apparently only ever exercised by legacy, non-native-OCI clients
+    // (none of which negotiate the rich/ANO-eligible path at all, so none ever actually receive
+    // this constant), and a bare truncated 0x02-marker terminator happened not to visibly break
+    // whatever WAS tested against it. A real, plain (non-dblink) native-OCI login
+    // reliably hangs after receiving the truncated version: confirmed live via a Warp thread dump
+    // parked forever in O5LogonHandler.authenticate's phase-two packet read (the client silently
+    // never sends its phase-two call because our truncated phase-one response corrupted its own
+    // session-key derivation state first). Root-caused and fixed by proxying a real non-dblink native-OCI login
+    // through a purpose-built raw TNS packet logger sitting in front of the real Oracle instance
+    // this session already had running (see NativeSessionRelay's own raw-relay design, reused as
+    // the technique, not the code, for this capture) -- this constant is that real server's own
+    // phase-one response terminator for a plain non-dblink native-OCI login, byte-for-byte, all 154 bytes of it
+    // (the same real length PHASE_ONE_TERMINATOR_RICH_B64's own fix already established for the
+    // structurally-equivalent dblink shape). No "varying" byte offset is patched into this one --
+    // unlike the dblink terminator, there's no evidence yet of which (if any) byte within it
+    // varies per-session; used verbatim, the same approach already applied to
     // LOGIN_REJECTION_PREFIX for the same reason.
     private static final String PHASE_ONE_TERMINATOR_SHORT_B64 =
-        "AAQBAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAd";
+        "AAQBAAAAAQABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAANgEAAAAAAAAAAAAAAAAAANAa2ByV/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
     private void sendPhaseOneResponseRich(OutputStream out, byte[] verifierData, byte[] authSesskey, byte[] cskSalt,
             boolean dblinkClient, boolean largeSdu) throws IOException {
@@ -598,10 +621,10 @@ public final class O5LogonHandler {
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHQ==";
 
     // Real bytes captured from an actual Oracle Database 23c Free instance's phase-two SUCCESS
-    // response to a real, PLAIN (non-dblink) `sqlplus` login -- same raw TCP-proxy capture as
+    // response to a real, PLAIN (non-dblink) native-OCI login -- same raw TCP-proxy capture as
     // PHASE_ONE_TERMINATOR_SHORT_B64 above, same reason: PHASE_TWO_RESPONSE_EXTENDED_B64 below is
     // real too, but specific to a distributed-database-link session (see isDblinkProgram) --
-    // sending it to a plain sqlplus client corrupts this response from that client's point of view
+    // sending it to a plain non-dblink native-OCI client corrupts this response from that client's point of view
     // and crashes its native OCI session-key verification (confirmed live: OCI incident oci-10847
     // in kpu8lgn/upirtr, immediately after receiving it, right where phase-one's own crash used to
     // be before that was fixed). Patched at runtime by locating the AUTH_SVR_RESPONSE key text
@@ -609,42 +632,51 @@ public final class O5LogonHandler {
     // was hand-transcribed from a live capture once already and a hardcoded offset is exactly the
     // kind of transcription mistake that already broke PHASE_ONE_TERMINATOR_SHORT_B64 once during
     // this same investigation (an extra/missing byte silently shifts every offset after it).
+    // Was a STALE template from an earlier, different real capture (this class's own comment
+    // history says "hand-transcribed from a live capture once already") until this fix -- it
+    // carried 52 AUTH_* pairs (including a large block of AUTH_NLS_LX* session-parameter pairs)
+    // where a real Oracle server responding to THIS session's exact login only ever sends 35: a
+    // client-visible mismatch found live via the same raw-TNS-packet-proxy technique used
+    // elsewhere in this file, comparing byte-for-byte against a fresh real capture of the
+    // identical scenario (real, native-OCI, non-dblink login) -- a real non-dblink native-OCI client
+    // detects the extra/unexpected pairs and aborts the session with TNS MARKER (break/reset)
+    // packets instead of ever sending its first real SQL statement. Replaced wholesale with that
+    // fresh capture's own bytes rather than hand-editing the stale one -- the same lesson
+    // PHASE_ONE_TERMINATOR_SHORT_B64's own fix (elsewhere in this file) already established:
+    // hand-transcription/hand-editing of a large binary template is exactly how a mismatch like
+    // this gets introduced in the first place.
     private static final String PHASE_TWO_RESPONSE_SHORT_B64 =
-        "CDQAEwAAABNBVVRIX1ZFUlNJT05fU1RSSU5HIgAAACItIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlAAAAABAAAAAQ"
-            + "QVVUSF9WRVJTSU9OX1NRTAIAAAACMjYAAAAAEwAAABNBVVRIX1hBQ1RJT05fVFJBSVRTAQAAAAEzAAAAAA8AAAAPQVVUSF9WRVJT"
-            + "SU9OX05PCQAAAAkzODc1ODgwOTYAAAAAEwAAABNBVVRIX1ZFUlNJT05fU1RBVFVTAQAAAAEwAAAAABUAAAAVQVVUSF9DQVBBQklM"
-            + "SVRZX1RBQkxFAAAAAAAAAAAPAAAAD0FVVEhfTEFTVF9MT0dJThoAAAAaNzg3RTA1MUUxNTM0MjQwMDAwMDAwMDAwMDAAAAAACwAA"
-            + "AAtBVVRIX0RCTkFNRQgAAAAIRlJFRVBEQjEAAAAAEQAAABFBVVRIX0RCX01PVU5UX0lEAAoAAAAKMTUxNDU4NzIwMQAAAAALAAAA"
-            + "C0FVVEhfREJfSUQACgAAAAozOTYxNDMzMDA5AAAAAAwAAAAMQVVUSF9VU0VSX0lEAQAAAAE5AAAAAA8AAAAPQVVUSF9TRVNTSU9O"
-            + "X0lEAgAAAAI1MwAAAAAPAAAAD0FVVEhfU0VSSUFMX05VTQUAAAAFNDMwNDYAAAAAEAAAABBBVVRIX0lOU1RBTkNFX05PAQAAAAEx"
-            + "AAAAABAAAAAQQVVUSF9GQUlMT1ZFUl9JRAEAAAABMQAAAAAPAAAAD0FVVEhfU0VSVkVSX1BJRAMAAAADMjU1AAAAABMAAAATQVVU"
-            + "SF9TQ19TRVJWRVJfSE9TVAwAAAAMY2MzMGM0YzA4NDNmAAAAABUAAAAVQVVUSF9TQ19EQlVOSVFVRV9OQU1FBAAAAARGUkVFAAAA"
-            + "ABUAAAAVQVVUSF9TQ19JTlNUQU5DRV9OQU1FBAAAAARGUkVFAAAAABMAAAATQVVUSF9TQ19JTlNUQU5DRV9JRAEAAAABMQAAAAAb"
-            + "AAAAG0FVVEhfU0NfSU5TVEFOQ0VfU1RBUlRfVElNRSQAAAAkMjAyNi0wOC0yOSAwMDoyMzoyOC4wMDAwMDAwMDAgLTA3OjAwAAAA"
-            + "ABEAAAARQVVUSF9TQ19EQl9ET01BSU4AAAAAAAAAABQAAAAUQVVUSF9TQ19TRVJWSUNFX05BTUUIAAAACGZyZWVwZGIxAAAAABsA"
-            + "AAAbQVVUSF9PTlNfUkxCX1NVQlNDUl9QQVRURVJONAAAADQlImV2ZW50VHlwZT1kYXRhYmFzZS9ldmVudC9zZXJ2aWNlbWV0cmlj"
-            + "cy9mcmVlcGRiMSIAAAAAABoAAAAaQVVUSF9PTlNfSEFfU1VCU0NSX1BBVFRFUk5JAAAASSgiZXZlbnRUeXBlPWRhdGFiYXNlL2V2"
-            + "ZW50L3NlcnZpY2UiKSB8ICgiZXZlbnRUeXBlPWRhdGFiYXNlL2V2ZW50L2hvc3QiKQAAAAAAGgAAABpBVVRIX1NDX1JFQUxfREJV"
-            + "TklRVUVfTkFNRQQAAAAERlJFRQAAAAARAAAAEUFVVEhfSU5TVEFOQ0VOQU1FBAAAAARGUkVFAAAAAA8AAAAPQVVUSF9OTFNfTFhM"
-            + "QU4ACAAAAAhBTUVSSUNBTgAAAAAWAAAAFkFVVEhfTkxTX0xYQ1RFUlJJVE9SWQAHAAAAB0FNRVJJQ0EAAAAAFQAAABVBVVRIX05M"
-            + "U19MWENDVVJSRU5DWQABAAAAASQAAAAAFAAAABRBVVRIX05MU19MWENJU09DVVJSAAcAAAAHQU1FUklDQQAAAAAVAAAAFUFVVEhf"
-            + "TkxTX0xYQ05VTUVSSUNTAAIAAAACLiwAAAAAEwAAABNBVVRIX05MU19MWENEQVRFRk0ACQAAAAlERC1NT04tUlIAAAAAFQAAABVB"
-            + "VVRIX05MU19MWENEQVRFTEFORwAIAAAACEFNRVJJQ0FOAAAAABEAAAARQVVUSF9OTFNfTFhDU09SVAAGAAAABkJJTkFSWQAAAAAV"
-            + "AAAAFUFVVEhfTkxTX0xYQ0NBTEVOREFSAAkAAAAJR1JFR09SSUFOAAAAABUAAAAVQVVUSF9OTFNfTFhDVU5JT05DVVIAAQAAAAEk"
-            + "AAAAABMAAAATQVVUSF9OTFNfTFhDVElNRUZNAA4AAAAOSEguTUkuU1NYRkYgQU0AAAAAEwAAABNBVVRIX05MU19MWENTVE1QRk0A"
-            + "GAAAABhERC1NT04tUlIgSEguTUkuU1NYRkYgQU0AAAAAEwAAABNBVVRIX05MU19MWENUVFpORk0AEgAAABJISC5NSS5TU1hGRiBB"
-            + "TSBUWlIAAAAAEwAAABNBVVRIX05MU19MWENTVFpORk0AHAAAABxERC1NT04tUlIgSEguTUkuU1NYRkYgQU0gVFpSAAAAABgAAAAY"
-            + "QVVUSF9OTFNfTFhMRU5TRU1BTlRJQ1MABAAAAARCWVRFAAAAABkAAAAZQVVUSF9OTFNfTFhOQ0hBUkNPTlZFWENQAAUAAAAFRkFM"
-            + "U0UAAAAAEAAAABBBVVRIX05MU19MWENPTVAABgAAAAZCSU5BUlkAAAAAEQAAABFBVVRIX1NWUl9SRVNQT05TRWAAAABgNDlGRDQ4"
-            + "OTBCOTRGNAAAAnsGAAAAIAA5RUU5NTMzOTIzNDExQzNBRDhGRkZEOUFBMTk0RjI3MjJBMUY4MTk4MTYyRUU3NjI5OTE0OUIzQTVB"
-            + "M0RENEEyQkQxMUE2NjQ2QTJERkY3MTU2NAAAAAAVAAAAFUFVVEhfTUFYX09QRU5fQ1VSU09SUwMAAAADMzAwAAAAAA0AAAANQVVU"
-            + "SF9QREJfVUlEAAoAAAAKMzk2MTQzMzAwOQAAAAAUAAAAFEFVVEhfTUFYX0lERU5fTEVOR1RIAwAAAAMxMjgAAAAACgAAAApBVVRI"
-            + "X0ZMQUdTAQAAAAExAAAAABAAAAAQQVVUSF9TRVJWRVJfVFlQRQEAAAABMQAAAAAYAAAAGEFVVEhfU0VSVkVSX0NBUEFCSUxJVElF"
-            + "UwEAAAABMQAAAAAQAAAAEEFVVEhfUkVTRVRfU1RBVEUBAAAAATAAAAAAFwUBABAGAAAAFgAAAAALAAAAC4AAAAA1PDyAAAAAowAA"
-            + "AAAAWAAAAFgAAAABAAAACQAAAAQAAAAKAAAAQwAAAAsAAABEAAAADAAAAA4AAAAPAAAAFQAAACMAAAAkAAAAMgAAADMAAAA/AAAA"
-            + "QAAAAEEAAABqAAAAawAAAH0AAAAhqgAdAAAAHSJEQkEiLCJBUV9BRE1JTklTVFJBVE9SX1JPTEUiAAAAAMcABAAAAARISUdIAAAA"
-            + "AMwAAAAAAAQAAAAEAAAAAMoAAAAAAAQAAAAEBGy8TMsAAAAAAAQBAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            + "AAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAd";
+        "CCMAEwAAABNBVVRIX1ZFUlNJT05fU1RSSU5HIgAAACItIERldmVsb3AsIExlYXJuLCBhbmQgUnVuIGZvciBGcmVlAAAAABAA"
+            + "AAAQQVVUSF9WRVJTSU9OX1NRTAIAAAACMjYAAAAAEwAAABNBVVRIX1hBQ1RJT05fVFJBSVRTAQAAAAEzAAAAAA8AAAAPQVVU"
+            + "SF9WRVJTSU9OX05PCQAAAAkzODc1OTIxOTIAAAAAEwAAABNBVVRIX1ZFUlNJT05fU1RBVFVTAQAAAAEwAAAAABUAAAAVQVVU"
+            + "SF9DQVBBQklMSVRZX1RBQkxFAAAAAAAAAAAPAAAAD0FVVEhfTEFTVF9MT0dJThoAAAAaRkY2NDAwMDAwMDAwMDAwMDAwMDAw"
+            + "MDAwMDAAAAAACwAAAAtBVVRIX0RCTkFNRQgAAAAIRlJFRVBEQjEAAAAAEQAAABFBVVRIX0RCX01PVU5UX0lEAAoAAAAKMTUx"
+            + "NzEzOTE1NgAAAAALAAAAC0FVVEhfREJfSUQACgAAAAozNjM4MjMxODQxAAAAAAwAAAAMQVVUSF9VU0VSX0lEAwAAAAMxMzYA"
+            + "AAAADwAAAA9BVVRIX1NFU1NJT05fSUQDAAAAAzIxNAAAAAAPAAAAD0FVVEhfU0VSSUFMX05VTQQAAAAEMTMxMAAAAAAQAAAA"
+            + "EEFVVEhfSU5TVEFOQ0VfTk8BAAAAATEAAAAAEAAAABBBVVRIX0ZBSUxPVkVSX0lEAQAAAAExAAAAAA8AAAAPQVVUSF9TRVJW"
+            + "RVJfUElEBAAAAAQxMjI3AAAAABMAAAATQVVUSF9TQ19TRVJWRVJfSE9TVAwAAAAMNWVlMjBhZTQ1OTAzAAAAABUAAAAVQVVU"
+            + "SF9TQ19EQlVOSVFVRV9OQU1FBAAAAARGUkVFAAAAABUAAAAVQVVUSF9TQ19JTlNUQU5DRV9OQU1FBAAAAARGUkVFAAAAABMA"
+            + "AAATQVVUSF9TQ19JTlNUQU5DRV9JRAEAAAABMQAAAAAbAAAAG0FVVEhfU0NfSU5TVEFOQ0VfU1RBUlRfVElNRSQAAAAkMjAy"
+            + "Ni0wOS0yOCAwMTozODoyNy4wMDAwMDAwMDAgKzAwOjAwAAAAABEAAAARQVVUSF9TQ19EQl9ET01BSU4AAAAAAAAAABQAAAAU"
+            + "QVVUSF9TQ19TRVJWSUNFX05BTUUIAAAACGZyZWVwZGIxAAAAABsAAAAbQVVUSF9PTlNfUkxCX1NVQlNDUl9QQVRURVJONAAA"
+            + "ADQlImV2ZW50VHlwZT1kYXRhYmFzZS9ldmVudC9zZXJ2aWNlbWV0cmljcy9mcmVlcGRiMSIAAAAAABoAAAAaQVVUSF9PTlNf"
+            + "SEFfU1VCU0NSX1BBVFRFUk5JAAAASSgiZXZlbnRUeXBlPWRhdGFiYXNlL2V2ZW50L3NlcnZpY2UiKSB8ICgiZXZlbnRUeXBl"
+            + "PWRhdGFiYXNlL2V2ZW50L2hvc3QiKQAAAAAAGgAAABpBVVRIX1NDX1JFQUxfREJVTklRVUVfTkFNRQQAAAAERlJFRQAAAAAR"
+            + "AAAAEUFVVEhfSU5TVEFOQ0VOQU1FBAAAAARGUkVFAAAAABEAAAARQVVUSF9TVlJfUkVTUE9OU0VgAAAAYDc0RjIzNDVGQTdD"
+            + "NDA2QjM2QzhGQzIwQjY5MTA4MDdGNjk2Rjg2OTU4MkE3MTZFQzZCRTkyMUQ0RDRGQjI4NjY4NjRBREUwMTI4RDVCMTcxMjNG"
+            + "RkQwOEI3OEQ5MDBFMwAAAAAVAAAAFUFVVEhfTUFYX09QRU5fQ1VSU09SUwMAAAADMzAwAAAAAA0AAAANQVVUSF9QREJfVUlE"
+            + "AAoAAAAKMzYzODIzMTg0MQAAAAAUAAAAFEFVVEhfTUFYX0lERU5fTEVOR1RIAwAAAAMxMjgAAAAACgAAAApBVVRIX0ZMQUdT"
+            + "AQAAAAExAAAAABAAAAAQQVVUSF9TRVJWRVJfVFlQRQEAAAABMQAAAAAYAAAAGEFVVEhfU0VSVkVSX0NBUEFCSUxJVElFUwEA"
+            + "AAABMQAAAAAQAAAAEEFVVEhfUkVTRVRfU1RBVEUBAAAAATAAAAAAFwUBABAYAAAAFgAAAAAIAAAACEFNRVJJQ0FOEAAAAAAA"
+            + "BwAAAAdBTUVSSUNBCQAAAAAAAQAAAAEkAAAAAAAABwAAAAdBTUVSSUNBAQAAAAAAAgAAAAIuLAIAAAAAAAgAAAAIQUwzMlVU"
+            + "RjgKAAAAAAAJAAAACUdSRUdPUklBTgwAAAAAAAkAAAAJREQtTU9OLVJSBwAAAAAACAAAAAhBTUVSSUNBTggAAAAAAAYAAAAG"
+            + "QklOQVJZCwAAAAAADgAAAA5ISC5NSS5TU1hGRiBBTTkAAAAAABgAAAAYREQtTU9OLVJSIEhILk1JLlNTWEZGIEFNOgAAAAAA"
+            + "EgAAABJISC5NSS5TU1hGRiBBTSBUWlI7AAAAAAAcAAAAHERELU1PTi1SUiBISC5NSS5TU1hGRiBBTSBUWlI8AAAAAAABAAAA"
+            + "ASQ0AAAAAAAGAAAABkJJTkFSWTIAAAAAAAQAAAAEQllURT0AAAAAAAUAAAAFRkFMU0U+AAAAAAALAAAAC4AAAAA8PDyAAAAA"
+            + "owAAAAAAFAAAABQAAAABAAAAiAAAAAIAAAADAAAAcKoAFAAAABQiQ09OTkVDVCIsIlJFU09VUkNFIgAAAADHAAQAAAAESElH"
+            + "SAAAAADMAAAAAAAEAAAABAAAAADKAAAAAAAEAAAABAR9A6TLAAAAAAAEAQAAAAMAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            + "AAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAADYBAAAAAAAAAAAAAAAAAADQGtgclfwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB0=";
 
     private static byte[] patchAuthSvrResponse(byte[] template, String newValueHex) {
         byte[] keyBytes = "AUTH_SVR_RESPONSE".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
@@ -756,7 +788,7 @@ public final class O5LogonHandler {
     }
 
     // Real bytes captured from an actual Oracle Database 23c Free instance (gvenzl/oracle-free)
-    // rejecting a login with a wrong password, via a raw TCP-proxy capture of a real ojdbc11
+    // rejecting a login with a wrong password, via a raw TCP-proxy capture of a real the Oracle JDBC driver
     // client's session -- see the session notes for the exact setup. This revealed three things
     // that weren't in the code before, each confirmed by diffing our own bytes against the real
     // capture byte-for-byte, not guessed:
