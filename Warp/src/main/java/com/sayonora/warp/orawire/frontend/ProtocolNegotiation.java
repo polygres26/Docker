@@ -250,7 +250,19 @@ public final class ProtocolNegotiation {
     // response to. every legacy (non-native-OCI) client were tested working against the full-table response and are
     // deliberately left on that path -- this only carves out the one request shape confirmed to
     // need the short form.
-    private static final int COMPACT_DATA_TYPES_REQUEST_LENGTH = 92;
+    //
+    // Real bug this fixes, found live: this constant was off by one -- 92, not the real captured
+    // request's own actual length. Confirmed via TWO independent, byte-for-byte-identical real
+    // captures (a fresh Oracle-to-Oracle self-loop capture taken today, and this codebase's
+    // original reference capture from when this constant was first added) that this request is
+    // ALWAYS 93 payload bytes, never 92 -- meaning this exact-match check had never actually fired
+    // for a real dblink client sending a genuine row-returning query, silently falling through to
+    // the full (thousands-of-bytes) legacy-client table below instead and immediately desyncing the
+    // client's protocol state machine exactly as this method's own comment already warned about.
+    // This is the actual root cause of every dblink-with-real-row-data hang investigated today --
+    // not the FUNC_UNKNOWN_68/handleFetch gaps a much later stage of the same investigation
+    // (wrongly) focused on, since the connection never got anywhere near that far.
+    private static final int COMPACT_DATA_TYPES_REQUEST_LENGTH = 93;
 
     private void sendDataTypesResponse(OutputStream out, boolean largeSdu) throws IOException {
         byte[] payload;

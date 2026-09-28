@@ -866,32 +866,53 @@ public final class RequestLoop {
                 tail[20] = 0x30;
                 tail[24] = 0x30;
             }
+        } else if (openColumns != null && openColumns.size() > 1) {
+            // The dblink equivalent of the non-dblink multi-column fix above -- confirmed live via
+            // a SEPARATE, independently-verified real Oracle-to-Oracle self-loop capture of a
+            // genuine 2-row dblink SELECT (id NUMBER, name VARCHAR2), diffed against Warp's own
+            // output for the identical query using a byte-accurate raw-socket capture proxy (the
+            // earlier attempt at this exact fix used a capture taken through a proxy with a TNS
+            // large-SDU framing bug that silently corrupted the capture once the session's SDU grew
+            // past the proxy's naive 2-byte-length assumption -- confirmed by retaking the capture
+            // with a transport-agnostic raw byte relay and finding materially different, corrected
+            // values at these same offsets; the earlier, wrong values were reverted before landing).
+            // tail[7]/[8] happen to already match the non-dblink case (0x09/0x1c), but tail[9..12]
+            // and tail[20]/[24] are genuinely different for a dblink client at these exact positions.
+            tail[7] = 0x09;
+            tail[8] = 0x1c;
+            tail[9] = 0x15;
+            tail[10] = 0x35;
+            tail[11] = 0x0f;
+            tail[12] = 0x01;
+            tail[20] = 0x61;
+            tail[24] = 0x61;
         }
-        // KNOWN GAP, not yet fixed: the multi-column tail patches above (found live against a
-        // plain non-dblink client's real capture) are scoped to !nativeOciDblinkClient only. A real
-        // dblink client's own row-carrying response for a multi-column query needs its own,
-        // independently-confirmed set of values at these same offsets (a fresh real capture showed
-        // some of them genuinely differ from the non-dblink values above) -- not yet landed here
-        // since the call site that would exercise this (FUNC_UNKNOWN_68's row-carrying response,
-        // see its own comment) isn't fixed yet either; see [[warp-orawire-native-oci-gap]].
         byte[] preRowBlock = NATIVE_OCI_PRE_ROW_BLOCK.clone();
+        // Real bug this fixes, found live: byte 2 of this block was patched only for non-dblink
+        // clients -- a real dblink capture (both the earlier corrupted one and this fix's own
+        // re-verified clean one) independently needs this SAME value (0x22) too. Applied
+        // unconditionally, unlike the offsets below it.
+        preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
+        // Real bug this fixes, found the same way as the tail offsets above: byte 4 of this block
+        // was treated as a fixed 0x01 constant (confirmed identical across two single-column real
+        // captures), but a fresh 2-column (NUMBER, VARCHAR2) real capture needs 0x02 here instead --
+        // genuinely column-count/type-dependent, not fixed, and confirmed true for BOTH dblink and
+        // non-dblink clients via their own independent real captures. Applied unconditionally.
+        preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = (openColumns != null && openColumns.size() > 1)
+                ? (byte) 0x02 : NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
         if (!nativeOciDblinkClient) {
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1, 0, preRowBlock,
                     NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_1, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1.length);
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2, 0, preRowBlock,
                     NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_2, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2.length);
-            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
-            // Real bug this fixes, found the same way as the tail offsets above: byte 4 of this
-            // block was treated as a fixed 0x01 constant (confirmed identical across two
-            // single-column real captures), but a fresh 2-column (NUMBER, VARCHAR2) real capture
-            // needs 0x02 here instead -- genuinely column-count/type-dependent, not fixed. Confirmed
-            // live via the same wire-level patch test as the tail offsets above.
-            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = (openColumns != null && openColumns.size() > 1)
-                    ? (byte) 0x02 : NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
         }
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
         w.writeRaw(preRowBlock);
-        writeRows(w, maxRows);
+        // false: see ResponseWriter.writeRowNativeOci's own javadoc -- a dblink client's row, when
+        // embedded here (inside the Execute-tail template) rather than delivered via a genuine
+        // FETCH, must NOT carry NATIVE_OCI_ROW_PREFIX, unlike every other native-OCI multi-column
+        // row this codebase writes.
+        writeRows(w, maxRows, false);
         w.writeRaw(java.util.Arrays.copyOfRange(tail, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, tail.length));
     }
 
@@ -2137,14 +2158,15 @@ public final class RequestLoop {
         // subsequent (now genuinely empty) FETCH naturally lands on NATIVE_OCI_EMPTY_FETCH_RESPONSE
         // instead.
         //
-        // KNOWN GAP, not yet fixed: a fresh real Oracle-to-Oracle self-loop capture of a genuine
-        // 2-row dblink SELECT suggests a real dblink client's own last-row FETCH response may need
-        // this SAME combined row+ORA-01403 shape too (both captures' final FETCH response contain
-        // the last row's real value immediately followed by "ORA-01403: no data found\n") -- not
-        // yet extended to dblink here since the call site that would actually exercise this for a
-        // dblink client (FUNC_UNKNOWN_68's row-carrying response) isn't fixed yet either; see
-        // [[warp-orawire-native-oci-gap]].
-        if (usedNativeOciExecuteFallback && !nativeOciDblinkClient
+        // Real bug this fixes, found live: this was originally scoped to non-dblink clients only.
+        // A fresh, independently-verified real Oracle-to-Oracle self-loop capture of a genuine
+        // 2-row dblink SELECT (retaken with a transport-agnostic raw-byte capture proxy after an
+        // earlier attempt's proxy turned out to have a TNS large-SDU framing bug corrupting the
+        // capture) confirms a real dblink client's own last-row FETCH response needs this SAME
+        // combined row+ORA-01403 shape, byte-for-byte -- scoping this to non-dblink only was itself
+        // the bug, not a deliberate exclusion. Verified live end-to-end: a real dblink SELECT over
+        // a genuine DATABASE LINK now returns correct data with zero wire-level patching.
+        if (usedNativeOciExecuteFallback
                 && openRows.size() - fetchPosition == 1 && request.fetchArraySize > 1) {
             List<Object> lastRow = openRows.get(fetchPosition++);
             ResponseWriter.writeFetchLastRowResponseNativeOci(w, openColumns, lastRow.toArray());
@@ -2244,11 +2266,20 @@ public final class RequestLoop {
         "BAMAAAAjAAEBAAAAewUAAAAABwAAAAMAIAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAA2AQAAAAAAAAAAAAAAAAAAsBRFKrL1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAEAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
 
     private long writeRows(TtcWriter w, long maxRows) {
+        return writeRows(w, maxRows, true);
+    }
+
+    // See ResponseWriter.writeRowNativeOci's own javadoc for what allowMultiColumnRowPrefix
+    // actually controls and why the Execute-tail-embedded row (writeNativeOciExecuteTailWithRows)
+    // needs it false while every genuine FETCH row (every other caller of the no-arg overload
+    // above) needs it true (the default).
+    private long writeRows(TtcWriter w, long maxRows, boolean allowMultiColumnRowPrefix) {
         long count = 0;
         while (count < maxRows && fetchPosition < openRows.size()) {
             List<Object> row = openRows.get(fetchPosition++);
             if (usedNativeOciExecuteFallback) {
-                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray(), nativeOciDblinkClient);
+                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray(), nativeOciDblinkClient,
+                        allowMultiColumnRowPrefix);
             } else {
                 ResponseWriter.writeRow(w, openColumns, row.toArray());
             }

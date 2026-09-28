@@ -336,6 +336,22 @@ public final class ResponseWriter {
     // the two real dblink captures this marker/prefix WERE verified against stay unaffected.
     public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values,
             boolean dblinkClient) {
+        writeRowNativeOci(w, columns, values, dblinkClient, true);
+    }
+
+    // Real bug this fixes, found live: a dblink client's row-carrying response for a multi-column
+    // query has TWO real, distinct shapes depending on how the row arrives, not one -- a genuine
+    // FETCH continuation's own row DOES carry NATIVE_OCI_ROW_PREFIX (confirmed against a real
+    // capture, already correct via the plain `dblinkClient` overload above), but the SAME row when
+    // it's instead embedded inline inside the Execute-tail template (writeNativeOciExecuteTailWithRows's
+    // own "chained Execute" case) does NOT -- confirmed via a fresh real Oracle-to-Oracle self-loop
+    // capture showing zero bytes where this codebase used to unconditionally insert the 4-byte
+    // prefix, corrupting the response's total length (513 bytes sent vs the real 509) and hanging
+    // the client. `allowMultiColumnRowPrefix` lets the Execute-tail-embedding call site opt out of
+    // just this one behavior while keeping every other native-OCI row-shaping rule (single-VARCHAR
+    // marker included, since that hasn't been shown to have the same two-shapes split).
+    public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values,
+            boolean dblinkClient, boolean allowMultiColumnRowPrefix) {
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
         if (dblinkClient && columns.size() == 1 && columns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
             TtcWriter valueWriter = new TtcWriter();
@@ -346,7 +362,7 @@ public final class ResponseWriter {
             w.writeRaw(encodedValue);
             return;
         }
-        if (dblinkClient && columns.size() > 1) {
+        if (dblinkClient && columns.size() > 1 && allowMultiColumnRowPrefix) {
             w.writeRaw(NATIVE_OCI_ROW_PREFIX);
         }
         for (int i = 0; i < columns.size(); i++) {
