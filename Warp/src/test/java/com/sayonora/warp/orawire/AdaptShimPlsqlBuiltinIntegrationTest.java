@@ -1,6 +1,8 @@
 package com.sayonora.warp.orawire;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sayonora.warp.testsupport.RealPostgres;
@@ -10,6 +12,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -79,11 +82,38 @@ class AdaptShimPlsqlBuiltinIntegrationTest {
                             () -> st.execute("BEGIN dbms_lock.sleep(1); END;"),
                             "an unsupported builtin (not in ShimBuiltinCatalog's allowlist) must still be "
                                     + "refused cleanly, not silently routed to Postgres as a raw function call");
-                    org.junit.jupiter.api.Assertions.assertTrue(
-                            e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
+                    assertTrue(e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
                             "the refusal message must be the same clean, helpful one plain Adapt mode "
                                     + "always gives for anything outside this feature's narrow scope: "
                                     + e.getMessage());
+                }
+
+                // Real bug this locks in as a regression: the scalar-function-return shape
+                // ("{? = call schema.func}") used to fail with a real PGJDBC SQLException ("out
+                // parameter 1 was of type java.sql.Types=X however type java.sql.Types=2 was
+                // registered") because ShimBuiltinCatalog always registered Types.NUMERIC
+                // regardless of the underlying Postgres function's REAL return type -- PGJDBC's own
+                // CallableStatement validates the registered type against the function's real
+                // signature and refuses a mismatch. Fixed by having each Signature carry its own
+                // real returnSqlType (Types.INTEGER for dbms_random.random's real "integer" return,
+                // confirmed live via \df against a real pg_oracle install). This test proves both
+                // the exact function this was fixed with (dbms_random.random, an INTEGER return)
+                // and a second one with a genuinely different real type (dbms_random.value, a
+                // DOUBLE return) -- confirming the fix generalizes, not just one lucky type match.
+                try (Connection conn = DriverManager.getConnection(url, pg.username(), pg.password());
+                        CallableStatement cs = conn.prepareCall("{? = call dbms_random.random}")) {
+                    cs.registerOutParameter(1, Types.NUMERIC);
+                    cs.execute();
+                    // No specific value assertion -- dbms_random.random() is, by design, random.
+                    // Reaching this line at all (no SQLException) is the real assertion.
+                }
+                try (Connection conn = DriverManager.getConnection(url, pg.username(), pg.password());
+                        CallableStatement cs = conn.prepareCall("{? = call dbms_random.value}")) {
+                    cs.registerOutParameter(1, Types.NUMERIC);
+                    cs.execute();
+                    double value = cs.getDouble(1);
+                    assertTrue(value >= 0.0 && value < 1.0,
+                            "dbms_random.value() must return its real, documented [0,1) range: " + value);
                 }
             }
         }

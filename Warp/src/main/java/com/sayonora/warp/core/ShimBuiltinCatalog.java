@@ -32,8 +32,28 @@ public final class ShimBuiltinCatalog {
      *      return value, called via the plain {@code {call schema.func(...)}} shape). Every entry
      *      here is IN-only -- none of these Shim builtins are known to have an OUT parameter (a
      *      real one, if ever added, needs the same signature-table treatment as the return value,
-     *      not guessed at). */
-    public record Signature(int inParamCount, boolean hasReturnValue) {
+     *      not guessed at).
+     * @param returnSqlType the real {@link java.sql.Types} constant of the underlying Postgres
+     *      function's OWN return type (e.g. {@code Types.INTEGER} for a Postgres {@code integer}
+     *      return, {@code Types.DOUBLE} for {@code double precision}) -- {@code 0} when {@code
+     *      hasReturnValue} is false. Real bug this fixes, found live: this must be the function's
+     *      REAL Postgres return type, not a fixed guess -- PGJDBC's own {@code CallableStatement}
+     *      validates the type registered via {@code registerOutParameter} against the actual
+     *      function's real signature and throws a real {@code SQLException} ("out parameter 1 was
+     *      of type java.sql.Types=X however type java.sql.Types=Y was registered") if they don't
+     *      match. Confirmed live: this exception was being thrown server-side (inside this
+     *      feature's own PGJDBC call, not by the receiving Oracle client at all -- a misleading
+     *      first impression, since the client's own generic error-help URL made it look
+     *      client-side) whenever the registered type (previously always hardcoded to {@code
+     *      Types.NUMERIC}) didn't match the real function's return type. The value returned to the
+     *      ORACLE-speaking client is still always encoded as a plain Oracle NUMBER regardless of
+     *      this field -- {@code writeColumnValue}'s existing NUMBER encoding already converts any
+     *      real Java numeric type correctly -- this field only controls what's registered against
+     *      PGJDBC on the Postgres side. */
+    public record Signature(int inParamCount, boolean hasReturnValue, int returnSqlType) {
+        public Signature(int inParamCount, boolean hasReturnValue) {
+            this(inParamCount, hasReturnValue, 0);
+        }
     }
 
     private static final Map<String, Signature> BUILTINS = Map.ofEntries(
@@ -45,23 +65,12 @@ public final class ShimBuiltinCatalog {
             Map.entry("dbms_output.put", new Signature(1, false)),
             Map.entry("dbms_output.new_line", new Signature(0, false)),
             Map.entry("dbms_output.enable", new Signature(1, false)),
-            Map.entry("dbms_output.disable", new Signature(0, false)));
-
-    // Real bug found live, NOT yet fixed, tracked here rather than silently claimed to work:
-    // hasReturnValue=true (the JDBC "{? = call schema.func}" function-return shape) was tried
-    // against real Shim functions (dbms_random.value, dbms_random.random) and confirmed BROKEN --
-    // a real ojdbc client rejects the response with "out parameter 1 was of type java.sql.Types=X
-    // however type java.sql.Types=2 (NUMERIC) was registered", where X varies with the Postgres
-    // function's own real return type (8/DOUBLE for dbms_random.value, 4/INTEGER for
-    // dbms_random.random) -- this varying-by-real-return-type pattern means the client IS
-    // detecting something real about the response, not hitting a fixed client-side quirk. This
-    // exact JDBC call shape had never actually been EXECUTED anywhere in this codebase before this
-    // feature (every earlier attempt at it, in Bridge/dual-exec mode, was refused outright before
-    // ever reaching real execution -- see handlePlSqlExecute's own history), so this is a newly
-    // exposed, genuinely separate bug in the shared response-writing path, not specific to Shim
-    // routing -- needs its own live-capture-diff investigation (same discipline as every other fix
-    // this session) before any scalar-function-return builtin can be added to this table. Until
-    // then, ONLY hasReturnValue=false (void procedure) entries belong here.
+            Map.entry("dbms_output.disable", new Signature(0, false)),
+            // Confirmed live via \df dbms_random.* against a real pg_oracle install: random()
+            // returns Postgres "integer", value() returns "double precision" -- registerOutParameter
+            // must match exactly (see Signature's own javadoc for the real bug this fixes).
+            Map.entry("dbms_random.random", new Signature(0, true, java.sql.Types.INTEGER)),
+            Map.entry("dbms_random.value", new Signature(0, true, java.sql.Types.DOUBLE)));
 
     /** Looks up {@code schemaDotFunction} (e.g. {@code "dbms_output.put_line"}, case-insensitive)
      * against the allowlist above. Returns {@code null} if this isn't a known, supported Shim

@@ -1785,7 +1785,7 @@ public final class RequestLoop {
         try (CallableStatement cs = pg.prepareCall(jdbcCallSyntax)) {
             int bindOffset = isFunctionCall ? 1 : 0;
             if (isFunctionCall) {
-                cs.registerOutParameter(1, Types.NUMERIC);
+                cs.registerOutParameter(1, sig.returnSqlType());
             }
             for (int i = 0; i < sig.inParamCount(); i++) {
                 cs.setObject(i + 1 + bindOffset, request.bindParams.get(i + bindOffset).value);
