@@ -5,7 +5,9 @@ import com.sayonora.warp.core.ColumnInfo;
 import com.sayonora.warp.core.DialectErrorMessages;
 import com.sayonora.warp.core.ExecutionResult;
 import com.sayonora.warp.core.JdbcBackendExecutor;
+import com.sayonora.warp.core.PgOracleSupport;
 import com.sayonora.warp.core.PipelineStage;
+import com.sayonora.warp.core.ShimBuiltinCatalog;
 import com.sayonora.warp.core.SourceDialect;
 import com.sayonora.warp.core.SqlStateErrorMapper;
 import com.sayonora.warp.core.Statement;
@@ -1352,6 +1354,12 @@ public final class RequestLoop {
                     request.bindRows);
         }
 
+        if (isPlSqlBlock(request.sqlText)
+                && oracleConnection == null
+                && tryHandleShimBuiltinCall(request, w, callNumber)) {
+            return;
+        }
+
         if (isPlSqlBlock(request.sqlText)) {
             handlePlSqlExecute(request, w, callNumber);
             return;
@@ -1697,6 +1705,107 @@ public final class RequestLoop {
      *       concatenate the same way without another live capture to prove it.
      * </ul>
      */
+    // Matches the exact same "BEGIN proc(:1, :2, ...); END;" shape
+    // OracleProcedureCatalog.PROC_CALL_PATTERN recognizes, but ALSO allows a dotted
+    // schema.function name (that pattern's own character class has no "." in it, deliberately --
+    // see its own javadoc on package-qualified calls being a disclosed, separate gap). Only used
+    // for the narrow Shim-builtin-call rewrite below; OracleProcedureCatalog's own bare-name-only
+    // scope for real Oracle-catalog-backed resolution (Bridge/dual-exec) is untouched.
+    // The trailing "(" is optional: confirmed live -- a real JDBC CallableStatement for a
+    // zero-argument call (e.g. dbms_output.new_line, dbms_output.disable) produces
+    // "BEGIN schema.func; END;" with NO parentheses at all, not "schema.func();" -- a first version
+    // of this pattern required "(" unconditionally and silently failed to match this real shape.
+    private static final java.util.regex.Pattern SHIM_PROC_CALL_PATTERN = java.util.regex.Pattern.compile(
+            "^\\s*BEGIN\\s+([A-Za-z0-9_$]+\\.[A-Za-z0-9_$]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    // Matches the JDBC "{? = call schema.func(...)}" function-return shape's own wire text,
+    // "BEGIN :1 := schema.func(:2, ...); END;" -- confirmed live (this session) as the real shape
+    // a JDBC CallableStatement produces for a function call, distinct from a plain procedure call
+    // (which has no ":1 :=" assignment prefix at all).
+    // Same "(" is optional" real bug as SHIM_PROC_CALL_PATTERN's own javadoc above -- confirmed
+    // live via the identical failure for dbms_random.value (a real zero-arg FUNCTION call):
+    // "BEGIN :1 := dbms_random.value; END;", no parentheses.
+    private static final java.util.regex.Pattern SHIM_FUNC_CALL_PATTERN = java.util.regex.Pattern.compile(
+            "^\\s*BEGIN\\s*:1\\s*:=\\s*([A-Za-z0-9_$]+\\.[A-Za-z0-9_$]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Real gap this closes, scoped narrowly -- see the {@code warp-adapt-plsql-shim-reach-plan}
+     * memory note for the full writeup: plain Adapt mode (no real Oracle backend at all) used to
+     * refuse EVERY PL/SQL-shaped statement outright, even though Shim/pg_oracle's own DBMS_*
+     * builtin functions genuinely work once called through Postgres's own native function-call
+     * syntax -- confirmed live by installing pg_oracle for real and testing directly: Oracle's
+     * {@code BEGIN...END} syntax itself is simply never understood by Postgres's parser (a hard
+     * grammar gap, not a missing feature), but {@code SELECT dbms_output.put_line($1)} (the exact
+     * same call, Postgres-native syntax) works correctly. For the single-call shape orawire
+     * already recognizes (no control-flow, no OUT parameters, no REF CURSOR -- exactly what a JDBC
+     * {@code CallableStatement} produces), a call to a KNOWN Shim builtin can simply be rewritten
+     * into that plain, ordinary, parameterized Postgres call instead of refused -- no PL/pgSQL, no
+     * {@code DO $$...$$} block, and no new execution machinery needed.
+     *
+     * <p>Deliberately narrow: only the small, hand-maintained {@link ShimBuiltinCatalog} allowlist
+     * is eligible (never a guess at an unknown function's real signature), only when
+     * {@link PgOracleSupport#isAvailable} confirms Shim is actually installed on this backend (so
+     * a Shim-less Adapt install keeps today's existing, unchanged clean refusal), and only
+     * IN-only calls (no known Shim builtin here has a real OUT parameter yet -- see the catalog's
+     * own javadoc). Returns {@code false} (without writing any response) for every case outside
+     * this narrow scope, so the caller falls through to {@code handlePlSqlExecute}'s existing,
+     * unchanged behavior. */
+    private boolean tryHandleShimBuiltinCall(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
+        java.util.regex.Matcher funcMatch = SHIM_FUNC_CALL_PATTERN.matcher(request.sqlText);
+        boolean isFunctionCall = funcMatch.find();
+        java.util.regex.Matcher m = isFunctionCall ? funcMatch : SHIM_PROC_CALL_PATTERN.matcher(request.sqlText);
+        if (!isFunctionCall && !m.find()) {
+            return false;
+        }
+        String name = m.group(1);
+        ShimBuiltinCatalog.Signature sig = ShimBuiltinCatalog.lookup(name);
+        if (sig == null || sig.hasReturnValue() != isFunctionCall) {
+            return false;
+        }
+        int expectedBindCount = sig.inParamCount() + (isFunctionCall ? 1 : 0);
+        if (request.bindParams.size() != expectedBindCount) {
+            return false;
+        }
+        Connection pg = pgConnection.get();
+        if (!PgOracleSupport.isAvailable(pg)) {
+            return false;
+        }
+
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < sig.inParamCount(); i++) {
+            if (i > 0) {
+                placeholders.append(", ");
+            }
+            placeholders.append('?');
+        }
+        String jdbcCallSyntax = isFunctionCall
+                ? "{? = call " + name + "(" + placeholders + ")}"
+                : "{call " + name + "(" + placeholders + ")}";
+
+        terminalExecutor.rebind(pg);
+        try (CallableStatement cs = pg.prepareCall(jdbcCallSyntax)) {
+            int bindOffset = isFunctionCall ? 1 : 0;
+            if (isFunctionCall) {
+                cs.registerOutParameter(1, Types.NUMERIC);
+            }
+            for (int i = 0; i < sig.inParamCount(); i++) {
+                cs.setObject(i + 1 + bindOffset, request.bindParams.get(i + bindOffset).value);
+            }
+            cs.execute();
+
+            if (isFunctionCall) {
+                Object returnValue = cs.getObject(1);
+                ColumnMetadata outColumn = new ColumnMetadata("RETURN", TtcConstants.ORA_TYPE_NUM_NUMBER, 0, 0,
+                        4000, true);
+                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { returnValue },
+                        expectedBindCount);
+            }
+
+            openCursorId = nextCursorId++;
+            ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+        }
+        return true;
+    }
+
     private void handlePlSqlExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
         if (oracleConnection == null) {
             throw new IllegalStateException(
