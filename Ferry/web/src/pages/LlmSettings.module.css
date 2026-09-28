@@ -1,0 +1,13 @@
+.narrow { max-width: 720px; }
+.subtle { color: var(--sy-muted); font-weight: 400; font-size: 12px; }
+.provider { border: 0; padding: 0; margin: 0 0 16px; display: flex; gap: 20px; flex-wrap: wrap; }
+.radio { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.radio input { accent-color: var(--sy-accent-fill); }
+.presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.preset {
+  padding: 10px 12px; border-radius: var(--sy-radius); text-align: left; font-size: 13px;
+  border: 1px solid var(--sy-line); background: var(--sy-surface); color: var(--sy-ink);
+}
+.preset:hover { border-color: var(--sy-muted); }
+.presetOn { border-color: var(--sy-accent); background: var(--sy-accent-soft); font-weight: 500; box-shadow: 0 0 0 1px var(--sy-accent); }
+.foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }

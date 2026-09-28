@@ -1,4 +1,4 @@
-package com.sayonora.wiretests;
+package com.sayonora.warptests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,7 +21,7 @@ import org.neo4j.driver.types.Node;
 /** boltwire: real Neo4j Bolt+Cypher wire protocol -- CREATE (nodes and single-hop node-edge-node
  * patterns), MATCH/WHERE/RETURN (fixed single-hop and bounded variable-length {@code [*min..max]}
  * paths), all translated to Postgres underneath (see
- * {@code com.sayonora.wire.boltwire.PgGraphStore}'s own javadoc for the two-table property-graph
+ * {@code com.sayonora.warp.boltwire.PgGraphStore}'s own javadoc for the two-table property-graph
  * schema). Uses the real official {@code neo4j-java-driver}, not a hand-rolled Bolt client -- no
  * auth configured in the test compose file, so any username/password is accepted. */
 class BoltWireTest {

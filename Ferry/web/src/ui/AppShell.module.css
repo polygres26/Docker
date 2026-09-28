@@ -1,0 +1,57 @@
+.shell { display: grid; grid-template-columns: var(--sy-rail-width) minmax(0, 1fr); min-height: 100vh; background: var(--sy-paper); }
+
+/* ---- Sidebar rail ---- */
+.rail {
+  background: var(--sy-rail); color: var(--sy-rail-text); padding: 20px 13px; display: flex; flex-direction: column;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; z-index: 40;
+}
+.brand { display: flex; align-items: center; gap: 11px; padding: 0 8px 23px; text-decoration: none; color: var(--sy-rail-text); font-weight: 500; }
+/* The logo art has a transparent background, so it sits on a small light tile to read on the dark rail. */
+.markTile { width: 34px; height: 34px; border-radius: 8px; background: var(--sy-logo-tile); display: grid; place-items: center; flex: none; padding: 3px; }
+.markTile img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.brandText { display: flex; flex-direction: column; line-height: 1.2; font-size: 14px; }
+.brandSub { color: var(--sy-rail-muted); font-size: 11px; font-weight: 400; }
+
+.nav { display: flex; flex-direction: column; flex: 1; }
+.navLabel { padding: 14px 10px 6px; color: var(--sy-rail-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0; font-weight: 400; }
+.navList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.navItem {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; width: 100%;
+  color: var(--sy-rail-muted); font-size: 13px; text-decoration: none; background: none; border: 0; text-align: left;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.navItem:hover { color: var(--sy-rail-text); background: color-mix(in srgb, var(--sy-rail-active) 55%, transparent); }
+.navItem:focus-visible { outline-color: var(--sy-rail-active-icon); }
+.navItemActive, .navItemActive:hover { background: var(--sy-rail-active); color: var(--sy-rail-text); }
+.navItemActive svg { color: var(--sy-rail-active-icon); }
+.railFoot { margin: 16px 6px 0; border-top: 1px solid var(--sy-rail-line); padding: 12px 4px 0; }
+.railFoot .navItem { padding: 8px 6px; }
+.backdrop { display: none; }
+
+/* ---- Main / topbar ---- */
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  height: var(--sy-topbar-height); background: var(--sy-surface); border-bottom: 1px solid var(--sy-line);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 26px;
+  position: sticky; top: 0; z-index: 20;
+}
+.topLeft { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.menuBtn { display: none; }
+.crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumbSep { color: var(--sy-muted); font-weight: 400; }
+.crumbCurrent { color: var(--sy-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.page { padding: var(--sy-page-pad); min-width: 0; flex: 1; }
+.pageInner { max-width: 1180px; }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: fixed; inset: 0 auto 0 0; width: min(280px, 86vw); transform: translateX(-100%); transition: transform 180ms ease; }
+  .railOpen { transform: none; box-shadow: var(--sy-drawer-shadow); }
+  .backdrop { position: fixed; inset: 0; z-index: 30; background: var(--sy-scrim); border: 0; }
+  .railOpen ~ .backdrop { display: block; }
+  .menuBtn { display: inline-flex; }
+  .topbar { padding: 0 14px; }
+}
+@media (max-width: 500px) {
+  .page { padding: 20px 14px; }
+}

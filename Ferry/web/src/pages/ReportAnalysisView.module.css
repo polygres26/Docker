@@ -1,0 +1,6 @@
+.finding { display: flex; align-items: flex-start; gap: 12px; }
+.finding > span { flex: none; min-width: 58px; text-align: center; margin-top: 2px; }
+.name { font-weight: 500; }
+.note { color: var(--sy-muted); font-size: 12.5px; }
+.detail { color: var(--sy-muted); font-size: 12px; font-family: var(--sy-mono); margin-top: 2px; overflow-wrap: anywhere; }
+.version { font-size: 14px; }

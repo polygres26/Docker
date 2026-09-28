@@ -1,0 +1,5 @@
+.picker { max-width: 420px; }
+.picker > div { margin-bottom: 0; }
+.progress { display: flex; align-items: center; gap: 9px; min-width: 190px; }
+.progressText { color: var(--sy-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: var(--sy-muted); white-space: nowrap; }

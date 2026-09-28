@@ -1,0 +1,285 @@
+## del unlink exists type touch
+SET s v
+LPUSH l a
+HSET h f v
+SADD st a
+ZADD z 1 a
+XADD x 1-1 f v
+TYPE s
+TYPE l
+TYPE h
+TYPE st
+TYPE z
+TYPE x
+TYPE nokey
+EXISTS s l h st z x nokey
+TOUCH s l nokey
+UNLINK s l
+DEL h st z x nokey
+DBSIZE
+DEL
+
+## rename renamenx copy move
+SET a 1
+RENAME a b
+GET a
+GET b
+RENAME nokey x
+RENAME b b
+SET c 2
+RENAMENX b c
+RENAMENX b d
+GET d
+RENAMENX d d
+SET t v EX 100
+RENAME t t2
+!ttl TTL t2
+LPUSH l 1 2 3
+RENAME l l2
+LRANGE l2 0 -1
+SET dst old
+RENAME l2 dst
+TYPE dst
+COPY dst dst3
+LRANGE dst3 0 -1
+COPY dst dst3
+COPY dst dst3 REPLACE
+COPY nokey nokey2
+COPY dst dst
+COPY dst dst4 DB 1
+SELECT 1
+LRANGE dst4 0 -1
+SELECT 0
+COPY dst dst5 DB 99
+COPY dst dst5 FOO
+SET m v
+MOVE m 1
+EXISTS m
+SELECT 1
+GET m
+SELECT 0
+MOVE nokey 1
+MOVE dst 0
+MOVE dst 99
+MOVE dst abc
+SET m2 v
+SELECT 1
+SET m2 other
+SELECT 0
+MOVE m2 1
+GET m2
+COPY t2 tcopy
+!ttl TTL tcopy
+HSET h1 a 1 b 2
+COPY h1 h2
+HGETALL h2
+ZADD z1 1 a 2 b
+COPY z1 z2
+ZRANGE z2 0 -1 WITHSCORES
+SADD s1 a b
+COPY s1 s2
+SMEMBERS s2
+
+## expire family
+SET k v
+EXPIRE k 100
+!ttl TTL k
+EXPIRE nokey 100
+PEXPIRE k 50000
+!ttl PTTL k
+EXPIREAT k 4102444800
+EXPIRETIME k
+PEXPIREAT k 4102444800000
+PEXPIRETIME k
+EXPIRETIME k
+TTL nokey
+PTTL nokey
+EXPIRETIME nokey
+PEXPIRETIME nokey
+SET p v
+TTL p
+PTTL p
+EXPIRETIME p
+PERSIST p
+PERSIST nokey
+EXPIRE p 100
+PERSIST p
+TTL p
+PERSIST p
+EXPIRE p abc
+EXPIRE p 9223372036854775807
+EXPIRE p -9223372036854775808
+EXPIREAT p 9223372036854775807
+PEXPIRE p 9223372036854775807
+EXPIRE p 100 FOO
+EXPIRE p
+EXPIRE p 100 NX XX
+EXPIRE p 100 GT LT
+EXPIRE p 100 NX GT
+EXPIRE p 100 NX
+!ttl TTL p
+EXPIRE p 200 NX
+EXPIRE p 200 XX
+!ttl TTL p
+EXPIRE p 100 GT
+EXPIRE p 300 GT
+!ttl TTL p
+EXPIRE p 400 LT
+EXPIRE p 50 LT
+!ttl TTL p
+SET q v
+EXPIRE q 100 GT
+EXPIRE q 100 LT
+!ttl TTL q
+SET r v
+EXPIRE r 100 XX
+EXPIRE r 0
+EXISTS r
+SET r2 v
+EXPIRE r2 -1
+EXISTS r2
+SET r3 v
+EXPIREAT r3 1
+EXISTS r3
+SET r4 v
+PEXPIRE r4 50
+!sleep 120
+EXISTS r4
+GET r4
+TTL r4
+EXPIRE r4 100
+SET r5 v PX 50
+!sleep 120
+SET r5 new NX
+GET r5
+SET r6 v PX 50
+!sleep 120
+INCR r6
+GET r6
+TTL r6
+LPUSH r7 a
+PEXPIRE r7 50
+!sleep 120
+EXISTS r7
+LLEN r7
+SET r7 string
+GET r7
+HSET r8 a 1
+PEXPIRE r8 50
+!sleep 120
+HSET r8 b 2
+HGETALL r8
+TTL r8
+
+## keys and scan
+MSET foo 1 foobar 2 bar 3 baz 4 "f?o" 5 "f*" 6 "a[b" 7 "hello world" 8
+!sort KEYS *
+!sort KEYS foo*
+!sort KEYS f?o
+!sort KEYS f\?o
+!sort KEYS f\*
+!sort KEYS ba[rz]
+!sort KEYS ba[^r]
+!sort KEYS ba[a-z]
+!sort KEYS "a\[b"
+!sort KEYS *o*
+!sort KEYS ""
+!sort KEYS "hello*"
+!sort KEYS "*d"
+!sort KEYS "h?llo world"
+!sort KEYS nomatch*
+KEYS
+KEYS a b
+DBSIZE
+!type RANDOMKEY
+FLUSHDB
+RANDOMKEY
+DBSIZE
+
+## scan
+MSET k1 1 k2 2 k3 3 k4 4 k5 5
+SET expiring v PX 30
+!sleep 80
+!sort SCAN 0 COUNT 100
+!sort SCAN 0 COUNT 100 MATCH k*
+!sort SCAN 0 COUNT 100 MATCH k[12]
+!sort SCAN 0 COUNT 100 TYPE string
+SCAN 0 COUNT 100 TYPE list
+LPUSH l a
+!sort SCAN 0 COUNT 100 TYPE list
+SCAN abc
+SCAN -1
+SCAN 0 COUNT 0
+SCAN 0 COUNT abc
+SCAN 0 FOO
+SCAN 0 MATCH
+SCAN
+SCAN 0 COUNT 100 TYPE nonexistent
+
+## object and dump restore
+SET s hello
+SET n 12345
+SET big "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+OBJECT ENCODING s
+OBJECT ENCODING n
+OBJECT ENCODING big
+OBJECT ENCODING nokey
+OBJECT FREQ s
+OBJECT IDLETIME s
+OBJECT REFCOUNT s
+OBJECT FOO s
+OBJECT
+OBJECT ENCODING
+RPUSH l 1 2 3
+OBJECT ENCODING l
+HSET h a 1
+OBJECT ENCODING h
+SADD si 1 2 3
+OBJECT ENCODING si
+SADD ss a b c
+OBJECT ENCODING ss
+ZADD z 1 a
+OBJECT ENCODING z
+XADD x 1-1 a b
+OBJECT ENCODING x
+DUMP nokey
+!type DUMP s
+RESTORE nokey 0 "bad"
+RESTORE s 0 "bad"
+
+## select and flush
+SET a 1
+SELECT 1
+GET a
+SET a 2
+DBSIZE
+SELECT 0
+GET a
+SELECT 15
+SELECT 16
+SELECT -1
+SELECT abc
+SELECT
+SELECT 1
+FLUSHDB
+DBSIZE
+SELECT 0
+DBSIZE
+SET x 1
+FLUSHALL
+DBSIZE
+FLUSHDB ASYNC
+FLUSHALL SYNC
+FLUSHALL FOO
+SWAPDB 0 1
+SWAPDB 0 abc
+SWAPDB 0 99
+SET s0 v
+SELECT 1
+SET s1 v
+SWAPDB 0 1
+GET s0
+GET s1
+SELECT 0
+GET s1
+GET s0

@@ -39,11 +39,31 @@ services:
       WARP_USER: postgres
       WARP_PASSWORD: postgres
       # Shared dev credential for every wire-protocol frontend's default (non-postgres_roles) auth
-      # -- see com.sayonora.wire.auth.CredentialStore's javadoc. Change for anything beyond local
+      # -- see com.sayonora.warp.auth.CredentialStore's javadoc. Change for anything beyond local
       # dev/test; consider WARP_AUTH_MODE=postgres_roles for real per-role Postgres auth instead
-      # (see com.sayonora.wire.auth.PgRoleAuthCache's javadoc).
+      # (see com.sayonora.warp.auth.PgRoleAuthCache's javadoc).
       WARP_AUTH_USER: postgres
       WARP_AUTH_PASSWORD: postgres
+      # HTTPS for the admin console, MCP and A2A (served IN ADDITION to plaintext). Mount the PEM files
+      # (for example Let's Encrypt fullchain.pem/privkey.pem) and uncomment; the certificate hot-reloads
+      # when the files change. WARP_MCP_PUBLIC_URL is what the admin console tells users to paste into
+      # Claude when a tunnel or reverse proxy terminates TLS in front of Warp.
+      # WARP_TLS_CERT: /certs/fullchain.pem
+      # WARP_TLS_KEY: /certs/privkey.pem
+      # WARP_MCP_PUBLIC_URL: https://warp.example.com
+      # WARP_MCP_HTTPS_PORT: "18443"
+      # WARP_ADMIN_HTTPS_PORT: "19443"
+      # WARP_MCP_HTTP_DISABLED: "true"   # serve MCP over HTTPS only
+      #
+      # Built-in ACME (Let's Encrypt) -- automatically issues and renews a PUBLICLY TRUSTED certificate, so
+      # Claude's claude.ai custom connectors can connect DIRECTLY to this container with no tunnel/proxy.
+      # Requires a real DNS name pointing at this host and port 80 reachable for http-01 (mapped below to the
+      # container's WARP_ACME_HTTP_PORT default 8880); see docs/WARP_GUIDE.md "Automatic certificates".
+      # WARP_ACME_DOMAINS: warp.example.com
+      # WARP_ACME_EMAIL: ops@example.com
+      # WARP_ACME_TERMS_ACCEPTED: "true"
+      # WARP_ACME_STAGING: "true"   # remove once a staging run has proven the setup (real Let's Encrypt rate limits are tight)
+      # WARP_ACME_DIR: /acme        # mount a volume here so the certificate and account key survive a restart
     ports:
       - "15432:15432" # pgwire (Postgres wire protocol)
       - "13306:13306" # mywire (MySQL wire protocol)
@@ -55,8 +75,56 @@ services:
       - "9324:9324"   # sqswire (Amazon SQS HTTP/JSON)
       - "9200:9200"   # oswire (OpenSearch HTTP/JSON)
       - "8086:8086"   # influxwire (InfluxDB HTTP/JSON)
+      - "16379:16379" # rediswire (RESP2/RESP3), enable with WARP_REDISWIRE_ENABLED
+      - "7687:7687"   # boltwire (Neo4j Bolt), enable with WARP_BOLTWIRE_ENABLED
+      - "18020:18020" # s3wire (Amazon S3), enable with WARP_S3WIRE_ENABLED
+      - "4443:4443"   # gcswire (Google Cloud Storage), enable with WARP_GCSWIRE_ENABLED
+      - "4566:4566"   # awswire (SNS, Kinesis, Secrets Manager, SSM, KMS, STS), enable with WARP_AWSWIRE_ENABLED
+      - "8085:8085"   # pubsubwire (Google Pub/Sub gRPC), enable with WARP_PUBSUBWIRE_ENABLED
+      - "8088:8088"   # bigtablewire (Google Bigtable gRPC), enable with WARP_BIGTABLEWIRE_ENABLED
+      - "8080:8080"   # firestorewire (Google Firestore gRPC + REST), enable with WARP_FIRESTOREWIRE_ENABLED
+      - "8081:8081"   # datastorewire (Google Datastore gRPC + REST), enable with WARP_DATASTOREWIRE_ENABLED
+      - "19042:19042" # cqlwire (Apache Cassandra CQL native protocol), enable with WARP_CQLWIRE_ENABLED
+      - "8182:8182"   # gremlinwire (Apache TinkerPop Gremlin Server: WebSocket + HTTP; Cosmos DB Gremlin API), enable with WARP_GREMLINWIRE_ENABLED
+      - "19092:19092" # kafkawire (Apache Kafka wire protocol), enable with WARP_KAFKAWIRE_ENABLED; set WARP_KAFKAWIRE_ADVERTISED_HOST to the name clients use
+      - "18081:18081" # cosmoswire (Azure Cosmos DB NoSQL REST), enable with WARP_COSMOSWIRE_ENABLED
+      - "5672:5672"   # amqpwire (RabbitMQ clients, AMQP 0-9-1 and 1.0), enable with WARP_AMQPWIRE_ENABLED
       - "18010:18010" # MCP (Model Context Protocol)
+      - "18443:18443" # MCP over HTTPS (Claude connectors need https), enable with WARP_MCP_TLS_CERT + WARP_MCP_TLS_KEY (or WARP_TLS_CERT/KEY)
+      - "18444:18444" # A2A over HTTPS, enable with WARP_A2A_TLS_CERT + WARP_A2A_TLS_KEY (or WARP_TLS_CERT/KEY)
       - "19090:19090" # admin app (browser UI) + /metrics, /config (admin HTTP API)
+      - "19443:19443" # admin app + API over HTTPS, enable with WARP_ADMIN_TLS_CERT + WARP_ADMIN_TLS_KEY (or WARP_TLS_CERT/KEY)
+      - "18445:18445" # dynamowire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18446:18446" # sqswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18447:18447" # oswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18448:18448" # influxwire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18449:18449" # s3wire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18450:18450" # gcswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18451:18451" # awswire unified endpoint over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18452:18452" # pubsubwire REST over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18457:18457" # cosmoswire over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18458:18458" # azurewire blob over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18459:18459" # azurewire queue over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18460:18460" # azurewire table over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      - "18461:18461" # gremlinwire (https + wss) over HTTPS, enabled by WARP_TLS_CERT + WARP_TLS_KEY (or WARP_<NAME>_TLS_*)
+      # TLS twins of the protocol frontends (WARP_TLS_CERT + WARP_TLS_KEY); mongowire/boltwire/cqlwire/pgwire/mywire/mssqlwire negotiate TLS on their plain port
+      - "17071:17071" # gRPC over TLS
+      - "2484:2484"   # orawire TCPS
+      - "17379:17379" # rediswire over TLS (rediss://)
+      - "19093:19093" # kafkawire SSL listener
+      - "5671:5671"   # amqpwire AMQPS
+      - "18453:18453" # pubsubwire gRPC over TLS
+      - "18456:18456" # bigtablewire gRPC over TLS
+      - "18454:18454" # firestorewire HTTPS + gRPC over TLS
+      - "18455:18455" # datastorewire HTTPS + gRPC over TLS
+      # Built-in ACME http-01: Let's Encrypt always validates on port 80, so the HOST side must be 80 even
+      # though the container's own WARP_ACME_HTTP_PORT default is the non-privileged 8880 (uncomment with
+      # WARP_ACME_DOMAINS above; on a host that already uses port 80, use WARP_ACME_CHALLENGE=dns-01 instead
+      # and drop this mapping).
+      # - "80:8880"
+    # volumes:
+    #   - warp-acme-state:/acme   # account key + certificate + private key; survives restarts (mode 600 files)
 
 volumes:
   warp-postgres-data:
+  warp-acme-state:

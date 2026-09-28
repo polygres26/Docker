@@ -1,0 +1,6 @@
+.starOn { color: var(--sy-accent-strong); }
+.when { color: var(--sy-muted); white-space: nowrap; }
+.actions { display: flex; justify-content: flex-end; gap: 2px; }
+.iconLink { width: 28px; padding: 0; }
+.danger { color: var(--sy-red); }
+.danger:hover:not(:disabled) { color: var(--sy-red); background: var(--sy-red-soft); }

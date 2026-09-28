@@ -1,0 +1,6 @@
+.nodeGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.nodeCard { border: 1px solid var(--sy-line); border-radius: var(--radius); padding: 12px 14px; background: var(--sy-surface-2); min-width: 0; }
+.nodeCardTop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+.nodeHost { font-family: var(--font-mono); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.nodeId { font-family: var(--font-mono); font-size: 11px; color: var(--sy-muted); margin-bottom: 8px; word-break: break-all; }
+.nodeMetaRow { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--sy-muted); padding: 2px 0; }

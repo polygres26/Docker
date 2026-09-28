@@ -10,7 +10,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
  * A faithful reproduction of dynamowire's own item-attribute serialization convention (see {@code
- * com.sayonora.wire.dynamowire.AttributeValue#toJson}/{@code PgItemStore#itemToJson} in the {@code
+ * com.sayonora.warp.dynamowire.AttributeValue#toJson}/{@code PgItemStore#itemToJson} in the {@code
  * wire} module) -- NOT independent reinvention, same principle as {@code MongoBsonJson} in the
  * Mongo connector. This has to produce byte-identical {@code item} jsonb content to what
  * dynamowire itself writes for the same item, or a table populated partly by live dynamowire

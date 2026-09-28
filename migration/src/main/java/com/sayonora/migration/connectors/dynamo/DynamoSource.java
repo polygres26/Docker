@@ -41,7 +41,7 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient;
 /**
  * DynamoDB connector: real parallel {@code Scan} segments for the initial bulk read, real DynamoDB
  * Streams for live sync, writing through the target's real dynamowire physical schema (see {@code
- * com.sayonora.wire.dynamowire.PgItemStore} in the {@code wire} module: {@code dynamo_item_<name>}
+ * com.sayonora.warp.dynamowire.PgItemStore} in the {@code wire} module: {@code dynamo_item_<name>}
  * with {@code pk_value text}/{@code sk_value text}/{@code sk_num numeric}/{@code item jsonb},
  * {@code PRIMARY KEY (pk_value, sk_value)}, plus a row in the shared {@code _dynamo_tables} catalog
  * table so a live dynamowire client can discover and query this table afterward) via whatever

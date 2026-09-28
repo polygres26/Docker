@@ -1,0 +1,338 @@
+{
+ "service": "kms",
+ "suite": "python",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 0.4,
+ "counts": {
+  "pass": 0,
+  "fail": 39,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "_py39_test_kms.py": {
+   "pass": 0,
+   "fail": 39,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/_py39_test_kms.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/results/awsx-baseline-kms-python.junit.xml --timeout=60",
+ "failures": [
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_create_key",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.035,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_describe_key",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_schedule_key_deletion",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_create_key_rejects_incompatible_key_usage",
+   "status": "fail",
+   "message": "AssertionError: assert 'UnknownOperationException' == 'ValidationException'",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_list_grants",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_list_grants_paginator",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_create_alias",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_list_aliases",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_delete_alias",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_encrypt_decrypt",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_encrypt_using_alias",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_generate_data_key",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_generate_data_key_without_plaintext",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_re_encrypt",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PSS_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PSS_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PSS_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PKCS1_V1_5_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PKCS1_V1_5_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_2048-RSASSA_PKCS1_V1_5_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PSS_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PSS_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PSS_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.011,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PKCS1_V1_5_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PKCS1_V1_5_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_3072-RSASSA_PKCS1_V1_5_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PSS_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PSS_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PSS_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PKCS1_V1_5_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PKCS1_V1_5_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[RSA_4096-RSASSA_PKCS1_V1_5_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[ECC_NIST_P256-ECDSA_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[ECC_NIST_P384-ECDSA_SHA_384-SHA384]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[ECC_NIST_P521-ECDSA_SHA_512-SHA512]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_sign_and_verify[ECC_SECG_P256K1-ECDSA_SHA_256-SHA256]",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_ed25519_sign_and_verify",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_tag_resource",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateKey operation: Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "_py39_test_kms.py",
+   "test": "test_generate_random",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the GenerateRandom operation: Missing or unrecognized X-Amz-Target header: TrentService.GenerateRandom",
+   "time": 0.003,
+   "class": "a"
+  }
+ ]
+}

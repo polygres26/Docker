@@ -2,9 +2,9 @@ package com.sayonora.migration.sink;
 
 import com.sayonora.migration.core.ChangeEvent;
 import com.sayonora.migration.core.Sink;
-import com.sayonora.wire.grpc.proto.ExecuteRequest;
-import com.sayonora.wire.grpc.proto.ExecuteResponse;
-import com.sayonora.wire.grpc.proto.QueryServiceGrpc;
+import com.sayonora.warp.grpc.proto.ExecuteRequest;
+import com.sayonora.warp.grpc.proto.ExecuteResponse;
+import com.sayonora.warp.grpc.proto.QueryServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The ONE write path every migration connector in this project uses: Warp's own native gRPC
- * driver (<code>QueryService.Execute</code>, {@code wire/src/main/proto/warp.proto}) -- the
+ * driver (<code>QueryService.Execute</code>, {@code Warp/src/main/proto/warp.proto}) -- the
  * exact same protocol a real Type-3 JDBC client speaks, not a JDBC backdoor straight to the
  * target Postgres. Every migration write goes through Warp's real pipeline this way:
  * firewall, QoS admission control, dialect translation, and -- the concrete correctness reason

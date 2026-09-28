@@ -7,7 +7,7 @@
 <meta name="description" content="Click through the Ferry console with synthetic data — no signup, no backend required.">
 <meta name="robots" content="noindex">
 <style>
-/* Tokens lifted verbatim from wire/web/src/index.css + dms/web/src/index.css -- this demo
+/* Tokens lifted verbatim from Warp/web/src/index.css + Ferry/web/src/index.css -- this demo
    reuses the real product's palette rather than inventing one, per "honor what's already there." */
 :root {
   --logo-url: url("/assets/logo.png");
@@ -402,12 +402,12 @@ const dmsConnections = [
 ];
 
 // Synthetic but shape-accurate stand-ins for what /api/metrics/summary and /api/federation/plans
-// actually return (see WireMetricsSummary / FederationPlanEntry in wire/web/src/api/client.ts) --
+// actually return (see WireMetricsSummary / FederationPlanEntry in Warp/web/src/api/client.ts) --
 // numbers are made up, but every field, unit, and outcome bucket is real.
 // Full protocol lineup Warp actually benchmarks against (see the marketing site's own
 // "Connect · Protect · Control · Accelerate · Observe" strip) -- every protocol that fronts the
 // same Postgres, each with its own wire name and color, same convention as PROTOCOL_COLORS in
-// wire/web/src/pages/Metrics.tsx.
+// Warp/web/src/pages/Metrics.tsx.
 const PROTOCOL_COLORS = {
   pgwire: '#2f5fb8', mywire: '#1f7a63', mssqlwire: '#c2622f', orawire: '#8a4fd9',
   mongowire: '#2ea3a0', dynamowire: '#d9a12f', sqswire: '#b8562f', influxwire: '#3d7fd9',

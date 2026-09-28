@@ -1,16 +1,17 @@
-# Warp -- multi-protocol Postgres wire gateway (orawire/pgwire/mywire/mssqlwire/mongowire/
-# dynamowire/sqswire/gRPC/MCP) plus its own admin app (wire/web). Build context is the repo root
+# Warp -- multi-protocol gateway that makes Postgres speak SQL (pg/my/mssql/ora), MongoDB, DynamoDB,
+# SQS, S3, Redis, OpenSearch, InfluxDB, Neo4j, Azure Storage, Google Cloud Storage, SNS, Kinesis,
+# Secrets Manager, SSM, KMS, STS, Pub/Sub, Firestore, Datastore, Bigtable and Cassandra (CQL), plus gRPC and MCP, and its own admin app (Warp/web). Build context is the repo root
 # (see docker-compose.yml / the `docker build` command in README.md) since this Dockerfile COPYs
-# both wire/ and wire/web in explicitly -- wire/ is a standalone Maven module (no parent pom, no
-# reactor with advisor/), so only wire/ ever needs to be in the build context, keeping rebuilds
+# both Warp/ and Warp/web in explicitly -- Warp/ is a standalone Maven module (no parent pom, no
+# reactor with advisor/), so only Warp/ ever needs to be in the build context, keeping rebuilds
 # fast when advisor/ changes.
 
 # ---- build the admin SPA ----
 FROM node:22-alpine AS web-build
 WORKDIR /build
-COPY wire/web/package.json wire/web/package-lock.json ./
+COPY Warp/web/package.json Warp/web/package-lock.json ./
 RUN npm ci
-COPY wire/web/ .
+COPY Warp/web/ .
 RUN npm run build
 
 # ---- build the backend ----
@@ -19,10 +20,10 @@ WORKDIR /build
 
 # Dependency layer cached separately from source -- a source-only change (the common case) skips
 # re-resolving the full dependency tree (real cost here: grpc/Calcite/Ignite/Nimbus pull a lot).
-COPY wire/pom.xml .
+COPY Warp/pom.xml .
 RUN mvn -q -B dependency:go-offline
 
-COPY wire/src ./src
+COPY Warp/src ./src
 RUN mvn -q -B -DskipTests package
 
 # ---- runtime stage ----
@@ -48,7 +49,7 @@ RUN chown warp:warp /app
 # means a full new copy of everything under /app), doubling this jar's real footprint in the
 # image for zero benefit. --chown sets ownership as part of the same COPY layer instead -- same
 # final files, same owner, same permissions, just without paying for them twice.
-COPY --from=build --chown=warp:warp /build/target/sayonora-wire.jar /app/sayonora-wire.jar
+COPY --from=build --chown=warp:warp /build/target/sayonora-warp.jar /app/sayonora-warp.jar
 COPY --from=web-build --chown=warp:warp /build/dist /app/web
 
 # WARP_ADMIN_WEB_DIR: tells MetricsServer to serve the built admin SPA copied in above via
@@ -56,12 +57,28 @@ COPY --from=web-build --chown=warp:warp /build/dist /app/web
 # run API-only (the JSON admin API still works either way; this only controls whether the browser
 # UI is also served on the same port).
 ENV WARP_ADMIN_WEB_DIR=/app/web
+# The public Docker/GitHub distribution is the one place the Developer-tier license caps (25
+# connections/3 instances/3 backends, see License.java) must still apply by default -- internal
+# engineering builds/tests default the other way (Enterprise-equivalent with no WARP_LICENSE_KEY)
+# specifically because THIS image is the boundary where the free tier's limits actually matter.
+# A real customer's WARP_LICENSE_KEY (docker run -e WARP_LICENSE_KEY=...) still overrides this
+# exactly as before -- this only restores the "no key -> Developer" default this image needs.
+ENV WARP_ENFORCE_DEVELOPER_TIER=true
 USER warp
 
 # Every TCP/HTTP frontend Warp can start -- see ServerOptions.java/Main.java for the full,
 # authoritative list and each one's real default. Not all are reachable unless published (see
 # docker-compose.yml's own port list for which ones this compose setup actually exposes).
-EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090
+# SQL: 15432 pg, 13306 my, 14333 mssql, 11521 ora (2484 ora TLS). Stores: 27017 mongo, 18000 dynamo,
+# 16379 redis, 9200 opensearch, 8086 influx, 7687 bolt, 9324 sqs, 18020 s3, 4443 gcs, 4566 aws (sns,
+# kinesis, secrets, ssm, kms, sts), 8085 pubsub gRPC, 8088 bigtable, 8080 firestore, 8081 datastore, 19042 cassandra (CQL), 8182 gremlin (TinkerPop Gremlin Server: WebSocket + HTTP), 19092 kafka. Native: 7070/17071 gRPC, 18010 MCP, 19090 admin. HTTPS (only when WARP_TLS_CERT/KEY, WARP_TLS_KEYSTORE, WARP_<NAME>_TLS_* or built-in ACME is set): 18443 MCP, 19443 admin, 18444 A2A, 18445 dynamodb, 18446 sqs, 18447 opensearch, 18448 influx, 18449 s3, 18450 gcs, 18451 aws unified, 18452 pubsub REST, 18457 cosmos, 18458/18459/18460 azure blob/queue/table, 18461 gremlin (https+wss).
+# ACME (WARP_ACME_DOMAINS): 8880 is the CONTAINER-side http-01 challenge port (WARP_ACME_HTTP_PORT default) -- a
+# non-privileged port so the container need not run as root or with cap_net_bind_service; map it to the HOST's
+# port 80 with `-p 80:8880` (Let's Encrypt's http-01 validator always connects to port 80, so the host side must
+# be 80 even though the container listens on 8880). Set WARP_ACME_HTTP_PORT=80 instead only if the container is
+# run with enough privilege to bind it directly. See docs/WARP_GUIDE.md "Automatic certificates (ACME / Let's
+# Encrypt)" for the full docker run / compose examples.
+EXPOSE 15432 13306 11521 2484 14333 27017 7070 17071 18000 9324 9200 18010 19090 16379 8086 7687 18020 4443 4566 8085 8087 8088 8080 8081 19042 18030 19092 8182 18081 5672 18443 19443 18444 18445 18446 18447 18448 18449 18450 18451 18452 18457 18458 18459 18460 18461 5671 17379 19093 18453 18454 18455 18456 8880
 
 # --add-opens flags: required by embedded Apache Ignite (CacheStage, only actually started when
 # WARP_CACHE_TABLES is set) reflectively opening java.lang.reflect.Field on several java.base
@@ -89,4 +106,4 @@ ENTRYPOINT ["java", \
     "--add-opens=java.base/java.net=ALL-UNNAMED", \
     "--add-opens=java.sql/java.sql=ALL-UNNAMED", \
     "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", \
-    "-jar", "/app/sayonora-wire.jar"]
+    "-jar", "/app/sayonora-warp.jar"]

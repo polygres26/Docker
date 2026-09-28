@@ -1,0 +1,154 @@
+{
+ "service": "ssm",
+ "suite": "java",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 1.7,
+ "counts": {
+  "pass": 0,
+  "fail": 1,
+  "error": 15,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.SsmTest": {
+   "pass": 0,
+   "fail": 1,
+   "error": 15,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=SsmTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "putParameter",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.075,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "getParameter",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.GetParameter (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "labelParameterVersion",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.LabelParameterVersion (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.005,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "getParameterHistory",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.GetParameterHistory (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.005,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "getParameters",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.GetParameters (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "describeParameters",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.DescribeParameters (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "getParametersByPath",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.GetParametersByPath (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "addTagsToResource",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.AddTagsToResource (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "listTagsForResource",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.ListTagsForResource (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "removeTagsFromResource",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.RemoveTagsFromResource (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "deleteParameter",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.DeleteParameter (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "deleteParameters",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.PutParameter (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "sendCommandRejectsTimeoutBelowAwsMinimum",
+   "status": "fail",
+   "message": "expected: \"ValidationException\"",
+   "time": 0.028,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "sendCommandCreatesPendingInvocation",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.SendCommand (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "listRunCommandsAndInvocations",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.ListCommands (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SsmTest",
+   "test": "cancelCommandUpdatesInvocationStatus",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: AmazonSSM.CancelCommand (Service: Ssm, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  }
+ ]
+}

@@ -1,0 +1,181 @@
+{
+ "passed": 693,
+ "valid_on_real_opensearch": 936,
+ "failures_by_class": {
+  "c": 48,
+  "b": 78,
+  "a": 117
+ },
+ "per_directory": {
+  "bulk": {
+   "passed": 15,
+   "total": 15
+  },
+  "cat.count": {
+   "passed": 1,
+   "total": 1
+  },
+  "cat.health": {
+   "passed": 1,
+   "total": 1
+  },
+  "cat.indices": {
+   "passed": 3,
+   "total": 5
+  },
+  "cluster.health": {
+   "passed": 5,
+   "total": 8
+  },
+  "cluster.stats": {
+   "passed": 0,
+   "total": 3
+  },
+  "count": {
+   "passed": 4,
+   "total": 4
+  },
+  "create": {
+   "passed": 6,
+   "total": 8
+  },
+  "delete": {
+   "passed": 10,
+   "total": 12
+  },
+  "exists": {
+   "passed": 2,
+   "total": 4
+  },
+  "explain": {
+   "passed": 5,
+   "total": 5
+  },
+  "field_caps": {
+   "passed": 8,
+   "total": 10
+  },
+  "get": {
+   "passed": 6,
+   "total": 9
+  },
+  "get_source": {
+   "passed": 6,
+   "total": 9
+  },
+  "index": {
+   "passed": 19,
+   "total": 27
+  },
+  "indices.analyze": {
+   "passed": 7,
+   "total": 8
+  },
+  "indices.create": {
+   "passed": 6,
+   "total": 8
+  },
+  "indices.delete": {
+   "passed": 7,
+   "total": 8
+  },
+  "indices.exists": {
+   "passed": 3,
+   "total": 3
+  },
+  "indices.exists_alias": {
+   "passed": 2,
+   "total": 2
+  },
+  "indices.flush": {
+   "passed": 0,
+   "total": 2
+  },
+  "indices.get": {
+   "passed": 10,
+   "total": 12
+  },
+  "indices.get_alias": {
+   "passed": 28,
+   "total": 31
+  },
+  "indices.get_field_mapping": {
+   "passed": 12,
+   "total": 13
+  },
+  "indices.get_mapping": {
+   "passed": 20,
+   "total": 20
+  },
+  "indices.get_settings": {
+   "passed": 15,
+   "total": 16
+  },
+  "indices.put_alias": {
+   "passed": 17,
+   "total": 18
+  },
+  "indices.put_mapping": {
+   "passed": 11,
+   "total": 11
+  },
+  "indices.refresh": {
+   "passed": 3,
+   "total": 3
+  },
+  "indices.update_aliases": {
+   "passed": 11,
+   "total": 15
+  },
+  "info": {
+   "passed": 2,
+   "total": 2
+  },
+  "mget": {
+   "passed": 14,
+   "total": 18
+  },
+  "mlt": {
+   "passed": 0,
+   "total": 3
+  },
+  "msearch": {
+   "passed": 3,
+   "total": 6
+  },
+  "nodes.info": {
+   "passed": 1,
+   "total": 5
+  },
+  "ping": {
+   "passed": 1,
+   "total": 1
+  },
+  "pit": {
+   "passed": 0,
+   "total": 1
+  },
+  "scroll": {
+   "passed": 10,
+   "total": 14
+  },
+  "search": {
+   "passed": 173,
+   "total": 258
+  },
+  "search.aggregation": {
+   "passed": 226,
+   "total": 312
+  },
+  "search.highlight": {
+   "passed": 6,
+   "total": 10
+  },
+  "update": {
+   "passed": 14,
+   "total": 15
+  }
+ },
+ "before_passed": 21,
+ "sharded_two_backends_passed": 690
+}

@@ -13,7 +13,7 @@ import com.sayonora.migration.sink.WarpGrpcSink;
 import com.sayonora.migration.testsupport.WarpProcess;
 import com.sayonora.migration.testsupport.RealMongo;
 import com.sayonora.migration.testsupport.RealPostgres;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;

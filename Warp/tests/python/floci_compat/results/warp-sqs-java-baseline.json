@@ -1,0 +1,184 @@
+{
+ "service": "sqs",
+ "suite": "java",
+ "endpoint": "http://localhost:50816",
+ "tag": "warp",
+ "date": "2026-09-25 13:38",
+ "runner_rc": 1,
+ "seconds": 1.9,
+ "counts": {
+  "pass": 8,
+  "fail": 3,
+  "error": 16,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.SqsTest": {
+   "pass": 8,
+   "fail": 3,
+   "error": 10,
+   "skip": 0
+  },
+  "com.floci.test.SqsMd5Test": {
+   "pass": 0,
+   "fail": 0,
+   "error": 6,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=SqsTest,SqsMd5Test -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "sendMessageBatch",
+   "status": "error",
+   "message": "sqswire does not implement SendMessageBatch (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "deleteMessageBatch",
+   "status": "error",
+   "message": "sqswire does not implement DeleteMessageBatch (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "tagQueue",
+   "status": "error",
+   "message": "sqswire does not implement TagQueue (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "listQueueTags",
+   "status": "error",
+   "message": "sqswire does not implement ListQueueTags (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "untagQueue",
+   "status": "error",
+   "message": "sqswire does not implement UntagQueue (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "changeMessageVisibilityBatch",
+   "status": "error",
+   "message": "sqswire does not implement ChangeMessageVisibilityBatch (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "messageAttributesString",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"0d2b66022a021b692df4bd9c923ff80d\", MD5 checksum returned: \"null\")",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "messageAttributesBinary",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"eb949ffb0fde53eb7625b04de10758ed\", MD5 checksum returned: \"null\")",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "longPolling",
+   "status": "fail",
+   "message": "Expecting actual:",
+   "time": 0.006,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "dlqRouting",
+   "status": "fail",
+   "message": "Expecting empty but was: [Message(MessageId=6, ReceiptHandle=f276a892-e818-46d8-bc60-264f5fdf6c8c, MD5OfBody=b0b465d463b138fae9035901814a5e6e, Body=dlq-test, Attributes={ApproximateReceiveCount=1})]",
+   "time": 0.018,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "listDeadLetterSourceQueues",
+   "status": "error",
+   "message": "sqswire does not implement ListDeadLetterSourceQueues (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "startMessageMoveTask",
+   "status": "error",
+   "message": "sqswire does not implement StartMessageMoveTask (Service: Sqs, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.SqsTest",
+   "test": "fifoReceiveReturnsMultipleMessagesFromSameGroupInOneCall",
+   "status": "fail",
+   "message": "[FIFO ReceiveMessage must return all 3 messages from group g1 in one call]",
+   "time": 0.011,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "fifoQueueBinaryAttributePassesSdkMd5Validation",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"bd4e38e0800871ea2e997d6ad3236a62\", MD5 checksum returned: \"null\")",
+   "time": 0.085,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "fifoQueueSendMessageWithAttributesPassesSdkMd5Validation",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"cfd821c7862ee66f6dbf2e411c55ff08\", MD5 checksum returned: \"null\")",
+   "time": 0.011,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "fifoDedupReplayReturnsOriginalIdsAndRecomputedMd5",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"bf45014b66c69bac3163e48f7552da72\", MD5 checksum returned: \"null\")",
+   "time": 0.008,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "highThroughputFifoQueueSendMessageWithAttributesPassesSdkMd5Validation",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"80176cdee1a774a6892d24cec267ac2f\", MD5 checksum returned: \"null\")",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "standardQueueSendMessageWithAttributesPassesSdkMd5Validation",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"cfd821c7862ee66f6dbf2e411c55ff08\", MD5 checksum returned: \"null\")",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.SqsMd5Test",
+   "test": "fifoQueueCustomTypeNamePassesSdkMd5Validation",
+   "status": "error",
+   "message": "MD5 returned by SQS does not match the calculation on the original request. (MD5 calculated by the message attributes: \"7818dd9025affc7e1aa978a97e9e38fe\", MD5 checksum returned: \"null\")",
+   "time": 0.005,
+   "class": "b"
+  }
+ ]
+}

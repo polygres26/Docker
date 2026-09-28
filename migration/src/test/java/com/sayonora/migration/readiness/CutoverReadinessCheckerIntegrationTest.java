@@ -11,7 +11,7 @@ import com.sayonora.migration.core.MigrationLicensingTestSupport;
 import com.sayonora.migration.coordinator.PartitionLeaseStore;
 import com.sayonora.migration.testsupport.RealPostgres;
 import com.sayonora.migration.verify.VerificationResult;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

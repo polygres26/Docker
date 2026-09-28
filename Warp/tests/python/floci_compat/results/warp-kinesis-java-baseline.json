@@ -1,0 +1,56 @@
+{
+ "service": "kinesis",
+ "suite": "java",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 3.8,
+ "counts": {
+  "pass": 0,
+  "fail": 3,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.KinesisTest": {
+   "pass": 0,
+   "fail": 2,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.KinesisEfoTest": {
+   "pass": 0,
+   "fail": 1,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=KinesisTest,KinesisEfoTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.KinesisTest",
+   "test": "listShardsPaginatesThroughEveryPage",
+   "status": "fail",
+   "message": "Unexpected exception thrown: software.amazon.awssdk.services.kinesis.model.KinesisException: Service returned HTTP status code 400 (Service: Kinesis, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.221,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KinesisTest",
+   "test": "awsSdkV2UsesRootCborRoute",
+   "status": "fail",
+   "message": "Unexpected exception thrown: software.amazon.awssdk.services.kinesis.model.KinesisException: Service returned HTTP status code 400 (Service: Kinesis, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.01,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KinesisEfoTest",
+   "test": "",
+   "status": "fail",
+   "message": "Unexpected exception thrown: software.amazon.awssdk.services.kinesis.model.KinesisException: Service returned HTTP status code 400 (Service: Kinesis, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 2.103,
+   "class": "b"
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+.wrap { position: relative; }
+.svg { display: block; width: 100%; height: auto; overflow: visible; }
+.grid { stroke: var(--sy-line); stroke-width: 1; }
+.axis { fill: var(--sy-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.line { fill: none; stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+.area { opacity: 0.12; }
+.hover { stroke: var(--sy-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.tip { position: absolute; pointer-events: none; transform: translate(-50%, -100%); background: var(--sy-surface); border: 1px solid var(--sy-line); border-radius: var(--radius); padding: 5px 8px; font-size: var(--fs-xs); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); white-space: nowrap; z-index: 2; }
+.tip b { font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: var(--fs-xs); color: var(--sy-muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.empty { display: grid; place-items: center; text-align: center; color: var(--sy-muted); font-size: var(--fs-sm); padding: 20px; min-height: 120px; border: 1px dashed var(--sy-line); border-radius: var(--radius); }

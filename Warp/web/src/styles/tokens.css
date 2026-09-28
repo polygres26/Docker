@@ -1,0 +1,112 @@
+/*
+ * Sayonora Warp design tokens -- lifted from the Warp UI mock (#warp-ui-system): graphite rail,
+ * vermilion accent, paper/surface neutrals, green/amber/red status, 6px control radius.
+ *
+ * Every colour is a light-dark() pair, so the whole app follows prefers-color-scheme. The theme
+ * toggle in the top bar sets <html data-theme="light|dark"> (see components/ui/theme.ts) which
+ * overrides `color-scheme`, and light-dark() follows it. No component needs its own dark rules.
+ *
+ * Naming: --sy-* are the canonical tokens. The short legacy names at the bottom (--bg, --muted, ...)
+ * are aliases kept so older pages that still reference them pick up the palette; new code must use --sy-*.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --sy-paper: light-dark(#f5f6f3, #171916);
+  --sy-surface: light-dark(#ffffff, #22241f);
+  --sy-surface-2: light-dark(#f9faf7, #292b26);
+  --sy-ink: light-dark(#20231f, #f2f3ee);
+  --sy-muted: light-dark(#656a62, #aeb2a8);
+  --sy-line: light-dark(#dfe2da, #3d4038);
+
+  /* Brand accent (vermilion) */
+  --sy-accent: light-dark(#d94b28, #ef6c49);
+  --sy-accent-strong: light-dark(#c73e1c, #ff8663); /* text + button fill; AA on surface */
+  --sy-accent-hover: light-dark(#ad3416, #ff9c7e);
+  --sy-accent-soft: light-dark(#fff0ea, #48261e);
+  --sy-on-accent: #ffffff;
+
+  /* Status */
+  --sy-green: light-dark(#16735a, #54c7a0);
+  --sy-green-soft: light-dark(#e5f4ed, #19392f);
+  --sy-green-dot: light-dark(#2f9e7c, #54c7a0);
+  --sy-amber: light-dark(#946008, #efb951);
+  --sy-amber-soft: light-dark(#fff5df, #433315);
+  --sy-red: light-dark(#b52d24, #ff8c82);
+  --sy-red-soft: light-dark(#fdecea, #48211e);
+
+  /* Chart series */
+  --sy-series-1: var(--sy-accent);
+  --sy-series-2: light-dark(#16735a, #54c7a0);
+  --sy-series-3: light-dark(#d9971c, #efb951);
+  --sy-series-4: light-dark(#4a4d45, #c9cbc3);
+  --sy-series-5: light-dark(#9a9d94, #7d8078);
+  --sy-series-6: light-dark(#2f9e7c, #7fd8b8);
+
+  /* Rail (graphite in both schemes; deeper in dark) */
+  --sy-rail: light-dark(#20231f, #10120f);
+  --sy-rail-text: #f3f4ef;
+  --sy-rail-muted: #a6aca2;
+  --sy-rail-active: #363a32;
+  --sy-rail-hover: #2b2f28;
+  --sy-rail-rule: #3b4037;
+  --sy-rail-icon-active: #ff7c58;
+  --sy-logo-tile: #f4f2eb; /* light tile so the blue/violet logo reads on graphite */
+  --sy-scrim: rgba(16, 17, 15, 0.5);
+
+  /* Layout */
+  --sidebar-w: 216px;
+  --topbar-h: 56px;
+  --page-pad-y: 23px;
+  --page-pad-x: 26px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 7px;
+  --radius-pill: 999px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 22px;
+  --space-6: 32px;
+
+  /* Type */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 20px;
+  --fs-h1: 23px;
+
+  /* Elevation */
+  --shadow-pop: 0 8px 24px light-dark(rgb(28 34 26 / 0.14), rgb(0 0 0 / 0.4));
+  --focus-ring: 0 0 0 3px var(--sy-accent-soft);
+
+  /* Legacy aliases (see header) */
+  --bg: var(--sy-paper);
+  --panel: var(--sy-surface);
+  --surface: var(--sy-surface);
+  --surface-2: var(--sy-surface-2);
+  --text: var(--sy-ink);
+  --muted: var(--sy-muted);
+  --border: var(--sy-line);
+  --accent: var(--sy-accent);
+  --accent-strong: var(--sy-accent-strong);
+  --accent-soft: var(--sy-accent-soft);
+  --error: var(--sy-red);
+  --hard: var(--sy-red);
+  --hard-soft: var(--sy-red-soft);
+  --success: var(--sy-green);
+  --shadow-sm: none;
+  --shadow-md: var(--shadow-pop);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

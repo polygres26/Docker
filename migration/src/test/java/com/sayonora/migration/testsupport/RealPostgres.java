@@ -41,7 +41,7 @@ public final class RealPostgres implements AutoCloseable {
     }
 
     /** As {@link #start(List)}, but against a custom image instead of stock {@value
-     * #DEFAULT_IMAGE} -- e.g. a locally built image with db/pg_oracle already installed, for
+     * #DEFAULT_IMAGE} -- e.g. a locally built image with Shim/pg_oracle already installed, for
      * verifying orawire's pg_oracle-present vs pg_oracle-absent code paths (see
      * PgOracleSupport) against the same real docker/JDBC-driven suite either way, not two
      * different test mechanisms. */

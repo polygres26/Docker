@@ -1,0 +1,19 @@
+mongowire conformance -- before -> after (real mongod 7.0 container as the oracle, pymongo 4.17)
+
+Differential corpus (mongo_corpus*.py): 2,683 recorded oracle steps (78 cases; 9 non-deterministic steps dropped)
+                          same    msg    diff    accepted (documented, class c)
+  before (pre-rewrite)     322     22    2,105    (old jar could not run: drop/create/getMore/indexes/most operators missing)
+  after, 1 backend       2,357    247        0     79
+  after, 2 sharded       2,324    247        0    112   (33 more: natural-order dependent steps, only compared on one backend)
+  msg = same error code/shape, only the message text or codeName differs.
+
+Driver-spec suites (mongo_run_spec.py; tests that a real mongod 7.0 fails or that need replica sets/sessions/failpoints are excluded: 126 skipped, 26 invalid on the oracle)
+  CRUD unified + BSON corpus, 1,018 runnable tests:
+    before: core CRUD files (insert/update/replace/delete/find/aggregate/count/distinct/findOneAnd*): 0 / 51 pass (the old server had no create/drop/getMore/bulk commands)
+    after, 1 backend : 1,018 pass, 0 fail
+    after, 2 backends: 1,006 pass, 12 fail (all natural-order dependent)
+
+RTT (mongo_rtt_bench.py, sequential pymongo, native local Postgres, 500 ops, p50 ms; 3 runs each)
+                       insertOne         find_one(_id)
+  before               0.110-0.113       0.161-0.241   (row cache hit path)
+  after                0.116-0.119       0.124-0.126

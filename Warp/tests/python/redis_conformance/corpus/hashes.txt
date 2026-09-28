@@ -1,0 +1,116 @@
+## hset hget basics
+HSET h a 1
+HSET h a 2 b 3 c 4
+HSET h a 9
+HGET h a
+HGET h missing
+HGET nokey a
+HMGET h a b missing
+HMGET nokey a b
+HGETALL h
+HGETALL nokey
+HLEN h
+HLEN nokey
+HEXISTS h a
+HEXISTS h zz
+HEXISTS nokey a
+!sort HKEYS h
+!sort HVALS h
+HKEYS nokey
+HSTRLEN h a
+HSTRLEN h zz
+HSTRLEN nokey a
+HMSET h2 a 1 b 2
+HMSET h2 a
+HSET h2 a
+HSET h2
+HSET
+HSETNX h a 5
+HSETNX h z 5
+HGET h z
+HSETNX newh f v
+HDEL h a z missing
+HDEL nokey a
+HDEL h
+HLEN h
+HDEL h b c
+HLEN h
+EXISTS h
+SET s v
+HSET s a 1
+HGET s a
+HGETALL s
+HLEN s
+HDEL s a
+HEXISTS s a
+HSETNX s a 1
+HKEYS s
+HMGET s a
+
+## hincrby hincrbyfloat
+HINCRBY h a 5
+HINCRBY h a -2
+HGET h a
+HINCRBY h a abc
+HINCRBY h a 9223372036854775807
+HSET h s abc
+HINCRBY h s 1
+HINCRBYFLOAT h s 1
+HINCRBYFLOAT h f 1.5
+HINCRBYFLOAT h f 1.25
+HINCRBYFLOAT h f abc
+HINCRBYFLOAT h f inf
+HINCRBYFLOAT h a 0.5
+HSET h big 9223372036854775807
+HINCRBY h big 1
+HSET h sp " 1"
+HINCRBY h sp 1
+HINCRBY nokey f 10
+HGETALL nokey
+HINCRBYFLOAT nokey2 f 1e3
+HGET nokey2 f
+HINCRBY h
+HINCRBYFLOAT h f
+
+## hrandfield
+HSET h a 1 b 2 c 3
+!type HRANDFIELD h
+HRANDFIELD nokey
+HRANDFIELD nokey 3
+HRANDFIELD h 0
+!len HRANDFIELD h 2
+!len HRANDFIELD h 10
+!len HRANDFIELD h -10
+!len HRANDFIELD h 2 WITHVALUES
+!len HRANDFIELD h -5 WITHVALUES
+HRANDFIELD h abc
+HRANDFIELD h 1 FOO
+!len HRANDFIELD h 1 WITHVALUES
+!sort HRANDFIELD h 9223372036854775807
+
+## hscan
+HSET h f1 v1 f2 v2 f3 v3
+!sortpairs HSCAN h 0
+!sortpairs HSCAN h 0 MATCH f*
+!sortpairs HSCAN h 0 MATCH f1
+!sortpairs HSCAN h 0 COUNT 1000
+HSCAN h 0 COUNT 0
+HSCAN h 0 COUNT abc
+HSCAN h abc
+HSCAN nokey 0
+HSCAN h 0 FOO
+HSCAN h
+SET s v
+HSCAN s 0
+
+## resp3 hashes resp3
+HSET h a 1 b 2
+HGETALL h
+HGETALL nokey
+!len HRANDFIELD h 2 WITHVALUES
+HMGET h a nokey
+HINCRBYFLOAT h f 1.5
+HKEYS h
+HSCAN h 0
+HLEN h
+TYPE h

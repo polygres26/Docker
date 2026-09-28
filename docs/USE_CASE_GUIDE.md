@@ -33,7 +33,7 @@ as a temporary cutover bridge while Sayonora DMS migrates schema/data behind the
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#f0e9f7','primaryTextColor':'#2c1f3d','primaryBorderColor':'#7c5aa6','lineColor':'#7c5aa6','secondaryColor':'#fde9e4','secondaryTextColor':'#2c1f3d','tertiaryColor':'#e2f3ef','tertiaryTextColor':'#2c1f3d','noteBkgColor':'#fde9e4','noteTextColor':'#2c1f3d','noteBorderColor':'#d97a5f','fontSize':'18px','fontFamily':'-apple-system, Helvetica, Arial, sans-serif'}}}%%
 flowchart LR
     subgraph Client["Your browser"]
-        UI["dms/web\nReact + Vite SPA"]
+        UI["Ferry/web\nReact + Vite SPA"]
     end
     subgraph Advisor["Sayonora DMS process"]
         HTTP["DmsHttpServer\n(REST API)"]
@@ -410,7 +410,7 @@ flowchart TB
 | Base (runtime) | `eclipse-temurin:21-jre-jammy` | same |
 | Published ports | 15432, 13306, 11521, 2484, 14333, 27017, 7070, 17071, 18000, 18010, 19090 | 8090 only |
 | Persistent state | none in the image — all state is the external control-plane Postgres | named volume `polyadvisor-data` → `SAYONORA_DATA_DIR` (embedded HSQLDB) |
-| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `dms/web` SPA itself via `SpaResourceHandler` (`SAYONORA_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/dms/` for teams that want a separately-scaled static tier instead |
+| How the SPA is served | n/a | `DmsHttpServer` runs on embedded Jetty (already a dependency) and serves the built `Ferry/web` SPA itself via `SpaResourceHandler` (`SAYONORA_DMS_WEB_DIR=/app/web`) — no nginx or second container. Unset that env var to run API-only; `Dockerfile.frontend`/`nginx.conf` are still available in `docker/dms/` for teams that want a separately-scaled static tier instead |
 | `.dockerignore` | repo-root only — both compose files set `context: ../..`, and classic Docker only honors a root-level `.dockerignore` | same |
 
 Build standalone (no compose):
@@ -439,7 +439,7 @@ Every end-user-facing feature in both modules, in one place, with its config kno
 | Easy-tier automated migration | Executes the migration itself for objects scored low-risk, writing only to the Postgres target | migration engine |
 | LLM-assisted narrative reports | Optional natural-language summary/explanation sections in the report | pluggable LLM provider config |
 | Report storage & history | Past assessment/migration reports kept for comparison over time | `ReportStore` (embedded HSQLDB) |
-| React/TS web UI | Full workflow — connect, profile, review score, trigger migration, read reports | `dms/web` |
+| React/TS web UI | Full workflow — connect, profile, review score, trigger migration, read reports | `Ferry/web` |
 
 ### 8.2 Warp — protocol frontends
 

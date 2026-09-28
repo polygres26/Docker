@@ -1,0 +1,31 @@
+{
+ "service": "kinesis",
+ "suite": "java",
+ "endpoint": "http://localhost:60641",
+ "tag": "warp",
+ "date": "2026-09-25 21:45",
+ "runner_rc": 0,
+ "seconds": 6.1,
+ "counts": {
+  "pass": 5,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.KinesisTest": {
+   "pass": 2,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.KinesisEfoTest": {
+   "pass": 3,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=KinesisTest,KinesisEfoTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": []
+}

@@ -1,0 +1,7 @@
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--sy-line); margin-bottom: 22px; overflow-x: auto; }
+.tab {
+  padding: 10px 14px; font-size: 13px; color: var(--sy-muted); text-decoration: none; white-space: nowrap;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--sy-ink); }
+.tabActive { color: var(--sy-ink); border-bottom-color: var(--sy-accent); font-weight: 500; }

@@ -1,0 +1,36 @@
+.screen { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr); background: var(--sy-paper); }
+
+.context {
+  padding: 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 40px;
+  background: var(--sy-rail); color: var(--sy-rail-text); position: relative; overflow: hidden;
+}
+.context::after {
+  content: ""; position: absolute; width: 420px; height: 420px; right: -170px; bottom: -210px;
+  border: 74px solid color-mix(in srgb, var(--sy-accent) 82%, transparent); border-radius: 50%;
+}
+.brand { display: flex; align-items: center; gap: 11px; font-weight: 500; position: relative; z-index: 1; }
+.markTile { width: 40px; height: 40px; border-radius: 9px; background: var(--sy-logo-tile); display: grid; place-items: center; padding: 4px; flex: none; }
+.markTile img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.message { margin: auto 0; max-width: 520px; position: relative; z-index: 1; }
+.message h2 { margin: 0 0 18px; font-size: 42px; line-height: 1.08; font-weight: 500; }
+.message p { max-width: 450px; color: var(--sy-rail-muted); font-size: 16px; line-height: 1.6; }
+
+.formWrap { background: var(--sy-surface); padding: 48px 54px; display: grid; align-items: center; }
+.form { width: 100%; max-width: 370px; margin: auto; }
+.eyebrow { margin: 0 0 8px; color: var(--sy-accent-strong); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+.form h1 { margin: 0 0 8px; font-size: 28px; font-weight: 500; }
+.copy { margin: 0 0 30px; color: var(--sy-muted); font-size: 14px; }
+.fieldWrap { position: relative; }
+.reveal {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px;
+  display: grid; place-items: center; background: none; border: 0; border-radius: 6px; color: var(--sy-muted);
+}
+.reveal:hover { color: var(--sy-ink); }
+.help { text-align: center; color: var(--sy-muted); font-size: 12px; margin: 22px 0 0; }
+
+@media (max-width: 760px) {
+  .screen { grid-template-columns: 1fr; }
+  .context { min-height: 250px; padding: 30px; }
+  .message h2 { font-size: 31px; }
+  .formWrap { padding: 34px 26px; }
+}

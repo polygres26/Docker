@@ -1,0 +1,53 @@
+/*
+ * Sayonora design tokens. Values are lifted from the design-direction mock (#sayonora-concept);
+ * names match the mock and the sibling Warp/web app so both stay visually identical.
+ * light-dark() follows the OS colour scheme (color-scheme: light dark).
+ *
+ * Deliberate deviations from the mock, all for WCAG AA:
+ *   --sy-accent        #e4512d is only 3.8:1 on white, so it is kept for fills, borders, icons and focus
+ *                      rings (>= 3:1) but NOT for text. Text and button fills use --sy-accent-strong.
+ *   --sy-accent-strong #c23c1b (5.3:1 on white, 4.8:1 on paper and on --sy-accent-soft).
+ *   --sy-amber         #9a6508 -> #8c5a05 so it reaches 4.5:1 on the paper background too.
+ */
+:root {
+  color-scheme: light dark;
+
+  --sy-paper: light-dark(#f4f3ef, #171816);
+  --sy-surface: light-dark(#ffffff, #22231f);
+  --sy-ink: light-dark(#20211f, #f1f0ea);
+  --sy-muted: light-dark(#6d7069, #a8aaa3);
+  --sy-line: light-dark(#dcded7, #3a3c36);
+  --sy-accent: light-dark(#e4512d, #f06c4b);
+  --sy-accent-strong: light-dark(#c23c1b, #ff8563);
+  --sy-accent-fill: light-dark(#c23c1b, #f06c4b);
+  --sy-accent-fill-hover: light-dark(#a83216, #ff8563);
+  --sy-on-accent: light-dark(#ffffff, #171816);
+  --sy-accent-soft: light-dark(#fff0e8, #46261e);
+  --sy-green: light-dark(#19725a, #4fc29a);
+  --sy-green-soft: light-dark(#e5f3ed, #19382f);
+  --sy-amber: light-dark(#8c5a05, #efb84f);
+  --sy-amber-soft: light-dark(#fbf1dc, #3a2d0f);
+  --sy-red: light-dark(#b3261e, #ff8a80);
+  --sy-red-soft: light-dark(#fbe9e7, #4a1f1c);
+
+  --sy-rail: light-dark(#242722, #10110f);
+  --sy-rail-text: #f4f2eb;
+  --sy-rail-muted: #a7aaa1;
+  --sy-rail-active: #373a33;
+  --sy-rail-active-icon: #ff7a56;
+  --sy-rail-line: #3b3e37;
+  /* Light tile the logo sits on so its transparent art reads on the dark rail / login panel. */
+  --sy-logo-tile: #f4f2eb;
+  --sy-scrim: rgb(16 17 15 / 0.5);
+  --sy-drawer-shadow: 0 0 40px rgb(0 0 0 / 0.35);
+
+  --sy-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sy-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --sy-radius: 6px;
+  --sy-radius-lg: 7px;
+  --sy-rail-width: 218px;
+  --sy-topbar-height: 58px;
+  --sy-page-pad: 25px 28px 34px;
+  --sy-focus: 0 0 0 3px var(--sy-accent-soft);
+}

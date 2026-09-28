@@ -1,0 +1,4 @@
+.sourceBlock { border-top: 1px solid var(--sy-line); padding-top: 14px; margin-bottom: 4px; }
+.sourceTitle { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sy-muted); margin-bottom: 12px; }
+.muted { color: var(--sy-muted); white-space: nowrap; }
+.error { color: var(--sy-red); max-width: 300px; overflow-wrap: anywhere; }

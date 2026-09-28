@@ -1,0 +1,24 @@
+.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.sub { color: var(--sy-muted); font-size: var(--fs-xs); }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.help { color: var(--sy-muted); font-size: var(--fs-sm); margin: 0 0 var(--space-3); max-width: 760px; }
+.pad { padding: 16px; }
+.formGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 var(--space-4); }
+.formActions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+.actions { display: flex; gap: 2px; justify-content: flex-end; }
+.tags { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.toolList { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.tool { border: 1px solid var(--sy-line); border-radius: var(--radius); padding: 10px; background: var(--sy-surface-2); min-width: 0; }
+.tool strong { display: block; font-size: var(--fs-sm); font-weight: 500; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.tool p { margin: 5px 0 0; color: var(--sy-muted); font-size: var(--fs-xs); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.selected { background: var(--sy-surface-2); }
+.rowBtn { all: unset; cursor: pointer; color: var(--sy-accent-strong); font-weight: 500; }
+.rowBtn:focus-visible { outline: 2px solid var(--sy-accent-strong); outline-offset: 2px; border-radius: 3px; }
+.policyList { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border: 1px solid var(--sy-line); border-radius: var(--radius-pill); font-size: var(--fs-xs); background: var(--sy-surface); color: var(--sy-ink); text-decoration: none; white-space: nowrap; }
+.chipOn { border-color: color-mix(in srgb, var(--sy-green) 40%, var(--sy-line)); }
+.chipOff { color: var(--sy-muted); }
+.bars { display: grid; gap: 8px; }
+.barRow { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; font-size: var(--fs-sm); }
+.barTrack { height: 8px; background: var(--sy-line); border-radius: 4px; overflow: hidden; }
+.barFill { display: block; height: 100%; background: var(--sy-accent); }

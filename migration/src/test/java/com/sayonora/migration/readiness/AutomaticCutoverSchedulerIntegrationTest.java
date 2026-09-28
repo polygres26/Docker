@@ -9,7 +9,7 @@ import com.sayonora.migration.core.MigrationLicensing;
 import com.sayonora.migration.core.MigrationLicensingTestSupport;
 import com.sayonora.migration.coordinator.PartitionLeaseStore;
 import com.sayonora.migration.testsupport.RealPostgres;
-import com.sayonora.wire.license.LicenseTier;
+import com.sayonora.warp.license.LicenseTier;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;

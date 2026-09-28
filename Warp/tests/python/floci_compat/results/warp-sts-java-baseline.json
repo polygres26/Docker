@@ -1,0 +1,34 @@
+{
+ "service": "sts",
+ "suite": "java",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 2.9,
+ "counts": {
+  "pass": 0,
+  "fail": 0,
+  "error": 1,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.StsTest": {
+   "pass": 0,
+   "fail": 0,
+   "error": 1,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=StsTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.StsTest",
+   "test": "",
+   "status": "error",
+   "message": "sqswire does not implement CreateSAMLProvider (Service: Iam, Status Code: 400, Request ID: 13cdd2ab-22e7-4695-8397-433436360db4) (SDK Attempt Count: 1)",
+   "time": 0.649,
+   "class": "a"
+  }
+ ]
+}
