@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { InterfaceInfo, WireMetricsSummary } from '../../api/client'
 import { maturityFor } from '../../api/maturity'
+import { OVERALL_LABEL, OVERALL_TONE, readinessOf } from '../../api/readiness'
 import { DataTable, EmptyState, MaturityTag, ModeTag, NameCell, StatusPill, compact } from '../../components/ui'
 import styles from './interfaces.module.css'
 
@@ -55,6 +56,28 @@ export function StatusCell({ i }: { i: InterfaceInfo }) {
   return <StatusPill tone="ok">Listening</StatusPill>
 }
 
+const AUTH_LABEL: Record<string, string> = { enforced: 'enforced', open: 'open', not_reported: 'not reported' }
+const ENCRYPTION_LABEL: Record<string, string> = { enabled: 'enabled', disabled: 'disabled', error: 'error', not_reported: 'not reported' }
+const BACKEND_LABEL: Record<string, string> = { configured: 'configured', not_configured: 'not configured', 'n/a': 'n/a' }
+
+/**
+ * The shared readiness verdict (see api/readiness.ts) -- additive to, never a replacement for, the
+ * Auth/TLS/Serves/Policies columns already on this table: a UI review specifically warned against
+ * compressing "listener up / auth open / TLS disabled / backend missing" into one ambiguous pill,
+ * so this shows the SAME per-dimension detail those columns already carry, just synthesized into
+ * one verdict with the reasoning on hover, alongside them rather than instead of them.
+ */
+export function ReadinessCell({ i }: { i: InterfaceInfo }) {
+  const { overall, dimensions: d } = readinessOf(i)
+  const title = [
+    `Auth: ${AUTH_LABEL[d.auth]}`,
+    `Encryption: ${ENCRYPTION_LABEL[d.encryption]}`,
+    `Backend: ${BACKEND_LABEL[d.backend]}`,
+    `Maturity: ${d.maturity ?? 'unclassified'}`,
+  ].join(' · ')
+  return <span title={title}><StatusPill tone={OVERALL_TONE[overall]}>{OVERALL_LABEL[overall]}</StatusPill></span>
+}
+
 /** Table of frontends: name/protocol, port, mode, serving set/backends, traffic, status. */
 export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
   rows: InterfaceInfo[]; metrics: WireMetricsSummary | null; emptyTitle: string; emptyText: string
@@ -63,7 +86,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
   return (
     <DataTable caption="Interfaces" minWidth={960}>
       <thead>
-        <tr><th>Interface</th><th>Port</th><th>Auth</th><th>TLS</th><th>Mode</th><th>Maturity</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
+        <tr><th>Interface</th><th>Port</th><th>Auth</th><th>TLS</th><th>Mode</th><th>Maturity</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th><th>Readiness</th></tr>
       </thead>
       <tbody>
         {rows.map((i) => {
@@ -86,6 +109,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
               <td className={styles.num}>{i.requests === null ? <span className={styles.sub}>not counted</span> : compact(i.requests)}</td>
               <td className={styles.num}>{lat ? `${lat.avgMs.toFixed(1)} ms` : <span className={styles.sub}>no samples</span>}</td>
               <td><StatusCell i={i} /></td>
+              <td><ReadinessCell i={i} /></td>
             </tr>
           )
         })}

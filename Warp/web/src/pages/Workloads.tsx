@@ -9,7 +9,7 @@ import {
   Button, DataTable, EmptyState, KpiStrip, Loading, ModeTag, NameCell, Notice, PageHeader, Section, compact, type KpiItem,
 } from '../components/ui'
 import { useLoad } from '../hooks'
-import { AuthCell, StatusCell } from './interfaces/InterfaceTable'
+import { AuthCell, ReadinessCell, StatusCell } from './interfaces/InterfaceTable'
 import styles from './interfaces/interfaces.module.css'
 
 const PROTOCOL_OF: Record<string, string> = {
@@ -81,7 +81,7 @@ export default function Workloads() {
       <Section flush title="Workloads" meta={`${rows.length} derived`}>
         {rows.length === 0 && !ifaces.loading ? <EmptyState title="No workloads">No SQL or API frontend is listening on this Warp.</EmptyState> : (
           <DataTable caption="Derived workloads" minWidth={980}>
-            <thead><tr><th>Workload</th><th>Mode</th><th>Auth</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th></tr></thead>
+            <thead><tr><th>Workload</th><th>Mode</th><th>Auth</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th><th>Readiness</th></tr></thead>
             <tbody>
               {rows.map((i) => {
                 const r = reaches(i)
@@ -107,6 +107,7 @@ export default function Workloads() {
                     </td>
                     <td className={styles.num}>{i.requests === null ? <span className={styles.sub}>not counted</span> : compact(i.requests)}</td>
                     <td><StatusCell i={i} /></td>
+                    <td><ReadinessCell i={i} /></td>
                   </tr>
                 )
               })}
