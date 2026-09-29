@@ -5,11 +5,13 @@ import {
   createMcpEndpoint, getMcpConfig, getMcpEndpointTools, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints,
   revokeMcpEndpoint, setMcpEndpointUrlToken,
 } from '../../api/client'
+import { maturityFor } from '../../api/maturity'
 import {
-  Button, CodeBlock, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, NameCell, Notice, PageHeader, Section, StatusPill, Tag, Tabs,
+  Button, CodeBlock, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, MaturityTag, NameCell, Notice, PageHeader, Section, StatusPill, Tag, Tabs,
   compact, type KpiItem,
 } from '../../components/ui'
 import { errorText, useLoad } from '../../hooks'
+import { MaturityLegend } from './InterfaceTable'
 import styles from './interfaces.module.css'
 
 const EXPIRIES: Array<{ label: string; seconds?: number }> = [
@@ -142,11 +144,13 @@ export default function McpServers() {
     } catch (err) { setError(errorText(err)); setPendingRevoke(null) } finally { setBusy(false) }
   }
 
+  const mcpMaturity = maturityFor(mcp?.metricsKey, 'mcp')
+  const a2aMaturity = maturityFor(a2a?.metricsKey, 'a2a')
   const kpis: KpiItem[] = [
-    { label: 'MCP listener', value: mcp ? 'Listening' : ifaces.loading ? '…' : 'Not running', tone: mcp ? 'ok' : 'muted', wide: true, hint: mcp ? (cfg.data?.tlsEnabled ? `https ${cfg.data.httpsPort}${cfg.data.httpPort ? ` · http ${cfg.data.httpPort}` : ''}` : `http ${mcp.port}`) : undefined },
+    { label: 'MCP listener', value: <>{mcp ? 'Listening' : ifaces.loading ? '…' : 'Not running'} <MaturityTag maturity={mcpMaturity} /></>, tone: mcp ? 'ok' : 'muted', wide: true, hint: mcp ? (cfg.data?.tlsEnabled ? `https ${cfg.data.httpsPort}${cfg.data.httpPort ? ` · http ${cfg.data.httpPort}` : ''}` : `http ${mcp.port}`) : undefined },
     { label: 'Endpoints', value: list.length, hint: `${active} active · ${list.length - active} expired` },
     { label: 'Tool calls', value: compact(toolCalls), hint: `${toolStats.length} tool${toolStats.length === 1 ? '' : 's'} used since start` },
-    { label: 'A2A agent', value: a2a ? `:${a2a.port}` : 'Off', hint: a2a ? 'Agent2Agent JSON-RPC' : 'not listening' },
+    { label: 'A2A agent', value: <>{a2a ? `:${a2a.port}` : 'Off'} <MaturityTag maturity={a2aMaturity} /></>, hint: a2a ? 'Agent2Agent JSON-RPC' : 'not listening' },
   ]
 
   return (
@@ -287,6 +291,7 @@ export default function McpServers() {
           )}
         </Section>
       )}
+      {(mcpMaturity || a2aMaturity) && <MaturityLegend />}
     </div>
   )
 }
