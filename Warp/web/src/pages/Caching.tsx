@@ -108,6 +108,46 @@ export default function Caching() {
         </div>
       )}
 
+      {s?.enabled && s.bypass && s.bypass.total > 0 && (
+        <Section flush title="Why wasn't this cached?" meta={`${s.bypass.total.toLocaleString()} SELECT${s.bypass.total === 1 ? '' : 's'} never attempted any cache tier`}>
+          <div className={styles.half} style={{ margin: 0 }}>
+            <div className={styles.pad}>
+              <p className={styles.sub}>
+                Distinct from a miss (a cache tier was tried and the key wasn't there) -- these SELECTs never attempted
+                caching at all, previously a silent fallthrough with no record of why.
+              </p>
+              <DataTable caption="Bypass reasons" minWidth={320}>
+                <thead><tr><th>Reason</th><th>Count</th></tr></thead>
+                <tbody>
+                  {s.bypass.byReason.map((r) => (
+                    <tr key={r.reason}>
+                      <td>{r.reason === 'not_configured' ? 'No cache tables configured' : "Table not in WARP_CACHE_TABLES"}</td>
+                      <td className={styles.num}>{r.count.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </DataTable>
+            </div>
+            <div className={styles.pad}>
+              <DataTable caption="Bypassed by table" minWidth={320}>
+                <thead><tr><th>Table</th><th>Count</th></tr></thead>
+                <tbody>
+                  {s.bypass.byTable.slice(0, 12).map((t) => (
+                    <tr key={t.table}>
+                      <td className={styles.mono}>{t.table}</td>
+                      <td className={styles.num}>{t.count.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </DataTable>
+              {s.bypass.byReason.some((r) => r.reason === 'table_not_cached') && (
+                <p className={styles.sub}>Add a bypassed table to the cache policy below if it should be cached.</p>
+              )}
+            </div>
+          </div>
+        </Section>
+      )}
+
       {s && (
         <Section flush title="Cache tiers" meta={`${s.clusterNodes} node${s.clusterNodes === 1 ? '' : 's'} in the cluster`}>
           <DataTable caption="Cache tiers" minWidth={860}>

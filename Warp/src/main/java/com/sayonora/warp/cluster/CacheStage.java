@@ -286,6 +286,14 @@ public final class CacheStage implements PipelineStage {
             if (matchesAnyPattern(sql)) {
                 return handleCacheableSelect(statement, next);
             }
+            // Reached only when NONE of the three cache tiers even attempted this SELECT -- until
+            // this counter existed, this was a completely silent fallthrough with no record at all
+            // of why. See CacheStats.BYPASS_* for the two real, distinguishable reasons: no tables
+            // configured at all (an empty WARP_CACHE_TABLES, or CacheStage never constructed --
+            // this branch only runs when it was), versus tables ARE configured but this statement's
+            // own table isn't one of them.
+            stats.bypass(cacheTableNames.isEmpty() ? CacheStats.BYPASS_NOT_CONFIGURED : CacheStats.BYPASS_TABLE_NOT_CACHED,
+                    extractFromTarget(sql));
         }
         if (IS_WRITE_OR_DDL.matcher(sql).find()) {
             ExecutionResult result = next.proceed(statement);

@@ -154,6 +154,28 @@ public final class WarpInsightsApi {
                 tables.add(o);
             }
             out.add("byTable", tables);
+
+            // Real "why wasn't this cached?" signal -- a SELECT that reached this stage but never
+            // attempted any of its three tiers at all (previously a completely silent fallthrough).
+            JsonObject bypass = new JsonObject();
+            bypass.addProperty("total", snap.bypassedTotal());
+            JsonArray byReason = new JsonArray();
+            for (CacheStats.BypassReasonStat r : snap.bypassByReason()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("reason", r.reason());
+                o.addProperty("count", r.count());
+                byReason.add(o);
+            }
+            bypass.add("byReason", byReason);
+            JsonArray bypassTables = new JsonArray();
+            for (CacheStats.BypassTableStat t : snap.bypassByTable()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("table", t.table());
+                o.addProperty("count", t.count());
+                bypassTables.add(o);
+            }
+            bypass.add("byTable", bypassTables);
+            out.add("bypass", bypass);
         }
         TranslationCache tc = translationCache.get();
         if (tc != null) {

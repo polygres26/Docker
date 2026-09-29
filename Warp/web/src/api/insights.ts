@@ -84,6 +84,14 @@ export interface CacheStatsResponse {
     recent: Array<{ at: string; kind: 'table' | 'clear'; target: string; entries: number; source: string }>
   }
   byTable?: Array<{ table: string; hits: number; misses: number }>
+  /** Real "why wasn't this cached?" signal: a SELECT that reached CacheStage but never attempted
+   * ANY of its three cache tiers at all -- previously a completely silent fallthrough with no
+   * record of why. Distinct from a miss (a tier WAS tried and the key wasn't there). */
+  bypass?: {
+    total: number
+    byReason: Array<{ reason: 'not_configured' | 'table_not_cached'; count: number }>
+    byTable: Array<{ table: string; count: number }>
+  }
 }
 export const getCacheStats = () => call<CacheStatsResponse>('/api/cache/stats')
 export const invalidateCache = (table?: string) =>
