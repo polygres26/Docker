@@ -6,6 +6,9 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.sayonora.warp.config.ConfigStore;
 import com.sayonora.warp.config.WarpConfig;
+import com.sayonora.warp.core.QosControlStage;
+import com.sayonora.warp.core.StatsCollectorStage;
+import com.sayonora.warp.mcp.McpMetricsCollector;
 import com.sayonora.warp.telemetry.ObservabilityToggles;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -33,7 +36,8 @@ public final class ObservabilityApi {
     private ObservabilityApi() {
     }
 
-    public static void handlePatch(HttpServletRequest request, HttpServletResponse response, ConfigStore configStore)
+    public static void handlePatch(HttpServletRequest request, HttpServletResponse response, ConfigStore configStore,
+            StatsCollectorStage statsStage, QosControlStage qosStage, McpMetricsCollector mcpMetrics)
             throws IOException {
         response.setContentType("application/json; charset=utf-8");
         try {
@@ -50,7 +54,7 @@ public final class ObservabilityApi {
                 JsonObject out = new JsonObject();
                 out.addProperty("ok", true);
                 out.addProperty("version", version);
-                out.add("observability", ObservabilitySummary.toJson(System.getenv()));
+                out.add("observability", ObservabilitySummary.toJson(System.getenv(), statsStage, qosStage, mcpMetrics));
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write(out.toString());
             }

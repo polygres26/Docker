@@ -34,6 +34,14 @@ public final class MetricsRenderer {
 
         out.append("# HELP warp_pool_connections Physical backend connections per pool, by state.\n");
         out.append("# TYPE warp_pool_connections gauge\n");
+        // warp_pool_max_size/warp_pool_waiting were previously missing their own HELP/TYPE lines --
+        // a real gap in Prometheus exposition-format compliance (every metric family should declare
+        // itself), found when the Signal Catalog started being generated from this method's actual
+        // output instead of a separately hand-maintained list that happened to paper over it.
+        out.append("# HELP warp_pool_max_size Configured maximum physical connections for this pool.\n");
+        out.append("# TYPE warp_pool_max_size gauge\n");
+        out.append("# HELP warp_pool_waiting Frontend sessions currently blocked waiting for a pooled backend connection.\n");
+        out.append("# TYPE warp_pool_waiting gauge\n");
         for (BackendConnectionPools.PoolStats pool : BackendConnectionPools.snapshot()) {
             appendPoolSeries(out, pool.poolKey(), "active", pool.activeConnections());
             appendPoolSeries(out, pool.poolKey(), "idle", pool.idleConnections());

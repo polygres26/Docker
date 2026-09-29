@@ -462,7 +462,7 @@ public final class MetricsServer {
                     }
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
-                    response.getWriter().write(ObservabilitySummary.toJson(System.getenv()).toString());
+                    response.getWriter().write(ObservabilitySummary.toJson(System.getenv(), statsStage, qosStage, mcpMetrics).toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -483,7 +483,7 @@ public final class MetricsServer {
                         baseRequest.setHandled(true);
                         return;
                     }
-                    ObservabilityApi.handlePatch(request, response, configStore);
+                    ObservabilityApi.handlePatch(request, response, configStore, statsStage, qosStage, mcpMetrics);
                     baseRequest.setHandled(true);
                     return;
                 }
