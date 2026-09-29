@@ -18,6 +18,13 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": ["-c", "cd Warp/web && npm run dev -- --port 5174"],
       "port": 5174
+    },
+    {
+      "name": "warp-server",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd Warp && WARP_HOST=localhost WARP_PORT=5432 WARP_DATABASE=postgres WARP_USER=kumarrajamani WARP_ADMIN_TOKEN=dev-admin-token WARP_OTEL_ENDPOINT=disabled java --add-opens=java.base/jdk.internal.access=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED --add-opens=java.base/java.time=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.sql/java.sql=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -jar target/sayonora-warp.jar"],
+      "url": "http://localhost:19090",
+      "port": 19090
     }
   ]
 }

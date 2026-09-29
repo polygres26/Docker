@@ -313,6 +313,35 @@ public final class MetricsServer {
             @Override
             public void handle(String target, Request baseRequest, HttpServletRequest request,
                     HttpServletResponse response) throws java.io.IOException {
+                // CORS: the web console (src/api/client.ts, this project's web/ SPA) is explicitly
+                // designed to talk to this admin API directly from the browser at runtime -- see
+                // web/vite.config.ts's own comment ("this SPA talks DIRECTLY to Warp's admin API
+                // from the browser... there is no dev-time proxy here"). That means the console's
+                // origin (wherever it's hosted/served from -- a dev server on a different port, a
+                // static site on a different host, etc.) is essentially never the SAME origin as
+                // this admin listener, so without real CORS support every browser blocks the
+                // preflight before a single request succeeds -- a real, confirmed bug (2026-09-29):
+                // the OPTIONS preflight used to fall through to the same auth check as every other
+                // method and get rejected with 401 and no CORS headers at all, so the browser never
+                // even got to send the real request. Reflect the caller's own Origin (safe here:
+                // auth is a bearer token in a header, never a cookie, so there's no ambient-
+                // credential CSRF risk reflecting an arbitrary Origin would create for cookie auth)
+                // and answer OPTIONS preflights before any auth/ACL check -- a preflight carries no
+                // Authorization header by spec, so gating it on one can never succeed.
+                String origin = request.getHeader("Origin");
+                if (origin != null) {
+                    response.setHeader("Access-Control-Allow-Origin", origin);
+                    response.setHeader("Vary", "Origin");
+                    response.setHeader("Access-Control-Allow-Credentials", "true");
+                }
+                if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+                    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+                    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+                    response.setHeader("Access-Control-Max-Age", "86400");
+                    response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (!connectionGate.acceptHttp(request)) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.getWriter().write("forbidden");
