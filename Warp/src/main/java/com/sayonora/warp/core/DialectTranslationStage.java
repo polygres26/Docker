@@ -97,6 +97,31 @@ public final class DialectTranslationStage implements PipelineStage {
                 available = false;
             }
             PgOracleSupport.setCurrentStatementAvailable(available);
+        } else if (fromDialect == SourceDialect.MYSQL && targetDialect == SourceDialect.POSTGRES) {
+            // Same detect-and-cache-per-backend gating as the Oracle block above, for pg_mysql --
+            // see PgMysqlSupport.CURRENT_STATEMENT_AVAILABLE's own javadoc for the real,
+            // live-found gap this closes (Warp run against a real managed Postgres -- Supabase,
+            // RDS, etc. -- with no pg_mysql installed, and no ability to install one).
+            boolean available;
+            try {
+                available = PgMysqlSupport.isAvailable(target);
+            } catch (SQLException e) {
+                log.warn("pg_mysql extension detection failed against backend {}, assuming absent: {}",
+                        targetName, e.getMessage());
+                available = false;
+            }
+            PgMysqlSupport.setCurrentStatementAvailable(available);
+        } else if (fromDialect == SourceDialect.SQL_SERVER && targetDialect == SourceDialect.POSTGRES) {
+            // Same pattern, for pg_sqlserver.
+            boolean available;
+            try {
+                available = PgSqlServerSupport.isAvailable(target);
+            } catch (SQLException e) {
+                log.warn("pg_sqlserver extension detection failed against backend {}, assuming absent: {}",
+                        targetName, e.getMessage());
+                available = false;
+            }
+            PgSqlServerSupport.setCurrentStatementAvailable(available);
         }
         String sqlText = statement.sqlText();
         String rewritten = translateWithFallback(sqlText, fromDialect, targetDialect, cache, llmClient, cacheStore);
@@ -127,7 +152,16 @@ public final class DialectTranslationStage implements PipelineStage {
         }
         log.info("translation cache MISS for {}->{}, translating: {}", fromDialect, targetDialect, sqlText);
 
-        String rewritten = DialectTranslations.translate(sqlText, fromDialect, targetDialect);
+        String rewritten;
+        try {
+            rewritten = DialectTranslations.translate(sqlText, fromDialect, targetDialect);
+        } catch (ShimUnavailableException e) {
+            // A statement that genuinely needs a Shim extension not installed on this backend,
+            // with no working plain-Postgres degraded fallback -- see ShimUnavailableException's
+            // own javadoc. Surfaced as a real UntranslatableQueryException (this method's own
+            // checked-exception contract) rather than an internal RuntimeException leaking out.
+            throw new UntranslatableQueryException(sqlText, fromDialect, targetDialect, e.getMessage());
+        }
         if (rewritten != null) {
             cache.put(sqlText, fromDialect, targetDialect, rewritten);
             if (cacheStore != null) {

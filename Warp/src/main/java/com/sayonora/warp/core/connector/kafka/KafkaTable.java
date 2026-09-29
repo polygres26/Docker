@@ -24,7 +24,7 @@ import org.apache.kafka.common.TopicPartition;
 
 /**
  * One Kafka topic exposed as a queryable SQL table over a real, bounded snapshot -- ported from the
- * sibling ThinkingSense project's real, tested {@code com.omnigate.calcite.kafka.KafkaTable}. See
+ * a prior internal reference implementation's real, tested {@code com.omnigate.calcite.kafka.KafkaTable}. See
  * {@link KafkaSchemaFactory}'s own javadoc for why this is a real bounded scan (each partition's
  * high-watermark captured once, before reading anything, via one probe consumer), not
  * continuous-streaming SQL -- this is ALREADY the exact upstream solution to the "unbounded stream"
@@ -39,7 +39,7 @@ import org.apache.kafka.common.TopicPartition;
  * <p>No predicate pushdown, same correctness-first call as every other schemaless-source connector
  * in this codebase.
  *
- * <p><b>Sequential, not partition-parallel</b>: ThinkingSense's own version dispatches one consumer
+ * <p><b>Sequential, not partition-parallel</b>: that reference implementation's own version dispatches one consumer
  * per partition concurrently through its {@code LakehouseFileScanExecutor}, an executor Warp has no
  * equivalent of. This port reads each partition sequentially instead (still correct, still the same
  * bounded-snapshot contract -- only slower on a many-partition topic); porting/introducing a

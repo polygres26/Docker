@@ -5,7 +5,9 @@ import com.sayonora.warp.core.ColumnInfo;
 import com.sayonora.warp.core.DialectErrorMessages;
 import com.sayonora.warp.core.ExecutionResult;
 import com.sayonora.warp.core.JdbcBackendExecutor;
+import com.sayonora.warp.core.PgOracleSupport;
 import com.sayonora.warp.core.PipelineStage;
+import com.sayonora.warp.core.ShimBuiltinCatalog;
 import com.sayonora.warp.core.SourceDialect;
 import com.sayonora.warp.core.SqlStateErrorMapper;
 import com.sayonora.warp.core.Statement;
@@ -449,6 +451,15 @@ public final class RequestLoop {
                 // nativeOciExecuteCount (already 1 again by this point in *either* case, since it
                 // resets per-query -- see its own reset site) since what actually matters here is
                 // "first query in this session" vs "not," not "how many Executes so far."
+                // KNOWN GAP, not yet fixed: a genuine row-returning dblink SELECT (confirmed live
+                // via a fresh real Oracle-to-Oracle self-loop capture of a real 2-column, 2-row
+                // query) needs a completely different, row-carrying response here instead of this
+                // fixed, row-free template -- see [[warp-orawire-native-oci-gap]] for the capture
+                // evidence. A first attempt at fixing this in-place (reusing
+                // writeNativeOciExecuteTailWithRows the same way a plain non-dblink client's own
+                // row-carrying Execute response does) did not get the client past this call in live
+                // testing and was reverted rather than shipped half-verified; left as this
+                // pre-existing, row-free template until the real cause is found and confirmed live.
                 byte[] response = java.util.Base64.getDecoder()
                         .decode(nativeOciFirstQueryComplete ? FUNC_UNKNOWN_68_REPEAT_RESPONSE_B64
                                 : FUNC_UNKNOWN_68_RESPONSE_B64);
@@ -491,9 +502,9 @@ public final class RequestLoop {
             sendNativeOciErrorMarkerHandshakeIfNeeded();
             String runtimeMessage = e.getMessage() == null ? e.toString() : e.getMessage();
             if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
-                ResponseWriter.writeErrorEndNativeOci(w, 942, runtimeMessage);
+                ResponseWriter.writeErrorEndNativeOci(w, SqlStateErrorMapper.ORACLE_INTERNAL_ERROR, runtimeMessage);
             } else {
-                ResponseWriter.writeErrorEnd(w, 942, runtimeMessage, openCursorId, callNumber);
+                ResponseWriter.writeErrorEnd(w, SqlStateErrorMapper.ORACLE_INTERNAL_ERROR, runtimeMessage, openCursorId, callNumber);
             }
         }
         sendData(w.toByteArray());
@@ -833,20 +844,77 @@ public final class RequestLoop {
                         : openColumns.get(0).bufferSize;
                 tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET] = (byte) (bufSizeHint & 0xFF);
                 tail[NATIVE_OCI_EXECUTE_TAIL_BUFSIZE_HINT_OFFSET + 1] = (byte) ((bufSizeHint >> 8) & 0xFF);
+            } else if (openColumns != null && openColumns.size() > 1) {
+                // Real bug this fixes, found live: every offset above was derived from, and only
+                // ever confirmed against, single-column real captures -- a genuine multi-column
+                // native-OCI query (id NUMBER, name VARCHAR2) hangs the client even with all of
+                // those applied, byte-diffed against a fresh real Oracle-to-Oracle self-loop
+                // capture of the identical 2-column query. Four of this template's own offsets
+                // that the single-column path treats as fixed/unconditional are wrong for this
+                // 2+-column case specifically: tail[9..12] (part of
+                // NATIVE_OCI_EXECUTE_TAIL_PREFIX_UNCONDITIONAL_PATCH's own span, applied
+                // unconditionally above) needs 0x15/0x0d/0x1f/0x01 here instead, and tail[20]/[24]
+                // (NATIVE_OCI_EXECUTE_TAIL_NON_DBLINK_TYPE_DEPENDENT_PREFIX_PATCH_OFFSETS, gated
+                // above to the single-VARCHAR-column case only) need 0x30 at both. Confirmed live
+                // by patching exactly these bytes at the wire level (bypassing this method
+                // entirely, to isolate the response shape from any other variable) and observing a
+                // real sqlplus client correctly print both rows afterward -- not yet independently
+                // confirmed to generalize beyond this exact (NUMBER, VARCHAR2) two-column shape;
+                // may need revisiting for 3+ columns or other type combinations.
+                tail[9] = 0x15;
+                tail[10] = 0x0d;
+                tail[11] = 0x1f;
+                tail[12] = 0x01;
+                tail[20] = 0x30;
+                tail[24] = 0x30;
             }
+        } else if (openColumns != null && openColumns.size() > 1) {
+            // The dblink equivalent of the non-dblink multi-column fix above -- confirmed live via
+            // a SEPARATE, independently-verified real Oracle-to-Oracle self-loop capture of a
+            // genuine 2-row dblink SELECT (id NUMBER, name VARCHAR2), diffed against Warp's own
+            // output for the identical query using a byte-accurate raw-socket capture proxy (the
+            // earlier attempt at this exact fix used a capture taken through a proxy with a TNS
+            // large-SDU framing bug that silently corrupted the capture once the session's SDU grew
+            // past the proxy's naive 2-byte-length assumption -- confirmed by retaking the capture
+            // with a transport-agnostic raw byte relay and finding materially different, corrected
+            // values at these same offsets; the earlier, wrong values were reverted before landing).
+            // tail[7]/[8] happen to already match the non-dblink case (0x09/0x1c), but tail[9..12]
+            // and tail[20]/[24] are genuinely different for a dblink client at these exact positions.
+            tail[7] = 0x09;
+            tail[8] = 0x1c;
+            tail[9] = 0x15;
+            tail[10] = 0x35;
+            tail[11] = 0x0f;
+            tail[12] = 0x01;
+            tail[20] = 0x61;
+            tail[24] = 0x61;
         }
         byte[] preRowBlock = NATIVE_OCI_PRE_ROW_BLOCK.clone();
+        // Real bug this fixes, found live: byte 2 of this block was patched only for non-dblink
+        // clients -- a real dblink capture (both the earlier corrupted one and this fix's own
+        // re-verified clean one) independently needs this SAME value (0x22) too. Applied
+        // unconditionally, unlike the offsets below it.
+        preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
+        // Real bug this fixes, found the same way as the tail offsets above: byte 4 of this block
+        // was treated as a fixed 0x01 constant (confirmed identical across two single-column real
+        // captures), but a fresh 2-column (NUMBER, VARCHAR2) real capture needs 0x02 here instead --
+        // genuinely column-count/type-dependent, not fixed, and confirmed true for BOTH dblink and
+        // non-dblink clients via their own independent real captures. Applied unconditionally.
+        preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = (openColumns != null && openColumns.size() > 1)
+                ? (byte) 0x02 : NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
         if (!nativeOciDblinkClient) {
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1, 0, preRowBlock,
                     NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_1, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_1.length);
             System.arraycopy(NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2, 0, preRowBlock,
                     NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_2, NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_2.length);
-            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_3] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_3A;
-            preRowBlock[NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_OFFSET_4] = NATIVE_OCI_PRE_ROW_BLOCK_CONSTANT_VALUE_4A;
         }
         w.writeRaw(java.util.Arrays.copyOfRange(tail, 0, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT));
         w.writeRaw(preRowBlock);
-        writeRows(w, maxRows);
+        // false: see ResponseWriter.writeRowNativeOci's own javadoc -- a dblink client's row, when
+        // embedded here (inside the Execute-tail template) rather than delivered via a genuine
+        // FETCH, must NOT carry NATIVE_OCI_ROW_PREFIX, unlike every other native-OCI multi-column
+        // row this codebase writes.
+        writeRows(w, maxRows, false);
         w.writeRaw(java.util.Arrays.copyOfRange(tail, NATIVE_OCI_EXECUTE_TAIL_ROW_INSERTION_POINT, tail.length));
     }
 
@@ -1286,6 +1354,12 @@ public final class RequestLoop {
                     request.bindRows);
         }
 
+        if (isPlSqlBlock(request.sqlText)
+                && oracleConnection == null
+                && tryHandleShimBuiltinCall(request, w, callNumber)) {
+            return;
+        }
+
         if (isPlSqlBlock(request.sqlText)) {
             handlePlSqlExecute(request, w, callNumber);
             return;
@@ -1486,7 +1560,19 @@ public final class RequestLoop {
                 // a real non-dblink native-OCI client, confirmed live, never sends that second call and expects
                 // its one and only Execute to carry the row directly.
                 if (nativeOciExecuteCount > 1 || !nativeOciDblinkClient) {
-                    writeNativeOciExecuteTailWithRows(w, request.numIters);
+                    // Real bug this fixes, found live: this call site used to embed up to
+                    // request.numIters rows directly inline into this same fixed-shape tail
+                    // template -- correct for exactly one row (the only shape ever captured and
+                    // verified before now), but a real Oracle-to-Oracle self-loop capture of a
+                    // genuinely two-row result shows real Oracle embeds only the FIRST row inline
+                    // here, then answers the client's own separate, subsequent real FETCH request
+                    // (which handleFetch/writeRows below already handles correctly, including the
+                    // empty-fetch end-of-data case) for every row after that. Embedding more than
+                    // one row here corrupts the tail template's own fixed trailing bytes (sized for
+                    // exactly one row's worth of content) enough to crash a real client outright
+                    // (confirmed live: a real 2-row SELECT segfaulted real sqlplus, not just a TNS
+                    // MARKER/hang the way a wrong-shape response usually manifests).
+                    writeNativeOciExecuteTailWithRows(w, Math.min(request.numIters, 1));
                 } else {
                     writeNativeOciExecuteTail(w);
                 }
@@ -1619,6 +1705,107 @@ public final class RequestLoop {
      *       concatenate the same way without another live capture to prove it.
      * </ul>
      */
+    // Matches the exact same "BEGIN proc(:1, :2, ...); END;" shape
+    // OracleProcedureCatalog.PROC_CALL_PATTERN recognizes, but ALSO allows a dotted
+    // schema.function name (that pattern's own character class has no "." in it, deliberately --
+    // see its own javadoc on package-qualified calls being a disclosed, separate gap). Only used
+    // for the narrow Shim-builtin-call rewrite below; OracleProcedureCatalog's own bare-name-only
+    // scope for real Oracle-catalog-backed resolution (Bridge/dual-exec) is untouched.
+    // The trailing "(" is optional: confirmed live -- a real JDBC CallableStatement for a
+    // zero-argument call (e.g. dbms_output.new_line, dbms_output.disable) produces
+    // "BEGIN schema.func; END;" with NO parentheses at all, not "schema.func();" -- a first version
+    // of this pattern required "(" unconditionally and silently failed to match this real shape.
+    private static final java.util.regex.Pattern SHIM_PROC_CALL_PATTERN = java.util.regex.Pattern.compile(
+            "^\\s*BEGIN\\s+([A-Za-z0-9_$]+\\.[A-Za-z0-9_$]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    // Matches the JDBC "{? = call schema.func(...)}" function-return shape's own wire text,
+    // "BEGIN :1 := schema.func(:2, ...); END;" -- confirmed live (this session) as the real shape
+    // a JDBC CallableStatement produces for a function call, distinct from a plain procedure call
+    // (which has no ":1 :=" assignment prefix at all).
+    // Same "(" is optional" real bug as SHIM_PROC_CALL_PATTERN's own javadoc above -- confirmed
+    // live via the identical failure for dbms_random.value (a real zero-arg FUNCTION call):
+    // "BEGIN :1 := dbms_random.value; END;", no parentheses.
+    private static final java.util.regex.Pattern SHIM_FUNC_CALL_PATTERN = java.util.regex.Pattern.compile(
+            "^\\s*BEGIN\\s*:1\\s*:=\\s*([A-Za-z0-9_$]+\\.[A-Za-z0-9_$]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Real gap this closes, scoped narrowly -- see the {@code warp-adapt-plsql-shim-reach-plan}
+     * memory note for the full writeup: plain Adapt mode (no real Oracle backend at all) used to
+     * refuse EVERY PL/SQL-shaped statement outright, even though Shim/pg_oracle's own DBMS_*
+     * builtin functions genuinely work once called through Postgres's own native function-call
+     * syntax -- confirmed live by installing pg_oracle for real and testing directly: Oracle's
+     * {@code BEGIN...END} syntax itself is simply never understood by Postgres's parser (a hard
+     * grammar gap, not a missing feature), but {@code SELECT dbms_output.put_line($1)} (the exact
+     * same call, Postgres-native syntax) works correctly. For the single-call shape orawire
+     * already recognizes (no control-flow, no OUT parameters, no REF CURSOR -- exactly what a JDBC
+     * {@code CallableStatement} produces), a call to a KNOWN Shim builtin can simply be rewritten
+     * into that plain, ordinary, parameterized Postgres call instead of refused -- no PL/pgSQL, no
+     * {@code DO $$...$$} block, and no new execution machinery needed.
+     *
+     * <p>Deliberately narrow: only the small, hand-maintained {@link ShimBuiltinCatalog} allowlist
+     * is eligible (never a guess at an unknown function's real signature), only when
+     * {@link PgOracleSupport#isAvailable} confirms Shim is actually installed on this backend (so
+     * a Shim-less Adapt install keeps today's existing, unchanged clean refusal), and only
+     * IN-only calls (no known Shim builtin here has a real OUT parameter yet -- see the catalog's
+     * own javadoc). Returns {@code false} (without writing any response) for every case outside
+     * this narrow scope, so the caller falls through to {@code handlePlSqlExecute}'s existing,
+     * unchanged behavior. */
+    private boolean tryHandleShimBuiltinCall(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
+        java.util.regex.Matcher funcMatch = SHIM_FUNC_CALL_PATTERN.matcher(request.sqlText);
+        boolean isFunctionCall = funcMatch.find();
+        java.util.regex.Matcher m = isFunctionCall ? funcMatch : SHIM_PROC_CALL_PATTERN.matcher(request.sqlText);
+        if (!isFunctionCall && !m.find()) {
+            return false;
+        }
+        String name = m.group(1);
+        ShimBuiltinCatalog.Signature sig = ShimBuiltinCatalog.lookup(name);
+        if (sig == null || sig.hasReturnValue() != isFunctionCall) {
+            return false;
+        }
+        int expectedBindCount = sig.inParamCount() + (isFunctionCall ? 1 : 0);
+        if (request.bindParams.size() != expectedBindCount) {
+            return false;
+        }
+        Connection pg = pgConnection.get();
+        if (!PgOracleSupport.isAvailable(pg)) {
+            return false;
+        }
+
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < sig.inParamCount(); i++) {
+            if (i > 0) {
+                placeholders.append(", ");
+            }
+            placeholders.append('?');
+        }
+        String jdbcCallSyntax = isFunctionCall
+                ? "{? = call " + name + "(" + placeholders + ")}"
+                : "{call " + name + "(" + placeholders + ")}";
+
+        terminalExecutor.rebind(pg);
+        try (CallableStatement cs = pg.prepareCall(jdbcCallSyntax)) {
+            int bindOffset = isFunctionCall ? 1 : 0;
+            if (isFunctionCall) {
+                cs.registerOutParameter(1, sig.returnSqlType());
+            }
+            for (int i = 0; i < sig.inParamCount(); i++) {
+                cs.setObject(i + 1 + bindOffset, request.bindParams.get(i + bindOffset).value);
+            }
+            cs.execute();
+
+            if (isFunctionCall) {
+                Object returnValue = cs.getObject(1);
+                ColumnMetadata outColumn = new ColumnMetadata("RETURN", TtcConstants.ORA_TYPE_NUM_NUMBER, 0, 0,
+                        4000, true);
+                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { returnValue },
+                        expectedBindCount);
+            }
+
+            openCursorId = nextCursorId++;
+            ResponseWriter.writeSuccessEnd(w, 0, openCursorId, callNumber);
+        }
+        return true;
+    }
+
     private void handlePlSqlExecute(ExecuteRequest request, TtcWriter w, int callNumber) throws SQLException {
         if (oracleConnection == null) {
             throw new IllegalStateException(
@@ -1697,7 +1884,7 @@ public final class RequestLoop {
             if (outArg != null) {
                 ColumnMetadata outColumn = new ColumnMetadata("OUT_" + outPosition,
                         oraTypeNumForOracleDataType(outArg.dataType()), 0, 0, 4000, true);
-                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { outValue });
+                ResponseWriter.writeOutBindValues(w, List.of(outColumn), new Object[] { outValue }, args.size());
             }
 
             openCursorId = nextCursorId++;
@@ -2062,6 +2249,40 @@ public final class RequestLoop {
         if (openRows == null) {
             throw new IllegalStateException("fetch requested with no open cursor");
         }
+        // Real bug this fixes, found live: a real non-dblink native-OCI client's own FETCH for the
+        // LAST remaining row of a multi-row result needs the combined row+end-of-data response
+        // ResponseWriter.writeFetchLastRowResponseNativeOci constructs (see its own javadoc) --
+        // genuinely different from, and not constructible by patching, the plain per-row writer
+        // writeRows below already uses for every other FETCH. Has to intercept here, BEFORE
+        // writeRows runs, since writeRows would otherwise already have written this exact row via
+        // the wrong (too-short, row-free) shape by the time anything downstream could tell the
+        // fetch was about to exhaust the cursor. Scoped to exactly one remaining row (the only
+        // shape confirmed against a real capture so far) AND the client asking for MORE than that
+        // one row -- confirmed live that a client asking for EXACTLY the one remaining row
+        // (fetchArraySize == 1, an exact match, not an over-fetch) does NOT get this combined
+        // shape: a real capture of that exact scenario still hung the client when answered this
+        // way. Real Oracle presumably only combines the last row with the end-of-data signal when
+        // the request's own over-fetch already implies "and tell me if that's everything"; an
+        // exact-size request gets the row alone, via the ordinary path below, and the client's own
+        // subsequent (now genuinely empty) FETCH naturally lands on NATIVE_OCI_EMPTY_FETCH_RESPONSE
+        // instead.
+        //
+        // Real bug this fixes, found live: this was originally scoped to non-dblink clients only.
+        // A fresh, independently-verified real Oracle-to-Oracle self-loop capture of a genuine
+        // 2-row dblink SELECT (retaken with a transport-agnostic raw-byte capture proxy after an
+        // earlier attempt's proxy turned out to have a TNS large-SDU framing bug corrupting the
+        // capture) confirms a real dblink client's own last-row FETCH response needs this SAME
+        // combined row+ORA-01403 shape, byte-for-byte -- scoping this to non-dblink only was itself
+        // the bug, not a deliberate exclusion. Verified live end-to-end: a real dblink SELECT over
+        // a genuine DATABASE LINK now returns correct data with zero wire-level patching.
+        if (usedNativeOciExecuteFallback
+                && openRows.size() - fetchPosition == 1 && request.fetchArraySize > 1) {
+            List<Object> lastRow = openRows.get(fetchPosition++);
+            ResponseWriter.writeFetchLastRowResponseNativeOci(w, openColumns, lastRow.toArray());
+            nativeOciExecuteCount = 0;
+            nativeOciFirstQueryComplete = true;
+            return;
+        }
         long rowsWritten = writeRows(w, request.fetchArraySize);
         // A real distributed-database-link connection's native OCI client's Execute response uses
         // this codebase's own static, real-capture-derived template (see writeNativeOciExecuteTail)
@@ -2154,11 +2375,20 @@ public final class RequestLoop {
         "BAMAAAAjAAEBAAAAewUAAAAABwAAAAMAIAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAA2AQAAAAAAAAAAAAAAAAAAsBRFKrL1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAEAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
 
     private long writeRows(TtcWriter w, long maxRows) {
+        return writeRows(w, maxRows, true);
+    }
+
+    // See ResponseWriter.writeRowNativeOci's own javadoc for what allowMultiColumnRowPrefix
+    // actually controls and why the Execute-tail-embedded row (writeNativeOciExecuteTailWithRows)
+    // needs it false while every genuine FETCH row (every other caller of the no-arg overload
+    // above) needs it true (the default).
+    private long writeRows(TtcWriter w, long maxRows, boolean allowMultiColumnRowPrefix) {
         long count = 0;
         while (count < maxRows && fetchPosition < openRows.size()) {
             List<Object> row = openRows.get(fetchPosition++);
             if (usedNativeOciExecuteFallback) {
-                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray(), nativeOciDblinkClient);
+                ResponseWriter.writeRowNativeOci(w, openColumns, row.toArray(), nativeOciDblinkClient,
+                        allowMultiColumnRowPrefix);
             } else {
                 ResponseWriter.writeRow(w, openColumns, row.toArray());
             }

@@ -5,7 +5,17 @@ import java.util.Map;
 public final class SqlStateErrorMapper {
 
     public static final int ORACLE_DEFAULT = 942;
-    
+
+    /** ORA-00600, Oracle's own real convention for "internal error code, arguments: [...]" --
+     * used for a genuinely unexpected internal failure (an uncaught {@code RuntimeException} with
+     * no mapped SQLSTATE at all), as distinct from {@link #ORACLE_DEFAULT}'s narrower meaning of
+     * "a real backend error occurred but this SQLSTATE has no dedicated entry in {@link #TABLE}".
+     * Deliberately not 942 (ORA-00942, "table or view does not exist") -- a caller branching on
+     * {@code getErrorCode() == 942} for "handle missing table" must not misfire on an unrelated
+     * internal error. No entry in {@link #TABLE} maps to 600, so this can't collide with a real,
+     * deliberate SQLSTATE mapping either. */
+    public static final int ORACLE_INTERNAL_ERROR = 600;
+
     public static final int MYSQL_DEFAULT = 1105;
     
     public static final int SQL_SERVER_DEFAULT = 50000;

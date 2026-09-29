@@ -8,7 +8,7 @@ pgwire has its own JDBC-based suite instead: `../../src/test/java/.../pgwire/PgW
 ## Running
 
 ```bash
-cd wire
+cd Warp
 mvn -DskipTests package        # produces target/sayonora-warp.jar, which these tests launch
 pip install pytest oracledb pymssql pymysql
 cd tests/python

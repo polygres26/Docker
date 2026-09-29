@@ -352,7 +352,7 @@ public final class SchemaFederationStage implements PipelineStage {
                 }
             } else if (mounts.size() >= 3 && parallelJoinEnabled()) {
                 // Star-topology (hub + independent spokes) extension, ported from the sibling
-                // ThinkingSense project -- tried FIRST, since it's provably at least as good as the
+                // a prior internal reference implementation -- tried FIRST, since it's provably at least as good as the
                 // linear chain for the shape it handles (see ParallelJoinPlanner's own star-topology
                 // section header): every spoke's hash table builds CONCURRENTLY instead of the chain's
                 // sequential re-materialization. Any non-star tree falls through to null here, and

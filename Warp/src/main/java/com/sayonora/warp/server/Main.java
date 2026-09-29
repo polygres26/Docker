@@ -414,7 +414,7 @@ public final class Main {
                         : "background refresh enabled");
 
         // Real native RLS/VPD session-context propagation into federated backend connections --
-        // WARP_ACCESS_NATIVE_RLS_DIALECTS is a comma list (not ThinkingSense/Omnigate's single
+        // WARP_ACCESS_NATIVE_RLS_DIALECTS is a comma list (not that reference implementation's single
         // boolean this was ported from), since Warp's own federation already spans 3+ simultaneous
         // backend dialects in one statement (the star/chain parallel-join engine), unlike the
         // single-boolean design's implicit 2-dialect assumption. Empty/unset means every existing
@@ -1354,7 +1354,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.myWireListenPort())) {
             log.info("warp listening for TCP (MySQL wire) on port {}, proxying to postgres {}:{}/{}",
                     options.myWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mywireNativeBackend() ? "mywire-native" : "mywire", "MySQL", "sql", "MySQL wire", options.myWireListenPort(), options.mywireNativeBackend() ? "Relay" : "Adapt", null, "mywire");
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mywireNativeBackend() ? "mywire-native" : "mywire", "MySQL", "sql", "MySQL wire", options.myWireListenPort(), mySqlBackendModeLabel(options), null, "mywire");
             acceptLoop("MySQL wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new MySqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry));
         } catch (IOException e) {
@@ -1369,7 +1369,7 @@ public final class Main {
         try (ServerSocket serverSocket = new ServerSocket(options.mssqlWireListenPort())) {
             log.info("warp listening for TCP (SQL Server TDS wire) on port {}, proxying to postgres {}:{}/{}",
                     options.mssqlWireListenPort(), options.pgHost(), options.pgPort(), options.pgDatabase());
-            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mssqlwireNativeBackend() ? "mssqlwire-native" : "mssqlwire", "SQL Server", "sql", "TDS", options.mssqlWireListenPort(), options.mssqlwireNativeBackend() ? "Relay" : "Adapt", null, "mssqlwire");
+            com.sayonora.warp.http.admin.InterfaceRegistry.register(options.mssqlwireNativeBackend() ? "mssqlwire-native" : "mssqlwire", "SQL Server", "sql", "TDS", options.mssqlWireListenPort(), mssqlBackendModeLabel(options), null, "mssqlwire");
             acceptLoop("SQL Server TDS wire", serverSocket, connectionGate, sessionExecutor,
                     clientSocket -> new MssqlWireSessionHandler(clientSocket, options, pipelineStages, backendRegistry, roleAuthCache, auditLog));
         } catch (IOException e) {
@@ -1401,6 +1401,22 @@ public final class Main {
      * "Adapt" (ADAPT's dialect-translated-to-Postgres default, unchanged). */
     private static String oracleWireModeLabel(ServerOptions options) {
         return switch (options.oracleBackendMode()) {
+            case RELAY -> "Relay";
+            case BRIDGE -> "Bridge";
+            case ADAPT -> "Adapt";
+        };
+    }
+
+    private static String mySqlBackendModeLabel(ServerOptions options) {
+        return switch (options.mySqlBackendMode()) {
+            case RELAY -> "Relay";
+            case BRIDGE -> "Bridge";
+            case ADAPT -> "Adapt";
+        };
+    }
+
+    private static String mssqlBackendModeLabel(ServerOptions options) {
+        return switch (options.mssqlBackendMode()) {
             case RELAY -> "Relay";
             case BRIDGE -> "Bridge";
             case ADAPT -> "Adapt";

@@ -70,8 +70,8 @@
          caught by MongoErrorMappingIntegrationTest actually running against a real driver. -->
     <bson.version>5.5.1</bson.version>
     <!-- S3/Kafka/Cassandra/Splunk connector work (com.sayonora.warp.core.connector.{s3,kafka,
-         cassandra,splunk}), ported from the sibling ThinkingSense project's own real, tested
-         connectors, same versions ThinkingSense pinned, reconciled against Warp's own existing
+         cassandra,splunk}), ported from a prior internal reference implementation's real, tested
+         connectors, the same versions that reference implementation pinned, reconciled against Warp's own existing
          pins where they already overlap (S3 reuses awssdk.version above, since the DynamoDB work
          already established that AWS SDK v2 line on this classpath; Splunk needs no version
          property at all, see the splunk dependency comment). -->
@@ -82,7 +82,7 @@
     <kafka.clients.version>4.3.1</kafka.clients.version>
     <cassandra.driver.version>4.17.0</cassandra.driver.version>
     <!-- The broader JDBC-dialect catalog (BackendDriverRegistry#driverClassNameFor /
-         BackendTarget#dialect()) — real, bundled drivers, same versions the sibling ThinkingSense
+         BackendTarget#dialect()) — real, bundled drivers, same versions a prior internal reference implementation
          project pinned and proved these load against. Reflectively loaded (Class.forName) only
          when an operator actually registers a backend of that dialect, so these are real, needed
          dependencies for the feature to WORK (not just compile) the moment WARP_BACKENDS names one
@@ -93,7 +93,7 @@
     <!-- Databricks' own JDBC driver ships under Databricks' JDBC Driver License Agreement for
          Non-Warranted Programs, not Apache-2.0/permissive like the others in this list — it's the
          only way to reach Databricks over JDBC at all. Confirmed the same real deviation the
-         sibling ThinkingSense project already accepted for this same driver. -->
+         a prior internal reference implementation project already accepted for this same driver. -->
     <databricks.jdbc.version>2.7.3</databricks.jdbc.version>
     <clickhouse.jdbc.version>0.10.0</clickhouse.jdbc.version>
     <pinot.jdbc.version>1.5.1</pinot.jdbc.version>
@@ -370,7 +370,7 @@
     <dependency>
       <!-- Compile scope (was test-only): com.sayonora.warp.core.connector.dynamodb reads a real
            DynamoDB table as a federated SchemaFederationStage mount. Same 2.46.7 version the
-           ported ThinkingSense connector was proven against, and the same awssdk.version property
+           ported that reference implementation connector was proven against, and the same awssdk.version property
            sqs/dynamowire's own test clients already use, so there is exactly one AWS SDK v2
            version on the classpath. -->
       <groupId>software.amazon.awssdk</groupId>
@@ -387,14 +387,14 @@
       <!-- Compile scope: com.sayonora.warp.core.connector.s3.S3CompatibleObjectFetcher needs real
            S3 object download (SigV4 request signing), same AWS SDK v2 line/version the DynamoDB
            connector above already established on this classpath (awssdk.version), reused verbatim
-           rather than introducing ThinkingSense's own separate aws.sdk.s3.version pin. -->
+           rather than introducing that reference implementation's own separate aws.sdk.s3.version pin. -->
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
       <version>${awssdk.version}</version>
     </dependency>
     <dependency>
       <!-- Real Parquet reader (org.apache.parquet.hadoop.ParquetFileReader) via the InputFile SPI
-           over an in-memory byte buffer, exactly as ThinkingSense's S3Table does, no Hadoop
+           over an in-memory byte buffer, exactly as that reference implementation's S3Table does, no Hadoop
            filesystem/Path abstraction needed since S3Table downloads one object fully into memory
            first (see ByteArrayInputFile). Apache-2.0. -->
       <groupId>org.apache.parquet</groupId>
@@ -410,7 +410,7 @@
     <dependency>
       <!-- commons-csv 1.14.1 needs commons-io 2.20.0's AbstractStreamBuilder.getReader(),
            calcite-core transitively pulls an older commons-io that lacks it, a real
-           NoSuchMethodError the moment CSVParser.parse(...) runs (confirmed via ThinkingSense's own
+           NoSuchMethodError the moment CSVParser.parse(...) runs (confirmed via that reference implementation's own
            pom.xml comment for the identical finding). Pinned explicitly, "nearest wins". -->
       <groupId>commons-io</groupId>
       <artifactId>commons-io</artifactId>
@@ -422,7 +422,7 @@
            constructor unconditionally reflection-probes for
            org.apache.hadoop.mapreduce.lib.input.FileInputFormat and raises a hard
            NoClassDefFoundError (not a caught ClassNotFoundException) when it's absent, found live
-           in ThinkingSense, ported here as the same required pair of minimal Hadoop jars. -->
+           in that reference implementation, ported here as the same required pair of minimal Hadoop jars. -->
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
       <version>${hadoop.common.version}</version>
@@ -455,7 +455,7 @@
     </dependency>
     <!-- com.sayonora.warp.core.connector.splunk needs no dependency of its own beyond Gson, which
          is already a main-scope dependency above (TranslationCache's HTTP client); Splunk access
-         is plain java.net.http.HttpClient + Gson JSON parsing, same as ThinkingSense's own
+         is plain java.net.http.HttpClient + Gson JSON parsing, same as that reference implementation's own
          SplunkTable. -->
 
     <dependency>
@@ -500,7 +500,7 @@
       <!-- Compile scope again: com.sayonora.warp.core.connector.mongo is a real Mongo backend
            connector (a plain ScannableTable over the sync driver's find(), NOT calcite-mongodb,
            whose 4.10.2-driver binary incompatibility described above is exactly why that adapter
-           was reverted). Pinned to bson.version (5.5.1), not the 5.11.0 ThinkingSense's ported
+           was reverted). Pinned to bson.version (5.5.1), not the 5.11.0 that reference implementation ported
            connector used: bson/driver-core/driver-sync must stay in lockstep (see bson.version's
            comment), and the connector only calls MongoClients.create/getCollection/find, all
            stable across 5.x. driver-core pinned explicitly so it can't drift transitively. -->
@@ -600,7 +600,7 @@
       <version>${spanner.jdbc.version}</version>
     </dependency>
     <!-- Apache-2.0, no transitive dependencies at all (a fully self-contained jar) — real Maven
-         Central artifact, unlike ThinkingSense's own pom.xml, which references this driver's class
+         Central artifact, unlike that reference implementation's own pom.xml, which references this driver's class
          name in code but never actually declared the dependency (confirmed absent there); added
          properly here rather than porting that gap. -->
     <dependency>

@@ -13,7 +13,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
 /**
  * {@link ObjectFetcher} for AWS S3 and every S3-compatible surface -- ported verbatim (module
- * package only) from the sibling ThinkingSense project's real, MinIO-verified connector. The AWS
+ * package only) from a prior internal reference implementation's real, MinIO-verified connector. The AWS
  * SDK's own SigV4 request signing plus a custom {@code endpoint} + path-style override is genuinely
  * sufficient for MinIO, Wasabi, OCI Object Storage's S3-compatibility API, and GCS's interoperability
  * API -- all four speak the identical S3 REST wire shape, just at a different endpoint.

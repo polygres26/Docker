@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import org.junit.jupiter.api.Test;
 
 /**
- * Real regression guard for the broader JDBC-dialect catalog (ported from the sibling ThinkingSense
+ * Real regression guard for the broader JDBC-dialect catalog (ported from a prior internal reference implementation
  * project's own {@code SourceDialect}/{@code BackendConnectionPools.driverClassNameFor}) — proves
  * {@link BackendTarget#dialect()} and {@link BackendDriverRegistry#driverClassNameFor} agree on the
  * exact same URL-prefix list, the invariant {@link BackendDriverRegistry}'s own javadoc claims

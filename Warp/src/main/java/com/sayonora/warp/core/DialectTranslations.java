@@ -516,6 +516,24 @@ public final class DialectTranslations {
     private static final Pattern SHOW_CREATE_TABLE =
             Pattern.compile("(?i)^\\s*SHOW\\s+CREATE\\s+TABLE\\s+`?(\\w+)`?\\s*;?\\s*$");
 
+    /** Guards every rewrite in {@link #normalizeMysql} that targets a {@code mysql_catalog.*}
+     * function -- unlike most Shim-dependent rewrites in this file, these five (SHOW COLUMNS/
+     * DESCRIBE/SHOW INDEX/SHOW VARIABLES/SHOW CREATE TABLE) have no plain-Postgres equivalent to
+     * degrade to at all, so when pg_mysql isn't installed (see {@link
+     * PgMysqlSupport#isCurrentStatementAvailable()}), the only honest option is a clear, named
+     * refusal instead of generating SQL that references a schema that doesn't exist. See {@link
+     * ShimUnavailableException}'s own javadoc for the real gap this closes. */
+    private static void requireShimForMysqlCatalog(String statementKind) {
+        if (!PgMysqlSupport.isCurrentStatementAvailable()) {
+            throw new ShimUnavailableException(statementKind + " requires the Shim/pg_mysql extension "
+                    + "to be installed on the backend Postgres database, which isn't available here "
+                    + "(this is common on managed Postgres providers -- Supabase, RDS, Cloud SQL, "
+                    + "Azure Database for PostgreSQL -- that don't allow installing third-party C "
+                    + "extensions). This statement needs a real MySQL backend (Bridge/Relay mode) "
+                    + "or a Postgres instance with pg_mysql installed.");
+        }
+    }
+
     private static String normalizeMysql(String sql) {
 
         if (SHOW_TABLES.matcher(sql).matches()) {
@@ -528,24 +546,29 @@ public final class DialectTranslations {
         }
         Matcher showColumns = SHOW_COLUMNS.matcher(sql);
         if (showColumns.matches()) {
+            requireShimForMysqlCatalog("SHOW COLUMNS");
             String select = "SELECT * FROM mysql_catalog.show_columns('" + showColumns.group(1).replace("'", "''") + "')";
             return showColumns.group(2) != null ? select + " WHERE \"Field\" LIKE " + showColumns.group(2) : select;
         }
         Matcher describe = DESCRIBE_TABLE.matcher(sql);
         if (describe.matches()) {
+            requireShimForMysqlCatalog("DESCRIBE");
             return "SELECT * FROM mysql_catalog.show_columns('" + describe.group(1).replace("'", "''") + "')";
         }
         Matcher showIndex = SHOW_INDEX.matcher(sql);
         if (showIndex.matches()) {
+            requireShimForMysqlCatalog("SHOW INDEX");
             return "SELECT * FROM mysql_catalog.show_index('" + showIndex.group(1).replace("'", "''") + "')";
         }
         Matcher showVariables = SHOW_VARIABLES.matcher(sql);
         if (showVariables.matches()) {
+            requireShimForMysqlCatalog("SHOW VARIABLES");
             String select = "SELECT * FROM mysql_catalog.show_variables()";
             return showVariables.group(1) != null ? select + " WHERE \"Variable_name\" LIKE " + showVariables.group(1) : select;
         }
         Matcher showCreateTable = SHOW_CREATE_TABLE.matcher(sql);
         if (showCreateTable.matches()) {
+            requireShimForMysqlCatalog("SHOW CREATE TABLE");
             return "SELECT * FROM mysql_catalog.show_create_table('" + showCreateTable.group(1).replace("'", "''") + "')";
         }
         String out = sql;
@@ -596,7 +619,19 @@ public final class DialectTranslations {
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_GETDATE_CALL, m -> "CURRENT_TIMESTAMP");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_ISNULL, m -> "COALESCE(");
         out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_BRACKETED_IDENTIFIER, m -> "\"" + m.group(1) + "\"");
-        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_AT_AT_IDENTITY, m -> "sys.scope_identity()");
+        // pg_sqlserver's sys.scope_identity() is preferred when available (real, disclosed
+        // limitation of ITS OWN: T-SQL's real @@IDENTITY is session-wide across every table,
+        // including triggers, while SCOPE_IDENTITY() is scoped to the current batch/procedure --
+        // an existing, pre-this-fix simplification, not introduced here). When pg_sqlserver isn't
+        // installed (see PgSqlServerSupport#isCurrentStatementAvailable, and the real gap closed
+        // 2026-09-29: Warp run against a real managed Postgres -- Supabase, RDS, etc. -- has no
+        // ability to install it), fall back to plain Postgres's own lastval() -- unlike
+        // normalizeMysql()'s SHOW-style rewrites, this one HAS a real, native, working degraded
+        // path: lastval() is session-wide (the last value from ANY nextval() in this session,
+        // across every sequence), which is actually a CLOSER semantic match to real @@IDENTITY's
+        // own session-wide definition than sys.scope_identity() is.
+        out = SqlLiterals.replaceOutsideLiterals(out, MSSQL_AT_AT_IDENTITY,
+                m -> PgSqlServerSupport.isCurrentStatementAvailable() ? "sys.scope_identity()" : "lastval()");
         out = applyTopLimit(out);
         return out;
     }

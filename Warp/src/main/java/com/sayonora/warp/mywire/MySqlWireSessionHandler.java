@@ -146,6 +146,22 @@ public final class MySqlWireSessionHandler implements Runnable {
     @Override
     public void run() {
         activeSocket = clientSocket;
+        // RELAY (WARP_MYWIRE_BACKEND_MODE=relay) is a raw-byte proxy straight to a real MySQL
+        // instance, 1 socket per client session, no wire parsing at all -- mirrors orawire's own
+        // OracleBackendMode.RELAY (see SessionHandler#run). It must be checked and dispatched
+        // before any of this class's own handshake/query-loop code runs, since a real MySQL server
+        // does its own handshake with the client directly over the relayed bytes.
+        // NativeSessionRelay is a generic byte-pump utility with no Oracle-specific logic, so it is
+        // reused as-is rather than duplicated for mywire.
+        if (options.mySqlBackendMode() == ServerOptions.MySqlBackendMode.RELAY) {
+            try (java.net.Socket socket = activeSocket) {
+                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
+                        socket, options.mysqlHost(), options.mysqlPort());
+            } catch (IOException e) {
+                log.warn("native mysql relay ended: {}", e.getMessage());
+            }
+            return;
+        }
         try {
             DataInputStream in = new DataInputStream(activeSocket.getInputStream());
             OutputStream out = activeSocket.getOutputStream();

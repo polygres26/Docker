@@ -7,7 +7,7 @@ import org.apache.calcite.schema.SchemaPlus;
 
 /**
  * Real S3 (and S3-compatible: MinIO/Wasabi/OCI/GCS-interop) access as a federated Warp schema -- a
- * port of the sibling ThinkingSense project's {@code com.omnigate.calcite.s3.S3SchemaFactory} (real,
+ * port of a prior internal reference implementation's {@code com.omnigate.calcite.s3.S3SchemaFactory} (real,
  * MinIO-verified there), so a Parquet/CSV/XML object in a bucket can be JOINed against a
  * Postgres/Oracle/etc. table in one statement through {@code SchemaFederationStage}. Operand shape
  * (built from an {@code s3://} {@code WARP_BACKENDS} entry by {@link

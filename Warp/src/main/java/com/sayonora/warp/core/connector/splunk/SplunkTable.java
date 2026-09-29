@@ -34,7 +34,7 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 /**
- * One Splunk SPL search exposed as a queryable SQL table -- ported from the sibling ThinkingSense
+ * One Splunk SPL search exposed as a queryable SQL table -- ported from a prior internal reference implementation
  * project's real, tested {@code com.omnigate.calcite.splunk.SplunkTable}: real async
  * {@code /services/search/jobs} submit/poll/fetch via {@link HttpClient}, real SPL-string-append
  * equality pushdown for configured {@link #pushdownColumns} (see {@link #buildSearch}, which mutates

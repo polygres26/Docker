@@ -46,7 +46,13 @@ public final class DialectErrorMessages {
     // whose real dialect-native wording is fixed text in every dialect (e.g. deadlock_detected)
     // needs no extractor at all.
     private static final Map<String, Pattern> EXTRACTORS = Map.ofEntries(
-            Map.entry("42P01", Pattern.compile("relation \"(.+?)\" does not exist")),
+            // Real bug this fixes, found live: Postgres phrases this SAME SQLSTATE differently by
+            // SQL command -- "relation \"x\" does not exist" for SELECT/INSERT/UPDATE, but "table
+            // \"x\" does not exist" for a DROP TABLE specifically (confirmed live: DROP TABLE on a
+            // nonexistent table never matched the "relation" wording at all, so this extractor
+            // silently never fired for it, falling through to the raw, untranslated Postgres
+            // message with no "ORA-00942:" prefix at all). Matches either wording.
+            Map.entry("42P01", Pattern.compile("(?:relation|table) \"(.+?)\" does not exist")),
             Map.entry("42703", Pattern.compile("column \"(.+?)\" does not exist")),
             Map.entry("23505", Pattern.compile("duplicate key value violates unique constraint \"(.+?)\"")),
             Map.entry("23502", Pattern.compile(

@@ -87,7 +87,7 @@ public final class ResponseWriter {
             ColumnMetadata col = columns.get(i);
             if (nativeOciColumnFormat && (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_NUMBER
                     || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR)) {
-                writeColumnMetadataNativeOci(w, col, i);
+                writeColumnMetadataNativeOci(w, col, i, i == columns.size() - 1 && columns.size() > 1);
             } else {
                 writeColumnMetadata(w, col, i);
             }
@@ -196,7 +196,22 @@ public final class ResponseWriter {
     private static final int[] NATIVE_OCI_NAME_LENGTH_OFFSETS = { 50, 51, 55 };
     private static final int NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET = 12;
 
-    private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex) {
+    // Real bug this fixes, found live diffing a fresh 2-column (id NUMBER, name VARCHAR2) real
+    // Oracle-to-Oracle self-loop capture against this codebase's own output for the identical
+    // query: this suffix's own byte 8 (always 0, this array's own zero-filled default) and byte 12
+    // (previously assumed to always hold the plain 0-based column index -- true for every
+    // single-column capture this was ever built/confirmed against, where index is always 0) are
+    // BOTH wrong specifically for the LAST column of a multi-column list -- real Oracle sends 1 at
+    // byte 8 and 0 (not the real index) at byte 12 there, confirmed live via a wire-level patch
+    // test that took a real sqlplus client from hanging to correctly printing every row. Every
+    // non-last column keeps the plain 0-based index at byte 12 and 0 at byte 8, matching the
+    // single-column case exactly (there, the one column IS the last column, but with only one
+    // column ever captured before now, this last-column-specific shape was indistinguishable from
+    // "byte 12 is always just the index").
+    private static final int NATIVE_OCI_COLUMN_SUFFIX_LAST_COLUMN_MARKER_OFFSET = 8;
+
+    private static void writeColumnMetadataNativeOci(TtcWriter w, ColumnMetadata col, int columnIndex,
+            boolean isLastOfMultiple) {
         byte[] prefix = (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR
                 ? NATIVE_OCI_COLUMN_PREFIX_VARCHAR
                 : NATIVE_OCI_COLUMN_PREFIX_NUMBER).clone();
@@ -215,7 +230,11 @@ public final class ResponseWriter {
             prefix[offset] = (byte) nameBytes.length;
         }
         byte[] suffix = NATIVE_OCI_COLUMN_SUFFIX.clone();
-        suffix[NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET] = (byte) columnIndex;
+        if (isLastOfMultiple) {
+            suffix[NATIVE_OCI_COLUMN_SUFFIX_LAST_COLUMN_MARKER_OFFSET] = 1;
+        } else {
+            suffix[NATIVE_OCI_COLUMN_INDEX_SUFFIX_OFFSET] = (byte) columnIndex;
+        }
         w.writeRaw(prefix);
         w.writeRaw(nameBytes);
         w.writeRaw(suffix);
@@ -228,21 +247,58 @@ public final class ResponseWriter {
         }
     }
 
-    // Confirmed live via a real Oracle 23c self-loop capture (a real JDBC CallableStatement
-    // call, one IN NUMBER + one OUT NUMBER parameter): the response's OUT-bind-carrying block is
-    // NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that shape produced a real
-    // ORA-17401 protocol violation against a real client, confirmed live) -- it's this fixed
-    // 10-byte preamble, whose individual field meanings aren't independently confirmed (no public
-    // TTC spec available to cross-check against), followed by a MSG_TYPE_DESCRIBE_INFO (0x10) tag
-    // byte, then one ROW_DATA-tagged value per OUT parameter in call-position order. This exact
-    // byte sequence for exactly ONE scalar OUT parameter is what was captured and is what's
-    // shipped here -- untested/unconfirmed for more than one OUT parameter in the same call (see
-    // RequestLoop#handlePlSqlExecute's own scope notes).
-    private static final byte[] IO_VECTOR_PREAMBLE = { 0x05, 0x01, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x20 };
+    // Originally confirmed live via a real Oracle 23c self-loop capture (a real JDBC
+    // CallableStatement call, one IN NUMBER + one OUT NUMBER parameter): the response's
+    // OUT-bind-carrying block is NOT a DESCRIBE_INFO/ROW_DATA pair (a first attempt using that
+    // shape produced a real ORA-17401 protocol violation against a real client, confirmed live)
+    // -- it's a fixed-shape preamble, whose individual field meanings aren't independently
+    // confirmed (no public TTC spec available to cross-check against), followed by a
+    // MSG_TYPE_DESCRIBE_INFO (0x10) tag byte, then one ROW_DATA-tagged value per OUT parameter in
+    // call-position order.
+    //
+    // That original preamble was hardcoded as a 10-byte CONSTANT -- { 0x01, 0x02, 0x00, 0x01,
+    // 0x01, 0x00, 0x00, 0x00, 0x20 } after the leading MSG_TYPE_IO_VECTOR tag byte -- and shipped
+    // as correct for ANY single-scalar-OUT call. That was WRONG: a second real capture (a
+    // procedure whose ONLY parameter is the single OUT, i.e. total bind count 1, not 2) produced
+    // a real client-side ORA-17401 through this server while the identical call succeeded direct
+    // against real Oracle, and a byte-for-byte diff of a real-Oracle capture against this same
+    // call's real-Oracle response nailed the exact divergence:
+    //
+    //   1 IN NUMBER + 1 OUT NUMBER (2 total binds), real Oracle: 05 01 02 00 01 01 00 00 00 20 10 07 ...
+    //   1 OUT NUMBER only          (1 total bind),  real Oracle: 05 01 01 00 01 01 00 00 00    10 07 ...
+    //
+    // The fixed 9-byte header { 0x05, 0x01, <totalBindCount>, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00 } is
+    // the same in both captures except for the bind-count field at index 1 -- but the 2-bind
+    // capture carries exactly ONE extra trailing byte (0x20) that the 1-bind capture does not.
+    // That extra byte's count tracks (totalBindCount - 1), i.e. one io-vector entry per IN bind
+    // in the call -- read as one io-vector entry per IN bind, describing it back to the client,
+    // with the OUT bind needing no such entry since its value follows separately as ROW_DATA. The
+    // old code always hardcoded totalBindCount=2 and always appended exactly one 0x20 byte
+    // regardless of the real call shape, which happened to match the only shape ever captured (1
+    // IN + 1 OUT) and was silently wrong for every other bind count -- confirmed live via the
+    // second capture above, which shows Warp emitting the stale "05 01 02 00 01 01 00 00 00 20"
+    // preamble for a 1-total-bind call, exactly the wrong-bind-count bytes a real ojdbc client
+    // then rejects with ORA-17401. Still unconfirmed for more than one OUT parameter in the same
+    // call (see RequestLoop#handlePlSqlExecute's own scope notes, which refuses that shape
+    // outright).
+    private static final byte IO_VECTOR_HEADER_TAIL_BYTE = 0x20;
 
-    public static void writeOutBindValues(TtcWriter w, List<ColumnMetadata> outColumns, Object[] outValues) {
+    public static void writeOutBindValues(TtcWriter w, List<ColumnMetadata> outColumns, Object[] outValues,
+            int totalBindCount) {
         w.writeUint8(TtcConstants.MSG_TYPE_IO_VECTOR);
-        w.writeRaw(IO_VECTOR_PREAMBLE);
+        w.writeUint8(0x05);
+        w.writeUint8(0x01);
+        w.writeUint8(totalBindCount);
+        w.writeUint8(0x00);
+        w.writeUint8(0x01);
+        w.writeUint8(0x01);
+        w.writeUint8(0x00);
+        w.writeUint8(0x00);
+        w.writeUint8(0x00);
+        int inBindCount = Math.max(0, totalBindCount - 1);
+        for (int i = 0; i < inBindCount; i++) {
+            w.writeUint8(IO_VECTOR_HEADER_TAIL_BYTE);
+        }
         w.writeUint8(TtcConstants.MSG_TYPE_DESCRIBE_INFO);
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
         for (int i = 0; i < outColumns.size(); i++) {
@@ -317,6 +373,22 @@ public final class ResponseWriter {
     // the two real dblink captures this marker/prefix WERE verified against stay unaffected.
     public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values,
             boolean dblinkClient) {
+        writeRowNativeOci(w, columns, values, dblinkClient, true);
+    }
+
+    // Real bug this fixes, found live: a dblink client's row-carrying response for a multi-column
+    // query has TWO real, distinct shapes depending on how the row arrives, not one -- a genuine
+    // FETCH continuation's own row DOES carry NATIVE_OCI_ROW_PREFIX (confirmed against a real
+    // capture, already correct via the plain `dblinkClient` overload above), but the SAME row when
+    // it's instead embedded inline inside the Execute-tail template (writeNativeOciExecuteTailWithRows's
+    // own "chained Execute" case) does NOT -- confirmed via a fresh real Oracle-to-Oracle self-loop
+    // capture showing zero bytes where this codebase used to unconditionally insert the 4-byte
+    // prefix, corrupting the response's total length (513 bytes sent vs the real 509) and hanging
+    // the client. `allowMultiColumnRowPrefix` lets the Execute-tail-embedding call site opt out of
+    // just this one behavior while keeping every other native-OCI row-shaping rule (single-VARCHAR
+    // marker included, since that hasn't been shown to have the same two-shapes split).
+    public static void writeRowNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values,
+            boolean dblinkClient, boolean allowMultiColumnRowPrefix) {
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
         if (dblinkClient && columns.size() == 1 && columns.get(0).oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
             TtcWriter valueWriter = new TtcWriter();
@@ -327,7 +399,7 @@ public final class ResponseWriter {
             w.writeRaw(encodedValue);
             return;
         }
-        if (dblinkClient && columns.size() > 1) {
+        if (dblinkClient && columns.size() > 1 && allowMultiColumnRowPrefix) {
             w.writeRaw(NATIVE_OCI_ROW_PREFIX);
         }
         for (int i = 0; i < columns.size(); i++) {
@@ -560,6 +632,39 @@ public final class ResponseWriter {
         w.writeUint8(messageBytes.length);
         w.writeRaw(messageBytes);
         w.writeRaw(NATIVE_OCI_ERROR_SUFFIX);
+    }
+
+    // Real bug this fixes, found live: a real non-dblink native-OCI client's own FETCH request for
+    // the LAST batch of a multi-row result (a real row combined with the end-of-data signal in one
+    // response) used this codebase's own generic writeErrorEnd shape -- far too short (real
+    // Oracle's own equivalent response is 241 bytes, not writeErrorEnd's much shorter one) and
+    // missing the row value entirely, corrupting the byte count enough that a real client simply
+    // stopped responding rather than continuing (confirmed live: a real 2-row SELECT's second,
+    // last row never got past this exact response). This template + two splice points (the row
+    // value, and NATIVE_OCI_ROW_PREFIX before it) come from a real Oracle-to-Oracle self-loop
+    // capture of the identical scenario (a real, plain non-dblink client, a real 2-column,
+    // 2-row SELECT, fetching its second and final row) -- the trailing message text is the SAME
+    // fixed "ORA-01403: no data found\n" this codebase's own writeErrorEnd call for the
+    // genuinely-empty-fetch case already uses, confirmed by this capture's own length-prefixed
+    // string byte-matching it exactly.
+    private static final byte[] NATIVE_OCI_FETCH_LAST_ROW_PREFIX = java.util.Base64.getDecoder().decode(
+        "BgEaAAIAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAJr1cPQAAAAAAAAAAAAAAACZ9XD0AAA=");
+    private static final byte[] NATIVE_OCI_FETCH_LAST_ROW_SUFFIX = java.util.Base64.getDecoder().decode(
+        "BAEAAADfAAECAAAAewUAAAAABQAAAAMAIAAAAAMgAQAABAAAuZIAAAEAAAAAAAAAABYAAAAAAAA2AQAAAAAAAAAAAAAAAAAA0PpJ9nD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAIAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
+
+    public static void writeFetchLastRowResponseNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
+        w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_PREFIX);
+        w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
+        // NATIVE_OCI_ROW_PREFIX only confirmed (both here and at writeRowNativeOci's own, separate
+        // call site) for a 2+-column row -- not yet captured for a single-column FETCH-continuation
+        // to know whether it applies there too, so scoped the same conservative way.
+        if (columns.size() > 1) {
+            w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+        }
+        for (int i = 0; i < columns.size(); i++) {
+            writeColumnValue(w, columns.get(i), values[i]);
+        }
+        w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_SUFFIX);
     }
 
     private static void writeZeroRowid(TtcWriter w) {

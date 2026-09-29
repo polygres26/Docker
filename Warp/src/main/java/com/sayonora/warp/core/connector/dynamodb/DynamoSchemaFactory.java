@@ -14,7 +14,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
 
 /**
- * Real DynamoDB access as a federated Warp schema -- a port of the sibling ThinkingSense project's
+ * Real DynamoDB access as a federated Warp schema -- a port of a prior internal reference implementation's
  * {@code com.omnigate.calcite.dynamodb.DynamoSchemaFactory} (real, tested there), so a DynamoDB
  * table can be JOINed against a Postgres/Oracle/etc. table in one statement through {@code
  * SchemaFederationStage}. Operand shape (built from a {@code dynamodb://} {@code WARP_BACKENDS}
@@ -36,7 +36,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
  *
  * <p>Implements Calcite's {@link SchemaFactory} for fidelity with the source, but Warp calls {@link
  * #createSchema} directly from {@code SchemaFederationStage} -- no model-file/reflection loading.
- * ThinkingSense's {@code statisticsFor} ({@code DescribeTable.itemCount}) isn't ported: Warp's
+ * that reference implementation's {@code statisticsFor} ({@code DescribeTable.itemCount}) isn't ported: Warp's
  * {@code StatisticsStore} is JDBC/{@code pg_class}-based, so there is no seam for it yet.
  */
 public final class DynamoSchemaFactory implements SchemaFactory {

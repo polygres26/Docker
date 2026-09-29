@@ -7,7 +7,7 @@ import org.apache.calcite.schema.SchemaFactory;
 import org.apache.calcite.schema.SchemaPlus;
 
 /**
- * Real Splunk access as a federated Warp schema -- a port of the sibling ThinkingSense project's
+ * Real Splunk access as a federated Warp schema -- a port of a prior internal reference implementation's
  * {@code com.omnigate.calcite.splunk.SplunkSchemaFactory} (real, shipped exactly as its own
  * ARCHITECTURE.md describes: real async {@code /services/search/jobs} submit/poll/fetch, real
  * SPL-string-append equality pushdown for configured {@code pushdownColumns}), so a Splunk saved

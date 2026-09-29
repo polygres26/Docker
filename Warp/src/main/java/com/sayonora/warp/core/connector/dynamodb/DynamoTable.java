@@ -52,9 +52,9 @@ public final class DynamoTable extends AbstractTable implements ScannableTable {
      * a stale version of) a very recently written item. This is AWS's documented default, kept
      * as-is from the ported source; it must be stated in customer-facing compatibility docs.
      *
-     * <p>Sequential single-segment scan only. ThinkingSense's version splits the table into
+     * <p>Sequential single-segment scan only. that reference implementation's version splits the table into
      * {@code totalSegments} real DynamoDB parallel-scan segments read concurrently through its
-     * {@code LakehouseFileScanExecutor} (see ThinkingSense {@code
+     * {@code LakehouseFileScanExecutor} (see that reference implementation's {@code
      * com/omnigate/calcite/dynamodb/DynamoTable.java}, {@code scan}/{@code readSegment}); that is
      * a deliberate fast-follow here, not ported for v1.
      */

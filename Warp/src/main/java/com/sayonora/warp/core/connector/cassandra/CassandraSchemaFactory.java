@@ -10,7 +10,7 @@ import org.apache.calcite.schema.SchemaFactory;
 import org.apache.calcite.schema.SchemaPlus;
 
 /**
- * Real Cassandra access as a federated Warp schema -- a port of the sibling ThinkingSense project's
+ * Real Cassandra access as a federated Warp schema -- a port of a prior internal reference implementation's
  * {@code com.omnigate.calcite.cassandra.CassandraSchemaFactory} (real, tested there), so a Cassandra
  * table can be JOINed against a Postgres/Oracle/etc. table in one statement through {@code
  * SchemaFederationStage}. Operand shape (built from a {@code cassandra://} {@code WARP_BACKENDS}
