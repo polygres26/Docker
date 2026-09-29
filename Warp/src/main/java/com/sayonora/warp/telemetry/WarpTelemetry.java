@@ -160,6 +160,60 @@ public final class WarpTelemetry {
         }
     }
 
+    /** Trace-export sibling of {@link ExportHealthTrackingExporter} -- wraps the real OTLP span
+     * exporter {@code BatchSpanProcessor} calls periodically/on-batch-full, tracking each batch
+     * export's real outcome the same way. Package-private for the same test-seam reason. */
+    static final class TraceExportHealthTrackingExporter implements SpanExporter {
+        private final SpanExporter delegate;
+        private final AtomicLong attempts = new AtomicLong();
+        private final AtomicLong successes = new AtomicLong();
+        private final AtomicLong failures = new AtomicLong();
+        private volatile Instant lastAttemptAt;
+        private volatile Instant lastSuccessAt;
+        private volatile String lastError;
+
+        TraceExportHealthTrackingExporter(SpanExporter delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public CompletableResultCode export(java.util.Collection<io.opentelemetry.sdk.trace.data.SpanData> spans) {
+            attempts.incrementAndGet();
+            lastAttemptAt = Instant.now();
+            CompletableResultCode code = delegate.export(spans);
+            code.whenComplete(() -> {
+                if (code.isSuccess()) {
+                    successes.incrementAndGet();
+                    lastSuccessAt = Instant.now();
+                    lastError = null;
+                } else {
+                    failures.incrementAndGet();
+                    Throwable t = code.getFailureThrowable();
+                    lastError = t != null ? t.toString() : "export did not succeed (no exception reported)";
+                }
+            });
+            return code;
+        }
+
+        @Override
+        public CompletableResultCode flush() {
+            return delegate.flush();
+        }
+
+        @Override
+        public CompletableResultCode shutdown() {
+            return delegate.shutdown();
+        }
+
+        ExportHealth health(long approxIntervalMs) {
+            Instant success = lastSuccessAt;
+            boolean verified = success != null
+                    && Duration.between(success, Instant.now()).toMillis() <= 3 * approxIntervalMs;
+            return new ExportHealth(attempts.get(), successes.get(), failures.get(), lastAttemptAt, success, lastError,
+                    verified, false);
+        }
+    }
+
     /** The live export-health snapshot for this instance -- see {@link ExportHealth}'s own javadoc. */
     public ExportHealth exportHealth() {
         return trackedExporter.health(exportIntervalMs);
@@ -176,6 +230,7 @@ public final class WarpTelemetry {
 
     private final Tracer tracer;
     private final boolean tracesEnabled;
+    private final TraceExportHealthTrackingExporter tracedSpanExporter;
 
     /** {@code null} unless {@code WARP_OTEL_TRACES_ENABLED=true} -- traces are a genuinely new,
      * more invasive signal (every pipeline stage on every statement becomes a span) than the
@@ -192,6 +247,15 @@ public final class WarpTelemetry {
      * as {@code ObservabilityToggles.prometheusEnabled()}. */
     public boolean tracesEnabled() {
         return tracesEnabled;
+    }
+
+    /** Real per-batch trace-export outcome, same idiom as {@link #exportHealth()} for metrics --
+     * {@code BatchSpanProcessor} export()s a batch of spans periodically/on-batch-full; a failed
+     * batch means every span in it is genuinely dropped (never retried), so {@code failures} here
+     * IS real dropped-span visibility, not a separately-invented "dropped points" counter. {@code
+     * null} unless tracing is enabled. */
+    public ExportHealth traceExportHealth() {
+        return tracesEnabled ? tracedSpanExporter.health(exportIntervalMs) : null;
     }
 
     /** Real, disclosed limitation: {@code host.name} is the only per-process identity attached --
@@ -226,12 +290,14 @@ public final class WarpTelemetry {
         this.trackedExporter = new ExportHealthTrackingExporter(buildExporter(protocol, otlpEndpoint, headers));
         this.tracesEnabled = "true".equalsIgnoreCase(System.getenv("WARP_OTEL_TRACES_ENABLED"));
         if (tracesEnabled) {
+            this.tracedSpanExporter = new TraceExportHealthTrackingExporter(buildSpanExporter(protocol, otlpEndpoint, headers));
             SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
                     .setResource(resource)
-                    .addSpanProcessor(BatchSpanProcessor.builder(buildSpanExporter(protocol, otlpEndpoint, headers)).build())
+                    .addSpanProcessor(BatchSpanProcessor.builder(tracedSpanExporter).build())
                     .build();
             this.tracer = tracerProvider.get("com.sayonora.warp");
         } else {
+            this.tracedSpanExporter = null;
             this.tracer = null;
         }
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()

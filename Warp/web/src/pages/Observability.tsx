@@ -1,6 +1,6 @@
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import { getObservability, setObservabilityToggles } from '../api/client'
+import { getObservability, setObservabilityToggles, testOtlpConnection, type OtlpConnectionTestResult } from '../api/client'
 import { Button, CodeBlock, DataTable, Field, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, Tabs, Tag, type KpiItem, type Tone } from '../components/ui'
 import { OTEL_PRESETS, type OtelPreset } from '../api/otel-presets'
 import { errorText, useLoad } from '../hooks'
@@ -141,6 +141,30 @@ export default function Observability() {
               )}
             </Section>
           )}
+
+          {otlp?.enabled && (
+            <Section flush title="Tracing" meta="one span per pipeline stage per statement">
+              {otlp.tracesEnabled && otlp.traces ? (
+                <div className={styles.pad}>
+                  <p className={styles.sub}>
+                    {otlp.traces.exportAttempts} batch export attempt{otlp.traces.exportAttempts === 1 ? '' : 's'} ·
+                    {' '}{otlp.traces.exportSuccesses} succeeded · {otlp.traces.exportFailures} failed
+                    {otlp.traces.lastExportAt ? ` · last attempt ${ago(otlp.traces.lastExportAt)}` : ''}.
+                    {otlp.traces.exportFailures > 0 && ' A failed batch means every span in it was genuinely dropped (never retried).'}
+                  </p>
+                  {otlp.traces.lastError && <p className={styles.sub}>Last error: <code>{otlp.traces.lastError}</code></p>}
+                </div>
+              ) : (
+                <div className={styles.pad}>
+                  <span className={styles.sub}>
+                    Not enabled -- set WARP_OTEL_TRACES_ENABLED=true (on top of WARP_OTEL_ENDPOINT) to trace protocol → policy →
+                    cache → translation → backend for every statement. Disclosed gap: no propagation into the backend's own
+                    JDBC call, and no spans before a statement is parsed or after the response is serialized.
+                  </span>
+                </div>
+              )}
+            </Section>
+          )}
         </>
       )}
 
@@ -261,12 +285,29 @@ function ConfigGenerator({ prometheusPath }: { prometheusPath: string }) {
   const [endpoint, setEndpoint] = useState(selected.endpointPlaceholder ?? '')
   const [headers, setHeaders] = useState(selected.headerPlaceholder ?? '')
   const [target, setTarget] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<OtlpConnectionTestResult | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
 
   function select(p: OtelPreset) {
     setSelectedId(p.id)
     setProtocol(p.protocol ?? 'grpc')
     setEndpoint(p.endpointPlaceholder ?? '')
     setHeaders(p.headerPlaceholder ?? '')
+    setTestResult(null)
+    setTestError(null)
+  }
+
+  async function runTest() {
+    setTesting(true)
+    setTestError(null)
+    try {
+      setTestResult(await testOtlpConnection({ protocol, endpoint, headers: headers.trim() || undefined }))
+    } catch (e) {
+      setTestError(errorText(e))
+    } finally {
+      setTesting(false)
+    }
   }
 
   const otlpConfig = [
@@ -320,6 +361,18 @@ function ConfigGenerator({ prometheusPath }: { prometheusPath: string }) {
             <Field label="Headers" hint="key=value, comma-separated for more than one -- values are never sent anywhere, this only builds the text below">
               {(id) => <input id={id} value={headers} onChange={(e) => setHeaders(e.target.value)} placeholder="none" />}
             </Field>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Button disabled={testing || !endpoint} onClick={runTest}>{testing ? 'Testing…' : 'Test connection'}</Button>
+              <span className={styles.sub}>Makes a real, one-off OTLP export attempt against this endpoint (5s timeout) -- not saved, not applied.</span>
+            </div>
+            {testError && <Notice tone="bad">Could not run the test: {testError}</Notice>}
+            {testResult && (
+              <Notice tone={testResult.success ? 'ok' : 'bad'}>
+                {testResult.success
+                  ? <>Connected: a real {testResult.protocol.toUpperCase()} export to <code>{testResult.endpoint}</code> succeeded in {testResult.tookMs}ms.</>
+                  : <>Failed after {testResult.tookMs}ms: <code>{testResult.errorMessage}</code></>}
+              </Notice>
+            )}
             <div style={{ marginTop: 12 }}>
               <CodeBlock label="Generated Warp configuration">{otlpConfig}</CodeBlock>
             </div>

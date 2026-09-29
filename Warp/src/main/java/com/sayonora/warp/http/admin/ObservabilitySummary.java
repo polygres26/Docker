@@ -106,6 +106,22 @@ public final class ObservabilitySummary {
             // protocol's statement execution passes through). Off by default -- opt-in on top of
             // OTLP being enabled at all, since it's a more invasive signal than metrics ever were.
             otlp.addProperty("tracesEnabled", live.tracesEnabled());
+            if (live.tracesEnabled()) {
+                // Real per-batch trace-export outcome -- a failed BatchSpanProcessor batch means
+                // every span in it is genuinely dropped (never retried), so this IS real
+                // dropped-span visibility, not a separately-invented "dropped points" counter.
+                WarpTelemetry.ExportHealth traceHealth = live.traceExportHealth();
+                JsonObject tracesJson = new JsonObject();
+                tracesJson.addProperty("exportAttempts", traceHealth.attempts());
+                tracesJson.addProperty("exportSuccesses", traceHealth.successes());
+                tracesJson.addProperty("exportFailures", traceHealth.failures());
+                tracesJson.addProperty("lastExportAt", traceHealth.lastAttemptAt() != null ? traceHealth.lastAttemptAt().toString() : null);
+                tracesJson.addProperty("lastSuccessAt", traceHealth.lastSuccessAt() != null ? traceHealth.lastSuccessAt().toString() : null);
+                tracesJson.addProperty("lastError", traceHealth.lastError());
+                otlp.add("traces", tracesJson);
+            } else {
+                otlp.add("traces", null);
+            }
         } else {
             otlp.addProperty("exportAttempts", 0);
             otlp.addProperty("exportSuccesses", 0);
@@ -117,6 +133,7 @@ public final class ObservabilitySummary {
             otlp.addProperty("pausedByAdmin", false);
             otlp.add("resource", null);
             otlp.addProperty("tracesEnabled", false);
+            otlp.add("traces", null);
         }
         out.add("otlp", otlp);
 

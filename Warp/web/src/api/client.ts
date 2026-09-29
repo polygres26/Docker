@@ -961,6 +961,21 @@ export interface ObservabilityOtlpStatus {
    * receiving end; this is the real identity now sent. Keys match the OTLP resource attribute
    * names verbatim (e.g. `"service.name"`, `"host.name"`, `"warp.zone"`). */
   resource: Record<string, string> | null
+  /** Real now: true only when WARP_OTEL_TRACES_ENABLED=true AND OTLP is live -- a genuine OTLP
+   * trace exporter (see StatementPipeline.java) spans every pipeline stage on every statement.
+   * Off by default; opt-in on top of OTLP export being enabled at all. */
+  tracesEnabled: boolean
+  /** Real per-batch trace-export outcome -- null unless tracesEnabled. A failed BatchSpanProcessor
+   * batch means every span in it is genuinely dropped (never retried), so exportFailures here IS
+   * real dropped-span visibility. */
+  traces: {
+    exportAttempts: number
+    exportSuccesses: number
+    exportFailures: number
+    lastExportAt: string | null
+    lastSuccessAt: string | null
+    lastError: string | null
+  } | null
 }
 
 export interface ObservabilityMetric {
@@ -1002,6 +1017,26 @@ export async function setObservabilityToggles(
   toggles: { otlpEnabled?: boolean | null; prometheusEnabled?: boolean | null },
 ): Promise<{ ok: boolean; version: number; observability: ObservabilityStatus }> {
   return api('/api/observability', { method: 'PATCH', body: JSON.stringify(toggles) })
+}
+
+export interface OtlpConnectionTestResult {
+  success: boolean
+  tookMs: number
+  protocol: string
+  endpoint: string
+  errorMessage: string | null
+}
+
+/** POST /api/observability/test-connection: a REAL test export against a candidate destination
+ * (ObservabilityApi.handleTestConnection / OtlpConnectivityTest.java) -- a genuine network call
+ * (connection, TLS handshake, and for a SaaS endpoint that validates the header on every request,
+ * a real auth result), never a bare socket check, and never against the live configured
+ * exporter's own counters. `headers` is the same `key=value,key2=value2` grammar as
+ * WARP_OTEL_HEADERS. Always resolves (never throws on a failed test -- that's a normal result). */
+export async function testOtlpConnection(
+  args: { protocol?: 'grpc' | 'http'; endpoint: string; headers?: string },
+): Promise<OtlpConnectionTestResult> {
+  return api('/api/observability/test-connection', { method: 'POST', body: JSON.stringify(args) })
 }
 
 export interface UsageStat { calls: number; errors: number; totalMs: number; avgMs: number }

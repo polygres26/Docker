@@ -10,10 +10,14 @@ import com.sayonora.warp.core.QosControlStage;
 import com.sayonora.warp.core.StatsCollectorStage;
 import com.sayonora.warp.mcp.McpMetricsCollector;
 import com.sayonora.warp.telemetry.ObservabilityToggles;
+import com.sayonora.warp.telemetry.OtlpConnectivityTest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.sql.SQLException;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * {@code PATCH /api/observability}: the admin-settable, {@code warp_config}-persisted enable/
@@ -63,6 +67,67 @@ public final class ObservabilityApi {
         } catch (SQLException e) {
             error(response, HttpServletResponse.SC_BAD_GATEWAY, e.getMessage());
         }
+    }
+
+    private static final Duration TEST_CONNECTION_TIMEOUT = Duration.ofSeconds(5);
+
+    /**
+     * {@code POST /api/observability/test-connection}: runs {@link OtlpConnectivityTest} against a
+     * candidate protocol/endpoint/headers -- a REAL test export (see that class's own javadoc for
+     * why this is a genuine network probe, not a bare socket check), never against the live
+     * configured exporter's own counters. Body: {@code {"protocol": "grpc"|"http", "endpoint":
+     * "...", "headers": "key=value,key2=value2"}}; {@code endpoint} is required, the rest default
+     * to {@code grpc} and no headers. Always responds 200 with the real result (success or not) --
+     * a failed connectivity test is a normal, expected outcome, not a server error.
+     */
+    public static void handleTestConnection(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setContentType("application/json; charset=utf-8");
+        try {
+            JsonObject body = readBody(request);
+            String endpoint = str(body, "endpoint");
+            if (endpoint == null || endpoint.isBlank()) {
+                error(response, HttpServletResponse.SC_BAD_REQUEST, "\"endpoint\" is required");
+                return;
+            }
+            String protocol = str(body, "protocol");
+            Map<String, String> headers = parseHeaderSpec(str(body, "headers"));
+
+            OtlpConnectivityTest.Result result = OtlpConnectivityTest.test(
+                    protocol == null ? "grpc" : protocol, endpoint, headers, TEST_CONNECTION_TIMEOUT);
+
+            JsonObject out = new JsonObject();
+            out.addProperty("success", result.success());
+            out.addProperty("tookMs", result.tookMs());
+            out.addProperty("protocol", result.protocol());
+            out.addProperty("endpoint", result.endpoint());
+            out.addProperty("errorMessage", result.errorMessage());
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(out.toString());
+        } catch (JsonParseException | IllegalStateException | ClassCastException e) {
+            error(response, HttpServletResponse.SC_BAD_REQUEST, "invalid request body: " + e.getMessage());
+        }
+    }
+
+    private static String str(JsonObject body, String key) {
+        JsonElement e = body.get(key);
+        return e == null || e.isJsonNull() ? null : e.getAsString();
+    }
+
+    /** Same {@code key=value,key2=value2} grammar {@code WARP_OTEL_HEADERS} uses -- deliberately
+     * lenient (skip a malformed entry, never throw) since a candidate value being tested is, by
+     * definition, not yet known-good. */
+    private static Map<String, String> parseHeaderSpec(String spec) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (spec == null || spec.isBlank()) {
+            return headers;
+        }
+        for (String pair : spec.split(",")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                headers.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+            }
+        }
+        return headers;
     }
 
     /** Reads {@code key} as a tri-state boolean override. Absent key: unchanged (returns {@code
