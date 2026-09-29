@@ -2739,12 +2739,21 @@ delivers the same notification to every listening connection — Warp adds no ad
 its own.
 
 **Out-of-band invalidation for writes that bypass Warp entirely** (`CacheInvalidationListener`,
-Postgres-backend-only): a write made directly against a Postgres backend — `psql`, a migration
-tool, another application — still invalidates `CacheStage`'s and `RowCache`'s entries, via the same
-Postgres trigger/NOTIFY mechanism, so a cache entry never goes stale just because the write didn't
-come through Warp's TCP frontends. This does **not** extend to non-Postgres backends (Oracle/MySQL/
-SQL Server reached via Bridge) — a write made directly against the real engine, bypassing Warp
-entirely, has no equivalent trigger-based invalidation path at all.
+Postgres-backend-only) — **⚠️ confirmed NOT wired into the running server as of 2026-09-29, despite
+being fully implemented and isolated-tested**: the design intent is that a write made directly
+against a Postgres backend — `psql`, a migration tool, another application — still invalidates
+`CacheStage`'s and `RowCache`'s entries via a Postgres trigger/NOTIFY mechanism, so a cache entry
+never goes stale just because the write didn't come through Warp's TCP frontends. `CacheInvalidationListener`
+and `CacheTriggerInstaller.install()` both exist and are proven correct in isolation
+(`CacheTriggerInstallerTest`, `CacheInvalidationPayloadTest`), but neither is ever constructed or
+called anywhere in `Main.java` or any other main-source file — confirmed by grep, zero call sites
+outside test code. **In today's actual running Warp, an out-of-band write does NOT invalidate any
+cache entry** — only the TTL backstop (`WARP_CACHE_TTL_MS`, default 30s) eventually clears a stale
+entry. Filed as a follow-up (`task_dec35035`) to wire it in with appropriate safety (best-effort on
+missing `TRIGGER` privilege, tied into the existing config-reload path) and add a real end-to-end
+test proving it. This does **not** extend to non-Postgres backends (Oracle/MySQL/SQL Server reached
+via Bridge) even once wired in — a write made directly against the real engine, bypassing Warp
+entirely, has no equivalent trigger-based invalidation path at all, Postgres-only or otherwise.
 
 | Protocol | Result cache | Generic-PK cache | Shared RowCache | Notes |
 |---|---|---|---|---|
@@ -2773,6 +2782,60 @@ mssqlwire's own Adapt-mode traffic) serve. The real risk case is narrower than "
 corrupts the cache": it's specifically a deployment mixing Relay and Adapt/Bridge traffic against
 the **same physical Postgres table** from different sessions, which is an unusual, not-recommended
 configuration to begin with.
+
+#### 8.2.2 Test coverage audit: QoS, Caching, Translation (2026-09-29)
+
+Every feature in Warp needs to be tested and documented — this is a living tracker, not a finished
+checklist, starting with the three most directly implicated by §8.1–§8.2.1. A test-coverage survey
+(reading every existing test file touching these areas, not just the production code) found real,
+specific gaps, and this pass closed the single highest-ranked gap in each:
+
+**QoS admission control (`QosControlStage`)** — closed: `WARP_QOS_CLASS_LIMITS` (per-workload-class
+limits) had never been tested with more than one class populated, despite being a real, documented,
+user-facing feature and the rejection error message explicitly naming the workload class. New
+`QosPerClassLimitLiveIntegrationTest` proves, live through a real pgwire connection, that a tight
+`write:1:1:0` class limit rejects a second rapid write with SQLState `57014` while the (generously
+limited) `query` class stays completely unaffected — the per-class token buckets are genuinely
+independent, not cosmetic. **Still open, not covered by any test**: no live test drives a real wire
+frontend under real concurrent multi-client load to prove QoS protects a backend end-to-end (every
+existing assertion, including the new one, is single-connection); `QosControlStage.reconfigure()`/
+`reconfigureFromEnv()` (the `warp_config` hot-reload path) has zero test coverage; `WARP_QOS_MAX_WAIT_MS
+> 0` (the backpressure/wait-for-a-token path, vs. immediate rejection) is never exercised with a
+positive value.
+
+**Caching** — the survey surfaced something more serious than a missing test: **`CacheTriggerInstaller`
+and `CacheInvalidationListener` (§8.2.1's out-of-band invalidation) are never constructed or called
+anywhere in `Main.java` or any other main-source file** — confirmed by grep, the only call sites in
+the entire codebase are inside isolated unit tests. The feature is fully implemented and correct in
+isolation, but was never wired into the running server, so it does nothing in production today.
+Corrected in §8.2.1 above rather than left overclaimed; filed as `task_dec35035` to wire it in
+(with care: `TRIGGER`-privilege failures must degrade to a warning, not prevent Warp from starting,
+since many managed-Postgres roles won't have that privilege) and add the first real end-to-end proof
+(a bare `psql` write invalidating a live Warp cache entry). **Still open, not covered by any test**:
+no cross-SQL-wire-protocol invalidation test exists (a pgwire write invalidating a cache entry a
+mywire/orawire `SELECT` populated — the cross-protocol coverage that does exist is SQL-vs-NoSQL, not
+SQL-vs-SQL); `StatisticsStore` (federation join-planning statistics) has zero test coverage of any
+kind; the Shim-availability cache's "only busted by a process restart" behavior (§8.2.1) is asserted
+nowhere.
+
+**Dialect Translation (`DialectTranslationStage`)** — closed: the LLM fallback path (taken when
+`DialectTranslations`'s deterministic AST/regex rewriter returns `null`) had zero test coverage —
+the existing `QueryRepairIntegrationTest` uses the same fake-LLM-HTTP-server technique but its own
+javadoc explicitly says it "deliberately provokes a same-dialect failure ... so
+DialectTranslationStage's own, separate LLM fallback ... structurally cannot be what fixes this" —
+i.e. it exists specifically to rule this path OUT, not exercise it. New
+`DialectTranslationLlmFallbackIntegrationTest` uses Oracle's `CONNECT BY` (already proven at the
+unit level to make the deterministic rewriter return `null`) to force the LLM fallback live through
+a real orawire connection, proves the LLM's own returned SQL is genuinely what executes (not the
+original untranslatable text), and proves an identical second statement is served from
+`TranslationCache` — the LLM is called exactly once, not twice. **Still open, not covered by any
+test**: the large majority of `DialectTranslations.java`'s dozens of individual regex-based rewrite
+rules (MySQL's `LAST_INSERT_ID()`/`GROUP_CONCAT()`/`DATE_FORMAT()` and `SHOW COLUMNS` specifically
+are covered via `AdaptShimMysqlBuiltinIntegrationTest`/`AdaptWithoutShimIntegrationTest`, but its
+sibling `DESCRIBE`/`SHOW INDEX`/`SHOW VARIABLES`/`SHOW CREATE TABLE` rewrites, and MSSQL's
+`TOP`/`GETDATE()`/`ISNULL`/bracketed identifiers, `ROWNUM`, `DECODE`, `NVL`, and Postgres sequence/
+cast rewriting, have no dedicated test at all — only a handful of Oracle DDL-type examples and the
+"unhandled construct" safety net are covered in `DialectTranslationsTest`).
 
 ### 8.3 Security features
 
