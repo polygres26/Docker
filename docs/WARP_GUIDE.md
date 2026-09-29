@@ -2606,6 +2606,33 @@ Live-verified against a genuinely plain `RealPostgres` (no `shared_preload_libra
 installed at all — not just "an unconfigured local instance," a real simulation of the managed-
 provider case) via `com.sayonora.warp.core.AdaptWithoutShimIntegrationTest`.
 
+#### 8.1.5 Capability matrix: Relay vs Bridge vs Adapt, per frontend
+
+One consolidated reference pulling together everything in §8.1.1–§8.1.4 plus §8.1.3's RTT numbers,
+frontend by frontend and mode by mode. pgwire has no Relay/Bridge split (source and target dialect
+are identical — see the note after the table) so it gets a single row.
+
+| Frontend | Mode | Firewall / QoS / audit | Pooling | Dialect translation | Shim reach (Adapt only) | Session-state reset on pool return | Client-facing auth | RTT avg (§8.1.3) |
+|---|---|---|---|---|---|---|---|---|
+| pgwire | Adapt (only mode) | Yes | Yes — many-to-few, `WARP_POOL_MAX_SIZE` | N/A — no dialect gap to bridge (Postgres→Postgres) | N/A | N/A | Warp `CredentialStore` (`WARP_AUTH_USER`/`_PASSWORD`) | 0.44ms |
+| orawire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real Oracle's own session, untouched by Warp) | Client's real O5LOGON credentials, verified by real Oracle | 0.36ms |
+| orawire | Bridge | Yes | Yes, many-to-few — `OracleBridgePool` | No — verbatim Oracle SQL | N/A (Bridge talks to real Oracle directly, no Shim involved) | Partial — `DBMS_SESSION.RESET_PACKAGE` run; `ALTER SESSION`, temp tables, NLS settings **not** reset | Separate: `WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS` (or Warp `CredentialStore`) vs. the pool's own shared `WARP_ORACLE_USER`/`_PASSWORD` | 0.58ms |
+| orawire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — Oracle SQL → Postgres | Yes — `pg_oracle`: `TO_CHAR`/`TO_DATE` schema-qualified when present (degrades to plain `to_char`/`to_date` when absent, §8.1.4); a narrow `ShimBuiltinCatalog` allowlist reaches specific PL/SQL scalar builtins (`dbms_output.put_line`, `dbms_random.random`/`value`, …) — everything else PL/SQL-shaped is refused cleanly with a helpful error, not silently mistranslated | N/A | Warp `CredentialStore` | 0.49ms |
+| mywire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real MySQL's own session, untouched by Warp) | Client's real MySQL credentials, verified by real MySQL | 0.31ms |
+| mywire | Bridge | Yes | Yes, many-to-few — `MySqlBridgePool` | No — verbatim MySQL SQL | N/A | None — session variables and temp tables are **not** reset (disclosed gap, same shape as orawire's pre-package-variable-fix state) | Warp `CredentialStore` vs. the pool's own shared `WARP_MYSQL_USER`/`_PASSWORD` | 0.83ms |
+| mywire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — MySQL SQL → Postgres | Yes — `pg_mysql`: `LAST_INSERT_ID()`/`GROUP_CONCAT()`/`DATE_FORMAT()` and friends work via unqualified-name resolution when present; `SHOW COLUMNS`/`DESCRIBE`/`SHOW INDEX`/`SHOW VARIABLES`/`SHOW CREATE TABLE` refuse cleanly when absent (no plain-Postgres equivalent exists, §8.1.4) | N/A | Warp `CredentialStore` | 0.50ms |
+| mssqlwire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real SQL Server's own session, untouched by Warp) | Client's real SQL Server credentials, verified by real SQL Server | 0.44ms |
+| mssqlwire | Bridge | Yes | Yes, many-to-few — `MssqlBridgePool` | No — verbatim T-SQL | N/A | None — `SET` options and temp tables (`#temp`) are **not** reset (disclosed gap) | Warp `CredentialStore` vs. the pool's own shared `WARP_MSSQL_USER`/`_PASSWORD` | 0.61ms |
+| mssqlwire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — T-SQL → Postgres | Yes — `pg_sqlserver`: `CHARINDEX`/`LEN`/`IIF`/`REPLICATE` and friends work when present; `@@IDENTITY` degrades to plain Postgres's own `lastval()` when absent, with **no loss of correctness** (§8.1.4) | N/A | Warp `CredentialStore` | 0.44ms |
+
+**Reading this table alongside the detailed sections**: Relay is the cheapest and most transparent
+(real backend, real session, zero Warp-side translation risk) but gets none of the shared
+pipeline's protections. Bridge adds full pipeline coverage at the cost of the highest latency and a
+real, disclosed session-state-reset gap per engine. Adapt is the only mode that needs Shim at all,
+and is now uniformly gap-checked (§8.1.4) so it degrades — never silently breaks — when Shim isn't
+installed, which matters most for managed Postgres targets (Supabase, RDS, Cloud SQL, Azure
+Database for PostgreSQL) that can't have a Shim extension installed in the first place.
+
 ### 8.2 Statement pipeline stages
 
 Every frontend above feeds the same shared pipeline, in this order:
