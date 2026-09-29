@@ -841,6 +841,14 @@ public final class WarpMcpServer {
             writeError(response, id, -32602, "Unknown tool: " + toolName);
             return true;
         }
+        List<String> schemaErrors = JsonSchemaValidator.validate(arguments, tool.inputSchema());
+        if (!schemaErrors.isEmpty()) {
+            String message = "Invalid params: " + String.join("; ", schemaErrors);
+            writeError(response, id, -32602, message);
+            isError[0] = true;
+            errorMessage[0] = message;
+            return true;
+        }
         McpBackend target = chosen;
         BackendToolProvider.Ctx ctx = new BackendToolProvider.Ctx() {
             @Override
@@ -2181,6 +2189,10 @@ public final class WarpMcpServer {
                 .filter(t -> t.toolName().equals(toolName))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("no such tool: " + toolName));
+        List<String> schemaErrors = JsonSchemaValidator.validate(arguments, tool.inputSchema());
+        if (!schemaErrors.isEmpty()) {
+            throw new IllegalArgumentException("Invalid params: " + String.join("; ", schemaErrors));
+        }
         List<Object> binds = new ArrayList<>();
         StringBuilder placeholders = new StringBuilder();
         for (PgFunctionIntrospector.ParamDef param : tool.signature().params()) {
