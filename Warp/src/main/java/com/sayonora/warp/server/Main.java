@@ -1398,12 +1398,12 @@ public final class Main {
     /** orawire's admin-console/API mode label: "Relay" (RELAY's raw-byte passthrough), "Bridge"
      * (BRIDGE's real-TTC-parse + verbatim-SQL-against-pooled-Oracle mode -- firewall/QoS/audit
      * still apply, dialect translation does not, see docs/WARP_GUIDE.md Section 8.1.1), or
-     * "Adapt" (ADAPT's dialect-translated-to-Postgres default, unchanged). */
+     * "Emulate" (EMULATE's dialect-translated-to-Postgres default, unchanged). */
     private static String oracleWireModeLabel(ServerOptions options) {
         return switch (options.oracleBackendMode()) {
             case RELAY -> "Relay";
             case BRIDGE -> "Bridge";
-            case ADAPT -> "Adapt";
+            case EMULATE -> "Emulate";
         };
     }
 
@@ -1411,7 +1411,7 @@ public final class Main {
         return switch (options.mySqlBackendMode()) {
             case RELAY -> "Relay";
             case BRIDGE -> "Bridge";
-            case ADAPT -> "Adapt";
+            case EMULATE -> "Emulate";
         };
     }
 
@@ -1419,7 +1419,7 @@ public final class Main {
         return switch (options.mssqlBackendMode()) {
             case RELAY -> "Relay";
             case BRIDGE -> "Bridge";
-            case ADAPT -> "Adapt";
+            case EMULATE -> "Emulate";
         };
     }
 

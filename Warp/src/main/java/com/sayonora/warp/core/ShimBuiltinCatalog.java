@@ -12,18 +12,18 @@ import java.util.Map;
  * anonymous-block syntax at all -- it only understands its own {@code DO $$...$$} block or a plain
  * function call -- so a real Oracle wire client's {@code {call schema.func(?, ?)}} shape (which
  * orawire's {@code isPlSqlBlock}/{@code RequestLoop} already recognizes) needs rewriting into an
- * ordinary Postgres function call before Adapt mode can reach these real, working Shim functions
+ * ordinary Postgres function call before Emulate mode can reach these real, working Shim functions
  * at all.
  *
  * <p>Deliberately NOT a general Oracle-dictionary-backed resolver the way
  * {@code OracleProcedureCatalog} is for Bridge/dual-exec (that class queries real Oracle's own
- * {@code ALL_ARGUMENTS} view for arbitrary user procedures) -- plain Adapt mode has no Oracle
+ * {@code ALL_ARGUMENTS} view for arbitrary user procedures) -- plain Emulate mode has no Oracle
  * connection to query at all, so this table is hand-built from Shim's own known, fixed function
  * signatures instead. Scoped narrowly on purpose (see
  * {@code warp-adapt-plsql-shim-reach-plan} memory note for the full plan/scope writeup): only
  * covers exactly the entries below, not Shim's entire surface -- every other Shim builtin, and
  * every user-defined package, still falls through to {@code handlePlSqlExecute}'s existing clean
- * refusal in plain Adapt mode.
+ * refusal in plain Emulate mode.
  */
 public final class ShimBuiltinCatalog {
 

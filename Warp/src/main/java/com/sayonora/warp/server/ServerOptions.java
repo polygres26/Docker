@@ -6,16 +6,16 @@ public final class ServerOptions {
         POSTGRES, ORACLE
     }
 
-    /** ADAPT (default): dialect-translate to the configured Postgres backend, same as before
+    /** EMULATE (default): dialect-translate to the configured Postgres backend, same as before
      * Bridge/RELAY existed. RELAY: raw-byte relay straight to a real Oracle instance, 1 socket per
      * client session, no SQL parsing at all (see NativeSessionRelay). BRIDGE: parse the client's
-     * real TTC protocol (reusing Adapt mode's own RequestLoop/ExecuteRequestReader/ResponseWriter
+     * real TTC protocol (reusing Emulate mode's own RequestLoop/ExecuteRequestReader/ResponseWriter
      * machinery -- no second parser), run the parsed statement through Warp's full shared pipeline
-     * (firewall, QoS, audit/metrics) same as Adapt mode, but skip dialect translation and execute
+     * (firewall, QoS, audit/metrics) same as Emulate mode, but skip dialect translation and execute
      * the verbatim Oracle SQL against a real Oracle backend via a small, bounded, shared JDBC
      * connection pool (see orawire.backend.OracleBridgePool) instead of either RELAY's 1:1 raw
-     * relay or Adapt's dialect-translated Postgres backend. See docs/WARP_GUIDE.md Section 8.1.1
-     * for the full Relay/Adapt/Bridge feature-coverage comparison.
+     * relay or Emulate's dialect-translated Postgres backend. See docs/WARP_GUIDE.md Section 8.1.1
+     * for the full Relay/Emulate/Bridge feature-coverage comparison.
      *
      * <p>Bridge mode's client-facing login is a SEPARATE credential from its backend connection
      * pool's, so a migrated Oracle app can log in "transparently" with its own real Oracle
@@ -25,7 +25,7 @@ public final class ServerOptions {
      * com.sayonora.warp.secrets.SecretRef}) while queries still run through the pool's own shared
      * service account ({@code WARP_ORACLE_USER}/{@code WARP_ORACLE_PASSWORD}, below). */
     public enum OracleBackendMode {
-        ADAPT, RELAY, BRIDGE
+        EMULATE, RELAY, BRIDGE
     }
 
     /** Which real backend the MCP frontend's tools (execute_sql, list_tables, etc.) target.
@@ -47,29 +47,29 @@ public final class ServerOptions {
     }
 
     /** mywire's own version of {@link OracleBackendMode}, added to close the gap where mywire only
-     * had a two-way ADAPT/native split ({@code mywireNativeBackend}, still kept below for backward
-     * compatibility with every existing call site) while orawire had a real three-way ADAPT/
-     * RELAY/BRIDGE split. ADAPT (default): dialect-translate to the configured Postgres backend.
+     * had a two-way EMULATE/native split ({@code mywireNativeBackend}, still kept below for backward
+     * compatibility with every existing call site) while orawire had a real three-way EMULATE/
+     * RELAY/BRIDGE split. EMULATE (default): dialect-translate to the configured Postgres backend.
      * RELAY: raw-byte relay straight to a real MySQL instance, 1 socket per client session, no wire
      * parsing at all (see {@link com.sayonora.warp.orawire.backend.NativeSessionRelay}, reused
      * as-is -- it is a generic byte pump with no Oracle-specific logic). BRIDGE: parse the client's
      * real MySQL wire protocol (reusing {@code MySqlWireSessionHandler}'s own machinery), execute
      * the parsed SQL verbatim against a real MySQL backend via a small, bounded, shared JDBC
      * connection pool (see {@code mywire.MySqlBridgePool}) instead of either RELAY's 1:1 raw relay
-     * or ADAPT's dialect-translated Postgres backend. Today's pre-existing {@code
+     * or EMULATE's dialect-translated Postgres backend. Today's pre-existing {@code
      * mywireNativeBackend} boolean (set via {@code WARP_MYWIRE_BACKEND=mysql}) is treated as a
      * legacy alias for BRIDGE, so no existing deployment's behavior changes. */
     public enum MySqlBackendMode {
-        ADAPT, RELAY, BRIDGE
+        EMULATE, RELAY, BRIDGE
     }
 
-    /** mssqlwire's version of {@link MySqlBackendMode} -- same ADAPT/RELAY/BRIDGE three-way split,
+    /** mssqlwire's version of {@link MySqlBackendMode} -- same EMULATE/RELAY/BRIDGE three-way split,
      * same legacy-alias relationship to the pre-existing {@code mssqlwireNativeBackend} boolean
      * (set via {@code WARP_MSSQLWIRE_BACKEND=sqlserver}, now treated as an alias for BRIDGE). RELAY
      * reuses the same generic {@link com.sayonora.warp.orawire.backend.NativeSessionRelay} byte
      * pump; BRIDGE uses a new dedicated {@code mssqlwire.MssqlBridgePool}. */
     public enum MssqlBackendMode {
-        ADAPT, RELAY, BRIDGE
+        EMULATE, RELAY, BRIDGE
     }
 
     private final int listenPort;
@@ -217,10 +217,10 @@ public final class ServerOptions {
         int oraclePort = parseIntEnv("WARP_ORACLE_PORT", 1521);
         String oracleServiceName = System.getenv().getOrDefault("WARP_ORACLE_SERVICE", "orcl");
         OracleBackendMode oracleBackendMode = switch (System.getenv()
-                .getOrDefault("WARP_ORACLE_BACKEND_MODE", "adapt").toLowerCase(java.util.Locale.ROOT)) {
+                .getOrDefault("WARP_ORACLE_BACKEND_MODE", "emulate").toLowerCase(java.util.Locale.ROOT)) {
             case "relay" -> OracleBackendMode.RELAY;
             case "bridge" -> OracleBackendMode.BRIDGE;
-            default -> OracleBackendMode.ADAPT;
+            default -> OracleBackendMode.EMULATE;
         };
         // Gateway-held Oracle credentials, needed only by MCP's own native-backend mode below --
         // orawire's own Relay mode (WARP_ORACLE_BACKEND_MODE=relay, just above) sources Oracle
@@ -241,7 +241,7 @@ public final class ServerOptions {
             default -> McpBackendMode.POSTGRES;
         };
 
-        // WARP_MYWIRE_BACKEND_MODE (adapt/relay/bridge) is the new, three-way toggle mirroring
+        // WARP_MYWIRE_BACKEND_MODE (emulate/relay/bridge) is the new, three-way toggle mirroring
         // WARP_ORACLE_BACKEND_MODE. When unset, WARP_MYWIRE_BACKEND=mysql (the original, pre-RELAY
         // toggle) is honored as a legacy alias for BRIDGE, so no existing deployment's behavior
         // changes -- see MySqlBackendMode's own javadoc.
@@ -251,14 +251,14 @@ public final class ServerOptions {
             mySqlBackendMode = switch (mywireBackendModeEnv.toLowerCase(java.util.Locale.ROOT)) {
                 case "relay" -> MySqlBackendMode.RELAY;
                 case "bridge" -> MySqlBackendMode.BRIDGE;
-                default -> MySqlBackendMode.ADAPT;
+                default -> MySqlBackendMode.EMULATE;
             };
         } else {
             mySqlBackendMode = "mysql".equalsIgnoreCase(
                     System.getenv().getOrDefault("WARP_MYWIRE_BACKEND", "postgres"))
-                    ? MySqlBackendMode.BRIDGE : MySqlBackendMode.ADAPT;
+                    ? MySqlBackendMode.BRIDGE : MySqlBackendMode.EMULATE;
         }
-        boolean mywireNativeBackend = mySqlBackendMode != MySqlBackendMode.ADAPT;
+        boolean mywireNativeBackend = mySqlBackendMode != MySqlBackendMode.EMULATE;
         String mysqlHost = System.getenv().getOrDefault("WARP_MYSQL_HOST", "localhost");
         int mysqlPort = parseIntEnv("WARP_MYSQL_PORT", 3306);
         String mysqlDatabase = System.getenv().getOrDefault("WARP_MYSQL_DATABASE", "mysql");
@@ -276,14 +276,14 @@ public final class ServerOptions {
             mssqlBackendMode = switch (mssqlwireBackendModeEnv.toLowerCase(java.util.Locale.ROOT)) {
                 case "relay" -> MssqlBackendMode.RELAY;
                 case "bridge" -> MssqlBackendMode.BRIDGE;
-                default -> MssqlBackendMode.ADAPT;
+                default -> MssqlBackendMode.EMULATE;
             };
         } else {
             mssqlBackendMode = "sqlserver".equalsIgnoreCase(
                     System.getenv().getOrDefault("WARP_MSSQLWIRE_BACKEND", "postgres"))
-                    ? MssqlBackendMode.BRIDGE : MssqlBackendMode.ADAPT;
+                    ? MssqlBackendMode.BRIDGE : MssqlBackendMode.EMULATE;
         }
-        boolean mssqlwireNativeBackend = mssqlBackendMode != MssqlBackendMode.ADAPT;
+        boolean mssqlwireNativeBackend = mssqlBackendMode != MssqlBackendMode.EMULATE;
         String mssqlHost = System.getenv().getOrDefault("WARP_MSSQL_HOST", "localhost");
         int mssqlPort = parseIntEnv("WARP_MSSQL_PORT", 1433);
         String mssqlDatabase = System.getenv().getOrDefault("WARP_MSSQL_DATABASE", "master");
@@ -362,11 +362,11 @@ public final class ServerOptions {
                 false, 0, 0, null, null,
                 false, DualExecAuthority.POSTGRES, false,
                 false,
-                "localhost", 1521, "orcl", OracleBackendMode.ADAPT,
+                "localhost", 1521, "orcl", OracleBackendMode.EMULATE,
                 null, null, McpBackendMode.POSTGRES,
-                false, MySqlBackendMode.ADAPT, "localhost", 3306, "mysql", null, null,
+                false, MySqlBackendMode.EMULATE, "localhost", 3306, "mysql", null, null,
                 0,
-                false, MssqlBackendMode.ADAPT, "localhost", 1433, "master", null, null,
+                false, MssqlBackendMode.EMULATE, "localhost", 1433, "master", null, null,
                 0, 0, 0);
     }
 

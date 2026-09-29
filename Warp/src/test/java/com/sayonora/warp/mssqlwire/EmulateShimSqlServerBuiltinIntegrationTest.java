@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Timeout;
 /**
  * mssqlwire's version of {@code com.sayonora.warp.orawire.AdaptShimPlsqlBuiltinIntegrationTest} /
  * {@code com.sayonora.warp.mywire.AdaptShimMysqlBuiltinIntegrationTest} -- real, live proof that
- * plain Adapt mode's always-on {@code SET db_emulation = 'sqlserver'} (see {@code
+ * plain Emulate mode's always-on {@code SET db_emulation = 'sqlserver'} (see {@code
  * core.access.MssqlPgEmulationSessionInitializer}) actually reaches Shim/pg_sqlserver's real
  * T-SQL-compatible {@code sys.*} builtin functions.
  *
@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Timeout;
  * AdaptShimPlsqlBuiltinIntegrationTest}'s own javadoc for the exact env vars. Skips cleanly via
  * {@code assumeTrue} if unavailable.
  */
-class AdaptShimSqlServerBuiltinIntegrationTest {
+class EmulateShimSqlServerBuiltinIntegrationTest {
 
     @Test
     @Timeout(120)

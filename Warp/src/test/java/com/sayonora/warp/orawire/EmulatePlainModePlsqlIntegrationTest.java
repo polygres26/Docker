@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * Confirms the exact, currently-undocumented-by-any-test failure shape for a PL/SQL block sent to
- * PLAIN Adapt mode -- the actual default configuration (no dual-exec, no real Oracle backend at
+ * PLAIN Emulate mode -- the actual default configuration (no dual-exec, no real Oracle backend at
  * all, {@code oracleConnection == null} in {@code RequestLoop}) -- as distinct from
  * {@link OraclePlsqlCallIntegrationTest} (dual-exec + Oracle authority, a real Oracle connection
  * IS present) and {@link com.sayonora.warp.orawire.backend.OracleBridgePoolTest}/
@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Timeout;
  * proc(:1); END;} shape a JDBC {@code CallableStatement} produces) reaches {@code
  * handlePlSqlExecute}, which immediately throws a clean {@code IllegalStateException} the moment it
  * sees {@code oracleConnection == null} -- there is no dialect-translation pass-through attempt at
- * all for plain Adapt mode (an earlier working theory that PL/SQL might fall through to the
+ * all for plain Emulate mode (an earlier working theory that PL/SQL might fall through to the
  * generic, non-PL/SQL-aware translator and get forwarded to Postgres as literal text was WRONG --
  * {@code isPlSqlBlock} always intercepts first). The refusal is clean and immediate regardless of
  * whether the named procedure exists at all.
@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Timeout;
  * completely unrelated refusal. See the follow-up task filed for widening this beyond a hardcoded
  * generic code.
  */
-class AdaptPlainModePlsqlIntegrationTest {
+class EmulatePlainModePlsqlIntegrationTest {
 
     private static RealPostgres postgres;
     private static WarpProcess warp;
@@ -81,7 +81,7 @@ class AdaptPlainModePlsqlIntegrationTest {
     void anonymousBlockIsRefusedCleanlyWithAHelpfulMessage() throws Exception {
         try (Connection conn = connect(); Statement st = conn.createStatement()) {
             SQLException e = assertThrows(SQLException.class, () -> st.execute("BEGIN NULL; END;"),
-                    "a genuine anonymous PL/SQL block must be refused cleanly in plain Adapt mode, "
+                    "a genuine anonymous PL/SQL block must be refused cleanly in plain Emulate mode, "
                             + "not silently pass through to Postgres as literal text");
             assertTrue(e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
                     "the refusal message must clearly explain WHY, not just fail generically: " + e.getMessage());

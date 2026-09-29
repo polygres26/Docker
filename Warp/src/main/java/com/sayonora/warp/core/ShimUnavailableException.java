@@ -12,7 +12,7 @@ package com.sayonora.warp.core;
  * UntranslatableQueryException} there, since that's the checked-exception boundary a caller
  * actually expects.
  *
- * <p>Real gap this exists to close (2026-09-29, raised directly: "Adapt should not always assume
+ * <p>Real gap this exists to close (2026-09-29, raised directly: "Emulate should not always assume
  * pg_* modules are linked because Warp can be run against Supabase or RDS Postgres"): before this,
  * these rewrites unconditionally targeted {@code mysql_catalog.*}/{@code sys.*} functions with no
  * availability check at all, so against a real managed Postgres with no Shim installed (Supabase,

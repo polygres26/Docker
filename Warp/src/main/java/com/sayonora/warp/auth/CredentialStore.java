@@ -55,7 +55,7 @@ public final class CredentialStore {
      * of the global {@code WARP_AUTH_*} ones -- e.g. Bridge mode's {@code
      * WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS}/{@code _USER}/{@code _PASSWORD}, which must verify a
      * migrated app's real Oracle password, not the separate credential {@code WARP_AUTH_*}
-     * configures for ordinary (JDBC/Adapt) sessions. Unlike the no-arg constructor, an entirely
+     * configures for ordinary (JDBC/Emulate) sessions. Unlike the no-arg constructor, an entirely
      * unconfigured set here denies every login rather than silently accepting the {@code
      * orapg}/{@code orapg} default -- that default isn't a real backend account for this use case,
      * so falling back to it would let an operator believe Bridge logins are secured when nothing

@@ -317,7 +317,7 @@ export function compact(n: number): string {
   return String(n)
 }
 
-/** Mode tag for an interface (Relay green, Adapt/Bridge/Emulate neutral), per the mock. */
+/** Mode tag for an interface (Relay green, Bridge/Emulate neutral), per the mock. */
 export function ModeTag({ mode }: { mode: string | null | undefined }) {
   if (!mode) return <span className={styles.cellSub}>n/a</span>
   return <span className={cx(styles.tag, mode === 'Relay' && styles.tagGreen)}>{mode}</span>

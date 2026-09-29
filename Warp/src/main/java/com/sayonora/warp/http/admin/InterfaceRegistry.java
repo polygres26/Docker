@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>{@code kind}: {@code sql} (relational wire drivers), {@code api} (storage/messaging/search APIs),
  * {@code mcp} (Model Context Protocol / agent frontends). {@code mode}: {@code Relay} (native
- * protocol forwarded to a backend of the same engine), {@code Adapt} (client dialect translated to
+ * protocol forwarded to a backend of the same engine), {@code Emulate} (client dialect translated to
  * the backend's) or {@code Emulate} (an API implemented on top of Postgres), or {@code null} when
  * none of those applies.
  */

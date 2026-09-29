@@ -28,7 +28,7 @@ import java.util.List;
  * Warp thread dump (blocked inside {@code O5LogonHandler.authenticate}'s very first packet read,
  * meaning the client itself never got a negotiation response it was willing to proceed past) --
  * isolated by testing Native mode (which never runs this code at all, bypassing straight to real
- * Oracle) against the identical network path, which worked instantly, and Adapt mode (which runs
+ * Oracle) against the identical network path, which worked instantly, and Emulate mode (which runs
  * this same code), which hung identically -- proving the bug lives here, not in Bridge mode or the
  * network setup that surfaced it.
  *

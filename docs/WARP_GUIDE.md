@@ -2374,9 +2374,9 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | Frontend | Protocol | Default port | Notes |
 |---|---|---|---|
 | pgwire | Postgres wire protocol v3 | 15432 | native passthrough, no translation needed |
-| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default (`WARP_MYWIRE_BACKEND_MODE=adapt`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MYWIRE_BACKEND=mysql` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled MySQL backend) — see §8.1.2 |
+| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default (`WARP_MYWIRE_BACKEND_MODE=emulate`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MYWIRE_BACKEND=mysql` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled MySQL backend) — see §8.1.2 |
 | orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native (Relay) mode — see §8.1.1; `WARP_ORACLE_BACKEND_MODE=bridge` switches to Bridge mode (real protocol parse, verbatim SQL, pooled Oracle backend) — see §8.1.2 |
-| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default (`WARP_MSSQLWIRE_BACKEND_MODE=adapt`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MSSQLWIRE_BACKEND=sqlserver` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled SQL Server backend) — see §8.1.2 |
+| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default (`WARP_MSSQLWIRE_BACKEND_MODE=emulate`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MSSQLWIRE_BACKEND=sqlserver` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled SQL Server backend) — see §8.1.2 |
 | mongowire | MongoDB wire protocol (OP_MSG, OP_QUERY handshake, OP_COMPRESSED/zlib) | 27017 | a MongoDB 7.0-compatible server over Postgres: CRUD, all query/update/aggregation operators, indexes with unique enforcement, collection and database administration, validators, cursors; sharded over the `mongodb` store hosts -- see *The MongoDB store* in §4.7 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
 | sqswire | Amazon SQS (JSON and AWS Query/XML protocols) | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); batches, message attributes + MD5, long polling, FIFO groups/dedup, DLQ/redrive and message move tasks, tags, retention sweeper; a queue lives on one shard chosen by name — §4.7 *The SQS store* |
@@ -2403,9 +2403,9 @@ analogous (but pipeline-bypassing rather than raw-socket) native-backend mode:
 
 | Frontend | Env var to enable | Backend connection config |
 |---|---|---|
-| mywire | `WARP_MYWIRE_BACKEND_MODE=relay` (default `adapt`) | `WARP_MYSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| mywire | `WARP_MYWIRE_BACKEND_MODE=relay` (default `emulate`) | `WARP_MYSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
 | orawire | `WARP_ORACLE_BACKEND_MODE=native` (default `jdbc`) | `WARP_ORACLE_HOST`/`_PORT`/`_SERVICE`; credentials come from the client's own O5LOGON login, not a separate config var |
-| mssqlwire | `WARP_MSSQLWIRE_BACKEND_MODE=relay` (default `adapt`) | `WARP_MSSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| mssqlwire | `WARP_MSSQLWIRE_BACKEND_MODE=relay` (default `emulate`) | `WARP_MSSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
 | MCP | `WARP_MCP_BACKEND=oracle` / `mysql` / `sqlserver` (default `postgres`) | Reuses the same `WARP_ORACLE_*`/`WARP_MYSQL_*`/`WARP_MSSQL_*` vars above, plus `WARP_ORACLE_USER`/`WARP_ORACLE_PASSWORD` specifically for MCP's Oracle mode — MCP has no client login step to source per-caller Oracle credentials from the way orawire's native mode does, so it needs a real, gateway-held credential configured |
 
 mywire's/mssqlwire's older, pre-Relay/Bridge-split single toggle (`WARP_MYWIRE_BACKEND=mysql` /
@@ -2445,11 +2445,11 @@ native mode.
 
 #### 8.1.2 Bridge mode: real protocol, verbatim SQL, pooled real-engine backend
 
-Every one of orawire/mywire/mssqlwire now has the same three-way Relay/Adapt/Bridge split. Bridge
-is a third mode, distinct from both Relay (§8.1.1, raw-byte proxy) and Adapt (the dialect-translation
-default): Warp parses the client's real wire protocol itself, reusing Adapt mode's own request-
+Every one of orawire/mywire/mssqlwire now has the same three-way Relay/Emulate/Bridge split. Bridge
+is a third mode, distinct from both Relay (§8.1.1, raw-byte proxy) and Emulate (the dialect-translation
+default): Warp parses the client's real wire protocol itself, reusing Emulate mode's own request-
 handling machinery (no second parser), runs the parsed statement through the full shared pipeline
-(§8.2) exactly as Adapt mode does, but skips `DialectTranslationStage` and executes the parsed SQL
+(§8.2) exactly as Emulate mode does, but skips `DialectTranslationStage` and executes the parsed SQL
 **verbatim, unmodified source dialect** against a real backend of that same engine:
 
 | Frontend | Env var | Bridge pool class | Pool size env var (default 10) |
@@ -2462,7 +2462,7 @@ Each Bridge pool connects using that engine's own `WARP_ORACLE_*`/`WARP_MYSQL_*`
 host/port/database config and a single shared service-account credential (`_USER`/`_PASSWORD`),
 same as that frontend's Relay-mode backend config. Unlike Relay's 1-raw-socket-per-session relay,
 Bridge pools a small, bounded number of real JDBC connections shared across many client sessions —
-many-to-few, the same shape each frontend's own Adapt-mode Postgres pool already uses.
+many-to-few, the same shape each frontend's own Emulate-mode Postgres pool already uses.
 
 Bridge mode's client-facing login is always a SEPARATE credential from its backend pool's: the
 client authenticates against Warp's own `CredentialStore` (`WARP_AUTH_USER`/`WARP_AUTH_PASSWORD`,
@@ -2474,8 +2474,8 @@ identity.
 | Mode | Firewall / QoS / audit | Connection pooling | Dialect translation |
 |---|---|---|---|
 | Relay (`native`) | No — bypasses the shared pipeline entirely (§8.1.1) | No — 1 dedicated raw socket per client session | No — raw byte relay, no SQL parsing at all |
-| Adapt (`jdbc`, default) | Yes | Yes — many clients share `WARP_POOL_MAX_SIZE` Postgres connections | Yes — source SQL rewritten to Postgres dialect |
-| **Bridge** | **Yes** — real protocol parse feeds the same pipeline Adapt uses | **Yes, many-to-few** — a dedicated bounded pool of real backend connections (table above) | **No — pass-through**: verbatim source-dialect SQL reaches the real engine unmodified |
+| Emulate (`jdbc`, default) | Yes | Yes — many clients share `WARP_POOL_MAX_SIZE` Postgres connections | Yes — source SQL rewritten to Postgres dialect |
+| **Bridge** | **Yes** — real protocol parse feeds the same pipeline Emulate uses | **Yes, many-to-few** — a dedicated bounded pool of real backend connections (table above) | **No — pass-through**: verbatim source-dialect SQL reaches the real engine unmodified |
 
 Bridge mode's session-state handling and its one known gap: a pooled connection is reset on
 checkout/return (any open transaction rolled back, any open statement/cursor closed) before it can
@@ -2519,28 +2519,28 @@ timed client-side with `System.nanoTime()` per iteration.
 | Direct Oracle (no Warp) | 0.25ms | 0.36ms | 0.55ms | 0.97ms | 0.40ms |
 | Direct MySQL (no Warp) | 0.23ms | 0.29ms | 0.43ms | 0.66ms | 0.32ms |
 | Direct SQL Server (no Warp) | 0.25ms | 0.34ms | 0.40ms | 1.04ms | 0.36ms |
-| **pgwire Adapt** (Postgres→Warp→Postgres) | 0.30ms | 0.44ms | 0.54ms | 0.72ms | 0.44ms |
+| **pgwire Emulate** (Postgres→Warp→Postgres) | 0.30ms | 0.44ms | 0.54ms | 0.72ms | 0.44ms |
 | orawire Relay (Oracle→Warp→real Oracle) | 0.29ms | 0.35ms | 0.42ms | 0.49ms | 0.36ms |
 | orawire Bridge (Oracle→Warp→real Oracle, pooled) | 0.37ms | 0.54ms | 0.75ms | 1.09ms | 0.58ms |
-| orawire Adapt (Oracle→Warp→Postgres, translated) | 0.33ms | 0.47ms | 0.61ms | 0.91ms | 0.49ms |
+| orawire Emulate (Oracle→Warp→Postgres, translated) | 0.33ms | 0.47ms | 0.61ms | 0.91ms | 0.49ms |
 | mywire Relay (MySQL→Warp→real MySQL) | 0.23ms | 0.31ms | 0.35ms | 0.42ms | 0.31ms |
 | mywire Bridge (MySQL→Warp→real MySQL, pooled) | 0.59ms | 0.74ms | 0.99ms | 3.38ms | 0.83ms |
-| mywire Adapt (MySQL→Warp→Postgres, translated) | 0.31ms | 0.49ms | 0.65ms | 0.90ms | 0.50ms |
+| mywire Emulate (MySQL→Warp→Postgres, translated) | 0.31ms | 0.49ms | 0.65ms | 0.90ms | 0.50ms |
 | mssqlwire Relay (SQL Server→Warp→real SQL Server) | 0.35ms | 0.44ms | 0.48ms | 0.55ms | 0.44ms |
 | mssqlwire Bridge (SQL Server→Warp→real SQL Server, pooled) | 0.46ms | 0.57ms | 0.67ms | 1.53ms | 0.61ms |
-| mssqlwire Adapt (SQL Server→Warp→Postgres, translated) | 0.27ms | 0.41ms | 0.57ms | 0.88ms | 0.44ms |
+| mssqlwire Emulate (SQL Server→Warp→Postgres, translated) | 0.27ms | 0.41ms | 0.57ms | 0.88ms | 0.44ms |
 
 **Reading the numbers**:
 - **Relay adds the least overhead** (~0.03–0.08ms over the direct baseline for the same engine) —
   expected, since it's a raw byte pump with zero parsing (§8.1.1).
-- **Adapt adds a consistent ~0.10–0.15ms** across all three non-Postgres frontends (Oracle/MySQL/SQL
+- **Emulate adds a consistent ~0.10–0.15ms** across all three non-Postgres frontends (Oracle/MySQL/SQL
   Server → Postgres) — the dialect-translation pipeline's own cost (parse, `DialectTranslationStage`,
-  translation-cache lookup, the shared 8-stage pipeline in §8.2). Plain pgwire Adapt (Postgres→Warp→
+  translation-cache lookup, the shared 8-stage pipeline in §8.2). Plain pgwire Emulate (Postgres→Warp→
   Postgres, no dialect gap to bridge at all) sits in the same ~0.44ms band, confirming this ~0.1–0.15ms
   is genuinely the shared-pipeline's fixed cost, not a translation-specific penalty.
 - **Bridge is consistently the most expensive mode** (0.58–0.83ms avg) — it pays BOTH the shared
-  pipeline's cost (same as Adapt) AND a real network hop to a pooled backend connection to the real
-  engine, instead of Adapt's single hop to Postgres. This matches its own design tradeoff (§8.1.2):
+  pipeline's cost (same as Emulate) AND a real network hop to a pooled backend connection to the real
+  engine, instead of Emulate's single hop to Postgres. This matches its own design tradeoff (§8.1.2):
   Bridge trades latency for verbatim-dialect correctness and full pipeline coverage (firewall/QoS/
   audit) that Relay doesn't get.
 - mywire Bridge's p99 (3.38ms, a clear outlier against its own p90 of 0.99ms) is very likely a single
@@ -2548,7 +2548,7 @@ timed client-side with `System.nanoTime()` per iteration.
   development machine, not a systemic property of Bridge mode — a real, disclosed limitation of a
   single-run benchmark; re-running would be needed to confirm whether it's reproducible.
 
-**Real, live-discovered bug found while building this benchmark**: mssqlwire (both Bridge and Adapt
+**Real, live-discovered bug found while building this benchmark**: mssqlwire (both Bridge and Emulate
 mode) used to fail a repeated execution of the SAME `PreparedStatement` with **zero bind
 parameters** with `sp_executesql call missing a string @stmt parameter` — the SQL Server JDBC
 driver sends a different RPC shape (a bare, single-parameter `sp_executesql` call, `@params`
@@ -2558,13 +2558,13 @@ single-parameter `sp_executesql` call is now accepted as a valid, zero-bound-val
 benchmark itself still uses a plain `Statement` (literal SQL, never reused as a prepared statement)
 for its own methodology, independent of the fix.
 
-#### 8.1.4 Adapt mode degrades gracefully when Shim isn't installed (managed Postgres providers)
+#### 8.1.4 Emulate mode degrades gracefully when Shim isn't installed (managed Postgres providers)
 
-Raised directly (2026-09-29): "Adapt should not always assume pg_* modules are linked because Warp
+Raised directly (2026-09-29): "Emulate should not always assume pg_* modules are linked because Warp
 can be run against Supabase or RDS Postgres etc." — correct, and mostly already true before this
 was raised, but with two real, confirmed gaps closed here.
 
-Every Adapt-mode dialect translation to Postgres that leans on a Shim extension
+Every Emulate-mode dialect translation to Postgres that leans on a Shim extension
 (`pg_oracle`/`pg_mysql`/`pg_sqlserver`) first probes `pg_catalog.pg_extension` for it, cached per
 physical backend (`PgOracleSupport`/`PgMysqlSupport`/`PgSqlServerSupport`, one query ever per
 backend, not per statement) — **not** assumed present. This matters because several major managed
@@ -2606,29 +2606,29 @@ Live-verified against a genuinely plain `RealPostgres` (no `shared_preload_libra
 installed at all — not just "an unconfigured local instance," a real simulation of the managed-
 provider case) via `com.sayonora.warp.core.AdaptWithoutShimIntegrationTest`.
 
-#### 8.1.5 Capability matrix: Relay vs Bridge vs Adapt, per frontend
+#### 8.1.5 Capability matrix: Relay vs Bridge vs Emulate, per frontend
 
 One consolidated reference pulling together everything in §8.1.1–§8.1.4 plus §8.1.3's RTT numbers,
 frontend by frontend and mode by mode. pgwire has no Relay/Bridge split (source and target dialect
 are identical — see the note after the table) so it gets a single row.
 
-| Frontend | Mode | Firewall / QoS / audit | Pooling | Dialect translation | Shim reach (Adapt only) | Session-state reset on pool return | Client-facing auth | RTT avg (§8.1.3) |
+| Frontend | Mode | Firewall / QoS / audit | Pooling | Dialect translation | Shim reach (Emulate only) | Session-state reset on pool return | Client-facing auth | RTT avg (§8.1.3) |
 |---|---|---|---|---|---|---|---|---|
-| pgwire | Adapt (only mode) | Yes | Yes — many-to-few, `WARP_POOL_MAX_SIZE` | N/A — no dialect gap to bridge (Postgres→Postgres) | N/A | N/A | Warp `CredentialStore` (`WARP_AUTH_USER`/`_PASSWORD`) | 0.44ms |
+| pgwire | Emulate (only mode) | Yes | Yes — many-to-few, `WARP_POOL_MAX_SIZE` | N/A — no dialect gap to bridge (Postgres→Postgres) | N/A | N/A | Warp `CredentialStore` (`WARP_AUTH_USER`/`_PASSWORD`) | 0.44ms |
 | orawire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real Oracle's own session, untouched by Warp) | Client's real O5LOGON credentials, verified by real Oracle | 0.36ms |
 | orawire | Bridge | Yes | Yes, many-to-few — `OracleBridgePool` | No — verbatim Oracle SQL | N/A (Bridge talks to real Oracle directly, no Shim involved) | Partial — `DBMS_SESSION.RESET_PACKAGE` run; `ALTER SESSION`, temp tables, NLS settings **not** reset | Separate: `WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS` (or Warp `CredentialStore`) vs. the pool's own shared `WARP_ORACLE_USER`/`_PASSWORD` | 0.58ms |
-| orawire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — Oracle SQL → Postgres | Yes — `pg_oracle`: `TO_CHAR`/`TO_DATE` schema-qualified when present (degrades to plain `to_char`/`to_date` when absent, §8.1.4); a narrow `ShimBuiltinCatalog` allowlist reaches specific PL/SQL scalar builtins (`dbms_output.put_line`, `dbms_random.random`/`value`, …) — everything else PL/SQL-shaped is refused cleanly with a helpful error, not silently mistranslated | N/A | Warp `CredentialStore` | 0.49ms |
+| orawire | Emulate | Yes | Yes, many-to-few — configured Postgres pool | Yes — Oracle SQL → Postgres | Yes — `pg_oracle`: `TO_CHAR`/`TO_DATE` schema-qualified when present (degrades to plain `to_char`/`to_date` when absent, §8.1.4); a narrow `ShimBuiltinCatalog` allowlist reaches specific PL/SQL scalar builtins (`dbms_output.put_line`, `dbms_random.random`/`value`, …) — everything else PL/SQL-shaped is refused cleanly with a helpful error, not silently mistranslated | N/A | Warp `CredentialStore` | 0.49ms |
 | mywire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real MySQL's own session, untouched by Warp) | Client's real MySQL credentials, verified by real MySQL | 0.31ms |
 | mywire | Bridge | Yes | Yes, many-to-few — `MySqlBridgePool` | No — verbatim MySQL SQL | N/A | None — session variables and temp tables are **not** reset (disclosed gap, same shape as orawire's pre-package-variable-fix state) | Warp `CredentialStore` vs. the pool's own shared `WARP_MYSQL_USER`/`_PASSWORD` | 0.83ms |
-| mywire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — MySQL SQL → Postgres | Yes — `pg_mysql`: `LAST_INSERT_ID()`/`GROUP_CONCAT()`/`DATE_FORMAT()` and friends work via unqualified-name resolution when present; `SHOW COLUMNS`/`DESCRIBE`/`SHOW INDEX`/`SHOW VARIABLES`/`SHOW CREATE TABLE` refuse cleanly when absent (no plain-Postgres equivalent exists, §8.1.4) | N/A | Warp `CredentialStore` | 0.50ms |
+| mywire | Emulate | Yes | Yes, many-to-few — configured Postgres pool | Yes — MySQL SQL → Postgres | Yes — `pg_mysql`: `LAST_INSERT_ID()`/`GROUP_CONCAT()`/`DATE_FORMAT()` and friends work via unqualified-name resolution when present; `SHOW COLUMNS`/`DESCRIBE`/`SHOW INDEX`/`SHOW VARIABLES`/`SHOW CREATE TABLE` refuse cleanly when absent (no plain-Postgres equivalent exists, §8.1.4) | N/A | Warp `CredentialStore` | 0.50ms |
 | mssqlwire | Relay | No | No — 1 raw socket per session | No — raw byte relay | N/A | N/A (real SQL Server's own session, untouched by Warp) | Client's real SQL Server credentials, verified by real SQL Server | 0.44ms |
 | mssqlwire | Bridge | Yes | Yes, many-to-few — `MssqlBridgePool` | No — verbatim T-SQL | N/A | None — `SET` options and temp tables (`#temp`) are **not** reset (disclosed gap) | Warp `CredentialStore` vs. the pool's own shared `WARP_MSSQL_USER`/`_PASSWORD` | 0.61ms |
-| mssqlwire | Adapt | Yes | Yes, many-to-few — configured Postgres pool | Yes — T-SQL → Postgres | Yes — `pg_sqlserver`: `CHARINDEX`/`LEN`/`IIF`/`REPLICATE` and friends work when present; `@@IDENTITY` degrades to plain Postgres's own `lastval()` when absent, with **no loss of correctness** (§8.1.4) | N/A | Warp `CredentialStore` | 0.44ms |
+| mssqlwire | Emulate | Yes | Yes, many-to-few — configured Postgres pool | Yes — T-SQL → Postgres | Yes — `pg_sqlserver`: `CHARINDEX`/`LEN`/`IIF`/`REPLICATE` and friends work when present; `@@IDENTITY` degrades to plain Postgres's own `lastval()` when absent, with **no loss of correctness** (§8.1.4) | N/A | Warp `CredentialStore` | 0.44ms |
 
 **Reading this table alongside the detailed sections**: Relay is the cheapest and most transparent
 (real backend, real session, zero Warp-side translation risk) but gets none of the shared
 pipeline's protections. Bridge adds full pipeline coverage at the cost of the highest latency and a
-real, disclosed session-state-reset gap per engine. Adapt is the only mode that needs Shim at all,
+real, disclosed session-state-reset gap per engine. Emulate is the only mode that needs Shim at all,
 and is now uniformly gap-checked (§8.1.4) so it degrades — never silently breaks — when Shim isn't
 installed, which matters most for managed Postgres targets (Supabase, RDS, Cloud SQL, Azure
 Database for PostgreSQL) that can't have a Shim extension installed in the first place.
@@ -2657,7 +2657,7 @@ a writer/invalidator, or both — investigated live (2026-09-29) in response to 
 cases").
 
 **Short answer**: yes, for every mode except Relay. A write that goes through Warp's own shared
-pipeline (Adapt or Bridge mode, any of pgwire/mywire/mssqlwire/orawire) invalidates every cache tier
+pipeline (Emulate or Bridge mode, any of pgwire/mywire/mssqlwire/orawire) invalidates every cache tier
 its statement shape can affect, synchronously, in the same pipeline stage as the write — regardless
 of which protocol issued the write or which protocol populated the cache entry, because rows are
 identified by physical backend table name + primary-key values, not by protocol. **Relay mode is the
@@ -2760,7 +2760,7 @@ entirely, has no equivalent trigger-based invalidation path at all, Postgres-onl
 | pgwire | reader + writer | reader + writer | reader + writer (when SQL matches dynamo/mongo shape) | Full participation — same pipeline stage as every other translated frontend |
 | mywire | reader + writer | reader + writer | reader + writer | Same as pgwire |
 | mssqlwire | reader + writer | reader + writer | reader + writer | Same as pgwire |
-| orawire (Adapt/Bridge) | reader + writer | reader + writer | reader + writer | Same as pgwire |
+| orawire (Emulate/Bridge) | reader + writer | reader + writer | reader + writer | Same as pgwire |
 | **orawire (Relay)** | **none** | **none** | **none** | **Bypasses `CacheStage` and the entire shared pipeline — see callout below** |
 | dynamowire | — (never emits SQL through `CacheStage`) | — | reader + writer (GetItem/PutItem/UpdateItem/DeleteItem) | Query/Scan never touch any cache |
 | mongowire | — | — | writer/invalidator only | Native `find` does not read the cache (see above) |
@@ -2777,9 +2777,9 @@ invalidated out-of-band. But orawire's Relay target is real Oracle, and mywire's
 targets are real MySQL/SQL Server — none of those are the Postgres backend `CacheStage`/`RowCache`
 actually cache against in the first place, so this scenario mostly doesn't arise in practice: Relay
 mode's whole point is bypassing Postgres entirely in favor of the real engine, and Warp's caches
-only ever cache reads against the Postgres-backed tables Adapt/Bridge mode (and pgwire/mywire/
-mssqlwire's own Adapt-mode traffic) serve. The real risk case is narrower than "any Relay write
-corrupts the cache": it's specifically a deployment mixing Relay and Adapt/Bridge traffic against
+only ever cache reads against the Postgres-backed tables Emulate/Bridge mode (and pgwire/mywire/
+mssqlwire's own Emulate-mode traffic) serve. The real risk case is narrower than "any Relay write
+corrupts the cache": it's specifically a deployment mixing Relay and Emulate/Bridge traffic against
 the **same physical Postgres table** from different sessions, which is an unusual, not-recommended
 configuration to begin with.
 

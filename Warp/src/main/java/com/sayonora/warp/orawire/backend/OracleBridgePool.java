@@ -93,7 +93,7 @@ public final class OracleBridgePool implements AutoCloseable {
      * {@code WARP_ORACLE_USER}/{@code WARP_ORACLE_PASSWORD} service account for every client
      * session (see NOTES.md's credential-sharing tradeoff section for why: pooled connections
      * generally cannot be shared across client sessions authenticated as different real Oracle
-     * users, so Bridge mode -- like Adapt mode's own Postgres pool -- picks one shared backend
+     * users, so Bridge mode -- like Emulate mode's own Postgres pool -- picks one shared backend
      * identity rather than a real per-client Oracle login). {@code WARP_ORACLE_BRIDGE_POOL_SIZE}
      * (default 10) becomes Hikari's {@code maximumPoolSize}. */
     public static OracleBridgePool fromServerOptions(ServerOptions options) {

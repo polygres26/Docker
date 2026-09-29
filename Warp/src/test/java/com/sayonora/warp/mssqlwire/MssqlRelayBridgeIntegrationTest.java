@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * mssqlwire's version of {@code com.sayonora.warp.mywire.MySqlRelayBridgeIntegrationTest} -- first
- * live test of mssqlwire's new three-way {@code WARP_MSSQLWIRE_BACKEND_MODE} split (ADAPT,
+ * live test of mssqlwire's new three-way {@code WARP_MSSQLWIRE_BACKEND_MODE} split (EMULATE,
  * pre-existing; RELAY and BRIDGE, new -- see {@code ServerOptions.MssqlBackendMode}). Uses {@link
  * RealAzureSqlEdge} (a real, ARM64-native SQL-Server-compatible engine) as the target real backend
  * -- see that class's own javadoc for why a real {@code mcr.microsoft.com/mssql/server} image can't
@@ -43,18 +43,18 @@ class MssqlRelayBridgeIntegrationTest {
         try (RealAzureSqlEdge sqlServer = RealAzureSqlEdge.start();
                 RealPostgres postgres = RealPostgres.start()) {
 
-            try (WarpProcess warp = mssqlwireWarp(sqlServer, postgres, "adapt", "master").start()) {
+            try (WarpProcess warp = mssqlwireWarp(sqlServer, postgres, "emulate", "master").start()) {
                 String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire")
                         + ";encrypt=false;trustServerCertificate=true";
                 try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
                         Statement st = conn.createStatement()) {
                     st.execute("CREATE TABLE adapt_it (id INT PRIMARY KEY, val VARCHAR(50))");
-                    st.execute("INSERT INTO adapt_it VALUES (1, 'via-adapt')");
+                    st.execute("INSERT INTO adapt_it VALUES (1, 'via-emulate')");
                     try (ResultSet rs = st.executeQuery("SELECT val FROM adapt_it WHERE id = 1")) {
                         assertEquals(true, rs.next(),
-                                "ADAPT mode must dialect-translate the client's T-SQL and execute it "
+                                "EMULATE mode must dialect-translate the client's T-SQL and execute it "
                                         + "against the configured Postgres backend");
-                        assertEquals("via-adapt", rs.getString(1));
+                        assertEquals("via-emulate", rs.getString(1));
                     }
                 }
             }

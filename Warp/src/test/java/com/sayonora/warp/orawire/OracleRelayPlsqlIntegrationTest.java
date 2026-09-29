@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Timeout;
  * to a real Oracle instance, bypassing {@code RequestLoop}/{@code handlePlSqlExecute} entirely (see
  * [[warp-plsql-support-matrix]]). This test proves that assumption holds for exactly the PL/SQL
  * shapes that are REFUSED (not silently broken, but genuinely unsupported) in both Bridge mode
- * ({@link OracleBridgePlsqlCallIntegrationTest}) and Adapt+dual-exec
+ * ({@link OracleBridgePlsqlCallIntegrationTest}) and Emulate+dual-exec
  * ({@link OraclePlsqlCallIntegrationTest}) -- a real multi-statement anonymous block with a loop, a
  * package-qualified procedure/function call, a REF CURSOR OUT parameter returning multiple rows,
  * and multiple OUT parameters in one call -- all of which must simply work end-to-end through
@@ -68,14 +68,14 @@ class OracleRelayPlsqlIntegrationTest {
             }
 
             try (WarpProcess warp = relayWarp(oracle, postgres).start()) {
-                // Unlike Bridge/Adapt mode (which don't forward the service name to a real
+                // Unlike Bridge/Emulate mode (which don't forward the service name to a real
                 // listener at all, so "anything" works as a placeholder there), Relay is a raw
                 // byte proxy that forwards the CONNECT packet's service name VERBATIM to real
                 // Oracle -- it must be the real, registered service name.
                 String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/" + oracle.serviceName();
 
                 // A genuine multi-statement anonymous block with real control-flow logic -- refused
-                // outright in Bridge/Adapt (only a single procedure/function CALL is supported
+                // outright in Bridge/Emulate (only a single procedure/function CALL is supported
                 // there); Relay must just run it against real Oracle. Package state (v_counter)
                 // is real Oracle session state -- like real Oracle itself, it only persists within
                 // the SAME physical session/connection, not across separate ones, so the increments
@@ -91,7 +91,7 @@ class OracleRelayPlsqlIntegrationTest {
                                 + "END;");
                     }
 
-                    // Package-qualified function call -- refused in Bridge/Adapt (the
+                    // Package-qualified function call -- refused in Bridge/Emulate (the
                     // procedure-name resolver's regex doesn't recognize a dotted name at all).
                     try (CallableStatement cs = conn.prepareCall("{? = call relay_it_pkg.get_counter}")) {
                         cs.registerOutParameter(1, Types.NUMERIC);
@@ -102,7 +102,7 @@ class OracleRelayPlsqlIntegrationTest {
                     }
                 }
 
-                // REF CURSOR OUT parameter returning multiple rows -- refused in Bridge/Adapt (both
+                // REF CURSOR OUT parameter returning multiple rows -- refused in Bridge/Emulate (both
                 // real attempts at this response shape crashed a real JDBC client).
                 try (Connection conn = DriverManager.getConnection(url, oracle.sysUsername(), oracle.sysPassword());
                         CallableStatement cs = conn.prepareCall("{call relay_it_refcursor_proc(?)}")) {
@@ -114,7 +114,7 @@ class OracleRelayPlsqlIntegrationTest {
                     }
                 }
 
-                // Multiple OUT parameters in one call -- refused in Bridge/Adapt ("only a single
+                // Multiple OUT parameters in one call -- refused in Bridge/Emulate ("only a single
                 // scalar OUT parameter per call has been verified").
                 try (Connection conn = DriverManager.getConnection(url, oracle.sysUsername(), oracle.sysPassword());
                         CallableStatement cs = conn.prepareCall("{call relay_it_multiout_proc(?, ?, ?)}")) {

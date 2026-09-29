@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Real, live proof that plain Adapt mode (no dual-exec, no real Oracle backend at all) can reach
+ * Real, live proof that plain Emulate mode (no dual-exec, no real Oracle backend at all) can reach
  * Shim/pg_oracle's genuine DBMS_* builtin implementations for the narrow, first-slice shape
  * described in the {@code warp-adapt-plsql-shim-reach-plan} memory note: a single call to a KNOWN
  * Shim builtin ({@link com.sayonora.warp.core.ShimBuiltinCatalog}), rewritten into a plain,
@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Timeout;
  * feature). Skips cleanly via {@code assumeTrue} if either isn't available, rather than failing a
  * CI run that doesn't have pg_oracle built.
  */
-class AdaptShimPlsqlBuiltinIntegrationTest {
+class EmulateShimPlsqlBuiltinIntegrationTest {
 
     @Test
     @Timeout(120)
@@ -68,7 +68,7 @@ class AdaptShimPlsqlBuiltinIntegrationTest {
                 // the most commonly-needed Shim builtin for migrated application logging.
                 try (Connection conn = DriverManager.getConnection(url, pg.username(), pg.password());
                         CallableStatement cs = conn.prepareCall("{call dbms_output.put_line(?)}")) {
-                    cs.setString(1, "hello from AdaptShimPlsqlBuiltinIntegrationTest");
+                    cs.setString(1, "hello from EmulateShimPlsqlBuiltinIntegrationTest");
                     cs.execute();
                 }
 
@@ -83,7 +83,7 @@ class AdaptShimPlsqlBuiltinIntegrationTest {
                             "an unsupported builtin (not in ShimBuiltinCatalog's allowlist) must still be "
                                     + "refused cleanly, not silently routed to Postgres as a raw function call");
                     assertTrue(e.getMessage().contains("PL/SQL execution requires a real Oracle backend"),
-                            "the refusal message must be the same clean, helpful one plain Adapt mode "
+                            "the refusal message must be the same clean, helpful one plain Emulate mode "
                                     + "always gives for anything outside this feature's narrow scope: "
                                     + e.getMessage());
                 }

@@ -70,7 +70,7 @@ public final class PgMysqlSupport {
     // (assume installed) for the same reason: unchanged behavior for the common case and for any
     // call site (tests, other pipelines) that never sets it.
     //
-    // Real, live-found gap this closes (2026-09-29, raised directly: "Adapt should not always
+    // Real, live-found gap this closes (2026-09-29, raised directly: "Emulate should not always
     // assume pg_* modules are linked because Warp can be run against Supabase or RDS Postgres"):
     // normalizeMysql()'s SHOW COLUMNS/DESCRIBE/SHOW INDEX/SHOW VARIABLES/SHOW CREATE TABLE rewrites
     // used to unconditionally target mysql_catalog.* functions with NO availability check at all --

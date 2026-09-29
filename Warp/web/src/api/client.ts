@@ -744,7 +744,7 @@ export async function getAbStats(): Promise<AbStats> {
 // --- Interfaces: /api/interfaces (every frontend this Warp is actually serving) ---
 
 export type InterfaceKind = 'sql' | 'api' | 'mcp'
-export type InterfaceMode = 'Relay' | 'Adapt' | 'Bridge' | 'Emulate'
+export type InterfaceMode = 'Relay' | 'Bridge' | 'Emulate'
 
 export interface InterfaceInfo {
   id: string
@@ -752,7 +752,7 @@ export interface InterfaceInfo {
   kind: InterfaceKind
   protocol: string
   port: number
-  /** Relay: native protocol to a same-engine backend. Adapt: dialect translated. Bridge: real protocol parsed, SQL run verbatim against a pooled same-engine backend (firewall/QoS/audit still apply, no dialect translation). Emulate: API implemented on Postgres. null: n/a. */
+  /** Relay: native protocol to a same-engine backend. Bridge: real protocol parsed, SQL run verbatim against a pooled same-engine backend (firewall/QoS/audit still apply, no dialect translation). Emulate: dialect/API translated and executed on Postgres. null: n/a. */
   mode: InterfaceMode | null
   status: 'listening'
   /** Store id for store-backed API frontends. */

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Timeout;
 /**
  * Real, live round-trip-time (RTT) measurement across every one of Warp's frontend/backend-mode
  * combinations -- requested directly by the user ("measure the RTT for Warp with different
- * backends including Adapt Postgres ... document that. Use a 250 byte result RTT").
+ * backends including Emulate Postgres ... document that. Use a 250 byte result RTT").
  *
  * <h2>Methodology</h2>
  * Every combination selects the identical payload shape: a single row, one {@code VARCHAR(250)}
@@ -73,8 +73,8 @@ class RttBenchmarkIntegrationTest {
         mysql = RealMySql.start();
         sqlServer = RealAzureSqlEdge.start();
 
-        // Postgres: seeded once, used by every Adapt-mode combination (orawire/mywire/mssqlwire
-        // Adapt all dialect-translate onto this same backend) plus the plain pgwire case.
+        // Postgres: seeded once, used by every Emulate-mode combination (orawire/mywire/mssqlwire
+        // Emulate all dialect-translate onto this same backend) plus the plain pgwire case.
         try (Connection c = DriverManager.getConnection(postgres.jdbcUrl(), postgres.username(), postgres.password());
                 Statement st = c.createStatement()) {
             st.execute("CREATE TABLE rtt_bench (id INT PRIMARY KEY, payload VARCHAR(250))");
@@ -227,7 +227,7 @@ class RttBenchmarkIntegrationTest {
         }
     }
 
-    // ---- pgwire: Postgres client -> Warp -> Postgres (the "Adapt Postgres" case) ----------
+    // ---- pgwire: Postgres client -> Warp -> Postgres (the "Emulate Postgres" case) ----------
 
     @Test
     @Order(5)
@@ -240,12 +240,12 @@ class RttBenchmarkIntegrationTest {
                 .start()) {
             String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/" + postgres.database();
             try (Connection c = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
-                record("pgwire Adapt (Postgres->Warp->Postgres)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
+                record("pgwire Emulate (Postgres->Warp->Postgres)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
             }
         }
     }
 
-    // ---- orawire: Relay / Bridge / Adapt ---------------------------------------------------
+    // ---- orawire: Relay / Bridge / Emulate ---------------------------------------------------
 
     @Test
     @Order(6)
@@ -301,12 +301,12 @@ class RttBenchmarkIntegrationTest {
                 .start()) {
             String url = "jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/anything";
             try (Connection c = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
-                record("orawire Adapt (Oracle->Warp->Postgres, translated)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
+                record("orawire Emulate (Oracle->Warp->Postgres, translated)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
             }
         }
     }
 
-    // ---- mywire: Relay / Bridge / Adapt -----------------------------------------------------
+    // ---- mywire: Relay / Bridge / Emulate -----------------------------------------------------
 
     @Test
     @Order(9)
@@ -369,12 +369,12 @@ class RttBenchmarkIntegrationTest {
             String url = "jdbc:mysql://localhost:" + warp.port("mywire") + "/" + postgres.database()
                     + "?useSSL=false&allowPublicKeyRetrieval=true";
             try (Connection c = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
-                record("mywire Adapt (MySQL->Warp->Postgres, translated)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
+                record("mywire Emulate (MySQL->Warp->Postgres, translated)", measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
             }
         }
     }
 
-    // ---- mssqlwire: Relay / Bridge / Adapt --------------------------------------------------
+    // ---- mssqlwire: Relay / Bridge / Emulate --------------------------------------------------
 
     @Test
     @Order(12)
@@ -436,7 +436,7 @@ class RttBenchmarkIntegrationTest {
                 .start()) {
             String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire") + ";encrypt=false;trustServerCertificate=true";
             try (Connection c = DriverManager.getConnection(url, postgres.username(), postgres.password())) {
-                record("mssqlwire Adapt (SQLServer->Warp->Postgres, translated)",
+                record("mssqlwire Emulate (SQLServer->Warp->Postgres, translated)",
                         measure(c, "SELECT payload FROM rtt_bench WHERE id = 1"));
             }
         }

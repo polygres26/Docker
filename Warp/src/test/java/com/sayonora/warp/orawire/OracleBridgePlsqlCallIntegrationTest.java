@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Timeout;
  * Real proof that a real ojdbc {@code CallableStatement} call to a PL/SQL procedure works through
  * orawire's BRIDGE mode specifically (verbatim execution against a real Oracle backend, via
  * {@code OracleBridgePool} -- see {@code ServerOptions.OracleBackendMode.BRIDGE}) -- not just under
- * dual-exec/Adapt, which {@link OraclePlsqlCallIntegrationTest} already covers. Both modes populate
+ * dual-exec/Emulate, which {@link OraclePlsqlCallIntegrationTest} already covers. Both modes populate
  * {@code RequestLoop#oracleConnection} and so share the exact same {@code handlePlSqlExecute} code
  * path, but that had never actually been exercised live under Bridge mode specifically until this
  * class -- confirmed live (2026-09-28) via a real ad hoc JDBC client against a real running Bridge
@@ -85,7 +85,7 @@ class OracleBridgePlsqlCallIntegrationTest {
                 stmt.execute("CREATE PROCEDURE bridge_it_out_proc(p_in IN NUMBER, p_out OUT NUMBER) AS "
                         + "BEGIN p_out := p_in * 2; END;");
                 // Real ojdbc client credential -- Bridge mode logs the client in as a real Oracle
-                // user (see WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS above), distinct from Adapt/dual-exec's
+                // user (see WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS above), distinct from Emulate/dual-exec's
                 // Postgres-side credential. Uses the same SYS password for simplicity in this test only.
                 try {
                     stmt.execute("CREATE USER app_user1 IDENTIFIED BY \"" + oracle.sysPassword() + "\"");

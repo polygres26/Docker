@@ -164,7 +164,7 @@ public final class SessionHandler implements Runnable {
      * against a real server: only reachable from a test that constructs {@code RequestLoop}
      * directly, never from a real client connection. This wires it up for the one combination that
      * needs a real, directly-usable {@code java.sql.Connection} here: dual-exec enabled, Oracle as
-     * authority, and {@code WARP_ORACLE_BACKEND_MODE=adapt} (the default) -- the {@code relay} mode
+     * authority, and {@code WARP_ORACLE_BACKEND_MODE=emulate} (the default) -- the {@code relay} mode
      * is handled entirely separately, above, via {@link
      * com.sayonora.warp.orawire.backend.NativeSessionRelay}'s raw byte relay, which never
      * constructs a {@code RequestLoop} (or any oracleConnection) at all. Returns {@code null} (same
@@ -173,7 +173,7 @@ public final class SessionHandler implements Runnable {
     private com.sayonora.warp.core.LazyPooledConnection openDualExecOracleConnection() {
         if (!options.dualExecEnabled()
                 || options.dualExecAuthority() != ServerOptions.DualExecAuthority.ORACLE
-                || options.oracleBackendMode() != ServerOptions.OracleBackendMode.ADAPT) {
+                || options.oracleBackendMode() != ServerOptions.OracleBackendMode.EMULATE) {
             return null;
         }
         String url = "jdbc:oracle:thin:@//" + options.oracleHost() + ":" + options.oraclePort()

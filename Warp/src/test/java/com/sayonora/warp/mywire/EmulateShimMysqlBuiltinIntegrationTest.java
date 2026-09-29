@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * mywire's version of {@code com.sayonora.warp.orawire.AdaptShimPlsqlBuiltinIntegrationTest} --
- * real, live proof that plain Adapt mode's always-on {@code SET db_emulation = 'mysql'} (see
+ * real, live proof that plain Emulate mode's always-on {@code SET db_emulation = 'mysql'} (see
  * {@code core.access.MySqlPgEmulationSessionInitializer}) actually reaches Shim/pg_mysql's real
  * MySQL-compatible builtin functions, unlike Oracle's Shim reach this has NO syntax gap to close
  * (a plain {@code SELECT LAST_INSERT_ID()} already parses fine against Postgres) -- what's actually
@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Timeout;
  * Postgres extension and {@code WARP_TEST_PG_LOCAL=1} -- see {@code AdaptShimPlsqlBuiltinIntegrationTest}'s
  * own javadoc for the exact env vars. Skips cleanly via {@code assumeTrue} if unavailable.
  */
-class AdaptShimMysqlBuiltinIntegrationTest {
+class EmulateShimMysqlBuiltinIntegrationTest {
 
     @Test
     @Timeout(120)

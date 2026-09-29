@@ -9,7 +9,7 @@ public final class MySqlBackendConnections {
 
     // Lazily built, process-wide: BRIDGE mode (ServerOptions.MySqlBackendMode#BRIDGE) shares one
     // small, bounded pool across every client session, same shape as orawire's OracleBridgePool.
-    // Left null (never constructed) for ADAPT/RELAY deployments, which never call open() with
+    // Left null (never constructed) for EMULATE/RELAY deployments, which never call open() with
     // BRIDGE selected.
     private static volatile MySqlBridgePool bridgePool;
 
@@ -44,8 +44,8 @@ public final class MySqlBackendConnections {
 
     /** BRIDGE mode (see {@link ServerOptions.MySqlBackendMode#BRIDGE}) uses a dedicated, bounded
      * {@link MySqlBridgePool} instead of the generic {@link BackendConnectionPools} every other
-     * caller of this method shares -- mirrors orawire's own Adapt-vs-Bridge pool split. Any other
-     * mode (the legacy single-toggle native path, which predates the ADAPT/RELAY/BRIDGE split and
+     * caller of this method shares -- mirrors orawire's own Emulate-vs-Bridge pool split. Any other
+     * mode (the legacy single-toggle native path, which predates the EMULATE/RELAY/BRIDGE split and
      * is treated as BRIDGE-shaped -- see {@link ServerOptions#mySqlBackendMode()}'s javadoc -- still
      * reaches BRIDGE's own dedicated pool once {@code mySqlBackendMode()} resolves to BRIDGE) keeps
      * using the shared generic pool unchanged. */

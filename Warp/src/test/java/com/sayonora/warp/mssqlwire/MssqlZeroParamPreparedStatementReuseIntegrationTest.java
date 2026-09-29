@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Timeout;
  * MssqlWireSessionHandler#handleRpc} used to require at least 2 RPC parameters for any {@code
  * sp_executesql} call, so it rejected this perfectly valid 1-parameter shape outright.
  *
- * <p>Three executions over the same {@code PreparedStatement}, in both ADAPT (dialect-translated
+ * <p>Three executions over the same {@code PreparedStatement}, in both EMULATE (dialect-translated
  * to Postgres) and BRIDGE (verbatim SQL against a pooled real SQL Server backend) mode -- Relay
  * mode is a raw byte proxy to a real backend and was never exposed to this bug.
  */
@@ -55,13 +55,13 @@ class MssqlZeroParamPreparedStatementReuseIntegrationTest {
         try (RealAzureSqlEdge sqlServer = RealAzureSqlEdge.start();
                 RealPostgres postgres = RealPostgres.start()) {
 
-            try (WarpProcess warp = mssqlwireWarp(sqlServer, postgres, "adapt", "master").start()) {
+            try (WarpProcess warp = mssqlwireWarp(sqlServer, postgres, "emulate", "master").start()) {
                 String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire")
                         + ";encrypt=false;trustServerCertificate=true";
                 try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
                         Statement setup = conn.createStatement()) {
                     setup.execute("CREATE TABLE rtt_bench (id INT PRIMARY KEY, payload VARCHAR(50))");
-                    setup.execute("INSERT INTO rtt_bench VALUES (1, 'via-adapt')");
+                    setup.execute("INSERT INTO rtt_bench VALUES (1, 'via-emulate')");
                 }
 
                 try (Connection conn = DriverManager.getConnection(url, postgres.username(), postgres.password());
@@ -70,7 +70,7 @@ class MssqlZeroParamPreparedStatementReuseIntegrationTest {
                     for (int i = 1; i <= 3; i++) {
                         try (ResultSet rs = ps.executeQuery()) {
                             assertTrue(rs.next(), "execution " + i + " must return a row");
-                            assertEquals("via-adapt", rs.getString(1), "execution " + i + " must return the right row");
+                            assertEquals("via-emulate", rs.getString(1), "execution " + i + " must return the right row");
                         }
                     }
                 }

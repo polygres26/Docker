@@ -1729,7 +1729,7 @@ public final class RequestLoop {
             "^\\s*BEGIN\\s*:1\\s*:=\\s*([A-Za-z0-9_$]+\\.[A-Za-z0-9_$]+)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** Real gap this closes, scoped narrowly -- see the {@code warp-adapt-plsql-shim-reach-plan}
-     * memory note for the full writeup: plain Adapt mode (no real Oracle backend at all) used to
+     * memory note for the full writeup: plain Emulate mode (no real Oracle backend at all) used to
      * refuse EVERY PL/SQL-shaped statement outright, even though Shim/pg_oracle's own DBMS_*
      * builtin functions genuinely work once called through Postgres's own native function-call
      * syntax -- confirmed live by installing pg_oracle for real and testing directly: Oracle's
@@ -1744,7 +1744,7 @@ public final class RequestLoop {
      * <p>Deliberately narrow: only the small, hand-maintained {@link ShimBuiltinCatalog} allowlist
      * is eligible (never a guess at an unknown function's real signature), only when
      * {@link PgOracleSupport#isAvailable} confirms Shim is actually installed on this backend (so
-     * a Shim-less Adapt install keeps today's existing, unchanged clean refusal), and only
+     * a Shim-less Emulate install keeps today's existing, unchanged clean refusal), and only
      * IN-only calls (no known Shim builtin here has a real OUT parameter yet -- see the catalog's
      * own javadoc). Returns {@code false} (without writing any response) for every case outside
      * this narrow scope, so the caller falls through to {@code handlePlSqlExecute}'s existing,

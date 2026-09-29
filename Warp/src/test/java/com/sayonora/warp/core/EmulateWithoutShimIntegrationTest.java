@@ -15,9 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Real, live proof that mywire/mssqlwire's Adapt mode does NOT assume a Shim extension
+ * Real, live proof that mywire/mssqlwire's Emulate mode does NOT assume a Shim extension
  * (pg_mysql/pg_sqlserver) is installed on the backend Postgres -- the scenario raised directly:
- * "Adapt should not always assume pg_* modules are linked because Warp can be run against Supabase
+ * "Emulate should not always assume pg_* modules are linked because Warp can be run against Supabase
  * or RDS Postgres etc" (neither of those, nor Cloud SQL or Azure Database for PostgreSQL, allow
  * installing a third-party C extension at all). Uses a completely plain {@link RealPostgres} --
  * no {@code shared_preload_libraries}, nothing installed -- to genuinely simulate that class of
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Timeout;
  * which have no plain-Postgres equivalent to fall back to) or a real, working degraded translation
  * (SQL Server's {@code @@IDENTITY}, which DOES have one: plain Postgres's own {@code lastval()}).
  */
-class AdaptWithoutShimIntegrationTest {
+class EmulateWithoutShimIntegrationTest {
 
     @Test
     @Timeout(120)
