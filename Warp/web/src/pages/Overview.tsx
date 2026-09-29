@@ -11,6 +11,7 @@ import {
   type KpiItem, type Tone,
 } from '../components/ui'
 import { errorText, targetOf, useLoad } from '../hooks'
+import { MaturityLegend } from './interfaces/InterfaceTable'
 import styles from './Overview.module.css'
 
 const POLL_MS = 10_000
@@ -92,6 +93,12 @@ export default function Overview() {
     const tlsOff = withReadiness.filter((r) => r.readiness.dimensions.encryption === 'disabled')
     const tlsErrored = withReadiness.filter((r) => r.readiness.dimensions.encryption === 'error')
     const noStore = withReadiness.filter((r) => r.readiness.dimensions.backend === 'not_configured')
+    // Least-verified interfaces (Experimental/Preview, see api/maturity.ts's MATURITY_ORDER) --
+    // informational (muted), not itself a fault: a low maturity tier just means less evidence
+    // exists yet, distinct from the confirmed problems above. Renamed from "Certified" naming per
+    // the same UI review this whole readiness effort responds to; see the Maturity scale legend
+    // at the bottom of this page for what each tier actually means.
+    const leastVerified = withReadiness.filter((r) => r.readiness.dimensions.maturity === 'Experimental' || r.readiness.dimensions.maturity === 'Preview')
     if (openAuth.length > 0) {
       risks.push({ tone: 'bad', text: <>{openAuth.length} interface{openAuth.length === 1 ? '' : 's'} {openAuth.length === 1 ? 'accepts' : 'accept'} connections with no authentication enforced: {namesOf(openAuth)}. <Link to="/acl">Review access</Link>.</> })
     }
@@ -106,6 +113,9 @@ export default function Overview() {
     }
     if (noStore.length > 0) {
       risks.push({ tone: 'warn', text: <>{noStore.length} store-backed interface{noStore.length === 1 ? '' : 's'} {noStore.length === 1 ? 'has' : 'have'} no backend configured, served from the default backend instead: {namesOf(noStore)}. <Link to="/infrastructure">Enable a store</Link>.</> })
+    }
+    if (leastVerified.length > 0) {
+      risks.push({ tone: 'muted', text: <>{leastVerified.length} interface{leastVerified.length === 1 ? '' : 's'} {leastVerified.length === 1 ? 'is' : 'are'} still Experimental or Preview maturity (least verified): {namesOf(leastVerified)}. See the maturity scale on <Link to="/interfaces/sql">SQL drivers</Link> or <Link to="/interfaces/api">API endpoints</Link>.</> })
     }
   }
   const riskLoading = !sets.data && !sets.error
@@ -199,6 +209,7 @@ export default function Overview() {
           </DataTable>
         </Section>
       )}
+      <MaturityLegend />
     </div>
   )
 }
