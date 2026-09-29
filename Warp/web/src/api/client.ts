@@ -805,6 +805,24 @@ export interface InterfaceInfo {
   authMethod?: string
   authEnforced?: boolean
   authDetail?: string
+  /** Joined from PolicySummary#applicablePolicies -- which control-plane policies apply to this
+   * interface, as short tags: "router", "qos", "firewall:N", "acl:N" (N = rule count). Router/QoS/
+   * firewall only ever appear for kind === 'sql' (they never apply outside the SQL pipeline); "acl:N"
+   * always appears (even "acl:0") so "explicitly no ACL rules" reads differently from "not computed".
+   * Absent entirely means the server had no WarpConfig to compute this from (never guessed). */
+  policies?: string[]
+}
+
+/** Whether `tag` (e.g. "router", "qos") is present verbatim in an interface's `policies` array. */
+export function policyOn(policies: string[] | undefined, tag: string): boolean {
+  return !!policies?.includes(tag)
+}
+
+/** The count from a `"prefix:N"` policy tag (e.g. `policyCount(i.policies, 'acl')` for `"acl:3"`),
+ * or 0 when the tag isn't present at all. */
+export function policyCount(policies: string[] | undefined, prefix: string): number {
+  const tag = policies?.find((p) => p.startsWith(`${prefix}:`))
+  return tag ? Number(tag.slice(prefix.length + 1)) : 0
 }
 
 export interface InterfacesResponse { interfaces: InterfaceInfo[]; activeSessions: number }

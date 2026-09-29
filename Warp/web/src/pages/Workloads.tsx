@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import {
   type InterfaceInfo,
-  getAbRouting, getUsage, getWireConfig, getWireMetrics, listBackendSets, listFirewallRules, listInterfaces,
+  getAbRouting, getUsage, getWireMetrics, listBackendSets, listInterfaces, policyCount, policyOn,
 } from '../api/client'
 import {
   Button, DataTable, EmptyState, KpiStrip, Loading, ModeTag, NameCell, Notice, PageHeader, Section, compact, type KpiItem,
@@ -17,28 +17,36 @@ const PROTOCOL_OF: Record<string, string> = {
   orawire: 'oracle', 'orawire-native': 'oracle', 'orawire-tls': 'oracle', mongowire: 'mongodb', boltwire: 'bolt', grpc: 'grpc', 'grpc-tls': 'grpc',
 }
 
-const filled = (s: string | null | undefined) => !!s && s.trim() !== ''
-
 /**
  * Workloads. Warp has no stored "workload" object; a workload here is DERIVED: one frontend (interface) joined with the backend set
  * and backends it reaches and the router / QoS / ACL / firewall / A-B policies that apply to it. Every cell is read from live config;
  * nothing is stored or invented, and the derivation is shown so it can be checked.
+ *
+ * Router/QoS/ACL/firewall applicability comes from each interface's own `policies` field (see
+ * PolicySummary#applicablePolicies, joined server-side onto GET /api/interfaces) rather than this
+ * page recomputing it from WireConfig/firewall-rules itself -- the exact reimplementation risk a
+ * UI review flagged once already for connection routing; one server-side computation now, not two.
  */
 export default function Workloads() {
   const ifaces = useLoad(listInterfaces, 15_000)
   const sets = useLoad(useCallback(() => listBackendSets(false), []))
-  const config = useLoad(getWireConfig)
   const ab = useLoad(getAbRouting)
-  const firewall = useLoad(listFirewallRules)
   const metrics = useLoad(getWireMetrics, 15_000)
   const usage = useLoad(getUsage, 15_000)
 
   const rows = (ifaces.data?.interfaces ?? []).filter((i) => i.kind !== 'mcp')
-  const cfg = config.data
-  const aclRules = cfg && filled(cfg.aclRules) ? cfg.aclRules!.split(';').filter((r) => r.trim()).length : 0
-  const fwRules = (firewall.data ?? []).filter((r) => r.enabled).length
-  const routerConfigured = !!cfg && [cfg.routerSchemaRules, cfg.routerPredicateRules, cfg.routerValueShardRules, cfg.routerShardTables, cfg.routerTableShards].some(filled)
-  const qosConfigured = !!cfg && (filled(cfg.qosRatePerSec) || filled(cfg.qosClassLimits))
+  // Router/QoS/ACL are process-global, not really per-interface, so every row's `policies` agrees
+  // on them already -- take the first SQL-kind row as the representative source for the page-level
+  // KPI strip (router/QoS/firewall never apply outside the SQL pipeline in the first place); fall
+  // back to any row for ACL, which every kind carries. `undefined` (no policy data reported at all)
+  // reads as "—", never as a false "not configured".
+  const sqlRow = rows.find((i) => i.kind === 'sql')
+  const anyRow = rows[0]
+  const policiesKnown = !!anyRow?.policies
+  const routerConfigured = policyOn(sqlRow?.policies, 'router')
+  const qosConfigured = policyOn(sqlRow?.policies, 'qos')
+  const fwRules = policyCount(sqlRow?.policies, 'firewall')
+  const aclRules = policyCount(anyRow?.policies, 'acl')
 
   const backendsOfSet = useMemo(() => Object.fromEntries((sets.data?.sets ?? []).map((s) => [s.name, s.backends.map((b) => b.name)])), [sets.data])
   const defaultSet = sets.data?.sets.find((s) => s.isDefaultSet)?.name
@@ -54,19 +62,19 @@ export default function Workloads() {
     return { primary: `Set ${defaultSet ?? 'default'}`, sub: `by database name · ${(backendsOfSet[defaultSet ?? 'default'] ?? []).length} backend(s)` }
   }
 
-  const err = ifaces.error ?? sets.error ?? config.error
+  const err = ifaces.error ?? sets.error
   const kpis: KpiItem[] = [
     { label: 'Derived workloads', value: rows.length, hint: 'one per listening SQL / API frontend' },
-    { label: 'Router', value: config ? (routerConfigured ? 'Rules set' : 'None') : '—', hint: 'statement routing rules' },
-    { label: 'QoS', value: config ? (qosConfigured ? 'Limits set' : 'Unlimited') : '—', hint: 'rate limits per class' },
-    { label: 'ACL / firewall', value: config ? `${aclRules} / ${fwRules}` : '—', hint: 'ACL rules / enabled SQL firewall rules' },
+    { label: 'Router', value: !policiesKnown ? '—' : routerConfigured ? 'Rules set' : 'None', hint: 'statement routing rules' },
+    { label: 'QoS', value: !policiesKnown ? '—' : qosConfigured ? 'Limits set' : 'Unlimited', hint: 'rate limits per class' },
+    { label: 'ACL / firewall', value: !policiesKnown ? '—' : `${aclRules} / ${fwRules}`, hint: 'ACL rules / enabled SQL firewall rules' },
   ]
 
   return (
     <div>
       <PageHeader title="Workloads"
         description="A workload is derived, not stored: a frontend joined with the backend set it reaches and the policies that apply to it. Policies are edited on their own pages."
-        actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { ifaces.reload(); sets.reload(); config.reload(); ab.reload(); firewall.reload(); metrics.reload(); usage.reload() }}>Refresh</Button>} />
+        actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { ifaces.reload(); sets.reload(); ab.reload(); metrics.reload(); usage.reload() }}>Refresh</Button>} />
       {err && <Notice tone="bad">Could not load: {err}</Notice>}
       {ifaces.loading ? <Loading /> : <KpiStrip items={kpis} label="Workload figures" />}
 
@@ -78,6 +86,10 @@ export default function Workloads() {
               {rows.map((i) => {
                 const r = reaches(i)
                 const abPolicy = i.store ? ab.data?.policies[i.store] : undefined
+                const rowRouter = policyOn(i.policies, 'router')
+                const rowQos = policyOn(i.policies, 'qos')
+                const rowFirewall = policyCount(i.policies, 'firewall')
+                const rowAcl = policyCount(i.policies, 'acl')
                 return (
                   <tr key={i.id}>
                     <td><NameCell name={i.label} sub={`${i.protocol} · port ${i.port}`} /></td>
@@ -86,10 +98,10 @@ export default function Workloads() {
                     <td><NameCell name={r.primary} sub={r.sub} /></td>
                     <td>
                       <span className={styles.policyList}>
-                        {i.kind === 'sql' && <Chip to="/router" on={routerConfigured} label="Router" />}
-                        {i.kind === 'sql' && <Chip to="/qos" on={qosConfigured} label="QoS" />}
-                        {i.kind === 'sql' && <Chip to="/firewall" on={fwRules > 0} label={fwRules > 0 ? `Firewall ${fwRules}` : 'Firewall'} />}
-                        <Chip to="/acl" on={aclRules > 0} label={aclRules > 0 ? `ACL ${aclRules}` : 'ACL'} />
+                        {i.kind === 'sql' && <Chip to="/router" on={rowRouter} label="Router" />}
+                        {i.kind === 'sql' && <Chip to="/qos" on={rowQos} label="QoS" />}
+                        {i.kind === 'sql' && <Chip to="/firewall" on={rowFirewall > 0} label={rowFirewall > 0 ? `Firewall ${rowFirewall}` : 'Firewall'} />}
+                        <Chip to="/acl" on={rowAcl > 0} label={rowAcl > 0 ? `ACL ${rowAcl}` : 'ACL'} />
                         {i.store && <Chip to="/ab-routing" on={!!abPolicy && abPolicy.mode !== 'local'} label={abPolicy ? `A/B ${abPolicy.mode}` : 'A/B'} />}
                       </span>
                     </td>
