@@ -16,21 +16,40 @@ const STARTER_QUERIES: Array<{ label: string; query: string }> = [
   { label: 'Callers waiting for a connection', query: 'warp_pool_waiting > 0' },
 ]
 
+/** ISO timestamp -> a short "Xs/m/h ago" string, or null passthrough. */
+function ago(iso: string | null): string | null {
+  if (!iso) return null
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 0) return 'just now'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  return `${Math.floor(m / 60)}h ago`
+}
+
 /**
- * Observability: what Warp actually emits about itself, where it goes, and what's genuinely
- * unverified. Every figure comes from GET /api/observability (ObservabilitySummary.java), which
- * re-reads the same env vars WarpTelemetry itself parses -- never a second OTLP exporter -- plus
- * the always-on Prometheus scrape endpoint. Nothing here is estimated: a real, disclosed gap
- * (OTLP has no delivery confirmation; only metrics are exported, no traces or logs) is stated as
- * such, not hidden behind a health check that doesn't exist.
+ * Observability: what Warp actually emits about itself, where it goes, and whether delivery is
+ * actually confirmed. Every figure comes from GET /api/observability (ObservabilitySummary.java):
+ * config fields are read straight from env (never a second OTLP exporter just to answer this
+ * page), and exportVerified/the attempt-and-success counters are the REAL, live outcome of every
+ * export WarpTelemetry has made (ExportHealthTrackingExporter tracks each export's actual async
+ * result) -- not an assumption from the exporter merely being configured.
  */
 export default function Observability() {
   const obs = useLoad(getObservability, POLL_MS)
   const data = obs.data
+  const otlp = data?.otlp
+
+  const otlpStateLabel = !otlp?.enabled ? 'Disabled'
+    : otlp.exportVerified ? 'Verified'
+    : otlp.exportAttempts === 0 ? 'Enabled, awaiting first export'
+    : 'Unverified'
+  const otlpTone = !otlp?.enabled ? 'muted' : otlp.exportVerified ? 'ok' : 'warn'
 
   const kpis: KpiItem[] = data ? [
-    { label: 'OTLP export', value: data.otlp.enabled ? 'Enabled' : 'Disabled', tone: data.otlp.enabled ? 'warn' : 'muted', wide: true,
-      hint: data.otlp.enabled ? `${data.otlp.protocol?.toUpperCase()} to ${data.otlp.endpoint} every ${data.otlp.exportIntervalMs}ms -- delivery is not confirmed` : 'set WARP_OTEL_ENDPOINT to enable' },
+    { label: 'OTLP export', value: otlpStateLabel, tone: otlpTone, wide: true,
+      hint: otlp?.enabled ? `${otlp.protocol?.toUpperCase()} to ${otlp.endpoint} every ${otlp.exportIntervalMs}ms` : 'set WARP_OTEL_ENDPOINT to enable' },
     { label: 'Signal types', value: data.metricsOnly ? 'Metrics' : '—', hint: 'no traces or logs' },
     { label: 'Prometheus scrape', value: data.prometheus.available ? 'Available' : 'Off', hint: data.prometheus.path },
     { label: 'Cataloged metrics', value: data.catalog.length, hint: 'names Warp actually emits' },
@@ -43,19 +62,26 @@ export default function Observability() {
       {obs.error && <Notice tone="bad">Could not load observability status: {obs.error}</Notice>}
       {obs.loading && !data ? <Loading /> : <KpiStrip items={kpis} label="Observability figures" />}
 
-      {data && !data.otlp.exportVerified && data.otlp.enabled && (
+      {otlp?.enabled && !otlp.exportVerified && otlp.exportAttempts > 0 && (
         <Notice tone="warn">
-          OTLP export is configured, but Warp cannot confirm successful delivery: the exporter runs on a timer with no
-          acknowledgement, health check or last-success signal. Treat this destination as unverified until you confirm
-          data is arriving on the collector side.
+          OTLP export has been attempted {otlp.exportAttempts} time{otlp.exportAttempts === 1 ? '' : 's'}
+          {otlp.exportSuccesses > 0 ? `, ${otlp.exportSuccesses} succeeded, but the most recent success was too long ago to trust` : ' with no successful delivery yet'}.
+          {otlp.lastError && <> Last error: <code>{otlp.lastError}</code>.</>} Check the collector at <code>{otlp.endpoint}</code>.
         </Notice>
+      )}
+      {otlp?.enabled && otlp.exportVerified && (
+        <Notice tone="ok">OTLP export to <code>{otlp.endpoint}</code> is verified: the most recent export succeeded {ago(otlp.lastSuccessAt)}.</Notice>
       )}
 
       <Section flush title="Destinations" meta="configured export paths">
         <div className={styles.rowList}>
           <div className={styles.rowItem}>
-            <div><strong>OTLP endpoint</strong><span className={styles.sub}>{data?.otlp.enabled ? `${data.otlp.protocol?.toUpperCase()} · ${data.otlp.endpoint}${data.otlp.headerCount > 0 ? ` · ${data.otlp.headerCount} header(s)` : ' · no headers configured'}` : 'Not configured -- set WARP_OTEL_ENDPOINT'}</span></div>
-            <StatusPill tone={data?.otlp.enabled ? 'warn' : 'muted'}>{data?.otlp.enabled ? 'Unverified' : 'Off'}</StatusPill>
+            <div>
+              <strong>OTLP endpoint</strong>
+              <span className={styles.sub}>{otlp?.enabled ? `${otlp.protocol?.toUpperCase()} · ${otlp.endpoint}${otlp.headerCount > 0 ? ` · ${otlp.headerCount} header(s)` : ' · no headers configured'}` : 'Not configured -- set WARP_OTEL_ENDPOINT'}</span>
+              {otlp?.enabled && <span className={styles.sub}>{otlp.exportAttempts} attempt{otlp.exportAttempts === 1 ? '' : 's'} · {otlp.exportSuccesses} succeeded · {otlp.exportFailures} failed{otlp.lastExportAt ? ` · last attempt ${ago(otlp.lastExportAt)}` : ''}</span>}
+            </div>
+            <StatusPill tone={otlpTone}>{otlpStateLabel}</StatusPill>
           </div>
           <div className={styles.rowItem}>
             <div><strong>Prometheus endpoint</strong><span className={styles.sub}>{data?.prometheus.path} -- unauthenticated, always on</span></div>

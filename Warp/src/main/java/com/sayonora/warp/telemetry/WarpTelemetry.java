@@ -8,10 +8,13 @@ import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporter;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,16 +26,123 @@ public final class WarpTelemetry {
     private static final AttributeKey<String> STATE = AttributeKey.stringKey("state");
     private static final AttributeKey<String> WORKLOAD_CLASS = AttributeKey.stringKey("workload_class");
 
+    // The one live instance this process constructed (null when OTLP export is disabled) -- same
+    // static-singleton-accessor pattern com.sayonora.warp.ab.AbRouting already uses in this
+    // codebase, chosen over threading a WarpTelemetry reference through MetricsServer's several
+    // constructors just so GET /api/observability can read its live export-health counters.
+    private static volatile WarpTelemetry current;
+
+    public static WarpTelemetry current() {
+        return current;
+    }
+
     private final LongCounter statementCounter;
     private final LongCounter errorCounter;
     private final DoubleHistogram latencyHistogram;
     private final LongCounter qosAdmittedCounter;
     private final LongCounter qosRejectedCounter;
     private final Meter meter;
+    private final ExportHealthTrackingExporter trackedExporter;
+    private final long exportIntervalMs;
 
     private static final AttributeKey<String> PROTOCOL = AttributeKey.stringKey("protocol");
     private static final AttributeKey<String> BACKEND = AttributeKey.stringKey("backend");
     private static final AttributeKey<String> KIND = AttributeKey.stringKey("kind");
+
+    /**
+     * Real per-export outcome tracking -- {@code attempts}/{@code successes}/{@code failures} are
+     * cumulative counts, {@code lastAttemptAt}/{@code lastSuccessAt} the real timestamps of the
+     * most recent export tick's start and most recent SUCCESSFUL export, {@code lastError} the
+     * failure reason from the most recent unsuccessful export (cleared on the next success).
+     * {@code verified} is the actual health verdict: at least one export has ever succeeded AND
+     * the most recent success is no older than 3 export intervals -- a real destination that
+     * accepted data once but has since gone quiet (collector restarted, network partition, auth
+     * expired) reports {@code verified=false} again, not a stale permanent "yes".
+     */
+    public record ExportHealth(long attempts, long successes, long failures, Instant lastAttemptAt,
+            Instant lastSuccessAt, String lastError, boolean verified) {
+    }
+
+    /**
+     * Wraps the real OTLP exporter (grpc or http) so every {@code export()} call's real, async
+     * {@link CompletableResultCode} outcome is recorded -- this is the actual delivery-confirmation
+     * signal {@code ObservabilitySummary}'s {@code exportVerified} used to always report {@code
+     * false} for, before this class existed. {@code whenComplete} fires once the SDK's own export
+     * attempt genuinely finishes (success, failure or timeout), never assumed from having merely
+     * been called -- calling {@code export()} only means an attempt started.
+     */
+    /** Package-private (not private) so a unit test can exercise its tracking logic directly
+     * against a fake delegate, without constructing a real OTLP exporter/network client. */
+    static final class ExportHealthTrackingExporter implements MetricExporter {
+        private final MetricExporter delegate;
+        private final AtomicLong attempts = new AtomicLong();
+        private final AtomicLong successes = new AtomicLong();
+        private final AtomicLong failures = new AtomicLong();
+        private volatile Instant lastAttemptAt;
+        private volatile Instant lastSuccessAt;
+        private volatile String lastError;
+
+        ExportHealthTrackingExporter(MetricExporter delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public CompletableResultCode export(java.util.Collection<io.opentelemetry.sdk.metrics.data.MetricData> metrics) {
+            attempts.incrementAndGet();
+            lastAttemptAt = Instant.now();
+            CompletableResultCode code = delegate.export(metrics);
+            code.whenComplete(() -> {
+                if (code.isSuccess()) {
+                    successes.incrementAndGet();
+                    lastSuccessAt = Instant.now();
+                    lastError = null;
+                } else {
+                    failures.incrementAndGet();
+                    Throwable t = code.getFailureThrowable();
+                    lastError = t != null ? t.toString() : "export did not succeed (no exception reported)";
+                }
+            });
+            return code;
+        }
+
+        @Override
+        public CompletableResultCode flush() {
+            return delegate.flush();
+        }
+
+        @Override
+        public CompletableResultCode shutdown() {
+            return delegate.shutdown();
+        }
+
+        @Override
+        public io.opentelemetry.sdk.metrics.Aggregation getDefaultAggregation(io.opentelemetry.sdk.metrics.InstrumentType instrumentType) {
+            return delegate.getDefaultAggregation(instrumentType);
+        }
+
+        @Override
+        public io.opentelemetry.sdk.common.export.MemoryMode getMemoryMode() {
+            return delegate.getMemoryMode();
+        }
+
+        @Override
+        public io.opentelemetry.sdk.metrics.data.AggregationTemporality getAggregationTemporality(
+                io.opentelemetry.sdk.metrics.InstrumentType instrumentType) {
+            return delegate.getAggregationTemporality(instrumentType);
+        }
+
+        ExportHealth health(long exportIntervalMs) {
+            Instant success = lastSuccessAt;
+            boolean verified = success != null
+                    && Duration.between(success, Instant.now()).toMillis() <= 3 * exportIntervalMs;
+            return new ExportHealth(attempts.get(), successes.get(), failures.get(), lastAttemptAt, success, lastError, verified);
+        }
+    }
+
+    /** The live export-health snapshot for this instance -- see {@link ExportHealth}'s own javadoc. */
+    public ExportHealth exportHealth() {
+        return trackedExporter.health(exportIntervalMs);
+    }
 
     private WarpTelemetry(String protocol, String otlpEndpoint, long exportIntervalMs,
             java.util.Map<String, String> headers) {
@@ -40,9 +150,10 @@ public final class WarpTelemetry {
             log.warn("WARP_OTEL_PROTOCOL={} not recognized (expected 'grpc' or 'http'); defaulting to grpc", protocol);
             protocol = "grpc";
         }
-        MetricExporter exporter = buildExporter(protocol, otlpEndpoint, headers);
+        this.exportIntervalMs = exportIntervalMs;
+        this.trackedExporter = new ExportHealthTrackingExporter(buildExporter(protocol, otlpEndpoint, headers));
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
-                .registerMetricReader(PeriodicMetricReader.builder(exporter)
+                .registerMetricReader(PeriodicMetricReader.builder(trackedExporter)
                         .setInterval(Duration.ofMillis(exportIntervalMs))
                         .build())
                 .build();
@@ -85,6 +196,7 @@ public final class WarpTelemetry {
         this.meter = meter;
         log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}", protocol.toUpperCase(),
                 otlpEndpoint, exportIntervalMs, headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)");
+        current = this;
     }
 
     /**

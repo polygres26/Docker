@@ -927,8 +927,22 @@ export interface ObservabilityOtlpStatus {
   endpoint: string | null
   exportIntervalMs: number | null
   headerCount: number
-  /** Always false today -- WarpTelemetry has no delivery-confirmation signal (fire-and-forget
-   * PeriodicMetricReader, no ack/health tracking). Never imply a check that doesn't exist. */
+  /** Cumulative export attempts/successes/failures since process start, from WarpTelemetry's real
+   * ExportHealthTrackingExporter (tracks each export's actual async CompletableResultCode
+   * outcome) -- all zero when OTLP is disabled or this admin process hasn't constructed the live
+   * exporter (e.g. a unit test). */
+  exportAttempts: number
+  exportSuccesses: number
+  exportFailures: number
+  /** ISO timestamp of the most recent export attempt (success or failure), or null if none yet. */
+  lastExportAt: string | null
+  /** ISO timestamp of the most recent SUCCESSFUL export, or null if none has ever succeeded. */
+  lastSuccessAt: string | null
+  /** The most recent failure's reason, cleared on the next success. */
+  lastError: string | null
+  /** A real signal now: true only when at least one export has succeeded AND the most recent
+   * success is within the last 3 export intervals -- a destination that accepted data once but has
+   * since gone quiet reports false again, not a stale permanent "yes". */
   exportVerified: boolean
 }
 

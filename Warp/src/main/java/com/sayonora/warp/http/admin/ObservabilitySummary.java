@@ -2,6 +2,7 @@ package com.sayonora.warp.http.admin;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.sayonora.warp.telemetry.WarpTelemetry;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -12,17 +13,17 @@ import java.util.Map;
  * always-on Prometheus scrape endpoint ({@code GET /metrics}, {@code MetricsRenderer}), plus a
  * static catalog of the real metric names/types/labels {@code MetricsRenderer} actually emits.
  *
- * <p>Deliberately does NOT call {@code WarpTelemetry.fromEnv()} -- that constructs a real OTLP SDK
- * exporter and meter provider as a side effect (registers instruments, opens a gRPC/HTTP client).
- * This class re-parses the same env vars read-only, mirroring {@code WarpTelemetry.fromEnv()}'s own
- * defaulting logic, so calling {@code GET /api/observability} repeatedly (the admin console polls
- * it) never constructs a second exporter alongside whatever {@code Main} already started.
+ * <p>Config fields (protocol/endpoint/interval/header count) are read directly from env, NOT via
+ * {@code WarpTelemetry.fromEnv()} -- that constructs a real OTLP SDK exporter and meter provider as
+ * a side effect (registers instruments, opens a gRPC/HTTP client), so calling this method must
+ * never build a second exporter alongside whatever {@code Main} already started at boot.
  *
- * <p>{@code exportVerified} is always {@code false}: {@code WarpTelemetry} is genuinely fire-and-
- * forget today (confirmed by reading the full class) -- {@code PeriodicMetricReader} runs on a
- * timer with no callback, counter or stored timestamp recording whether an export ever reached the
- * collector. This is a real, disclosed gap, not a bug this class works around; the UI must say so
- * rather than imply a health check that doesn't exist.
+ * <p>{@code exportVerified}/attempt-and-success counters ARE live now: {@code WarpTelemetry}
+ * exposes {@link WarpTelemetry#current()} (the one real instance this process constructed, or
+ * {@code null} when OTLP is disabled) and {@link WarpTelemetry#exportHealth()}, which tracks each
+ * export's real, async {@code CompletableResultCode} outcome (see {@code WarpTelemetry}'s own
+ * {@code ExportHealthTrackingExporter}). {@code verified} means a real export has SUCCEEDED, and
+ * recently -- not merely that one was attempted.
  */
 public final class ObservabilitySummary {
 
@@ -76,8 +77,30 @@ public final class ObservabilitySummary {
         otlp.addProperty("endpoint", enabled ? endpoint : null);
         otlp.addProperty("exportIntervalMs", enabled ? intervalMs : null);
         otlp.addProperty("headerCount", headerCount);
-        // Real, disclosed limitation -- see this class's own javadoc. Never true today.
-        otlp.addProperty("exportVerified", false);
+
+        // The live instance, if OTLP is actually enabled AND this call is running inside the real
+        // process that constructed it (WarpTelemetry.current() is null in a unit test that never
+        // calls WarpTelemetry.fromEnv(), and also null whenever OTLP is disabled) -- never guessed,
+        // never a second exporter constructed just to answer this.
+        WarpTelemetry live = WarpTelemetry.current();
+        if (enabled && live != null) {
+            WarpTelemetry.ExportHealth health = live.exportHealth();
+            otlp.addProperty("exportAttempts", health.attempts());
+            otlp.addProperty("exportSuccesses", health.successes());
+            otlp.addProperty("exportFailures", health.failures());
+            otlp.addProperty("lastExportAt", health.lastAttemptAt() != null ? health.lastAttemptAt().toString() : null);
+            otlp.addProperty("lastSuccessAt", health.lastSuccessAt() != null ? health.lastSuccessAt().toString() : null);
+            otlp.addProperty("lastError", health.lastError());
+            otlp.addProperty("exportVerified", health.verified());
+        } else {
+            otlp.addProperty("exportAttempts", 0);
+            otlp.addProperty("exportSuccesses", 0);
+            otlp.addProperty("exportFailures", 0);
+            otlp.addProperty("lastExportAt", (String) null);
+            otlp.addProperty("lastSuccessAt", (String) null);
+            otlp.addProperty("lastError", (String) null);
+            otlp.addProperty("exportVerified", false);
+        }
         out.add("otlp", otlp);
 
         // WarpTelemetry only ever registers metric instruments (counters/histograms/gauges) --
