@@ -1,3 +1,5 @@
+import maturityData from './maturity-data.json'
+
 /**
  * Per-protocol maturity classification, shown as a badge in the interfaces list.
  *
@@ -5,58 +7,49 @@
  * else this console shows (see Overview.tsx's own header comment: "A figure the API does not
  * report... is not shown. Nothing here is estimated."), maturity is a product/documentation
  * judgment call about verification depth, not something a running process can report about
- * itself. It is grounded in real evidence (test coverage, real-client/official-emulator
- * verification, disclosed gaps in docs/WARP_GUIDE.md), reviewed 2026-09-29, but it is a snapshot
- * assessment that needs revisiting as protocols mature or new gaps are found -- not a live signal.
+ * itself.
+ *
+ * The actual classification data -- the tier order, each tier's description, and which protocol
+ * ids belong to which tier -- lives in ./maturity-data.json, NOT in this file: it's editorial
+ * metadata that changes as protocols mature or new gaps are found, and editing it should never
+ * require touching application logic (this file just loads and indexes it). This module is the
+ * one place that reads that file; every consumer (MaturityTag/MaturityLegend in components/ui,
+ * readiness.ts, every page listing interfaces) goes through the exports below, never the JSON
+ * directly, so there's exactly one parsing/indexing step to keep correct.
+ *
+ * See docs/WARP_GUIDE.md for the real evidence behind each protocol's placement (e.g. mongowire:
+ * 2,683 recorded steps vs real mongod; boltwire: all 3,810 openCypher TCK scenario instances that
+ * pass on real Neo4j also pass here) -- that level of per-protocol detail lives in the docs, not
+ * duplicated here or in the JSON.
  *
  * A UI review flagged the previous 4-tier naming ("Certified" as the top tier) as genuinely
  * ambiguous -- nothing told a reader whether Certified outranked Production, and "Certified"
- * implies an external certification program Warp doesn't actually have. Renamed the top tier to
- * "Verified" (Warp's own conformance-suite verification, not third-party certification) and every
- * tier now carries an explicit numeric MATURITY_RANK so ordering is never left to the reader to
- * infer from the English word alone. See MaturityTag/MaturityLegend (components/ui) for where this
- * ordering and the evidence behind each tier are actually surfaced.
- *
- * Tiers, 1 (least verified) to 4 (most verified) -- see MATURITY_ORDER/MATURITY_RANK below for the
- * machine-readable form of this same ordering:
- * 1. Experimental: newest, still-settling, or no verification-oracle language found in the docs
- *    at all for this specific protocol.
- * 2. Preview: verification exists but relies on an imperfect oracle the docs themselves flag
- *    ("MinIO doesn't implement every S3 op", "fake-gcs-server... many gaps", "the official Java
- *    driver/console were not run"), or a real, disclosed feature gap blocks production use
- *    end-to-end (e.g. influxwire's cross-backend sharding not yet implemented).
- * 3. Production: real backend/emulator verification exists, but with real, DISCLOSED gaps (e.g.
- *    Bridge mode's session-state-reset limitations for SQL frontends, MCP's native-mode tool
- *    narrowing).
- * 4. Verified: real official client/server, a large/quantified conformance suite, no major
- *    open gaps found (e.g. mongowire: 2,683 recorded steps vs real mongod; boltwire: all 3,810
- *    openCypher TCK scenario instances that pass on real Neo4j also pass here).
+ * implies an external certification program Warp doesn't actually have. The top tier is named
+ * "Verified" in the data file for that reason, and every tier carries an explicit numeric
+ * MATURITY_RANK (derived from the data file's own order, never hand-maintained separately) so
+ * ordering is never left to the reader -- or a second hardcoded copy of the scale -- to infer.
  */
-export type Maturity = 'Verified' | 'Production' | 'Preview' | 'Experimental'
+export type Maturity = string
 
-/** Ascending order, least to most verified -- the exact "1. Experimental ... 4. Verified" scale. */
-export const MATURITY_ORDER: Maturity[] = ['Experimental', 'Preview', 'Production', 'Verified']
+interface MaturityData {
+  order: string[]
+  descriptions: Record<string, string>
+  tiers: Record<string, string[]>
+}
+
+const data = maturityData as MaturityData
+
+/** Ascending order, least to most verified -- exactly the JSON file's own `order` array. */
+export const MATURITY_ORDER: Maturity[] = data.order
 
 export const MATURITY_RANK: Record<Maturity, number> = Object.fromEntries(
   MATURITY_ORDER.map((m, i) => [m, i + 1]),
-) as Record<Maturity, number>
+)
 
-export const MATURITY_DESCRIPTION: Record<Maturity, string> = {
-  Experimental: 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet.',
-  Preview: 'Verification relies on an imperfect oracle, or a real, disclosed feature gap blocks production use end-to-end.',
-  Production: 'Real backend/emulator verification exists, with real, disclosed gaps documented in the guide.',
-  Verified: "Real official client/server, a large/quantified conformance suite, no major open gaps found -- Warp's own verification, not a third-party certification.",
-}
-
-const TIERS: Record<Maturity, string[]> = {
-  Verified: ['pgwire', 'mongowire', 'dynamowire', 'boltwire', 'cqlwire', 'kafkawire', 'amqpwire'],
-  Production: ['mywire', 'orawire', 'mssqlwire', 'sqswire', 'oswire', 'firestorewire', 'datastorewire', 'rediswire', 'mcp'],
-  Preview: ['s3wire', 'gcswire', 'pubsubwire', 'azurewire', 'gremlinwire', 'awswire', 'influxwire'],
-  Experimental: ['a2a', 'cosmoswire', 'bigtablewire', 'grpc'],
-}
+export const MATURITY_DESCRIPTION: Record<Maturity, string> = data.descriptions
 
 const KEY_TO_TIER: Record<string, Maturity> = Object.fromEntries(
-  Object.entries(TIERS).flatMap(([tier, keys]) => keys.map((k) => [k, tier as Maturity])),
+  Object.entries(data.tiers).flatMap(([tier, keys]) => keys.map((k) => [k, tier])),
 )
 
 /** Normalizes an interface's `metricsKey` (falling back to its `id`) to the family key used
@@ -71,7 +64,8 @@ function normalize(idOrKey: string): string {
 }
 
 /** Returns this interface's maturity tier, or `null` if it isn't classified yet (a new protocol
- * added after this file was last reviewed) -- callers should render nothing rather than guess. */
+ * added after maturity-data.json was last reviewed) -- callers should render nothing rather than
+ * guess. */
 export function maturityFor(metricsKey: string | null | undefined, id: string): Maturity | null {
   const key = normalize(metricsKey || id)
   return KEY_TO_TIER[key] ?? null

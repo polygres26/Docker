@@ -7,12 +7,14 @@ import {
   createBackendSet, deleteBackendSet, deleteSetBackend, getConfigVersion, getWireMetrics, listBackendSets, listInterfaces,
   listMcpEndpoints, listNodes, moveSetBackend, setStoreFrontendSet, testSetBackend, updateBackendSet, type StoreId,
 } from '../api/client'
+import { maturityFor } from '../api/maturity'
 import {
-  Button, CopyButton, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, Meter, NameCell, Notice, PageHeader, Section,
+  Button, CopyButton, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, MaturityTag, Meter, NameCell, Notice, PageHeader, Section,
   StatusPill, Tabs, Tag, formatLicenseLimit, type KpiItem,
 } from '../components/ui'
 import { errorText, targetOf, useLoad } from '../hooks'
 import { AdvancedRouting, BackendEditor, ConnectPanel, Health, RoutesSection, StoreTags, WriteNotice, storeLabel } from './infra/parts'
+import { MaturityLegend } from './interfaces/InterfaceTable'
 import styles from './Infrastructure.module.css'
 
 const POLL_MS = 15_000
@@ -291,6 +293,7 @@ export default function Infrastructure() {
             </SetPanel>
           ))}
           {data && data.sets.length === 0 && <EmptyState icon={<Boxes size={18} aria-hidden="true" />} title="No backend sets">Create a set, then add its backends.</EmptyState>}
+          <MaturityLegend />
         </>
       )}
 
@@ -425,7 +428,7 @@ function SetPanel({ set, data, probes, testing, busy, endpoints, interfaces, met
           <summary>Stores hosted by this set ({storeIds.length}) and the frontends serving them</summary>
           <div className={styles.detailBody}>
             <DataTable caption={`Stores hosted in set ${set.name}`} minWidth={720}>
-              <thead><tr><th>Store</th><th>Hosts</th><th>Layout</th><th>Frontend</th><th>Rebalance</th></tr></thead>
+              <thead><tr><th>Store</th><th>Hosts</th><th>Layout</th><th>Maturity</th><th>Frontend</th><th>Rebalance</th></tr></thead>
               <tbody>
                 {storeIds.map((id) => {
                   const h = set.stores[id]!
@@ -436,6 +439,7 @@ function SetPanel({ set, data, probes, testing, busy, endpoints, interfaces, met
                       <td>{storeLabel(data.stores, id)}</td>
                       <td className={styles.mono}>{h.hosts.join(', ')}</td>
                       <td>{h.sharded ? <Tag>{`sharded ×${h.hosts.length}`}</Tag> : <span className={styles.sub}>single host</span>}</td>
+                      <td>{fe.length > 0 ? <MaturityTag maturity={maturityFor(fe[0].metricsKey, fe[0].id)} /> : <span className={styles.sub}>—</span>}</td>
                       <td>
                         {fe.length > 0 && <>{fe.map((i) => <span key={i.id}>{i.label} <code>:{i.port}</code> </span>)}</>}
                         {h.servedFromThisSet

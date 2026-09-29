@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, KeyboardEvent, ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Copy } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
+import { MATURITY_DESCRIPTION, MATURITY_ORDER, MATURITY_RANK, type Maturity } from '../../api/maturity'
 import styles from './ui.module.css'
 
 export { default as AppShell } from './AppShell'
@@ -334,33 +335,33 @@ export function ModeTag({ mode }: { mode: string | null | undefined }) {
 /** Warp's own editorial classification of a protocol's verification depth -- see
  * src/api/maturity.ts for the criteria and evidence behind each tier. Not a live metric: renders
  * nothing for a protocol this console doesn't have a classification for yet, rather than guessing. */
-export function MaturityTag({ maturity }: { maturity: MaturityValue | null }) {
+/**
+ * Maturity is Warp's own editorial classification of a protocol's verification depth -- the tier
+ * order, names and descriptions live entirely in api/maturity-data.json (real metadata, not
+ * hardcoded here or duplicated between this component and MaturityLegend below): this component
+ * only maps a tier's RANK to a color, never a tier NAME, so it never needs updating if a tier is
+ * renamed or the scale's length changes.
+ *
+ * A UI review specifically flagged the old 4-tier naming as ambiguous -- "customers will not know
+ * whether Certified is better than Production." The per-tag tooltip states each tag's explicit
+ * rank (e.g. "3 of 4"), and MaturityLegend (rendered once per page that shows this column, not per
+ * row) spells out the full ordered scale from the same metadata so a reader never has to infer it
+ * from hovering every row.
+ */
+export function MaturityTag({ maturity }: { maturity: Maturity | null }) {
   if (!maturity) return <span className={styles.cellSub}>—</span>
-  const cls = maturity === 'Verified' ? styles.tagGreen
-    : maturity === 'Preview' ? styles.tagAmber
-    : maturity === 'Experimental' ? styles.tagMuted
-    : undefined // Production: default accent tag, same visual weight as an ordinary mode
+  const rank = MATURITY_RANK[maturity]
+  const total = MATURITY_ORDER.length
+  const cls = rank === total ? styles.tagGreen // most verified
+    : rank === 1 ? styles.tagMuted // least verified
+    : rank === total - 1 ? undefined // second-highest: default accent tag, same visual weight as an ordinary mode
+    : styles.tagAmber // everything else in between reads as a caution tier
   return <span className={cx(styles.tag, cls)} title={maturityHint(maturity)}>{maturity}</span>
 }
 
-// Kept as a plain string union here (not imported from api/maturity) so this presentational
-// component has no dependency on that module's own MATURITY_RANK/MATURITY_DESCRIPTION machinery --
-// MaturityLegend below is the one place that imports and renders those directly.
-type MaturityValue = 'Verified' | 'Production' | 'Preview' | 'Experimental'
-const MATURITY_TOOLTIP_ORDER: MaturityValue[] = ['Experimental', 'Preview', 'Production', 'Verified']
-
-/** A UI review specifically flagged the old 4-tier naming as ambiguous -- "customers will not know
- * whether Certified is better than Production." The per-tag tooltip below now states each tag's
- * explicit rank (e.g. "3 of 4"), and MaturityLegend (rendered once per page that shows this column,
- * not per row) spells out the full ordered scale so a reader never has to infer it from hovering
- * every row. */
-function maturityHint(maturity: MaturityValue): string {
-  const rank = MATURITY_TOOLTIP_ORDER.indexOf(maturity) + 1
-  const detail: Record<MaturityValue, string> = {
-    Verified: "Real official client/server, a large/quantified conformance suite, no major open gaps found -- Warp's own verification, not a third-party certification",
-    Production: 'Real backend/emulator verification, with real, disclosed gaps documented in the guide',
-    Preview: 'Verification relies on an imperfect oracle, or a real feature gap blocks production use end-to-end',
-    Experimental: 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet',
-  }
-  return `${rank} of ${MATURITY_TOOLTIP_ORDER.length} (${rank === MATURITY_TOOLTIP_ORDER.length ? 'highest' : rank === 1 ? 'lowest' : 'mid'}) -- ${detail[maturity]}`
+function maturityHint(maturity: Maturity): string {
+  const rank = MATURITY_RANK[maturity]
+  const total = MATURITY_ORDER.length
+  const position = rank === total ? 'highest' : rank === 1 ? 'lowest' : 'mid'
+  return `${rank} of ${total} (${position}) -- ${MATURITY_DESCRIPTION[maturity]}`
 }

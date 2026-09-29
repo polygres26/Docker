@@ -1,0 +1,15 @@
+{
+  "order": ["Experimental", "Preview", "Production", "Verified"],
+  "descriptions": {
+    "Experimental": "Newest, still-settling, or no verification-oracle evidence found for this protocol yet.",
+    "Preview": "Verification relies on an imperfect oracle, or a real, disclosed feature gap blocks production use end-to-end.",
+    "Production": "Real backend/emulator verification exists, with real, disclosed gaps documented in the guide.",
+    "Verified": "Real official client/server, a large/quantified conformance suite, no major open gaps found -- Warp's own verification, not a third-party certification."
+  },
+  "tiers": {
+    "Verified": ["pgwire", "mongowire", "dynamowire", "boltwire", "cqlwire", "kafkawire", "amqpwire"],
+    "Production": ["mywire", "orawire", "mssqlwire", "sqswire", "oswire", "firestorewire", "datastorewire", "rediswire", "mcp"],
+    "Preview": ["s3wire", "gcswire", "pubsubwire", "azurewire", "gremlinwire", "awswire", "influxwire"],
+    "Experimental": ["a2a", "cosmoswire", "bigtablewire", "grpc"]
+  }
+}
