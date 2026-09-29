@@ -3,8 +3,9 @@ import { Database, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
   getAnomalies, getUsage, getWireConfig, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints, listNodes,
-  type InterfaceKind,
+  type InterfaceKind, type InterfaceInfo,
 } from '../api/client'
+import { readinessOf } from '../api/readiness'
 import {
   Button, DataTable, EmptyState, KpiStrip, Loading, Meter, Notice, PageHeader, Section, StatusPill, Tag, compact, formatLicenseLimit,
   type KpiItem, type Tone,
@@ -76,6 +77,36 @@ export default function Overview() {
   }
   if (endpoints.data && endpoints.data.length === 0) {
     risks.push({ tone: 'muted', text: <>No MCP endpoints are configured: agent/LLM clients have nothing scoped to connect through. Create one on <Link to="/interfaces/mcp">MCP servers</Link>.</> })
+  }
+  // The shared readiness evaluator (api/readiness.ts), grouped by dimension -- one risk line per
+  // real gap category across every interface, not one line per interface (which would swamp this
+  // list the moment more than a couple of frontends share the same gap). Uses the same per-
+  // dimension facts ReadinessCell already renders per row on Interfaces/Workloads; this is the
+  // aggregate view of the identical data, not a new computation.
+  if (ifaces.data) {
+    const withReadiness = ifaces.data.interfaces.map((i) => ({ i, readiness: readinessOf(i) }))
+    const namesOf = (rows: Array<{ i: InterfaceInfo }>) =>
+      rows.slice(0, 4).map((r) => r.i.label).join(', ') + (rows.length > 4 ? `, +${rows.length - 4} more` : '')
+    const openAuth = withReadiness.filter((r) => r.readiness.dimensions.auth === 'open')
+    const unreportedAuth = withReadiness.filter((r) => r.readiness.dimensions.auth === 'not_reported')
+    const tlsOff = withReadiness.filter((r) => r.readiness.dimensions.encryption === 'disabled')
+    const tlsErrored = withReadiness.filter((r) => r.readiness.dimensions.encryption === 'error')
+    const noStore = withReadiness.filter((r) => r.readiness.dimensions.backend === 'not_configured')
+    if (openAuth.length > 0) {
+      risks.push({ tone: 'bad', text: <>{openAuth.length} interface{openAuth.length === 1 ? '' : 's'} {openAuth.length === 1 ? 'accepts' : 'accept'} connections with no authentication enforced: {namesOf(openAuth)}. <Link to="/acl">Review access</Link>.</> })
+    }
+    if (tlsErrored.length > 0) {
+      risks.push({ tone: 'bad', text: <>{tlsErrored.length} interface{tlsErrored.length === 1 ? '' : 's'} configured TLS but {tlsErrored.length === 1 ? "it's" : "they're"} failing: {namesOf(tlsErrored)}. <Link to="/certificates">Check certificates</Link>.</> })
+    }
+    if (unreportedAuth.length > 0) {
+      risks.push({ tone: 'warn', text: <>{unreportedAuth.length} interface{unreportedAuth.length === 1 ? '' : 's'} {unreportedAuth.length === 1 ? 'reports' : 'report'} no authentication status at all: {namesOf(unreportedAuth)}.</> })
+    }
+    if (tlsOff.length > 0) {
+      risks.push({ tone: 'warn', text: <>{tlsOff.length} interface{tlsOff.length === 1 ? '' : 's'} {tlsOff.length === 1 ? 'has' : 'have'} TLS disabled: {namesOf(tlsOff)}. <Link to="/certificates">Configure TLS</Link>.</> })
+    }
+    if (noStore.length > 0) {
+      risks.push({ tone: 'warn', text: <>{noStore.length} store-backed interface{noStore.length === 1 ? '' : 's'} {noStore.length === 1 ? 'has' : 'have'} no backend configured, served from the default backend instead: {namesOf(noStore)}. <Link to="/infrastructure">Enable a store</Link>.</> })
+    }
   }
   const riskLoading = !sets.data && !sets.error
 
