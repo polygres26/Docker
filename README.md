@@ -15,15 +15,15 @@ extensions are native Postgres extensions (C, built with `make`).
   HTTP/JSON, gRPC, and MCP to clients -- by default translating and routing every one to real
   Postgres backend(s) (wire-protocol compatibility for a pre- or post-migration cutover, not a
   schema/data migration tool itself -- that's Ferry's job); orawire/mywire/mssqlwire/MCP can each
-  also run in native-backend (Relay) mode instead, proxying straight through to a real
-  Oracle/MySQL/SQL Server database of your own with no translation, for keeping the engine you
-  already run, or in Bridge mode (Oracle only), which parses the real client protocol and runs the
-  shared pipeline like Adapt mode but executes the verbatim SQL against a real Oracle backend. See
-  `docs/WARP_GUIDE.md` §8.1.1. Ported from Omnigate (`~/Projects/Omnigate`, package
+  also run in Relay mode instead, proxying straight through to a real Oracle/MySQL/SQL Server
+  database of your own with no translation, for keeping the engine you already run, or in Bridge
+  mode (orawire/mywire/mssqlwire), which parses the real client protocol and runs the shared
+  pipeline like Emulate mode but executes the verbatim SQL against a real, pooled backend of that
+  same engine. See `docs/WARP_GUIDE.md` §8.1.1–§8.1.5. Ported from Omnigate (`~/Projects/Omnigate`, package
   `com.omnigate.*` -> `com.sayonora.warp.*`).
 - **[Shim/](Shim/)** -- Postgres extensions (`pg_oracle`, `pg_mysql`, `pg_sqlserver`) that teach a
   real Postgres backend enough of another engine's dictionary views, functions, and dialect quirks
-  to make Warp's own translated-mode (Adapt) traffic land closer to native -- detected and used
+  to make Warp's own translated-mode (Emulate) traffic land closer to native -- detected and used
   automatically when installed (see Warp's own `PgOracleSupport`/`DialectTranslations`), with a
   graceful, fully-functional fallback when it isn't.
 - **[migration/](migration/)** -- `sayonora-migration`: massively-parallel, low-downtime migration

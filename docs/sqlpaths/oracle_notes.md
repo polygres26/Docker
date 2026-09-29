@@ -4,15 +4,15 @@
 
 An engine-agnostic SQL-path test matrix framework under `Warp/tests/sqlpaths/`, with an Oracle
 engine plug-in fully wired up. It runs the same engine-neutral scenario corpus through multiple
-real client tools against three real-backend paths (NATIVE / RELAY / ADAPT), normalizes each
-result to a comparable canonical form, and classifies every RELAY/ADAPT result against that same
+real client tools against three real-backend paths (NATIVE / RELAY / EMULATE), normalizes each
+result to a comparable canonical form, and classifies every RELAY/EMULATE result against that same
 client's own NATIVE result.
 
 ## NATIVE is a frozen golden baseline, not a live path (methodology update)
 
 **As of this slice, no ordinary run of this framework live-executes a Warp-bypassing "native"
-connection any more.** Previously `--paths native,relay,adapt` freshly re-queried a real,
-directly-connected Oracle client on every single run as the "truth" to diff RELAY/ADAPT against.
+connection any more.** Previously `--paths native,relay,emulate` freshly re-queried a real,
+directly-connected Oracle client on every single run as the "truth" to diff RELAY/EMULATE against.
 That is now recorded **once** into a frozen golden file and every ordinary run replays/diffs
 against it instead -- the exact same convention every other emulated-protocol conformance harness
 in this repo already uses (`Warp/tests/python/*_conformance/golden.json.gz`, e.g.
@@ -34,14 +34,14 @@ in this repo already uses (`Warp/tests/python/*_conformance/golden.json.gz`, e.g
   scenario against each requested client's real, Warp-bypassing native connection, twice, keeps
   only the stable (reproducing) results, and writes the golden file (`--golden-out` to override the
   path, `--record-times` to change the re-run count).
-- **Ordinary runs** (`--paths relay,adapt,bridge`) load that frozen file once at startup
-  (`sp_golden.load_golden`) and classify every RELAY/ADAPT/BRIDGE result against the golden
+- **Ordinary runs** (`--paths relay,emulate,bridge`) load that frozen file once at startup
+  (`sp_golden.load_golden`) and classify every RELAY/EMULATE/BRIDGE result against the golden
   per-client entry, via the same `sp_core.classify()` used before -- nothing about the
   PASS/KNOWN_DIFF/WARP_BUG logic itself changed, only where the baseline comes from. Passing
   `--paths native` explicitly is accepted but a no-op: `run_matrix.py` prints a note and drops it,
   since NATIVE is never live-executed in this mode any more.
 - **What still touches the real Oracle container in an ordinary run**: it is still started/reused
-  as RELAY's and BRIDGE's real backend (Warp proxies to it) and, where applicable, as ADAPT's
+  as RELAY's and BRIDGE's real backend (Warp proxies to it) and, where applicable, as EMULATE's
   translation target -- that is a connection **from Warp**, not a separate client bypassing Warp.
   The thing that's gone is a second, direct client-to-Oracle-listener connection made purely to
   produce the native/baseline diff.
@@ -64,7 +64,7 @@ Warp/tests/sqlpaths/
   sp_golden.py            -- golden native-baseline recording/loading (engine-neutral)
   sp_report.py           -- turns results into <engine>_matrix.md / .html (engine-neutral)
   run_matrix.py           -- CLI driver (generic; imports engines.<name>.sp_<name>_engine)
-  known/oracle_adapt.yaml -- documented ADAPT (and a couple of any-path) differences, with reasons
+  known/oracle_adapt.yaml -- documented EMULATE (and a couple of any-path) differences, with reasons
   reports/oracle_matrix.{json,md,html}  -- last run's output
   adapters/               -- client adapters (python-oracledb, JDBC, sqlcl, sqlplus)
     sp_python_client.py
@@ -72,7 +72,7 @@ Warp/tests/sqlpaths/
     sp_sqlcl_client.py     -- drives `sqlcl -S -L`, SET SQLFORMAT json
     sp_sqlplus_client.py   -- drives `docker exec <oracle-container> sqlplus -S`, SET MARKUP CSV ON
   engines/oracle/
-    sp_oracle_engine.py    -- container start/stop, RELAY/ADAPT/BRIDGE env wiring, Target builder
+    sp_oracle_engine.py    -- container start/stop, RELAY/EMULATE/BRIDGE env wiring, Target builder
     scenarios.json          -- 70 engine-neutral scenarios across every category in the spec
     golden/golden_native.json.gz  -- frozen NATIVE baseline (see above); recorded, not live
 Warp/tests/python/test_sqlpaths_oracle.py  -- pytest smoke wrapper (8 scenarios, python client,
@@ -87,7 +87,7 @@ Warp first):
 ```sh
 cd Warp && mvn -q -o -Dmaven.test.skip=true package   # build the jar once
 python3 tests/sqlpaths/run_matrix.py --engine oracle \
-    --clients python,jdbc,sqlcl,sqlplus --paths relay,adapt,bridge
+    --clients python,jdbc,sqlcl,sqlplus --paths relay,emulate,bridge
 ```
 
 Faster iteration against an already-running, already-healthy Oracle container (skips the 1-3 min
@@ -98,7 +98,7 @@ docker run -d --name sp-oracle --memory 2500m -e ORACLE_PASSWORD=OraPass1 -p 115
     gvenzl/oracle-free:23-slim
 # wait for it healthy (see sp_oracle_engine._wait_ready for the exact readiness probe), then:
 python3 tests/sqlpaths/run_matrix.py --engine oracle --clients python \
-    --paths relay,adapt,bridge --reuse-oracle sp-oracle:11522
+    --paths relay,emulate,bridge --reuse-oracle sp-oracle:11522
 ```
 
 Note: `--paths` no longer needs (or live-executes) `native` -- see "NATIVE is a frozen golden
@@ -132,7 +132,7 @@ stray `java`/`sqlcl`/`sqlplus` (`ps aux | grep -E 'sayonora-warp|sqlcl|OracleJdb
 
 ## Coverage actually executed in this pass (be precise about what ran vs what's wired up)
 
-- **python (python-oracledb thin)**: full 70-scenario corpus x NATIVE, RELAY, ADAPT. This is the
+- **python (python-oracledb thin)**: full 70-scenario corpus x NATIVE, RELAY, EMULATE. This is the
   client the full run completed for.
 - **jdbc (ojdbc11 thin, single-file `OracleJdbcRunner.java`)**: adapter built, compiles, and was
   verified working end-to-end against the real Oracle container (`SELECT 21*2 FROM DUAL` ->
@@ -166,27 +166,27 @@ Final numbers (`oracle_matrix.md`/`.json`/`.html` in this directory), python cli
 |---|---|---|---|---|---|
 | python | native | 70 | 70 | 0 | 0 |
 | python | relay | 70 | 69 | 1 | 0 |
-| python | adapt | 20 (see below for why not 70) | 2 | 11 | 7 |
+| python | emulate | 20 (see below for why not 70) | 2 | 11 | 7 |
 
 - **RELAY**: found and fixed one HIGH-severity WARP_BUG (see below) that made RELAY fail 100% of
   logins before the fix. After the fix: PASS on 69/70 scenarios; the remaining one is a
   scenario-design limitation (ROWID is a physical row address that differs by construction across
   three separately-created table instances), not a Warp bug -- documented in
   `known/oracle_adapt.yaml` as an "any-path" entry.
-- **ADAPT**: run across the first 20 scenarios (login/dual/datatypes/nulls/ddl prefix of the
-  corpus), not the full 70 -- see "Why ADAPT stopped at 20 scenarios" below, a real, reproducible
+- **EMULATE**: run across the first 20 scenarios (login/dual/datatypes/nulls/ddl prefix of the
+  corpus), not the full 70 -- see "Why EMULATE stopped at 20 scenarios" below, a real, reproducible
   finding in its own right. PASS on 2/20, KNOWN_DIFF on 11/20 (login-identity difference by
-  ADAPT's design, cosmetic default-column-naming-from-translated-text, CONNECT BY ordering,
+  EMULATE's design, cosmetic default-column-naming-from-translated-text, CONNECT BY ordering,
   ROWID, INTERVAL formatting, SYNONYM emulation -- each with a written reason in
-  `known/oracle_adapt.yaml`), and 7 open, genuine ADAPT gaps (see the effort-estimate table
+  `known/oracle_adapt.yaml`), and 7 open, genuine EMULATE gaps (see the effort-estimate table
   below).
 
-### Why ADAPT stopped at 20 scenarios (a real finding, not just a time-budget note)
+### Why EMULATE stopped at 20 scenarios (a real finding, not just a time-budget note)
 
-The first full-corpus ADAPT attempt (all 70 scenarios) ran for over 30 minutes and never
+The first full-corpus EMULATE attempt (all 70 scenarios) ran for over 30 minutes and never
 completed or wrote output, despite the identical NATIVE+RELAY 70-scenario run for the same
 client finishing in under 2 minutes. The scenarios beyond the first 20 include several DDL/CAST
-statements ADAPT's dialect translator cannot handle via its normal rule-based path (see e.g.
+statements EMULATE's dialect translator cannot handle via its normal rule-based path (see e.g.
 ora006/ora008/ora013/ora020's `error_text` in the 20-scenario run: literally *"LLM fallback
 translator failed: null"*). That message means the translator's fallback for an unrecognized
 statement is a live call to an LLM API -- which, in this sandboxed environment (no network access
@@ -195,7 +195,7 @@ per attempt. With roughly a dozen+ such statements in the remaining 50 scenarios
 stacked per-statement timeouts to plausibly explain 30+ minutes with zero progress. This was not
 independently confirmed with a network trace (no network access, by design) but is the leading
 explanation given the direct evidence in the 20-scenario run's own error text. **This is worth
-flagging as its own finding**: an ADAPT deployment that hits enough untranslatable statements in
+flagging as its own finding**: an EMULATE deployment that hits enough untranslatable statements in
 a network-restricted or LLM-unavailable environment could see request-level hangs rather than
 fast, clear errors -- a candidate robustness gap (the LLM fallback path should have its own short
 timeout with a fast, clear failure) worth a follow-up investigation, separate from the specific
@@ -234,7 +234,7 @@ scenario throws `ORA-01017` on the RELAY side) and passes after it. Re-running t
 python-client matrix after the fix: RELAY went from 0/70 non-error to 69/70 PASS + 1 documented
 any-path KNOWN_DIFF (ROWID, see above).
 
-## Open ADAPT findings (not fixed -- documented with effort estimates per the task's own
+## Open EMULATE findings (not fixed -- documented with effort estimates per the task's own
 "larger gaps: list them... rather than starting risky rewrites" instruction)
 
 | id | what | severity | effort estimate |
@@ -242,9 +242,9 @@ any-path KNOWN_DIFF (ROWID, see above).
 | ora006 | `CAST(x AS NUMBER(p,s))` fails to translate at all (dialect translator's LLM fallback errors) | HIGH -- NUMBER precision/scale casts are extremely common in migrated Oracle SQL | 2-4 days: needs a real (non-LLM-fallback) rule in the dialect translator for `NUMBER(p,s)` -> `NUMERIC(p,s)` cast syntax |
 | ora008 | `CAST(x AS BINARY_DOUBLE)` fails (`type "binary_double" does not exist` -- untranslated type name reaches Postgres literally) | MEDIUM | 1-2 days: map BINARY_DOUBLE/BINARY_FLOAT to Postgres double precision/real in the type-name translation table |
 | ora009 | `CAST('ab' AS CHAR(5))` loses Oracle's blank-padding semantics after translation/concatenation (`'ab |'` vs `'ab|'`) | MEDIUM-HIGH -- silently-wrong data, not an error | 2-3 days: needs the translated column/cast type to be Postgres `bpchar(n)` (which does preserve padding) rather than whatever it currently maps to, verified in concatenation contexts specifically |
-| ora011 | `TIMESTAMP ... AT TIME ZONE 'UTC'` produces a materially different wall-clock value after translation (`17:00:00 UTC` natively vs `02:00:00 PSTR` via ADAPT) -- not a formatting difference, an actual ~15-hour value discrepancy | HIGH -- silently-wrong data | 3-5 days: likely the translated expression is picking up the *session's* timezone instead of the literal zone named in `AT TIME ZONE`; needs a focused investigation of `DialectTranslations`' AT TIME ZONE handling, not a quick patch |
+| ora011 | `TIMESTAMP ... AT TIME ZONE 'UTC'` produces a materially different wall-clock value after translation (`17:00:00 UTC` natively vs `02:00:00 PSTR` via EMULATE) -- not a formatting difference, an actual ~15-hour value discrepancy | HIGH -- silently-wrong data | 3-5 days: likely the translated expression is picking up the *session's* timezone instead of the literal zone named in `AT TIME ZONE`; needs a focused investigation of `DialectTranslations`' AT TIME ZONE handling, not a quick patch |
 | ora013 | `HEXTORAW(...)` not translated (`ORA-00904 invalid identifier`) | LOW-MEDIUM | 0.5-1 day: add a translation rule to Postgres's `decode(x,'hex')`/similar |
-| ora018 | `INSERT ALL ... SELECT ... FROM DUAL` -- the *python-oracledb client itself* raises "could not locate a SQL statement in this Execute request by scanning" against ADAPT, but not against NATIVE for the identical statement | MEDIUM, needs more isolation first | 1 day just to determine whether this is a Warp response-shape bug that confuses the client's own statement cache, or a genuine oracledb client-library limitation with multi-table INSERT ALL over a translated connection, before any fix estimate is meaningful |
+| ora018 | `INSERT ALL ... SELECT ... FROM DUAL` -- the *python-oracledb client itself* raises "could not locate a SQL statement in this Execute request by scanning" against EMULATE, but not against NATIVE for the identical statement | MEDIUM, needs more isolation first | 1 day just to determine whether this is a Warp response-shape bug that confuses the client's own statement cache, or a genuine oracledb client-library limitation with multi-table INSERT ALL over a translated connection, before any fix estimate is meaningful |
 | ora020 | `CREATE SEQUENCE ... START WITH n` fails to translate at all | HIGH -- sequences are foundational DDL, used constantly | 2-3 days: needs a real (non-LLM-fallback) rule mapping Oracle's CREATE SEQUENCE syntax (which has several optional clauses: START WITH, INCREMENT BY, MAXVALUE/NOMAXVALUE, CACHE, CYCLE) to Postgres's, plus `.NEXTVAL`/`.CURRVAL` pseudo-column syntax (already appears to be *separately* supported given ora020's setup step for the CONNECT BY... wait, actually this failed at CREATE SEQUENCE itself, so `.NEXTVAL` translation was never reached in this scenario) |
 
 None of these were fixed in this pass: each is either a substantive dialect-translation feature
@@ -271,20 +271,20 @@ these are listed here with effort estimates rather than attempted as risky rewri
   larger than what one pass built; `scenarios.json` is a real, working subset covering every
   *category* at least once, not the full target count. Extending it is pure data-entry (add more
   entries to `scenarios.json`; no framework code changes needed).
-- **pg_oracle extension in ADAPT's Postgres backend**: not built/loaded in this pass.
+- **pg_oracle extension in EMULATE's Postgres backend**: not built/loaded in this pass.
   `Shim/pg_oracle` has C components (`dbms_output.c`, `utl_file.c`) that need PGXS against the
-  exact Postgres server version ADAPT's `RealPostgres` container runs (`postgres:16-alpine`);
+  exact Postgres server version EMULATE's `RealPostgres` container runs (`postgres:16-alpine`);
   building it was out of scope for this pass's time budget. `PgOracleSupport.java`'s own
   documented behavior is graceful degradation when the extension is absent (confirmed in the
-  source, see `Warp/src/main/java/com/sayonora/warp/core/PgOracleSupport.java`), so ADAPT still
+  source, see `Warp/src/main/java/com/sayonora/warp/core/PgOracleSupport.java`), so EMULATE still
   ran and produced real, meaningful results without it -- but V$/DBA_*/DBMS_OUTPUT-dependent
   scenarios (ora003's V$VERSION banner, ora042's DBMS_OUTPUT.PUT_LINE, ora065's DBMS_LOB) were
-  exercised against ADAPT's plain-Postgres degraded path, not against a pg_oracle-equipped
+  exercised against EMULATE's plain-Postgres degraded path, not against a pg_oracle-equipped
   backend -- a real deployment would normally have the extension installed. Building it is a
   reasonable next step, not attempted here.
 - **License instance cap**: the Developer license's 3-live-instance limit was respected by
   design (one Oracle container is not a Warp instance; at most two Warp processes -- RELAY and
-  ADAPT -- run at once in this framework), so it was never hit, but wasn't stress-tested either
+  EMULATE -- run at once in this framework), so it was never hit, but wasn't stress-tested either
   (e.g. running all three engines' matrices concurrently, which this task didn't ask for).
 
 ## No pyyaml on this machine
