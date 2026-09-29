@@ -1,8 +1,19 @@
 import { useCallback, useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
 import { type TlsCertificate, getTlsCertificates, renewTlsCertificate } from '../api/client'
-import { Button, DataTable, EmptyState, Loading, Notice, PageHeader, Section, StatusPill, Tag } from '../components/ui'
+import { maturityFor } from '../api/maturity'
+import { Button, DataTable, EmptyState, Loading, MaturityTag, Notice, PageHeader, Section, StatusPill, Tag } from '../components/ui'
 import { errorText, useLoad } from '../hooks'
+import { MaturityLegend } from './interfaces/InterfaceTable'
+
+/** A cert's `listeners` field carries the same NAMEs InterfaceRegistry's TLS_NAMES map uses
+ * (e.g. "DYNAMOWIRE", "PUBSUBWIRE_REST", plus non-protocol ones like "ADMIN" that have no
+ * maturity concept at all and correctly render nothing) -- not the lowercase wire ids
+ * maturity-data.json is keyed by. Recovers the id well enough for maturityFor's own suffix-
+ * stripping/normalization to take it from there. */
+function maturityForListener(listener: string) {
+  return maturityFor(null, listener.toLowerCase().replace(/_/g, '-'))
+}
 
 const POLL_MS = 15_000
 
@@ -117,13 +128,14 @@ export default function Certificates() {
           <DataTable caption="Certificates serving Warp's HTTPS listeners">
             <thead>
               <tr>
-                <th>Listeners</th><th>Source</th><th>Domain names</th><th>Issuer</th><th>Expires</th><th>Days left</th><th>Error</th>
+                <th>Listeners</th><th>Maturity</th><th>Source</th><th>Domain names</th><th>Issuer</th><th>Expires</th><th>Days left</th><th>Error</th>
               </tr>
             </thead>
             <tbody>
               {certs.map((c) => (
                 <tr key={c.listeners + c.sha256}>
                   <td>{c.listeners.split(',').map((l) => <Tag key={l}>{l}</Tag>)}</td>
+                  <td>{c.listeners.split(',').map((l) => <MaturityTag key={l} maturity={maturityForListener(l)} />)}</td>
                   <td>{sourceLabel(c)}</td>
                   <td>{c.domainNames.join(', ') || '—'}</td>
                   <td>{c.issuer}</td>
@@ -136,6 +148,7 @@ export default function Certificates() {
           </DataTable>
         )}
       </Section>
+      {certs.length > 0 && <MaturityLegend />}
     </div>
   )
 }
