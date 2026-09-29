@@ -225,6 +225,11 @@ public final class Main {
         if (telemetry != null) {
             log.info("OTel export enabled (WARP_OTEL_ENDPOINT); set WARP_OTEL_ENDPOINT=disabled to turn off");
         }
+        // Admin-persisted overrides (PATCH /api/observability) apply on top of whatever env-var
+        // state was just resolved above -- an admin's prior "pause OTLP export"/"disable
+        // Prometheus scrape" choice survives a restart, same as every other warp_config field.
+        com.sayonora.warp.telemetry.ObservabilityToggles.apply(
+                config.otlpExportOverride(), config.prometheusScrapeOverride());
 
         String qosRate = config.qosRatePerSec();
         String qosBurst = config.qosBurst();

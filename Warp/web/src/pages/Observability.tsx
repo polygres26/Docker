@@ -1,7 +1,8 @@
 import { RefreshCw } from 'lucide-react'
-import { getObservability } from '../api/client'
+import { useState } from 'react'
+import { getObservability, setObservabilityToggles } from '../api/client'
 import { Button, CodeBlock, DataTable, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, Tag, type KpiItem } from '../components/ui'
-import { useLoad } from '../hooks'
+import { errorText, useLoad } from '../hooks'
 import styles from './interfaces/interfaces.module.css'
 
 const POLL_MS = 15_000
@@ -40,12 +41,28 @@ export default function Observability() {
   const obs = useLoad(getObservability, POLL_MS)
   const data = obs.data
   const otlp = data?.otlp
+  const [toggling, setToggling] = useState<'otlp' | 'prometheus' | null>(null)
+  const [toggleError, setToggleError] = useState<string | null>(null)
+
+  async function toggle(which: 'otlp' | 'prometheus', next: boolean) {
+    setToggling(which)
+    setToggleError(null)
+    try {
+      await setObservabilityToggles(which === 'otlp' ? { otlpEnabled: next } : { prometheusEnabled: next })
+      obs.reload()
+    } catch (e) {
+      setToggleError(errorText(e))
+    } finally {
+      setToggling(null)
+    }
+  }
 
   const otlpStateLabel = !otlp?.enabled ? 'Disabled'
+    : otlp.pausedByAdmin ? 'Paused by admin'
     : otlp.exportVerified ? 'Verified'
     : otlp.exportAttempts === 0 ? 'Enabled, awaiting first export'
     : 'Unverified'
-  const otlpTone = !otlp?.enabled ? 'muted' : otlp.exportVerified ? 'ok' : 'warn'
+  const otlpTone = !otlp?.enabled ? 'muted' : otlp.pausedByAdmin ? 'muted' : otlp.exportVerified ? 'ok' : 'warn'
 
   const kpis: KpiItem[] = data ? [
     { label: 'OTLP export', value: otlpStateLabel, tone: otlpTone, wide: true,
@@ -60,17 +77,24 @@ export default function Observability() {
       <PageHeader title="Observability" description="What Warp emits, where it goes, and whether monitoring is complete enough for production."
         actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => obs.reload()}>Refresh</Button>} />
       {obs.error && <Notice tone="bad">Could not load observability status: {obs.error}</Notice>}
+      {toggleError && <Notice tone="bad">Could not update observability settings: {toggleError}</Notice>}
       {obs.loading && !data ? <Loading /> : <KpiStrip items={kpis} label="Observability figures" />}
 
-      {otlp?.enabled && !otlp.exportVerified && otlp.exportAttempts > 0 && (
+      {otlp?.enabled && otlp.pausedByAdmin && (
+        <Notice tone="muted">OTLP export is paused by an admin -- no exports are being sent to <code>{otlp.endpoint}</code>. Resume it below.</Notice>
+      )}
+      {otlp?.enabled && !otlp.pausedByAdmin && !otlp.exportVerified && otlp.exportAttempts > 0 && (
         <Notice tone="warn">
           OTLP export has been attempted {otlp.exportAttempts} time{otlp.exportAttempts === 1 ? '' : 's'}
           {otlp.exportSuccesses > 0 ? `, ${otlp.exportSuccesses} succeeded, but the most recent success was too long ago to trust` : ' with no successful delivery yet'}.
           {otlp.lastError && <> Last error: <code>{otlp.lastError}</code>.</>} Check the collector at <code>{otlp.endpoint}</code>.
         </Notice>
       )}
-      {otlp?.enabled && otlp.exportVerified && (
+      {otlp?.enabled && !otlp.pausedByAdmin && otlp.exportVerified && (
         <Notice tone="ok">OTLP export to <code>{otlp.endpoint}</code> is verified: the most recent export succeeded {ago(otlp.lastSuccessAt)}.</Notice>
+      )}
+      {!data?.prometheus.available && (
+        <Notice tone="muted">The Prometheus scrape endpoint is disabled by an admin -- GET /metrics currently returns 404. Re-enable it below.</Notice>
       )}
 
       <Section flush title="Destinations" meta="configured export paths">
@@ -80,12 +104,35 @@ export default function Observability() {
               <strong>OTLP endpoint</strong>
               <span className={styles.sub}>{otlp?.enabled ? `${otlp.protocol?.toUpperCase()} · ${otlp.endpoint}${otlp.headerCount > 0 ? ` · ${otlp.headerCount} header(s)` : ' · no headers configured'}` : 'Not configured -- set WARP_OTEL_ENDPOINT'}</span>
               {otlp?.enabled && <span className={styles.sub}>{otlp.exportAttempts} attempt{otlp.exportAttempts === 1 ? '' : 's'} · {otlp.exportSuccesses} succeeded · {otlp.exportFailures} failed{otlp.lastExportAt ? ` · last attempt ${ago(otlp.lastExportAt)}` : ''}</span>}
+              {otlp?.enabled && !otlp.adminOverrideHasEffect && (
+                <span className={styles.sub}>Admin pause/resume has no effect until this process restarts with an OTLP endpoint configured.</span>
+              )}
             </div>
-            <StatusPill tone={otlpTone}>{otlpStateLabel}</StatusPill>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusPill tone={otlpTone}>{otlpStateLabel}</StatusPill>
+              {otlp?.enabled && (
+                <Button
+                  disabled={toggling === 'otlp' || !otlp.adminOverrideHasEffect}
+                  onClick={() => toggle('otlp', otlp.pausedByAdmin)}
+                >
+                  {otlp.pausedByAdmin ? 'Resume' : 'Pause'}
+                </Button>
+              )}
+            </div>
           </div>
           <div className={styles.rowItem}>
-            <div><strong>Prometheus endpoint</strong><span className={styles.sub}>{data?.prometheus.path} -- unauthenticated, always on</span></div>
-            <StatusPill tone="ok">Passive scrape</StatusPill>
+            <div><strong>Prometheus endpoint</strong><span className={styles.sub}>{data?.prometheus.path} -- unauthenticated{data?.prometheus.available ? ', always on' : ''}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusPill tone={data?.prometheus.available ? 'ok' : 'muted'}>{data?.prometheus.available ? 'Passive scrape' : 'Disabled'}</StatusPill>
+              {data && (
+                <Button
+                  disabled={toggling === 'prometheus'}
+                  onClick={() => toggle('prometheus', !data.prometheus.available)}
+                >
+                  {data.prometheus.available ? 'Disable' : 'Enable'}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </Section>

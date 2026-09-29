@@ -5,13 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
+import com.sayonora.warp.telemetry.ObservabilityToggles;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /** Unit coverage for {@link ObservabilitySummary} -- confirms it never constructs a real OTLP SDK
  * exporter (unlike {@code WarpTelemetry.fromEnv()}) while still reporting the same enabled/disabled
- * and endpoint-defaulting logic. */
+ * and endpoint-defaulting logic, plus the admin-settable overrides ({@link ObservabilityToggles}) --
+ * process-wide static state, so every test that touches it resets it in {@link #resetToggles()}. */
 class ObservabilitySummaryTest {
+
+    @AfterEach
+    void resetToggles() {
+        ObservabilityToggles.apply(null, null);
+    }
 
     @Test
     void disabledWhenEndpointIsLiterallyDisabled() {
@@ -48,19 +56,49 @@ class ObservabilitySummaryTest {
     }
 
     @Test
-    void exportVerifiedIsAlwaysFalse() {
+    void exportVerifiedIsFalseWithNoLiveWarpTelemetryInstance() {
+        // WarpTelemetry.current() is null in this test JVM (fromEnv() is never called), so there's
+        // no live exporter to report health from -- exportVerified must fall back to false, not be
+        // guessed from "enabled" alone.
         JsonObject out = ObservabilitySummary.toJson(Map.of());
-        assertFalse(out.getAsJsonObject("otlp").get("exportVerified").getAsBoolean(),
-                "WarpTelemetry has no delivery-confirmation signal -- must never be reported as verified");
+        assertFalse(out.getAsJsonObject("otlp").get("exportVerified").getAsBoolean());
     }
 
     @Test
-    void reportsMetricsOnlyAndAnAlwaysAvailablePrometheusEndpoint() {
+    void adminOverrideHasNoEffectWhenNoLiveExporterExists() {
+        ObservabilityToggles.apply("false", null);
+        JsonObject out = ObservabilitySummary.toJson(Map.of());
+        JsonObject otlp = out.getAsJsonObject("otlp");
+        assertFalse(otlp.get("adminOverride").getAsBoolean());
+        assertFalse(otlp.get("adminOverrideHasEffect").getAsBoolean(),
+                "no live WarpTelemetry instance in this test JVM -- an admin pause has nothing to pause");
+    }
+
+    @Test
+    void reportsMetricsOnlyAndAPrometheusEndpointAvailableByDefault() {
         JsonObject out = ObservabilitySummary.toJson(Map.of());
         assertTrue(out.get("metricsOnly").getAsBoolean());
         JsonObject prom = out.getAsJsonObject("prometheus");
         assertTrue(prom.get("available").getAsBoolean());
+        assertTrue(prom.get("adminOverride").isJsonNull());
         assertEquals("/metrics", prom.get("path").getAsString());
+    }
+
+    @Test
+    void adminCanDisableThePrometheusEndpointLive() {
+        ObservabilityToggles.apply(null, "false");
+        JsonObject out = ObservabilitySummary.toJson(Map.of());
+        JsonObject prom = out.getAsJsonObject("prometheus");
+        assertFalse(prom.get("available").getAsBoolean());
+        assertFalse(prom.get("adminOverride").getAsBoolean());
+    }
+
+    @Test
+    void adminCanReEnableThePrometheusEndpointAfterDisabling() {
+        ObservabilityToggles.apply(null, "false");
+        ObservabilityToggles.apply(null, "true");
+        JsonObject out = ObservabilitySummary.toJson(Map.of());
+        assertTrue(out.getAsJsonObject("prometheus").get("available").getAsBoolean());
     }
 
     @Test

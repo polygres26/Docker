@@ -16,6 +16,7 @@ import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -25,6 +26,11 @@ import org.junit.jupiter.api.Test;
  * no PeriodicMetricReader background thread) so the tracking logic itself is deterministic.
  */
 class ExportHealthTrackingExporterTest {
+
+    @AfterEach
+    void resetAdminOverride() {
+        ObservabilityToggles.apply(null, null);
+    }
 
     /** A fake exporter whose export() outcome is scripted per call. */
     private static final class ScriptedExporter implements MetricExporter {
@@ -131,6 +137,43 @@ class ExportHealthTrackingExporterTest {
         // milliseconds), so verified stays true -- "verified" tracks recency of the last SUCCESS,
         // not whether the single most recent attempt succeeded.
         assertTrue(health.verified());
+    }
+
+    @Test
+    void adminPauseSkipsTheRealDelegateEntirely() {
+        var delegate = new ScriptedExporter(List.of());
+        var tracked = new WarpTelemetry.ExportHealthTrackingExporter(delegate);
+        ObservabilityToggles.apply("false", null);
+        tracked.export(new ArrayList<>());
+        assertEquals(0, delegate.calls, "a paused exporter must never call the real delegate");
+        WarpTelemetry.ExportHealth health = tracked.health(5_000);
+        assertEquals(0, health.attempts(), "a paused export isn't counted as an attempt");
+        assertTrue(health.pausedByAdmin());
+        assertFalse(health.verified());
+    }
+
+    @Test
+    void aPriorSuccessIsNoLongerVerifiedOnceAdminPauses() {
+        var tracked = new WarpTelemetry.ExportHealthTrackingExporter(new ScriptedExporter(List.of(CompletableResultCode.ofSuccess())));
+        tracked.export(new ArrayList<>());
+        assertTrue(tracked.health(5_000).verified());
+        ObservabilityToggles.apply("false", null);
+        WarpTelemetry.ExportHealth health = tracked.health(5_000);
+        assertTrue(health.pausedByAdmin());
+        assertFalse(health.verified(), "a genuine prior success doesn't count as currently healthy while paused");
+    }
+
+    @Test
+    void resumingAfterAPauseAllowsRealExportsAgain() {
+        var delegate = new ScriptedExporter(List.of(CompletableResultCode.ofSuccess()));
+        var tracked = new WarpTelemetry.ExportHealthTrackingExporter(delegate);
+        ObservabilityToggles.apply("false", null);
+        tracked.export(new ArrayList<>());
+        assertEquals(0, delegate.calls);
+        ObservabilityToggles.apply("true", null);
+        tracked.export(new ArrayList<>());
+        assertEquals(1, delegate.calls);
+        assertTrue(tracked.health(5_000).verified());
     }
 
     @Test

@@ -107,6 +107,6 @@ class InterfaceRegistryTest {
     private static com.sayonora.warp.config.WarpConfig policyCfg(String qosRatePerSec, String routerSchemaRules, String aclRules) {
         return new com.sayonora.warp.config.WarpConfig(qosRatePerSec, null, null, null, null, null, null, null, null,
                 null, routerSchemaRules, null, null, null, null, null, aclRules, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 }

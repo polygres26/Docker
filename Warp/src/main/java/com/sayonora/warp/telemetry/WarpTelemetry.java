@@ -57,10 +57,14 @@ public final class WarpTelemetry {
      * {@code verified} is the actual health verdict: at least one export has ever succeeded AND
      * the most recent success is no older than 3 export intervals -- a real destination that
      * accepted data once but has since gone quiet (collector restarted, network partition, auth
-     * expired) reports {@code verified=false} again, not a stale permanent "yes".
+     * expired) reports {@code verified=false} again, not a stale permanent "yes". {@code
+     * pausedByAdmin} is true when {@link ObservabilityToggles#otlpOverride()} is explicitly {@code
+     * false} -- exports are skipped entirely (never sent to the real delegate) while paused, so
+     * {@code verified} correctly decays to {@code false} the moment the pause outlasts 3 export
+     * intervals, the same as a genuinely unreachable collector would.
      */
     public record ExportHealth(long attempts, long successes, long failures, Instant lastAttemptAt,
-            Instant lastSuccessAt, String lastError, boolean verified) {
+            Instant lastSuccessAt, String lastError, boolean verified, boolean pausedByAdmin) {
     }
 
     /**
@@ -88,6 +92,13 @@ public final class WarpTelemetry {
 
         @Override
         public CompletableResultCode export(java.util.Collection<io.opentelemetry.sdk.metrics.data.MetricData> metrics) {
+            if (Boolean.FALSE.equals(ObservabilityToggles.otlpOverride())) {
+                // Admin-paused: skip the real delegate entirely -- no network call, no attempt
+                // recorded. Reported to the SDK as success so PeriodicMetricReader doesn't treat
+                // this tick as a real failure; the pause itself is surfaced separately via
+                // ExportHealth.pausedByAdmin(), not folded into the success/failure counters.
+                return CompletableResultCode.ofSuccess();
+            }
             attempts.incrementAndGet();
             lastAttemptAt = Instant.now();
             CompletableResultCode code = delegate.export(metrics);
@@ -132,10 +143,12 @@ public final class WarpTelemetry {
         }
 
         ExportHealth health(long exportIntervalMs) {
+            boolean pausedByAdmin = Boolean.FALSE.equals(ObservabilityToggles.otlpOverride());
             Instant success = lastSuccessAt;
-            boolean verified = success != null
+            boolean verified = !pausedByAdmin && success != null
                     && Duration.between(success, Instant.now()).toMillis() <= 3 * exportIntervalMs;
-            return new ExportHealth(attempts.get(), successes.get(), failures.get(), lastAttemptAt, success, lastError, verified);
+            return new ExportHealth(attempts.get(), successes.get(), failures.get(), lastAttemptAt, success, lastError,
+                    verified, pausedByAdmin);
         }
     }
 

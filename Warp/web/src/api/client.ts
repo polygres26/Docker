@@ -944,6 +944,17 @@ export interface ObservabilityOtlpStatus {
    * success is within the last 3 export intervals -- a destination that accepted data once but has
    * since gone quiet reports false again, not a stale permanent "yes". */
   exportVerified: boolean
+  /** True while an admin has paused export via PATCH /api/observability (see adminOverride). A
+   * paused export never reaches the real delegate -- no attempt is even recorded -- and verified
+   * decays to false the same way a genuinely unreachable collector would. */
+  pausedByAdmin: boolean
+  /** The raw admin override value (true/false), or null if no admin has set one -- distinct from
+   * `enabled`, which reflects WARP_OTEL_ENDPOINT at process boot. */
+  adminOverride: boolean | null
+  /** False when there's no live exporter for an admin override to act on (OTLP was never
+   * configured via WARP_OTEL_ENDPOINT at boot) -- an admin can still SET the override (it's
+   * remembered for the next restart), but it has no effect on this running process. */
+  adminOverrideHasEffect: boolean
 }
 
 export interface ObservabilityMetric {
@@ -953,17 +964,36 @@ export interface ObservabilityMetric {
   labels: string[]
 }
 
+export interface ObservabilityPrometheusStatus {
+  /** Whether GET /metrics currently renders -- a real, unconditional live toggle (no network
+   * client to construct), so an admin's PATCH takes effect on the very next scrape. */
+  available: boolean
+  /** The raw admin override value (true/false), or null if no admin has set one. */
+  adminOverride: boolean | null
+  path: string
+}
+
 export interface ObservabilityStatus {
   otlp: ObservabilityOtlpStatus
   /** Always true today: WarpTelemetry only registers metric instruments, no trace or log exporter
    * exists anywhere in this codebase. */
   metricsOnly: boolean
-  prometheus: { available: boolean; path: string }
+  prometheus: ObservabilityPrometheusStatus
   catalog: ObservabilityMetric[]
 }
 
 export async function getObservability(): Promise<ObservabilityStatus> {
   return api('/api/observability')
+}
+
+/** PATCH /api/observability: admin-settable, warp_config-persisted enable/disable for the two
+ * observability destinations (ObservabilityApi.java). Either field may be omitted to leave that
+ * toggle unchanged. Returns the freshly re-read ObservabilityStatus so the caller doesn't need a
+ * separate reload to reflect the change. */
+export async function setObservabilityToggles(
+  toggles: { otlpEnabled?: boolean; prometheusEnabled?: boolean },
+): Promise<{ ok: boolean; version: number; observability: ObservabilityStatus }> {
+  return api('/api/observability', { method: 'PATCH', body: JSON.stringify(toggles) })
 }
 
 export interface UsageStat { calls: number; errors: number; totalMs: number; avgMs: number }

@@ -40,7 +40,9 @@ public record WarpConfig(
         String backendSetNames,
         String connectionRoutes,
         String mcpUpstreams,
-        String storeFrontendSets) {
+        String storeFrontendSets,
+        String otlpExportOverride,
+        String prometheusScrapeOverride) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -80,6 +82,8 @@ public record WarpConfig(
                 System.getenv("WARP_BACKEND_SET_NAMES"),
                 System.getenv("WARP_CONNECTION_ROUTES"),
                 null,
+                null,
+                null,
                 null);
     }
 
@@ -93,7 +97,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams, storeFrontendSets);
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
     }
 
     /** Copy with the connect-time route table (JSON array, see ConnectionRouter) replaced. */
@@ -105,7 +109,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                routes, mcpUpstreams, storeFrontendSets);
+                routes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
     }
 
     /** Copy with the mcpUpstreams field (JSON array, see McpUpstream) replaced. */
@@ -117,7 +121,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreamsJson, storeFrontendSets);
+                connectionRoutes, mcpUpstreamsJson, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
     }
 
     /** Copy with the per-store serving-set assignment ({@code store=set|store2=set2}, see
@@ -131,7 +135,22 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams, spec);
+                connectionRoutes, mcpUpstreams, spec, otlpExportOverride, prometheusScrapeOverride);
+    }
+
+    /** Copy with the admin-settable OTLP-export/Prometheus-scrape enable overrides replaced --
+     * each is {@code "true"}/{@code "false"}/{@code null} ({@code null} means "no admin override,
+     * defer to the env-var-derived default"); see {@code com.sayonora.warp.telemetry.
+     * ObservabilityToggles}, the live counterpart these values are applied to. */
+    public WarpConfig withObservabilityOverrides(String otlpExportOverride, String prometheusScrapeOverride) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
     }
 
     public String toJson() {
@@ -173,6 +192,8 @@ public record WarpConfig(
         fields.put("connectionRoutes", connectionRoutes);
         fields.put("mcpUpstreams", mcpUpstreams);
         fields.put("storeFrontendSets", storeFrontendSets);
+        fields.put("otlpExportOverride", otlpExportOverride);
+        fields.put("prometheusScrapeOverride", prometheusScrapeOverride);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -226,7 +247,9 @@ public record WarpConfig(
                 fields.get("backendSetNames"),
                 fields.get("connectionRoutes"),
                 fields.get("mcpUpstreams"),
-                fields.get("storeFrontendSets"));
+                fields.get("storeFrontendSets"),
+                fields.get("otlpExportOverride"),
+                fields.get("prometheusScrapeOverride"));
     }
 
     private static String quote(String value) {

@@ -2,6 +2,7 @@ package com.sayonora.warp.http.admin;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.sayonora.warp.telemetry.ObservabilityToggles;
 import com.sayonora.warp.telemetry.WarpTelemetry;
 import java.util.List;
 import java.util.Locale;
@@ -24,6 +25,16 @@ import java.util.Map;
  * export's real, async {@code CompletableResultCode} outcome (see {@code WarpTelemetry}'s own
  * {@code ExportHealthTrackingExporter}). {@code verified} means a real export has SUCCEEDED, and
  * recently -- not merely that one was attempted.
+ *
+ * <p>Both destinations are also admin-toggleable, live, from {@code PATCH /api/observability}
+ * ({@link ObservabilityApi}) -- {@link ObservabilityToggles} is the process-wide, {@code
+ * warp_config}-persisted override this method reads. {@code prometheus.available} is a real,
+ * unconditional live toggle (no network client to construct, so an admin turning it off is
+ * exactly as real as turning it on). The OTLP override can only pause/resume an exporter that was
+ * already constructed from {@code WARP_OTEL_ENDPOINT} at process startup -- {@code
+ * otlp.adminOverrideHasEffect} is {@code false} when OTLP was never configured via env, since no
+ * admin toggle can conjure a live exporter/network-client into existence without a restart; this
+ * is disclosed to the UI rather than silently implying the toggle always works.
  */
 public final class ObservabilitySummary {
 
@@ -83,6 +94,12 @@ public final class ObservabilitySummary {
         // calls WarpTelemetry.fromEnv(), and also null whenever OTLP is disabled) -- never guessed,
         // never a second exporter constructed just to answer this.
         WarpTelemetry live = WarpTelemetry.current();
+        otlp.addProperty("adminOverride", ObservabilityToggles.otlpOverride());
+        // An admin override can only pause/resume an exporter WARP_OTEL_ENDPOINT already built at
+        // boot -- it never has an effect when OTLP was never configured, since there's no live
+        // exporter to pause. Surfaced explicitly so the UI can grey out the toggle honestly rather
+        // than imply it always works.
+        otlp.addProperty("adminOverrideHasEffect", enabled && live != null);
         if (enabled && live != null) {
             WarpTelemetry.ExportHealth health = live.exportHealth();
             otlp.addProperty("exportAttempts", health.attempts());
@@ -92,6 +109,7 @@ public final class ObservabilitySummary {
             otlp.addProperty("lastSuccessAt", health.lastSuccessAt() != null ? health.lastSuccessAt().toString() : null);
             otlp.addProperty("lastError", health.lastError());
             otlp.addProperty("exportVerified", health.verified());
+            otlp.addProperty("pausedByAdmin", health.pausedByAdmin());
         } else {
             otlp.addProperty("exportAttempts", 0);
             otlp.addProperty("exportSuccesses", 0);
@@ -100,6 +118,7 @@ public final class ObservabilitySummary {
             otlp.addProperty("lastSuccessAt", (String) null);
             otlp.addProperty("lastError", (String) null);
             otlp.addProperty("exportVerified", false);
+            otlp.addProperty("pausedByAdmin", false);
         }
         out.add("otlp", otlp);
 
@@ -109,7 +128,10 @@ public final class ObservabilitySummary {
         out.addProperty("metricsOnly", true);
 
         JsonObject prometheus = new JsonObject();
-        prometheus.addProperty("available", true); // GET /metrics has no on/off switch, no auth gate
+        // A real, unconditional live toggle -- no network client to construct, so an admin
+        // disabling/re-enabling this takes effect on the very next scrape, no restart needed.
+        prometheus.addProperty("available", ObservabilityToggles.prometheusEnabled());
+        prometheus.addProperty("adminOverride", ObservabilityToggles.prometheusOverride());
         prometheus.addProperty("path", "/metrics");
         out.add("prometheus", prometheus);
 

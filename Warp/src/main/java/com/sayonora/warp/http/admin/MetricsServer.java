@@ -380,6 +380,17 @@ public final class MetricsServer {
                     recordAdminAction(auditLog, accessContext, request.getMethod(), target);
                 }
                 if ("/metrics".equals(target)) {
+                    // No authorized() gate here (unlike every other admin route) -- Prometheus
+                    // scrapers don't carry admin roles -- but an admin CAN turn this endpoint off
+                    // entirely via PATCH /api/observability, live, process-wide, no restart.
+                    if (!com.sayonora.warp.telemetry.ObservabilityToggles.prometheusEnabled()) {
+                        response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                        response.setContentType("text/plain; charset=utf-8");
+                        response.getWriter().write("Prometheus scrape endpoint disabled by an admin -- "
+                                + "see PATCH /api/observability");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
                     String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("text/plain; version=0.0.4; charset=utf-8");
@@ -452,6 +463,27 @@ public final class MetricsServer {
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(ObservabilitySummary.toJson(System.getenv()).toString());
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if ("/api/observability".equals(target) && "PATCH".equals(request.getMethod())) {
+                    if (configStore == null) {
+                        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write("{\"error\":\"no config store configured\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    ObservabilityApi.handlePatch(request, response, configStore);
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1609,7 +1641,9 @@ public final class MetricsServer {
                         field(body, "backendSetNames", current.backendSetNames()),
                         field(body, "connectionRoutes", current.connectionRoutes()),
                         field(body, "mcpUpstreams", current.mcpUpstreams()),
-                        field(body, "storeFrontendSets", current.storeFrontendSets()));
+                        field(body, "storeFrontendSets", current.storeFrontendSets()),
+                        field(body, "otlpExportOverride", current.otlpExportOverride()),
+                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
@@ -1627,6 +1661,8 @@ public final class MetricsServer {
                 com.sayonora.warp.core.BackendRegistry.fromConfig(updated.backends(), updated.shardBackends(),
                         updated.backendSets(), null, java.util.Map.of());
                 long version = configStore.write(updated);
+                com.sayonora.warp.telemetry.ObservabilityToggles.apply(
+                        updated.otlpExportOverride(), updated.prometheusScrapeOverride());
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write("{\"ok\":true,\"version\":" + version + "}");
             } else {
@@ -1708,7 +1744,8 @@ public final class MetricsServer {
                         newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
                         current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
-                        current.mcpUpstreams(), current.storeFrontendSets());
+                        current.mcpUpstreams(), current.storeFrontendSets(),
+                        current.otlpExportOverride(), current.prometheusScrapeOverride());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -2354,7 +2391,8 @@ public final class MetricsServer {
                 current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
-                current.mcpUpstreams(), current.storeFrontendSets());
+                current.mcpUpstreams(), current.storeFrontendSets(),
+                current.otlpExportOverride(), current.prometheusScrapeOverride());
         configStore.write(updated);
     }
 
