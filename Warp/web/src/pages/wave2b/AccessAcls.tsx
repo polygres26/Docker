@@ -104,11 +104,38 @@ export default function AccessAcls() {
 
   const kpis: KpiItem[] = [
     { label: 'Named identities', value: config.data && summary.data ? identities.length : '—', hint: 'SQL logins, access keys, MCP tokens, seen users' },
-    { label: 'ACL rules', value: cfg ? aclRules.length : '—', hint: aclRules.length > 0 ? 'first match wins, then deny' : 'none: every client allowed' },
+    { label: 'ACL rules', value: cfg ? aclRules.length : '—', hint: aclRules.length > 0 ? 'first match wins, then deny' : 'none: every client allowed',
+      tone: cfg && aclRules.length === 0 ? 'warn' : undefined },
     { label: 'Denied (in audit window)', value: audit.data ? `${auditFull ? `${denied24}+` : denied24}` : auditOff ? 'off' : '—', hint: auditOff ? 'audit log not enabled' : 'login failures and access denials, last 24h' },
-    { label: 'Auth enforced', value: ifaces.data && summary.data ? `${enforced} / ${coverage.length}` : '—', hint: ifaces.data ? `${open} open · ${unreported} not reported` : undefined },
+    // A neutral "4 / 13" reads as a fine ratio at a glance -- a UI review specifically flagged this
+    // as understating real exposure. Tone it by what's actually wrong: any confirmed-OPEN interface
+    // is worse than a merely-unreported one, so bad beats warn beats a clean ok.
+    { label: 'Auth enforced', value: ifaces.data && summary.data ? `${enforced} / ${coverage.length}` : '—', hint: ifaces.data ? `${open} open · ${unreported} not reported` : undefined,
+      tone: !ifaces.data || !summary.data ? undefined : open > 0 ? 'bad' : unreported > 0 ? 'warn' : 'ok' },
   ]
   const loadErr = config.error ?? ifaces.error ?? summary.error
+
+  // Explicit, actionable findings -- the review's own ask: "these should be red or amber
+  // remediation findings with direct actions... not neutral statistics." Built from the SAME
+  // `coverage`/`aclRules` state already computed above for the KPIs and the per-interface table
+  // below; this is a different rendering of identical data, not a new computation.
+  interface Finding { tone: Tone; text: React.ReactNode }
+  const findings: Finding[] = []
+  coverage.filter((c) => c.status === 'open').forEach((c) => {
+    findings.push({ tone: 'bad', text: <>Configure authentication for <strong>{c.iface.label}</strong>: {c.methods.map((m) => m.detail).join('; ') || 'no method enforced'}.</> })
+  })
+  if (unreported > 0) {
+    findings.push({ tone: 'warn', text: <>Verify authentication for {unreported} interface{unreported === 1 ? '' : 's'} that report no auth status at all: {coverage.filter((c) => c.status === 'unreported').map((c) => c.iface.label).join(', ')}.</> })
+  }
+  if (aclRules.length === 0) {
+    findings.push({ tone: 'warn', text: <>Add a network ACL: every client IP can currently attempt to connect. Configure rules on the <Link to="/acl">ACL</Link> tab.</> })
+  }
+  if (!oauthOn) {
+    const oauthCapable = coverage.filter((c) => OAUTH_IDS.has(c.iface.id)).map((c) => c.iface.label)
+    if (oauthCapable.length > 0) {
+      findings.push({ tone: 'muted', text: <>Configure OIDC if any of {oauthCapable.join(', ')} should require a real per-user identity instead of a static credential.</> })
+    }
+  }
 
   return (
     <div>
@@ -116,6 +143,18 @@ export default function AccessAcls() {
         actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { config.reload(); ifaces.reload(); summary.reload(); audit.reload(); endpoints.reload() }}>Refresh</Button>} />
       {loadErr && <Notice tone="bad">Could not load: {loadErr}</Notice>}
       {config.loading && ifaces.loading ? <Loading /> : <KpiStrip items={kpis} label="Access figures" />}
+
+      {findings.length > 0 && (
+        <Section flush title="Security findings" meta={`${findings.length} open`}>
+          <div className={styles.rowList}>
+            {findings.map((f, i) => (
+              <div className={styles.rowItem} key={i}>
+                <div><StatusPill tone={f.tone}>{''}</StatusPill> <span>{f.text}</span></div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {view === 'rules' && (
         <>

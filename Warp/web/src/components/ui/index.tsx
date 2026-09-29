@@ -55,7 +55,7 @@ export function KpiStrip({ items, label = 'Key figures' }: { items: KpiItem[]; l
           <small className={styles.kpiLabel}>{it.label}</small>
           {it.tone && it.wide
             ? <span className={cx(styles.kpiLive, styles[`tone_${it.tone}`])}><i className={styles.dot} />{it.value}</span>
-            : <strong className={styles.kpiValue}>{it.value ?? '—'}</strong>}
+            : <strong className={cx(styles.kpiValue, it.tone && styles[`tone_${it.tone}`])}>{it.value ?? '—'}</strong>}
           {it.hint && <span className={styles.kpiHint}>{it.hint}</span>}
         </div>
       ))}
