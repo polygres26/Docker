@@ -60,8 +60,8 @@ export default function Connect() {
           <span>Sayonora</span>
         </div>
         <div className={styles.message}>
-          <h1>One gateway.<br />Every backend.</h1>
-          <p>Route, govern and observe the SQL traffic Warp fronts, from one controlled admin console.</p>
+          <h1>Every workload.<br />One control plane.</h1>
+          <p>Govern, route and validate SQL, API and MCP traffic across existing and modern backends, from one controlled admin console.</p>
         </div>
         <ul className={styles.signals}>
           <li><ShieldCheck size={14} aria-hidden="true" />Bearer-token protected admin API</li>
@@ -72,7 +72,7 @@ export default function Connect() {
       <main className={styles.formWrap}>
         <form className={styles.form} onSubmit={handleSubmit}>
           <p className={styles.eyebrow}>Warp admin console</p>
-          <h2>Connect to Warp</h2>
+          <h2>Connect to an environment</h2>
           <p className={styles.formCopy}>Enter the admin URL and token of the Warp process you want to manage.</p>
 
           <label className={styles.label} htmlFor="adminUrl">Admin URL</label>
