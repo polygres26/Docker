@@ -60,4 +60,22 @@ public final class PgSqlServerSupport {
         AVAILABLE_CACHE.put(key, available);
         return available;
     }
+
+    // See PgMysqlSupport.CURRENT_STATEMENT_AVAILABLE's own javadoc for the full rationale --
+    // identical pattern, applied to mssqlwire's normalizeSqlServer(). Closes the same real,
+    // live-found gap (2026-09-29): @@IDENTITY used to unconditionally rewrite to
+    // sys.scope_identity(), with no availability check, against a real managed Postgres (Supabase,
+    // RDS, etc.) with no pg_sqlserver installed. Unlike normalizeMysql()'s SHOW-style rewrites
+    // (which have no plain-Postgres equivalent at all), @@IDENTITY DOES have a real, native,
+    // full-fidelity Postgres fallback -- lastval() -- so the degraded path here doesn't need to
+    // refuse the statement, only rewrite it differently (see normalizeSqlServer() itself).
+    private static final ThreadLocal<Boolean> CURRENT_STATEMENT_AVAILABLE = ThreadLocal.withInitial(() -> true);
+
+    public static void setCurrentStatementAvailable(boolean available) {
+        CURRENT_STATEMENT_AVAILABLE.set(available);
+    }
+
+    public static boolean isCurrentStatementAvailable() {
+        return CURRENT_STATEMENT_AVAILABLE.get();
+    }
 }

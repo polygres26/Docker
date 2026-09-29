@@ -62,4 +62,31 @@ public final class PgMysqlSupport {
         AVAILABLE_CACHE.put(key, available);
         return available;
     }
+
+    // Consulted by DialectTranslations.normalizeMysql(), which has no Connection/BackendTarget of
+    // its own -- same pattern as PgOracleSupport.CURRENT_STATEMENT_AVAILABLE, see that class's own
+    // javadoc for why this has to be a ThreadLocal set one pipeline stage earlier
+    // (DialectTranslationStage.handle()) rather than passed as a parameter. Defaults to true
+    // (assume installed) for the same reason: unchanged behavior for the common case and for any
+    // call site (tests, other pipelines) that never sets it.
+    //
+    // Real, live-found gap this closes (2026-09-29, raised directly: "Adapt should not always
+    // assume pg_* modules are linked because Warp can be run against Supabase or RDS Postgres"):
+    // normalizeMysql()'s SHOW COLUMNS/DESCRIBE/SHOW INDEX/SHOW VARIABLES/SHOW CREATE TABLE rewrites
+    // used to unconditionally target mysql_catalog.* functions with NO availability check at all --
+    // unlike normalizeOracle()'s TO_CHAR/TO_DATE rewrite, which was already correctly gated behind
+    // PgOracleSupport. Against a real managed Postgres with no pg_mysql installed (Supabase, RDS,
+    // Cloud SQL, Azure Database for PostgreSQL -- none of which allow installing a third-party C
+    // extension), those five statement shapes would generate SQL referencing a schema that doesn't
+    // exist, surfacing a raw, confusing "schema mysql_catalog does not exist" error instead of a
+    // clear, actionable one.
+    private static final ThreadLocal<Boolean> CURRENT_STATEMENT_AVAILABLE = ThreadLocal.withInitial(() -> true);
+
+    public static void setCurrentStatementAvailable(boolean available) {
+        CURRENT_STATEMENT_AVAILABLE.set(available);
+    }
+
+    public static boolean isCurrentStatementAvailable() {
+        return CURRENT_STATEMENT_AVAILABLE.get();
+    }
 }
