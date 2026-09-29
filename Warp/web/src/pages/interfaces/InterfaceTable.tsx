@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { InterfaceInfo, WireMetricsSummary } from '../../api/client'
-import { DataTable, EmptyState, ModeTag, NameCell, StatusPill, compact } from '../../components/ui'
+import { maturityFor } from '../../api/maturity'
+import { DataTable, EmptyState, MaturityTag, ModeTag, NameCell, StatusPill, compact } from '../../components/ui'
 import styles from './interfaces.module.css'
 
 /** Average latency of an interface's protocol from the RTT-outcome table (real samples only; null when none). */
@@ -40,7 +41,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
   return (
     <DataTable caption="Interfaces" minWidth={960}>
       <thead>
-        <tr><th>Interface</th><th>Port</th><th>TLS</th><th>Mode</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
+        <tr><th>Interface</th><th>Port</th><th>TLS</th><th>Mode</th><th>Maturity</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
       </thead>
       <tbody>
         {rows.map((i) => {
@@ -51,6 +52,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
               <td className={styles.mono}>{i.port}</td>
               <td><TlsCell i={i} /></td>
               <td><ModeTag mode={i.mode} /></td>
+              <td><MaturityTag maturity={maturityFor(i.metricsKey, i.id)} /></td>
               <td>
                 {i.store
                   ? <>

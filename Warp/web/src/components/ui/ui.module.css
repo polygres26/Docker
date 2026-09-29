@@ -143,3 +143,5 @@
 .cellName { font-weight: 500; font-size: var(--fs-base); overflow-wrap: anywhere; }
 .cellSub { color: var(--sy-muted); font-size: var(--fs-xs); margin-top: 2px; overflow-wrap: anywhere; }
 .tagGreen { background: var(--sy-green-soft); color: var(--sy-green); }
+.tagAmber { background: var(--sy-amber-soft); color: var(--sy-amber); }
+.tagMuted { background: var(--sy-line); color: var(--sy-muted); }

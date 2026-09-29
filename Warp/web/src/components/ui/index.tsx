@@ -322,3 +322,24 @@ export function ModeTag({ mode }: { mode: string | null | undefined }) {
   if (!mode) return <span className={styles.cellSub}>n/a</span>
   return <span className={cx(styles.tag, mode === 'Relay' && styles.tagGreen)}>{mode}</span>
 }
+
+/** Warp's own editorial classification of a protocol's verification depth -- see
+ * src/api/maturity.ts for the criteria and evidence behind each tier. Not a live metric: renders
+ * nothing for a protocol this console doesn't have a classification for yet, rather than guessing. */
+export function MaturityTag({ maturity }: { maturity: 'Certified' | 'Production' | 'Preview' | 'Experimental' | null }) {
+  if (!maturity) return <span className={styles.cellSub}>—</span>
+  const cls = maturity === 'Certified' ? styles.tagGreen
+    : maturity === 'Preview' ? styles.tagAmber
+    : maturity === 'Experimental' ? styles.tagMuted
+    : undefined // Production: default accent tag, same visual weight as an ordinary mode
+  return <span className={cx(styles.tag, cls)} title={maturityHint(maturity)}>{maturity}</span>
+}
+
+function maturityHint(maturity: string): string {
+  switch (maturity) {
+    case 'Certified': return 'Real official client/server, a large/quantified conformance suite, no major open gaps found'
+    case 'Production': return 'Real backend/emulator verification, with real, disclosed gaps documented in the guide'
+    case 'Preview': return 'Verification relies on an imperfect oracle, or a real feature gap blocks production use end-to-end'
+    default: return 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet'
+  }
+}
