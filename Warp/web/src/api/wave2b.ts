@@ -88,3 +88,19 @@ export async function getAbCompareAll(limit = 1000): Promise<AbCompareEntry[]> {
   const r = await getJson<{ entries: AbCompareEntry[] }>(`/api/ab-routing/compare?limit=${limit}`)
   return r.entries
 }
+
+// ---- Compatibility scorecard: GET /api/compat-scorecard (CompatScorecard.java) -- real, published
+// floci-io/floci SDK conformance-suite results baked into the jar at build time, per (service,
+// suite): a before/after pair (baseline = earliest captured run, current = latest) rather than a
+// single always-improving number, and per-failure heuristic classes (a=not implemented,
+// b=wrong behaviour, c=floci-test-specific, d=environment) straight from the harness itself. ----
+
+export interface CompatCounts { pass: number; fail: number; error: number; skip: number; total: number; passRate: number }
+export interface CompatFailure { testFile: string; test: string; status: string; message: string; class: 'a' | 'b' | 'c' | 'd' | '' }
+export interface CompatRun { endpoint: string; date: string; counts: CompatCounts; failures: CompatFailure[] }
+export interface CompatScorecardEntry { service: string; suite: string; current: CompatRun; baseline: CompatRun | null }
+export interface CompatScorecardResponse { scorecards: CompatScorecardEntry[]; source: string }
+
+export async function getCompatScorecard(): Promise<CompatScorecardResponse> {
+  return getJson('/api/compat-scorecard')
+}

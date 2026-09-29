@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ArrowLeftRight, RefreshCw } from 'lucide-react'
 import { getAbRouting, getAbStats, type AbCompareEntry, type AbPolicy, type AbState, type AbStats } from '../../api/client'
-import { getAbCompareAll, getCapture } from '../../api/wave2b'
+import { getAbCompareAll, getCapture, getCompatScorecard, type CompatFailure, type CompatScorecardEntry } from '../../api/wave2b'
 import {
   Button, CodeBlock, DataTable, EmptyState, Field, KpiStrip, Loading, NameCell, Notice, PageHeader, Section, StatusPill, Tag, compact,
   type KpiItem, type Tone,
@@ -77,6 +77,7 @@ export default function CompatLab() {
   const state = useLoad(getAbRouting, POLL_MS)
   const stats = useLoad(getAbStats, POLL_MS)
   const entries = useLoad(useCallback(() => getAbCompareAll(COMPARE_LIMIT), []), POLL_MS)
+  const scorecard = useLoad(getCompatScorecard)
   const [store, setStore] = useState('all')
   const [th, setTh] = useState<Thresholds>(() => readLocal(TH_KEY, DEFAULT_THRESHOLDS))
   const [decisions, setDecisions] = useState<Record<string, Decision>>(() => readLocal<Record<string, Decision>>(DEC_KEY, {}))
@@ -203,6 +204,7 @@ export default function CompatLab() {
         </>
       )}
 
+      {view === 'scorecard' && <Scorecard data={scorecard.data} loading={scorecard.loading} error={scorecard.error} />}
       {view === 'profiles' && <Profiles policies={policies} state={state.data} loading={state.loading} />}
       {view === 'traffic' && <Traffic />}
       {view === 'known' && (
@@ -280,6 +282,95 @@ function DifferencesTable({ groups, decisionOf, setDecision, loading, compared }
         )}
       {groups.length > MAX_GROUPS && <div className={styles.pad}><span className={styles.sub}>Showing the {MAX_GROUPS} highest-severity groups of {groups.length}.</span></div>}
     </Section>
+  )
+}
+
+/** Real gaps worth an operator's attention: class a (not implemented) and b (wrong behaviour/shape).
+ * Classes c (floci-test-specific) and d (environment) are the harness's own heuristic for "not
+ * actually a Warp compatibility gap" -- counted, but not surfaced as if they were. */
+function isRealGap(f: CompatFailure): boolean {
+  return f.class === 'a' || f.class === 'b'
+}
+const GAP_CLASS_LABEL: Record<string, string> = {
+  a: 'Not implemented', b: 'Wrong behaviour', c: 'Floci-specific', d: 'Environment', '': 'Unclassified',
+}
+
+/**
+ * Compatibility scorecard: real, published pass rates from the floci-io/floci third-party SDK
+ * conformance suites run against Warp's AWS-service wire protocols (GET /api/compat-scorecard,
+ * CompatScorecard.java) -- baked into the jar from Warp/tests/python/floci_compat/results/*.json
+ * at build time, not a live probe. Each row is a before/after pair from the same baseline session:
+ * "baseline" is the earliest captured run for that (service, suite), "current" the latest.
+ */
+function Scorecard({ data, loading, error }: { data: { scorecards: CompatScorecardEntry[]; source: string } | null; loading: boolean; error: string | null }) {
+  const cards = data?.scorecards ?? []
+  const totals = cards.reduce((acc, c) => ({ pass: acc.pass + c.current.counts.pass, total: acc.total + c.current.counts.total }),
+    { pass: 0, total: 0 })
+  const overallRate = totals.total > 0 ? (totals.pass / totals.total) * 100 : null
+  const services = new Set(cards.map((c) => c.service))
+  const allGaps = cards.flatMap((c) => c.current.failures.filter(isRealGap).map((f) => ({ ...f, service: c.service, suite: c.suite })))
+
+  const kpis: KpiItem[] = data ? [
+    { label: 'Overall conformance', value: overallRate === null ? '—' : `${overallRate.toFixed(1)}%`, tone: overallRate === null ? 'muted' : overallRate >= 95 ? 'ok' : overallRate >= 80 ? 'warn' : 'bad', wide: true,
+      hint: `${totals.pass.toLocaleString()} of ${totals.total.toLocaleString()} tests, across ${cards.length} (service, SDK) pair${cards.length === 1 ? '' : 's'}` },
+    { label: 'Services covered', value: services.size, hint: [...services].sort().join(', ') },
+    { label: 'Real gaps', value: allGaps.length, tone: allGaps.length === 0 ? 'ok' : 'warn', hint: 'not-implemented or wrong-behaviour failures' },
+    { label: 'Source', value: 'floci-io/floci', hint: 'MIT-licensed third-party SDK test suites' },
+  ] : []
+
+  return (
+    <>
+      {error && <Notice tone="bad">Could not load the compatibility scorecard: {error}</Notice>}
+      {loading && !data ? <Loading /> : <KpiStrip items={kpis} label="Compatibility scorecard figures" />}
+      <Notice tone="muted">{data?.source ?? 'Real conformance-suite results, baked into the jar at build time -- not a live probe. Updating requires re-running the harness and rebuilding.'}</Notice>
+
+      <Section flush title="Per-SDK conformance" meta={cards.length > 0 ? `${cards.length} pairs, 2026-09-25 baseline session` : undefined}>
+        {!data ? <div className={styles.pad}><Loading /></div> : cards.length === 0
+          ? <EmptyState title="No scorecard data">The compat-scorecard resource bundle is missing or empty in this build.</EmptyState>
+          : (
+            <DataTable caption="Compatibility scorecard by service and SDK" minWidth={860}>
+              <thead><tr><th>Service</th><th>SDK</th><th style={{ textAlign: 'right' }}>Current</th><th style={{ textAlign: 'right' }}>Baseline</th><th style={{ textAlign: 'right' }}>Tests</th><th style={{ textAlign: 'right' }}>Real gaps</th></tr></thead>
+              <tbody>
+                {cards.map((c) => {
+                  const rate = c.current.counts.passRate * 100
+                  const baseRate = c.baseline ? c.baseline.counts.passRate * 100 : null
+                  const gaps = c.current.failures.filter(isRealGap).length
+                  return (
+                    <tr key={`${c.service}-${c.suite}`}>
+                      <td className={styles.mono}>{c.service}</td>
+                      <td><Tag>{c.suite}</Tag></td>
+                      <td className={styles.num}><StatusPill tone={rate >= 95 ? 'ok' : rate >= 80 ? 'warn' : 'bad'}>{rate.toFixed(1)}%</StatusPill></td>
+                      <td className={styles.num}>{baseRate === null ? '—' : `${baseRate.toFixed(1)}%`}</td>
+                      <td className={styles.num}>{c.current.counts.total}</td>
+                      <td className={styles.num}>{gaps === 0 ? <span className={styles.sub}>none</span> : gaps}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </DataTable>
+          )}
+      </Section>
+
+      <Section flush title="Real gaps" meta={`${allGaps.length} not-implemented or wrong-behaviour failure${allGaps.length === 1 ? '' : 's'} -- floci-specific and environment failures excluded`}>
+        {allGaps.length === 0
+          ? <EmptyState title="No known gaps in the current baselines">Every captured run's class-a/b failures have been resolved as of the latest baseline.</EmptyState>
+          : (
+            <DataTable caption="Known compatibility gaps" minWidth={860}>
+              <thead><tr><th>Service</th><th>Test</th><th>Class</th><th>Message</th></tr></thead>
+              <tbody>
+                {allGaps.map((g, i) => (
+                  <tr key={i}>
+                    <td><NameCell name={g.service} sub={g.suite} /></td>
+                    <td className={styles.mono}>{g.test}</td>
+                    <td><Tag>{GAP_CLASS_LABEL[g.class] ?? g.class}</Tag></td>
+                    <td className={styles.wrapCell}>{g.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+          )}
+      </Section>
+    </>
   )
 }
 

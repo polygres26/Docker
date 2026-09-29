@@ -1,0 +1,37 @@
+{
+ "service": "s3",
+ "suite": "node",
+ "endpoint": "http://localhost:52935",
+ "tag": "warp",
+ "date": "2026-09-25 16:15",
+ "runner_rc": 0,
+ "seconds": 7.4,
+ "counts": {
+  "pass": 35,
+  "fail": 0,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/s3-cors.test.ts": {
+   "pass": 15,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/s3-multipart-checksum.test.ts": {
+   "pass": 3,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/s3.test.ts": {
+   "pass": 17,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/s3.test.ts tests/s3-cors.test.ts tests/s3-multipart-checksum.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-s3-node.junit.xml",
+ "failures": []
+}

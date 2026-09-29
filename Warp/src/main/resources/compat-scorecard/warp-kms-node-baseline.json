@@ -1,0 +1,136 @@
+{
+ "service": "kms",
+ "suite": "node",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 0.5,
+ "counts": {
+  "pass": 0,
+  "fail": 13,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/kms-features.test.ts": {
+   "pass": 0,
+   "fail": 6,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/kms.test.ts": {
+   "pass": 0,
+   "fail": 7,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/kms.test.ts tests/kms-features.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/results/awsx-baseline-kms-node.junit.xml",
+ "failures": [
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #269: CreateKey with Tags stores tags immediately",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.012685625,
+   "class": "a"
+  },
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #269: CreateKey without Tags has empty tag list",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.001997708,
+   "class": "a"
+  },
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #258: CreateKey without Policy returns a non-empty default policy",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.001126,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #258: CreateKey with Policy stores and returns that policy",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.001167083,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #259: PutKeyPolicy updates the key policy",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.001296875,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms-features.test.ts",
+   "test": "KMS features (#258 #259 #269) > #259: PutKeyPolicy round-trip \u2014 get, change, verify",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.000911584,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should create key",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey",
+   "time": 0.002607959,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should describe key",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.DescribeKey",
+   "time": 0.001046916,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should list keys",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.ListKeys",
+   "time": 0.002387917,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should encrypt data",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.Encrypt",
+   "time": 0.001341917,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should decrypt data",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.Decrypt",
+   "time": 0.000736208,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should generate data key",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.GenerateDataKey",
+   "time": 0.000772792,
+   "class": "b"
+  },
+  {
+   "file": "tests/kms.test.ts",
+   "test": "KMS > should generate random bytes",
+   "status": "fail",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.GenerateRandom",
+   "time": 0.0009165,
+   "class": "b"
+  }
+ ]
+}

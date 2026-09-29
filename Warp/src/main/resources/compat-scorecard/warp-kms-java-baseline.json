@@ -1,0 +1,484 @@
+{
+ "service": "kms",
+ "suite": "java",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 1.8,
+ "counts": {
+  "pass": 0,
+  "fail": 0,
+  "error": 55,
+  "skip": 2
+ },
+ "per_file": {
+  "com.floci.test.KmsFeaturesTest": {
+   "pass": 0,
+   "fail": 0,
+   "error": 24,
+   "skip": 0
+  },
+  "com.floci.test.KmsSm2Test": {
+   "pass": 0,
+   "fail": 0,
+   "error": 6,
+   "skip": 0
+  },
+  "com.floci.test.KmsTest": {
+   "pass": 0,
+   "fail": 0,
+   "error": 22,
+   "skip": 2
+  },
+  "com.floci.test.KmsGrantLifecycleTest": {
+   "pass": 0,
+   "fail": 0,
+   "error": 3,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=KmsTest,KmsFeaturesTest,KmsGrantLifecycleTest,KmsSm2Test -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "createKeyWithTagsStoresTags",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "createKeyWithoutTagsHasEmptyTagList",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "createKeyWithoutPolicyReturnsDefaultPolicy",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "createKeyWithPolicyStoresAndReturnsPolicy",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "putKeyPolicyUpdatesPolicy",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "putKeyPolicyRoundTrip",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "describeSymmetricKeyReturnsNoEncryptionAlgorithms",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "describeAsymmetricRsaSignKeyReturnsSigningAlgorithms",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "describeHmacKeyReturnsMacAlgorithms",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "mlDsaCreateGetPublicKeySignAndVerifyThroughSdk(KeySpec)[1]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "mlDsaCreateGetPublicKeySignAndVerifyThroughSdk(KeySpec)[2]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "mlDsaCreateGetPublicKeySignAndVerifyThroughSdk(KeySpec)[3]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "decryptWithMatchingKeyIdReturnsPlaintext",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "decryptWithMismatchedKeyIdRaisesIncorrectKeyException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "reEncryptWithMatchingSourceKeyIdReturnsNewCiphertext",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "reEncryptWithMismatchedSourceKeyIdRaisesIncorrectKeyException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "encryptWithDisabledKeyRaisesDisabledException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "decryptWithDisabledKeyRaisesDisabledException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.0,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "encryptWithPendingDeletionKeyRaisesKmsInvalidStateException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "decryptWithPendingDeletionKeyRaisesKmsInvalidStateException",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "rsaOaepEncryptDecryptRoundTrip",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "decryptAcceptsRsaOaepCiphertextMadeWithGetPublicKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "rsaEncryptWithDefaultAlgorithmRaisesInvalidKeyUsage",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsFeaturesTest",
+   "test": "importedKeyMaterialMakesAnExternalKeyUsable",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "c"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyUseSm2dsaWireAlgorithm(String)[1]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.009,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyUseSm2dsaWireAlgorithm(String)[2]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyRejectInvalidSm2Parameters(String, String, MessageType, String)[1]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyRejectInvalidSm2Parameters(String, String, MessageType, String)[2]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyRejectInvalidSm2Parameters(String, String, MessageType, String)[3]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsSm2Test",
+   "test": "signAndVerifyRejectInvalidSm2Parameters(String, String, MessageType, String)[4]",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "createKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "describeKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.DescribeKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "createAlias",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateAlias (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "listAliases",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.ListAliases (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "encrypt",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.Encrypt (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "encryptUsingAlias",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.Encrypt (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "generateDataKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.GenerateDataKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "tagging",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.TagResource (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "generateDataKeyWithoutPlaintext",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.GenerateDataKeyWithoutPlaintext (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "signAndVerify",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "signAndVerifyRSA",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "signWithDigest",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "getPublicKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "scheduleKeyDeletion",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.ScheduleKeyDeletion (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "deleteAlias",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.DeleteAlias (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "signAndVerifySecp256k1",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "describeSignVerifyRsaKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "generateRandom",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.GenerateRandom (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "describeSignVerifyEcKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "describeSignVerifyOtherKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "describeHmacKey",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsTest",
+   "test": "generateAndVerifyMac",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsGrantLifecycleTest",
+   "test": "createListGrantRoundTrip",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.101,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsGrantLifecycleTest",
+   "test": "createListRetireGrantRoundTrip",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.KmsGrantLifecycleTest",
+   "test": "createListRevokeGrantRoundTrip",
+   "status": "error",
+   "message": "Missing or unrecognized X-Amz-Target header: TrentService.CreateKey (Service: Kms, Status Code: 400, Request ID: null) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "b"
+  }
+ ]
+}

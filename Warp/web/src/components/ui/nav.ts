@@ -58,7 +58,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Migration',
     items: [
       { label: 'Compatibility lab', icon: FlaskConical, to: '/lab', tabs: [
-        { to: '/lab', label: 'Comparison' }, { to: '/lab/profiles', label: 'Profiles' }, { to: '/lab/traffic', label: 'Captured traffic' },
+        { to: '/lab', label: 'Comparison' }, { to: '/lab/scorecard', label: 'Scorecard' }, { to: '/lab/profiles', label: 'Profiles' },
+        { to: '/lab/traffic', label: 'Captured traffic' },
         { to: '/lab/known', label: 'Known differences' }, { to: '/ab-routing', label: 'A/B routing' }, { to: '/llm-config', label: 'Dialect translation (LLM)' },
       ] },
     ],

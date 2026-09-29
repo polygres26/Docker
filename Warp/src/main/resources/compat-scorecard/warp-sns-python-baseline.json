@@ -1,0 +1,106 @@
+{
+ "service": "sns",
+ "suite": "python",
+ "endpoint": "http://localhost:49728",
+ "tag": "awsx-baseline",
+ "date": "2026-09-25 20:56",
+ "runner_rc": 1,
+ "seconds": 0.3,
+ "counts": {
+  "pass": 0,
+  "fail": 10,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "test_sns.py": {
+   "pass": 0,
+   "fail": 10,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pytest tests/test_sns.py -o addopts= -p no:cacheprovider -q --tb=line --junit-xml=/private/tmp/claude-501/-Users-kumarrajamani-Projects-Sayonora/023be836-e251-416c-b826-4d3c5ebffbe7/scratchpad/awsextras-work/run/results/awsx-baseline-sns-python.junit.xml --timeout=60",
+ "failures": [
+  {
+   "file": "test_sns.py",
+   "test": "test_create_topic",
+   "status": "fail",
+   "message": "UnboundLocalError: local variable 'response' referenced before assignment",
+   "time": 0.039,
+   "class": "b"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_list_topics",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_get_topic_attributes",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_delete_topic",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_subscribe_sqs",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.006,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_list_subscriptions_by_topic",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_unsubscribe",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_publish",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_publish_sqs_delivery",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "test_sns.py",
+   "test": "test_publish_with_message_attributes",
+   "status": "fail",
+   "message": "botocore.exceptions.ClientError: An error occurred (UnknownOperationException) when calling the CreateTopic operation: sqswire does not implement CreateTopic",
+   "time": 0.004,
+   "class": "a"
+  }
+ ]
+}

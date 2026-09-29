@@ -1,0 +1,58 @@
+{
+ "service": "s3",
+ "suite": "java",
+ "endpoint": "http://localhost:53160",
+ "tag": "warp",
+ "date": "2026-09-25 16:16",
+ "runner_rc": 1,
+ "seconds": 7.1,
+ "counts": {
+  "pass": 74,
+  "fail": 0,
+  "error": 1,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.S3Test": {
+   "pass": 33,
+   "fail": 0,
+   "error": 1,
+   "skip": 0
+  },
+  "com.floci.test.S3AnnotationsTest": {
+   "pass": 11,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.S3MultipartChecksumTest": {
+   "pass": 6,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.S3VirtualHostStyleTest": {
+   "pass": 10,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  },
+  "com.floci.test.S3FeaturesTest": {
+   "pass": 14,
+   "fail": 0,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=S3Test,S3FeaturesTest,S3VirtualHostStyleTest,S3MultipartChecksumTest,S3AnnotationsTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "deleteBucketTagging",
+   "status": "error",
+   "message": "The TagSet does not exist (Service: S3, Status Code: 404, Request ID: E7A3614073864077, Extended Request ID: b4fbHqHKhMxC6XAS=b4fbHqHKhMxC6XAS) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "a"
+  }
+ ]
+}

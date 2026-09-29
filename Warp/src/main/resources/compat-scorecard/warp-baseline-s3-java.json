@@ -1,0 +1,410 @@
+{
+ "service": "s3",
+ "suite": "java",
+ "endpoint": "http://localhost:55602",
+ "tag": "warp-baseline",
+ "date": "2026-09-25 14:39",
+ "runner_rc": 1,
+ "seconds": 7.6,
+ "counts": {
+  "pass": 30,
+  "fail": 23,
+  "error": 22,
+  "skip": 0
+ },
+ "per_file": {
+  "com.floci.test.S3Test": {
+   "pass": 21,
+   "fail": 6,
+   "error": 7,
+   "skip": 0
+  },
+  "com.floci.test.S3AnnotationsTest": {
+   "pass": 2,
+   "fail": 6,
+   "error": 3,
+   "skip": 0
+  },
+  "com.floci.test.S3MultipartChecksumTest": {
+   "pass": 0,
+   "fail": 4,
+   "error": 2,
+   "skip": 0
+  },
+  "com.floci.test.S3VirtualHostStyleTest": {
+   "pass": 2,
+   "fail": 5,
+   "error": 3,
+   "skip": 0
+  },
+  "com.floci.test.S3FeaturesTest": {
+   "pass": 5,
+   "fail": 2,
+   "error": 7,
+   "skip": 0
+  }
+ },
+ "cmd": "mvn -q -B test -Dtest=S3Test,S3FeaturesTest,S3VirtualHostStyleTest,S3MultipartChecksumTest,S3AnnotationsTest -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false",
+ "failures": [
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "getBucketLocationEuCentral1",
+   "status": "fail",
+   "message": "expected: eu-central-1",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (PUT [tagging]) (Service: S3, Status Code: 501, Request ID: 7DC866E937B648DE) (SDK Attempt Count: 1)",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "getObjectTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [tagging]) (Service: S3, Status Code: 501, Request ID: EF3003A950B349CF) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "deleteObjectTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (DELETE [tagging]) (Service: S3, Status Code: 501, Request ID: 8A1EEEED5B4544F4) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putBucketTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (PUT [tagging]) (Service: S3, Status Code: 501, Request ID: 6FDA3AD704F04549) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "getBucketTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [tagging]) (Service: S3, Status Code: 501, Request ID: CAF24D53A8C14E4F) (SDK Attempt Count: 1)",
+   "time": 0.004,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "deleteBucketTagging",
+   "status": "error",
+   "message": "s3wire does not implement this operation (DELETE [tagging]) (Service: S3, Status Code: 501, Request ID: 3C26077B914247B5) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectPersistsInlineTaggingHeader",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [tagging]) (Service: S3, Status Code: 501, Request ID: 0B1CE3FA9419456B) (SDK Attempt Count: 1)",
+   "time": 0.011,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectInlineTaggingRejectsMalformedPair",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectInlineTaggingRejectsEmptyKey",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.01,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectInlineTaggingRejectsDuplicateKey",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectInlineTaggingRejectsTooManyTags",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3Test",
+   "test": "putObjectInlineTaggingRejectsOversizedHeader",
+   "status": "fail",
+   "message": "Multiple Failures (1 failure)",
+   "time": 0.014,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "putObjectAnnotation",
+   "status": "fail",
+   "message": "expected: \"docs/annotated.txt\"",
+   "time": 0.011,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "getObjectAnnotationWithChecksumMode",
+   "status": "fail",
+   "message": "Expecting not blank but was: null",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "listObjectAnnotations",
+   "status": "error",
+   "message": "Could not parse XML response. (SDK Attempt Count: 1)",
+   "time": 0.012,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "putObjectAnnotationWithChecksum",
+   "status": "fail",
+   "message": "Expecting not blank but was: null",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "getMissingAnnotationThrows",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "deleteObjectAnnotationIsIdempotent",
+   "status": "fail",
+   "message": "Expecting actual throwable to be an instance of:",
+   "time": 0.007,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "copyObjectExcludeDirectiveSkipsAnnotations",
+   "status": "error",
+   "message": "The specified key does not exist. (Service: S3, Status Code: 404, Request ID: 8ADD1D9A5C5045B5) (SDK Attempt Count: 1)",
+   "time": 0.009,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "enableVersioning",
+   "status": "error",
+   "message": "s3wire does not implement this operation (PUT [versioning]) (Service: S3, Status Code: 501, Request ID: C1032D298D9F4C06) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3AnnotationsTest",
+   "test": "annotationAttachesToSpecificVersion",
+   "status": "fail",
+   "message": "Expecting not blank but was: null",
+   "time": 0.005,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "sha256MultipartUploadReturnsCompositeChecksum",
+   "status": "fail",
+   "message": "expected: SHA256",
+   "time": 0.01,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "completeWithoutPartChecksumsIsRejected",
+   "status": "fail",
+   "message": "Expecting code to raise a throwable.",
+   "time": 0.041,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "crc32FullObjectUpload",
+   "status": "fail",
+   "message": "expected: FULL_OBJECT",
+   "time": 0.004,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "copyOfMultipartObjectIsASingleFullObject",
+   "status": "error",
+   "message": "(Service: S3, Status Code: 404, Request ID: B4AB55B34F9C4483) (SDK Attempt Count: 1) (Service: S3, Status Code: 404, Request ID: B4AB55B34F9C4483)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "transferManagerSha256UploadReportsCompositeChecksum",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [attributes]) (Service: S3, Status Code: 501, Request ID: F81FA8BB6E63467C) (SDK Attempt Count: 1)",
+   "time": 2.322,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3MultipartChecksumTest",
+   "test": "transferManagerDefaultChecksum",
+   "status": "fail",
+   "message": "expected: FULL_OBJECT",
+   "time": 2.126,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "createBucket",
+   "status": "error",
+   "message": "The specified method is not allowed against this resource. (Service: S3, Status Code: 405, Request ID: DF0371F0430D4A40) (SDK Attempt Count: 1)",
+   "time": 0.047,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "headBucket",
+   "status": "error",
+   "message": "Method Not Allowed (Service: S3, Status Code: 405, Request ID: E5FBCFA0A0E04B18)",
+   "time": 0.001,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "headBucketNonExistent",
+   "status": "fail",
+   "message": "Multiple Failures (2 failures)",
+   "time": 0.044,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "headObject",
+   "status": "fail",
+   "message": "expected: 32L",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "getObject",
+   "status": "fail",
+   "message": "expected:",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "listObjectsV2",
+   "status": "fail",
+   "message": "Expecting any elements of:",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "copyObject",
+   "status": "fail",
+   "message": "Expecting actual not to be null",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3VirtualHostStyleTest",
+   "test": "deleteBucket",
+   "status": "error",
+   "message": "The specified method is not allowed against this resource. (Service: S3, Status Code: 405, Request ID: 7A9502AF51C24AD5) (SDK Attempt Count: 1)",
+   "time": 0.002,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "listObjectVersionsPaginatorNonVersionedBucketDoesNotNpe",
+   "status": "fail",
+   "message": "Expecting code not to raise a throwable but caught",
+   "time": 0.077,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "listObjectVersionsPaginatorVersionedBucketReturnsTruncatedFlag",
+   "status": "error",
+   "message": "s3wire does not implement this operation (PUT [versioning]) (Service: S3, Status Code: 501, Request ID: 02DF757664EE4E7D) (SDK Attempt Count: 1)",
+   "time": 0.007,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "listObjectVersionsPaginatorPaginates",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [versions, max-keys]) (Service: S3, Status Code: 501, Request ID: 9CC26A4C0C0D4657) (SDK Attempt Count: 1)",
+   "time": 0.017,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "listObjectVersionsNonVersionedBucketReturnsObjects",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [versions]) (Service: S3, Status Code: 501, Request ID: D5F1D12BD2E24A01) (SDK Attempt Count: 1)",
+   "time": 0.008,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "listObjectVersionsPreVersioningObjectsAppearsWithNullVersionId",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [versions]) (Service: S3, Status Code: 501, Request ID: 17EF0DB457E446AC) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "putPublicAccessBlockSucceeds",
+   "status": "fail",
+   "message": "Expecting code not to raise a throwable but caught",
+   "time": 0.006,
+   "class": "b"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "getPublicAccessBlockReturnsConfig",
+   "status": "error",
+   "message": "s3wire does not implement this operation (GET [publicAccessBlock]) (Service: S3, Status Code: 501, Request ID: 189C5F4626D0421C) (SDK Attempt Count: 1)",
+   "time": 0.005,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "putPublicAccessBlockCanBeUpdated",
+   "status": "error",
+   "message": "s3wire does not implement this operation (PUT [publicAccessBlock]) (Service: S3, Status Code: 501, Request ID: 1CEFD1E1449849E9) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  },
+  {
+   "file": "com.floci.test.S3FeaturesTest",
+   "test": "deletePublicAccessBlockRemovesConfig",
+   "status": "error",
+   "message": "s3wire does not implement this operation (DELETE [publicAccessBlock]) (Service: S3, Status Code: 501, Request ID: 8A6532C80B5D4133) (SDK Attempt Count: 1)",
+   "time": 0.003,
+   "class": "a"
+  }
+ ]
+}

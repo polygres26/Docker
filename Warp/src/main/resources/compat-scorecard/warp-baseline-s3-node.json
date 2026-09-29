@@ -1,0 +1,158 @@
+{
+ "service": "s3",
+ "suite": "node",
+ "endpoint": "http://localhost:55450",
+ "tag": "warp-baseline",
+ "date": "2026-09-25 14:38",
+ "runner_rc": 1,
+ "seconds": 1.2,
+ "counts": {
+  "pass": 20,
+  "fail": 15,
+  "error": 0,
+  "skip": 0
+ },
+ "per_file": {
+  "tests/s3-cors.test.ts": {
+   "pass": 7,
+   "fail": 8,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/s3-multipart-checksum.test.ts": {
+   "pass": 0,
+   "fail": 3,
+   "error": 0,
+   "skip": 0
+  },
+  "tests/s3.test.ts": {
+   "pass": 13,
+   "fail": 4,
+   "error": 0,
+   "skip": 0
+  }
+ },
+ "cmd": "npx vitest run tests/s3.test.ts tests/s3-cors.test.ts tests/s3-multipart-checksum.test.ts --testTimeout 60000 --reporter=junit --outputFile.junit=/Users/kumarrajamani/Projects/Sayonora/wire/tests/python/floci_compat/results/warp-baseline-s3-node.junit.xml",
+ "failures": [
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should set wildcard CORS config",
+   "status": "fail",
+   "message": "s3wire does not implement this operation (PUT [cors])",
+   "time": 0.002891209,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should allow wildcard preflight",
+   "status": "fail",
+   "message": "expected 403 to be 200 // Object.is equality",
+   "time": 0.003372083,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should return CORS headers on actual GET with Origin",
+   "status": "fail",
+   "message": "expected undefined to be '*' // Object.is equality",
+   "time": 0.002256917,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should set specific origin CORS config",
+   "status": "fail",
+   "message": "s3wire does not implement this operation (PUT [cors])",
+   "time": 0.002640958,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should allow matching origin preflight",
+   "status": "fail",
+   "message": "expected 403 to be 200 // Object.is equality",
+   "time": 0.002966458,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should echo origin for matching actual GET",
+   "status": "fail",
+   "message": "expected undefined to be 'https://example.com' // Object.is equality",
+   "time": 0.002482125,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should reject preflight after CORS config deleted",
+   "status": "fail",
+   "message": "s3wire does not implement this operation (DELETE [cors])",
+   "time": 0.002468917,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-cors.test.ts",
+   "test": "S3 CORS Enforcement > should support subdomain wildcard pattern",
+   "status": "fail",
+   "message": "s3wire does not implement this operation (PUT [cors])",
+   "time": 0.002028583,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-multipart-checksum.test.ts",
+   "test": "S3 multipart checksums > reports the composite SHA256 checksum of a multipart upload",
+   "status": "fail",
+   "message": "expected undefined to be 'QKoSoqN0w4CVqh25roMpNp4FjVitT/VruK+UL\u2026' // Object.is equality",
+   "time": 0.110875458,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-multipart-checksum.test.ts",
+   "test": "S3 multipart checksums > stores what the uploader sends by default and validates the download",
+   "status": "fail",
+   "message": "unexpected checksum on HeadObject: {\"AcceptRanges\":\"bytes\",\"LastModified\":\"2026-09-25T21:38:51.000Z\",\"ContentLength\":12582912,\"ETag\":\"\\\"51963baeb0dd5592f239a9a1c52621d5-3\\\"\",\"ContentType\":\"binary/octet-stream\",\"Metadata\":{},\"$metadata\":{\"httpStatusCode\":200,\"requestId\":\"145C73751E18451A\",\"attempts\":",
+   "time": 0.0734925,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3-multipart-checksum.test.ts",
+   "test": "S3 multipart checksums > writes a copy of the multipart object as a single full object",
+   "status": "fail",
+   "message": "expected undefined to be 'eGxUTvOK2CDEvaSt7ud/QseRZSvDG8R1FkJhm\u2026' // Object.is equality",
+   "time": 0.066558958,
+   "class": "a"
+  },
+  {
+   "file": "tests/s3.test.ts",
+   "test": "S3 > should get bucket location",
+   "status": "fail",
+   "message": "expected undefined to be 'eu-central-1' // Object.is equality",
+   "time": 0.0056635,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3.test.ts",
+   "test": "S3 > should create bucket using signing region when body empty",
+   "status": "fail",
+   "message": "expected undefined to be 'eu-central-1' // Object.is equality",
+   "time": 0.005778042,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3.test.ts",
+   "test": "S3 > should reject explicit us-east-1 LocationConstraint",
+   "status": "fail",
+   "message": "promise resolved \"{ \u2026(2) }\" instead of rejecting",
+   "time": 0.003682709,
+   "class": "b"
+  },
+  {
+   "file": "tests/s3.test.ts",
+   "test": "S3 > should multipart copy object with non-ASCII key",
+   "status": "fail",
+   "message": "s3wire does not implement this operation (UploadPartCopy [partNumber, uploadId, x-id])",
+   "time": 0.04765125,
+   "class": "a"
+  }
+ ]
+}
