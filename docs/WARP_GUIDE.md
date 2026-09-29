@@ -2374,9 +2374,9 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 | Frontend | Protocol | Default port | Notes |
 |---|---|---|---|
 | pgwire | Postgres wire protocol v3 | 15432 | native passthrough, no translation needed |
-| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default; `WARP_MYWIRE_BACKEND=mysql` switches to native mode — see §8.1.1 |
+| mywire | MySQL client/server protocol | 13306 | SQL dialect translated to Postgres by default (`WARP_MYWIRE_BACKEND_MODE=adapt`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MYWIRE_BACKEND=mysql` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled MySQL backend) — see §8.1.2 |
 | orawire | Oracle TNS/TTC | 11521 (plaintext), 2484 (TCPS/TLS) | SQL dialect translated by default; both plaintext and TLS listeners run together; `WARP_ORACLE_BACKEND_MODE=native` switches to native (Relay) mode — see §8.1.1; `WARP_ORACLE_BACKEND_MODE=bridge` switches to Bridge mode (real protocol parse, verbatim SQL, pooled Oracle backend) — see §8.1.2 |
-| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default; `WARP_MSSQLWIRE_BACKEND=sqlserver` switches to native mode — see §8.1.1 |
+| mssqlwire | SQL Server TDS | 14333 | T-SQL dialect translated by default (`WARP_MSSQLWIRE_BACKEND_MODE=adapt`); `=relay` switches to Relay mode (raw-byte proxy) — see §8.1.1; `=bridge` (or the legacy `WARP_MSSQLWIRE_BACKEND=sqlserver` alias) switches to Bridge mode (real protocol parse, verbatim SQL, pooled SQL Server backend) — see §8.1.2 |
 | mongowire | MongoDB wire protocol (OP_MSG, OP_QUERY handshake, OP_COMPRESSED/zlib) | 27017 | a MongoDB 7.0-compatible server over Postgres: CRUD, all query/update/aggregation operators, indexes with unique enforcement, collection and database administration, validators, cursors; sharded over the `mongodb` store hosts -- see *The MongoDB store* in §4.7 |
 | dynamowire | DynamoDB HTTP/JSON API | 18000 | AWS SigV4-verifiable, item ops mapped to SQL; sharded by partition key |
 | sqswire | Amazon SQS (JSON and AWS Query/XML protocols) | 9324 | pgmq-style Postgres storage (no `pgmq` extension needed); batches, message attributes + MD5, long polling, FIFO groups/dedup, DLQ/redrive and message move tasks, tags, retention sweeper; a queue lives on one shard chosen by name — §4.7 *The SQS store* |
@@ -2395,16 +2395,24 @@ docker build -f docker/warp/Dockerfile -t warp:latest .
 
 mywire, orawire, mssqlwire, and MCP each default to **dialect-translation mode**: the client's own
 SQL/T-SQL/PL-SQL is rewritten into Postgres dialect and run against the real, configured Postgres
-backend — the shared eight-stage pipeline in §8.2, unmodified. Each of the four also has a
-**native-backend mode**, which instead proxies the client's SQL straight through, completely
-unmodified, to a real Oracle/MySQL/SQL Server connection of Warp's own:
+backend — the shared eight-stage pipeline in §8.2, unmodified. orawire/mywire/mssqlwire each also
+have a **Relay mode**, a raw-byte proxy straight through, completely unmodified, to a real
+Oracle/MySQL/SQL Server connection of Warp's own — no SQL parsing at all, 1 dedicated socket per
+client session (see §8.1.2 for the third mode, Bridge, which DOES parse and pool). MCP has an
+analogous (but pipeline-bypassing rather than raw-socket) native-backend mode:
 
 | Frontend | Env var to enable | Backend connection config |
 |---|---|---|
-| mywire | `WARP_MYWIRE_BACKEND=mysql` (default `postgres`) | `WARP_MYSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| mywire | `WARP_MYWIRE_BACKEND_MODE=relay` (default `adapt`) | `WARP_MYSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
 | orawire | `WARP_ORACLE_BACKEND_MODE=native` (default `jdbc`) | `WARP_ORACLE_HOST`/`_PORT`/`_SERVICE`; credentials come from the client's own O5LOGON login, not a separate config var |
-| mssqlwire | `WARP_MSSQLWIRE_BACKEND=sqlserver` (default `postgres`) | `WARP_MSSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
+| mssqlwire | `WARP_MSSQLWIRE_BACKEND_MODE=relay` (default `adapt`) | `WARP_MSSQL_HOST`/`_PORT`/`_DATABASE`/`_USER`/`_PASSWORD` |
 | MCP | `WARP_MCP_BACKEND=oracle` / `mysql` / `sqlserver` (default `postgres`) | Reuses the same `WARP_ORACLE_*`/`WARP_MYSQL_*`/`WARP_MSSQL_*` vars above, plus `WARP_ORACLE_USER`/`WARP_ORACLE_PASSWORD` specifically for MCP's Oracle mode — MCP has no client login step to source per-caller Oracle credentials from the way orawire's native mode does, so it needs a real, gateway-held credential configured |
+
+mywire's/mssqlwire's older, pre-Relay/Bridge-split single toggle (`WARP_MYWIRE_BACKEND=mysql` /
+`WARP_MSSQLWIRE_BACKEND=sqlserver`) is kept working as a **legacy alias for Bridge, not Relay** — it
+was always pooled JDBC passthrough, never a raw-socket relay, so no existing deployment's behavior
+changes; a deployment that wants the new raw-socket Relay behavior must opt in explicitly via
+`WARP_MYWIRE_BACKEND_MODE=relay` / `WARP_MSSQLWIRE_BACKEND_MODE=relay`.
 
 **Native mode bypasses the shared pipeline entirely for every statement, not just the
 dialect-translation stage** — a real, previously-live bug, not a design choice: `RouterStage`'s
@@ -2435,31 +2443,49 @@ configured backend. `WARP_MCP_TOOLS` (real Postgres functions/procedures registe
 via `pg_proc` introspection) is Postgres-only for the same reason and isn't introspected at all in
 native mode.
 
-#### 8.1.2 Bridge mode (orawire only): real protocol, verbatim SQL, pooled Oracle backend
+#### 8.1.2 Bridge mode: real protocol, verbatim SQL, pooled real-engine backend
 
-`WARP_ORACLE_BACKEND_MODE=bridge` is a third orawire mode, distinct from both `native` (Relay,
-§8.1.1) and the `jdbc` default (Adapt): Warp parses the client's real TTC protocol itself, reusing
-Adapt mode's own `RequestLoop`/`ExecuteRequestReader`/`ResponseWriter` machinery (no second parser),
-runs the parsed statement through the full shared pipeline (§8.2) exactly as Adapt mode does, but
-skips `DialectTranslationStage` and executes the parsed SQL **verbatim, unmodified Oracle dialect**
-against a real Oracle backend — via `WARP_ORACLE_HOST`/`_PORT`/`_SERVICE` and a shared
-`WARP_ORACLE_USER`/`WARP_ORACLE_PASSWORD` service account, same as native mode's backend config.
-Unlike native mode's 1-raw-socket-per-session relay, Bridge pools a small, bounded number of real
-Oracle JDBC connections (`WARP_ORACLE_BRIDGE_POOL_SIZE`, default 10) shared across many client
-sessions — many-to-few, the same shape orawire's own Adapt-mode Postgres pool already uses.
+Every one of orawire/mywire/mssqlwire now has the same three-way Relay/Adapt/Bridge split. Bridge
+is a third mode, distinct from both Relay (§8.1.1, raw-byte proxy) and Adapt (the dialect-translation
+default): Warp parses the client's real wire protocol itself, reusing Adapt mode's own request-
+handling machinery (no second parser), runs the parsed statement through the full shared pipeline
+(§8.2) exactly as Adapt mode does, but skips `DialectTranslationStage` and executes the parsed SQL
+**verbatim, unmodified source dialect** against a real backend of that same engine:
+
+| Frontend | Env var | Bridge pool class | Pool size env var (default 10) |
+|---|---|---|---|
+| orawire | `WARP_ORACLE_BACKEND_MODE=bridge` | `orawire.backend.OracleBridgePool` | `WARP_ORACLE_BRIDGE_POOL_SIZE` |
+| mywire | `WARP_MYWIRE_BACKEND_MODE=bridge` (or legacy `WARP_MYWIRE_BACKEND=mysql`) | `mywire.MySqlBridgePool` | `WARP_MYSQL_BRIDGE_POOL_SIZE` |
+| mssqlwire | `WARP_MSSQLWIRE_BACKEND_MODE=bridge` (or legacy `WARP_MSSQLWIRE_BACKEND=sqlserver`) | `mssqlwire.MssqlBridgePool` | `WARP_MSSQL_BRIDGE_POOL_SIZE` |
+
+Each Bridge pool connects using that engine's own `WARP_ORACLE_*`/`WARP_MYSQL_*`/`WARP_MSSQL_*`
+host/port/database config and a single shared service-account credential (`_USER`/`_PASSWORD`),
+same as that frontend's Relay-mode backend config. Unlike Relay's 1-raw-socket-per-session relay,
+Bridge pools a small, bounded number of real JDBC connections shared across many client sessions —
+many-to-few, the same shape each frontend's own Adapt-mode Postgres pool already uses.
+
+Bridge mode's client-facing login is always a SEPARATE credential from its backend pool's: the
+client authenticates against Warp's own `CredentialStore` (`WARP_AUTH_USER`/`WARP_AUTH_PASSWORD`,
+or orawire's own `WARP_ORACLE_BRIDGE_LOGIN_CREDENTIALS`), while the pool itself always connects
+upstream as the one shared service account above — this is what lets a migrated app log in
+"transparently" with its own real credentials while queries still run through the pool's shared
+identity.
 
 | Mode | Firewall / QoS / audit | Connection pooling | Dialect translation |
 |---|---|---|---|
 | Relay (`native`) | No — bypasses the shared pipeline entirely (§8.1.1) | No — 1 dedicated raw socket per client session | No — raw byte relay, no SQL parsing at all |
-| Adapt (`jdbc`, default) | Yes | Yes — many clients share `WARP_POOL_MAX_SIZE` Postgres connections | Yes — Oracle SQL rewritten to Postgres dialect |
-| **Bridge** | **Yes** — real TTC parse feeds the same pipeline Adapt uses | **Yes, many-to-few** — `WARP_ORACLE_BRIDGE_POOL_SIZE` pooled Oracle connections | **No — pass-through**: verbatim Oracle SQL reaches Oracle unmodified |
+| Adapt (`jdbc`, default) | Yes | Yes — many clients share `WARP_POOL_MAX_SIZE` Postgres connections | Yes — source SQL rewritten to Postgres dialect |
+| **Bridge** | **Yes** — real protocol parse feeds the same pipeline Adapt uses | **Yes, many-to-few** — a dedicated bounded pool of real backend connections (table above) | **No — pass-through**: verbatim source-dialect SQL reaches the real engine unmodified |
 
-Bridge mode's session-state handling and its one known gap: a pooled Oracle connection is reset on
+Bridge mode's session-state handling and its one known gap: a pooled connection is reset on
 checkout/return (any open transaction rolled back, any open statement/cursor closed) before it can
-reach a different client session, but ALTER SESSION settings, `DBMS_SESSION` package state, temp
-table contents, and NLS settings are **not** reset in this slice — see the Bridge implementation's
-own `NOTES.md` (checked in alongside `orawire.backend.OracleBridgePool`) for the full list and the
-credential-sharing tradeoff this implies. `CacheStage`/`PrimaryKeyCatalog` (the distributed
+reach a different client session, but engine-specific session state is **not** reset in this slice:
+orawire's Oracle pool resets `DBMS_SESSION` package-variable state (ALTER SESSION settings, temp
+table contents, and NLS settings still are not); mywire's/mssqlwire's pools reset neither MySQL
+session variables/temp tables nor SQL Server `SET` options/temp tables — see each Bridge
+implementation's own class javadoc (and orawire's own `NOTES.md`, checked in alongside
+`orawire.backend.OracleBridgePool`) for the full list and the credential-sharing tradeoff this
+implies. `CacheStage`/`PrimaryKeyCatalog` (the distributed
 row-cache/rollup stages, built against dynamowire's/mongowire's own fixed Postgres physical table
 shapes) are not Oracle-SQL-shaped and so do not cleanly generalize to Bridge's arbitrary,
 untranslated Oracle SQL; in practice their regex-matched physical shapes essentially never match

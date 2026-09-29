@@ -14,6 +14,25 @@ import java.sql.SQLException;
  * WARP_PG_SSLROOTCERT} already make explicit for the Postgres side. */
 public final class MssqlBackendConnections {
 
+    // Lazily built, process-wide: BRIDGE mode (ServerOptions.MssqlBackendMode#BRIDGE) shares one
+    // small, bounded pool across every client session -- see MssqlBridgePool, mirroring
+    // MySqlBackendConnections' own bridgePool() field.
+    private static volatile MssqlBridgePool bridgePool;
+
+    private static MssqlBridgePool bridgePool(ServerOptions options) {
+        MssqlBridgePool pool = bridgePool;
+        if (pool == null) {
+            synchronized (MssqlBackendConnections.class) {
+                pool = bridgePool;
+                if (pool == null) {
+                    pool = MssqlBridgePool.fromServerOptions(options);
+                    bridgePool = pool;
+                }
+            }
+        }
+        return pool;
+    }
+
     /** The one JDBC URL both {@link #open} and {@code Main}'s registered native targets build
      * from -- one source, so they can't drift (same URL + user => same pool key). */
     public static String jdbcUrl(ServerOptions options) {
@@ -21,7 +40,13 @@ public final class MssqlBackendConnections {
                 + ";databaseName=" + options.mssqlDatabase() + ";encrypt=false;trustServerCertificate=true";
     }
 
+    /** BRIDGE mode (see {@link ServerOptions.MssqlBackendMode#BRIDGE}) uses a dedicated, bounded
+     * {@link MssqlBridgePool} instead of the generic {@link BackendConnectionPools} every other
+     * caller of this method shares -- mirrors {@code MySqlBackendConnections}'s own split. */
     public static Connection open(ServerOptions options) throws SQLException {
+        if (options.mssqlBackendMode() == ServerOptions.MssqlBackendMode.BRIDGE) {
+            return bridgePool(options).checkout();
+        }
         String url = jdbcUrl(options);
         String poolKey = BackendConnectionPools.poolKeyFor(url, options.mssqlUser());
         return BackendConnectionPools.borrow(poolKey, url, options.mssqlUser(), options.mssqlPassword());

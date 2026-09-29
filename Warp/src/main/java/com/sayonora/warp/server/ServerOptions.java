@@ -46,6 +46,32 @@ public final class ServerOptions {
         POSTGRES, ORACLE, MYSQL, SQLSERVER
     }
 
+    /** mywire's own version of {@link OracleBackendMode}, added to close the gap where mywire only
+     * had a two-way ADAPT/native split ({@code mywireNativeBackend}, still kept below for backward
+     * compatibility with every existing call site) while orawire had a real three-way ADAPT/
+     * RELAY/BRIDGE split. ADAPT (default): dialect-translate to the configured Postgres backend.
+     * RELAY: raw-byte relay straight to a real MySQL instance, 1 socket per client session, no wire
+     * parsing at all (see {@link com.sayonora.warp.orawire.backend.NativeSessionRelay}, reused
+     * as-is -- it is a generic byte pump with no Oracle-specific logic). BRIDGE: parse the client's
+     * real MySQL wire protocol (reusing {@code MySqlWireSessionHandler}'s own machinery), execute
+     * the parsed SQL verbatim against a real MySQL backend via a small, bounded, shared JDBC
+     * connection pool (see {@code mywire.MySqlBridgePool}) instead of either RELAY's 1:1 raw relay
+     * or ADAPT's dialect-translated Postgres backend. Today's pre-existing {@code
+     * mywireNativeBackend} boolean (set via {@code WARP_MYWIRE_BACKEND=mysql}) is treated as a
+     * legacy alias for BRIDGE, so no existing deployment's behavior changes. */
+    public enum MySqlBackendMode {
+        ADAPT, RELAY, BRIDGE
+    }
+
+    /** mssqlwire's version of {@link MySqlBackendMode} -- same ADAPT/RELAY/BRIDGE three-way split,
+     * same legacy-alias relationship to the pre-existing {@code mssqlwireNativeBackend} boolean
+     * (set via {@code WARP_MSSQLWIRE_BACKEND=sqlserver}, now treated as an alias for BRIDGE). RELAY
+     * reuses the same generic {@link com.sayonora.warp.orawire.backend.NativeSessionRelay} byte
+     * pump; BRIDGE uses a new dedicated {@code mssqlwire.MssqlBridgePool}. */
+    public enum MssqlBackendMode {
+        ADAPT, RELAY, BRIDGE
+    }
+
     private final int listenPort;
     private final int pgWireListenPort;
     private final int myWireListenPort;
@@ -78,6 +104,7 @@ public final class ServerOptions {
     private final String oraclePassword;
     private final McpBackendMode mcpBackendMode;
     private final boolean mywireNativeBackend;
+    private final MySqlBackendMode mySqlBackendMode;
     private final String mysqlHost;
     private final int mysqlPort;
     private final String mysqlDatabase;
@@ -85,6 +112,7 @@ public final class ServerOptions {
     private final String mysqlPassword;
     private final int mssqlWireListenPort;
     private final boolean mssqlwireNativeBackend;
+    private final MssqlBackendMode mssqlBackendMode;
     private final String mssqlHost;
     private final int mssqlPort;
     private final String mssqlDatabase;
@@ -116,9 +144,9 @@ public final class ServerOptions {
             boolean dualExecShadowEnabled,
             String oracleHost, int oraclePort, String oracleServiceName, OracleBackendMode oracleBackendMode,
             String oracleUser, String oraclePassword, McpBackendMode mcpBackendMode,
-            boolean mywireNativeBackend, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
+            boolean mywireNativeBackend, MySqlBackendMode mySqlBackendMode, String mysqlHost, int mysqlPort, String mysqlDatabase, String mysqlUser, String mysqlPassword,
             int mssqlWireListenPort,
-            boolean mssqlwireNativeBackend, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword,
+            boolean mssqlwireNativeBackend, MssqlBackendMode mssqlBackendMode, String mssqlHost, int mssqlPort, String mssqlDatabase, String mssqlUser, String mssqlPassword,
             int oracleNativeListenPort, int mywireNativeListenPort, int mssqlwireNativeListenPort) {
         this.listenPort = listenPort;
         this.pgWireListenPort = pgWireListenPort;
@@ -152,6 +180,7 @@ public final class ServerOptions {
         this.oraclePassword = oraclePassword;
         this.mcpBackendMode = mcpBackendMode;
         this.mywireNativeBackend = mywireNativeBackend;
+        this.mySqlBackendMode = mySqlBackendMode;
         this.mysqlHost = mysqlHost;
         this.mysqlPort = mysqlPort;
         this.mysqlDatabase = mysqlDatabase;
@@ -159,6 +188,7 @@ public final class ServerOptions {
         this.mysqlPassword = mysqlPassword;
         this.mssqlWireListenPort = mssqlWireListenPort;
         this.mssqlwireNativeBackend = mssqlwireNativeBackend;
+        this.mssqlBackendMode = mssqlBackendMode;
         this.mssqlHost = mssqlHost;
         this.mssqlPort = mssqlPort;
         this.mssqlDatabase = mssqlDatabase;
@@ -211,8 +241,24 @@ public final class ServerOptions {
             default -> McpBackendMode.POSTGRES;
         };
 
-        boolean mywireNativeBackend = "mysql".equalsIgnoreCase(
-                System.getenv().getOrDefault("WARP_MYWIRE_BACKEND", "postgres"));
+        // WARP_MYWIRE_BACKEND_MODE (adapt/relay/bridge) is the new, three-way toggle mirroring
+        // WARP_ORACLE_BACKEND_MODE. When unset, WARP_MYWIRE_BACKEND=mysql (the original, pre-RELAY
+        // toggle) is honored as a legacy alias for BRIDGE, so no existing deployment's behavior
+        // changes -- see MySqlBackendMode's own javadoc.
+        String mywireBackendModeEnv = System.getenv("WARP_MYWIRE_BACKEND_MODE");
+        MySqlBackendMode mySqlBackendMode;
+        if (mywireBackendModeEnv != null) {
+            mySqlBackendMode = switch (mywireBackendModeEnv.toLowerCase(java.util.Locale.ROOT)) {
+                case "relay" -> MySqlBackendMode.RELAY;
+                case "bridge" -> MySqlBackendMode.BRIDGE;
+                default -> MySqlBackendMode.ADAPT;
+            };
+        } else {
+            mySqlBackendMode = "mysql".equalsIgnoreCase(
+                    System.getenv().getOrDefault("WARP_MYWIRE_BACKEND", "postgres"))
+                    ? MySqlBackendMode.BRIDGE : MySqlBackendMode.ADAPT;
+        }
+        boolean mywireNativeBackend = mySqlBackendMode != MySqlBackendMode.ADAPT;
         String mysqlHost = System.getenv().getOrDefault("WARP_MYSQL_HOST", "localhost");
         int mysqlPort = parseIntEnv("WARP_MYSQL_PORT", 3306);
         String mysqlDatabase = System.getenv().getOrDefault("WARP_MYSQL_DATABASE", "mysql");
@@ -224,8 +270,20 @@ public final class ServerOptions {
         // that existed before this) and proxying straight through to a real SQL Server backend --
         // the "keep the database you have" path this product's own positioning already claims for
         // Oracle/MySQL but, until this, never actually implemented for SQL Server.
-        boolean mssqlwireNativeBackend = "sqlserver".equalsIgnoreCase(
-                System.getenv().getOrDefault("WARP_MSSQLWIRE_BACKEND", "postgres"));
+        String mssqlwireBackendModeEnv = System.getenv("WARP_MSSQLWIRE_BACKEND_MODE");
+        MssqlBackendMode mssqlBackendMode;
+        if (mssqlwireBackendModeEnv != null) {
+            mssqlBackendMode = switch (mssqlwireBackendModeEnv.toLowerCase(java.util.Locale.ROOT)) {
+                case "relay" -> MssqlBackendMode.RELAY;
+                case "bridge" -> MssqlBackendMode.BRIDGE;
+                default -> MssqlBackendMode.ADAPT;
+            };
+        } else {
+            mssqlBackendMode = "sqlserver".equalsIgnoreCase(
+                    System.getenv().getOrDefault("WARP_MSSQLWIRE_BACKEND", "postgres"))
+                    ? MssqlBackendMode.BRIDGE : MssqlBackendMode.ADAPT;
+        }
+        boolean mssqlwireNativeBackend = mssqlBackendMode != MssqlBackendMode.ADAPT;
         String mssqlHost = System.getenv().getOrDefault("WARP_MSSQL_HOST", "localhost");
         int mssqlPort = parseIntEnv("WARP_MSSQL_PORT", 1433);
         String mssqlDatabase = System.getenv().getOrDefault("WARP_MSSQL_DATABASE", "master");
@@ -279,9 +337,9 @@ public final class ServerOptions {
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,
-                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mywireNativeBackend, mySqlBackendMode, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,
-                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                mssqlwireNativeBackend, mssqlBackendMode, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
                 oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 
@@ -306,9 +364,9 @@ public final class ServerOptions {
                 false,
                 "localhost", 1521, "orcl", OracleBackendMode.ADAPT,
                 null, null, McpBackendMode.POSTGRES,
-                false, "localhost", 3306, "mysql", null, null,
+                false, MySqlBackendMode.ADAPT, "localhost", 3306, "mysql", null, null,
                 0,
-                false, "localhost", 1433, "master", null, null,
+                false, MssqlBackendMode.ADAPT, "localhost", 1433, "master", null, null,
                 0, 0, 0);
     }
 
@@ -462,6 +520,16 @@ public final class ServerOptions {
         return mywireNativeBackend;
     }
 
+    public MySqlBackendMode mySqlBackendMode() {
+        return mySqlBackendMode;
+    }
+
+    /** mywire's version of {@link #oracleBridgePoolSize()} -- bound on the number of real, pooled
+     * MySQL JDBC connections {@link MySqlBackendMode#BRIDGE} shares across every client session. */
+    public static int mysqlBridgePoolSize() {
+        return parseIntEnv("WARP_MYSQL_BRIDGE_POOL_SIZE", 10);
+    }
+
     public String mysqlHost() {
         return mysqlHost;
     }
@@ -484,6 +552,15 @@ public final class ServerOptions {
 
     public boolean mssqlwireNativeBackend() {
         return mssqlwireNativeBackend;
+    }
+
+    public MssqlBackendMode mssqlBackendMode() {
+        return mssqlBackendMode;
+    }
+
+    /** mssqlwire's version of {@link #oracleBridgePoolSize()}/{@link #mysqlBridgePoolSize()}. */
+    public static int mssqlBridgePoolSize() {
+        return parseIntEnv("WARP_MSSQL_BRIDGE_POOL_SIZE", 10);
     }
 
     public String mssqlHost() {
@@ -550,9 +627,9 @@ public final class ServerOptions {
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, OracleBackendMode.RELAY,
                 oracleUser, oraclePassword, mcpBackendMode,
-                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mywireNativeBackend, mySqlBackendMode, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,
-                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                mssqlwireNativeBackend, mssqlBackendMode, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
                 oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 
@@ -569,9 +646,10 @@ public final class ServerOptions {
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,
-                true, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                true, mySqlBackendMode == MySqlBackendMode.RELAY ? MySqlBackendMode.RELAY : MySqlBackendMode.BRIDGE,
+                mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlWireListenPort,
-                mssqlwireNativeBackend, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                mssqlwireNativeBackend, mssqlBackendMode, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
                 oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 
@@ -589,9 +667,10 @@ public final class ServerOptions {
                 dualExecShadowEnabled,
                 oracleHost, oraclePort, oracleServiceName, oracleBackendMode,
                 oracleUser, oraclePassword, mcpBackendMode,
-                mywireNativeBackend, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
+                mywireNativeBackend, mySqlBackendMode, mysqlHost, mysqlPort, mysqlDatabase, mysqlUser, mysqlPassword,
                 mssqlwireNativeListenPort,
-                true, mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
+                true, mssqlBackendMode == MssqlBackendMode.RELAY ? MssqlBackendMode.RELAY : MssqlBackendMode.BRIDGE,
+                mssqlHost, mssqlPort, mssqlDatabase, mssqlUser, mssqlPassword,
                 oracleNativeListenPort, mywireNativeListenPort, mssqlwireNativeListenPort);
     }
 }

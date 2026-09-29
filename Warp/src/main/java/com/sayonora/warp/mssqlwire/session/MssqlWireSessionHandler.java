@@ -199,6 +199,20 @@ public final class MssqlWireSessionHandler implements Runnable {
     @Override
     public void run() {
         activeSocket = clientSocket;
+        // RELAY (WARP_MSSQLWIRE_BACKEND_MODE=relay) is a raw-byte proxy straight to a real SQL
+        // Server instance, 1 socket per client session, no TDS parsing at all -- mirrors orawire's
+        // OracleBackendMode.RELAY and mywire's MySqlBackendMode.RELAY. Checked before any of this
+        // class's own handshake/query-loop code runs, since a real SQL Server does its own
+        // PRELOGIN/LOGIN7 handshake directly over the relayed bytes.
+        if (options.mssqlBackendMode() == com.sayonora.warp.server.ServerOptions.MssqlBackendMode.RELAY) {
+            try (Socket socket = activeSocket) {
+                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
+                        socket, options.mssqlHost(), options.mssqlPort());
+            } catch (IOException e) {
+                log.warn("native mssql relay ended: {}", e.getMessage());
+            }
+            return;
+        }
         try {
             DataInputStream in = new DataInputStream(activeSocket.getInputStream());
             OutputStream out = activeSocket.getOutputStream();
