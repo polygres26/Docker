@@ -1,7 +1,8 @@
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { getObservability, setObservabilityToggles } from '../api/client'
-import { Button, CodeBlock, DataTable, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, Tabs, Tag, type KpiItem } from '../components/ui'
+import { Button, CodeBlock, DataTable, Field, KpiStrip, Loading, Notice, PageHeader, Section, StatusPill, Tabs, Tag, type KpiItem, type Tone } from '../components/ui'
+import { OTEL_PRESETS, type OtelPreset } from '../api/otel-presets'
 import { errorText, useLoad } from '../hooks'
 import styles from './interfaces/interfaces.module.css'
 
@@ -144,6 +145,7 @@ export default function Observability() {
       )}
 
       {tab === 'export' && (
+        <>
         <Section flush title="Destinations" meta="configured export paths">
           <div className={styles.rowList}>
             <div className={styles.rowItem}>
@@ -203,6 +205,9 @@ export default function Observability() {
             </div>
           </div>
         </Section>
+
+        <ConfigGenerator prometheusPath={data?.prometheus.path ?? '/metrics'} />
+        </>
       )}
 
       {tab === 'metrics' && (
@@ -235,5 +240,111 @@ export default function Observability() {
         </>
       )}
     </div>
+  )
+}
+
+const MATURITY_TONE: Record<OtelPreset['maturity'], Tone> = { available: 'ok', collector: 'warn', planned: 'muted' }
+const MATURITY_LABEL: Record<OtelPreset['maturity'], string> = { available: 'Available now', collector: 'Requires Collector', planned: 'Planned' }
+
+/**
+ * Generates the real WARP_OTEL_* env vars (or a Prometheus scrape_config) for a chosen
+ * destination -- every preset selection changes real content, unlike the docs/mockups/
+ * warp-observability.html mock this fixes the "functionally static" flaw of. This never writes
+ * or applies anything: WARP_OTEL_PROTOCOL/ENDPOINT/HEADERS have no persisted-config write path
+ * (unlike otlpEnabled/prometheusEnabled's PATCH /api/observability), so the only honest action is
+ * generating text to set and restart with -- stated explicitly below, not implied away.
+ */
+function ConfigGenerator({ prometheusPath }: { prometheusPath: string }) {
+  const [selectedId, setSelectedId] = useState(OTEL_PRESETS[0].id)
+  const selected = OTEL_PRESETS.find((p) => p.id === selectedId) ?? OTEL_PRESETS[0]
+  const [protocol, setProtocol] = useState(selected.protocol ?? 'grpc')
+  const [endpoint, setEndpoint] = useState(selected.endpointPlaceholder ?? '')
+  const [headers, setHeaders] = useState(selected.headerPlaceholder ?? '')
+  const [target, setTarget] = useState('')
+
+  function select(p: OtelPreset) {
+    setSelectedId(p.id)
+    setProtocol(p.protocol ?? 'grpc')
+    setEndpoint(p.endpointPlaceholder ?? '')
+    setHeaders(p.headerPlaceholder ?? '')
+  }
+
+  const otlpConfig = [
+    `WARP_OTEL_PROTOCOL=${protocol}`,
+    `WARP_OTEL_ENDPOINT=${endpoint || '<endpoint>'}`,
+    headers.trim() ? `WARP_OTEL_HEADERS=${headers.trim()}` : null,
+    'WARP_OTEL_EXPORT_INTERVAL_MS=5000',
+  ].filter(Boolean).join('\n')
+
+  const scrapeConfig = `scrape_configs:\n  - job_name: warp\n    static_configs:\n      - targets: ['${target || '<warp-host:admin-port>'}']\n    metrics_path: ${prometheusPath}`
+
+  return (
+    <Section flush title="Generate configuration" meta="pick a destination -- nothing here writes or applies anything">
+      <div className={styles.pad}>
+        <p className={styles.sub}>
+          WARP_OTEL_PROTOCOL/ENDPOINT/HEADERS are environment-variable only today -- there is no live-apply API for
+          them (unlike the pause/enable toggles above, which do persist). Generate the text below, set it, and restart.
+        </p>
+      </div>
+      <div className={styles.rowList}>
+        {OTEL_PRESETS.map((p) => (
+          <div key={p.id} className={styles.rowItem}>
+            <div>
+              <strong>{p.label}</strong>
+              <span className={styles.sub}>{p.sub}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusPill tone={MATURITY_TONE[p.maturity]}>{MATURITY_LABEL[p.maturity]}</StatusPill>
+              <Button variant={p.id === selectedId ? 'primary' : 'secondary'} onClick={() => select(p)}>
+                {p.id === selectedId ? 'Selected' : 'Select'}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className={styles.pad}>
+        <p className={styles.sub}>{selected.notes}</p>
+
+        {selected.kind === 'otlp' && selected.maturity === 'available' && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <Field label="Transport">{(id) => (
+                <select id={id} value={protocol} onChange={(e) => setProtocol(e.target.value as 'grpc' | 'http')}>
+                  <option value="grpc">OTLP/gRPC</option>
+                  <option value="http">OTLP/HTTP</option>
+                </select>
+              )}</Field>
+              <Field label="Endpoint">{(id) => <input id={id} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} />}</Field>
+            </div>
+            <Field label="Headers" hint="key=value, comma-separated for more than one -- values are never sent anywhere, this only builds the text below">
+              {(id) => <input id={id} value={headers} onChange={(e) => setHeaders(e.target.value)} placeholder="none" />}
+            </Field>
+            <div style={{ marginTop: 12 }}>
+              <CodeBlock label="Generated Warp configuration">{otlpConfig}</CodeBlock>
+            </div>
+          </>
+        )}
+
+        {selected.kind === 'otlp' && selected.maturity !== 'available' && (
+          <p className={styles.sub}>
+            {selected.maturity === 'collector'
+              ? <>Select <strong>OTel Collector</strong> above to generate the config for the Collector Warp would export to -- it then handles the {selected.label}-specific translation.</>
+              : 'No configuration to generate -- this destination isn’t supported yet.'}
+          </p>
+        )}
+
+        {selected.kind === 'prometheus-scrape' && (
+          <>
+            <Field label="Warp host:admin-port" hint="e.g. warp.internal:19090 -- your own Prometheus server needs to reach this">
+              {(id) => <input id={id} value={target} onChange={(e) => setTarget(e.target.value)} placeholder="warp-host:19090" />}
+            </Field>
+            <div style={{ marginTop: 12 }}>
+              <CodeBlock label="Prometheus scrape_config">{scrapeConfig}</CodeBlock>
+            </div>
+          </>
+        )}
+      </div>
+    </Section>
   )
 }
