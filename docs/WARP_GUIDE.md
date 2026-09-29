@@ -2645,8 +2645,134 @@ Every frontend above feeds the same shared pipeline, in this order:
 | `QosControlStage` | Admission control — caps in-flight work per backend to protect it from overload |
 | `DialectTranslationStage` | Rewrites source-dialect SQL (Oracle/MySQL/T-SQL) into Postgres SQL |
 | `RollupStage` | Aggregates/merges results for scatter-gather (shard-group) queries |
-| `CacheStage` | Translation-result and read caching (`warp_translation_cache`) |
+| `CacheStage` | Cross-protocol result/row caching — see §8.2.1 |
 | `StatsCollectorStage` | Per-statement metrics feeding the admin/metrics HTTP endpoint |
+
+#### 8.2.1 Caching and invalidation, per protocol
+
+Warp has six independent caching/hot-reload layers, each with its own invalidation shape. This
+section documents exactly what invalidates each one, and which protocol participates as a reader,
+a writer/invalidator, or both — investigated live (2026-09-29) in response to a direct question
+("Hopefully everything will be invalidated via updates through Warp" / "Except for the Relay
+cases").
+
+**Short answer**: yes, for every mode except Relay. A write that goes through Warp's own shared
+pipeline (Adapt or Bridge mode, any of pgwire/mywire/mssqlwire/orawire) invalidates every cache tier
+its statement shape can affect, synchronously, in the same pipeline stage as the write — regardless
+of which protocol issued the write or which protocol populated the cache entry, because rows are
+identified by physical backend table name + primary-key values, not by protocol. **Relay mode is the
+one confirmed exception**: it bypasses `CacheStage` (and the entire shared pipeline) entirely, so a
+write made via Relay produces no cache invalidation from Warp's own code at all — see the callout
+after the table below for what actually protects against staleness in that case.
+
+**`CacheStage`** (`cluster/CacheStage.java`) is three tiers in one class, all Ignite-backed:
+
+- **Result cache** — caches any `SELECT` whose SQL text matches a configured table name
+  (`WARP_CACHE_TABLES`), keyed by `tenantId|targetBackend|sqlText|bindParams|accessContext`.
+  Invalidated **synchronously**, in the same `handle()` call as the write: any `INSERT`/`UPDATE`/
+  `DELETE`/`CREATE`/`ALTER`/`DROP`/`TRUNCATE` statement's target table is extracted and every cached
+  result indexed under that table name is dropped, via a companion index cache — table-name-based,
+  not physical-row-based, so it doesn't need to know which protocol wrote the row. `WARP_CACHE_TTL_MS`
+  (default 30s) is a backstop, not the primary mechanism.
+- **Generic-PK row cache** — exact-key point lookups (`SELECT ... WHERE pk_col = ?` covering every
+  real JDBC primary-key column, discovered via `PrimaryKeyCatalog`) for tables with a real PK. Row
+  identity is physical table name + PK values, case-folded to handle Oracle's uppercase vs.
+  Postgres's lowercase identifier folding — this is exactly the mechanism that lets a pgwire `UPDATE`
+  invalidate a row a mywire `SELECT` had cached. Invalidated synchronously for any UPDATE/DELETE
+  whose WHERE clause is exactly the PK columns.
+- **Shared `RowCache`** — dynamowire's and mongowire's fixed-shape physical row cache, ALSO read
+  by `CacheStage`'s own SQL-side fast path when a SELECT matches dynamowire's `(pk, sk, item)` or
+  mongowire's `(id, doc)` table shape (see below).
+
+**`RowCache`** (`cluster/RowCache.java`) is one Ignite cache instance shared by dynamowire, mongowire,
+and `CacheStage`'s SQL fast path — not three separate caches. Keyed by physical table name + PK +
+optional sort key, default 30s TTL.
+
+- **dynamowire**: genuine reader AND writer. `GetItem` checks the cache before hitting Postgres;
+  `PutItem`/`UpdateItem`/`DeleteItem` explicitly invalidate the entry after a successful write
+  (write-through, not TTL-dependent). `Query`/`Scan` never touch this cache.
+- **mongowire**: writer/invalidator **only**. `insert`/`replace`/`update`/`delete`/`findAndModify`
+  invalidate the shared entry after a successful write — but mongowire's own `find` command does
+  **not** read or populate this cache at all yet (confirmed: no `cache.get()`/`cache.put()` anywhere
+  in mongowire's CRUD path). A Mongo-shaped row is only ever served from cache via `CacheStage`'s own
+  SQL-side `(id, doc)` pattern match — i.e. a pgwire/mywire/mssqlwire/orawire `SELECT doc FROM
+  "db"."coll" WHERE id = ?`, not mongowire's native `find`. The startup log line ("mongowire find
+  cache: enabled ... exact-_id find only") is accurate about invalidation and about *other* protocols
+  reading what mongowire wrote, but overstates mongowire's own read participation — worth knowing if
+  you're debugging why a repeated native Mongo `find` never shows a cache hit.
+
+**Translation cache** (`core/TranslationCache.java`) — an in-process, size-bounded (250 entries,
+`WARP_TRANSLATION_CACHE_SIZE`) LRU cache of `(fromDialect, toDialect, sqlText) → translated SQL`.
+**No TTL, no explicit invalidation at all** — eviction is purely LRU-size-bound, on the design
+assumption that translating the same literal SQL text is a pure function. The separate
+`warp_translation_cache` Postgres table is NOT a read-serving cache at all — it's a write-only
+analytics/audit log (hit counts, last-hit timestamps) never consulted to serve a translation.
+
+**Real, disclosed staleness gap**: a translated SQL text's correctness can depend on whether a Shim
+extension is installed (e.g. whether `TO_CHAR`/`TO_DATE` get schema-qualified to `oracle_catalog.*`
+— §8.1.4), but the translation-cache key does **not** include Shim-availability state. If an
+extension is installed or removed on the backend after a given statement's translation was already
+cached, the stale translation keeps being served until it's evicted by the LRU bound — there's no
+active invalidation tied to a Shim-availability change.
+
+**Shim-availability cache** (`PgOracleSupport`/`PgMysqlSupport`/`PgSqlServerSupport`) — whether
+`pg_oracle`/`pg_mysql`/`pg_sqlserver` is installed on a backend, cached forever per backend JDBC URL
+once probed. **This is deliberate, not an oversight** (the class javadoc states the design
+assumption: extension presence is a property of the target database that doesn't change at
+runtime) — but confirmed live: there is genuinely no config-reload hook, no reconnect hook, and no
+`warp_config` NOTIFY callback that busts it. **The only way to bust this cache is a Warp process
+restart.** Operationally: installing Shim on a backend Warp already probed (and got a negative for)
+has no effect until Warp restarts.
+
+**Federation statistics cache** (`stats/StatisticsStore.java`) — row-count/distinct-value estimates
+for join planning. TTL-only invalidation (`WARP_STATS_TTL_MS`, default 24h; unbounded with no TTL at
+all when clustering is disabled). No DDL-triggered invalidation exists — a schema change is only
+reflected after the TTL expires or the next scheduled refresh cycle (`WARP_STATS_REFRESH_INTERVAL_
+MINUTES`, off by default); there's no lazy refresh-on-miss either, so a stats miss just means no
+estimate is available until something populates it.
+
+**`warp_config`/`warp_firewall_rules` hot-reload** — not a keyed cache, but the same "in-memory,
+invalidated by an external signal" shape: a Postgres trigger fires `pg_notify` on insert, and every
+Warp instance holds its own dedicated `LISTEN` connection and reacts independently. This is
+per-process by connection, but effectively cluster-wide because Postgres's own NOTIFY fan-out
+delivers the same notification to every listening connection — Warp adds no additional fan-out of
+its own.
+
+**Out-of-band invalidation for writes that bypass Warp entirely** (`CacheInvalidationListener`,
+Postgres-backend-only): a write made directly against a Postgres backend — `psql`, a migration
+tool, another application — still invalidates `CacheStage`'s and `RowCache`'s entries, via the same
+Postgres trigger/NOTIFY mechanism, so a cache entry never goes stale just because the write didn't
+come through Warp's TCP frontends. This does **not** extend to non-Postgres backends (Oracle/MySQL/
+SQL Server reached via Bridge) — a write made directly against the real engine, bypassing Warp
+entirely, has no equivalent trigger-based invalidation path at all.
+
+| Protocol | Result cache | Generic-PK cache | Shared RowCache | Notes |
+|---|---|---|---|---|
+| pgwire | reader + writer | reader + writer | reader + writer (when SQL matches dynamo/mongo shape) | Full participation — same pipeline stage as every other translated frontend |
+| mywire | reader + writer | reader + writer | reader + writer | Same as pgwire |
+| mssqlwire | reader + writer | reader + writer | reader + writer | Same as pgwire |
+| orawire (Adapt/Bridge) | reader + writer | reader + writer | reader + writer | Same as pgwire |
+| **orawire (Relay)** | **none** | **none** | **none** | **Bypasses `CacheStage` and the entire shared pipeline — see callout below** |
+| dynamowire | — (never emits SQL through `CacheStage`) | — | reader + writer (GetItem/PutItem/UpdateItem/DeleteItem) | Query/Scan never touch any cache |
+| mongowire | — | — | writer/invalidator only | Native `find` does not read the cache (see above) |
+
+**The Relay exception, explicitly**: Relay mode (`WARP_ORACLE_BACKEND_MODE=native` /
+`WARP_MYWIRE_BACKEND_MODE=relay` / `WARP_MSSQLWIRE_BACKEND_MODE=relay`) is a raw byte pump straight
+to the real backend — it never parses SQL and never reaches `CacheStage`, `RowCache`, or any other
+pipeline stage (§8.1.1/§8.1.5). A write made via Relay produces **zero cache invalidation from Warp's
+own pipeline code**. What still protects correctness in that case: if the real backend IS Postgres
+(mywire/mssqlwire Relay pointed at a real MySQL/SQL Server, not Postgres, has no such protection —
+see below), `CacheInvalidationListener`'s Postgres trigger/NOTIFY mechanism still fires on the
+physical write regardless of which client or protocol issued it, so the cache still gets
+invalidated out-of-band. But orawire's Relay target is real Oracle, and mywire's/mssqlwire's Relay
+targets are real MySQL/SQL Server — none of those are the Postgres backend `CacheStage`/`RowCache`
+actually cache against in the first place, so this scenario mostly doesn't arise in practice: Relay
+mode's whole point is bypassing Postgres entirely in favor of the real engine, and Warp's caches
+only ever cache reads against the Postgres-backed tables Adapt/Bridge mode (and pgwire/mywire/
+mssqlwire's own Adapt-mode traffic) serve. The real risk case is narrower than "any Relay write
+corrupts the cache": it's specifically a deployment mixing Relay and Adapt/Bridge traffic against
+the **same physical Postgres table** from different sessions, which is an unusual, not-recommended
+configuration to begin with.
 
 ### 8.3 Security features
 
