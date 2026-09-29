@@ -3,10 +3,12 @@ import { Link, useLocation } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { getWireConfig, listInterfaces, listMcpEndpoints, type InterfaceInfo, type WireConfig } from '../../api/client'
 import { getAccessSummary, getAudit, type AccessFrontend, type AuditEvent } from '../../api/wave2b'
+import { maturityFor } from '../../api/maturity'
 import {
-  Button, DataTable, EmptyState, KpiStrip, Loading, NameCell, Notice, PageHeader, Section, StatusPill, Tag, type KpiItem, type Tone,
+  Button, DataTable, EmptyState, KpiStrip, Loading, MaturityTag, NameCell, Notice, PageHeader, Section, StatusPill, Tag, type KpiItem, type Tone,
 } from '../../components/ui'
 import { useLoad } from '../../hooks'
+import { MaturityLegend } from '../interfaces/InterfaceTable'
 import styles from './wave2b.module.css'
 
 const POLL_MS = 15_000
@@ -247,12 +249,13 @@ export default function AccessAcls() {
           </Section>
           <Section flush title="Coverage by interface" meta={`${enforced} enforced · ${open} open · ${unreported} not reported`}>
             <DataTable caption="Authentication per interface" minWidth={860}>
-              <thead><tr><th>Interface</th><th>Endpoint</th><th>Method</th><th>State</th><th>Detail</th></tr></thead>
+              <thead><tr><th>Interface</th><th>Endpoint</th><th>Maturity</th><th>Method</th><th>State</th><th>Detail</th></tr></thead>
               <tbody>
                 {coverage.map((c) => (
                   <tr key={c.iface.id}>
                     <td><NameCell name={c.iface.label} sub={c.iface.kind} /></td>
                     <td className={styles.mono}>{c.iface.protocol} :{c.iface.port}</td>
+                    <td><MaturityTag maturity={maturityFor(c.iface.metricsKey, c.iface.id)} /></td>
                     <td>{c.methods.length > 0 ? c.methods.map((m) => label(m.method)).join(' + ') : '—'}</td>
                     <td><StatusPill tone={statusTone(c.status)}>{c.status === 'enforced' ? 'Enforced' : c.status === 'open' ? 'Open' : 'Not reported'}</StatusPill></td>
                     <td className={styles.wrapCell}>{c.methods.length > 0 ? c.methods.map((m) => m.detail).join('; ') : 'Warp does not report how this frontend authenticates.'}</td>
@@ -288,6 +291,7 @@ export default function AccessAcls() {
           <div className={styles.pad}><span className={styles.sub}>Connections rejected by the network ACL are written to the server log only; they are not audited or counted, so they cannot appear here.</span></div>
         </Section>
       )}
+      {view === 'authentication' && <MaturityLegend />}
     </div>
   )
 }
