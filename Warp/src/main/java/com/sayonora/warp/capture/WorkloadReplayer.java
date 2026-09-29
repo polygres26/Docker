@@ -57,6 +57,8 @@ public final class WorkloadReplayer {
     private WorkloadReplayer() {
     }
 
+    // Package-visible (not private) so MigrationRehearsal -- which needs the exact same fleet-wide
+    // discover/page/merge behavior, not a reimplementation of it -- can reuse it unchanged.
     record CapturedEntry(Instant wallClock, String nodeId, long localSeq, String sqlText, List<Object> bindParams) {
     }
 
@@ -105,8 +107,9 @@ public final class WorkloadReplayer {
         log.info("workload replay: done -- {} replayed, {} failed, out of {} merged", replayed, failed, all.size());
     }
 
-    /** Pages through one node's {@code /api/capture} until exhausted, appending into {@code out}. */
-    private static int fetchAll(HttpClient http, NodeRegistry.NodeRow node, String adminToken,
+    /** Pages through one node's {@code /api/capture} until exhausted, appending into {@code out}.
+     * Package-visible: also used by {@link MigrationRehearsal}. */
+    static int fetchAll(HttpClient http, NodeRegistry.NodeRow node, String adminToken,
             List<CapturedEntry> out) throws Exception {
         int pulled = 0;
         long since = 0;
