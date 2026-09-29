@@ -9,24 +9,47 @@
  * verification, disclosed gaps in docs/WARP_GUIDE.md), reviewed 2026-09-29, but it is a snapshot
  * assessment that needs revisiting as protocols mature or new gaps are found -- not a live signal.
  *
- * Tiers, in descending order of verification confidence:
- * - Certified: real official client/server, a large/quantified conformance suite, no major
- *   open gaps found (e.g. mongowire: 2,683 recorded steps vs real mongod; boltwire: all 3,810
- *   openCypher TCK scenario instances that pass on real Neo4j also pass here).
- * - Production: real backend/emulator verification exists, but with real, DISCLOSED gaps (e.g.
- *   Bridge mode's session-state-reset limitations for SQL frontends, MCP's native-mode tool
- *   narrowing).
- * - Preview: verification exists but relies on an imperfect oracle the docs themselves flag
- *   ("MinIO doesn't implement every S3 op", "fake-gcs-server... many gaps", "the official Java
- *   driver/console were not run"), or a real, disclosed feature gap blocks production use
- *   end-to-end (e.g. influxwire's cross-backend sharding not yet implemented).
- * - Experimental: newest, still-settling, or no verification-oracle language found in the docs
- *   at all for this specific protocol.
+ * A UI review flagged the previous 4-tier naming ("Certified" as the top tier) as genuinely
+ * ambiguous -- nothing told a reader whether Certified outranked Production, and "Certified"
+ * implies an external certification program Warp doesn't actually have. Renamed the top tier to
+ * "Verified" (Warp's own conformance-suite verification, not third-party certification) and every
+ * tier now carries an explicit numeric MATURITY_RANK so ordering is never left to the reader to
+ * infer from the English word alone. See MaturityTag/MaturityLegend (components/ui) for where this
+ * ordering and the evidence behind each tier are actually surfaced.
+ *
+ * Tiers, 1 (least verified) to 4 (most verified) -- see MATURITY_ORDER/MATURITY_RANK below for the
+ * machine-readable form of this same ordering:
+ * 1. Experimental: newest, still-settling, or no verification-oracle language found in the docs
+ *    at all for this specific protocol.
+ * 2. Preview: verification exists but relies on an imperfect oracle the docs themselves flag
+ *    ("MinIO doesn't implement every S3 op", "fake-gcs-server... many gaps", "the official Java
+ *    driver/console were not run"), or a real, disclosed feature gap blocks production use
+ *    end-to-end (e.g. influxwire's cross-backend sharding not yet implemented).
+ * 3. Production: real backend/emulator verification exists, but with real, DISCLOSED gaps (e.g.
+ *    Bridge mode's session-state-reset limitations for SQL frontends, MCP's native-mode tool
+ *    narrowing).
+ * 4. Verified: real official client/server, a large/quantified conformance suite, no major
+ *    open gaps found (e.g. mongowire: 2,683 recorded steps vs real mongod; boltwire: all 3,810
+ *    openCypher TCK scenario instances that pass on real Neo4j also pass here).
  */
-export type Maturity = 'Certified' | 'Production' | 'Preview' | 'Experimental'
+export type Maturity = 'Verified' | 'Production' | 'Preview' | 'Experimental'
+
+/** Ascending order, least to most verified -- the exact "1. Experimental ... 4. Verified" scale. */
+export const MATURITY_ORDER: Maturity[] = ['Experimental', 'Preview', 'Production', 'Verified']
+
+export const MATURITY_RANK: Record<Maturity, number> = Object.fromEntries(
+  MATURITY_ORDER.map((m, i) => [m, i + 1]),
+) as Record<Maturity, number>
+
+export const MATURITY_DESCRIPTION: Record<Maturity, string> = {
+  Experimental: 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet.',
+  Preview: 'Verification relies on an imperfect oracle, or a real, disclosed feature gap blocks production use end-to-end.',
+  Production: 'Real backend/emulator verification exists, with real, disclosed gaps documented in the guide.',
+  Verified: "Real official client/server, a large/quantified conformance suite, no major open gaps found -- Warp's own verification, not a third-party certification.",
+}
 
 const TIERS: Record<Maturity, string[]> = {
-  Certified: ['pgwire', 'mongowire', 'dynamowire', 'boltwire', 'cqlwire', 'kafkawire', 'amqpwire'],
+  Verified: ['pgwire', 'mongowire', 'dynamowire', 'boltwire', 'cqlwire', 'kafkawire', 'amqpwire'],
   Production: ['mywire', 'orawire', 'mssqlwire', 'sqswire', 'oswire', 'firestorewire', 'datastorewire', 'rediswire', 'mcp'],
   Preview: ['s3wire', 'gcswire', 'pubsubwire', 'azurewire', 'gremlinwire', 'awswire', 'influxwire'],
   Experimental: ['a2a', 'cosmoswire', 'bigtablewire', 'grpc'],

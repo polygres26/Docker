@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { InterfaceInfo, WireMetricsSummary } from '../../api/client'
-import { maturityFor } from '../../api/maturity'
+import { MATURITY_DESCRIPTION, MATURITY_ORDER, MATURITY_RANK, maturityFor } from '../../api/maturity'
 import { OVERALL_LABEL, OVERALL_TONE, readinessOf } from '../../api/readiness'
 import { DataTable, EmptyState, MaturityTag, ModeTag, NameCell, StatusPill, compact } from '../../components/ui'
 import styles from './interfaces.module.css'
@@ -76,6 +76,26 @@ export function ReadinessCell({ i }: { i: InterfaceInfo }) {
     `Maturity: ${d.maturity ?? 'unclassified'}`,
   ].join(' · ')
   return <span title={title}><StatusPill tone={OVERALL_TONE[overall]}>{OVERALL_LABEL[overall]}</StatusPill></span>
+}
+
+/**
+ * The maturity scale, spelled out once per page rather than left for the reader to infer from
+ * hovering every row's tag -- a UI review specifically flagged the old naming as ambiguous
+ * ("customers will not know whether Certified is better than Production"). Rendered in explicit
+ * rank order (1 = least verified, {MATURITY_ORDER.length} = most), each with the real evidence
+ * behind it (api/maturity.ts).
+ */
+export function MaturityLegend() {
+  return (
+    <details className={styles.legend}>
+      <summary>Maturity scale ({MATURITY_ORDER.length} levels, low to high)</summary>
+      <ol>
+        {MATURITY_ORDER.map((m) => (
+          <li key={m}><strong>{MATURITY_RANK[m]}. {m}</strong> — {MATURITY_DESCRIPTION[m]}</li>
+        ))}
+      </ol>
+    </details>
+  )
 }
 
 /** Table of frontends: name/protocol, port, mode, serving set/backends, traffic, status. */

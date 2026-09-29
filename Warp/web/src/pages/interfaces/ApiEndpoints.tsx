@@ -2,7 +2,7 @@ import { RefreshCw } from 'lucide-react'
 import { getWireMetrics, listInterfaces } from '../../api/client'
 import { Button, KpiStrip, Loading, Notice, PageHeader, Section, compact, type KpiItem } from '../../components/ui'
 import { useLoad } from '../../hooks'
-import { InterfaceTable } from './InterfaceTable'
+import { InterfaceTable, MaturityLegend } from './InterfaceTable'
 
 const POLL_MS = 10_000
 
@@ -28,6 +28,7 @@ export default function ApiEndpoints() {
       <Section flush title="Endpoints" meta={`${rows.length} listening`}>
         <InterfaceTable rows={rows} metrics={metrics.data} emptyTitle="No API endpoint is listening" emptyText="Enable a protocol store on a Postgres backend (Infrastructure) and its frontend starts at the next restart, or set WARP_<PROTOCOL>_PORT." />
       </Section>
+      <MaturityLegend />
     </div>
   )
 }

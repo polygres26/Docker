@@ -334,20 +334,33 @@ export function ModeTag({ mode }: { mode: string | null | undefined }) {
 /** Warp's own editorial classification of a protocol's verification depth -- see
  * src/api/maturity.ts for the criteria and evidence behind each tier. Not a live metric: renders
  * nothing for a protocol this console doesn't have a classification for yet, rather than guessing. */
-export function MaturityTag({ maturity }: { maturity: 'Certified' | 'Production' | 'Preview' | 'Experimental' | null }) {
+export function MaturityTag({ maturity }: { maturity: MaturityValue | null }) {
   if (!maturity) return <span className={styles.cellSub}>—</span>
-  const cls = maturity === 'Certified' ? styles.tagGreen
+  const cls = maturity === 'Verified' ? styles.tagGreen
     : maturity === 'Preview' ? styles.tagAmber
     : maturity === 'Experimental' ? styles.tagMuted
     : undefined // Production: default accent tag, same visual weight as an ordinary mode
   return <span className={cx(styles.tag, cls)} title={maturityHint(maturity)}>{maturity}</span>
 }
 
-function maturityHint(maturity: string): string {
-  switch (maturity) {
-    case 'Certified': return 'Real official client/server, a large/quantified conformance suite, no major open gaps found'
-    case 'Production': return 'Real backend/emulator verification, with real, disclosed gaps documented in the guide'
-    case 'Preview': return 'Verification relies on an imperfect oracle, or a real feature gap blocks production use end-to-end'
-    default: return 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet'
+// Kept as a plain string union here (not imported from api/maturity) so this presentational
+// component has no dependency on that module's own MATURITY_RANK/MATURITY_DESCRIPTION machinery --
+// MaturityLegend below is the one place that imports and renders those directly.
+type MaturityValue = 'Verified' | 'Production' | 'Preview' | 'Experimental'
+const MATURITY_TOOLTIP_ORDER: MaturityValue[] = ['Experimental', 'Preview', 'Production', 'Verified']
+
+/** A UI review specifically flagged the old 4-tier naming as ambiguous -- "customers will not know
+ * whether Certified is better than Production." The per-tag tooltip below now states each tag's
+ * explicit rank (e.g. "3 of 4"), and MaturityLegend (rendered once per page that shows this column,
+ * not per row) spells out the full ordered scale so a reader never has to infer it from hovering
+ * every row. */
+function maturityHint(maturity: MaturityValue): string {
+  const rank = MATURITY_TOOLTIP_ORDER.indexOf(maturity) + 1
+  const detail: Record<MaturityValue, string> = {
+    Verified: "Real official client/server, a large/quantified conformance suite, no major open gaps found -- Warp's own verification, not a third-party certification",
+    Production: 'Real backend/emulator verification, with real, disclosed gaps documented in the guide',
+    Preview: 'Verification relies on an imperfect oracle, or a real feature gap blocks production use end-to-end',
+    Experimental: 'Newest, still-settling, or no verification-oracle evidence found for this protocol yet',
   }
+  return `${rank} of ${MATURITY_TOOLTIP_ORDER.length} (${rank === MATURITY_TOOLTIP_ORDER.length ? 'highest' : rank === 1 ? 'lowest' : 'mid'}) -- ${detail[maturity]}`
 }

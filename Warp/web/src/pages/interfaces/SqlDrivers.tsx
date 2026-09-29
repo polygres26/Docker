@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { getWireMetrics, listBackendSets, listInterfaces } from '../../api/client'
 import { KpiStrip, Loading, Notice, PageHeader, Section, Button, DataTable, EmptyState, compact, type KpiItem } from '../../components/ui'
 import { useLoad } from '../../hooks'
-import { InterfaceTable } from './InterfaceTable'
+import { InterfaceTable, MaturityLegend } from './InterfaceTable'
 import { RefreshCw } from 'lucide-react'
 import styles from './interfaces.module.css'
 
@@ -33,6 +33,7 @@ export default function SqlDrivers() {
       <Section flush title="Drivers" meta={`${rows.length} listening`}>
         <InterfaceTable rows={rows} metrics={metrics.data} emptyTitle="No SQL driver is listening" emptyText="No relational frontend has bound a port on this Warp instance." />
       </Section>
+      <MaturityLegend />
       <Section flush title="Connection routing" meta={<Link to="/infrastructure">Edit on Infrastructure</Link>}>
         {!routing ? <div className={styles.pad}><Loading /></div>
           : routing.routes.length === 0 ? <EmptyState title="No explicit routes">The database name a client sends selects a backend set or backend directly; no explicit route overrides it.</EmptyState>

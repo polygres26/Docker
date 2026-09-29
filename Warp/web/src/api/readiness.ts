@@ -1,6 +1,6 @@
 import type { InterfaceInfo } from './client'
 import { policyCount, policyOn } from './client'
-import { maturityFor, type Maturity } from './maturity'
+import { MATURITY_RANK, maturityFor, type Maturity } from './maturity'
 import type { Tone } from '../components/ui'
 
 /**
@@ -65,7 +65,7 @@ const SOFT = new Set<string>(['not_reported'])
  * The rollup: any dimension actually confirmed BAD (open auth, disabled/errored TLS, a store not
  * configured) is `not_ready` for a Preview/Experimental/unclassified protocol -- one still settling
  * or with disclosed gaps shouldn't also get the benefit of the doubt on top of that. The SAME bad
- * dimension on a Production/Certified protocol (real, verified, at worst with disclosed gaps) is
+ * dimension on a Production/Verified protocol (real, verified, at worst with disclosed gaps) is
  * `needs_attention` instead -- a real problem, but the underlying protocol itself is trustworthy
  * enough that "go fix this one thing" is the honest framing, not "this is broadly unproven."
  * A dimension that's merely unknown (`not_reported`) never alone produces `not_ready` -- absence of
@@ -80,7 +80,9 @@ export function readinessOf(i: InterfaceInfo): Readiness {
 
   const anyBad = values.some((v) => BAD.has(v))
   const anySoft = values.some((v) => SOFT.has(v))
-  const matureProtocol = maturity === 'Certified' || maturity === 'Production'
+  // Rank-based (>= Production) rather than naming the tiers again here, so this stays correct
+  // automatically if the tier scale ever changes -- see MATURITY_ORDER/MATURITY_RANK's own javadoc.
+  const matureProtocol = maturity !== null && MATURITY_RANK[maturity] >= MATURITY_RANK.Production
 
   let overall: Overall
   if (anyBad) {
