@@ -90,7 +90,11 @@ public final class NodeRegistry {
     // hostname as the group label instead of a generic "unknown" bucket or, worse, a fabricated
     // cloud-sounding placeholder like "us-east-1" that would be actively misleading on a laptop.
     // One real machine not in a zoned deployment is its own honest group of one.
-    private static String resolveZone(String host) {
+    /** Public (not just used internally) so {@code WarpTelemetry} can attach the SAME zone label
+     * to its OTLP resource attributes as this class attaches to {@code warp_nodes} -- one real
+     * source of truth for "what zone is this node in", not two independently-computed answers
+     * that could silently drift apart. */
+    public static String resolveZone(String host) {
         String zone = System.getenv("WARP_ZONE");
         return (zone != null && !zone.isBlank()) ? zone : host;
     }

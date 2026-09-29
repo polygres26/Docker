@@ -119,6 +119,27 @@ export default function Observability() {
               </p>
             </div>
           </Section>
+
+          {otlp?.enabled && (
+            <Section flush title="Resource identity" meta="attached to every OTLP export from this process">
+              {otlp.resource ? (
+                <div className={styles.pad}>
+                  <p className={styles.sub}>
+                    Every exported metric now carries these resource attributes, so a multi-node deployment's data is
+                    distinguishable on the receiving end -- previously none were attached at all.
+                  </p>
+                  <div className={styles.tags}>
+                    {Object.entries(otlp.resource).map(([k, v]) => <Tag key={k}>{k}={v}</Tag>)}
+                  </div>
+                  {!('service.version' in otlp.resource) && (
+                    <p className={styles.sub}>service.version is omitted: this build's jar manifest carries no Implementation-Version.</p>
+                  )}
+                </div>
+              ) : (
+                <div className={styles.pad}><span className={styles.sub}>No live exporter yet -- resource attributes appear once the first export tick runs.</span></div>
+              )}
+            </Section>
+          )}
         </>
       )}
 

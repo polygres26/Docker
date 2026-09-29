@@ -87,6 +87,14 @@ public final class ObservabilitySummary {
             otlp.addProperty("lastError", health.lastError());
             otlp.addProperty("exportVerified", health.verified());
             otlp.addProperty("pausedByAdmin", health.pausedByAdmin());
+            // Real per-node identity attached to every export (WarpTelemetry#buildResource) --
+            // without this a multi-node deployment's metrics were indistinguishable from each
+            // other on the receiving end. Surfaced here so an operator can confirm what identity
+            // is actually being sent without needing to inspect a collector's own logs.
+            io.opentelemetry.sdk.resources.Resource resource = live.resourceAttributes();
+            JsonObject resourceJson = new JsonObject();
+            resource.getAttributes().forEach((key, value) -> resourceJson.addProperty(key.getKey(), String.valueOf(value)));
+            otlp.add("resource", resourceJson);
         } else {
             otlp.addProperty("exportAttempts", 0);
             otlp.addProperty("exportSuccesses", 0);
@@ -96,6 +104,7 @@ public final class ObservabilitySummary {
             otlp.addProperty("lastError", (String) null);
             otlp.addProperty("exportVerified", false);
             otlp.addProperty("pausedByAdmin", false);
+            otlp.add("resource", null);
         }
         out.add("otlp", otlp);
 

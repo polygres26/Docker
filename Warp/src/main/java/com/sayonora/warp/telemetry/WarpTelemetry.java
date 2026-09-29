@@ -1,5 +1,6 @@
 package com.sayonora.warp.telemetry;
 
+import com.sayonora.warp.config.NodeRegistry;
 import com.sayonora.warp.core.BackendConnectionPools;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -12,6 +13,7 @@ import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
+import io.opentelemetry.sdk.resources.Resource;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicLong;
@@ -157,6 +159,36 @@ public final class WarpTelemetry {
         return trackedExporter.health(exportIntervalMs);
     }
 
+    private final Resource resource;
+
+    /** The resource attributes attached to every export from this instance -- lets {@code GET /api
+     * /observability} disclose exactly what identity a multi-node deployment's metrics carry,
+     * instead of the operator having to guess from an OTLP collector's own logs. */
+    public Resource resourceAttributes() {
+        return resource;
+    }
+
+    /** Real, disclosed limitation: {@code host.name} is the only per-process identity attached --
+     * unlike {@code NodeRegistry}'s {@code node_id} (a stable UUID of {@code host:adminPort}),
+     * this constructor has no admin port to include, so two Warp processes on the SAME host are
+     * not distinguishable from their OTLP resource attributes alone. {@code warp.zone} reuses
+     * {@link NodeRegistry#resolveZone} so the same "what zone is this node in" answer never drifts
+     * between {@code warp_nodes} rows and OTLP resource attributes. Package-private (not private)
+     * so a unit test can exercise it directly without constructing a real OTLP exporter. */
+    static Resource buildResource() {
+        String host = NodeRegistry.resolveHost();
+        String serviceName = System.getenv().getOrDefault("WARP_OTEL_SERVICE_NAME", "warp");
+        String serviceVersion = WarpTelemetry.class.getPackage().getImplementationVersion();
+        var builder = Resource.builder()
+                .put(AttributeKey.stringKey("service.name"), serviceName)
+                .put(AttributeKey.stringKey("host.name"), host)
+                .put(AttributeKey.stringKey("warp.zone"), NodeRegistry.resolveZone(host));
+        if (serviceVersion != null && !serviceVersion.isBlank()) {
+            builder.put(AttributeKey.stringKey("service.version"), serviceVersion);
+        }
+        return builder.build();
+    }
+
     private WarpTelemetry(String protocol, String otlpEndpoint, long exportIntervalMs,
             java.util.Map<String, String> headers) {
         if (!"http".equalsIgnoreCase(protocol) && !"grpc".equalsIgnoreCase(protocol)) {
@@ -164,8 +196,10 @@ public final class WarpTelemetry {
             protocol = "grpc";
         }
         this.exportIntervalMs = exportIntervalMs;
+        this.resource = buildResource();
         this.trackedExporter = new ExportHealthTrackingExporter(buildExporter(protocol, otlpEndpoint, headers));
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
+                .setResource(resource)
                 .registerMetricReader(PeriodicMetricReader.builder(trackedExporter)
                         .setInterval(Duration.ofMillis(exportIntervalMs))
                         .build())
@@ -207,8 +241,9 @@ public final class WarpTelemetry {
                 });
 
         this.meter = meter;
-        log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}", protocol.toUpperCase(),
-                otlpEndpoint, exportIntervalMs, headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)");
+        log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}, resource attributes: {}",
+                protocol.toUpperCase(), otlpEndpoint, exportIntervalMs,
+                headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)", resource.getAttributes());
         current = this;
     }
 

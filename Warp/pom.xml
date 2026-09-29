@@ -706,6 +706,10 @@
                        exiting with code 1 on this exact error before this fix. -->
                   <manifestEntries>
                     <Multi-Release>true</Multi-Release>
+                    <!-- Real service.version for WarpTelemetry's OTLP resource attributes
+                         (Class#getPackage().getImplementationVersion() reads this); without it,
+                         every OTLP export reported no version at all. -->
+                    <Implementation-Version>${project.version}</Implementation-Version>
                   </manifestEntries>
                 </transformer>
                 <!-- Without this, shading collapses every dependency's META-INF/services/java.sql.Driver

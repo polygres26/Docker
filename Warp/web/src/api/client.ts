@@ -955,6 +955,12 @@ export interface ObservabilityOtlpStatus {
    * configured via WARP_OTEL_ENDPOINT at boot) -- an admin can still SET the override (it's
    * remembered for the next restart), but it has no effect on this running process. */
   adminOverrideHasEffect: boolean
+  /** The OTLP resource attributes actually attached to every export from this process (service
+   * name/version, host name, zone) -- null when OTLP isn't live. Previously no resource attributes
+   * were attached at all, so a multi-node deployment's metrics were indistinguishable on the
+   * receiving end; this is the real identity now sent. Keys match the OTLP resource attribute
+   * names verbatim (e.g. `"service.name"`, `"host.name"`, `"warp.zone"`). */
+  resource: Record<string, string> | null
 }
 
 export interface ObservabilityMetric {
