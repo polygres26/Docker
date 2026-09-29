@@ -957,12 +957,18 @@ public final class MssqlWireSessionHandler implements Runnable {
                             + "system proc id)"));
             return null;
         }
-        if (request.params().size() < 2 || !(request.params().get(0).value() instanceof String sql)) {
+        // @params is optional in real T-SQL sp_executesql syntax: mssql-jdbc omits it (sending
+        // @stmt as the sole RPC parameter) for a PreparedStatement with zero bind ('?') params,
+        // observed on the 2nd+ execution of the same statement object -- confirmed live. A bare
+        // single-parameter call is therefore a valid, zero-bound-value sp_executesql, not an error.
+        if (request.params().isEmpty() || !(request.params().get(0).value() instanceof String sql)) {
             packets.writeMessage(out, TdsPacketType.TABULAR_RESULT,
                     TdsTokens.errorMessage(50000, "sp_executesql call missing a string @stmt parameter"));
             return null;
         }
-        List<RpcRequestReader.RpcParam> boundParams = request.params().subList(2, request.params().size());
+        List<RpcRequestReader.RpcParam> boundParams = request.params().size() >= 2
+                ? request.params().subList(2, request.params().size())
+                : List.of();
         List<Object> orderedBinds = new java.util.ArrayList<>();
         String jdbcSql;
         try {
