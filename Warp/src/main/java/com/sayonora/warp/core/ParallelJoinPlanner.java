@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.plan.Convention;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
@@ -19,6 +20,7 @@ import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Sort;
+import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
@@ -177,6 +179,16 @@ final class ParallelJoinPlanner {
      * name {@link SchemaFederationStage#executeWithMounts} already builds per backend. */
     static Plan tryPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams) {
+        return tryPlan(optimized, mountDialects, mountToBackend, hasBindParams, null);
+    }
+
+    /** As the 4-arg {@link #tryPlan}, but also given a live {@link StatisticsStore} (may be {@code
+     * null}, e.g. when the caller has none configured, or in a unit test) -- see {@link
+     * #rowCountEstimate} for how a cached statistics estimate is preferred over a live {@code
+     * COUNT(*)} probe when one is available. */
+    static Plan tryPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams,
+            StatisticsStore statisticsStore) {
         if (hasBindParams) {
             return null;
         }
@@ -190,7 +202,7 @@ final class ParallelJoinPlanner {
             return null;
         }
         return buildTwoWayPlan(join, mountDialects, mountToBackend, head.outputProjection(), head.sortKeys(),
-                head.fetchLimit(), head.aggregateSpec());
+                head.fetchLimit(), head.aggregateSpec(), statisticsStore);
     }
 
     /** N-way (left-deep chain) counterpart to {@link #tryPlan}: only attempted when there are 3+
@@ -205,6 +217,15 @@ final class ParallelJoinPlanner {
      * bushy join tree falls back to the sequential path, same as every other real narrowing here. */
     static ChainPlan tryChainPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams) {
+        return tryChainPlan(optimized, mountDialects, mountToBackend, hasBindParams, null);
+    }
+
+    /** As the 4-arg {@link #tryChainPlan}, but also given a live {@link StatisticsStore} (may be
+     * {@code null}) for the chain's first pairwise join -- see {@link #tryPlan}'s own statistics-
+     * aware overload. */
+    static ChainPlan tryChainPlan(RelNode optimized, Map<String, SqlDialect> mountDialects,
+            Map<String, LeafScanProfiler.MountedBackend> mountToBackend, boolean hasBindParams,
+            StatisticsStore statisticsStore) {
         if (hasBindParams) {
             return null;
         }
@@ -222,7 +243,8 @@ final class ParallelJoinPlanner {
             return null;
         }
         Join innermostJoin = findInnermostJoin(topJoin);
-        Plan firstStepPlan = buildTwoWayPlan(innermostJoin, mountDialects, mountToBackend, null, null, null, null);
+        Plan firstStepPlan = buildTwoWayPlan(innermostJoin, mountDialects, mountToBackend, null, null, null, null,
+                statisticsStore);
         if (firstStepPlan == null) {
             return null;
         }
@@ -357,7 +379,7 @@ final class ParallelJoinPlanner {
      * the WHOLE chain's final result, not this intermediate pairwise step). */
     private static Plan buildTwoWayPlan(Join join, Map<String, SqlDialect> mountDialects,
             Map<String, LeafScanProfiler.MountedBackend> mountToBackend, List<Integer> outputProjection,
-            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec) {
+            List<SortKey> sortKeys, Integer fetchLimit, AggregateSpec aggregateSpec, StatisticsStore statisticsStore) {
         JoinInfo info = join.analyzeCondition();
         if (info.leftKeys.size() != 1) {
             log.debug("parallel join planner: join condition isn't a single equi-join key pair -- skipping");
@@ -394,8 +416,8 @@ final class ParallelJoinPlanner {
             log.debug("parallel join planner: failed to convert one side back to SQL -- skipping ({})", e.toString());
             return null;
         }
-        Long leftCount = countRows(leftBackend, leftSql);
-        Long rightCount = countRows(rightBackend, rightSql);
+        Long leftCount = rowCountEstimate(statisticsStore, leftBackend, leftSide.leaf(), leftSql);
+        Long rightCount = rowCountEstimate(statisticsStore, rightBackend, rightSide.leaf(), rightSql);
         if (leftCount != null && rightCount != null && Math.min(leftCount, rightCount) < minRowsFromEnvOrDefault()) {
             log.debug("parallel join planner: smaller side has only ~{} estimated row(s), below the "
                     + "WARP_PARALLEL_JOIN_MIN_ROWS threshold -- partitioning overhead isn't worth it, skipping",
@@ -698,6 +720,89 @@ final class ParallelJoinPlanner {
                     + "choice, real query is unaffected ({})", backend.label(), e.toString());
             return null;
         }
+    }
+
+    /**
+     * Cost-based row-count estimate for one join side, preferring a cached {@link StatisticsStore}
+     * estimate (a real Postgres planner estimate, {@code pg_class.reltuples} -- a fast catalog
+     * lookup, not a table scan) over the live {@link #countRows} {@code COUNT(*)} probe, when both
+     * a live {@code statisticsStore} AND a real, single underlying (schema, table) pair can be
+     * resolved for {@code leaf}. Falls back to the exact previous behavior (a live {@code COUNT(*)}
+     * against the extracted SQL) whenever either isn't available -- {@code statisticsStore} is
+     * {@code null} (no statistics configured for this process), or {@code leaf}'s extracted SQL
+     * doesn't bottom out in a single bare table scan (a pushed-down filter/projection over a JOIN,
+     * or any shape {@link #resolveSchemaTable} can't confidently resolve to one real table) -- since
+     * {@code StatisticsStore}'s cache key needs a genuine (schema, table) pair, which a general
+     * extracted subquery doesn't always have. This never blocks correctness: same as {@link
+     * #countRows}, a failure or unresolvable case just means proceeding without this particular
+     * cost signal, never failing the query.
+     *
+     * <p>Real, disclosed tradeoff: a connection is opened either way when {@code statisticsStore}
+     * is live and the table resolves, even on a cache hit (needed for the on-miss fallback probe
+     * {@code StatisticsStore.rowCount} itself performs) -- cheaper than the {@code COUNT(*)} probe
+     * it replaces (a real catalog-estimate lookup, not a live scan), but not a zero-cost cache peek.
+     */
+    private static Long rowCountEstimate(StatisticsStore statisticsStore, LeafScanProfiler.MountedBackend backend,
+            RelNode leaf, String sql) {
+        if (statisticsStore == null) {
+            return countRows(backend, sql);
+        }
+        String[] schemaTable = resolveSchemaTable(leaf);
+        if (schemaTable == null) {
+            return countRows(backend, sql);
+        }
+        String schema = schemaTable[0];
+        String table = schemaTable[1];
+        String cacheKey = backend.label() + "." + schema + "." + table;
+        try (Connection connection = backend.target().open()) {
+            Long estimate = statisticsStore.rowCount(connection, cacheKey, schema, table);
+            if (estimate != null) {
+                return estimate;
+            }
+        } catch (SQLException e) {
+            log.debug("parallel join planner: statistics-backed row-count lookup failed for \"{}\" -- falling back "
+                    + "to a live COUNT(*) probe ({})", cacheKey, e.toString());
+        }
+        // No cached/probed estimate available (never ANALYZE'd, lookup failed, or statistics
+        // genuinely aren't warmed for this table yet) -- the same live COUNT(*) this method
+        // replaces when it can't confidently help, not a fabricated default.
+        return countRows(backend, sql);
+    }
+
+    /**
+     * Attempts to resolve the real backend (schema, table) pair underlying one join side's
+     * extracted leaf, by walking down through any pushed-down {@code JdbcFilter}/{@code
+     * JdbcProject} (single-input nodes) until a bare {@link TableScan} is found. Returns {@code
+     * null} when the subtree doesn't bottom out in exactly one table (a JOIN below this leaf --
+     * shouldn't happen given {@link #extractSide}'s own single-backend requirement, but checked
+     * defensively -- or any other shape with no single underlying table), or when Calcite's
+     * qualified name for that table doesn't carry at least a schema and a table segment. A real,
+     * accepted narrowing: {@code StatisticsStore} can only help when there's one real table to key
+     * a cache entry on, which a general filtered/projected subquery doesn't guarantee.
+     */
+    private static String[] resolveSchemaTable(RelNode leaf) {
+        if (!(leaf instanceof JdbcToEnumerableConverter converter)) {
+            return null;
+        }
+        RelNode node = converter.getInput();
+        while (node != null && !(node instanceof TableScan)) {
+            List<RelNode> inputs = node.getInputs();
+            node = inputs.size() == 1 ? inputs.get(0) : null;
+        }
+        if (!(node instanceof TableScan scan)) {
+            return null;
+        }
+        RelOptTable relOptTable = scan.getTable();
+        if (relOptTable == null) {
+            return null;
+        }
+        List<String> qualifiedName = relOptTable.getQualifiedName();
+        if (qualifiedName.size() < 2) {
+            return null;
+        }
+        String table = qualifiedName.get(qualifiedName.size() - 1);
+        String schema = qualifiedName.get(qualifiedName.size() - 2);
+        return new String[] { schema, table };
     }
 
     /** {@code leaf} must be the {@code JdbcToEnumerableConverter} itself (see the caller's own

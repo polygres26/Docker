@@ -332,7 +332,7 @@ public final class SchemaFederationStage implements PipelineStage {
             // the unchanged sequential RelRunner path below, so this is purely additive.
             if (mounts.size() == 2 && parallelJoinEnabled()) {
                 ParallelJoinPlanner.Plan parallelPlan = ParallelJoinPlanner.tryPlan(
-                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
+                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty(), statisticsStore);
                 if (parallelPlan != null) {
                     long parallelStartNanos = System.nanoTime();
                     int partitionCount = ParallelJoinExecutor.partitionCountFor(parallelPlan);
@@ -380,7 +380,7 @@ public final class SchemaFederationStage implements PipelineStage {
                 // non-star shape the block above already declined) falls back to the sequential path
                 // exactly like every other real narrowing in this engine.
                 ParallelJoinPlanner.ChainPlan chainPlan = ParallelJoinPlanner.tryChainPlan(
-                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty());
+                        optimized, mountDialects, mountToBackend, !statement.bindParams().isEmpty(), statisticsStore);
                 if (chainPlan != null) {
                     long parallelStartNanos = System.nanoTime();
                     int partitionCount = ParallelJoinExecutor.partitionCountFor(chainPlan.firstStepPlan());
