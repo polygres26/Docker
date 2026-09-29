@@ -20,11 +20,11 @@ import java.sql.SQLException;
  * then immediately re-apply the live in-process toggle ({@link ObservabilityToggles}) so the
  * effect is visible without waiting for a restart or the cross-node LISTEN/NOTIFY path.
  *
- * <p>Body: {@code {"otlpEnabled": true|false|null, "prometheusEnabled": true|false|null}}. Either
- * key may be omitted or {@code null} to leave that toggle unchanged (not to clear it -- clearing
- * an override entirely isn't exposed by this route today; a disclosed, narrow scope, not an
- * oversight, since "no admin opinion, defer to env" is indistinguishable in practice from "admin
- * explicitly matched today's env-derived default").
+ * <p>Body: {@code {"otlpEnabled": true|false|null, "prometheusEnabled": true|false|null}}. A key
+ * that is OMITTED entirely leaves that toggle unchanged; a key explicitly present with value
+ * {@code null} CLEARS the override (back to "no admin opinion, defer to the env-var-derived
+ * default"). These are deliberately different: {@code {}} is a no-op PATCH, {@code {"otlpEnabled":
+ * null}} is a real, intentional "forget my previous choice."
  */
 public final class ObservabilityApi {
 
@@ -61,19 +61,34 @@ public final class ObservabilityApi {
         }
     }
 
-    /** Reads {@code key} as a tri-state boolean ({@code "true"}/{@code "false"}/absent-or-null
-     * keeps {@code fallback}) -- never throws on an unexpected value, matching this codebase's
-     * other config-apply methods (a malformed field is ignored, not a 500). */
-    private static String boolField(JsonObject body, String key, String fallback) {
+    /** Reads {@code key} as a tri-state boolean override. Absent key: unchanged (returns {@code
+     * fallback}). Present and {@code null}: an explicit CLEAR (returns {@code null} -- "no admin
+     * opinion, defer to env"). Present and a real boolean: sets the override. Never throws on an
+     * unexpected value (falls back to {@code fallback}, matching this codebase's other config-apply
+     * methods -- a malformed field is ignored, not a 500). Package-private (not private) so a unit
+     * test can exercise the tri-state parsing directly, without a real ConfigStore/Postgres. */
+    static String boolField(JsonObject body, String key, String fallback) {
+        if (!body.has(key)) {
+            return fallback;
+        }
         JsonElement e = body.get(key);
-        if (e == null || e.isJsonNull()) {
-            return fallback;
+        if (e.isJsonNull()) {
+            return null;
         }
-        try {
+        // Deliberately NOT e.getAsBoolean() -- Gson's JsonPrimitive#getAsBoolean() silently treats
+        // ANY non-"true" string (e.g. "not-a-boolean") as false rather than throwing, which would
+        // turn a malformed request body into a real, silent "disable" instead of a no-op. Only the
+        // exact JSON booleans (or the exact strings "true"/"false") are accepted.
+        if (e.isJsonPrimitive() && e.getAsJsonPrimitive().isBoolean()) {
             return String.valueOf(e.getAsBoolean());
-        } catch (RuntimeException ignored) {
-            return fallback;
         }
+        if (e.isJsonPrimitive() && e.getAsJsonPrimitive().isString()) {
+            String s = e.getAsString();
+            if ("true".equalsIgnoreCase(s) || "false".equalsIgnoreCase(s)) {
+                return s.toLowerCase(java.util.Locale.ROOT);
+            }
+        }
+        return fallback;
     }
 
     private static JsonObject readBody(HttpServletRequest request) throws IOException {

@@ -987,11 +987,13 @@ export async function getObservability(): Promise<ObservabilityStatus> {
 }
 
 /** PATCH /api/observability: admin-settable, warp_config-persisted enable/disable for the two
- * observability destinations (ObservabilityApi.java). Either field may be omitted to leave that
- * toggle unchanged. Returns the freshly re-read ObservabilityStatus so the caller doesn't need a
- * separate reload to reflect the change. */
+ * observability destinations (ObservabilityApi.java). A field OMITTED from `toggles` leaves that
+ * toggle unchanged; a field explicitly set to `null` CLEARS the override entirely (back to "no
+ * admin opinion, defer to the env-var-derived default") -- `true`/`false` sets it. Returns the
+ * freshly re-read ObservabilityStatus so the caller doesn't need a separate reload to reflect the
+ * change. */
 export async function setObservabilityToggles(
-  toggles: { otlpEnabled?: boolean; prometheusEnabled?: boolean },
+  toggles: { otlpEnabled?: boolean | null; prometheusEnabled?: boolean | null },
 ): Promise<{ ok: boolean; version: number; observability: ObservabilityStatus }> {
   return api('/api/observability', { method: 'PATCH', body: JSON.stringify(toggles) })
 }

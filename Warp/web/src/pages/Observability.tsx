@@ -44,7 +44,7 @@ export default function Observability() {
   const [toggling, setToggling] = useState<'otlp' | 'prometheus' | null>(null)
   const [toggleError, setToggleError] = useState<string | null>(null)
 
-  async function toggle(which: 'otlp' | 'prometheus', next: boolean) {
+  async function toggle(which: 'otlp' | 'prometheus', next: boolean | null) {
     setToggling(which)
     setToggleError(null)
     try {
@@ -118,6 +118,16 @@ export default function Observability() {
                   {otlp.pausedByAdmin ? 'Resume' : 'Pause'}
                 </Button>
               )}
+              {otlp?.adminOverride !== null && (
+                <Button
+                  variant="ghost"
+                  disabled={toggling === 'otlp'}
+                  onClick={() => toggle('otlp', null)}
+                  title="Forget the admin pause/resume choice and defer to WARP_OTEL_ENDPOINT again"
+                >
+                  Clear override
+                </Button>
+              )}
             </div>
           </div>
           <div className={styles.rowItem}>
@@ -130,6 +140,16 @@ export default function Observability() {
                   onClick={() => toggle('prometheus', !data.prometheus.available)}
                 >
                   {data.prometheus.available ? 'Disable' : 'Enable'}
+                </Button>
+              )}
+              {data?.prometheus.adminOverride !== null && (
+                <Button
+                  variant="ghost"
+                  disabled={toggling === 'prometheus'}
+                  onClick={() => toggle('prometheus', null)}
+                  title="Forget the admin enable/disable choice -- Prometheus scrape defaults back to on"
+                >
+                  Clear override
                 </Button>
               )}
             </div>
