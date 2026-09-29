@@ -9,6 +9,7 @@ import {
 } from '../../components/ui'
 import { useLoad } from '../../hooks'
 import { MaturityLegend } from '../interfaces/InterfaceTable'
+import AccessPolicyEditor from './AccessPolicyEditor'
 import styles from './wave2b.module.css'
 
 const POLL_MS = 15_000
@@ -155,6 +156,12 @@ export default function AccessAcls() {
               </div>
             ))}
           </div>
+        </Section>
+      )}
+
+      {view === 'policies' && (
+        <Section flush title="Row & column policies" meta="AccessControlStage: row filters (inject a WHERE clause) and column grants (mask or deny), enforced before the query cache">
+          <div className={styles.pad}><AccessPolicyEditor /></div>
         </Section>
       )}
 

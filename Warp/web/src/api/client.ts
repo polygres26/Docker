@@ -220,6 +220,9 @@ export interface WireConfig {
   oauthUserIdClaim: string | null
   oauthRolesClaim: string | null
   awsIamCredentials: string | null
+  /** Row-filter/column-masking policy YAML for AccessControlStage -- see
+   * com.sayonora.warp.core.access.AccessPolicyYamlConfig's column_grants/row_filters shape. */
+  accessPolicy: string | null
 }
 
 export async function getWireConfig(): Promise<WireConfig> {

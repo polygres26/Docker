@@ -1673,11 +1673,15 @@ public final class MetricsServer {
                         field(body, "mcpUpstreams", current.mcpUpstreams()),
                         field(body, "storeFrontendSets", current.storeFrontendSets()),
                         field(body, "otlpExportOverride", current.otlpExportOverride()),
-                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()));
+                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()),
+                        field(body, "accessPolicy", current.accessPolicy()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
                 com.sayonora.warp.core.ConnectionRouter.parse(updated.connectionRoutes());
+                if (updated.accessPolicy() != null && !updated.accessPolicy().isBlank()) {
+                    com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(updated.accessPolicy());
+                }
                 // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
                 // the backend-set admin API, so the raw config route cannot bypass them
                 com.sayonora.warp.core.BackendSetModel.from(updated, null).validateStores();
@@ -1775,7 +1779,7 @@ public final class MetricsServer {
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
                         current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                         current.mcpUpstreams(), current.storeFrontendSets(),
-                        current.otlpExportOverride(), current.prometheusScrapeOverride());
+                        current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -2422,7 +2426,7 @@ public final class MetricsServer {
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                 current.mcpUpstreams(), current.storeFrontendSets(),
-                current.otlpExportOverride(), current.prometheusScrapeOverride());
+                current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
         configStore.write(updated);
     }
 

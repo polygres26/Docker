@@ -94,7 +94,7 @@ public final class ConfigStore implements AutoCloseable {
                 c.llmBaseUrl(), c.llmModel(), c.backendGroups(),
                 c.backendDescriptions(), c.backendGroupDescriptions(), c.mcpEndpoints(),
                 c.backendStores(), c.backendSetNames(), c.connectionRoutes(), c.mcpUpstreams(), c.storeFrontendSets(),
-                c.otlpExportOverride(), c.prometheusScrapeOverride());
+                c.otlpExportOverride(), c.prometheusScrapeOverride(), c.accessPolicy());
     }
 
     private static WarpConfig decryptSecretFields(WarpConfig c) {
@@ -111,7 +111,7 @@ public final class ConfigStore implements AutoCloseable {
                 c.llmBaseUrl(), c.llmModel(), c.backendGroups(),
                 c.backendDescriptions(), c.backendGroupDescriptions(), c.mcpEndpoints(),
                 c.backendStores(), c.backendSetNames(), c.connectionRoutes(), c.mcpUpstreams(), c.storeFrontendSets(),
-                c.otlpExportOverride(), c.prometheusScrapeOverride());
+                c.otlpExportOverride(), c.prometheusScrapeOverride(), c.accessPolicy());
     }
 
     public void listen(Consumer<Version> callback) throws SQLException {
