@@ -544,7 +544,8 @@ public final class MetricsServer {
                     response.setContentType("application/json; charset=utf-8");
                     response.getWriter().write(InterfaceRegistry.toJson(backendRegistry,
                             statsStage.sqlMetricsSnapshot().protocolCounts(),
-                            com.sayonora.warp.core.ConnectionLimiter.activeCount()).toString());
+                            com.sayonora.warp.core.ConnectionLimiter.activeCount(),
+                            policyConfigOrNull(configStore), enabledFirewallRuleCountOrZero(firewallRuleStore)).toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -932,6 +933,43 @@ public final class MetricsServer {
         }
         return Arrays.stream(envValue.split(",")).map(String::trim).filter(s -> !s.isEmpty())
                 .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /** The latest persisted config for {@link InterfaceRegistry#toJson}'s policy join, or {@code
+     * null} on any failure (config store absent, or a read error) -- a policy-summary read must
+     * never break {@code GET /api/interfaces} itself, same "degrade, don't fail" posture {@link
+     * AccessSummary} already takes for auth (it reads straight from env, which can't fail this
+     * way, but the intent carries over: this is enrichment, not core interface-listing data). */
+    private static WarpConfig policyConfigOrNull(ConfigStore configStore) {
+        if (configStore == null) {
+            return null;
+        }
+        try {
+            return configStore.readLatest().map(ConfigStore.Version::payload).orElse(null);
+        } catch (java.sql.SQLException e) {
+            log.warn("interfaces: could not read latest config for the policy summary join: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** Count of currently-ENABLED SQL firewall rules, or 0 on any failure -- same "never break
+     * GET /api/interfaces over this" posture as {@link #policyConfigOrNull}. */
+    private static int enabledFirewallRuleCountOrZero(FirewallRuleStore firewallRuleStore) {
+        if (firewallRuleStore == null) {
+            return 0;
+        }
+        try {
+            int count = 0;
+            for (FirewallRuleStore.AdminRow row : firewallRuleStore.listAll()) {
+                if (row.enabled()) {
+                    count++;
+                }
+            }
+            return count;
+        } catch (java.sql.SQLException e) {
+            log.warn("interfaces: could not read firewall rule count for the policy summary join: {}", e.toString());
+            return 0;
+        }
     }
 
     static boolean bearerTokenValid(String authorizationHeader, String adminToken) {

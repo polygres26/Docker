@@ -57,13 +57,29 @@ public final class InterfaceRegistry {
     }
 
     /** JSON for {@code GET /api/interfaces}; {@code registry} and {@code protocolCounts} may be null. */
+    /** As the 5-arg overload, with no policy config available ({@code policies} is
+     * omitted from every row). Kept for callers (and existing tests) that don't have a {@code
+     * WarpConfig}/firewall-rule-count on hand. */
     public static JsonObject toJson(BackendRegistry registry, Map<String, Long> protocolCounts, int activeSessions) {
+        return toJson(registry, protocolCounts, activeSessions, null, 0);
+    }
+
+    /**
+     * @param policyConfig the latest {@code WarpConfig} (for router/QoS/ACL rule presence), or
+     *     {@code null} to omit {@code policies} from every row entirely
+     * @param firewallEnabledRuleCount count of currently-ENABLED SQL firewall rules (see {@link
+     *     PolicySummary#compute})
+     */
+    public static JsonObject toJson(BackendRegistry registry, Map<String, Long> protocolCounts, int activeSessions,
+            com.sayonora.warp.config.WarpConfig policyConfig, int firewallEnabledRuleCount) {
         // Joined onto every row below (auth*) rather than left isolated on the Access page -- see
         // AccessSummary#frontendAuth's own javadoc for why this is now factored out that way. A
         // frontend absent from this map (grpc, mcp, a2a, boltwire, dynamowire, sqswire, oswire,
         // mongowire, ...) reports no auth fields at all, which the UI shows as "not reported" --
         // never guessed.
         Map<String, JsonObject> auth = AccessSummary.frontendAuth(System.getenv());
+        PolicySummary.Summary policySummary = policyConfig == null ? null
+                : PolicySummary.compute(policyConfig, firewallEnabledRuleCount);
         JsonArray arr = new JsonArray();
         for (Entry e : entries()) {
             JsonObject o = new JsonObject();
@@ -98,6 +114,9 @@ public final class InterfaceRegistry {
                 o.addProperty("authMethod", authEntry.get("method").getAsString());
                 o.addProperty("authEnforced", authEntry.get("enforced").getAsBoolean());
                 o.addProperty("authDetail", authEntry.get("detail").getAsString());
+            }
+            if (policySummary != null) {
+                o.add("policies", PolicySummary.applicablePolicies(policySummary, e.kind()));
             }
             // The collector only has an entry for a protocol once it served something: no entry means 0 so far.
             // No metrics key at all (e.g. A2A) means the count is unknown, reported as null.

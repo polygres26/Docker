@@ -76,4 +76,37 @@ class InterfaceRegistryTest {
         JsonObject out = InterfaceRegistry.toJson(null, null, 0).getAsJsonArray("interfaces").get(0).getAsJsonObject();
         assertTrue(!out.has("authMethod"), "a2a has no AccessSummary entry -- must be omitted, never guessed");
     }
+
+    @Test
+    void omitsPoliciesWhenNoPolicyConfigIsSupplied() {
+        InterfaceRegistry.register("pgwire", "PostgreSQL", "sql", "PostgreSQL wire", 15432, "Relay", null, "pgwire");
+        JsonObject out = InterfaceRegistry.toJson(null, null, 0).getAsJsonArray("interfaces").get(0).getAsJsonObject();
+        assertTrue(!out.has("policies"), "the 3-arg overload must not silently fabricate a policy summary");
+    }
+
+    @Test
+    void joinsPoliciesOntoASqlFrontendWhenConfigIsSupplied() {
+        InterfaceRegistry.register("pgwire", "PostgreSQL", "sql", "PostgreSQL wire", 15432, "Relay", null, "pgwire");
+        JsonObject out = InterfaceRegistry.toJson(null, null, 0, policyCfg("100", "public:pg", "allow:10.0.0.0/8"), 2)
+                .getAsJsonArray("interfaces").get(0).getAsJsonObject();
+        var policies = out.getAsJsonArray("policies");
+        assertEquals(4, policies.size(), policies.toString());
+    }
+
+    @Test
+    void routerAndQosDoNotApplyToAnApiFrontend() {
+        InterfaceRegistry.register("s3wire", "S3", "api", "S3", 18000, "Emulate", "s3", "s3wire");
+        JsonObject out = InterfaceRegistry.toJson(null, null, 0, policyCfg("100", "public:pg", null), 5)
+                .getAsJsonArray("interfaces").get(0).getAsJsonObject();
+        var policies = out.getAsJsonArray("policies");
+        assertEquals(1, policies.size(), "only acl:0 -- router/qos/firewall never apply outside the SQL pipeline");
+        assertEquals("acl:0", policies.get(0).getAsString());
+    }
+
+    /** Only the 3 fields {@link PolicySummary} reads are ever non-null. */
+    private static com.sayonora.warp.config.WarpConfig policyCfg(String qosRatePerSec, String routerSchemaRules, String aclRules) {
+        return new com.sayonora.warp.config.WarpConfig(qosRatePerSec, null, null, null, null, null, null, null, null,
+                null, routerSchemaRules, null, null, null, null, null, aclRules, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    }
 }
