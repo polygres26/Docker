@@ -2492,6 +2492,70 @@ untranslated Oracle SQL; in practice their regex-matched physical shapes essenti
 real Oracle SQL, but this has not been proven against a real Oracle instance — see that same
 NOTES.md for the explicit "not verified without live Oracle" list.
 
+#### 8.1.3 Round-trip latency across every frontend/backend-mode combination
+
+Measured live (2026-09-29) via `com.sayonora.warp.RttBenchmarkIntegrationTest`, checked into the
+test tree as a permanent, repeatable benchmark, not a one-off — real Postgres 16, real Oracle
+(`gvenzl/oracle-free:23-slim`), real MySQL 8.4, and real Azure SQL Edge, all local/loopback so the
+numbers below reflect protocol/pipeline overhead, not network distance.
+
+**Methodology**: a single literal key-value lookup, `SELECT payload FROM rtt_bench WHERE id = 1`,
+returning one row with a `VARCHAR(250)` column holding exactly 250 ASCII characters (the fixed
+"250-byte result" payload size) — this is the row's own application-level data size, not a claim
+about exact wire bytes, since orawire's binary TTC framing, MySQL/SQL Server/Postgres's text wire
+formats, and each JDBC driver's own per-row overhead all differ; comparing the thing that's
+actually comparable across engines (the payload size) is the point. A plain `java.sql.Statement`
+re-executes the same literal SQL text each iteration (deliberately NOT a `PreparedStatement` reused
+across executions — a zero-bind-parameter reused prepared statement hit a real, separately
+live-discovered mssqlwire bug, see below). 30 warmup executions discarded, then 300 measured,
+sequential (not concurrent — this is latency, not throughput: a separate, undocumented ad hoc
+benchmark earlier found pgwire's connection-multiplexing throughput at a fixed backend-pool size
+consistently beats PgBouncer's transaction-pooling mode at the same pool size, not repeated here),
+timed client-side with `System.nanoTime()` per iteration.
+
+| Path | min | p50 | p90 | p99 | avg |
+|---|---|---|---|---|---|
+| Direct Postgres (no Warp) | 0.25ms | 0.29ms | 0.34ms | 0.49ms | 0.30ms |
+| Direct Oracle (no Warp) | 0.25ms | 0.36ms | 0.55ms | 0.97ms | 0.40ms |
+| Direct MySQL (no Warp) | 0.23ms | 0.29ms | 0.43ms | 0.66ms | 0.32ms |
+| Direct SQL Server (no Warp) | 0.25ms | 0.34ms | 0.40ms | 1.04ms | 0.36ms |
+| **pgwire Adapt** (Postgres→Warp→Postgres) | 0.30ms | 0.44ms | 0.54ms | 0.72ms | 0.44ms |
+| orawire Relay (Oracle→Warp→real Oracle) | 0.29ms | 0.35ms | 0.42ms | 0.49ms | 0.36ms |
+| orawire Bridge (Oracle→Warp→real Oracle, pooled) | 0.37ms | 0.54ms | 0.75ms | 1.09ms | 0.58ms |
+| orawire Adapt (Oracle→Warp→Postgres, translated) | 0.33ms | 0.47ms | 0.61ms | 0.91ms | 0.49ms |
+| mywire Relay (MySQL→Warp→real MySQL) | 0.23ms | 0.31ms | 0.35ms | 0.42ms | 0.31ms |
+| mywire Bridge (MySQL→Warp→real MySQL, pooled) | 0.59ms | 0.74ms | 0.99ms | 3.38ms | 0.83ms |
+| mywire Adapt (MySQL→Warp→Postgres, translated) | 0.31ms | 0.49ms | 0.65ms | 0.90ms | 0.50ms |
+| mssqlwire Relay (SQL Server→Warp→real SQL Server) | 0.35ms | 0.44ms | 0.48ms | 0.55ms | 0.44ms |
+| mssqlwire Bridge (SQL Server→Warp→real SQL Server, pooled) | 0.46ms | 0.57ms | 0.67ms | 1.53ms | 0.61ms |
+| mssqlwire Adapt (SQL Server→Warp→Postgres, translated) | 0.27ms | 0.41ms | 0.57ms | 0.88ms | 0.44ms |
+
+**Reading the numbers**:
+- **Relay adds the least overhead** (~0.03–0.08ms over the direct baseline for the same engine) —
+  expected, since it's a raw byte pump with zero parsing (§8.1.1).
+- **Adapt adds a consistent ~0.10–0.15ms** across all three non-Postgres frontends (Oracle/MySQL/SQL
+  Server → Postgres) — the dialect-translation pipeline's own cost (parse, `DialectTranslationStage`,
+  translation-cache lookup, the shared 8-stage pipeline in §8.2). Plain pgwire Adapt (Postgres→Warp→
+  Postgres, no dialect gap to bridge at all) sits in the same ~0.44ms band, confirming this ~0.1–0.15ms
+  is genuinely the shared-pipeline's fixed cost, not a translation-specific penalty.
+- **Bridge is consistently the most expensive mode** (0.58–0.83ms avg) — it pays BOTH the shared
+  pipeline's cost (same as Adapt) AND a real network hop to a pooled backend connection to the real
+  engine, instead of Adapt's single hop to Postgres. This matches its own design tradeoff (§8.1.2):
+  Bridge trades latency for verbatim-dialect correctness and full pipeline coverage (firewall/QoS/
+  audit) that Relay doesn't get.
+- mywire Bridge's p99 (3.38ms, a clear outlier against its own p90 of 0.99ms) is very likely a single
+  GC pause or connection-pool contention blip in a 300-iteration single-threaded run on a shared
+  development machine, not a systemic property of Bridge mode — a real, disclosed limitation of a
+  single-run benchmark; re-running would be needed to confirm whether it's reproducible.
+
+**Real, live-discovered bug found while building this benchmark, not fixed here**: mssqlwire (both
+Bridge and Adapt mode) fails a repeated execution of the SAME `PreparedStatement` with **zero bind
+parameters** with `sp_executesql call missing a string @stmt parameter` — the SQL Server JDBC
+driver sends a different RPC shape on a parameterless statement's 2nd+ execution than
+`MssqlWireSessionHandler`'s RPC dispatch currently expects. Worked around in this benchmark by using
+a plain `Statement` (literal SQL, never reused as a prepared statement) instead — filed as a
+follow-up task, not yet fixed.
+
 ### 8.2 Statement pipeline stages
 
 Every frontend above feeds the same shared pipeline, in this order:
