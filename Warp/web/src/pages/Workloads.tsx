@@ -5,11 +5,12 @@ import {
   type InterfaceInfo,
   getAbRouting, getUsage, getWireMetrics, listBackendSets, listInterfaces, policyCount, policyOn,
 } from '../api/client'
+import { maturityFor } from '../api/maturity'
 import {
-  Button, DataTable, EmptyState, KpiStrip, Loading, ModeTag, NameCell, Notice, PageHeader, Section, compact, type KpiItem,
+  Button, DataTable, EmptyState, KpiStrip, Loading, MaturityTag, ModeTag, NameCell, Notice, PageHeader, Section, compact, type KpiItem,
 } from '../components/ui'
 import { useLoad } from '../hooks'
-import { AuthCell, ReadinessCell, StatusCell } from './interfaces/InterfaceTable'
+import { AuthCell, MaturityLegend, ReadinessCell, StatusCell } from './interfaces/InterfaceTable'
 import styles from './interfaces/interfaces.module.css'
 
 const PROTOCOL_OF: Record<string, string> = {
@@ -81,7 +82,7 @@ export default function Workloads() {
       <Section flush title="Workloads" meta={`${rows.length} derived`}>
         {rows.length === 0 && !ifaces.loading ? <EmptyState title="No workloads">No SQL or API frontend is listening on this Warp.</EmptyState> : (
           <DataTable caption="Derived workloads" minWidth={980}>
-            <thead><tr><th>Workload</th><th>Mode</th><th>Auth</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th><th>Readiness</th></tr></thead>
+            <thead><tr><th>Workload</th><th>Mode</th><th>Maturity</th><th>Auth</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th><th>Readiness</th></tr></thead>
             <tbody>
               {rows.map((i) => {
                 const r = reaches(i)
@@ -94,6 +95,7 @@ export default function Workloads() {
                   <tr key={i.id}>
                     <td><NameCell name={i.label} sub={`${i.protocol} · port ${i.port}`} /></td>
                     <td><ModeTag mode={i.mode} /></td>
+                    <td><MaturityTag maturity={maturityFor(i.metricsKey, i.id)} /></td>
                     <td><AuthCell i={i} /></td>
                     <td><NameCell name={r.primary} sub={r.sub} /></td>
                     <td>
@@ -130,6 +132,7 @@ export default function Workloads() {
         Filled chip = that policy is configured. Router, QoS and the SQL firewall apply to the SQL pipeline; ACL applies to every TCP frontend; A/B applies per store.
         See <Link to="/router">Routing &amp; QoS</Link>, <Link to="/firewall">Policies</Link> and <Link to="/acl">Access &amp; ACLs</Link>.
       </p>
+      <MaturityLegend />
     </div>
   )
 }
