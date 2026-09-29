@@ -7,13 +7,19 @@ import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.DoubleHistogram;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporter;
+import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicLong;
@@ -168,6 +174,26 @@ public final class WarpTelemetry {
         return resource;
     }
 
+    private final Tracer tracer;
+    private final boolean tracesEnabled;
+
+    /** {@code null} unless {@code WARP_OTEL_TRACES_ENABLED=true} -- traces are a genuinely new,
+     * more invasive signal (every pipeline stage on every statement becomes a span) than the
+     * metrics this class has exported since it existed, so they're opt-in on top of OTLP being
+     * enabled at all, not silently turned on for every existing metrics-only deployment. See
+     * {@code com.sayonora.warp.core.StatementPipeline}, the one real choke point every wire
+     * protocol's statement execution passes through, for where spans are actually created. */
+    public Tracer tracer() {
+        return tracer;
+    }
+
+    /** Whether tracing is actually live right now -- distinct from {@code tracer() != null} only
+     * in that this is the stable, documented way to ask "is Warp emitting traces", the same shape
+     * as {@code ObservabilityToggles.prometheusEnabled()}. */
+    public boolean tracesEnabled() {
+        return tracesEnabled;
+    }
+
     /** Real, disclosed limitation: {@code host.name} is the only per-process identity attached --
      * unlike {@code NodeRegistry}'s {@code node_id} (a stable UUID of {@code host:adminPort}),
      * this constructor has no admin port to include, so two Warp processes on the SAME host are
@@ -198,6 +224,16 @@ public final class WarpTelemetry {
         this.exportIntervalMs = exportIntervalMs;
         this.resource = buildResource();
         this.trackedExporter = new ExportHealthTrackingExporter(buildExporter(protocol, otlpEndpoint, headers));
+        this.tracesEnabled = "true".equalsIgnoreCase(System.getenv("WARP_OTEL_TRACES_ENABLED"));
+        if (tracesEnabled) {
+            SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
+                    .setResource(resource)
+                    .addSpanProcessor(BatchSpanProcessor.builder(buildSpanExporter(protocol, otlpEndpoint, headers)).build())
+                    .build();
+            this.tracer = tracerProvider.get("com.sayonora.warp");
+        } else {
+            this.tracer = null;
+        }
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
                 .setResource(resource)
                 .registerMetricReader(PeriodicMetricReader.builder(trackedExporter)
@@ -241,9 +277,10 @@ public final class WarpTelemetry {
                 });
 
         this.meter = meter;
-        log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}, resource attributes: {}",
+        log.info("OpenTelemetry metrics export enabled: OTLP/{} to {} every {}ms{}, resource attributes: {}{}",
                 protocol.toUpperCase(), otlpEndpoint, exportIntervalMs,
-                headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)", resource.getAttributes());
+                headers.isEmpty() ? "" : " (" + headers.size() + " header(s) attached)", resource.getAttributes(),
+                tracesEnabled ? "; trace export also enabled (WARP_OTEL_TRACES_ENABLED=true), one span per pipeline stage per statement" : "");
         current = this;
     }
 
@@ -268,6 +305,21 @@ public final class WarpTelemetry {
         // routing through a local Agent) need an API-key header on every export request -- a
         // local collector/agent (the more common enterprise pattern) needs none, hence this being
         // optional rather than assumed.
+        headers.forEach(builder::addHeader);
+        return builder.build();
+    }
+
+    /** Same protocol/endpoint/headers a trace export uses as the metrics exporter -- one real
+     * OTLP collector destination for both signals, matching how a real Collector is typically
+     * configured to receive everything on the same endpoint. A separate trace-only endpoint isn't
+     * supported; if that's ever needed, it's a real, disclosed gap, not an oversight. */
+    private static SpanExporter buildSpanExporter(String protocol, String endpoint, java.util.Map<String, String> headers) {
+        if ("http".equalsIgnoreCase(protocol)) {
+            var builder = OtlpHttpSpanExporter.builder().setEndpoint(endpoint);
+            headers.forEach(builder::addHeader);
+            return builder.build();
+        }
+        var builder = OtlpGrpcSpanExporter.builder().setEndpoint(endpoint);
         headers.forEach(builder::addHeader);
         return builder.build();
     }

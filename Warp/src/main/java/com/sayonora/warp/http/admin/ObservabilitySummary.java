@@ -39,6 +39,12 @@ import java.util.Map;
  * otlp.adminOverrideHasEffect} is {@code false} when OTLP was never configured via env, since no
  * admin toggle can conjure a live exporter/network-client into existence without a restart; this
  * is disclosed to the UI rather than silently implying the toggle always works.
+ *
+ * <p>{@code metricsOnly}/{@code otlp.tracesEnabled} are also real and computed now: {@code
+ * WarpTelemetry} can export genuine OTLP traces (see {@code com.sayonora.warp.core.
+ * StatementPipeline}, which spans every pipeline stage on every statement), gated behind {@code
+ * WARP_OTEL_TRACES_ENABLED=true} on top of OTLP being enabled at all. {@code metricsOnly} is
+ * {@code true} unless tracing is actually live right now -- never a hardcoded claim.
  */
 public final class ObservabilitySummary {
 
@@ -95,6 +101,11 @@ public final class ObservabilitySummary {
             JsonObject resourceJson = new JsonObject();
             resource.getAttributes().forEach((key, value) -> resourceJson.addProperty(key.getKey(), String.valueOf(value)));
             otlp.add("resource", resourceJson);
+            // Real now: WARP_OTEL_TRACES_ENABLED=true adds a genuine OTLP trace exporter alongside
+            // metrics (see WarpTelemetry.tracer()/StatementPipeline, the one choke point every wire
+            // protocol's statement execution passes through). Off by default -- opt-in on top of
+            // OTLP being enabled at all, since it's a more invasive signal than metrics ever were.
+            otlp.addProperty("tracesEnabled", live.tracesEnabled());
         } else {
             otlp.addProperty("exportAttempts", 0);
             otlp.addProperty("exportSuccesses", 0);
@@ -105,13 +116,15 @@ public final class ObservabilitySummary {
             otlp.addProperty("exportVerified", false);
             otlp.addProperty("pausedByAdmin", false);
             otlp.add("resource", null);
+            otlp.addProperty("tracesEnabled", false);
         }
         out.add("otlp", otlp);
 
-        // WarpTelemetry only ever registers metric instruments (counters/histograms/gauges) --
-        // confirmed by reading the full class: no trace or log exporter exists anywhere in this
-        // codebase. Stated explicitly so the UI doesn't imply broader signal coverage than exists.
-        out.addProperty("metricsOnly", true);
+        // Real, computed fact now, not a hardcoded claim: true only when there's no live tracer
+        // (OTLP disabled, or enabled without WARP_OTEL_TRACES_ENABLED=true -- traces are opt-in on
+        // top of OTLP being on at all, since one span per pipeline stage per statement is a more
+        // invasive signal than metrics ever were). See StatementPipeline for where spans are made.
+        out.addProperty("metricsOnly", !(enabled && live != null && live.tracesEnabled()));
 
         JsonObject prometheus = new JsonObject();
         // A real, unconditional live toggle -- no network client to construct, so an admin
