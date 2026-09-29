@@ -17,6 +17,29 @@ client (`psycopg2`, `pymysql`, `pymssql`, `python-oracledb`, `boto3`, `pymongo`)
 Postgres backend, and every fix was verified for correctness (not just speed) before being
 accepted.
 
+> **Benchmark currency** (Phase H, dating pass — see
+> [`COMPETITIVE_POSITIONING_ROADMAP.md`](COMPETITIVE_POSITIONING_ROADMAP.md)): this document's
+> numbers were captured incrementally, dated inline per section (§2-§5 below), against these real
+> commits in this repository's history — not a single point-in-time run, and not re-verified as
+> part of adding this note. A number's own inline date is authoritative for what it measures;
+> this table exists so a reader can find the exact commit a given date corresponds to.
+>
+> | Date | Commit | What changed |
+> |---|---|---|
+> | 2026-08-23 | `2540e8f9` | Original document: architecture, caching, RTT stats, performance work |
+> | 2026-09-23 | `77f870d9` | §2-§5: seven-bug latency investigation (dynamowire/orawire/mywire/mssqlwire/sqswire/mongowire), plus the orawire/mssqlwire root-cause fix in §5/§3.8-§3.11 (`PostgresRlsSessionInitializer`) — both landed in this one commit |
+>
+> This file has not been touched since `77f870d9` except two pure-rename commits (`60ce553d`,
+> `62db997d` — package/directory renames only, no content or number changed).
+>
+> **Reproduction**: every number in this file was captured with the real client libraries named
+> above against a real (not mocked) Postgres backend — see §5 "Methodology" below for the exact
+> harness and warm-up/sample-count discipline. There is no single "run this one script" command;
+> each investigation in §3 names its own reproduction steps inline. If you need current numbers
+> rather than this document's historical record, re-run the harness described in §5 against
+> today's `HEAD` and compare — do not assume these numbers still hold across an arbitrary number
+> of commits since the dates above without re-verifying.
+
 ---
 
 ## 1. What gets measured, and how
