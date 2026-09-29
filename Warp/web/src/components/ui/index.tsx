@@ -317,6 +317,14 @@ export function compact(n: number): string {
   return String(n)
 }
 
+/** A backend-count license limit as the admin API reports it: Java's Integer.MAX_VALUE
+ * (2147483647) is the literal Enterprise-tier "no cap" sentinel (see License#maxBackends), not a
+ * real number to show a customer -- render it as "Unlimited" instead of the raw integer. */
+export function formatLicenseLimit(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  return n >= 2147483647 ? 'Unlimited' : String(n)
+}
+
 /** Mode tag for an interface (Relay green, Bridge/Emulate neutral), per the mock. */
 export function ModeTag({ mode }: { mode: string | null | undefined }) {
   if (!mode) return <span className={styles.cellSub}>n/a</span>

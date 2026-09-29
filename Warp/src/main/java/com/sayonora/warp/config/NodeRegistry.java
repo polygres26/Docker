@@ -41,7 +41,7 @@ public final class NodeRegistry {
     }
 
     private final com.sayonora.warp.server.ServerOptions options;
-    private final UUID nodeId = UUID.randomUUID();
+    private final UUID nodeId;
     private final String host;
     private final int adminPort;
     private final int peerGrpcPort;
@@ -64,6 +64,23 @@ public final class NodeRegistry {
         this.host = resolveHost();
         this.zone = resolveZone(this.host);
         this.version = version;
+        // Stable per (host, adminPort) -- NOT a fresh UUID.randomUUID() per process start. A
+        // random id meant every restart of the SAME process/host permanently orphaned its
+        // previous row (the 24h stale-row sweep in heartbeatOnce eventually deletes it, but until
+        // then every restart inflated the node count and Overview's stale-node risk list, degrading
+        // both real quickly on a dev machine or any host that restarts more than once a day). Using
+        // the same (host, adminPort) MetricsServer#fanOutToPeers/listLivePeerWorkers already use to
+        // recognize "this is my own row" makes the heartbeat's own ON CONFLICT (node_id) upsert
+        // naturally reuse that row across a restart instead of inserting a new one. Real, disclosed
+        // limitation this does NOT fix: an environment where the hostname itself changes every
+        // restart (an ephemeral container with no WARP_ADVERTISED_HOST set) still gets a new id
+        // each time, since host is part of the key -- there is no portable, restart-durable
+        // identity available in that case without operator-supplied configuration.
+        this.nodeId = stableNodeId(this.host, this.adminPort);
+    }
+
+    static UUID stableNodeId(String host, int adminPort) {
+        return UUID.nameUUIDFromBytes((host + ":" + adminPort).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     // WARP_ZONE is how an operator names a real availability zone/region ("us-east-1a",
@@ -141,7 +158,13 @@ public final class NodeRegistry {
                             + "VALUES (?, ?, ?, ?, ?, ?, now(), ?) "
                             + "ON CONFLICT (node_id) DO UPDATE SET "
                             + "host = EXCLUDED.host, admin_port = EXCLUDED.admin_port, zone = EXCLUDED.zone, "
-                            + "version = EXCLUDED.version, last_heartbeat = now(), peer_grpc_port = EXCLUDED.peer_grpc_port")) {
+                            // A conflict now means "the same (host, adminPort) restarted" (node_id
+                            // is stable per that pair, not a fresh id per process -- see the
+                            // constructor's own comment), so started_at MUST refresh too: a restart
+                            // is a new process lifetime, and leaving the original row's started_at
+                            // in place would misreport this instance's uptime as spanning restarts.
+                            + "version = EXCLUDED.version, started_at = EXCLUDED.started_at, "
+                            + "last_heartbeat = now(), peer_grpc_port = EXCLUDED.peer_grpc_port")) {
                 ps.setObject(1, nodeId);
                 ps.setString(2, host);
                 ps.setInt(3, adminPort);

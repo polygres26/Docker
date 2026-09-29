@@ -9,7 +9,7 @@ import {
 } from '../api/client'
 import {
   Button, CopyButton, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, Meter, NameCell, Notice, PageHeader, Section,
-  StatusPill, Tabs, Tag, type KpiItem,
+  StatusPill, Tabs, Tag, formatLicenseLimit, type KpiItem,
 } from '../components/ui'
 import { errorText, targetOf, useLoad } from '../hooks'
 import { AdvancedRouting, BackendEditor, ConnectPanel, Health, RoutesSection, StoreTags, WriteNotice, storeLabel } from './infra/parts'
@@ -168,7 +168,7 @@ export default function Infrastructure() {
   const kpis: KpiItem[] = [
     { label: 'Warp nodes', value: nodes.data && nodes.data.length > 0 ? `${upNodes} / ${nodes.data.length}` : '—',
       hint: nodes.data && nodes.data.length > 0 ? (upNodes === nodes.data.length ? 'all reporting' : `${nodes.data.length - upNodes} stale`) : 'no node heartbeats' },
-    { label: 'Backends', value: data ? `${data.backendCount} / ${data.maxBackends}` : '—',
+    { label: 'Backends', value: data ? `${data.backendCount} / ${formatLicenseLimit(data.maxBackends)}` : '—',
       hint: data ? `${data.sets.length} set${data.sets.length === 1 ? '' : 's'}${probed.length > 0 ? ` · ${unreachable === 0 ? 'all reachable' : `${unreachable} unreachable`}` : ''}` : undefined },
     { label: 'Pool utilization', value: poolMax > 0 ? `${Math.round((poolActive / poolMax) * 100)}%` : '—',
       hint: poolMax > 0 ? `${poolActive} of ${poolMax} connections in use` : 'no pool opened yet' },
@@ -234,7 +234,7 @@ export default function Infrastructure() {
           {!data && !error && <Loading>Loading backend sets…</Loading>}
           {data && (
             <p className={styles.help}>
-              {data.backendCount} of {data.maxBackends} backends used on this license. A protocol frontend serves the set that holds
+              {data.backendCount} of {formatLicenseLimit(data.maxBackends)} backends used on this license. A protocol frontend serves the set that holds
               the <code>default</code> backend unless told to serve another one -- use the “Serve from …” action in a store's row below,
               or set <code>WARP_&lt;PROTOCOL&gt;_SET</code>.
             </p>

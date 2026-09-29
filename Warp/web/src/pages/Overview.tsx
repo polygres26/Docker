@@ -2,11 +2,11 @@ import { useCallback, useMemo } from 'react'
 import { Database, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
-  getAnomalies, getUsage, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints, listNodes,
+  getAnomalies, getUsage, getWireConfig, getWireMetrics, listBackendSets, listInterfaces, listMcpEndpoints, listNodes,
   type InterfaceKind,
 } from '../api/client'
 import {
-  Button, DataTable, EmptyState, KpiStrip, Loading, Meter, Notice, PageHeader, Section, StatusPill, Tag, compact,
+  Button, DataTable, EmptyState, KpiStrip, Loading, Meter, Notice, PageHeader, Section, StatusPill, Tag, compact, formatLicenseLimit,
   type KpiItem, type Tone,
 } from '../components/ui'
 import { errorText, targetOf, useLoad } from '../hooks'
@@ -28,6 +28,7 @@ export default function Overview() {
   const endpoints = useLoad(listMcpEndpoints, 30_000)
   const anomalies = useLoad(getAnomalies, 30_000)
   const usage = useLoad(getUsage, POLL_MS)
+  const config = useLoad(getWireConfig, 30_000)
 
   const m = metrics.data
   const backends = useMemo(() => (sets.data?.sets ?? []).flatMap((s) => s.backends.map((b) => ({ ...b, set: s.name }))), [sets.data])
@@ -67,12 +68,21 @@ export default function Overview() {
   staleNodes.forEach((n) => risks.push({ tone: 'warn', text: <>Node <strong>{n.nodeId}</strong> has not heartbeated recently</> }))
   expired.forEach((e) => risks.push({ tone: 'muted', text: <>MCP endpoint <strong>{e.name}</strong> has expired: <Link to="/interfaces/mcp">revoke it</Link></> }))
   notes.slice(0, 3).forEach((n) => risks.push({ tone: 'warn', text: <><strong>{n.protocol}</strong> traffic {n.ratio}x its baseline ({n.currentPerSec}/s vs {n.baselinePerSec}/s){n.narrative ? `: ${n.narrative}` : ''}</> }))
+  // These two were already fetched elsewhere on this page (WireConfig for other tabs' editors,
+  // MCP endpoints above for the expiry check) but never turned into a risk item themselves --
+  // a real, already-loaded gap, not new data collection.
+  if (config.data && (config.data.aclRules === null || config.data.aclRules.trim() === '')) {
+    risks.push({ tone: 'warn', text: <>No network ACL configured: every client IP can attempt to connect. Add rules on <Link to="/acl">Access</Link>.</> })
+  }
+  if (endpoints.data && endpoints.data.length === 0) {
+    risks.push({ tone: 'muted', text: <>No MCP endpoints are configured: agent/LLM clients have nothing scoped to connect through. Create one on <Link to="/interfaces/mcp">MCP servers</Link>.</> })
+  }
   const riskLoading = !sets.data && !sets.error
 
   return (
     <div>
       <PageHeader title="Gateway overview" description="Health, demand and risk across every interface Warp fronts."
-        actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { metrics.reload(); ifaces.reload(); sets.reload(); nodes.reload(); endpoints.reload(); anomalies.reload(); usage.reload() }}>Refresh</Button>} />
+        actions={<Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => { metrics.reload(); ifaces.reload(); sets.reload(); nodes.reload(); endpoints.reload(); anomalies.reload(); usage.reload(); config.reload() }}>Refresh</Button>} />
       {metrics.error && <Notice tone="bad">Could not load metrics: {metrics.error}</Notice>}
       {!m && !metrics.error ? <Loading>Loading overview…</Loading> : <KpiStrip items={kpis} label="Gateway health" />}
 
@@ -82,7 +92,7 @@ export default function Overview() {
             <Link className={styles.typeCard} to="/interfaces/sql"><strong>SQL drivers</strong><span>{byKind('sql').map((i) => i.label).join(', ') || 'none listening'}</span><b>{compact(sumReq('sql'))}</b><small>statements</small></Link>
             <Link className={styles.typeCard} to="/interfaces/api"><strong>API endpoints</strong><span>{byKind('api').length} listening{byKind('api').length ? `: ${byKind('api').slice(0, 4).map((i) => i.label).join(', ')}${byKind('api').length > 4 ? '…' : ''}` : ''}</span><b>{compact(sumReq('api'))}</b><small>operations</small></Link>
             <Link className={styles.typeCard} to="/interfaces/mcp"><strong>MCP servers</strong><span>{endpoints.data ? `${endpoints.data.length} endpoint${endpoints.data.length === 1 ? '' : 's'}` : byKind('mcp').map((i) => i.label).join(', ')}</span><b>{compact((m?.mcpTools ?? []).reduce((s, t) => s + t.calls, 0))}</b><small>tool calls</small></Link>
-            <Link className={styles.typeCard} to="/infrastructure"><strong>Backends</strong><span>{sets.data ? `${sets.data.sets.length} set${sets.data.sets.length === 1 ? '' : 's'}` : ''}</span><b>{sets.data ? sets.data.backendCount : '—'}</b><small>of {sets.data?.maxBackends ?? '—'} licensed</small></Link>
+            <Link className={styles.typeCard} to="/infrastructure"><strong>Backends</strong><span>{sets.data ? `${sets.data.sets.length} set${sets.data.sets.length === 1 ? '' : 's'}` : ''}</span><b>{sets.data ? sets.data.backendCount : '—'}</b><small>of {formatLicenseLimit(sets.data?.maxBackends)} licensed</small></Link>
           </div>
         )}
       </Section>
