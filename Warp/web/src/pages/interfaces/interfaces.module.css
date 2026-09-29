@@ -27,3 +27,8 @@
 .barRow { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; font-size: var(--fs-sm); }
 .barTrack { height: 8px; background: var(--sy-line); border-radius: 4px; overflow: hidden; }
 .barFill { display: block; height: 100%; background: var(--sy-accent); }
+.rowList { display: grid; }
+.rowItem { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--sy-line); }
+.rowItem:first-child { border-top: 0; }
+.rowItem strong { display: block; font-size: var(--fs-sm); font-weight: 500; }
+.wrapCell { white-space: normal; max-width: 420px; }

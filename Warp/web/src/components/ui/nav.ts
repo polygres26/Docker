@@ -30,6 +30,7 @@ export const NAV_GROUPS: NavGroup[] = [
       ] },
       { label: 'Traffic', icon: Activity, to: '/traffic', tabs: [
         { to: '/traffic', label: 'Traffic' }, { to: '/traffic-detail', label: 'SQL & backends' }, { to: '/topology', label: 'Topology' },
+        { to: '/observability', label: 'Observability' },
       ] },
       { label: 'Caching', icon: Layers, to: '/cache', tabs: [{ to: '/cache', label: 'Caching' }, { to: '/rollups', label: 'Rollups' }] },
       { label: 'Routing & QoS', icon: Route, to: '/routing', tabs: [

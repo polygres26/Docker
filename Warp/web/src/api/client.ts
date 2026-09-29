@@ -917,6 +917,41 @@ export async function getAnomalies(): Promise<{ enabled: boolean; notes: Anomaly
   return api('/api/anomalies')
 }
 
+// --- Observability: /api/observability (real OTLP exporter config + the always-on Prometheus
+// scrape endpoint + the real metric catalog -- see ObservabilitySummary.java's own javadoc for
+// why this never constructs a second OTLP SDK exporter just by being polled) ---
+
+export interface ObservabilityOtlpStatus {
+  enabled: boolean
+  protocol: 'grpc' | 'http' | null
+  endpoint: string | null
+  exportIntervalMs: number | null
+  headerCount: number
+  /** Always false today -- WarpTelemetry has no delivery-confirmation signal (fire-and-forget
+   * PeriodicMetricReader, no ack/health tracking). Never imply a check that doesn't exist. */
+  exportVerified: boolean
+}
+
+export interface ObservabilityMetric {
+  name: string
+  type: 'counter' | 'gauge' | 'histogram'
+  description: string
+  labels: string[]
+}
+
+export interface ObservabilityStatus {
+  otlp: ObservabilityOtlpStatus
+  /** Always true today: WarpTelemetry only registers metric instruments, no trace or log exporter
+   * exists anywhere in this codebase. */
+  metricsOnly: boolean
+  prometheus: { available: boolean; path: string }
+  catalog: ObservabilityMetric[]
+}
+
+export async function getObservability(): Promise<ObservabilityStatus> {
+  return api('/api/observability')
+}
+
 export interface UsageStat { calls: number; errors: number; totalMs: number; avgMs: number }
 
 export async function getUsage(): Promise<{

@@ -11,6 +11,7 @@ import ApiEndpoints from './pages/interfaces/ApiEndpoints'
 import McpServers from './pages/interfaces/McpServers'
 import Metrics from './pages/Metrics'
 import Traffic from './pages/Traffic'
+import Observability from './pages/Observability'
 import Caching from './pages/Caching'
 import Policies from './pages/Policies'
 import Topology from './pages/Topology'
@@ -58,6 +59,7 @@ export default function App() {
       <Route path="/cache" element={<RequireAuth><Caching /></RequireAuth>} />
       <Route path="/policies" element={<RequireAuth><Policies /></RequireAuth>} />
       <Route path="/topology" element={<RequireAuth><Topology /></RequireAuth>} />
+      <Route path="/observability" element={<RequireAuth><Observability /></RequireAuth>} />
       <Route path="/firewall" element={<RequireAuth><FirewallRules /></RequireAuth>} />
       <Route path="/acl" element={<RequireAuth><AclRules /></RequireAuth>} />
       <Route path="/oauth" element={<RequireAuth><OAuth /></RequireAuth>} />
