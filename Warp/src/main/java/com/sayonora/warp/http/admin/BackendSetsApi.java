@@ -46,6 +46,8 @@ import org.slf4j.LoggerFactory;
  *   DELETE /api/backend-sets/{set}/backends/{name}
  *   POST   /api/backend-sets/{set}/backends/{name}/test
  *   GET    /api/backend-stores                          the stores a Postgres backend can host
+ *   PATCH  /api/backend-stores/{storeId}                {set}   (which backend set this protocol's frontend
+ *                                                        serves; {@code set: null} clears the assignment)
  *   GET    /api/connection-routes                       connect-time routing: mode + explicit routes
  *   POST   /api/connection-routes                       {protocol?, database, user?, target, defaultBackend?, position?}
  *   PATCH  /api/connection-routes/{id}                  {target?, defaultBackend?}   (id = protocol|database|user)
@@ -67,12 +69,13 @@ public final class BackendSetsApi {
     private static final Pattern SET_BACKENDS = Pattern.compile("^/api/backend-sets/([^/]+)/backends/?$");
     private static final Pattern SET_BACKEND = Pattern.compile("^/api/backend-sets/([^/]+)/backends/([^/]+)/?$");
     private static final Pattern SET_BACKEND_TEST = Pattern.compile("^/api/backend-sets/([^/]+)/backends/([^/]+)/test$");
+    private static final Pattern STORE = Pattern.compile("^/api/backend-stores/([^/]+)/?$");
 
     private BackendSetsApi() {
     }
 
     public static boolean handles(String target) {
-        return target.equals("/api/backend-stores") || target.startsWith("/api/backend-sets")
+        return target.startsWith("/api/backend-stores") || target.startsWith("/api/backend-sets")
                 || target.startsWith("/api/connection-routes");
     }
 
@@ -82,10 +85,14 @@ public final class BackendSetsApi {
         String method = request.getMethod();
         try {
             if (target.equals("/api/backend-stores") && "GET".equals(method)) {
-                write(response, 200, storesCatalog());
+                write(response, 200, storesCatalog(registry));
                 return;
             }
             Matcher m;
+            if ((m = STORE.matcher(target)).matches() && "PATCH".equals(method)) {
+                setStoreFrontendSet(decode(m.group(1)), readBody(request), response, configStore, registry, options);
+                return;
+            }
             if (ROUTES.matcher(target).matches()) {
                 switch (method) {
                     case "GET" -> write(response, 200, routesJson(registry));
@@ -177,6 +184,10 @@ public final class BackendSetsApi {
     // ---- reads -------------------------------------------------------------------------------
 
     private static JsonObject storesCatalog() {
+        return storesCatalog(null);
+    }
+
+    private static JsonObject storesCatalog(BackendRegistry registry) {
         JsonArray arr = new JsonArray();
         for (StoreType t : StoreType.values()) {
             JsonObject o = new JsonObject();
@@ -185,6 +196,8 @@ public final class BackendSetsApi {
             o.addProperty("description", t.description());
             o.addProperty("shardable", t.shardable());
             o.addProperty("setEnvVar", t.setEnvVar());
+            o.addProperty("servedSet", registry == null ? null : registry.frontendSet(t));
+            o.addProperty("frontendSetOverride", registry == null ? null : registry.storeFrontendSetOverride(t));
             arr.add(o);
         }
         JsonObject out = new JsonObject();
@@ -275,6 +288,7 @@ public final class BackendSetsApi {
             String served = registry == null ? null : registry.frontendSet(t);
             e.addProperty("servedFromThisSet", served == null || served.equals(set));
             e.addProperty("frontendSetEnvVar", t.setEnvVar());
+            e.addProperty("frontendSetOverride", registry == null ? null : registry.storeFrontendSetOverride(t));
             o.add(t.id(), e);
         }
         return o;
@@ -356,6 +370,48 @@ public final class BackendSetsApi {
     }
 
     // ---- writes ------------------------------------------------------------------------------
+
+    /**
+     * {@code PATCH /api/backend-stores/{storeId}}: sets or clears (body {@code {"set": null}}) the
+     * admin-persisted serving-set assignment for one store -- the UI/API alternative to hand-setting
+     * that protocol's {@code WARP_<PROTO>WIRE_SET} env var (see {@link BackendRegistry#frontendSet}).
+     */
+    private static void setStoreFrontendSet(String storeIdRaw, JsonObject body, HttpServletResponse response,
+            ConfigStore configStore, BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
+        StoreType store;
+        try {
+            store = StoreType.parse(storeIdRaw);
+        } catch (IllegalArgumentException e) {
+            error(response, 404, e.getMessage());
+            return;
+        }
+        String setName = str(body, "set");
+        synchronized (WRITE_LOCK) {
+            WarpConfig before = latest(configStore);
+            java.util.Map<StoreType, String> assignments =
+                    new java.util.LinkedHashMap<>(BackendRegistry.parseStoreFrontendSets(before.storeFrontendSets()));
+            if (setName == null || setName.isBlank()) {
+                assignments.remove(store);
+            } else {
+                List<String> sets = registry != null ? registry.setNames() : hypothetical(before, options).setNames();
+                if (!sets.contains(setName)) {
+                    throw new ModelException(400, "no backend set '" + setName + "' -- known sets: " + sets);
+                }
+                assignments.put(store, setName);
+            }
+            String spec = BackendRegistry.renderStoreFrontendSets(assignments);
+            long version = configStore.write(before.withStoreFrontendSets(spec));
+            if (registry != null) {
+                registry.applyStoreFrontendSets(spec);
+            }
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            out.addProperty("version", version);
+            out.addProperty("store", store.id());
+            out.addProperty("servedSet", registry == null ? setName : registry.frontendSet(store));
+            write(response, 200, out);
+        }
+    }
 
     private static void createSet(HttpServletRequest request, HttpServletResponse response, ConfigStore configStore,
             BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
@@ -544,6 +600,7 @@ public final class BackendSetsApi {
                 registry.reload(after.backends(), after.shardBackends(), after.backendSets(), after.backendGroups());
                 registry.applyDescriptions(after.backendDescriptions(), after.backendGroupDescriptions());
                 registry.applyStoreConfig(after.backendStores(), after.backendSetNames());
+                registry.applyStoreFrontendSets(after.storeFrontendSets());
                 registry.connectionRouter().load(after.connectionRoutes());
             } catch (RuntimeException e) {
                 log.warn("backend sets: local immediate apply failed (the LISTEN/NOTIFY reload will retry): {}", e.toString());
@@ -561,6 +618,7 @@ public final class BackendSetsApi {
         BackendRegistry r = BackendRegistry.fromConfig(c.backends(), c.shardBackends(), c.backendSets(),
                 c.backendGroups(), implicitDefault(options), Map.of());
         r.applyStoreConfig(c.backendStores(), c.backendSetNames());
+        r.applyStoreFrontendSets(c.storeFrontendSets());
         return r;
     }
 
@@ -583,11 +641,15 @@ public final class BackendSetsApi {
     private static JsonObject routeJson(ConnectionRouter.Route r, BackendRegistry registry) {
         JsonObject o = ConnectionRouter.toJson(r);
         o.addProperty("id", r.key());
-        String t = r.target().toLowerCase(java.util.Locale.ROOT);
-        String kind = t.startsWith("set:") || t.startsWith("group:") ? "set"
-                : t.startsWith("db:") || t.startsWith("backend:") ? "backend"
-                : registry != null && registry.get(r.target()) != null ? "backend" : "set";
-        o.addProperty("targetKind", kind);
+        // Real resolution (same code path ConnectionRouter#resolve itself uses for a live
+        // connection), not a second, independently-reimplemented guess at what the target string
+        // means -- see ConnectionRouter#describeTarget's own javadoc for why that guess (case-
+        // sensitive exact match, no db:/set: prefix handling) could silently diverge from reality.
+        ConnectionRouter.TargetResolution resolved = registry != null
+                ? registry.connectionRouter().describeTarget(r.target()) : null;
+        o.addProperty("targetKind", resolved != null ? resolved.kind() : "unknown");
+        o.addProperty("resolvedName", resolved != null ? resolved.resolvedName() : null);
+        o.add("resolvedHosts", strings(resolved != null ? resolved.hosts() : List.of()));
         return o;
     }
 

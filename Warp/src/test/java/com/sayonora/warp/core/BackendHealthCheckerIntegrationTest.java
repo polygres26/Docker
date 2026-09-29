@@ -45,7 +45,6 @@ class BackendHealthCheckerIntegrationTest {
                             controlPlane.username(), controlPlane.password())
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", backends)
-                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                     .env("WARP_ROUTER_SCHEMA_RULES", "shopx:primary")
                     // Fast enough for a test to wait out without dragging real-time out of it too
                     // far -- production would use something like 15-30s (see Main's default).

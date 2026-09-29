@@ -138,7 +138,6 @@ class McpTokenScopeIntegrationTest {
                 .env("WARP_ADMIN_TOKEN", "test-admin-token")
                 .env("WARP_OAUTH_ISSUER", ISSUER)
                 .env("WARP_OAUTH_JWKS_URI", "http://localhost:" + jwksPort + "/jwks")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

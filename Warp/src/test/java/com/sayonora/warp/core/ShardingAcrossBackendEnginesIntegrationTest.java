@@ -85,7 +85,6 @@ class ShardingAcrossBackendEnginesIntegrationTest {
                 .frontend("pgwire", "WARP_PGWIRE_PORT")
                 .env("WARP_BACKENDS", backends)
                 .env("WARP_TABLE_SHARDS", "orders:hash:customer_id:shard1,shard2")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

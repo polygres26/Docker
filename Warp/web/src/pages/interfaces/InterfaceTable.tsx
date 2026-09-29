@@ -33,6 +33,28 @@ export function TlsCell({ i }: { i: InterfaceInfo }) {
   )
 }
 
+/** Auth column: the method and whether it's actually enforced (joined from GET /api/access-summary),
+ * or "not reported" for a frontend AccessSummary doesn't cover -- never guessed. An interface with a
+ * real method that isn't enforced (open unless configured) is a genuine warning, not a neutral fact. */
+export function AuthCell({ i }: { i: InterfaceInfo }) {
+  if (i.authMethod === undefined) return <span className={styles.sub} title="This frontend reports no auth status">not reported</span>
+  if (!i.authEnforced) {
+    return <span title={i.authDetail}><StatusPill tone="warn">Open</StatusPill></span>
+  }
+  return <span title={i.authDetail}>{i.authMethod}</span>
+}
+
+/** "Listening" alone used to be shown for every row regardless of whether the frontend actually has
+ * anywhere real to put/read data -- a store-backed frontend whose store isn't enabled on any
+ * backend read exactly as healthy as a fully-configured one. Now warn instead when that's the case;
+ * every other status still reads as a plain, healthy "Listening". */
+export function StatusCell({ i }: { i: InterfaceInfo }) {
+  if (i.status === 'listening_no_store') {
+    return <span title="Socket is up, but this store isn't enabled on any backend -- see the Serves column"><StatusPill tone="warn">Listening (no store)</StatusPill></span>
+  }
+  return <StatusPill tone="ok">Listening</StatusPill>
+}
+
 /** Table of frontends: name/protocol, port, mode, serving set/backends, traffic, status. */
 export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
   rows: InterfaceInfo[]; metrics: WireMetricsSummary | null; emptyTitle: string; emptyText: string
@@ -41,7 +63,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
   return (
     <DataTable caption="Interfaces" minWidth={960}>
       <thead>
-        <tr><th>Interface</th><th>Port</th><th>TLS</th><th>Mode</th><th>Maturity</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
+        <tr><th>Interface</th><th>Port</th><th>Auth</th><th>TLS</th><th>Mode</th><th>Maturity</th><th>Serves</th><th>Requests</th><th>Avg latency</th><th>Status</th></tr>
       </thead>
       <tbody>
         {rows.map((i) => {
@@ -50,6 +72,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
             <tr key={i.id}>
               <td><NameCell name={i.label} sub={i.protocol} /></td>
               <td className={styles.mono}>{i.port}</td>
+              <td><AuthCell i={i} /></td>
               <td><TlsCell i={i} /></td>
               <td><ModeTag mode={i.mode} /></td>
               <td><MaturityTag maturity={maturityFor(i.metricsKey, i.id)} /></td>
@@ -62,7 +85,7 @@ export function InterfaceTable({ rows, metrics, emptyTitle, emptyText }: {
               </td>
               <td className={styles.num}>{i.requests === null ? <span className={styles.sub}>not counted</span> : compact(i.requests)}</td>
               <td className={styles.num}>{lat ? `${lat.avgMs.toFixed(1)} ms` : <span className={styles.sub}>no samples</span>}</td>
-              <td><StatusPill tone="ok">Listening</StatusPill></td>
+              <td><StatusCell i={i} /></td>
             </tr>
           )
         })}

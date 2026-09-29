@@ -6,9 +6,10 @@ import {
   getAbRouting, getUsage, getWireConfig, getWireMetrics, listBackendSets, listFirewallRules, listInterfaces,
 } from '../api/client'
 import {
-  Button, DataTable, EmptyState, KpiStrip, Loading, ModeTag, NameCell, Notice, PageHeader, Section, StatusPill, compact, type KpiItem,
+  Button, DataTable, EmptyState, KpiStrip, Loading, ModeTag, NameCell, Notice, PageHeader, Section, compact, type KpiItem,
 } from '../components/ui'
 import { useLoad } from '../hooks'
+import { AuthCell, StatusCell } from './interfaces/InterfaceTable'
 import styles from './interfaces/interfaces.module.css'
 
 const PROTOCOL_OF: Record<string, string> = {
@@ -72,7 +73,7 @@ export default function Workloads() {
       <Section flush title="Workloads" meta={`${rows.length} derived`}>
         {rows.length === 0 && !ifaces.loading ? <EmptyState title="No workloads">No SQL or API frontend is listening on this Warp.</EmptyState> : (
           <DataTable caption="Derived workloads" minWidth={980}>
-            <thead><tr><th>Workload</th><th>Mode</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th></tr></thead>
+            <thead><tr><th>Workload</th><th>Mode</th><th>Auth</th><th>Reaches</th><th>Policies that apply</th><th>Requests</th><th>Status</th></tr></thead>
             <tbody>
               {rows.map((i) => {
                 const r = reaches(i)
@@ -81,6 +82,7 @@ export default function Workloads() {
                   <tr key={i.id}>
                     <td><NameCell name={i.label} sub={`${i.protocol} · port ${i.port}`} /></td>
                     <td><ModeTag mode={i.mode} /></td>
+                    <td><AuthCell i={i} /></td>
                     <td><NameCell name={r.primary} sub={r.sub} /></td>
                     <td>
                       <span className={styles.policyList}>
@@ -92,7 +94,7 @@ export default function Workloads() {
                       </span>
                     </td>
                     <td className={styles.num}>{i.requests === null ? <span className={styles.sub}>not counted</span> : compact(i.requests)}</td>
-                    <td><StatusPill tone="ok">Listening</StatusPill></td>
+                    <td><StatusCell i={i} /></td>
                   </tr>
                 )
               })}

@@ -62,7 +62,6 @@ class MySqlXaIntegrationTest {
                             controlPlane.username(), controlPlane.password())
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", backends)
-                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                     .env("WARP_ROUTER_SCHEMA_RULES", "shopA:backendA," + mysqlDb + ":backendB")
                     .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                     .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")

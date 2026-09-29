@@ -412,6 +412,11 @@ export interface StoreInfo {
   description: string
   shardable: boolean
   setEnvVar: string
+  /** The set this protocol's frontend currently serves from (null: nothing hosts it anywhere yet). */
+  servedSet: string | null
+  /** The admin-persisted serving-set assignment (settable via PATCH /api/backend-stores/{id}),
+   * or null when none is set -- falls back to the setEnvVar / the default set. */
+  frontendSetOverride: string | null
 }
 
 export interface SetBackend {
@@ -440,6 +445,9 @@ export interface SetStoreHosting {
   sharded: boolean
   servedFromThisSet: boolean
   frontendSetEnvVar: string
+  /** The admin-persisted serving-set assignment for this store (any set, not just this one), or
+   * null when none is set. Settable via `setStoreFrontendSet`. */
+  frontendSetOverride: string | null
 }
 
 export interface BackendSetInfo {
@@ -458,7 +466,15 @@ export interface ConnectionRoute {
   database: string
   user?: string
   target: string
-  targetKind: 'backend' | 'set'
+  /** Real resolution of `target` (ConnectionRouter#describeTarget -- the SAME code path a live
+   * connection uses), not a client-side guess: 'unknown' means a real connection through this
+   * route is rejected outright, fail-closed, exactly as ConnectionRouter#resolve treats it. */
+  targetKind: 'backend' | 'set' | 'unknown'
+  /** The real backend/set name `target` resolves to (case/prefix-normalized), null when unknown. */
+  resolvedName: string | null
+  /** The real backend(s) this route reaches: one name for a backend target, the set's members for
+   * a set target, empty for 'unknown'. */
+  resolvedHosts: string[]
   defaultBackend?: string
 }
 
@@ -512,6 +528,12 @@ export async function createBackendSet(name: string, description: string): Promi
 export async function listBackendStores(): Promise<StoreInfo[]> {
   const r = await api<{ stores: StoreInfo[] }>('/api/backend-stores')
   return r.stores
+}
+
+/** Sets (or, with `set: null`, clears) which backend set a store's frontend serves -- the UI
+ * alternative to hand-setting that protocol's WARP_<PROTO>WIRE_SET env var. */
+export async function setStoreFrontendSet(storeId: StoreId, set: string | null): Promise<{ ok: boolean; version: number; servedSet: string | null }> {
+  return api(`/api/backend-stores/${encodeURIComponent(storeId)}`, { method: 'PATCH', body: JSON.stringify({ set }) })
 }
 
 /** Rename and/or re-describe a set. `name` renames it (its backends follow). */
@@ -754,7 +776,11 @@ export interface InterfaceInfo {
   port: number
   /** Relay: native protocol to a same-engine backend. Bridge: real protocol parsed, SQL run verbatim against a pooled same-engine backend (firewall/QoS/audit still apply, no dialect translation). Emulate: dialect/API translated and executed on Postgres. null: n/a. */
   mode: InterfaceMode | null
-  status: 'listening'
+  /** 'listening_no_store': the socket is up, but this store-backed frontend's store isn't enabled
+   * on any backend, so it's silently running on the legacy implicit-default-backend fallback --
+   * not what "store not enabled" in the Serves column implies at a glance. Render as a warning,
+   * not the same plain "Listening" pill as a fully-configured frontend. */
+  status: 'listening' | 'listening_no_store'
   /** Store id for store-backed API frontends. */
   store: string | null
   /** Backend set this store-backed frontend is served from (WARP_<PROTOCOL>_SET), and the backends hosting it. */
@@ -774,6 +800,11 @@ export interface InterfaceInfo {
   tlsClientAuth?: boolean
   /** Why HTTPS is off although TLS was configured (bad certificate, missing file, ...). */
   tlsError?: string
+  /** Joined from GET /api/access-summary (AccessSummary#frontendAuth) -- absent means this
+   * frontend has no auth summary reported at all (never guessed; render as "not reported"). */
+  authMethod?: string
+  authEnforced?: boolean
+  authDetail?: string
 }
 
 export interface InterfacesResponse { interfaces: InterfaceInfo[]; activeSessions: number }

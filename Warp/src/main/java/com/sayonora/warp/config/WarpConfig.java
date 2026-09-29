@@ -39,7 +39,8 @@ public record WarpConfig(
         String backendStores,
         String backendSetNames,
         String connectionRoutes,
-        String mcpUpstreams) {
+        String mcpUpstreams,
+        String storeFrontendSets) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -78,6 +79,7 @@ public record WarpConfig(
                 System.getenv("WARP_BACKEND_STORES"),
                 System.getenv("WARP_BACKEND_SET_NAMES"),
                 System.getenv("WARP_CONNECTION_ROUTES"),
+                null,
                 null);
     }
 
@@ -91,7 +93,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams);
+                connectionRoutes, mcpUpstreams, storeFrontendSets);
     }
 
     /** Copy with the connect-time route table (JSON array, see ConnectionRouter) replaced. */
@@ -103,7 +105,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                routes, mcpUpstreams);
+                routes, mcpUpstreams, storeFrontendSets);
     }
 
     /** Copy with the mcpUpstreams field (JSON array, see McpUpstream) replaced. */
@@ -115,7 +117,21 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreamsJson);
+                connectionRoutes, mcpUpstreamsJson, storeFrontendSets);
+    }
+
+    /** Copy with the per-store serving-set assignment ({@code store=set|store2=set2}, see
+     * {@link com.sayonora.warp.core.BackendRegistry#applyStoreFrontendSets}) replaced -- the
+     * admin-UI/API-settable alternative to a protocol's {@code WARP_<PROTO>WIRE_SET} env var. */
+    public WarpConfig withStoreFrontendSets(String spec) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes, mcpUpstreams, spec);
     }
 
     public String toJson() {
@@ -156,6 +172,7 @@ public record WarpConfig(
         fields.put("backendSetNames", backendSetNames);
         fields.put("connectionRoutes", connectionRoutes);
         fields.put("mcpUpstreams", mcpUpstreams);
+        fields.put("storeFrontendSets", storeFrontendSets);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -208,7 +225,8 @@ public record WarpConfig(
                 fields.get("backendStores"),
                 fields.get("backendSetNames"),
                 fields.get("connectionRoutes"),
-                fields.get("mcpUpstreams"));
+                fields.get("mcpUpstreams"),
+                fields.get("storeFrontendSets"));
     }
 
     private static String quote(String value) {

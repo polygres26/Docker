@@ -1554,7 +1554,8 @@ public final class MetricsServer {
                         field(body, "backendStores", current.backendStores()),
                         field(body, "backendSetNames", current.backendSetNames()),
                         field(body, "connectionRoutes", current.connectionRoutes()),
-                        field(body, "mcpUpstreams", current.mcpUpstreams()));
+                        field(body, "mcpUpstreams", current.mcpUpstreams()),
+                        field(body, "storeFrontendSets", current.storeFrontendSets()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
@@ -1653,7 +1654,7 @@ public final class MetricsServer {
                         newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
                         current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
-                        current.mcpUpstreams());
+                        current.mcpUpstreams(), current.storeFrontendSets());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -2299,7 +2300,7 @@ public final class MetricsServer {
                 current.backendGroups(), current.backendDescriptions(), current.backendGroupDescriptions(),
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
-                current.mcpUpstreams());
+                current.mcpUpstreams(), current.storeFrontendSets());
         configStore.write(updated);
     }
 

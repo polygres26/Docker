@@ -21,7 +21,6 @@ public final class AccessSummary {
         JsonObject out = new JsonObject();
         String authMode = blankToNull(env.get("WARP_AUTH_MODE"));
         out.addProperty("authMode", authMode);
-        boolean roles = "postgres_roles".equals(authMode);
 
         String creds = blankToNull(env.get("WARP_AUTH_CREDENTIALS"));
         TreeSet<String> users = names(creds, '=');
@@ -29,6 +28,35 @@ public final class AccessSummary {
         sql.addProperty("mode", users.isEmpty() ? "single-shared" : "multi-user");
         sql.add("users", array(users.isEmpty() ? new TreeSet<>(java.util.List.of(env.getOrDefault("WARP_AUTH_USER", "orapg"))) : users));
         out.add("sqlCredentials", sql);
+
+        JsonArray arr = new JsonArray();
+        frontendAuth(env).forEach((id, o) -> {
+            JsonObject copy = o.deepCopy();
+            copy.addProperty("id", id);
+            arr.add(copy);
+        });
+        out.add("frontends", arr);
+
+        JsonObject tls = new JsonObject();
+        tls.addProperty("serverKeystoreConfigured", blankToNull(env.get("WARP_TLS_KEYSTORE")) != null);
+        tls.addProperty("clientCertificatesRequired", false);
+        out.add("tls", tls);
+        return out;
+    }
+
+    /**
+     * Per-frontend auth summary keyed by interface id, WITHOUT the {@code id} property added (unlike
+     * {@link #toJson}'s own {@code frontends} array) -- the shape {@link InterfaceRegistry#toJson}
+     * joins onto {@code GET /api/interfaces} so the Interfaces/Workloads tables can show a real Auth
+     * column instead of leaving this isolated on the Access page. A frontend absent from this map
+     * has no auth summary at all (never guessed) -- the id list here is exactly {@link #toJson}'s own,
+     * just factored out so both callers build it once, the same way.
+     */
+    public static Map<String, JsonObject> frontendAuth(Map<String, String> env) {
+        String authMode = blankToNull(env.get("WARP_AUTH_MODE"));
+        boolean roles = "postgres_roles".equals(authMode);
+        String creds = blankToNull(env.get("WARP_AUTH_CREDENTIALS"));
+        TreeSet<String> users = names(creds, '=');
 
         Map<String, JsonObject> f = new LinkedHashMap<>();
         for (String id : new String[] {"pgwire", "mssqlwire", "mssqlwire-native"}) {
@@ -59,18 +87,7 @@ public final class AccessSummary {
         for (String id : new String[] {"azblobwire", "azqueuewire", "aztablewire", "azfilewire"}) {
             f.put(id, entry("shared-key", !azure.isEmpty() || blankToNull(env.get("WARP_AZURE_BEARER_TOKEN")) != null, azure.size() + " storage account(s)", azure.isEmpty() ? null : azure));
         }
-        JsonArray arr = new JsonArray();
-        f.forEach((id, o) -> {
-            o.addProperty("id", id);
-            arr.add(o);
-        });
-        out.add("frontends", arr);
-
-        JsonObject tls = new JsonObject();
-        tls.addProperty("serverKeystoreConfigured", blankToNull(env.get("WARP_TLS_KEYSTORE")) != null);
-        tls.addProperty("clientCertificatesRequired", false);
-        out.add("tls", tls);
-        return out;
+        return f;
     }
 
     private static JsonObject entry(String method, boolean enforced, String detail, TreeSet<String> principals) {

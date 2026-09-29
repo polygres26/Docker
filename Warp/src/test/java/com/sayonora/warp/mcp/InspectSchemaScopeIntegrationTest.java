@@ -87,7 +87,6 @@ class InspectSchemaScopeIntegrationTest {
                 // "default" and "backend_b" form a real named group; "backend_c" is deliberately
                 // left OUT of it, to prove scope=group doesn't just show everything.
                 .env("WARP_BACKEND_GROUPS", "team_alpha=default,backend_b")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

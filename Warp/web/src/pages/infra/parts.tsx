@@ -191,7 +191,7 @@ export function StoreTags({ backend, set, stores }: { backend: SetBackend; set: 
         const note = h?.sharded ? ` · sharded ×${h.hosts.length}` : ''
         const unserved = h && !h.servedFromThisSet
         return (
-          <span key={id} title={unserved ? `No ${storeLabel(stores, id)} frontend serves this set: set ${h.frontendSetEnvVar}=${set.name}` : undefined}>
+          <span key={id} title={unserved ? `No ${storeLabel(stores, id)} frontend serves this set -- use “Serve from ${set.name}” below, or set ${h.frontendSetEnvVar}=${set.name}` : undefined}>
             <Tag>{storeLabel(stores, id)}{note}{unserved ? ' · not served' : ''}</Tag>
           </span>
         )
@@ -334,7 +334,9 @@ export function RoutesSection({ data, onChanged }: { data: BackendSetsResponse; 
                 <td className={styles.mono}>{r.database}</td>
                 <td>{r.protocol ?? <span className={styles.sub}>any</span>}</td>
                 <td className={styles.mono}>{r.user ?? <span className={styles.sub}>any</span>}</td>
-                <td><span className={styles.mono}>{r.target}</span> <Tag>{r.targetKind}</Tag></td>
+                <td><span className={styles.mono}>{r.target}</span> {r.targetKind === 'unknown'
+                  ? <span title="No backend or set named this exists -- a real connection through this route is rejected, fail-closed"><StatusPill tone="bad">unknown, rejected</StatusPill></span>
+                  : <Tag>{r.targetKind}</Tag>}</td>
                 <td className={styles.mono}>{r.defaultBackend ?? <span className={styles.sub}>—</span>}</td>
                 <td>
                   <div className={styles.actions}>

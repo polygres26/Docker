@@ -484,6 +484,7 @@ public final class BackendRegistry {
     private volatile List<String> declarationOrder = List.of();
     private volatile Map<String, List<StoreType>> enabledStores = Map.of();
     private volatile List<String> declaredSetNames = List.of();
+    private volatile Map<StoreType, String> storeFrontendSets = Map.of();
 
     /** Backend names in the order they were declared in WARP_BACKENDS (implicit default first). */
     public List<String> orderedNames() {
@@ -541,6 +542,66 @@ public final class BackendRegistry {
             }
         }
         return out;
+    }
+
+    /**
+     * Applies the admin-settable per-store serving-set assignment ({@code warp_config.
+     * storeFrontendSets}) -- the UI/API alternative to a protocol's {@code WARP_<PROTO>WIRE_SET}
+     * env var (see {@link #frontendSet}). Grammar: {@code store1=set1|store2=set2}, store ids as
+     * {@link StoreType#id()}. Never throws -- a malformed entry is logged and skipped, same
+     * contract as {@link #applyStoreConfig}, so a bad value cannot break a config reload.
+     */
+    public void applyStoreFrontendSets(String spec) {
+        this.storeFrontendSets = parseStoreFrontendSets(spec);
+        this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
+        touch();
+    }
+
+    public static Map<StoreType, String> parseStoreFrontendSets(String spec) {
+        Map<StoreType, String> out = new LinkedHashMap<>();
+        if (spec == null || spec.isBlank()) {
+            return out;
+        }
+        for (String entry : spec.split("\\|")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int eq = entry.indexOf('=');
+            if (eq <= 0) {
+                log.warn("backend registry: ignoring malformed storeFrontendSets entry \"{}\"", entry);
+                continue;
+            }
+            String storeId = entry.substring(0, eq).trim();
+            String setName = entry.substring(eq + 1).trim();
+            if (setName.isEmpty()) {
+                continue;
+            }
+            try {
+                out.put(StoreType.parse(storeId), setName);
+            } catch (IllegalArgumentException e) {
+                log.warn("backend registry: ignoring storeFrontendSets entry for unknown store \"{}\"", storeId);
+            }
+        }
+        return Map.copyOf(out);
+    }
+
+    public static String renderStoreFrontendSets(Map<StoreType, String> assignments) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<StoreType, String> e : assignments.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('|');
+            }
+            sb.append(e.getKey().id()).append('=').append(e.getValue());
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /** The admin-persisted serving set for {@code store}, or {@code null} if none is assigned. */
+    public String storeFrontendSetOverride(StoreType store) {
+        return storeFrontendSets.get(store);
     }
 
     public static String renderStoreSpec(Map<String, List<StoreType>> stores) {
@@ -605,12 +666,23 @@ public final class BackendRegistry {
     }
 
     /**
-     * The set a protocol frontend serves: its {@code WARP_<PROTO>_SET} env var when that names an
-     * existing set, otherwise the set holding the {@code default} backend (or the first set).
+     * The set a protocol frontend serves, in priority order: the admin-persisted assignment
+     * ({@code warp_config.storeFrontendSets}, settable in the UI/API -- see
+     * {@link #applyStoreFrontendSets}), else its {@code WARP_<PROTO>_SET} env var (kept for
+     * existing env-var-only deployments), when either names an existing set; otherwise the set
+     * holding the {@code default} backend (or the first set).
      */
     public String frontendSet(StoreType store) {
-        String configured = System.getenv(store.setEnvVar());
         List<String> sets = setNames();
+        String persisted = storeFrontendSets.get(store);
+        if (persisted != null && !persisted.isBlank()) {
+            if (sets.contains(persisted.trim())) {
+                return persisted.trim();
+            }
+            log.warn("backend registry: storeFrontendSets assigns {} to '{}', not an existing backend set ({}); "
+                    + "falling back", store.id(), persisted, sets);
+        }
+        String configured = System.getenv(store.setEnvVar());
         if (configured != null && !configured.isBlank()) {
             if (sets.contains(configured.trim())) {
                 return configured.trim();

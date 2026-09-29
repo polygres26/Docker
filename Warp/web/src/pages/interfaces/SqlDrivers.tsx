@@ -42,7 +42,9 @@ export default function SqlDrivers() {
               <tbody>
                 {routing.routes.map((r) => (
                   <tr key={r.id}><td className={styles.mono}>{r.database}</td><td>{r.protocol ?? 'any'}</td><td className={styles.mono}>{r.user ?? 'any'}</td>
-                    <td className={styles.mono}>{r.target} <span className={styles.sub}>{r.targetKind}</span></td></tr>
+                    <td className={styles.mono}>{r.target} {r.targetKind === 'unknown'
+                      ? <span className={styles.sub} title="No backend or set named this exists -- a real connection through this route is rejected">unknown, rejected</span>
+                      : <span className={styles.sub}>{r.targetKind}</span>}</td></tr>
                 ))}
               </tbody>
             </DataTable>

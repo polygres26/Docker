@@ -48,7 +48,6 @@ class OpenSearchWireShardingIntegrationTest {
                 .frontend("oswire", "WARP_OSWIRE_PORT")
                 .env("WARP_BACKENDS", backends)
                 .env("WARP_SHARD_BACKENDS", "shard1,shard2")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

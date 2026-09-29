@@ -54,7 +54,6 @@ class ScatterGatherAggregateMergeIntegrationTest {
                 .env("WARP_BACKENDS", backends)
                 .env("WARP_SHARD_BACKENDS", "shard1,shard2")
                 .env("WARP_ROUTER_SHARD_TABLES", "public")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

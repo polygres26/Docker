@@ -160,7 +160,6 @@ class AllFiveEnginesConcurrentCaptureAndMetricsIntegrationTest {
                 .env("WARP_MSSQL_PASSWORD", sqlServer.password())
                 .env("WARP_CAPTURE_ENABLED", "true")
                 .env("WARP_ADMIN_TOKEN", ADMIN_TOKEN)
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

@@ -313,6 +313,40 @@ public final class ConnectionRouter {
     }
 
     /**
+     * {@code kind}: {@code "backend"}, {@code "set"}, or {@code "unknown"} (the target names
+     * neither -- a route pointed at it is rejected, fail-closed, exactly like {@link #resolve}
+     * treats it). {@code resolvedName} is the real backend/set name (case- and {@code db:}/
+     * {@code set:}-prefix-normalized), null for unknown. {@code hosts} is the one backend for a
+     * DATABASE target, or the set's members in declaration order for a GROUP target -- empty for
+     * an unknown target or a set with no members.
+     */
+    public record TargetResolution(String kind, String resolvedName, List<String> hosts) {
+    }
+
+    /**
+     * The SAME resolution {@link #resolve} itself uses for one route's {@code target} string --
+     * exposed publicly so a caller displaying route state (the admin API/UI) shows exactly what a
+     * real connection would resolve to, instead of independently reimplementing name/prefix
+     * matching (which can silently diverge, e.g. on case-sensitivity or the {@code db:}/{@code set:}
+     * prefixes this method already normalizes). Never throws; an unresolvable target is a normal,
+     * reportable {@code "unknown"} result, not an error.
+     */
+    public TargetResolution describeTarget(String target) {
+        if (target == null || target.isBlank()) {
+            return new TargetResolution("unknown", null, List.of());
+        }
+        Target t = resolveTarget(target, snapshot());
+        if (t == null) {
+            return new TargetResolution("unknown", null, List.of());
+        }
+        if (t.backend != null) {
+            return new TargetResolution("backend", t.backend, List.of(t.backend));
+        }
+        List<String> members = snapshot().members.get(t.set);
+        return new TargetResolution("set", t.set, members == null ? List.of() : members);
+    }
+
+    /**
      * For the frontends that do NOT run SQL through the shared pipeline (mongowire documents,
      * boltwire graph): the backends a store may use under {@code route}. {@code null} = unrouted (the
      * store's own normal placement); otherwise the Postgres-dialect backends -- the one backend of a

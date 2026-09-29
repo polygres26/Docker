@@ -112,7 +112,6 @@ class ParallelJoinChainIntegrationTest {
                 .pgBackend(ordersDb.host(), ordersDb.port(), ordersDb.database(), ordersDb.username(), ordersDb.password())
                 .frontend("mcp", "WARP_MCP_PORT")
                 .env("WARP_BACKENDS", backends)
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

@@ -168,7 +168,6 @@ class ThreeOracleBackendsHashShardedByCustomerIdIntegrationTest {
                 // index 1 (0-based) is customer_id in "INSERT INTO orders (id, customer_id,
                 // amount) VALUES (?, ?, ?)" below.
                 .env("WARP_ROUTER_VALUE_SHARD_RULES", "1:hash:oracle-shards")
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_MONGOWIRE_CACHE_ENABLED", "false")
                 .env("WARP_OTEL_ENDPOINT", "disabled")

@@ -82,10 +82,21 @@ export default function RoutingQos() {
     const out: RouteRow[] = []
     const mk = (r: Omit<RouteRow, 'health' | 'fallback'> & { fallback?: string }) =>
       out.push({ ...r, fallback: r.fallback ?? fallbackOf(r.destination), health: healthOf(r.destination) })
-    // 1. connect-time routing (before any statement runs)
+    // 1. connect-time routing (before any statement runs). Health/destination come straight from
+    // the server's OWN resolution (ConnectionRouter#describeTarget, via resolvedHosts/targetKind)
+    // rather than re-guessing here against this page's own byName/setByName maps -- those maps use
+    // case-sensitive exact matching and don't understand the db:/set: target prefixes
+    // ConnectionRouter itself normalizes, so they could show a route as healthy or unknown when the
+    // real connection-time resolution disagrees. A targetKind of 'unknown' is the server telling us
+    // the route is rejected outright (fail-closed), not a guess.
     for (const r of sets.data?.connectionRouting.routes ?? []) {
-      mk({ key: `conn:${r.id}`, origin: 'Connection route', match: `database = ${r.database}${r.protocol ? ` · ${r.protocol}` : ''}${r.user ? ` · user ${r.user}` : ''}`,
-        strategy: r.targetKind === 'set' ? 'Route to set' : 'Route to backend', destination: [r.target], fallback: r.defaultBackend ? `default: ${r.defaultBackend}` : undefined })
+      const destination = r.resolvedHosts.length > 0 ? r.resolvedHosts : [r.target]
+      const health: Health = r.targetKind === 'unknown'
+        ? { tone: 'bad', text: 'Unknown destination' }
+        : healthOf(destination)
+      out.push({ key: `conn:${r.id}`, origin: 'Connection route', match: `database = ${r.database}${r.protocol ? ` · ${r.protocol}` : ''}${r.user ? ` · user ${r.user}` : ''}`,
+        strategy: r.targetKind === 'set' ? 'Route to set' : r.targetKind === 'backend' ? 'Route to backend' : 'Route (unresolved)',
+        destination, health, fallback: r.defaultBackend ? `default: ${r.defaultBackend}` : fallbackOf(destination) })
     }
     if (cfg) {
       // 2. router stage, in the order RouterStage evaluates them

@@ -88,7 +88,6 @@ class ShardRoutingAndTwoPhaseCommitIntegrationTest {
                 .frontend("pgwire", "WARP_PGWIRE_PORT")
                 .env("WARP_BACKENDS", backends)
                 .env("WARP_TABLE_SHARDS", TABLE_SHARDS)
-                .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                 // This dev machine has an unrelated process that can hold the default gRPC port
                 // (7070) -- always pin an ephemeral one instead of relying on the default.
                 .env("WARP_GRPC_PORT", String.valueOf(findFreePort()))

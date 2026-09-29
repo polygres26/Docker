@@ -42,7 +42,6 @@ class BackendDrainXaGateIntegrationTest {
                             controlPlane.username(), controlPlane.password())
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", backends)
-                    .env("WARP_TRUSTED_BACKEND_HOSTS", "localhost")
                     .env("WARP_ADMIN_TOKEN", adminToken)
                     .env("WARP_BACKEND_HEALTH_CHECK_SECONDS", "0")
                     .env("WARP_DYNAMOWIRE_CACHE_ENABLED", "false")

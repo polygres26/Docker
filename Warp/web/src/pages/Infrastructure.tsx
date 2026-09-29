@@ -5,7 +5,7 @@ import {
   type BackendSetInfo, type BackendSetsResponse, type BackendTestResult, type BackendWriteResult, type InterfaceInfo,
   type McpEndpoint, type RebalanceNotice, type SetBackend,
   createBackendSet, deleteBackendSet, deleteSetBackend, getConfigVersion, getWireMetrics, listBackendSets, listInterfaces,
-  listMcpEndpoints, listNodes, moveSetBackend, testSetBackend, updateBackendSet,
+  listMcpEndpoints, listNodes, moveSetBackend, setStoreFrontendSet, testSetBackend, updateBackendSet, type StoreId,
 } from '../api/client'
 import {
   Button, CopyButton, DataTable, EmptyState, Field, IconButton, KpiStrip, Loading, Meter, NameCell, Notice, PageHeader, Section,
@@ -70,6 +70,7 @@ export default function Infrastructure() {
   const [testing, setTesting] = useState<Record<string, boolean>>({})
   const [pendingDelete, setPendingDelete] = useState<Pending | null>(null)
   const [rebalance, setRebalance] = useState<RebalanceMap>(loadRebalance)
+  const [servingStore, setServingStore] = useState<StoreId | null>(null)
 
   // The polled copy (fast, no probes) is the base; it keeps the last probe results by backend name. A health-probed
   // copy (slower: it connects to every backend) replaces it whenever one arrives.
@@ -92,6 +93,19 @@ export default function Infrastructure() {
     }
     setEditor(null); setRenaming(null); setMoving(null); setProbes({})
     reload()
+  }
+
+  async function serveStore(storeId: StoreId, set: string) {
+    setServingStore(storeId)
+    try {
+      await setStoreFrontendSet(storeId, set)
+      setNotice(`${storeLabel(data?.stores ?? [], storeId)} is now served from set “${set}”.`)
+      reload()
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setServingStore(null)
+    }
   }
 
   function dismissRebalance(set: string, store: string) {
@@ -221,14 +235,15 @@ export default function Infrastructure() {
           {data && (
             <p className={styles.help}>
               {data.backendCount} of {data.maxBackends} backends used on this license. A protocol frontend serves the set that holds
-              the <code>default</code> backend unless <code>WARP_&lt;PROTOCOL&gt;_SET</code> names another set.
+              the <code>default</code> backend unless told to serve another one -- use the “Serve from …” action in a store's row below,
+              or set <code>WARP_&lt;PROTOCOL&gt;_SET</code>.
             </p>
           )}
           {data?.sets.map((set) => (
             <SetPanel key={set.name} set={set} data={data} probes={probes} testing={testing} busy={busy}
               endpoints={endpoints.data ?? []} interfaces={interfaces.data?.interfaces ?? []} metrics={metrics.data?.byBackend ?? []}
               rebalance={rebalance[set.name] ?? []} onDismissRebalance={(store) => dismissRebalance(set.name, store)}
-              ports={ports}
+              ports={ports} servingStore={servingStore} onServeStore={serveStore}
               onAdd={() => { setEditor({ kind: 'add', set: set.name }); setCreating(false); setRenaming(null) }}
               onEdit={(b) => { setEditor({ kind: 'edit', set: set.name, backend: b }); setCreating(false); setRenaming(null) }}
               onRename={() => { setRenaming({ set: set.name, name: set.name, description: set.description ?? '' }); setEditor(null); setMoving(null) }}
@@ -316,12 +331,13 @@ export default function Infrastructure() {
 }
 
 /** One backend set: header, its backends (with pool/health/roles/stores), stores & frontends, MCP endpoints. */
-function SetPanel({ set, data, probes, testing, busy, endpoints, interfaces, metrics, rebalance, ports, onDismissRebalance, onAdd, onEdit, onRename, onMove, onTest, onDelete, children }: {
+function SetPanel({ set, data, probes, testing, busy, endpoints, interfaces, metrics, rebalance, ports, onDismissRebalance, onAdd, onEdit, onRename, onMove, onTest, onDelete, servingStore, onServeStore, children }: {
   set: BackendSetInfo; data: BackendSetsResponse; probes: Record<string, BackendTestResult | undefined>; testing: Record<string, boolean>; busy: boolean
   endpoints: McpEndpoint[]; interfaces: InterfaceInfo[]; metrics: Array<{ backend: string; calls: number; avgMs: number }>
   rebalance: RebalanceNotice[]; ports: Record<string, number>; onDismissRebalance: (store: string) => void
   onAdd: () => void; onEdit: (backend: string) => void; onRename: () => void; onMove: (backend: string) => void
-  onTest: (backend: string) => void; onDelete: (p: Pending) => void; children?: React.ReactNode
+  onTest: (backend: string) => void; onDelete: (p: Pending) => void
+  servingStore: StoreId | null; onServeStore: (storeId: StoreId, set: string) => void; children?: React.ReactNode
 }) {
   const removable = set.backends.length === 0 && !set.isDefaultSet
   const names = new Set(set.backends.map((b) => b.name))
@@ -421,10 +437,18 @@ function SetPanel({ set, data, probes, testing, busy, endpoints, interfaces, met
                       <td className={styles.mono}>{h.hosts.join(', ')}</td>
                       <td>{h.sharded ? <Tag>{`sharded ×${h.hosts.length}`}</Tag> : <span className={styles.sub}>single host</span>}</td>
                       <td>
-                        {fe.length > 0
-                          ? <>{fe.map((i) => <span key={i.id}>{i.label} <code>:{i.port}</code> </span>)}
-                              {!h.servedFromThisSet && <div className={styles.sub}>Serves another set (<code>{h.frontendSetEnvVar}</code>); set it to <code>{set.name}</code> to serve this one.</div>}</>
-                          : <span className={styles.sub}>{h.servedFromThisSet ? 'Frontend not listening' : <>Not served: set <code>{h.frontendSetEnvVar}={set.name}</code></>}</span>}
+                        {fe.length > 0 && <>{fe.map((i) => <span key={i.id}>{i.label} <code>:{i.port}</code> </span>)}</>}
+                        {h.servedFromThisSet
+                          ? (fe.length === 0 && <span className={styles.sub}>Frontend not listening</span>)
+                          : (
+                            <div className={styles.sub}>
+                              {fe.length > 0 ? 'Serves another set. ' : 'Not served. '}
+                              <Button variant="ghost" disabled={busy || servingStore === id}
+                                onClick={() => onServeStore(id, set.name)}>
+                                {servingStore === id ? 'Serving…' : `Serve from ${set.name}`}
+                              </Button>
+                            </div>
+                          )}
                       </td>
                       <td>{rb ? <StatusPill tone="warn">Required</StatusPill> : <span className={styles.sub}>None recorded</span>}</td>
                     </tr>

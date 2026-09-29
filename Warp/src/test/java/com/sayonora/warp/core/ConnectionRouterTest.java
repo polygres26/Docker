@@ -287,7 +287,7 @@ class ConnectionRouterTest {
                 groups.append(b > 0 ? "," : "").append(name);
             }
         }
-        com.sayonora.warp.config.WarpConfig cfg = new com.sayonora.warp.config.WarpConfig(null, null, null, null, null, null, null, spec.toString(), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, groups.toString(), null, null, null, null, null, null, null);
+        com.sayonora.warp.config.WarpConfig cfg = new com.sayonora.warp.config.WarpConfig(null, null, null, null, null, null, null, spec.toString(), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, groups.toString(), null, null, null, null, null, null, null, null);
         BackendSetModel model = BackendSetModel.from(cfg, null);
         assertEquals(100, model.allBackends().size());
         assertEquals(10, model.sets().size());
@@ -310,5 +310,56 @@ class ConnectionRouterTest {
                 assertFalse(one.scope().permits("s0_b0") && !b.name().equals("s0_b0"));
             }
         }
+    }
+
+    // ---- describeTarget: the same resolution `resolve` itself uses, exposed for display --------
+
+    @Test
+    void describeTargetResolvesABackendByExactName() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        ConnectionRouter.TargetResolution res = r.describeTarget("pg_e2");
+        assertEquals("backend", res.kind());
+        assertEquals("pg_e2", res.resolvedName());
+        assertEquals(List.of("pg_e2"), res.hosts());
+    }
+
+    @Test
+    void describeTargetResolvesASetAndListsItsMembers() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        ConnectionRouter.TargetResolution res = r.describeTarget("west");
+        assertEquals("set", res.kind());
+        assertEquals("west", res.resolvedName());
+        assertEquals(List.of("pg_w1", "pg_w2", "pg_w3"), res.hosts());
+    }
+
+    @Test
+    void describeTargetIsCaseInsensitiveLikeResolveItself() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        assertEquals("backend", r.describeTarget("PG_E1").kind());
+        assertEquals("set", r.describeTarget("West").kind());
+    }
+
+    @Test
+    void describeTargetHonorsTheDbAndSetPrefixes() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        assertEquals("backend", r.describeTarget("db:pg_e1").kind());
+        assertEquals("set", r.describeTarget("set:west").kind());
+        assertEquals("set", r.describeTarget("group:west").kind(), "group: is a synonym for set:");
+    }
+
+    @Test
+    void describeTargetReportsUnknownForANameThatDoesNotExist() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        ConnectionRouter.TargetResolution res = r.describeTarget("nonexistent");
+        assertEquals("unknown", res.kind());
+        assertNull(res.resolvedName());
+        assertTrue(res.hosts().isEmpty());
+    }
+
+    @Test
+    void describeTargetTreatsBlankAsUnknownWithoutThrowing() {
+        ConnectionRouter r = router(small(), ConnectionRouter.Mode.IMPLICIT);
+        assertEquals("unknown", r.describeTarget(null).kind());
+        assertEquals("unknown", r.describeTarget("").kind());
     }
 }

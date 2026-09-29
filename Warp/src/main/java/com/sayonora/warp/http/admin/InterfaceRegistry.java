@@ -58,6 +58,12 @@ public final class InterfaceRegistry {
 
     /** JSON for {@code GET /api/interfaces}; {@code registry} and {@code protocolCounts} may be null. */
     public static JsonObject toJson(BackendRegistry registry, Map<String, Long> protocolCounts, int activeSessions) {
+        // Joined onto every row below (auth*) rather than left isolated on the Access page -- see
+        // AccessSummary#frontendAuth's own javadoc for why this is now factored out that way. A
+        // frontend absent from this map (grpc, mcp, a2a, boltwire, dynamowire, sqswire, oswire,
+        // mongowire, ...) reports no auth fields at all, which the UI shows as "not reported" --
+        // never guessed.
+        Map<String, JsonObject> auth = AccessSummary.frontendAuth(System.getenv());
         JsonArray arr = new JsonArray();
         for (Entry e : entries()) {
             JsonObject o = new JsonObject();
@@ -67,8 +73,16 @@ public final class InterfaceRegistry {
             o.addProperty("protocol", e.protocol());
             o.addProperty("port", e.port());
             o.addProperty("mode", e.mode());
-            o.addProperty("status", "listening");
             o.addProperty("store", e.storeId());
+            // "listening" only ever meant "the socket is bound" -- it said nothing about whether
+            // the frontend has anywhere real to put/read data. A store-backed frontend (s3wire,
+            // dynamowire, ...) whose store isn't enabled on ANY backend still shows this as
+            // "listening" today, which reads as healthy when it's actually running on the legacy
+            // implicit-default-backend fallback, not the store the operator thinks they enabled.
+            // Surfaced as its own status value here (rather than folded silently into "listening")
+            // so the UI can render it as a real, distinct warning instead of a plain green pill --
+            // see docs/WARP_GUIDE.md and InterfaceTable.tsx's own StatusPill rendering.
+            boolean storeConfiguredButNotHosted = false;
             if (registry != null && e.storeId() != null) {
                 StoreType t = StoreType.valueOf(e.storeId().toUpperCase(Locale.ROOT));
                 o.addProperty("set", registry.frontendSet(t));
@@ -76,6 +90,14 @@ public final class InterfaceRegistry {
                 registry.storeHosts(t).forEach(hosts::add);
                 o.add("hosts", hosts);
                 o.addProperty("setEnvVar", t.setEnvVar());
+                storeConfiguredButNotHosted = hosts.isEmpty();
+            }
+            o.addProperty("status", storeConfiguredButNotHosted ? "listening_no_store" : "listening");
+            JsonObject authEntry = auth.get(e.id());
+            if (authEntry != null) {
+                o.addProperty("authMethod", authEntry.get("method").getAsString());
+                o.addProperty("authEnforced", authEntry.get("enforced").getAsBoolean());
+                o.addProperty("authDetail", authEntry.get("detail").getAsString());
             }
             // The collector only has an entry for a protocol once it served something: no entry means 0 so far.
             // No metrics key at all (e.g. A2A) means the count is unknown, reported as null.

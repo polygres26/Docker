@@ -192,6 +192,7 @@ public final class Main {
                 defaultBackendTarget, nativeBackendTargets);
         backendRegistry.applyDescriptions(config.backendDescriptions(), config.backendGroupDescriptions());
         backendRegistry.applyStoreConfig(config.backendStores(), config.backendSetNames());
+        backendRegistry.applyStoreFrontendSets(config.storeFrontendSets());
         backendRegistry.connectionRouter().load(config.connectionRoutes());
         // schema of every store enabled on a Postgres backend, before any frontend starts serving
         com.sayonora.warp.core.StoreBootstrap.ensureAll(backendRegistry);
@@ -1128,6 +1129,7 @@ public final class Main {
             backendRegistry.reload(c.backends(), c.shardBackends(), c.backendSets(), c.backendGroups());
             backendRegistry.applyDescriptions(c.backendDescriptions(), c.backendGroupDescriptions());
             backendRegistry.applyStoreConfig(c.backendStores(), c.backendSetNames());
+            backendRegistry.applyStoreFrontendSets(c.storeFrontendSets());
             backendRegistry.connectionRouter().load(c.connectionRoutes());
             com.sayonora.warp.core.StoreBootstrap.ensureAll(backendRegistry);
             mcpServer.endpoints().load(c.mcpEndpoints());
