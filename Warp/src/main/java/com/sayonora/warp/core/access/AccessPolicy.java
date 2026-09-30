@@ -16,6 +16,13 @@ public record AccessPolicy(List<ColumnGrant> columnGrants, List<RowFilter> rowFi
         return columnGrants.isEmpty() && rowFilters.isEmpty();
     }
 
+    // Config-storage/authoring format: this policy is written and read as YAML text (see
+    // AccessPolicyYamlConfig#parse), stored verbatim as the accessPolicy field on
+    // com.sayonora.warp.config.WarpConfig -- the same "human-authored text, stored as-is, parsed
+    // fresh on every reload" convention rollupDefinitionsYaml already uses for RollupConfig. There
+    // is deliberately no toYaml()/round-trip serializer here: the admin API stores and echoes back
+    // whatever YAML text the caller last PUT, rather than reconstructing it from this object.
+
     public enum OnViolation { DENY, MASK }
 
     public record ColumnGrant(Pattern tablePattern, List<String> columns, String requiredAttribute,

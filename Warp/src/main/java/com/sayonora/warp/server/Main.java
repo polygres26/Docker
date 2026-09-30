@@ -353,6 +353,14 @@ public final class Main {
 
         List<PipelineStage> stages = new ArrayList<>();
 
+        // Constructed here (before MetricsServer, which reads it for GET /api/audit, and before
+        // AccessControlStage below, which records row-filter/column-mask decisions into it) so the
+        // same instance is shared with every session handler that records into it -- pgwire/
+        // mssqlwire's DB_LOGIN_SUCCEEDED/DB_LOGIN_FAILED events included. Without
+        // WARP_AUDIT_LOG_FILE/WARP_AUDIT_LOG_DB configured, events still land in the in-memory ring
+        // (readable via /api/audit) but aren't durable across a restart.
+        com.sayonora.warp.audit.AuditLog auditLog = com.sayonora.warp.audit.AuditLog.fromEnv();
+
         com.sayonora.warp.config.FirewallRuleStore firewallRuleStore = new com.sayonora.warp.config.FirewallRuleStore(options);
         firewallRuleStore.ensureSchema();
         List<FirewallStage.Rule> initialFirewallRules;
@@ -367,6 +375,29 @@ public final class Main {
         firewallRuleStore.listen(firewallStage::reloadRules);
         log.info("firewall: {} rule(s) loaded from warp_firewall_rules", initialFirewallRules.size());
         stages.add(firewallStage);
+
+        // Row-filter/column-masking SQL rewrite -- real, tested engine (AccessPolicy/
+        // AccessControlStage), previously wired up only in integration tests with no config/admin/UI
+        // authoring surface. Placed right after the firewall (allow/deny is decided first) and,
+        // critically, BEFORE cacheStage below: a row filter or column mask changes the SQL text, so
+        // it must be part of what gets cached under -- two callers with different AccessContexts
+        // must never share one cache entry for the same nominal query.
+        com.sayonora.warp.core.access.AccessPolicy initialAccessPolicy;
+        try {
+            initialAccessPolicy = config.accessPolicy() == null || config.accessPolicy().isBlank()
+                    ? com.sayonora.warp.core.access.AccessPolicy.EMPTY
+                    : com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(config.accessPolicy());
+        } catch (IllegalArgumentException e) {
+            log.warn("access-control: warp_config's accessPolicy failed to parse ({}) -- starting with "
+                    + "no policy (fail-open on config, not fail-closed on queries) until a valid "
+                    + "PUT /api/config accessPolicy lands", e.getMessage());
+            initialAccessPolicy = com.sayonora.warp.core.access.AccessPolicy.EMPTY;
+        }
+        com.sayonora.warp.core.AccessControlStage accessControlStage =
+                new com.sayonora.warp.core.AccessControlStage(initialAccessPolicy, auditLog);
+        log.info("access control: {} column grant(s), {} row filter(s) loaded",
+                initialAccessPolicy.columnGrants().size(), initialAccessPolicy.rowFilters().size());
+        stages.add(accessControlStage);
 
         boolean captureEnabled = "true".equalsIgnoreCase(
                 System.getenv().getOrDefault("WARP_CAPTURE_ENABLED", "false"));
@@ -531,14 +562,6 @@ public final class Main {
         // they end up in) so both share the exact same instance -- MetricsServer reads it,
         // WarpMcpServer writes to it, from its single tools/call dispatch point.
         com.sayonora.warp.mcp.McpMetricsCollector mcpMetrics = new com.sayonora.warp.mcp.McpMetricsCollector();
-
-        // Constructed here (before MetricsServer, which reads it for GET /api/audit) so the same
-        // instance is shared with every session handler that records into it below -- pgwire/
-        // mssqlwire's DB_LOGIN_SUCCEEDED/DB_LOGIN_FAILED events, and (indirectly, via
-        // AccessControlStage if that's ever wired in) row-filter/column-mask decisions. Without
-        // WARP_AUDIT_LOG_FILE/WARP_AUDIT_LOG_DB configured, events still land in the
-        // in-memory ring (readable via /api/audit) but aren't durable across a restart.
-        com.sayonora.warp.audit.AuditLog auditLog = com.sayonora.warp.audit.AuditLog.fromEnv();
 
         MetricsServer metricsServer = new MetricsServer(metricsPort, statsStage, qosStage, currentConfigVersion::get,
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
@@ -1165,6 +1188,15 @@ public final class Main {
             }
             rollupRefreshJob.scheduleAll();
             
+            try {
+                accessControlStage.reloadPolicy(c.accessPolicy() == null || c.accessPolicy().isBlank()
+                        ? com.sayonora.warp.core.access.AccessPolicy.EMPTY
+                        : com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(c.accessPolicy()));
+            } catch (IllegalArgumentException e) {
+                log.warn("access-control: config version {} has an unparseable accessPolicy ({}) -- "
+                        + "keeping the previous policy live rather than falling back to an empty one",
+                        newVersion.version(), e.getMessage());
+            }
             clientAcl.reload(c.aclRules());
             connectionGate.reload("true".equalsIgnoreCase(c.aclPpv2Enabled()),
                     com.sayonora.warp.acl.ConnectionGate.parseTrustedProxies(c.aclTrustedProxies()));

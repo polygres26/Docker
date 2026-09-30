@@ -1,5 +1,38 @@
 # RTT Baseline (2026-09-23)
 
+> **Benchmark currency** (Phase H, dating pass — see
+> [`COMPETITIVE_POSITIONING_ROADMAP.md`](COMPETITIVE_POSITIONING_ROADMAP.md)): this file is a
+> running, append-only dated log, not a single point-in-time report — every `##`/`###` section
+> below already carries its own date, and that inline date is authoritative for the number next to
+> it. This note adds an index from date to the exact commit that landed it, generated from `git
+> log --follow -- docs/RTT_BASELINE_2026.md` and filtered to commits that changed real content
+> (two pure-rename commits, `60ce553d` and `aa78cdbc`, touched only path text like
+> `sayonora-wire.jar` → `sayonora-warp.jar` and are omitted as carrying no benchmark change):
+>
+> | Date | Commit | What was added |
+> |---|---|---|
+> | 2026-09-23 | `77f870d9` | Original 8-protocol baseline, cache-hit vs. cache-miss RTT |
+> | 2026-09-23 | `e6b0be97` | Cache-miss root cause, gRPC/boltwire RTT investigation |
+> | 2026-09-23 | `b6410897` | gRPC runtime version fix, gRPC vs. pgwire fair comparison |
+> | 2026-09-23 | `e95c2665` | s3wire (S3-over-MinIO) RTT |
+> | 2026-09-24 | `0f642842` | Harness/naming maintenance touching this file |
+> | 2026-09-25 | `2fc7f1b1` | Connection multiplexing / connect-time routing RTT |
+> | 2026-09-25 | `912ce2ed` | Redis, Azure Storage, Neo4j RTT |
+> | 2026-09-25 | `287861d1` | pubsubwire, firestorewire, datastorewire RTT |
+> | 2026-09-25 | `5f0e708a` | bigtablewire RTT |
+> | 2026-09-26 | `6ccea1c9` | cqlwire RTT |
+> | 2026-09-26 | `b1099938` | kafkawire RTT |
+> | 2026-09-26 | `286e41af` | gremlinwire RTT |
+> | 2026-09-26 | `95f35f36` | cosmoswire RTT |
+> | 2026-09-26 | `cce016ce` | amqpwire RTT |
+>
+> **Reproduction**: each entry below names its own harness inline (mostly
+> `Warp/tests/python/test_<protocol>.py` or `rtt_bench.py`, warm-up + timed-sample counts stated
+> per section) — there is no single script that reproduces the whole file, because it was captured
+> incrementally as each protocol was added. Numbers past the newest date above have not been
+> re-verified against later commits; treat any number here as "true as of its own date," not as a
+> live, continuously-reconfirmed baseline.
+
 First-ever RTT baseline for all 8 Warp wire protocols, captured while adding real
 literal/bind/read/write integration tests for pgwire, mongowire, dynamowire, sqswire, oswire,
 influxwire, boltwire, and Warp's native gRPC `QueryService`. See `tests/python/test_<protocol>.py`

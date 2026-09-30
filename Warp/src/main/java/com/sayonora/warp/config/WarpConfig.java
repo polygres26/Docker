@@ -42,7 +42,8 @@ public record WarpConfig(
         String mcpUpstreams,
         String storeFrontendSets,
         String otlpExportOverride,
-        String prometheusScrapeOverride) {
+        String prometheusScrapeOverride,
+        String accessPolicy) {
 
     public static WarpConfig fromEnvDefaults() {
         return new WarpConfig(
@@ -84,7 +85,8 @@ public record WarpConfig(
                 null,
                 null,
                 null,
-                null);
+                null,
+                System.getenv("WARP_ACCESS_POLICY"));
     }
 
     /** Copy with the backend-model fields replaced (null keeps nothing: pass the values you want). */
@@ -97,7 +99,8 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride,
+                accessPolicy);
     }
 
     /** Copy with the connect-time route table (JSON array, see ConnectionRouter) replaced. */
@@ -109,7 +112,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                routes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
+                routes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride, accessPolicy);
     }
 
     /** Copy with the mcpUpstreams field (JSON array, see McpUpstream) replaced. */
@@ -121,7 +124,8 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreamsJson, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
+                connectionRoutes, mcpUpstreamsJson, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride,
+                accessPolicy);
     }
 
     /** Copy with the per-store serving-set assignment ({@code store=set|store2=set2}, see
@@ -135,7 +139,7 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams, spec, otlpExportOverride, prometheusScrapeOverride);
+                connectionRoutes, mcpUpstreams, spec, otlpExportOverride, prometheusScrapeOverride, accessPolicy);
     }
 
     /** Copy with the admin-settable OTLP-export/Prometheus-scrape enable overrides replaced --
@@ -150,7 +154,27 @@ public record WarpConfig(
                 oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
                 llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
                 backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
-                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride);
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride,
+                accessPolicy);
+    }
+
+    /** Copy with the row-filter/column-masking policy replaced -- YAML text in the {@code
+     * column_grants}/{@code row_filters} shape {@code com.sayonora.warp.core.access.
+     * AccessPolicyYamlConfig#parse} reads (the same "store the human-authored text verbatim, parse
+     * fresh on every reload" convention {@code rollupDefinitionsYaml} already uses for {@code
+     * RollupConfig}). This is the admin-UI/API-settable authoring surface for the real, previously
+     * config-less {@code AccessControlStage} pipeline stage. {@code null}/blank means "no policy
+     * configured" (the stage becomes a no-op pass-through). */
+    public WarpConfig withAccessPolicy(String accessPolicyYaml) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, routerTableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride,
+                accessPolicyYaml);
     }
 
     public String toJson() {
@@ -194,6 +218,7 @@ public record WarpConfig(
         fields.put("storeFrontendSets", storeFrontendSets);
         fields.put("otlpExportOverride", otlpExportOverride);
         fields.put("prometheusScrapeOverride", prometheusScrapeOverride);
+        fields.put("accessPolicy", accessPolicy);
 
         StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -249,7 +274,8 @@ public record WarpConfig(
                 fields.get("mcpUpstreams"),
                 fields.get("storeFrontendSets"),
                 fields.get("otlpExportOverride"),
-                fields.get("prometheusScrapeOverride"));
+                fields.get("prometheusScrapeOverride"),
+                fields.get("accessPolicy"));
     }
 
     private static String quote(String value) {

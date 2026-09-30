@@ -22,7 +22,8 @@ class PolicySummaryTest {
     private static WarpConfig cfg(String qosRatePerSec, String routerSchemaRules, String aclRules) {
         return new WarpConfig(qosRatePerSec, null, null, null, null, null, null, null, null, null,
                 routerSchemaRules, null, null, null, null, null, aclRules, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null);
     }
 
     @Test
