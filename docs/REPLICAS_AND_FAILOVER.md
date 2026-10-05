@@ -178,11 +178,16 @@ untested.
   majority, lag gate, optional fencing). **Only for `CLUSTER_TYPE = NONE`** (read-scale AGs with no cluster
   manager); an AG owned by WSFC or Pacemaker is refused, because forcing it behind the cluster's back risks two
   primaries. A forced failover can lose transactions the secondary had not hardened; the lag gate limits that.
-  Not built: resuming the other secondaries and re-attaching the old primary
-  (`SET (ROLE = SECONDARY)` / `SET HADR RESUME`), and no planned switchover or rejoin, so after a promotion those
-  nodes need a DBA. Live-verified on SQL Server 2022 (two-node read-scale AG, Warp promoted the secondary after
-  the primary container was killed); not verified: multiple secondaries, clustered AGs (refused by design),
-  synchronous commit. Azure Synapse is not supported.
+  **Survivors:** after the forced failover the other secondaries stay suspended, so Warp runs
+  `SET (ROLE = SECONDARY)` then `SET HADR RESUME` on each (repeated until it works, because a resume issued right after
+  the failover can be accepted and do nothing) and waits for it to synchronize from the new primary. Verified live on
+  a three-node AG. **Old primary:** when it returns it is a *second primary* that still takes writes. Warp reports it
+  (`rejoin-needed` plus the split-brain alarm) and leaves it exactly as found: demoting it with
+  `SET (ROLE = SECONDARY)` failed live every time with error 41104, and resuming it would discard whatever it committed
+  that the new primary lacks (Warp cannot prove that is nothing: the commit and hardened LSNs move during crash recovery
+  even when no user data was written). A DBA must demote or rebuild it. No planned switchover. Live-verified on SQL
+  Server 2022 (Warp promoted a secondary after the primary container was killed; the other secondary resumed and
+  received the new primary's writes); not verified: clustered AGs (refused by design), synchronous commit. Azure Synapse is not supported.
 
 ## Promote mode
 
@@ -235,8 +240,8 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
   reach that same address (a JDBC address that differs from the replication-network address is not
   translated). A Postgres replica that is *ahead* of the promoted node (it received WAL the promoted one
   did not) cannot follow it; it is reported `repoint-failed` and needs a rebuild (`pg_rewind`/re-basebackup).
-  The old primary is not repointed; it must be rebuilt as a replica before it can rejoin. Oracle is follow-only and
-  neither it nor SQL Server is repointed by Warp.
+  The old primary is not repointed; it must be rebuilt as a replica before it can rejoin. Oracle is follow-only and is
+  never repointed by Warp.
 
 ### Planned switchover
 
@@ -330,7 +335,8 @@ All live tests are opt-in and skipped unless their environment is set; they run 
   cannot start under QEMU emulation** (it aborts with an
   address-space error), which is what a default Colima/Docker on Apple silicon uses; use Docker Desktop with
   Rosetta, or a Colima profile started with `--vm-type vz --vz-rosetta`. Needs about 4 GB of Docker memory.
-- **SQL Server promote:** `SqlServerPromoteLiveTest` on a *fresh* AG (`ag.sh up`; it kills `sql1`), with
+- **SQL Server promote:** `SqlServerPromoteLiveTest` on a *fresh* AG (`ag.sh up`; it kills `sql1`); `SqlServerRejoinLiveTest`
+  (`WARP_TEST_MSSQL_REJOIN=1`) on a fresh three-node AG (`AG_NODES=3 ag.sh up`), with
   `WARP_TEST_MSSQL_PROMOTE=1`, `DOCKER_CONTEXT` set if needed, and a Postgres config database via
   `WARP_HOST`/`WARP_PORT`/`WARP_USER`/`WARP_PASSWORD`.
 - **Oracle Data Guard:** `OracleDataGuardLiveTest` needs a real physical standby open read-only with apply

@@ -31,9 +31,16 @@ import java.util.Properties;
  * the primary is gone. An AG that a cluster manager (WSFC / Pacemaker) owns is refused: forcing it behind
  * the cluster's back is how you get two primaries. Data loss is inherent to a forced failover; Warp's
  * promote safeguards (majority, lease, WAL ranking via {@code last_hardened_lsn}, lag gate) apply first.
- * Not done: re-resuming the other secondaries and re-attaching the old primary (both need
- * {@code ALTER AVAILABILITY GROUP ... SET (ROLE = SECONDARY)} / {@code SET HADR RESUME} steps that were not
- * built), so after a promotion those nodes need a DBA. A non-readable
+ * After a forced failover the other secondaries stay suspended, so {@link #repoint} runs
+ * {@code SET (ROLE = SECONDARY)} then {@code SET HADR RESUME} on each (repeated, because a resume issued
+ * right after the failover can be accepted yet do nothing) and waits for it to synchronize from the new primary.
+ * Verified live on a three-node AG. The old primary, when it returns, is a <i>second primary</i> that accepts
+ * writes. {@link #rejoin} only <b>reports</b> it: demoting it is not automated, because
+ * {@code SET (ROLE = SECONDARY)} on it failed live with error 41104 ("availability group resource did not come
+ * online") in every attempt, and resuming it would in any case discard the transactions it committed that the new
+ * primary lacks (Warp cannot prove that set is empty: {@code last_commit_lsn} moves during crash recovery even
+ * when no user data was written). A DBA has to demote or rebuild it.
+ * A non-readable
  * secondary rejects ordinary connections (error 978) so it is invisible to the probes until it
  * becomes the primary and starts accepting them.
  */
@@ -230,6 +237,132 @@ final class SqlServerHa implements EngineHa {
                 Thread.currentThread().interrupt();
                 throw new SQLException("interrupted", e);
             }
+        }
+    }
+
+    // ---- after a forced failover: resume survivors, demote the old primary -----------------------
+
+    /** The availability group of the connection's database as seen from the node itself. */
+    private record AgInfo(String group, String clusterType, boolean primary, String database, boolean suspended,
+            String syncState) {
+    }
+
+    private static AgInfo agInfo(Connection c) throws SQLException {
+        try (Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)), "
+                        + "CAST(sys.fn_hadr_is_primary_replica(DB_NAME()) AS int), DB_NAME(), "
+                        + "CAST(drs.is_suspended AS int), CAST(drs.synchronization_state_desc AS varchar(30)) "
+                        + "FROM sys.availability_groups ag JOIN sys.dm_hadr_database_replica_states drs "
+                        + "ON drs.group_id = ag.group_id WHERE drs.is_local = 1 AND drs.database_id = DB_ID()")) {
+            if (!rs.next()) {
+                throw new SQLException("the database is not in an availability group on this server");
+            }
+            AgInfo info = new AgInfo(rs.getString(1), rs.getString(2), rs.getInt(3) == 1, rs.getString(4),
+                    rs.getInt(5) == 1, rs.getString(6));
+            if (rs.next()) {
+                throw new SQLException("the database is in more than one availability group; refusing to guess");
+            }
+            if (!"NONE".equalsIgnoreCase(info.clusterType())) {
+                throw new SQLException("availability group '" + info.group() + "' is managed by a cluster manager ("
+                        + info.clusterType() + "); not touching it behind the cluster's back");
+            }
+            return info;
+        }
+    }
+
+    private static String bracket(String name) {
+        return "[" + name.replace("]", "]]") + "]";
+    }
+
+    private static void demoteAndResume(Connection c, AgInfo info, boolean resume) throws SQLException {
+        c.setCatalog("master"); // availability-group DDL runs from master
+        try (Statement st = c.createStatement()) {
+            st.execute("ALTER AVAILABILITY GROUP " + bracket(info.group()) + " SET (ROLE = SECONDARY)");
+            if (resume) {
+                st.execute("ALTER DATABASE " + bracket(info.database()) + " SET HADR RESUME");
+            }
+        }
+    }
+
+    private static boolean awaitSynchronizing(Connection c, long timeoutMillis) throws SQLException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            try (Statement st = c.createStatement();
+                    ResultSet rs = st.executeQuery("SELECT CAST(is_suspended AS int), "
+                            + "CAST(synchronization_state_desc AS varchar(30)) FROM sys.dm_hadr_database_replica_states "
+                            + "WHERE is_local = 1 AND database_id = DB_ID()")) {
+                if (rs.next() && rs.getInt(1) == 0 && ("SYNCHRONIZING".equalsIgnoreCase(rs.getString(2))
+                        || "SYNCHRONIZED".equalsIgnoreCase(rs.getString(2)))) {
+                    return true;
+                }
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean supportsRepoint() {
+        return true;
+    }
+
+    /**
+     * After a forced failover a surviving secondary is suspended and still tied to the old primary: tells it
+     * it is a secondary, resumes data movement, and waits until it synchronizes from the new primary. (A
+     * secondary that hardened more log than the new primary would be rolled back to the common point; Warp promotes
+     * the secondary with the most log, so that is only possible on a tie.)
+     */
+    @Override
+    public void repoint(BackendTarget replica, BackendTarget newPrimary) throws SQLException {
+        try (Connection c = connect(replica)) {
+            String catalog = c.getCatalog();
+            AgInfo info = agInfo(c);
+            if (info.primary()) {
+                throw new SQLException("this replica is a primary, not a secondary");
+            }
+            // Right after the forced failover a RESUME can be accepted yet change nothing until the new primary has
+            // finished taking over (seen live: it works a few seconds later), so repeat the idempotent pair.
+            long deadline = System.currentTimeMillis() + 90_000;
+            while (true) {
+                demoteAndResume(c, info, true);
+                c.setCatalog(catalog);
+                if (awaitSynchronizing(c, 4_000)) {
+                    return;
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    throw new SQLException("the secondary did not start synchronizing from the new primary within 90s");
+                }
+            }
+        }
+    }
+
+    /**
+     * Classification only. A node that is a primary of the availability group while Warp's primary is another node
+     * (the old primary, back after a forced failover) is a second writer; Warp reports it and leaves it exactly as
+     * found. See the class comment for why it is not demoted automatically.
+     */
+    @Override
+    public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws SQLException {
+        try (Connection c = connect(node)) {
+            AgInfo info = agInfo(c);
+            if (info.primary()) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a second primary of availability group '"
+                        + info.group() + "' and still takes writes; Warp does not demote it automatically (any "
+                        + "transaction it committed that the new primary lacks would be lost) -- stop writes to it, then "
+                        + "demote it with ALTER AVAILABILITY GROUP " + bracket(info.group()) + " SET (ROLE = SECONDARY) "
+                        + "or rebuild it as a secondary");
+            }
+            if (info.suspended()) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a secondary with data movement suspended; "
+                        + "review it, then run ALTER DATABASE " + bracket(info.database()) + " SET HADR RESUME (this "
+                        + "discards any transaction it holds that the new primary lacks)");
+            }
+            return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a synchronizing secondary");
         }
     }
 }

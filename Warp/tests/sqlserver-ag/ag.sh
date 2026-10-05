@@ -6,7 +6,7 @@
 #   ag.sh up      start both, build the AG, wait until the secondary is synchronizing
 #   ag.sh down    remove the containers and the network
 #
-# Ports on the host: 14331 (sql1), 14332 (sql2). Needs Docker (on Apple silicon the amd64 image runs
+# AG_NODES=3 adds a second readable secondary, sql3 (14333). Ports on the host: 14331 (sql1), 14332 (sql2). Needs Docker (on Apple silicon the amd64 image runs
 # under emulation and needs ~4 GB of Docker memory).
 set -euo pipefail
 PW='Warp_Test_1234!'
@@ -22,13 +22,17 @@ wait_ready() {
 
 up() {
   docker network create "$NET" >/dev/null 2>&1 || true
-  for spec in "sql1 14331" "sql2 14332"; do
+  NODES="sql1 14331;sql2 14332"
+  [ "${AG_NODES:-2}" = "3" ] && NODES="$NODES;sql3 14333"
+  IFS=';' read -ra SPECS <<< "$NODES"
+  for spec in "${SPECS[@]}"; do
     set -- $spec
     docker rm -f "$1" >/dev/null 2>&1 || true
     docker run -d --platform linux/amd64 --name "$1" --hostname "$1" --network "$NET" -p "$2:1433" \
-      -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$PW" -e MSSQL_PID=Developer -e MSSQL_ENABLE_HADR=1 "$IMG" >/dev/null
+      -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$PW" -e MSSQL_PID=Developer -e MSSQL_ENABLE_HADR=1 -e MSSQL_MEMORY_LIMIT_MB=1536 "$IMG" >/dev/null
   done
   wait_ready sql1; wait_ready sql2
+  [ "${AG_NODES:-2}" = "3" ] && wait_ready sql3
 
   DBM="CREATE LOGIN dbm_login WITH PASSWORD = 'Dbm_Pass_1234!'; CREATE USER dbm_user FOR LOGIN dbm_login; CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'Master_Pass_1234!';"
   ENDPOINT="CREATE ENDPOINT [Hadr_endpoint] AS TCP (LISTENER_PORT = 5022) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE dbm_certificate, ENCRYPTION = REQUIRED ALGORITHM AES); ALTER ENDPOINT [Hadr_endpoint] STATE = STARTED; GRANT CONNECT ON ENDPOINT::[Hadr_endpoint] TO [dbm_login];"
@@ -37,11 +41,13 @@ up() {
   TMP=$(mktemp -d)
   docker cp sql1:/var/opt/mssql/data/dbm_certificate.cer "$TMP/"
   docker cp sql1:/var/opt/mssql/data/dbm_certificate.pvk "$TMP/"
-  docker cp "$TMP/dbm_certificate.cer" sql2:/var/opt/mssql/data/
-  docker cp "$TMP/dbm_certificate.pvk" sql2:/var/opt/mssql/data/
-  docker exec -u 0 sql2 chown mssql:root /var/opt/mssql/data/dbm_certificate.cer /var/opt/mssql/data/dbm_certificate.pvk
+  for node in sql2 $([ "${AG_NODES:-2}" = "3" ] && echo sql3); do
+    docker cp "$TMP/dbm_certificate.cer" $node:/var/opt/mssql/data/
+    docker cp "$TMP/dbm_certificate.pvk" $node:/var/opt/mssql/data/
+    docker exec -u 0 $node chown mssql:root /var/opt/mssql/data/dbm_certificate.cer /var/opt/mssql/data/dbm_certificate.pvk
+    sqlc $node "$DBM CREATE CERTIFICATE dbm_certificate AUTHORIZATION dbm_user FROM FILE = '/var/opt/mssql/data/dbm_certificate.cer' WITH PRIVATE KEY (FILE = '/var/opt/mssql/data/dbm_certificate.pvk', DECRYPTION BY PASSWORD = 'Pvk_Pass_1234!'); $ENDPOINT"
+  done
   rm -rf "$TMP"
-  sqlc sql2 "$DBM CREATE CERTIFICATE dbm_certificate AUTHORIZATION dbm_user FROM FILE = '/var/opt/mssql/data/dbm_certificate.cer' WITH PRIVATE KEY (FILE = '/var/opt/mssql/data/dbm_certificate.pvk', DECRYPTION BY PASSWORD = 'Pvk_Pass_1234!'); $ENDPOINT"
 
   sqlc sql1 "CREATE DATABASE [w]; ALTER DATABASE [w] SET RECOVERY FULL; BACKUP DATABASE [w] TO DISK = '/var/opt/mssql/data/w.bak'; "
   sqlc sql1 "CREATE TABLE w.dbo.t (id int PRIMARY KEY, v varchar(50)); INSERT INTO w.dbo.t VALUES (1, 'a');"
@@ -50,6 +56,15 @@ up() {
     N'sql1' WITH (ENDPOINT_URL = N'tcp://sql1:5022', AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT, FAILOVER_MODE = MANUAL, SEEDING_MODE = AUTOMATIC, SECONDARY_ROLE (ALLOW_CONNECTIONS = ALL)),
     N'sql2' WITH (ENDPOINT_URL = N'tcp://sql2:5022', AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT, FAILOVER_MODE = MANUAL, SEEDING_MODE = AUTOMATIC, SECONDARY_ROLE (ALLOW_CONNECTIONS = ALL));"
   sqlc sql2 "ALTER AVAILABILITY GROUP [ag1] JOIN WITH (CLUSTER_TYPE = NONE); ALTER AVAILABILITY GROUP [ag1] GRANT CREATE ANY DATABASE;"
+  if [ "${AG_NODES:-2}" = "3" ]; then
+    sqlc sql1 "ALTER AVAILABILITY GROUP [ag1] ADD REPLICA ON N'sql3' WITH (ENDPOINT_URL = N'tcp://sql3:5022', AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT, FAILOVER_MODE = MANUAL, SEEDING_MODE = AUTOMATIC, SECONDARY_ROLE (ALLOW_CONNECTIONS = ALL));"
+    sqlc sql3 "ALTER AVAILABILITY GROUP [ag1] JOIN WITH (CLUSTER_TYPE = NONE); ALTER AVAILABILITY GROUP [ag1] GRANT CREATE ANY DATABASE;"
+    for _ in $(seq 1 90); do
+      n=$(docker exec sql3 /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$PW" -h -1 -W -Q "SET NOCOUNT ON; SELECT count(*) FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND synchronization_state_desc IN ('SYNCHRONIZING','SYNCHRONIZED')" 2>/dev/null | tr -d '[:space:]' || true)
+      [ "${n:-0}" = "1" ] && break
+      sleep 2
+    done
+  fi
 
   for _ in $(seq 1 90); do
     n=$(docker exec sql2 /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$PW" -h -1 -W -Q "SET NOCOUNT ON; SELECT count(*) FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND synchronization_state_desc IN ('SYNCHRONIZING','SYNCHRONIZED')" 2>/dev/null | tr -d '[:space:]' || true)
@@ -60,7 +75,7 @@ up() {
 }
 
 down() {
-  docker rm -f sql1 sql2 >/dev/null 2>&1 || true
+  docker rm -f sql1 sql2 sql3 >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 
