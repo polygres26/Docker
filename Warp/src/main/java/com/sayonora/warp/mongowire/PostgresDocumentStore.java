@@ -385,6 +385,15 @@ final class PostgresDocumentStore {
         }
     }
 
+    /** Advisory-lock key serializing the creation of collections and helper tables of one database. */
+    private static long creationLockKey(String db) {
+        long h = 1125899906842597L;
+        for (int i = 0; i < db.length(); i++) {
+            h = 31 * h + db.charAt(i);
+        }
+        return h ^ 0x4d6f6e676f43726cL; // "MongoCrl": keeps this lock space apart from other users of advisory locks
+    }
+
     /** Creates the collection's table, catalog row and support tables on every shard. Returns true when it was created now. */
     boolean createCollection(String db, String coll, BsonDocument options) throws SQLException {
         validateDb(db);
@@ -395,20 +404,35 @@ final class PostgresDocumentStore {
             try {
                 for (Shard s : shards()) {
                     try (Connection conn = s.open()) {
-                        boolean existed = tableExists(conn, db, coll);
-                        ensureSchemaObjects(conn, db);
-                        createTable(conn, db, coll);
-                        BsonDocument entry = catalogEntry(options == null ? new BsonDocument() : options, List.of(), uuid);
-                        try (PreparedStatement ps = conn.prepareStatement("INSERT INTO " + qualified(db, CATALOG)
-                                + " (name, entry) VALUES (?, ?) ON CONFLICT (name) DO NOTHING")) {
-                            ps.setString(1, coll);
-                            ps.setBytes(2, MongoBson.encode(entry));
-                            ps.executeUpdate();
+                        // Serialize creation per database (across threads AND Warp instances): Postgres does not make
+                        // concurrent CREATE TABLE/SCHEMA IF NOT EXISTS safe, it can fail with "relation/type already exists"
+                        // (42P07/42710) or a unique violation on pg_class/pg_type, and retrying in lock-step does not help.
+                        long lockKey = creationLockKey(db);
+                        try (var lock = conn.createStatement()) {
+                            lock.execute("SELECT pg_advisory_lock(" + lockKey + ")");
                         }
-                        if (!existed) {
-                            created = true;
+                        try {
+                            boolean existed = tableExists(conn, db, coll);
+                            ensureSchemaObjects(conn, db);
+                            createTable(conn, db, coll);
+                            BsonDocument entry = catalogEntry(options == null ? new BsonDocument() : options, List.of(), uuid);
+                            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO " + qualified(db, CATALOG)
+                                    + " (name, entry) VALUES (?, ?) ON CONFLICT (name) DO NOTHING")) {
+                                ps.setString(1, coll);
+                                ps.setBytes(2, MongoBson.encode(entry));
+                                ps.executeUpdate();
+                            }
+                            if (!existed) {
+                                created = true;
+                            }
+                            ENSURED.put(shardScope(s) + "|" + db + "." + coll, Boolean.TRUE);
+                        } finally {
+                            try (var unlock = conn.createStatement()) {
+                                unlock.execute("SELECT pg_advisory_unlock(" + lockKey + ")");
+                            } catch (SQLException releaseFailed) {
+                                // the connection is broken, which ends the session and releases the lock with it
+                            }
                         }
-                        ENSURED.put(shardScope(s) + "|" + db + "." + coll, Boolean.TRUE);
                     }
                 }
                 break;
