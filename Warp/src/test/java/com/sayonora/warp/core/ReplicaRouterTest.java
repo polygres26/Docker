@@ -66,8 +66,8 @@ class ReplicaRouterTest {
             assertNotNull(picked);
             assertEquals("pg#1", picked.id());
         }
-        assertEquals(6, r.routedCount("pg#1"));
-        assertEquals(0, r.routedCount("pg#2"));
+        assertEquals(6, r.routedCount("jdbc:postgresql://r1/db"));
+        assertEquals(0, r.routedCount("jdbc:postgresql://r2/db"));
     }
 
     @Test
@@ -79,8 +79,8 @@ class ReplicaRouterTest {
         for (int i = 0; i < 10; i++) {
             assertNotNull(r.pick("pg"));
         }
-        assertEquals(5, r.routedCount("pg#1"));
-        assertEquals(5, r.routedCount("pg#2"));
+        assertEquals(5, r.routedCount("jdbc:postgresql://r1/db"));
+        assertEquals(5, r.routedCount("jdbc:postgresql://r2/db"));
     }
 
     @Test

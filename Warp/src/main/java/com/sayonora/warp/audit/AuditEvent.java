@@ -25,7 +25,11 @@ public record AuditEvent(Instant timestamp, Type type, String userId, String sum
 
         NL2SQL_JUDGE_CORRECTED,
 
-        MCP_TOOL_CALLED
+        MCP_TOOL_CALLED,
+
+        BACKEND_FAILOVER,
+
+        BACKEND_SPLIT_BRAIN_SUSPECTED
     }
 
     public AuditEvent {

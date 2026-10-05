@@ -44,18 +44,30 @@ public final class BackendSetModel {
     /** {@code replicas}: the backend's read replicas in {@link ReplicaSpec#format} form, or
      * {@code null}/empty for none. */
     public record Backend(String name, String url, String user, String password, String fallback,
-            String description, List<StoreType> stores, String set, String replicas) {
+            String description, List<StoreType> stores, String set, String replicas, String failoverMode) {
 
         Backend with(String url, String user, String password, String description, List<StoreType> stores) {
-            return new Backend(name, url, user, password, fallback, description, stores, set, replicas);
+            return new Backend(name, url, user, password, fallback, description, stores, set, replicas, failoverMode);
         }
 
         Backend inSet(String newSet) {
-            return new Backend(name, url, user, password, fallback, description, stores, newSet, replicas);
+            return new Backend(name, url, user, password, fallback, description, stores, newSet, replicas, failoverMode);
         }
 
         Backend withReplicas(String newReplicas) {
-            return new Backend(name, url, user, password, fallback, description, stores, set, newReplicas);
+            return new Backend(name, url, user, password, fallback, description, stores, set, newReplicas, failoverMode);
+        }
+
+        Backend withFailoverMode(String mode) {
+            return new Backend(name, url, user, password, fallback, description, stores, set, replicas, mode);
+        }
+
+        /** The mode actually in force: "off" without replicas, else the configured one (default "follow"). */
+        public String effectiveFailoverMode() {
+            if (replicas == null || replicas.isBlank()) {
+                return "off";
+            }
+            return failoverMode == null ? "follow" : failoverMode;
         }
 
         public List<ReplicaSpec> replicaSpecs() {
@@ -130,7 +142,7 @@ public final class BackendSetModel {
                         implicitDefault.jdbcUrl(), implicitDefault.user(), implicitDefault.password(), null,
                         descriptions.get(BackendRegistry.DEFAULT_BACKEND_NAME),
                         stores.getOrDefault(BackendRegistry.DEFAULT_BACKEND_NAME, List.of()),
-                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME)), null));
+                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME)), null, null));
             }
         } else {
             for (String entry : spec.split(";")) {
@@ -148,8 +160,9 @@ public final class BackendSetModel {
                 String password = parts.length > 2 ? parts[2] : null;
                 String fallback = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
                 String replicas = parts.length > 4 && !parts[4].isBlank() ? parts[4].trim() : null;
+                String failoverMode = parts.length > 5 && !parts[5].isBlank() ? parts[5].trim() : null;
                 m.backends.put(name, new Backend(name, url, user, password, fallback, descriptions.get(name),
-                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name)), replicas));
+                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name)), replicas, failoverMode));
             }
         }
 
@@ -304,6 +317,19 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
+    /** Only {@code follow} and {@code off} exist; promote mode is deliberately not accepted yet. */
+    private static String normalizeFailoverMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return "";
+        }
+        String m = mode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!BackendRegistry.FAILOVER_MODES.contains(m)) {
+            throw new ModelException(400, "failoverMode must be one of " + BackendRegistry.FAILOVER_MODES
+                    + (m.equals("promote") ? " (promote mode is not available yet)" : ""));
+        }
+        return m;
+    }
+
     /** Validates a replicas field (each URL on a trusted host, lag values numeric) and returns its
      * canonical {@link ReplicaSpec#format} form; blank/null normalizes to the empty string. */
     private static String normalizeReplicas(String replicas) {
@@ -334,7 +360,13 @@ public final class BackendSetModel {
 
     public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
             String description, List<StoreType> stores, String replicas) {
+        return addBackend(set, name, url, user, password, fallback, description, stores, replicas, null);
+    }
+
+    public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
+            String description, List<StoreType> stores, String replicas, String failoverMode) {
         String normalizedReplicas = normalizeReplicas(replicas);
+        String normalizedMode = normalizeFailoverMode(failoverMode);
         if (set == null || set.isBlank()) {
             throw new ModelException(400, "a backend must be added to a backend set -- 'set' is required");
         }
@@ -369,7 +401,7 @@ public final class BackendSetModel {
         }
         Backend b = new Backend(name, url.trim(), user, password, fallback == null || fallback.isBlank() ? null
                 : fallback.trim(), blankToNull(description), List.copyOf(stores == null ? List.of() : stores), set,
-                normalizedReplicas);
+                normalizedReplicas, normalizedMode.isEmpty() ? null : normalizedMode);
         backends.put(name, b);
         try {
             validateStores();
@@ -390,7 +422,15 @@ public final class BackendSetModel {
      * clears them, anything else replaces them (validated). */
     public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
             String description, List<StoreType> stores, String replicas) {
+        return patchBackend(name, url, user, password, hasDescription, description, stores, replicas, null);
+    }
+
+    /** As above, plus {@code failoverMode}: {@code null} unchanged, blank clears (back to the
+     * default), otherwise {@code follow} or {@code off}. */
+    public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
+            String description, List<StoreType> stores, String replicas, String failoverMode) {
         String newReplicas = replicas == null ? null : normalizeReplicas(replicas);
+        String newMode = failoverMode == null ? null : normalizeFailoverMode(failoverMode);
         Backend b = backends.get(name);
         if (b == null) {
             throw new ModelException(404, "backend '" + name + "' does not exist");
@@ -412,6 +452,9 @@ public final class BackendSetModel {
                 stores != null ? List.copyOf(stores) : b.stores());
         if (newReplicas != null) {
             updated = updated.withReplicas(newReplicas.isEmpty() ? null : newReplicas);
+        }
+        if (newMode != null) {
+            updated = updated.withFailoverMode(newMode.isEmpty() ? null : newMode);
         }
         backends.put(name, updated);
         try {
@@ -473,7 +516,8 @@ public final class BackendSetModel {
                     sb.append(';');
                 }
                 sb.append(b.name()).append('=').append(b.url().replace(";", "%3B"));
-                boolean hasReplicas = b.replicas() != null && !b.replicas().isBlank();
+                boolean hasMode = b.failoverMode() != null && !b.failoverMode().isBlank();
+                boolean hasReplicas = hasMode || (b.replicas() != null && !b.replicas().isBlank());
                 boolean hasFallback = b.fallback() != null;
                 boolean hasPassword = b.password() != null;
                 boolean hasUser = b.user() != null;
@@ -487,7 +531,10 @@ public final class BackendSetModel {
                     sb.append('|').append(b.fallback() == null ? "" : b.fallback());
                 }
                 if (hasReplicas) {
-                    sb.append('|').append(b.replicas());
+                    sb.append('|').append(b.replicas() == null ? "" : b.replicas());
+                }
+                if (hasMode) {
+                    sb.append('|').append(b.failoverMode());
                 }
             }
             spec = sb.length() == 0 ? null : sb.toString();

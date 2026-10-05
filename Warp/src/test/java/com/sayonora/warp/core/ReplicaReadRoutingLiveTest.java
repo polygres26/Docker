@@ -129,7 +129,7 @@ class ReplicaReadRoutingLiveTest {
                 direct(primaryPort, "insert into t values (" + (int) (Math.random() * 1_000_000 + 2_000_000) + ", 'lag')");
                 sleep(4000);
                 registry.replicaRouter().probeAll();
-                var sample = registry.replicaRouter().samplesSnapshot().get("pg#1");
+                var sample = registry.replicaRouter().samplesSnapshot().get(replicaUrl);
                 assertTrue(sample.lagSeconds() > 2.0, "paused replay must show real lag, got " + sample.lagSeconds());
                 sleep(2200);
                 assertEquals(primaryPort, serverPort(ex, "select inet_server_port()"),

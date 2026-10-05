@@ -364,6 +364,15 @@ public final class Main {
         // (readable via /api/audit) but aren't durable across a restart.
         com.sayonora.warp.audit.AuditLog auditLog = com.sayonora.warp.audit.AuditLog.fromEnv();
 
+        // Follow-mode failover for backends with read replicas: repoints a backend at the node that
+        // the database's own HA tooling has made writable. A no-op loop when no backend has replicas
+        // (and WARP_FAILOVER_PROBE_SECONDS=0 turns it off). See FailoverMonitor's javadoc.
+        com.sayonora.warp.core.FailoverMonitor failoverMonitor = new com.sayonora.warp.core.FailoverMonitor(
+                backendRegistry, new com.sayonora.warp.config.BackendFailoverPersister(configStore, backendRegistry),
+                auditLog);
+        backendRegistry.setFailoverMonitor(failoverMonitor);
+        failoverMonitor.start();
+
         com.sayonora.warp.config.FirewallRuleStore firewallRuleStore = new com.sayonora.warp.config.FirewallRuleStore(options);
         firewallRuleStore.ensureSchema();
         List<FirewallStage.Rule> initialFirewallRules;

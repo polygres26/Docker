@@ -49,6 +49,13 @@ public final class ReplicaRouter {
         public String id() {
             return primaryName + "#" + index;
         }
+
+        /** Stable identity of the replica's server. Lag samples and quarantine are keyed by this,
+         * NOT by {@link #id()}: after a failover the replica list is reordered, and a sample
+         * measured on one server must never be attributed to whichever server inherits its index. */
+        public String key() {
+            return target.jdbcUrl();
+        }
     }
 
     public enum Reason {
@@ -141,17 +148,17 @@ public final class ReplicaRouter {
                 eligible.size());
         Replica chosen = eligible.get(idx);
         record(primaryName, Reason.ROUTED_TO_REPLICA);
-        routedPerReplica.computeIfAbsent(chosen.id(), k -> new AtomicLong()).incrementAndGet();
+        routedPerReplica.computeIfAbsent(chosen.key(), k -> new AtomicLong()).incrementAndGet();
         return chosen;
     }
 
     boolean isEligible(Replica r) {
         long now = clock.getAsLong();
-        Long until = quarantinedUntil.get(r.id());
+        Long until = quarantinedUntil.get(r.key());
         if (until != null && now < until) {
             return false;
         }
-        LagSample s = samples.get(r.id());
+        LagSample s = samples.get(r.key());
         if (s == null || !s.ok() || !s.isReplica()) {
             return false;
         }
@@ -172,7 +179,7 @@ public final class ReplicaRouter {
     /** A routed read failed on {@code replica}: stop using it for a while and let the caller retry
      * on the primary. */
     public void quarantine(Replica replica, String why) {
-        quarantinedUntil.put(replica.id(), clock.getAsLong() + quarantineMillis);
+        quarantinedUntil.put(replica.key(), clock.getAsLong() + quarantineMillis);
         log.warn("replica routing: quarantining {} for {}s ({})", replica.id(), quarantineMillis / 1000, why);
     }
 
@@ -200,7 +207,7 @@ public final class ReplicaRouter {
                     } catch (RuntimeException e) {
                         s = new LagSample(false, false, 0, "probe failed: " + e.getMessage(), clock.getAsLong());
                     }
-                    samples.put(r.id(), s);
+                    samples.put(r.key(), s);
                 }));
             }
             for (Future<?> f : futures) {
@@ -260,8 +267,8 @@ public final class ReplicaRouter {
         return Map.copyOf(samples);
     }
 
-    public long routedCount(String replicaId) {
-        AtomicLong c = routedPerReplica.get(replicaId);
+    public long routedCount(String replicaUrl) {
+        AtomicLong c = routedPerReplica.get(replicaUrl);
         return c == null ? 0 : c.get();
     }
 
@@ -275,7 +282,7 @@ public final class ReplicaRouter {
     }
 
     public boolean isQuarantined(Replica r) {
-        Long until = quarantinedUntil.get(r.id());
+        Long until = quarantinedUntil.get(r.key());
         return until != null && clock.getAsLong() < until;
     }
 
@@ -300,7 +307,7 @@ public final class ReplicaRouter {
                 ro.addProperty("id", r.id());
                 ro.addProperty("url", BackendSetModel.maskUrl(r.target().jdbcUrl()));
                 ro.addProperty("maxLagSeconds", r.maxLagSeconds());
-                LagSample sample = samples.get(r.id());
+                LagSample sample = samples.get(r.key());
                 if (sample == null) {
                     ro.add("sample", com.google.gson.JsonNull.INSTANCE);
                 } else {
@@ -314,7 +321,7 @@ public final class ReplicaRouter {
                 }
                 ro.addProperty("eligible", isEligible(r));
                 ro.addProperty("quarantined", isQuarantined(r));
-                ro.addProperty("routedReads", routedCount(r.id()));
+                ro.addProperty("routedReads", routedCount(r.key()));
                 ra.add(ro);
             }
             po.add("replicas", ra);

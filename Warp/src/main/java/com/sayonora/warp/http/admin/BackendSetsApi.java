@@ -315,6 +315,7 @@ public final class BackendSetsApi {
             replicaArr.add(ro);
         }
         o.add("replicas", replicaArr);
+        o.addProperty("failoverMode", b.effectiveFailoverMode());
         o.addProperty("isDefault", BackendRegistry.DEFAULT_BACKEND_NAME.equals(b.name()));
         o.addProperty("connectAs", b.name());
         List<String> ids = new ArrayList<>();
@@ -476,7 +477,8 @@ public final class BackendSetsApi {
             BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
             Backend b = model.addBackend(set, str(body, "name"), firstNonNull(str(body, "url"), str(body, "jdbcUrl")),
                     str(body, "user"), str(body, "password"), str(body, "fallback"), str(body, "description"),
-                    stores(body), body.has("replicas") ? replicasField(body) : null);
+                    stores(body), body.has("replicas") ? replicasField(body) : null,
+                    body.has("failoverMode") ? str(body, "failoverMode") : null);
             List<String> warnings = new ArrayList<>();
             boolean specBlank = before.backends() == null || before.backends().isBlank();
             String standby = System.getenv("WARP_STANDBY_HOST");
@@ -506,7 +508,8 @@ public final class BackendSetsApi {
                     body.has("password") && !str(body, "password").isBlank() ? str(body, "password") : null,
                     body.has("description"), str(body, "description"),
                     body.has("enabledStores") ? stores(body) : null,
-                    body.has("replicas") ? replicasField(body) : null);
+                    body.has("replicas") ? replicasField(body) : null,
+                    body.has("failoverMode") ? (str(body, "failoverMode") == null ? "" : str(body, "failoverMode")) : null);
             if (body.has("set") && str(body, "set") != null && !set.equals(str(body, "set"))) {
                 b = model.moveBackend(name, str(body, "set"));
             }

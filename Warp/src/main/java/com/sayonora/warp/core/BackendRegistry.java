@@ -123,6 +123,86 @@ public final class BackendRegistry {
     private volatile Map<String, List<ReplicaSpec>> replicaSpecs = Map.of();
     private final ReplicaRouter replicaRouter = new ReplicaRouter(this);
 
+    public static final java.util.Set<String> FAILOVER_MODES = java.util.Set.of("follow", "off");
+
+    // Failover mode per backend (6th WARP_BACKENDS field); absent = default (follow when replicas exist).
+    private volatile Map<String, String> failoverModes = Map.of();
+
+    /** Effective failover mode for {@code name}: "off" when it has no replicas or was set to off,
+     * otherwise "follow" (the only active mode so far). */
+    public String failoverModeOf(String name) {
+        if (replicaSpecsOf(name).isEmpty()) {
+            return "off";
+        }
+        return failoverModes.getOrDefault(name, "follow");
+    }
+
+    /** A promotion this process applied in memory that the shared config does not (yet) reflect --
+     * kept so a reload from a config that still names the old primary does not silently revert it. */
+    private record FailoverOverride(String expectedOldUrl, String newUrl, List<ReplicaSpec> newReplicas) {
+    }
+
+    private final Map<String, FailoverOverride> failoverOverrides = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile FailoverMonitor failoverMonitor;
+
+    public FailoverMonitor failoverMonitor() {
+        return failoverMonitor;
+    }
+
+    public void setFailoverMonitor(FailoverMonitor monitor) {
+        this.failoverMonitor = monitor;
+    }
+
+    /**
+     * Repoints backend {@code name} at {@code newUrl} (and replaces its replica list) in this
+     * process only, compare-and-set on the primary URL it is expected to currently have. Returns
+     * false -- changing nothing -- when the backend is unknown or already points elsewhere (someone,
+     * possibly this process via a config reload, already moved it). The change is remembered as an
+     * override so a later {@link #reload} from a config that has not caught up cannot undo it; the
+     * override disappears once the config itself names {@code newUrl}.
+     */
+    public synchronized boolean applyFailoverLocally(String name, String expectedOldUrl, String newUrl,
+            List<ReplicaSpec> newReplicas) {
+        BackendTarget t = targets.get(name);
+        if (t == null || !t.jdbcUrl().equals(expectedOldUrl)) {
+            return false;
+        }
+        failoverOverrides.put(name, new FailoverOverride(expectedOldUrl, newUrl, List.copyOf(newReplicas)));
+        swapPrimary(this, name, newUrl, newReplicas);
+        touch();
+        return true;
+    }
+
+    private static void swapPrimary(BackendRegistry r, String name, String newUrl, List<ReplicaSpec> newReplicas) {
+        BackendTarget t = r.targets.get(name);
+        Map<String, BackendTarget> copy = new LinkedHashMap<>(r.targets);
+        copy.put(name, new BackendTarget(name, newUrl, t.user(), t.password(), t.failoverOptions(),
+                t.fallbackName(), t.connectorOperand()));
+        r.targets = Map.copyOf(copy);
+        Map<String, List<ReplicaSpec>> specs = new LinkedHashMap<>(r.replicaSpecs);
+        if (newReplicas.isEmpty()) {
+            specs.remove(name);
+        } else {
+            specs.put(name, List.copyOf(newReplicas));
+        }
+        r.replicaSpecs = Map.copyOf(specs);
+    }
+
+    private synchronized void reapplyFailoverOverrides() {
+        for (var it = failoverOverrides.entrySet().iterator(); it.hasNext();) {
+            var e = it.next();
+            BackendTarget t = targets.get(e.getKey());
+            FailoverOverride o = e.getValue();
+            if (t == null || t.jdbcUrl().equals(o.newUrl())) {
+                it.remove(); // config caught up (or the backend is gone)
+            } else if (t.jdbcUrl().equals(o.expectedOldUrl())) {
+                swapPrimary(this, e.getKey(), o.newUrl(), o.newReplicas());
+            } else {
+                it.remove(); // config now names some third node: the config wins
+            }
+        }
+    }
+
     /** Replicas configured for {@code primaryName}; empty when none. */
     public List<ReplicaSpec> replicaSpecsOf(String primaryName) {
         List<ReplicaSpec> r = replicaSpecs.get(primaryName);
@@ -225,6 +305,7 @@ public final class BackendRegistry {
         TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
         Map<String, List<ReplicaSpec>> replicaSpecs = new LinkedHashMap<>();
+        Map<String, String> failoverModes = new LinkedHashMap<>();
         if (spec != null && !spec.isBlank()) {
             for (String entry : spec.split(";")) {
                 if (entry.isBlank()) {
@@ -256,6 +337,18 @@ public final class BackendRegistry {
                         entryReplicas = ReplicaSpec.parseList(parts[4]);
                     } catch (IllegalArgumentException e) {
                         log.warn("backend registry: ignoring replicas of '{}': {}", name, e.getMessage());
+                    }
+                }
+                // Optional 6th field: failover mode for this backend's replica group -- "follow"
+                // (Warp follows a promotion made by the database's own HA tooling) or "off". Blank
+                // means follow when replicas exist. Unknown values are ignored with a warning.
+                if (parts.length > 5 && !parts[5].isBlank()) {
+                    String mode = parts[5].trim().toLowerCase(java.util.Locale.ROOT);
+                    if (FAILOVER_MODES.contains(mode)) {
+                        failoverModes.put(name, mode);
+                    } else {
+                        log.warn("backend registry: ignoring unknown failover mode '{}' for '{}' (expected {})",
+                                parts[5].trim(), name, FAILOVER_MODES);
                     }
                 }
                 if (!trustedHosts.isTrusted(url)) {
@@ -327,6 +420,7 @@ public final class BackendRegistry {
                 backendSets, parsedGroups.sharded(), parsedGroups.backendToGroupName());
         built.declarationOrder = declarationOrder;
         built.replicaSpecs = Map.copyOf(replicaSpecs);
+        built.failoverModes = Map.copyOf(failoverModes);
         return built;
     }
 
@@ -460,7 +554,9 @@ public final class BackendRegistry {
         this.backendGroupSharded = fresh.backendGroupSharded;
         this.backendToGroupName = fresh.backendToGroupName;
         this.declarationOrder = fresh.declarationOrder;
+        this.failoverModes = fresh.failoverModes;
         this.replicaSpecs = fresh.replicaSpecs;
+        reapplyFailoverOverrides();
         this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
         touch();
     }
