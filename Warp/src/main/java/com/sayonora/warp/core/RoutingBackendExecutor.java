@@ -47,6 +47,34 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     private boolean transactionFailed;
 
+    // ---- read-replica routing (see ReplicaRouter) ----------------------------------------
+    // Wall-clock millis of this session's most recent statement that was not a plain replica-safe
+    // read; reads inside the read-your-writes window after it stay on the primary.
+    private long lastNonReadMillis = Long.MIN_VALUE / 2;
+    // Whether this session holds state that lives on its own backend connection (SET values, temp
+    // tables, an open cursor...). null means "unknown": the supplied-connection (default) path then
+    // never goes to a replica, because a fresh replica connection would not carry that state.
+    private java.util.function.BooleanSupplier sessionHasState;
+    private static final long READ_AFTER_WRITE_WINDOW_MILLIS = longEnv("WARP_READ_AFTER_WRITE_WINDOW_MS", 2000);
+
+    private static long longEnv(String name, long fallback) {
+        try {
+            String v = System.getenv(name);
+            return v == null || v.isBlank() ? fallback : Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** Fluent. Tells the executor how to ask the owning wire session whether it currently holds
+     * connection-bound state. Without it, reads on the session's own supplied connection are never
+     * routed to a replica (reads to an explicitly routed target are unaffected: those already use a
+     * fresh connection per statement). */
+    public RoutingBackendExecutor withSessionStatePredicate(java.util.function.BooleanSupplier hasState) {
+        this.sessionHasState = hasState;
+        return this;
+    }
+
     private static final Pattern DECLARE_CURSOR = Pattern.compile("(?i)^\\s*DECLARE\\s+(\\w+)\\s+CURSOR\\b");
     private static final Pattern FETCH_OR_CLOSE_CURSOR =
             Pattern.compile("(?i)^\\s*(?:FETCH\\b.*\\b(?:FROM|IN)\\s+(\\w+)|CLOSE\\s+(\\w+))\\s*;?\\s*$");
@@ -160,6 +188,13 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     @Override
     public ExecutionResult execute(Statement statement) throws SQLException {
+        // Conservatively treat anything that is not provably a plain read as a (potential) write
+        // BEFORE running it: if it fails, the next read staying on the primary is merely cautious.
+        // Skipped entirely when no replica is configured anywhere (the common case) to keep this
+        // path free of regex work.
+        if (!registry.allReplicaSpecs().isEmpty() && !StatementClassifier.isReplicaSafeRead(statement.sqlText())) {
+            lastNonReadMillis = System.currentTimeMillis();
+        }
         String targetName = statement.targetBackend();
         if (targetName == null && transactionConnections != null) {
             targetName = cursorTargets.get(cursorNameReferenced(statement.sqlText()));
@@ -196,6 +231,12 @@ public final class RoutingBackendExecutor implements BackendExecutor {
                 BackendTarget defaultTarget = registry.resolveForRouting(defaultExecutorBackendName);
                 if (defaultTarget != null) {
                     return executeOnFreshConnection(defaultTarget, statement);
+                }
+            }
+            if (transactionConnections == null && !registry.isEmpty()) {
+                ExecutionResult viaReplica = tryReplicaRead(defaultExecutorBackendName, statement, true);
+                if (viaReplica != null) {
+                    return viaReplica;
                 }
             }
             return defaultExecutor.execute(statement);
@@ -420,10 +461,62 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // transaction" is already guaranteed by the caller; the remaining condition is purely
         // "would sending this to a standby be safe", which for a WRITE or an unclassifiable
         // statement it is not.
+        ExecutionResult viaReplica = tryReplicaRead(target.name(), statement, false);
+        if (viaReplica != null) {
+            return viaReplica;
+        }
         boolean preferStandby = READ_ROUTING_ENABLED
                 && SqlMetricsCollector.classify(statement.sqlText()) == SqlMetricsCollector.StatementKind.READ;
         try (Connection connection = preferStandby ? target.openPreferringStandby() : target.open()) {
             return new JdbcBackendExecutor(connection).execute(statement);
+        }
+    }
+
+    /**
+     * Runs {@code statement} on a lag-eligible read replica of {@code primaryName} and returns its
+     * result, or returns {@code null} to mean "use the primary" -- for every reason a replica must
+     * not (or could not) serve it. Never throws for a replica-side problem: any SQLException from
+     * the replica is retried on the primary (a failing read is idempotent, and only the primary may
+     * decide that e.g. a table really does not exist), and a connect/read-only failure also
+     * quarantines that replica for a while.
+     *
+     * @param needsSessionStateCheck true on the supplied-connection path, where the session's
+     *     connection-bound state would be lost on a replica connection
+     */
+    private ExecutionResult tryReplicaRead(String primaryName, Statement statement, boolean needsSessionStateCheck) {
+        ReplicaRouter router = registry.replicaRouter();
+        if (!ReplicaRouter.enabledByEnv() || !router.hasReplicas(primaryName)) {
+            return null;
+        }
+        if (!StatementClassifier.isReplicaSafeRead(statement.sqlText())) {
+            router.record(primaryName, ReplicaRouter.Reason.NOT_READ_SAFE);
+            return null;
+        }
+        if (needsSessionStateCheck && (sessionHasState == null || sessionHasState.getAsBoolean())) {
+            router.record(primaryName, ReplicaRouter.Reason.SESSION_STATE);
+            return null;
+        }
+        if (System.currentTimeMillis() - lastNonReadMillis < READ_AFTER_WRITE_WINDOW_MILLIS) {
+            router.record(primaryName, ReplicaRouter.Reason.RECENT_WRITE);
+            return null;
+        }
+        ReplicaRouter.Replica replica = router.pick(primaryName);
+        if (replica == null) {
+            return null;
+        }
+        try (Connection connection = replica.target().open()) {
+            return new JdbcBackendExecutor(connection).execute(statement);
+        } catch (SQLException | RuntimeException e) {
+            String state = e instanceof SQLException se ? se.getSQLState() : null;
+            // 08xxx connection exception; 25006 read-only transaction (Postgres), 57P01-03 server
+            // shutdown/crash; anything else is retried on the primary without penalising the replica.
+            if (state == null || state.startsWith("08") || "25006".equals(state) || state.startsWith("57P")
+                    || e instanceof RuntimeException) {
+                router.quarantine(replica, state == null ? e.toString() : "SQLSTATE " + state);
+            }
+            router.record(primaryName, ReplicaRouter.Reason.REPLICA_RETRIED_ON_PRIMARY);
+            log.debug("replica routing: read on {} failed ({}), retrying on the primary", replica.id(), e.toString());
+            return null;
         }
     }
 

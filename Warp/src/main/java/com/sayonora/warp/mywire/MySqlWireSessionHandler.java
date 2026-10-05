@@ -141,6 +141,8 @@ public final class MySqlWireSessionHandler implements Runnable {
         this.failedStatementLog.ensureSchema();
         this.lease = PgConnections.newSessionLease(options);
         this.terminalExecutor.bindLease(lease);
+        this.routingExecutor.withSessionStatePredicate(
+                () -> lease.hasSettings() || lease.isPinned() || lease.inTransaction());
     }
 
     @Override

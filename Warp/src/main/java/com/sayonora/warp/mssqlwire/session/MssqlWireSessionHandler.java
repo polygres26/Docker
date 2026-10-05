@@ -170,6 +170,8 @@ public final class MssqlWireSessionHandler implements Runnable {
         this.failedStatementLog.ensureSchema();
         this.lease = PgConnections.newSessionLease(options);
         this.terminalExecutor.bindLease(lease);
+        this.routingExecutor.withSessionStatePredicate(
+                () -> lease.hasSettings() || lease.isPinned() || lease.inTransaction());
         this.roleAuthCache = roleAuthCache;
         this.auditLog = auditLog;
     }

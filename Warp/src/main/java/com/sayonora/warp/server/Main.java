@@ -197,6 +197,9 @@ public final class Main {
         // schema of every store enabled on a Postgres backend, before any frontend starts serving
         com.sayonora.warp.core.StoreBootstrap.ensureAll(backendRegistry);
         logSchemaDiscoveryConflicts(backendRegistry);
+        // Lag sampling for read replicas configured on any backend (5th WARP_BACKENDS field); a no-op
+        // loop when none are configured, and disabled by WARP_REPLICA_LAG_CHECK_SECONDS=0.
+        backendRegistry.replicaRouter().start();
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it
@@ -360,6 +363,24 @@ public final class Main {
         // WARP_AUDIT_LOG_FILE/WARP_AUDIT_LOG_DB configured, events still land in the in-memory ring
         // (readable via /api/audit) but aren't durable across a restart.
         com.sayonora.warp.audit.AuditLog auditLog = com.sayonora.warp.audit.AuditLog.fromEnv();
+
+        // Follow-mode failover for backends with read replicas: repoints a backend at the node that
+        // the database's own HA tooling has made writable. A no-op loop when no backend has replicas
+        // (and WARP_FAILOVER_PROBE_SECONDS=0 turns it off). See FailoverMonitor's javadoc.
+        com.sayonora.warp.core.FailoverMonitor failoverMonitor = new com.sayonora.warp.core.FailoverMonitor(
+                backendRegistry, new com.sayonora.warp.config.BackendFailoverPersister(configStore, backendRegistry),
+                auditLog);
+        try {
+            com.sayonora.warp.config.PgFailoverCoordination failoverCoordination =
+                    new com.sayonora.warp.config.PgFailoverCoordination(options);
+            failoverCoordination.ensureSchema();
+            failoverMonitor.withPromoteHooks(com.sayonora.warp.core.FailoverMonitor.defaultHooks(failoverCoordination));
+        } catch (Exception e) {
+            log.warn("failover: promote mode unavailable (could not prepare the lease tables in the config "
+                    + "database: {}) -- backends set to promote will be monitored but never promoted", e.toString());
+        }
+        backendRegistry.setFailoverMonitor(failoverMonitor);
+        failoverMonitor.start();
 
         com.sayonora.warp.config.FirewallRuleStore firewallRuleStore = new com.sayonora.warp.config.FirewallRuleStore(options);
         firewallRuleStore.ensureSchema();

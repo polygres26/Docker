@@ -71,8 +71,16 @@ public final class ReplicationLag {
         try (Connection conn = DriverManager.getConnection(target.jdbcUrl(), props);
                 Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
+                        // An idle primary makes now() - pg_last_xact_replay_timestamp() grow even
+                        // though the replica is fully caught up, so that alone reports false lag.
+                        // When the WAL receiver is actively streaming AND everything it received has
+                        // been replayed, the replica really is current (0). Anything else -- not
+                        // streaming, or no privilege to see the receiver (status NULL) -- falls back
+                        // to the timestamp, which can only over-report lag (the safe direction).
                         "SELECT pg_is_in_recovery(), "
-                                + "EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))")) {
+                                + "CASE WHEN (SELECT status FROM pg_stat_wal_receiver LIMIT 1) = 'streaming' "
+                                + "AND pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 "
+                                + "ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END")) {
             if (!rs.next()) {
                 return Result.unreachable("no row returned from lag probe");
             }

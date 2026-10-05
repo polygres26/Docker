@@ -43,7 +43,8 @@ export const NAV_GROUPS: NavGroup[] = [
         { to: '/acl', label: 'ACL editor' }, { to: '/oauth', label: 'OAuth' },
       ] },
       { label: 'Infrastructure', icon: Server, to: '/infrastructure', tabs: [
-        { to: '/infrastructure', label: 'Backend sets' }, { to: '/certificates', label: 'Certificates' },
+        { to: '/infrastructure', label: 'Backend sets' }, { to: '/replicas', label: 'Replicas and failover' },
+        { to: '/certificates', label: 'Certificates' },
       ] },
     ],
   },
