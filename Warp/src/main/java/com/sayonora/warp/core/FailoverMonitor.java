@@ -904,6 +904,7 @@ public final class FailoverMonitor {
     }
 
     private void record(String backend, String kind, String detail, AuditEvent.Type auditType) {
+        eventCounts.computeIfAbsent(backend + "\u0000" + kind, k -> new java.util.concurrent.atomic.LongAdder()).increment();
         synchronized (events) {
             events.addFirst(new Event(Instant.now(), backend, kind, detail));
             while (events.size() > 50) {
@@ -941,6 +942,27 @@ public final class FailoverMonitor {
             scheduler.shutdownNow();
             scheduler = null;
         }
+    }
+
+    private final Map<String, java.util.concurrent.atomic.LongAdder> eventCounts = new ConcurrentHashMap<>();
+
+    /** Lifetime count of events per (backend, kind) since this process started -- the recent-events list
+     * only keeps the last 50, which is useless for a monotonic metric. Keys are {@code backend\0kind}. */
+    public Map<String, Long> eventCounts() {
+        Map<String, Long> out = new java.util.TreeMap<>();
+        eventCounts.forEach((k, v) -> out.put(k, v.sum()));
+        return out;
+    }
+
+    /** The role the last probe saw for {@code url} in {@code backend}'s group, or null if never probed. */
+    public NodeRole observedRole(String backend, String url) {
+        Streak s = streaks.get(backend + "|" + url);
+        return s == null ? null : s.last;
+    }
+
+    /** Epoch millis of the last primary switch this process applied for {@code backend}, or null. */
+    public Long lastSwitchMillis(String backend) {
+        return lastSwitchMillis.get(backend);
     }
 
     public List<Event> recentEvents() {

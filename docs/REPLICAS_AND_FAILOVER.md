@@ -263,6 +263,21 @@ Without external fencing the majority rule is the only protection against promot
 primary is merely partitioned away from Warp but still serving others. Configure
 `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
 
+## Metrics and alerts
+
+`GET /metrics` now includes (labels `backend` = the primary's name, `replica` = replica URL with credentials masked):
+`warp_replica_lag_seconds`, `warp_replica_sample_age_seconds`, `warp_replica_eligible`, `warp_replica_quarantined`,
+`warp_replica_reads_routed_total`, `warp_replica_read_decisions_total{reason}`, `warp_failover_primary_writable`,
+`warp_failover_last_switch_timestamp_seconds` and `warp_failover_events_total{kind}`. Counters are per Warp
+process and reset on restart; in a multi-instance deployment each instance reports its own view (and its own
+event counts), so alert on `sum`/`max` across instances where that matters. A replica whose lag cannot be
+measured has no `warp_replica_lag_seconds` series (never a fake 0). These series are not yet listed in the
+Signal Catalog on `/api/observability`.
+
+Ready-made alert rules are in `docs/alerts/warp-replicas.rules.yml` (lag, no eligible replica, primary not
+writable, failover happened, failover blocked, split brain, node needs rebuild). They have been syntax-checked
+as YAML but not run through `promtool` or a live Prometheus.
+
 ## Known limits
 
 - In-flight transactions and statements on the dead primary fail; clients retry. New statements go to
