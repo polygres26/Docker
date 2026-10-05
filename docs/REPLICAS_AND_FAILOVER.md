@@ -283,8 +283,9 @@ primary is merely partitioned away from Warp but still serving others. Configure
 `warp_failover_last_switch_timestamp_seconds` and `warp_failover_events_total{kind}`. Counters are per Warp
 process and reset on restart; in a multi-instance deployment each instance reports its own view (and its own
 event counts), so alert on `sum`/`max` across instances where that matters. A replica whose lag cannot be
-measured has no `warp_replica_lag_seconds` series (never a fake 0). These series are not yet listed in the
-Signal Catalog on `/api/observability`.
+measured has no `warp_replica_lag_seconds` series (never a fake 0). The series are listed in the Signal
+Catalog on `/api/observability`; as for every catalog entry, a metric's label set only appears once a data
+series for it exists (for example `warp_failover_events_total` has no labels until the first event).
 
 Ready-made alert rules are in `docs/alerts/warp-replicas.rules.yml` (lag, no eligible replica, primary not
 writable, failover happened, failover blocked, split brain, node needs rebuild). They have been syntax-checked
