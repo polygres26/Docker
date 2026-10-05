@@ -1,4 +1,4 @@
-# Postgres-backed protocols under switchover and failover (phases 1-4: 25 protocols, listed per phase below)
+# Postgres-backed protocols under switchover and failover (phases 1-5: 29 protocols, listed per phase below)
 
 Measured on 2026-10-05 with `StoreFailoverBrownoutLiveTest`. Warp serves the protocol over its Postgres backend (the data
 lives in Postgres tables, enabled per backend with `WARP_BACKEND_STORES`), the backend has one streaming replica and
@@ -143,10 +143,38 @@ for Kinesis, SSM and Secrets Manager, the Query protocol for SNS; no SigV4 signi
 - Not benchmarked, deliberately: KMS and STS (no data worth losing: KMS is exercised through Secrets Manager's sealing, STS is
   stateless).
 
+## Phase 5: Warp's gRPC query service, MCP, Gremlin, Bigtable
+
+Clients: the generated gRPC stub for `QueryService.Execute` (selecting the backend with the request's `database` field), a JSON-RPC
+client calling the MCP `execute_sql` tool (`backend: pg`), plain HTTP to Gremlin's `POST /` endpoint (`g.addV(...)`), and the
+generated Bigtable gRPC stubs (`CreateTable`, `MutateRow`, `ReadRows`). The gRPC query service and MCP are not stores: their data
+is whatever SQL they run against the Postgres backend, which is also what makes them follow the failover.
+
+| protocol | scenario | writes ok | writes failed | steady max gap ms | max gap around event ms | failed window | reads ok | reads failed | acked | lost | extra |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| grpc-query | switchover | 4537 | 3 | 27 | 157 | 3 ms (recovered +29) | 3041 | 0 | 4537 | 0 | 0 |
+| grpc-query | failover | 6370 | 6 | 25 | 5282 | 5150 ms (recovered +5168) | 4682 | 0 | 6370 | 0 | 0 |
+| mcp | switchover | 4547 | 3 | 26 | 146 | 17 ms (recovered +32) | 3040 | 2 | 4547 | 0 | 0 |
+| mcp | failover | 6161 | 6 | 27 | 5310 | 5143 ms (recovered +5186) | 4116 | 4 | 6161 | 0 | 0 |
+| gremlinwire | switchover | 4186 | 3 | 31 | 154 | 7 ms (recovered +28) | 2367 | 2 | 4186 | 0 | 0 |
+| gremlinwire | failover | 5867 | 6 | 30 | 5308 | 5154 ms (recovered +5181) | 3101 | 3 | 5867 | 0 | 0 |
+| bigtablewire | switchover | 4003 | 3 | 31 | 155 | 7 ms (recovered +34) | 2683 | 0 | 4003 | 0 | 0 |
+| bigtablewire | failover | 5589 | 4 | 29 | 5177 | 5152 ms (recovered +5154) | 3728 | 3 | 5589 | 0 | 0 |
+
+- **All four follow the failover on their own and lost no acknowledged write**, same shape as everything else (~150 ms on a switchover,
+  ~5.2-5.3 s on a crash).
+- **MCP error mapping, noted not fixed:** during a crash some failed calls came back as JSON-RPC error `-32602` ("invalid params") with the
+  message `jdbc:postgresql://...: Connection is not available, request timed out`. A transient backend connection problem is reported as a
+  malformed request, which a client would reasonably treat as non-retryable; the rest came back as tool results with `isError: true`
+  and the SQLSTATE (`57P01`, `25006`, `08006`), which is the better shape.
+- Mistake in my first MCP read-back (not Warp): its regex also matched the JSON-RPC envelope's own `"id":1`, so the paging loop never
+  saw an empty page and the harness hung until I stopped it.
+- Not benchmarked, deliberately: **A2A** (its `message/send` turns plain English into a read-only SQL query through an LLM, so it needs
+  an LLM endpoint and does not write anything).
+
 ## Not covered yet
 
-The remaining Postgres-backed protocols: AMQP, Gremlin, Bigtable, and Warp's own gRPC, MCP and A2A APIs (all need a custom or
-generated client rather than plain HTTP). Many of them have only unit tests, no
+The remaining Postgres-backed protocol: **AMQP** (0-9-1 and 1.0 need a hand-written binary client), and A2A (needs an LLM, see above). Many of them have only unit tests, no
 end-to-end test with a real client at all, so their workloads are being added in groups. Same caveats as the SQL results:
 single runs, localhost, one replica, one Warp instance, no partitions.
 
