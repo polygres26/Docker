@@ -60,7 +60,7 @@ class BackendSetModelReplicasTest {
     }
 
     @Test
-    void failoverModeRoundTripsAndPromoteIsNotAcceptedYet() {
+    void failoverModeRoundTripsAndOnlyKnownModesAreAccepted() {
         String spec = "pg=jdbc:postgresql://p/db|u|pw||jdbc:postgresql://r1/db|off";
         BackendSetModel m = BackendSetModel.from(cfg(spec), null);
         assertEquals("off", m.backend("pg").failoverMode());
@@ -71,10 +71,11 @@ class BackendSetModelReplicasTest {
         assertEquals("follow", m.backend("pg").effectiveFailoverMode(), "blank clears back to the default");
         m.patchBackend("pg", null, null, null, false, null, null, null, "off");
         assertEquals("off", m.backend("pg").failoverMode());
+        m.patchBackend("pg", null, null, null, false, null, null, null, "promote");
+        assertEquals("promote", m.backend("pg").effectiveFailoverMode());
         ModelException e = assertThrows(ModelException.class,
-                () -> m.patchBackend("pg", null, null, null, false, null, null, null, "promote"));
+                () -> m.patchBackend("pg", null, null, null, false, null, null, null, "bogus"));
         assertEquals(400, e.status());
-        assertTrue(e.getMessage().contains("not available yet"));
     }
 
     @Test

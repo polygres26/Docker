@@ -207,7 +207,7 @@ public final class ReplicaRouter {
                     } catch (RuntimeException e) {
                         s = new LagSample(false, false, 0, "probe failed: " + e.getMessage(), clock.getAsLong());
                     }
-                    samples.put(r.key(), s);
+                    recordSample(r.key(), s);
                 }));
             }
             for (Future<?> f : futures) {
@@ -220,6 +220,11 @@ public final class ReplicaRouter {
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /** Stores a lag sample for the replica server at {@code replicaUrl}. */
+    void recordSample(String replicaUrl, LagSample sample) {
+        samples.put(replicaUrl, sample);
     }
 
     /** Starts the background sampler (idempotent). A no-op when disabled by env. */

@@ -370,6 +370,15 @@ public final class Main {
         com.sayonora.warp.core.FailoverMonitor failoverMonitor = new com.sayonora.warp.core.FailoverMonitor(
                 backendRegistry, new com.sayonora.warp.config.BackendFailoverPersister(configStore, backendRegistry),
                 auditLog);
+        try {
+            com.sayonora.warp.config.PgFailoverCoordination failoverCoordination =
+                    new com.sayonora.warp.config.PgFailoverCoordination(options);
+            failoverCoordination.ensureSchema();
+            failoverMonitor.withPromoteHooks(com.sayonora.warp.core.FailoverMonitor.defaultHooks(failoverCoordination));
+        } catch (Exception e) {
+            log.warn("failover: promote mode unavailable (could not prepare the lease tables in the config "
+                    + "database: {}) -- backends set to promote will be monitored but never promoted", e.toString());
+        }
         backendRegistry.setFailoverMonitor(failoverMonitor);
         failoverMonitor.start();
 

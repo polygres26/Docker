@@ -2,8 +2,8 @@
 
 > Technical reference. Status: **Postgres only** so far. MySQL, Oracle and SQL Server replicas are
 > accepted in the config but never used for reads, and are not monitored for failover, until their
-> lag/role probes exist. Warp does **not** promote replicas; it follows a promotion made by your
-> database's own HA tooling.
+> lag/role probes exist. Failover has two modes: `follow` (a promotion made by your database's own HA
+> tooling is followed) and `promote` (Warp itself promotes a replica, behind the safeguards below).
 
 ## Configuring replicas
 
@@ -17,7 +17,7 @@ pg=jdbc:postgresql://p/db|app|secret||jdbc:postgresql://r1/db~5^jdbc:postgresql:
 
 - Replicas reuse the primary's user and password, are **not** registered backends, and do not count
   against the Developer-tier backend cap. `maxLagSeconds` defaults to 5.
-- `failoverMode`: `follow` (default whenever replicas exist) or `off`. `promote` is rejected for now.
+- `failoverMode`: `follow` (default whenever replicas exist), `promote`, or `off`.
 - `~` and `^` separate lag and replicas; `;` inside a URL is written `%3B` as for the primary.
 
 ## Read routing
@@ -72,12 +72,48 @@ and re-applied across reloads until the config names the new primary.
 confirmation window; every other rule still applies). Switches and suspected split brains are written
 to the audit log (`BACKEND_FAILOVER`, `BACKEND_SPLIT_BRAIN_SUSPECTED`).
 
+## Promote mode
+
+`failoverMode=promote` does everything `follow` does, and additionally promotes a replica when the
+primary is confirmed down **and nothing is writable**. If some node is already writable (someone else
+promoted) Warp follows it instead of promoting a second one. Warp promotes with `pg_promote()` (PG 12+;
+the Warp user needs superuser or `EXECUTE` on it) and **refuses** unless all of these hold:
+
+1. the full confirmation window has elapsed (a manual evaluate cannot shorten it) and the backend is
+   outside its cooldown;
+2. **majority:** more than half of the live Warp instances (those heartbeating in `warp_nodes`) report
+   the same primary down within `WARP_FAILOVER_VOTE_FRESH_SECONDS` (30);
+3. **lease:** this instance holds the per-backend lease in the config database
+   (`warp_failover_lease`, atomic, expiry on the database clock, `WARP_FAILOVER_LEASE_SECONDS` 120,
+   released afterwards) -- so only one instance promotes at a time;
+4. **fence:** if `WARP_FAILOVER_FENCE_COMMAND` is set it is run with `FAILED_PRIMARY_URL` in its
+   environment and must exit 0 (use it to power off / firewall the old primary); a failure aborts;
+5. a fresh re-probe, after taking the lease, still shows no writable node;
+6. the candidate is the reachable replica that **received the most WAL** (ties: the earlier one in the
+   list) and it was within `WARP_FAILOVER_MAX_PROMOTE_LAG_SECONDS` (default 30; negative disables the
+   gate) the last time its lag was measured **while the primary was still up** -- never measured means
+   refused, because lag read after the outage includes the outage itself.
+
+After promotion Warp requires the replica to report itself writable, then switches exactly like follow
+mode (one `warp_config` version, old primary takes the promoted node's replica slot) and releases the
+lease. If the config database is unreachable the majority and the lease cannot be established, so
+**Warp does not promote**; there is deliberately no fallback decider.
+
+Warp does not repoint the *other* replicas at the new primary (that needs replication-source changes
+on those servers, i.e. your HA tooling); until that is done their lag probe fails and they are not used
+for reads. When the old primary comes back writable while the new one is writable, Warp reports a
+suspected split brain and changes nothing.
+
+Without external fencing the majority rule is the only protection against promoting while the old
+primary is merely partitioned away from Warp but still serving others. Configure
+`WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
+
 ## Known limits
 
 - In-flight transactions and statements on the dead primary fail; clients retry. New statements go to
   the new primary.
-- Every instance decides independently; there is no cluster-wide decider yet (it arrives with promote
-  mode, where disagreement would be unsafe rather than redundant).
+- In `follow` mode every instance decides independently (redundant, idempotent). Promotion is the only
+  action gated by the lease and majority.
 - The config database is usually the default backend; its own failover is the existing
   `WARP_STANDBY_HOST` mechanism, not this one.
 - `BackendHealthChecker` still marks a backend DOWN after one failed connect; that is independent of

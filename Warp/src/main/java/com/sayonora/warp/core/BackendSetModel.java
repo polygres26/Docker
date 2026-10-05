@@ -317,15 +317,14 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
-    /** Only {@code follow} and {@code off} exist; promote mode is deliberately not accepted yet. */
+    /** {@code follow} (default), {@code promote} or {@code off}. */
     private static String normalizeFailoverMode(String mode) {
         if (mode == null || mode.isBlank()) {
             return "";
         }
         String m = mode.trim().toLowerCase(java.util.Locale.ROOT);
         if (!BackendRegistry.FAILOVER_MODES.contains(m)) {
-            throw new ModelException(400, "failoverMode must be one of " + BackendRegistry.FAILOVER_MODES
-                    + (m.equals("promote") ? " (promote mode is not available yet)" : ""));
+            throw new ModelException(400, "failoverMode must be one of " + BackendRegistry.FAILOVER_MODES);
         }
         return m;
     }

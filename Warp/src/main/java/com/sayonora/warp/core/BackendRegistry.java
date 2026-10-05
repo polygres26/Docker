@@ -123,13 +123,13 @@ public final class BackendRegistry {
     private volatile Map<String, List<ReplicaSpec>> replicaSpecs = Map.of();
     private final ReplicaRouter replicaRouter = new ReplicaRouter(this);
 
-    public static final java.util.Set<String> FAILOVER_MODES = java.util.Set.of("follow", "off");
+    public static final java.util.Set<String> FAILOVER_MODES = java.util.Set.of("follow", "promote", "off");
 
     // Failover mode per backend (6th WARP_BACKENDS field); absent = default (follow when replicas exist).
     private volatile Map<String, String> failoverModes = Map.of();
 
     /** Effective failover mode for {@code name}: "off" when it has no replicas or was set to off,
-     * otherwise "follow" (the only active mode so far). */
+     * otherwise the configured "follow" (default) or "promote". */
     public String failoverModeOf(String name) {
         if (replicaSpecsOf(name).isEmpty()) {
             return "off";
