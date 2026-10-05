@@ -109,6 +109,16 @@ public interface EngineHa {
         freezeWrites(node);
     }
 
+    /**
+     * True when {@code node} reports itself writable (it is not a replica) but refuses writes because it was frozen: a primary left
+     * read-only by a planned switchover, or a stale old primary Warp froze. Warp applies it to nodes listed as replicas only, so such a node
+     * is treated as read-only (not a second writer) while it waits to be rebuilt. It is never applied to the configured primary, so a primary
+     * that is read-only for some other reason cannot trigger a failover. The default is false.
+     */
+    default boolean writesFrozen(BackendTarget node) throws Exception {
+        return false;
+    }
+
     /** False for engines where Warp will follow a promotion made elsewhere but never perform one. */
     default boolean supportsPromote() {
         return true;

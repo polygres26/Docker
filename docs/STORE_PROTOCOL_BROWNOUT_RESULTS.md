@@ -302,10 +302,12 @@ SIGSTOP across the switchover and resumed 8 s later).
 - **Losing an instance first did not stop the failover**: with one of three killed before the primary, the remaining two still reached the
   majority and promoted. With two instances, both vote, and the failover worked.
 - **A paused instance recovered cleanly**: it resumed after the switchover, reloaded the shared config and followed.
-- **Noise worth knowing:** after a switchover *every* instance records `split-brain-suspected`, `rejoin-needed` and `stale-writer-frozen` for
-  the old primary. That node was deliberately left read-only by the switchover, but it is no longer in recovery, so the role probe still calls
-  it writable. The freeze is a no-op on it. The alarm is the same as before the split-brain guards; making the probe treat a frozen node as
-  read-only was left alone, because a primary that is read-only for another reason would then look like a failure.
+- **Noise that was there, since fixed:** in these runs every instance recorded `split-brain-suspected`, `rejoin-needed` and
+  `stale-writer-frozen` after a switchover, for the old primary that the switchover had deliberately left read-only but which is no longer
+  in recovery, so the role probe called it writable. A node listed as a replica that is not in recovery but refuses writes is now treated as
+  read-only (event `frozen-node`); a 3-instance switchover re-run records only `frozen-node` and `rejoin-needed` (the second is the real
+  to-do: the node still has to be rebuilt) and no alarm. The check is applied to replica entries only, never to the configured primary, so a
+  primary that is read-only for another reason cannot trigger a failover.
 - **A hazard the guard now covers, found while reading this run's events:** an instance that has not yet reloaded the config after another
   instance's switch can list the *old* primary as primary and see the *new* one as a second writer. After the confirmation window it would
   freeze the new primary, the cluster's only real writer. Before freezing anything an instance now checks that its idea of the primary
