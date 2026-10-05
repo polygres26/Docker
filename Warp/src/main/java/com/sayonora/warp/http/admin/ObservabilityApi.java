@@ -43,6 +43,12 @@ public final class ObservabilityApi {
     public static void handlePatch(HttpServletRequest request, HttpServletResponse response, ConfigStore configStore,
             StatsCollectorStage statsStage, QosControlStage qosStage, McpMetricsCollector mcpMetrics)
             throws IOException {
+        handlePatch(request, response, configStore, statsStage, qosStage, mcpMetrics, null);
+    }
+
+    public static void handlePatch(HttpServletRequest request, HttpServletResponse response, ConfigStore configStore,
+            StatsCollectorStage statsStage, QosControlStage qosStage, McpMetricsCollector mcpMetrics,
+            com.sayonora.warp.core.BackendRegistry registry) throws IOException {
         response.setContentType("application/json; charset=utf-8");
         try {
             JsonObject body = readBody(request);
@@ -58,7 +64,7 @@ public final class ObservabilityApi {
                 JsonObject out = new JsonObject();
                 out.addProperty("ok", true);
                 out.addProperty("version", version);
-                out.add("observability", ObservabilitySummary.toJson(System.getenv(), statsStage, qosStage, mcpMetrics));
+                out.add("observability", ObservabilitySummary.toJson(System.getenv(), statsStage, qosStage, mcpMetrics, registry));
                 response.setStatus(HttpServletResponse.SC_OK);
                 response.getWriter().write(out.toString());
             }

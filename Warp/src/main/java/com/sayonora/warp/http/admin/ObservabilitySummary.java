@@ -53,6 +53,12 @@ public final class ObservabilitySummary {
 
     public static JsonObject toJson(Map<String, String> env, StatsCollectorStage statsStage,
             QosControlStage qosStage, McpMetricsCollector mcpMetrics) {
+        return toJson(env, statsStage, qosStage, mcpMetrics, null);
+    }
+
+    /** As above; with a registry the Signal Catalog also lists the replica and failover series. */
+    public static JsonObject toJson(Map<String, String> env, StatsCollectorStage statsStage,
+            QosControlStage qosStage, McpMetricsCollector mcpMetrics, com.sayonora.warp.core.BackendRegistry registry) {
         JsonObject out = new JsonObject();
 
         String protocol = env.getOrDefault("WARP_OTEL_PROTOCOL", "grpc").toLowerCase(Locale.ROOT);
@@ -155,7 +161,7 @@ public final class ObservabilitySummary {
         // not a hand-maintained list -- see MetricsCatalogGenerator's javadoc for the one real
         // tradeoff (a metric with zero recorded data yet reports an empty label set, not a
         // presumed schema, until real traffic exists to observe it from).
-        String rendered = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
+        String rendered = MetricsRenderer.render(statsStage, qosStage, mcpMetrics, registry);
         JsonArray catalog = new JsonArray();
         for (MetricsCatalogGenerator.Entry c : MetricsCatalogGenerator.fromPrometheusText(rendered)) {
             JsonObject e = new JsonObject();

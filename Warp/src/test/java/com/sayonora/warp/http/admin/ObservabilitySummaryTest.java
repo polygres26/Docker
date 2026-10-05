@@ -152,4 +152,21 @@ class ObservabilitySummaryTest {
         }
         assertTrue(foundPoolMaxSize, "warp_pool_max_size must be in the catalog even with no pools configured yet");
     }
+
+    @Test
+    void catalogListsReplicaAndFailoverSeriesWhenARegistryIsSupplied() {
+        var registry = com.sayonora.warp.core.BackendRegistry.fromConfig(
+                "pg=jdbc:postgresql://p/db|u|pw||jdbc:postgresql://r1/db~5|follow", null);
+        JsonObject out = ObservabilitySummary.toJson(Map.of("WARP_OTEL_ENDPOINT", "disabled"), STATS, QOS, MCP, registry);
+        java.util.Set<String> names = new java.util.HashSet<>();
+        out.getAsJsonArray("catalog").forEach(e -> names.add(e.getAsJsonObject().get("name").getAsString()));
+        assertTrue(names.contains("warp_replica_lag_seconds"), names.toString());
+        assertTrue(names.contains("warp_replica_eligible"));
+        assertTrue(names.contains("warp_failover_events_total"));
+        // without a registry they are absent, exactly as before
+        JsonObject bare = toJson(Map.of("WARP_OTEL_ENDPOINT", "disabled"));
+        java.util.Set<String> bareNames = new java.util.HashSet<>();
+        bare.getAsJsonArray("catalog").forEach(e -> bareNames.add(e.getAsJsonObject().get("name").getAsString()));
+        assertFalse(bareNames.contains("warp_replica_lag_seconds"));
+    }
 }
