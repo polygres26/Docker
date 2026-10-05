@@ -67,6 +67,7 @@ public final class MetricsServer {
     private static final Pattern BACKEND_COLUMNS_PATH = Pattern.compile("^/api/backends/([^/]+)/tables/([^/]+)/([^/]+)/columns$");
     private static final Pattern BACKEND_QUERY_PATH = Pattern.compile("^/api/backends/([^/]+)/query$");
     private static final Pattern BACKEND_TEST_NAMED_PATH = Pattern.compile("^/api/backends/([^/]+)/test$");
+    private static final Pattern FAILOVER_SWITCHOVER_PATH = Pattern.compile("^/api/failover/([^/]+)/switchover$");
     private static final Pattern FAILOVER_EVALUATE_PATH = Pattern.compile("^/api/failover/([^/]+)/evaluate$");
     private static final Pattern BACKEND_DRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/drain$");
     private static final Pattern BACKEND_UNDRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/undrain$");
@@ -843,6 +844,7 @@ public final class MetricsServer {
                     }
                     response.setContentType("application/json; charset=utf-8");
                     Matcher evaluate = FAILOVER_EVALUATE_PATH.matcher(target);
+                    Matcher switchover = FAILOVER_SWITCHOVER_PATH.matcher(target);
                     if ("/api/failover".equals(target) && "GET".equals(request.getMethod())) {
                         response.setStatus(HttpServletResponse.SC_OK);
                         response.getWriter().write(backendRegistry.failoverMonitor().toJson().toString());
@@ -857,6 +859,34 @@ public final class MetricsServer {
                         out.addProperty("action", d.action().name());
                         out.addProperty("reason", d.reason());
                         response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(out.toString());
+                    } else if (switchover.matches() && "POST".equals(request.getMethod())) {
+                        // Planned zero-loss swap: body {"target":"<replica url as listed by /api/replicas>"}.
+                        String backend = java.net.URLDecoder.decode(switchover.group(1), java.nio.charset.StandardCharsets.UTF_8);
+                        String body = new String(request.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                        String wanted = null;
+                        try {
+                            wanted = com.google.gson.JsonParser.parseString(body).getAsJsonObject().get("target").getAsString();
+                        } catch (RuntimeException e) {
+                            // handled below
+                        }
+                        JsonObject out = new JsonObject();
+                        if (wanted == null) {
+                            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                            out.addProperty("error", "body must be {\"target\": \"<replica url>\"}");
+                        } else {
+                            String url = wanted;
+                            for (var r : backendRegistry.replicaRouter().replicasOf(backend)) {
+                                if (com.sayonora.warp.core.BackendSetModel.maskUrl(r.key()).equals(wanted)) {
+                                    url = r.key(); // the UI only ever sees masked URLs
+                                }
+                            }
+                            var res = backendRegistry.failoverMonitor().switchover(backend, url);
+                            response.setStatus(res.ok() ? HttpServletResponse.SC_OK : HttpServletResponse.SC_CONFLICT);
+                            out.addProperty("backend", backend);
+                            out.addProperty("ok", res.ok());
+                            out.addProperty("message", res.message());
+                        }
                         response.getWriter().write(out.toString());
                     } else {
                         response.setStatus(HttpServletResponse.SC_NOT_FOUND);

@@ -43,6 +43,33 @@ public interface EngineHa {
         throw new UnsupportedOperationException("repointing replicas is not supported for " + replica.dialect());
     }
 
+    /** True when the planned-switchover operations below are implemented (and promote/repoint work). */
+    default boolean supportsSwitchover() {
+        return false;
+    }
+
+    /** Stops the primary accepting writes (best effort for what it can enforce) without shutting it down. */
+    default void freezeWrites(BackendTarget primary) throws Exception {
+        throw new UnsupportedOperationException("planned switchover is not supported for " + primary.dialect());
+    }
+
+    /** Undoes {@link #freezeWrites}; used when a switchover is aborted. */
+    default void unfreezeWrites(BackendTarget primary) throws Exception {
+        throw new UnsupportedOperationException("planned switchover is not supported for " + primary.dialect());
+    }
+
+    /** With {@code primary} frozen, returns only once {@code replica} has applied everything the primary
+     * ever committed; throws if that does not happen within {@code timeoutSeconds}. */
+    default void awaitCaughtUp(BackendTarget primary, BackendTarget replica, long timeoutSeconds) throws Exception {
+        throw new UnsupportedOperationException("planned switchover is not supported for " + primary.dialect());
+    }
+
+    /** Turns the old, frozen primary into a replica of {@code newPrimary}. Returns false when the engine
+     * cannot do that over SQL (the old primary is then left read-only, to be rebuilt by hand). */
+    default boolean demoteToReplica(BackendTarget oldPrimary, BackendTarget newPrimary) throws Exception {
+        return false;
+    }
+
     /** False for engines where Warp will follow a promotion made elsewhere but never perform one. */
     default boolean supportsPromote() {
         return true;

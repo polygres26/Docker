@@ -314,6 +314,105 @@ final class MySqlHa implements EngineHa {
         return false;
     }
 
+    @Override
+    public boolean supportsSwitchover() {
+        return true;
+    }
+
+    /** {@code super_read_only = ON}: blocks writes from every account including SUPER ones (it waits for
+     * in-flight statements to finish). Requires GTIDs, since catching up is verified by GTID set. */
+    @Override
+    public void freezeWrites(BackendTarget primary) throws SQLException {
+        try (Connection c = connect(primary, 5000, 120000); Statement st = c.createStatement()) {
+            try (ResultSet rs = st.executeQuery("SELECT @@global.gtid_mode")) {
+                if (!rs.next() || !"ON".equalsIgnoreCase(rs.getString(1))) {
+                    throw new SQLException("planned switchover needs gtid_mode=ON on the primary");
+                }
+            }
+            st.execute("SET GLOBAL super_read_only = ON");
+        }
+    }
+
+    @Override
+    public void unfreezeWrites(BackendTarget primary) throws SQLException {
+        try (Connection c = connect(primary, 5000, 30000); Statement st = c.createStatement()) {
+            st.execute("SET GLOBAL read_only = OFF");
+            try {
+                st.execute("SET GLOBAL super_read_only = OFF");
+            } catch (SQLException e) {
+                if (e.getErrorCode() != 1193) {
+                    throw e;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void awaitCaughtUp(BackendTarget primary, BackendTarget replica, long timeoutSeconds) throws SQLException {
+        String gtids;
+        try (Connection c = connect(primary, 5000, 30000); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT @@global.gtid_executed")) {
+            rs.next();
+            gtids = rs.getString(1).replaceAll("\\s+", "");
+        }
+        if (gtids.isEmpty()) {
+            return;
+        }
+        try (Connection c = connect(replica, 5000, (int) (timeoutSeconds * 1000 + 10000));
+                java.sql.PreparedStatement ps = c.prepareStatement("SELECT WAIT_FOR_EXECUTED_GTID_SET(?, ?)")) {
+            ps.setString(1, gtids);
+            ps.setLong(2, timeoutSeconds);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                if (rs.getInt(1) != 0) {
+                    throw new SQLException("replica did not execute the primary's final GTID set within "
+                            + timeoutSeconds + "s");
+                }
+            }
+        }
+    }
+
+    /**
+     * Makes the old primary a GTID replica of the new one. It has no replication credentials of its own, so
+     * this uses the backend's own user and password as the replication account (it needs REPLICATION SLAVE)
+     * with {@code GET_SOURCE_PUBLIC_KEY=1} so a caching_sha2 login works without TLS.
+     */
+    @Override
+    public boolean demoteToReplica(BackendTarget oldPrimary, BackendTarget newPrimary) throws SQLException {
+        JdbcHostPort hp = JdbcHostPort.parse(newPrimary.jdbcUrl(), 3306);
+        String pw = SecretResolver.resolve(oldPrimary.password());
+        try (Connection c = connect(oldPrimary, 5000, 60000)) {
+            String sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST=?, SOURCE_PORT=?, SOURCE_USER=?, "
+                    + "SOURCE_PASSWORD=?, SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1";
+            try (java.sql.PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, hp.host());
+                ps.setInt(2, hp.port());
+                ps.setString(3, oldPrimary.user() == null ? "" : oldPrimary.user());
+                ps.setString(4, pw == null ? "" : pw);
+                ps.execute();
+            } catch (SQLException e) {
+                if (e.getErrorCode() != 1064) {
+                    throw e;
+                }
+                try (java.sql.PreparedStatement ps = c.prepareStatement("CHANGE MASTER TO MASTER_HOST=?, "
+                        + "MASTER_PORT=?, MASTER_USER=?, MASTER_PASSWORD=?, MASTER_AUTO_POSITION=1, GET_MASTER_PUBLIC_KEY=1")) {
+                    ps.setString(1, hp.host());
+                    ps.setInt(2, hp.port());
+                    ps.setString(3, oldPrimary.user() == null ? "" : oldPrimary.user());
+                    ps.setString(4, pw == null ? "" : pw);
+                    ps.execute();
+                }
+            }
+            try (Statement st = c.createStatement()) {
+                execLegacy(st, "START REPLICA", "START SLAVE");
+            }
+            if (!waitRunning(c, hp.host())) {
+                throw new SQLException("the old primary was pointed at the new one but replication did not start");
+            }
+        }
+        return true;
+    }
+
     /** True when the SQL thread has applied everything the I/O thread fetched. */
     static boolean fullyApplied(Map<String, String> row) {
         String state = col(row, "Replica_SQL_Running_State", "Slave_SQL_Running_State");
