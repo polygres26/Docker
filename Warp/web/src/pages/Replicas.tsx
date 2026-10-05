@@ -98,6 +98,8 @@ export default function Replicas() {
   const failoverOf = (name: string): FailoverGroup | null => data?.failover?.groups.find((g) => g.backend === name) ?? null
 
   const withReplicas = backends.filter((b) => b.backend.replicas.length > 0)
+  // Replicas of the implicit WARP_* backend (WARP_REPLICAS) belong to no backend set, so they are not editable here
+  const envGroups = (data?.replicas?.primaries ?? []).filter((p) => !backends.some((b) => b.backend.name === p.primary))
   const candidates = backends.filter((b) => b.backend.replicas.length === 0
     && b.backend.dialect !== null && REPLICA_DIALECTS.has(b.backend.dialect))
 
@@ -110,13 +112,13 @@ export default function Replicas() {
     for (const e of data?.failover?.events ?? []) if (!latest.has(e.backend)) latest.set(e.backend, e)
     const attention = [...latest.values()].filter((e) => ATTENTION_EVENTS.has(e.kind)).length
     return [
-      { label: 'Backends with replicas', value: withReplicas.length },
+      { label: 'Backends with replicas', value: withReplicas.length + envGroups.length },
       { label: 'Replicas eligible for reads', value: `${all.filter((r) => r.eligible).length} / ${all.length}`,
         tone: all.length > 0 && !all.some((r) => r.eligible) ? 'warn' : undefined },
       { label: 'Reads served by replicas', value: total > 0 ? `${Math.round((routed / total) * 100)}%` : '—', hint: 'since this node started' },
       { label: 'Failover', value: attention > 0 ? `${attention} need attention` : 'Healthy', tone: attention > 0 ? 'warn' : 'ok' },
     ]
-  }, [data, withReplicas.length])
+  }, [data, withReplicas.length, envGroups.length])
 
   if (state.loading && !data) return <Loading />
 
@@ -133,7 +135,7 @@ export default function Replicas() {
       )}
       <KpiStrip items={kpis} label="Replica figures" />
 
-      {withReplicas.length === 0 && (
+      {withReplicas.length === 0 && envGroups.length === 0 && (
         <Section>
           <EmptyState title="No backend has replicas yet">
             Add a replica to a backend below. Reads then go to it while it is within its lag allowance.
@@ -150,6 +152,8 @@ export default function Replicas() {
           onSaved={(text) => { setEditing(null); setNotice({ tone: 'ok', text }); state.reload() }}
           onNotice={(tone, text) => setNotice({ tone, text })} />
       ))}
+
+      {envGroups.map((g) => <EnvGroupCard key={g.primary} status={g} />)}
 
       {candidates.length > 0 && (
         <Section title="Backends without replicas" meta="Postgres, MySQL, Oracle and SQL Server">
@@ -322,6 +326,52 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
       )}
 
       {editing && <ReplicaEditor set={set} backend={backend} onCancel={onEdit} onSaved={onSaved} />}
+    </Section>
+  )
+}
+
+/** Read-only card for replicas configured through WARP_REPLICAS on the implicit backend. */
+function EnvGroupCard({ status }: { status: ReplicaGroupStatus }) {
+  const decisions = status.decisions ?? {}
+  return (
+    <Section title="Default backend" meta="set by WARP_REPLICAS · failover off · read-only here" flush>
+      <p className={styles.help} style={{ padding: '0 16px' }}>
+        These replicas belong to the single implicit backend, which is not part of a backend set, so they are
+        changed with the WARP_REPLICAS environment variable and a restart. Sessions with a per-user identity,
+        open transactions or SET state always read from the primary.
+      </p>
+      <DataTable caption="Replicas of the default backend" minWidth={560}>
+        <thead><tr><th>Node</th><th>Lag vs allowance</th><th>Reads served</th><th>State</th></tr></thead>
+        <tbody>
+          {status.replicas.map((r) => {
+            const st = replicaState(r)
+            const lag = r.sample && r.sample.ok && r.sample.isReplica ? r.sample.lagSeconds : null
+            return (
+              <tr key={r.id}>
+                <td className={styles.mono}>{targetOf(r.url)}</td>
+                <td>
+                  {lag === null
+                    ? <span className={styles.sub}>allowance {seconds(r.maxLagSeconds)} s</span>
+                    : <Meter value={lag} max={Math.max(r.maxLagSeconds, 0.001)} label={`Lag of ${targetOf(r.url)}`}
+                      tone={lag > r.maxLagSeconds ? 'warn' : 'ok'}
+                      caption={`${seconds(Math.round(lag * 10) / 10)} s of ${seconds(r.maxLagSeconds)} s`} />}
+                </td>
+                <td className={styles.num}>{r.routedReads.toLocaleString()}</td>
+                <td>
+                  <StatusPill tone={st.tone}>{st.label}</StatusPill>
+                  {st.note && <div className={styles.sub}>{st.note}</div>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </DataTable>
+      <div className={styles.reasons} aria-label="Why reads stayed on the primary">
+        <span className={styles.reasonsLabel}>Reads that stayed on the primary:</span>
+        {REASONS.map(([k, label, tone]) => (
+          <StatusPill key={k} tone={(decisions[k] ?? 0) > 0 ? tone : 'muted'} dot={false}>{label} · {(decisions[k] ?? 0).toLocaleString()}</StatusPill>
+        ))}
+      </div>
     </Section>
   )
 }
