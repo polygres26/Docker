@@ -11,9 +11,11 @@ import java.util.Properties;
 
 /**
  * {@link EngineHa} for SQL Server <b>Always On Availability Groups</b> with a readable secondary.
- * <b>Written to Microsoft's documentation and NOT exercised against a live Availability Group</b>
- * (none can be run in this project's test setup), so only the pure decision logic ({@link #roleFrom},
- * {@link #lagFrom}) is unit-tested.
+ * Verified live (see {@code SqlServerAgLiveTest}) against SQL Server 2022 Developer in a two-node
+ * read-scale AG ({@code CLUSTER_TYPE = NONE}, asynchronous commit, readable secondary): role, lag,
+ * suspended-secondary handling and follow-after-failover. <b>Not exercised:</b> clustered AGs (WSFC /
+ * Pacemaker), synchronous commit, AG listeners, multiple secondaries. The pure decision logic
+ * ({@link #roleFrom}, {@link #lagFrom}) is also unit-tested.
  *
  * <p>Setup it assumes: the Warp backend URL names the availability-group database
  * ({@code databaseName=...}); replica URLs point at readable secondaries (add

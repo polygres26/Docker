@@ -131,11 +131,16 @@ tried it in your environment.
   `failoverMode=promote` is rejected by the API for Oracle, and a `promote` entry in `WARP_BACKENDS`
   is monitored but recorded as blocked.
 
-## SQL Server Availability Groups (follow only, unverified)
+## SQL Server Availability Groups (follow only)
 
-**Verification status:** written to Microsoft's documentation; no Availability Group can be run in this
-project's tests, so only the decision logic is unit-tested. Treat it as untested until you have tried
-it in your environment.
+**Verification status:** exercised live (`SqlServerAgLiveTest`) against SQL Server 2022 Developer in a
+two-node **read-scale** AG (`CLUSTER_TYPE = NONE`, asynchronous commit, manual failover, readable
+secondary): role and lag probes on the real DMVs, plain reads served by the secondary while a locking
+read stays on the primary, a suspended secondary skipped (never reported as 0 lag) and restored after
+resume, and the primary killed + `FORCE_FAILOVER_ALLOW_DATA_LOSS` run on the secondary, which Warp
+followed after the confirmation window. **Not exercised:** Windows Server Failover Cluster or Pacemaker
+clustered AGs, synchronous commit, AG listeners, more than one secondary, Azure SQL. Treat those as
+untested.
 
 - **Topology:** the backend URL names the availability-group database (`databaseName=...`); replica
   URLs point at **readable secondaries** and should carry `applicationIntent=ReadOnly`. Write `;` as
@@ -201,3 +206,26 @@ primary is merely partitioned away from Warp but still serving others. Configure
 - `BackendHealthChecker` still marks a backend DOWN after one failed connect; that is independent of
   failover-follow, which needs a confirmed window.
 - Relay mode and the orawire emulation path have no replica routing (no session-state predicate there).
+
+## Running the live tests
+
+All live tests are opt-in and skipped unless their environment is set; they run real servers, not mocks.
+
+- **Postgres / MySQL:** `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
+  `MySqlReplicaFailoverLiveTest` (`WARP_TEST_*` variables are documented in each class's javadoc; they need
+  local Postgres 17 and MySQL 9 binaries and a throwaway Postgres for `warp_config`).
+- **SQL Server Availability Group:** `Warp/tests/sqlserver-ag/ag.sh up` starts two SQL Server 2022 Developer
+  containers (`sql1` primary on 14331, `sql2` readable secondary on 14332) in a read-scale AG with no cluster
+  manager, then run `WARP_TEST_MSSQL_AG=1 mvn test -Dtest=SqlServerAgLiveTest`; `ag.sh down` removes them. The
+  test performs the failover itself the way a DBA would (kills `sql1`, runs `FORCE_FAILOVER_ALLOW_DATA_LOSS` on
+  `sql2`) because Warp only follows. (It has been run: it passes on SQL Server 2022 Developer.) **SQL Server
+  cannot start under QEMU emulation** (it aborts with an
+  address-space error), which is what a default Colima/Docker on Apple silicon uses; use Docker Desktop with
+  Rosetta, or a Colima profile started with `--vm-type vz --vz-rosetta`. Needs about 4 GB of Docker memory.
+- **Oracle Data Guard:** `OracleDataGuardLiveTest` needs a real physical standby open read-only with apply
+  (Active Data Guard, Enterprise Edition) and has **never been run** by this project's authors. Set
+  `WARP_TEST_ORACLE_DG_PRIMARY_URL`, `_STANDBY_URL`, `_USER`, `_PASSWORD` (the user needs `SELECT` on
+  `V_$DATABASE` and `V_$DATAGUARD_STATS`), and optionally `WARP_TEST_ORACLE_DG_FAILOVER_CMD`, a shell command that
+  fails the pair over (for example a `dgmgrl` script); without it the failover-follow part is skipped. Expect to
+  adjust the test the first time it meets a real configuration.
+
