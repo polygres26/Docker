@@ -1,5 +1,5 @@
 comment = 'pg_sqlserver -- SQL Server compatibility for Postgres (sys.* catalog views, T-SQL system functions: OBJECT_ID, SCOPE_IDENTITY, CHARINDEX, ...). Part of the Shim extension collection.'
-default_version = '0.2'
+default_version = '0.3'
 module_pathname = '$libdir/pg_oracle'
 relocatable = false
 # Pure SQL/plpgsql -- no C of its own (see README.md and pg_mysql.control's
