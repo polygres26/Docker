@@ -80,9 +80,23 @@ public final class BrownoutHarness {
 
     private static final int WRITERS = 3;
     private static final int READERS = 2;
+    /** WARP_TEST_BROWNOUT_WARPS=3 runs that many Warp instances sharing one config database and one backend set; clients are spread
+     * across them. */
+    private static final int WARPS = Math.max(1, Integer.parseInt(System.getenv().getOrDefault("WARP_TEST_BROWNOUT_WARPS", "1")));
     private static final long PACE_MS = 20;
     /** WARP_TEST_BROWNOUT_QUICK=true shortens the phases to find setup mistakes fast; the numbers are then not comparable. */
     private static final boolean QUICK = "true".equalsIgnoreCase(System.getenv("WARP_TEST_BROWNOUT_QUICK"));
+
+    /** Every listener that has a fixed default port; a second Warp on the same host would fail to bind them. The workload's own frontend
+     * is then given its port by {@code configure}, which overrides these. */
+    private static final List<String> FRONTEND_PORT_VARS = List.of("WARP_A2A_PORT", "WARP_MCP_PORT", "WARP_HTTP_PORT",
+            "WARP_AMQPWIRE_PORT", "WARP_AWSWIRE_PORT", "WARP_AZBLOBWIRE_PORT", "WARP_AZQUEUEWIRE_PORT", "WARP_AZTABLEWIRE_PORT",
+            "WARP_BIGTABLEWIRE_PORT", "WARP_BOLTWIRE_PORT", "WARP_COSMOSWIRE_PORT", "WARP_CQLWIRE_PORT", "WARP_DATASTOREWIRE_PORT",
+            "WARP_DYNAMOWIRE_PORT", "WARP_FIRESTOREWIRE_PORT", "WARP_GCSWIRE_PORT", "WARP_GREMLINWIRE_PORT", "WARP_INFLUXWIRE_PORT",
+            "WARP_KAFKAWIRE_PORT", "WARP_KINESISWIRE_PORT", "WARP_KMSWIRE_PORT", "WARP_MONGOWIRE_PORT", "WARP_MSSQLWIRE_PORT",
+            "WARP_MYWIRE_PORT", "WARP_ORAWIRE_PORT", "WARP_OSWIRE_PORT", "WARP_PGWIRE_PORT",
+            "WARP_PUBSUBWIRE_PORT", "WARP_PUBSUBWIRE_REST_PORT", "WARP_REDISWIRE_PORT", "WARP_S3WIRE_PORT", "WARP_SECRETSWIRE_PORT",
+            "WARP_SNSWIRE_PORT", "WARP_SQSWIRE_PORT", "WARP_SSMWIRE_PORT", "WARP_STSWIRE_PORT");
 
     private BrownoutHarness() {
     }
@@ -97,27 +111,39 @@ public final class BrownoutHarness {
         try {
             replica = LocalPostgres.replicaOf(pgBin, dir, "replica", primary, LocalPostgres.freePort());
             String spec = "pg=" + primary.url() + "|warp|secret||" + replica.url() + "~10|promote";
-            WarpProcess.Builder b = WarpProcess.builder()
-                    .pgBackend("127.0.0.1", cfg.port(), "postgres", "warp", "secret")
-                    .env("WARP_BACKENDS", spec)
-                    .env("WARP_REPLICA_LAG_CHECK_SECONDS", "1")
-                    .env("WARP_FAILOVER_PROBE_SECONDS", "1")
-                    .env("WARP_FAILOVER_CONFIRM_PROBES", "3")
-                    .env("WARP_FAILOVER_COOLDOWN_SECONDS", "5")
-                    .env("WARP_QOS_RATE_PER_SEC", "1000000")
-                    .env("WARP_QOS_BURST", "1000000")
-                    .env("WARP_ADMIN_TOKEN", TOKEN)
-                    .env("WARP_GRPC_PORT", String.valueOf(LocalPostgres.freePort()))
-                    .env("WARP_OTEL_ENDPOINT", "disabled");
-            StoreConfig stores = new StoreConfig();
-            workload.configure(b, stores);
-            if (stores.spec() != null) {
-                b.env("WARP_BACKEND_STORES", stores.spec());
-            }
-            try (WarpProcess warp = b.start()) {
-                return drive(workload, scenario, warp, primary, replica);
+            List<WarpProcess> warps = new ArrayList<>();
+            try {
+                // The first instance seeds warp_config from the environment; the others find it and share it (and the config database).
+                for (int i = 0; i < WARPS; i++) {
+                    WarpProcess.Builder b = WarpProcess.builder()
+                            .pgBackend("127.0.0.1", cfg.port(), "postgres", "warp", "secret")
+                            .env("WARP_BACKENDS", spec)
+                            .env("WARP_REPLICA_LAG_CHECK_SECONDS", "1")
+                            .env("WARP_FAILOVER_PROBE_SECONDS", "1")
+                            .env("WARP_FAILOVER_CONFIRM_PROBES", "3")
+                            .env("WARP_FAILOVER_COOLDOWN_SECONDS", "5")
+                            .env("WARP_QOS_RATE_PER_SEC", "1000000")
+                            .env("WARP_QOS_BURST", "1000000")
+                            .env("WARP_ADMIN_TOKEN", TOKEN)
+                            .env("WARP_GRPC_PORT", String.valueOf(LocalPostgres.freePort()))
+                            .env("WARP_OTEL_ENDPOINT", "disabled");
+                    if (WARPS > 1) { // several instances on one host: no frontend may sit on a fixed default port
+                        for (String portVar : FRONTEND_PORT_VARS) {
+                            b.env(portVar, String.valueOf(LocalPostgres.freePort()));
+                        }
+                    }
+                    StoreConfig stores = new StoreConfig();
+                    workload.configure(b, stores);
+                    if (stores.spec() != null) {
+                        b.env("WARP_BACKEND_STORES", stores.spec());
+                    }
+                    warps.add(b.start());
+                }
+                return drive(workload, scenario, warps, primary, replica);
             } catch (Exception startup) {
                 return new Result(workload.name(), scenario, null, null, 0, 0, 0, 0, Map.of(), "", String.valueOf(startup.getMessage()));
+            } finally {
+                warps.forEach(WarpProcess::close);
             }
         } finally {
             if (replica != null) {
@@ -128,8 +154,16 @@ public final class BrownoutHarness {
         }
     }
 
-    private static Result drive(Workload workload, String scenario, WarpProcess warp, LocalPostgres primary,
+    private static Result drive(Workload workload, String scenario, List<WarpProcess> warps, LocalPostgres primary,
             LocalPostgres replica) throws Exception {
+        WarpProcess warp = warps.get(0);
+        boolean oneDown = scenario.endsWith("-one-down");
+        boolean staleInstance = scenario.equals("switchover-stale-instance");
+        if ((oneDown || staleInstance) && warps.size() < 3) {
+            throw new IllegalStateException(scenario + " needs WARP_TEST_BROWNOUT_WARPS >= 3");
+        }
+        // in the one-down scenario the last instance carries no clients: it is the one that dies before the primary does
+        List<WarpProcess> clientWarps = oneDown || staleInstance ? warps.subList(0, warps.size() - 1) : warps;
         workload.prepare(warp);
         long startNanos = System.nanoTime();
         AtomicBoolean stop = new AtomicBoolean();
@@ -139,10 +173,10 @@ public final class BrownoutHarness {
         Map<String, AtomicLong> errors = new ConcurrentHashMap<>();
         List<Thread> threads = new ArrayList<>();
         for (int w = 0; w < WRITERS; w++) {
-            threads.add(worker("w" + w, stop, workload, warp, true, w, startNanos, writes, acked, errors));
+            threads.add(worker("w" + w, stop, workload, clientWarps.get(w % clientWarps.size()), true, w, startNanos, writes, acked, errors));
         }
         for (int r = 0; r < READERS; r++) {
-            threads.add(worker("r" + r, stop, workload, warp, false, 100 + r, startNanos, reads, acked, errors));
+            threads.add(worker("r" + r, stop, workload, clientWarps.get((w0(r)) % clientWarps.size()), false, 100 + r, startNanos, reads, acked, errors));
         }
         threads.forEach(Thread::start);
         Thread.sleep(QUICK ? 3_000 : 12_000);
@@ -150,18 +184,31 @@ public final class BrownoutHarness {
         long eventMs = (System.nanoTime() - startNanos) / 1_000_000;
         String eventNote;
         long postEvent;
-        if ("switchover".equals(scenario)) {
+        if ("switchover".equals(scenario) || staleInstance) {
+            if (staleInstance) {
+                warps.get(warps.size() - 1).pause(); // frozen across the switchover, so it comes back with an out-of-date idea of the primary
+            }
             long t0 = System.nanoTime();
             String res = http("POST", "http://localhost:" + warp.metricsPort() + "/api/failover/pg/switchover",
                     "{\"target\":\"" + replica.url() + "\"}");
-            eventNote = "switchover API took " + (System.nanoTime() - t0) / 1_000_000 + " ms: " + res;
+            eventNote = (staleInstance ? "one Warp instance paused across the switchover, resumed 8 s later; " : "")
+                    + "switchover API took " + (System.nanoTime() - t0) / 1_000_000 + " ms: " + res;
+            if (staleInstance) {
+                Thread.sleep(8_000);
+                warps.get(warps.size() - 1).resume();
+            }
             postEvent = QUICK ? 6_000 : 25_000;
         } else {
+            if (oneDown) {
+                warps.get(warps.size() - 1).close();
+                Thread.sleep(1500);
+            }
             primary.stop("immediate");
-            eventNote = "primary crashed (pg_ctl -m immediate)";
+            eventNote = (oneDown ? "one of " + warps.size() + " Warp instances killed, then " : "") + "primary crashed (pg_ctl -m immediate)";
             postEvent = QUICK ? 15_000 : 45_000;
         }
         Thread.sleep(postEvent);
+        String instances = warps.size() > 1 ? "; " + instanceViews(warps, replica) : "";
         stop.set(true);
         for (Thread t : threads) {
             t.join(20_000);
@@ -181,8 +228,45 @@ public final class BrownoutHarness {
         errors.forEach((k, v) -> errs.put(k, v.get()));
         return new Result(workload.name(), scenario, summarize(writes, eventMs), summarize(reads, eventMs), acked.size(),
                 present.size(), lost.size(), unacked.size(), errs,
-                eventNote + "; writable afterwards: " + (replica.writable() ? "former replica" : primary.writable() ? "original primary" : "NONE"),
+                eventNote + instances + "; writable afterwards: " + (replica.writable() ? "former replica" : primary.writable() ? "original primary" : "NONE"),
                 null);
+    }
+
+    /** What each Warp instance believes after the event: whether it points at the new primary, and which failover events it recorded. */
+    private static String instanceViews(List<WarpProcess> warps, LocalPostgres newPrimary) {
+        StringBuilder sb = new StringBuilder();
+        int following = 0;
+        int reachable = 0;
+        for (int i = 0; i < warps.size(); i++) {
+            sb.append(i == 0 ? "" : ", ").append("instance ").append(i).append(": ");
+            try {
+                var root = com.google.gson.JsonParser.parseString(http("GET", "http://localhost:" + warps.get(i).metricsPort()
+                        + "/api/failover", null)).getAsJsonObject();
+                reachable++;
+                String primaryUrl = "";
+                for (var g : root.getAsJsonArray("groups")) {
+                    for (var n : g.getAsJsonObject().getAsJsonArray("nodes")) {
+                        if ("primary".equals(n.getAsJsonObject().get("configuredRole").getAsString())) {
+                            primaryUrl = n.getAsJsonObject().get("url").getAsString();
+                        }
+                    }
+                }
+                boolean follows = primaryUrl.contains(":" + newPrimary.port() + "/");
+                following += follows ? 1 : 0;
+                Map<String, Integer> kinds = new TreeMap<>();
+                for (var e : root.getAsJsonArray("events")) {
+                    kinds.merge(e.getAsJsonObject().get("kind").getAsString(), 1, Integer::sum);
+                }
+                sb.append(follows ? "follows the new primary" : "STILL ON " + primaryUrl).append(" ").append(kinds);
+            } catch (Exception e) {
+                sb.append("down");
+            }
+        }
+        return following + " of " + reachable + " reachable instances follow the new primary [" + sb + "]";
+    }
+
+    private static int w0(int readerIndex) {
+        return WRITERS + readerIndex;
     }
 
     private static Thread worker(String name, AtomicBoolean stop, Workload workload, WarpProcess warp, boolean writer,

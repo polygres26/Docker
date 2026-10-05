@@ -268,6 +268,52 @@ transactions, the way an application uses it) and influxdb-java.
 - **influxdb-java never retries**, so nothing on Warp's side changes what it sees.
 - Single runs on localhost, as before.
 
+## Phase 9: several Warp instances sharing one backend set
+
+Everything above ran one Warp. Here two or three Warp processes share one config database and one backend set (a primary and a replica,
+`promote` mode); clients (3 writers, 2 readers) are spread across them round-robin. The first instance seeds the shared config, the
+others read it. After each run the harness asks every instance which primary it believes in and which failover events it recorded.
+`WARP_TEST_BROWNOUT_WARPS=3` turns it on (the instances need separate ports for every listener, which the harness now assigns).
+
+Scenarios: `switchover` (one instance runs the switchover API), `failover` (the primary crashes), `failover-one-down` (one of three
+instances, carrying no clients, is killed 1.5 s before the primary crashes), `switchover-stale-instance` (one of three is paused with
+SIGSTOP across the switchover and resumed 8 s later).
+
+| protocol | instances | scenario | writes ok | writes failed | max gap around event ms | acked | lost |
+|---|---|---|---|---|---|---|---|
+| dynamowire | 3 | switchover | 4521 | 3 | 149 | 4521 | 0 |
+| dynamowire | 3 | failover | 6365 | 6 | 5289 | 6365 | 0 |
+| dynamowire | 3 | failover, one instance killed first | 6597 | 6 | 5308 | 6597 | 0 |
+| dynamowire | 3 | switchover, one instance paused across it | 5556 | 3 | 148 | 5556 | 0 |
+| dynamowire | 2 | failover | 6292 | 6 | 5322 | 6292 | 0 |
+| rediswire | 3 | switchover | 4618 | 3 | 147 | 4618 | 0 |
+| rediswire | 3 | failover | 6460 | 6 | 5285 | 6460 | 0 |
+| kafkawire | 3 | switchover | 3698 | 3 | 168 | 3698 | 0 |
+| kafkawire | 3 | failover | 5161 | 6 | 5300 | 5161 | 0 |
+| mongowire | 3 | switchover | 4550 | 3 | 158 | 4550 | 0 |
+| mongowire | 3 | failover | 6386 | 6 | 5317 | 6386 | 0 |
+
+- **Every instance followed the new primary in every run** (3 of 3, or 2 of 2 reachable), with no restart, and **no acknowledged write was
+  lost**. A write that landed on the old primary through an instance that had not caught up would have shown up as lost (the read-back goes
+  through the new primary); none did.
+- **One instance promoted, the others followed.** In each crash run exactly one instance recorded `promoted`; the others recorded nothing and
+  picked the change up from the shared config. No run recorded `promote-blocked` (no lost vote, no lease contention). Latency is the same as
+  with one instance: about 0.15 s on a switchover, about 5.2-5.3 s on a crash.
+- **Losing an instance first did not stop the failover**: with one of three killed before the primary, the remaining two still reached the
+  majority and promoted. With two instances, both vote, and the failover worked.
+- **A paused instance recovered cleanly**: it resumed after the switchover, reloaded the shared config and followed.
+- **Noise worth knowing:** after a switchover *every* instance records `split-brain-suspected`, `rejoin-needed` and `stale-writer-frozen` for
+  the old primary. That node was deliberately left read-only by the switchover, but it is no longer in recovery, so the role probe still calls
+  it writable. The freeze is a no-op on it. The alarm is the same as before the split-brain guards; making the probe treat a frozen node as
+  read-only was left alone, because a primary that is read-only for another reason would then look like a failure.
+- **A hazard the guard now covers, found while reading this run's events:** an instance that has not yet reloaded the config after another
+  instance's switch can list the *old* primary as primary and see the *new* one as a second writer. After the confirmation window it would
+  freeze the new primary, the cluster's only real writer. Before freezing anything an instance now checks that its idea of the primary
+  matches the latest shared config, and does nothing (`stale-writer-deferred`) when it does not or cannot tell. **I could not reproduce the
+  hazard live**: a paused instance reloads the config within milliseconds of resuming, well inside the confirmation window. That guard is
+  covered by unit tests, not by a live failure.
+- Single runs on localhost, one config database (itself a single point), instances on one host, no network partition between instances.
+
 ## Not covered yet
 
 Not benchmarked: **A2A** (needs an LLM and writes nothing). KMS and STS were skipped on purpose. AMQP 1.0 is

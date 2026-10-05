@@ -379,6 +379,13 @@ public final class Main {
             log.warn("failover: promote mode unavailable (could not prepare the lease tables in the config "
                     + "database: {}) -- backends set to promote will be monitored but never promoted", e.toString());
         }
+        // Before it freezes a node as a "stale second writer", an instance confirms against the shared config that its own idea of the
+        // primary is current (another instance may have just switched the backend and this one not have reloaded yet).
+        failoverMonitor.withPrimaryView(backend -> configStore.readLatest().map(com.sayonora.warp.config.ConfigStore.Version::payload)
+                .map(c -> {
+                    var b = com.sayonora.warp.core.BackendSetModel.from(c, null).backend(backend);
+                    return b == null ? null : b.url();
+                }).orElse(null));
         backendRegistry.setFailoverMonitor(failoverMonitor);
         failoverMonitor.start();
 
