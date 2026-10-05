@@ -886,6 +886,9 @@ public final class MetricsServer {
                             out.addProperty("backend", backend);
                             out.addProperty("ok", res.ok());
                             out.addProperty("message", res.message());
+                            if (!res.ok()) {
+                                out.addProperty("error", res.message());
+                            }
                         }
                         response.getWriter().write(out.toString());
                     } else {

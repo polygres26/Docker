@@ -216,6 +216,7 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
 
 ### Planned switchover
 
+The Replicas page has a "Make primary" button on each replica (with a confirmation step) that calls this API.
 `POST /api/failover/{backend}/switchover` with `{"target": "<replica url>"}` (admin role) swaps the primary
 on purpose, without losing a committed transaction. Postgres and MySQL only; allowed in `follow` or
 `promote` mode (not `off`).
