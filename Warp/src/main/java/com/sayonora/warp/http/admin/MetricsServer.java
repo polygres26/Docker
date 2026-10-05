@@ -385,7 +385,7 @@ public final class MetricsServer {
                         baseRequest.setHandled(true);
                         return;
                     }
-                    String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics);
+                    String body = MetricsRenderer.render(statsStage, qosStage, mcpMetrics, backendRegistry);
                     response.setStatus(HttpServletResponse.SC_OK);
                     response.setContentType("text/plain; version=0.0.4; charset=utf-8");
                     response.getWriter().write(body);

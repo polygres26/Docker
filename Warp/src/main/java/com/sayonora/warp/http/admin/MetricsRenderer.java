@@ -12,6 +12,14 @@ public final class MetricsRenderer {
         return render(statsStage, qosStage, null);
     }
 
+    /** As {@link #render(StatsCollectorStage, QosControlStage, com.sayonora.warp.mcp.McpMetricsCollector)}
+     * plus the replica-routing and failover series when a backend registry is supplied. */
+    public static String render(StatsCollectorStage statsStage, QosControlStage qosStage,
+            com.sayonora.warp.mcp.McpMetricsCollector mcpMetrics, com.sayonora.warp.core.BackendRegistry registry) {
+        String base = render(statsStage, qosStage, mcpMetrics);
+        return registry == null ? base : base + ReplicaMetrics.render(registry);
+    }
+
     public static String render(StatsCollectorStage statsStage, QosControlStage qosStage,
             com.sayonora.warp.mcp.McpMetricsCollector mcpMetrics) {
         Map<String, StatsCollectorStage.Counters> byTenant = statsStage.snapshot();

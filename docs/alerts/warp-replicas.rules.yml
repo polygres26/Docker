@@ -1,0 +1,61 @@
+# Prometheus alert rules for Warp replica read routing and failover.
+# Metrics are exposed on GET /metrics (see docs/REPLICAS_AND_FAILOVER.md, "Metrics and alerts").
+groups:
+  - name: warp-replicas
+    rules:
+      - alert: WarpReplicaLagHigh
+        expr: warp_replica_lag_seconds > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Replica {{ $labels.replica }} of {{ $labels.backend }} is {{ $value }}s behind"
+          description: "Reads skip a replica above its own lag allowance; sustained lag also raises data loss if it must be promoted."
+
+      - alert: WarpNoEligibleReplica
+        expr: sum by (backend) (warp_replica_eligible) == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.backend }} has no replica eligible for reads"
+          description: "Every read is going to the primary. Check replica lag, replication threads and quarantines."
+
+      - alert: WarpReplicaUnmeasurable
+        expr: warp_replica_sample_age_seconds > 60 or (warp_replica_eligible == 0 and absent_over_time(warp_replica_lag_seconds[10m]))
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Replica {{ $labels.replica }} of {{ $labels.backend }} cannot be measured"
+
+      - alert: WarpPrimaryNotWritable
+        expr: warp_failover_primary_writable == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.backend }}: the primary is not writable"
+          description: "Failover (follow or promote) acts after its confirmation window; page if it does not recover."
+
+      - alert: WarpFailoverHappened
+        expr: increase(warp_failover_events_total{kind=~"switched|promoted|switchover"}[10m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.backend }}: the primary changed ({{ $labels.kind }})"
+
+      - alert: WarpFailoverBlocked
+        expr: increase(warp_failover_events_total{kind=~"promote-blocked|no-writable-node"}[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.backend }}: Warp wanted to fail over but could not"
+          description: "Promotion refused (lease, majority, fencing, lag gate) or no node is writable. A human is needed."
+
+      - alert: WarpSplitBrainSuspected
+        expr: increase(warp_failover_events_total{kind="split-brain-suspected"}[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.backend }}: two writable nodes seen"
+          description: "Warp changes nothing in this state. Stop the stale writer and rebuild it."
+
+      - alert: WarpReplicaNeedsRebuild
+        expr: increase(warp_failover_events_total{kind=~"rejoin-needed|repoint-failed|rejoin-failed"}[30m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.backend }}: a node could not be (re)attached as a replica"
