@@ -173,11 +173,27 @@ is whatever SQL they run against the Postgres backend, which is also what makes 
 - Not benchmarked, deliberately: **A2A** (its `message/send` turns plain English into a read-only SQL query through an LLM, so it needs
   an LLM endpoint and does not write anything).
 
+## Phase 6: AMQP 0-9-1 (amqpwire)
+
+Client: a minimal hand-written AMQP 0-9-1 client in the test (no RabbitMQ client library is on the classpath): a durable queue,
+persistent messages, **publisher confirms** (a write counts as acknowledged only on `basic.ack`), a passive `queue.declare` as the
+read, and a `basic.get` drain afterwards to read back what is present. Because it is my own client rather than a real library, its
+framing and reconnect behaviour may differ from what pika, amqplib or the RabbitMQ Java client would do.
+
+| protocol | scenario | writes ok | writes failed | steady max gap ms | max gap around event ms | failed window | reads ok | reads failed | acked | lost | extra |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| amqpwire | switchover | 4568 | 3 | 26 | 148 | 16 ms (recovered +31) | 2997 | 2 | 4568 | 0 | 0 |
+| amqpwire | failover | 6379 | 6 | 26 | 5285 | 5142 ms (recovered +5169) | 4134 | 4 | 6379 | 0 | 0 |
+
+- AMQP follows the failover like every other protocol: no restart, 0 confirmed messages lost, ~150 ms on a switchover and ~5.3 s on a crash.
+- **Error shape:** a storage failure closes the whole connection with `541 INTERNAL_ERROR - storage error: ...` rather than nacking the one
+  publish, so every client in flight has to reconnect (my client does, as the harness drops and reopens it). That is a heavier failure than a
+  per-publish nack. A real AMQP client library would auto-recover its connection only if it is configured to.
+
 ## Not covered yet
 
-The remaining Postgres-backed protocol: **AMQP** (0-9-1 and 1.0 need a hand-written binary client), and A2A (needs an LLM, see above). Many of them have only unit tests, no
-end-to-end test with a real client at all, so their workloads are being added in groups. Same caveats as the SQL results:
-single runs, localhost, one replica, one Warp instance, no partitions.
+Not benchmarked: **A2A** (needs an LLM and writes nothing). KMS and STS were skipped on purpose. AMQP 1.0 is
+not exercised (only 0-9-1). Same caveats as the SQL results: single runs, localhost, one replica, one Warp instance, no partitions.
 
 Re-run: `WARP_TEST_BROWNOUT_PG_BIN=<postgres bin dir> mvn test -Dtest=StoreFailoverBrownoutLiveTest`
 (`WARP_TEST_STORE_WORKLOADS=sqswire` and `WARP_TEST_BROWNOUT_SCENARIOS=switchover` narrow it).

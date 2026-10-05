@@ -31,6 +31,7 @@ class StoreFailoverBrownoutLiveTest {
             List<com.sayonora.warp.testsupport.BrownoutHarness.Workload> workloads = new ArrayList<>(StoreWorkloads.all());
             workloads.addAll(RestWorkloads.all());
             workloads.addAll(ApiWorkloads.all());
+        workloads.add(AmqpWorkload.amqp());
             for (var w : workloads) {
                 if (only != null && !List.of(only.split(",")).contains(w.name())) {
                     continue;
