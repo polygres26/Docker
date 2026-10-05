@@ -240,7 +240,8 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
   reach that same address (a JDBC address that differs from the replication-network address is not
   translated). A Postgres replica that is *ahead* of the promoted node (it received WAL the promoted one
   did not) cannot follow it; it is reported `repoint-failed` and needs a rebuild (`pg_rewind`/re-basebackup).
-  The old primary is not repointed; it must be rebuilt as a replica before it can rejoin. Oracle is follow-only and is
+  The old primary is not repointed; it must be rebuilt as a replica before it can rejoin (see
+  `WARP_FAILOVER_REJOIN_COMMAND` under rejoin below). Oracle is follow-only and is
   never repointed by Warp.
 
 ### Planned switchover
@@ -283,8 +284,22 @@ replicating (typically the old primary coming back after a failover) and tries t
   with errant transactions, or without `gtid_mode=ON`, is left exactly as found and reported
   `rejoin-needed`; it must be rebuilt. The replication account is the backend's own user and password
   (as for a planned switchover).
-- **Postgres:** Warp cannot demote a running primary over SQL, so it only reports `rejoin-needed` (stop the
-  node and rebuild it with `pg_rewind` or `pg_basebackup`).
+- **Postgres:** Warp cannot demote a running primary over SQL and has no host access, so by default it only reports
+  `rejoin-needed` (stop the node and rebuild it with `pg_rewind` or `pg_basebackup`). Set
+  `WARP_FAILOVER_REJOIN_COMMAND` to have Warp run that rebuild for you: the command is run through `sh -c` with
+  `WARP_REJOIN_NODE_URL`, `WARP_REJOIN_PRIMARY_URL`, `WARP_REJOIN_PRIMARY_HOST`, `WARP_REJOIN_PRIMARY_PORT`,
+  `WARP_REJOIN_PRIMARY_USER` and `PGPASSWORD` (the current primary's) in its environment, for at most
+  `WARP_FAILOVER_REJOIN_TIMEOUT_SECONDS` (default 120), and the node counts as rejoined only if it is then in recovery.
+  `Warp/scripts/pg-rebuild-standby.sh <bin-dir> <old-primary-pgdata> [--basebackup | --basebackup-fallback]` is a
+  ready-made command: it stops the node, runs `pg_rewind` against the current primary (keeping the node's own
+  `postgresql.conf`, `pg_hba.conf` and `pg_ident.conf`) or takes a fresh `pg_basebackup`, and starts it as a standby.
+  Live-verified against real Postgres 17, through the script alone and through Warp after both a planned switchover
+  and a crash failover (the old primary came back streaming and eligible for read routing). Caveats: anything the old
+  primary wrote that never reached the new primary is **discarded**; `pg_rewind` needs `wal_log_hints=on` or data
+  checksums on the old primary and the WAL back to the divergence point (`wal_keep_size` or an archive; otherwise use
+  `--basebackup-fallback`); the command runs on the monitor's thread, so failover decisions wait while it runs; the
+  command must be able to stop and start the old primary, so it has to run where that Postgres runs; one command
+  serves every node, so it must pick the data directory from `WARP_REJOIN_NODE_URL` if there is more than one.
 - A node that needs a rebuild but is still writable keeps raising the split-brain alarm, deliberately.
 - Events: `rejoined` (audited), `rejoin-needed`, `rejoin-failed`.
 

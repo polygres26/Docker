@@ -242,9 +242,10 @@ final class PostgresHa implements EngineHa {
     // demoteToReplica stays false: turning a running primary into a standby needs a restart with
     // standby.signal (and usually pg_rewind) on the host, which Warp cannot do over SQL.
 
-    /** Postgres cannot demote a running primary over SQL, so this only classifies the node: still in
-     * recovery means nothing to do; a standalone primary needs an operator to stop it and rebuild it
-     * (pg_rewind or a fresh pg_basebackup) as a standby of the current primary. */
+    /** Postgres cannot demote a running primary over SQL. Still in recovery means nothing to do. A standalone
+     * primary needs a host-side rebuild (stop it, pg_rewind or pg_basebackup, start it as a standby): Warp has no
+     * host access, so it runs the operator's {@code WARP_FAILOVER_REJOIN_COMMAND} for that when one is set (see
+     * {@code scripts/pg-rebuild-standby.sh}), and otherwise only reports that a rebuild is needed. */
     @Override
     public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws SQLException {
         try (Connection c = connect(node); Statement st = c.createStatement();
@@ -253,9 +254,87 @@ final class PostgresHa implements EngineHa {
             if (rs.getBoolean(1)) {
                 return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a standby");
             }
+        }
+        String command = System.getenv("WARP_FAILOVER_REJOIN_COMMAND");
+        if (command == null || command.isBlank()) {
             return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is running as a standalone primary; Warp cannot "
                     + "turn a running Postgres primary into a standby -- stop it and rebuild it from the current "
-                    + "primary with pg_rewind or pg_basebackup");
+                    + "primary with pg_rewind or pg_basebackup (or set WARP_FAILOVER_REJOIN_COMMAND to have Warp run "
+                    + "that for you)");
         }
+        long timeout = 120;
+        String t = System.getenv("WARP_FAILOVER_REJOIN_TIMEOUT_SECONDS");
+        if (t != null && !t.isBlank()) {
+            timeout = Long.parseLong(t.trim());
+        }
+        return runRejoinCommand(command, node, currentPrimary, timeout);
+    }
+
+    /** Runs the operator's rebuild command with the node and the current primary described in its environment
+     * (WARP_REJOIN_NODE_URL, WARP_REJOIN_PRIMARY_URL / _HOST / _PORT / _USER, and PGPASSWORD for the primary), then
+     * checks the node really came back as a standby. */
+    static RejoinResult runRejoinCommand(String command, BackendTarget node, BackendTarget primary, long timeoutSeconds) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c", command).redirectErrorStream(true);
+            java.util.Map<String, String> env = pb.environment();
+            env.put("WARP_REJOIN_NODE_URL", node.jdbcUrl());
+            env.put("WARP_REJOIN_PRIMARY_URL", primary.jdbcUrl());
+            java.net.URI u = java.net.URI.create(primary.jdbcUrl().substring("jdbc:".length()));
+            env.put("WARP_REJOIN_PRIMARY_HOST", u.getHost());
+            env.put("WARP_REJOIN_PRIMARY_PORT", String.valueOf(u.getPort() < 0 ? 5432 : u.getPort()));
+            env.put("WARP_REJOIN_PRIMARY_USER", primary.user() == null ? "" : primary.user());
+            String pw = SecretResolver.resolve(primary.password());
+            if (pw != null) {
+                env.put("PGPASSWORD", pw);
+            }
+            Process p = pb.start();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            Thread drain = new Thread(() -> {
+                try {
+                    p.getInputStream().transferTo(out);
+                } catch (java.io.IOException ignored) {
+                    // process ended
+                }
+            }, "warp-rejoin-output");
+            drain.setDaemon(true);
+            drain.start();
+            if (!p.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command did not finish within "
+                        + timeoutSeconds + "s and was stopped");
+            }
+            drain.join(1000);
+            String tail = tail(out.toString());
+            if (p.exitValue() != 0) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command failed (exit "
+                        + p.exitValue() + "): " + tail);
+            }
+            long deadline = System.currentTimeMillis() + 30_000;
+            while (System.currentTimeMillis() < deadline) {
+                try (Connection c = connect(node); Statement st = c.createStatement();
+                        ResultSet rs = st.executeQuery("select pg_is_in_recovery()")) {
+                    rs.next();
+                    if (rs.getBoolean(1)) {
+                        return RejoinResult.of(RejoinOutcome.REJOINED, "rebuilt as a standby of the current primary by "
+                                + "the rejoin command");
+                    }
+                } catch (SQLException e) {
+                    // still restarting
+                }
+                Thread.sleep(500);
+            }
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command succeeded but the node is not a "
+                    + "standby: " + tail);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "interrupted while running the rejoin command");
+        } catch (Exception e) {
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "could not run the rejoin command: " + e.getMessage());
+        }
+    }
+
+    private static String tail(String s) {
+        String t = s.strip().replaceAll("\\s+", " ");
+        return t.length() > 300 ? t.substring(t.length() - 300) : t;
     }
 }
