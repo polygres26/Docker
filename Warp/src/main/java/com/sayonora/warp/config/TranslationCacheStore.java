@@ -40,18 +40,7 @@ public final class TranslationCacheStore {
 
     public void ensureSchema() {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_translation_cache ("
-                    + "id bigserial PRIMARY KEY, "
-                    + "source_dialect text NOT NULL, "
-                    + "target_dialect text NOT NULL, "
-                    + "original_sql text NOT NULL, "
-                    + "original_sql_hash text NOT NULL, "
-                    + "translated_sql text NOT NULL, "
-                    + "first_cached_at timestamptz NOT NULL DEFAULT now(), "
-                    + "hit_count bigint NOT NULL DEFAULT 1, "
-                    + "last_hit_at timestamptz NOT NULL DEFAULT now())");
-            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS warp_translation_cache_key "
-                    + "ON warp_translation_cache (source_dialect, target_dialect, original_sql_hash)");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_translation_cache", java.util.Map.of());
         } catch (SQLException e) {
             log.warn("translation cache store: could not ensure warp_translation_cache schema exists"
                     + " -- write-through recording will keep failing best-effort until this is fixed", e);

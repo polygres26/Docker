@@ -63,21 +63,7 @@ public final class XaRecoveryLog {
 
     public void ensureSchema() {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_xa_log ("
-                    + "gtrid_hex text NOT NULL, "
-                    + "branch_index integer NOT NULL, "
-                    + "backend_name text NOT NULL, "
-                    + "created_at timestamptz NOT NULL DEFAULT now(), "
-                    + "resolved_at timestamptz, "
-                    + "PRIMARY KEY (gtrid_hex, branch_index))");
-            // Added for Phase 4b (see Branch's javadoc) -- ADD COLUMN IF NOT EXISTS so an
-            // already-deployed warp_xa_log table (from before this existed) picks these up on
-            // the next restart without a separate migration step. All three stay nullable: an
-            // existing unresolved row from before this migration simply has none of them, and
-            // XaRecovery already falls back to name-based resolution in exactly that case.
-            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_jdbc_url text");
-            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_user text");
-            st.execute("ALTER TABLE warp_xa_log ADD COLUMN IF NOT EXISTS backend_password text");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_xa_log", java.util.Map.of());
         } catch (SQLException e) {
             log.warn("xa recovery log: could not ensure warp_xa_log schema exists -- in-doubt "
                     + "transactions from a coordinator crash will NOT be recoverable until this is fixed", e);

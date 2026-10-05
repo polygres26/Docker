@@ -564,6 +564,18 @@ directory, not a config format for its own sake: `BackendDriverRegistry.engineDi
 dispatch (`DdlTemplates.engineDirFor`) picks the right file from a `BackendTarget`'s own `jdbcUrl`,
 the same real dispatch shape §4.4's `BackendDriverRegistry` already uses for driver classes.
 
+**The same rule covers Warp's own control-plane tables.** `warp_config` (and its change notification), `warp_nodes`, the failover lease and
+observation tables, `warp_firewall_rules`, `warp_ab_routing`, `warp_translation_cache`, `warp_failed_statements`, `warp_xa_log`, `warp_acme_state`,
+`warp_audit_log`, the legacy key/value `warp_config` of `core.ConfigStore` and the `warp_enabled_stores` marker all have their DDL in
+`ddl/postgres/warp_*.sql` (the control plane is Postgres by design: it runs on the default backend's connection and uses `LISTEN`/`NOTIFY`), loaded with
+`DdlTemplates.run`. The audit log and the legacy key/value store accept any JDBC URL, so they also have a MySQL file and use
+`DdlTemplates.runFor`; there is deliberately no Oracle or SQL Server file for them (the same statement means something else there, or does not parse),
+and `runFor` fails with a clear message instead of guessing. `NoInlineDdlTest` fails the build when a new main-code file puts `CREATE TABLE`,
+`CREATE INDEX`, a trigger, a function or `ALTER TABLE ... ADD` in a Java string; its short allow-list names what is still inline (the static schemas of
+`PgItemStore`, `PgTimeSeriesStore`, `PostgresDocumentStore` and `PostgresSearchStore`) and the code that builds DDL from a runtime name
+(`CacheTriggerInstaller`, rollup tables, CQL `DESCRIBE`, dialect translation). The move was checked by dumping every `warp_*` table, column, index,
+trigger, function and constraint from a fresh database on `main` and on this change: 120 facts, identical.
+
 **Only two of the four can even reach a non-default backend today.** `PgItemStore` (dynamowire)
 and `PgQueueStore` (sqswire) both support real shard routing (`WARP_SHARD_BACKENDS` — hashing
 by DynamoDB partition key / SQS queue name, same as real DynamoDB/SQS partitioning), so a shard

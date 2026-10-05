@@ -26,8 +26,7 @@ public final class AcmeDb {
 
     public void ensureSchema() throws SQLException {
         try (Connection c = PgConnections.open(options); Statement st = c.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_acme_state (name text PRIMARY KEY, value text NOT NULL, "
-                    + "updated_at timestamptz NOT NULL DEFAULT now())");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_acme_state", java.util.Map.of());
         }
     }
 

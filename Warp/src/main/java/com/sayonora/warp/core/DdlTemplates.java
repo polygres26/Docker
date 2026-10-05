@@ -118,6 +118,27 @@ public final class DdlTemplates {
         return statements;
     }
 
+    /** Runs every statement of {@code ddl/<engine>/<name>.sql} on {@code st}, in file order. Throws if that (engine, name) file does not
+     * exist: a missing file is a packaging or engine-support bug, never something to skip silently. */
+    public static void run(java.sql.Statement st, String engine, String name, Map<String, String> vars) throws java.sql.SQLException {
+        List<String> statements = loadStatements(engine, name, vars);
+        if (statements == null) {
+            throw new IllegalStateException("no DDL file ddl/" + engine + "/" + name + ".sql");
+        }
+        for (String statement : statements) {
+            st.execute(statement);
+        }
+    }
+
+    /** As {@link #run(java.sql.Statement, String, String, Map)}, with the engine taken from {@code jdbcUrl}. */
+    public static void runFor(java.sql.Statement st, String jdbcUrl, String name, Map<String, String> vars) throws java.sql.SQLException {
+        String engine = engineDirFor(jdbcUrl);
+        if (engine == null) {
+            throw new IllegalStateException("no DDL variants for the database at " + jdbcUrl + " (known engines: postgres, oracle, sqlserver, mysql)");
+        }
+        run(st, engine, name, vars);
+    }
+
     private static String substitute(String text, Map<String, String> vars) {
         String out = text;
         for (Map.Entry<String, String> entry : vars.entrySet()) {

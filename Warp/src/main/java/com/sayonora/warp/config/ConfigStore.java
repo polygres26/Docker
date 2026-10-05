@@ -33,16 +33,7 @@ public final class ConfigStore implements AutoCloseable {
 
     public void ensureSchema() throws SQLException {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_config ("
-                    + "version bigserial PRIMARY KEY, "
-                    + "payload jsonb NOT NULL, "
-                    + "created_at timestamptz NOT NULL DEFAULT now())");
-            st.execute("CREATE OR REPLACE FUNCTION warp_config_notify() RETURNS trigger AS $$ "
-                    + "BEGIN PERFORM pg_notify('" + CHANNEL + "', NEW.version::text); RETURN NEW; END; "
-                    + "$$ LANGUAGE plpgsql");
-            st.execute("DROP TRIGGER IF EXISTS warp_config_notify_trigger ON warp_config");
-            st.execute("CREATE TRIGGER warp_config_notify_trigger AFTER INSERT ON warp_config "
-                    + "FOR EACH ROW EXECUTE FUNCTION warp_config_notify()");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_config", java.util.Map.of("channel", CHANNEL));
         }
     }
 
