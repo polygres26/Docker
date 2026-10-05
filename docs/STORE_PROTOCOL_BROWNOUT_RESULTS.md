@@ -13,8 +13,8 @@ be longer, not measured). After the event every acknowledged write is read back 
 | dynamowire | failover | 6337 | 6 | 27 | 5288 | 5144 ms (recovered +5165) | 4240 | 4 | 6337 | 0 | 0 |
 | sqswire | switchover | 4520 | 3 | 29 | 144 | 20 ms (recovered +30) | 2979 | 2 | 4520 | 0 | 0 |
 | sqswire | failover | 6341 | 6 | 27 | 5304 | 5143 ms (recovered +5182) | 4150 | 4 | 6341 | 0 | 0 |
-| mongowire | switchover | 4515 | 4 | 27 | 151 | 4 ms (recovered +28) | 3010 | 2 | 4515 | 0 | 0 |
-| mongowire | failover | 6354 | 7 | 31 | 5296 | 5144 ms (recovered +5173) | 4235 | 4 | 6354 | 0 | 0 |
+| mongowire | switchover | 4570 | 3 | 26 | 139 | 18 ms (recovered +26) | 3040 | 2 | 4570 | 0 | 0 |
+| mongowire | failover | 6410 | 6 | 26 | 5308 | 5144 ms (recovered +5183) | 4272 | 4 | 6410 | 0 | 0 |
 
 ## What it shows
 
@@ -27,13 +27,18 @@ be longer, not measured). After the event every acknowledged write is read back 
   AWS SDKs and the Mongo driver do by default) would mostly ride it out; these runs deliberately disabled that.
 - As with the SQL protocols, the old primary is left read-only and not replicating after a switchover.
 
-## Problem found, not fixed: mongowire's concurrent first insert
+## Found and fixed: mongowire's concurrent first insert
 
 One write per run failed with `Postgres error: ERROR: type "c" already exists` (switchover) and `type "__warp_uk" already
-exists` (failover), error code 8 (UnknownError). The collection and its unique-index helper are created on first use; three
-writers inserting into a collection that does not exist yet race on `CREATE TABLE IF NOT EXISTS`, which Postgres does not
-make safe (it can raise a duplicate-type error instead of doing nothing). It happens once, at the start, before any event;
-a client sees a failed first insert for a brand-new collection. DynamoDB and SQS did not show it in these runs.
+exists` (failover), error code 8 (UnknownError). The collection and its helper tables are created on first use; several
+writers inserting into a collection that does not exist yet raced on `CREATE TABLE IF NOT EXISTS`, which Postgres does not make
+safe (it can fail with "relation/type already exists" or a unique violation on `pg_class`/`pg_type` instead of doing nothing).
+In isolation, with 8 clients each inserting into 60 brand-new databases at the same moment, **203 of 480 first inserts failed**
+(five different Postgres duplicate errors). The existing three immediate retries did not help because the contenders collide
+again in lock-step. Collection creation now takes a Postgres advisory lock per database (also safe across several Warp
+instances), so concurrent first writes queue up and the later ones find the table already there: **0 of 480 fail**.
+`MongowireConcurrentCreateLiveTest` fails without the fix and passes with it. After the fix the brownout rows for mongowire
+no longer contain the error (switchover: 3 failed writes, 139 ms stall; failover: 6 failed writes, 5.3 s stall; 0 lost).
 
 ## Not covered yet
 
