@@ -26,6 +26,20 @@ public final class ConfigStore implements AutoCloseable {
     private final AtomicBoolean listening = new AtomicBoolean(false);
     private volatile Connection listenConnection;
     private ExecutorService listenExecutor;
+    /** The newest config version handed to the listener. A notification sent while the LISTEN connection was down is never redelivered by
+     * Postgres, so on every (re)connect and on a timer the latest version is read and delivered when it is newer than this. */
+    private final java.util.concurrent.atomic.AtomicLong lastDelivered = new java.util.concurrent.atomic.AtomicLong();
+    /** How often to compare the stored version with the delivered one even without a notification; 0 turns the poll off. */
+    private final long pollMillis = pollMillisFromEnv();
+
+    private static long pollMillisFromEnv() {
+        try {
+            String v = System.getenv("WARP_CONFIG_POLL_SECONDS");
+            return (v == null || v.isBlank() ? 30 : Long.parseLong(v.trim())) * 1000;
+        } catch (NumberFormatException e) {
+            return 30_000;
+        }
+    }
 
     public ConfigStore(com.sayonora.warp.server.ServerOptions options) {
         this.options = options;
@@ -114,10 +128,13 @@ public final class ConfigStore implements AutoCloseable {
                 c.otlpExportOverride(), c.prometheusScrapeOverride(), c.accessPolicy());
     }
 
-    public void listen(Consumer<Version> callback) throws SQLException {
+    /** Calls {@code callback} for every config version newer than {@code appliedVersion} (the one the process started from), whether it
+     * arrived as a notification, was found when the LISTEN connection came back, or was found by the periodic poll. */
+    public void listen(long appliedVersion, Consumer<Version> callback) throws SQLException {
         if (!listening.compareAndSet(false, true)) {
             throw new IllegalStateException("listen() already called on this ConfigStore");
         }
+        lastDelivered.set(appliedVersion);
         listenExecutor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "warp-config-listen");
             t.setDaemon(true);
@@ -135,17 +152,24 @@ public final class ConfigStore implements AutoCloseable {
                     st.execute("LISTEN " + CHANNEL);
                 }
                 log.info("config: LISTEN {} established on a dedicated connection", CHANNEL);
+                // anything written while this connection was down (or before it first existed) was never notified to us
+                catchUp(callback, "after the LISTEN connection was (re)established");
                 PGConnection pgConn = conn.unwrap(PGConnection.class);
+                long lastPoll = System.currentTimeMillis();
                 while (listening.get() && !conn.isClosed()) {
                     PGNotification[] notifications = pgConn.getNotifications(5000);
                     if (notifications != null && notifications.length > 0) {
                         log.info("config: received {} notification(s) on {}, re-reading latest version",
                                 notifications.length, CHANNEL);
                         try {
-                            readLatest().ifPresent(callback::accept);
+                            readLatest().ifPresent(v -> deliver(v, callback));
                         } catch (SQLException e) {
                             log.warn("config: failed to re-read latest version after notification", e);
                         }
+                    }
+                    if (pollMillis > 0 && System.currentTimeMillis() - lastPoll >= pollMillis) {
+                        lastPoll = System.currentTimeMillis();
+                        catchUp(callback, "by the periodic poll (a notification was missed)");
                     }
                 }
             } catch (SQLException e) {
@@ -154,6 +178,45 @@ public final class ConfigStore implements AutoCloseable {
                     sleep(2000);
                 }
             }
+        }
+    }
+
+    /** Delivers the latest stored version when it is newer than the last one delivered. */
+    private void catchUp(Consumer<Version> callback, String how) {
+        try {
+            long stored = latestVersion();
+            if (stored > lastDelivered.get()) {
+                readLatest().ifPresent(v -> {
+                    if (v.version() > lastDelivered.get()) {
+                        log.warn("config: found version {} newer than the applied {} {}; applying it", v.version(), lastDelivered.get(), how);
+                    }
+                    deliver(v, callback);
+                });
+            }
+        } catch (SQLException e) {
+            log.warn("config: could not compare the stored config version {}: {}", how, e.toString());
+        }
+    }
+
+    private synchronized void deliver(Version v, Consumer<Version> callback) {
+        long previous = lastDelivered.get();
+        if (v.version() <= previous) {
+            return;
+        }
+        lastDelivered.set(v.version());
+        try {
+            callback.accept(v);
+        } catch (RuntimeException e) {
+            lastDelivered.set(previous); // applying it failed: the next poll or notification tries again
+            log.error("config: applying version {} failed; will retry", v.version(), e);
+        }
+    }
+
+    private long latestVersion() throws SQLException {
+        try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT coalesce(max(version), 0) FROM warp_config")) {
+            rs.next();
+            return rs.getLong(1);
         }
     }
 

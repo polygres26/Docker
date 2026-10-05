@@ -1170,7 +1170,7 @@ public final class Main {
                     a2aPort, e);
         }
 
-        configStore.listen(newVersion -> {
+        configStore.listen(currentConfigVersion.get().version(), newVersion -> {
             currentConfigVersion.set(newVersion);
             WarpConfig c = newVersion.payload();
             log.info("config: applying warp_config version {} in place", newVersion.version());

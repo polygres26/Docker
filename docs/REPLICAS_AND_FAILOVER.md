@@ -339,6 +339,16 @@ Postgres checks `transaction_read_only` on a fresh session (set cluster-wide by 
 `read_only` server as read-only; SQL Server's `OFFLINE` node is unreachable. The check is never applied to the configured primary: a primary
 that is read-only for another reason must not look like a failure and start a promotion.
 
+**An instance cannot stay on an old config because it missed a notification.** Instances learn a new primary from the shared config over
+Postgres LISTEN/NOTIFY, and Postgres never redelivers a notification sent while the listening connection was down. Before this fix such an
+instance kept the old primary until the next config change, which is exactly the situation the guards above are most exposed to (live repro:
+cut both LISTEN connections, switch over through one instance, the other stayed on the old primary for the full 40 s of the test and
+indefinitely by the code). The config listener now compares the stored version with the last one it applied whenever it (re)connects and
+every `WARP_CONFIG_POLL_SECONDS` (default 30, `0` turns the poll off), and applies a newer one (log line `found version N newer than the
+applied M ...`). Both paths are covered by live tests, which suppress the notification entirely for the poll case. The window in which a
+stale instance can still write to the old primary is therefore bounded by that interval, and the old primary is frozen by the instances that
+did learn of the change; this is not a per-write term check.
+
 What the guards do **not** cover: a partition that also cuts the replica off from the primary while clients can still reach the primary (the
 replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
 configuration writing to different nodes (the lease controls who decides, not who writes); and the config database being a single point (Warp

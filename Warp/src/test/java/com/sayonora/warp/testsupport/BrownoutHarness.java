@@ -98,6 +98,13 @@ public final class BrownoutHarness {
             "WARP_PUBSUBWIRE_PORT", "WARP_PUBSUBWIRE_REST_PORT", "WARP_REDISWIRE_PORT", "WARP_S3WIRE_PORT", "WARP_SECRETSWIRE_PORT",
             "WARP_SNSWIRE_PORT", "WARP_SQSWIRE_PORT", "WARP_SSMWIRE_PORT", "WARP_STSWIRE_PORT");
 
+    /** Gives every listener of this Warp its own free port, so several instances can share one host. */
+    public static void separatePorts(WarpProcess.Builder b) throws java.io.IOException {
+        for (String portVar : FRONTEND_PORT_VARS) {
+            b.env(portVar, String.valueOf(LocalPostgres.freePort()));
+        }
+    }
+
     private BrownoutHarness() {
     }
 
@@ -128,9 +135,7 @@ public final class BrownoutHarness {
                             .env("WARP_GRPC_PORT", String.valueOf(LocalPostgres.freePort()))
                             .env("WARP_OTEL_ENDPOINT", "disabled");
                     if (WARPS > 1) { // several instances on one host: no frontend may sit on a fixed default port
-                        for (String portVar : FRONTEND_PORT_VARS) {
-                            b.env(portVar, String.valueOf(LocalPostgres.freePort()));
-                        }
+                        separatePorts(b);
                     }
                     StoreConfig stores = new StoreConfig();
                     workload.configure(b, stores);
