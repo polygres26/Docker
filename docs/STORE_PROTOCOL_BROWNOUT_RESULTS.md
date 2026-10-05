@@ -190,6 +190,42 @@ framing and reconnect behaviour may differ from what pika, amqplib or the Rabbit
   publish, so every client in flight has to reconnect (my client does, as the harness drops and reopens it). That is a heavier failure than a
   per-publish nack. A real AMQP client library would auto-recover its connection only if it is configured to.
 
+## Phase 7: the vendors' own client libraries at their default retry settings
+
+Everything above uses clients with retries switched off (or raw requests), which measures what one request sees. This phase asks what
+an *application* sees: the same workloads through the real client library with its **default** retry, timeout and reconnect behaviour.
+Libraries: AWS SDK v2 (DynamoDB, Secrets Manager), the Kafka producer (retries, idempotence and the 120 s delivery timeout at their
+defaults), the Azure Blob SDK 12.13 and Lettuce 6.3 for Redis. Writes count as failed only when they fail *after* the client's own retries.
+
+| protocol | scenario | writes ok | writes failed | steady max gap ms | max gap around event ms | failed window | reads ok | reads failed | acked | lost |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dynamowire (AWS SDK) | switchover | 4496 | 0 | 29 | 131 | none | 3009 | 0 | 4496 | 0 |
+| dynamowire (AWS SDK) | failover | 6369 | 0 | 38 | 5053 | none | 4262 | 0 | 6369 | 0 |
+| secretswire (AWS SDK) | switchover | 4427 | 0 | 29 | 145 | none | 3017 | 0 | 4427 | 0 |
+| secretswire (AWS SDK) | failover | 6215 | 0 | 29 | 5177 | none | 4222 | 0 | 6215 | 0 |
+| kafkawire (Kafka producer) | switchover | 3236 | 0 | 38 | 137 | none | 2728 | 0 | 3236 | 0 |
+| kafkawire (Kafka producer) | failover | 4517 | 0 | 37 | 5338 | none | 3821 | 0 | 4517 | 0 |
+| azblobwire (Azure SDK) | switchover | 3486 | 0 | 31 | 4046 | none | 2695 | 0 | 3486 | 0 |
+| azblobwire (Azure SDK) | failover | 5334 | 0 | 33 | 4036 | none | 3637 | 0 | 5334 | 0 |
+| rediswire (Lettuce) | switchover | 4024 | 3 | 30 | 154 | 7 ms (recovered +29) | 2704 | 0 | 4024 | 0 |
+| rediswire (Lettuce) | failover | 5658 | 5 | 32 | 5187 | 5154 ms (recovered +5169) | 3780 | 4 | 5658 | 0 |
+
+- **A client with default retries hides the event from the application**: DynamoDB, Secrets Manager, Kafka and Azure Blob show 0 failed
+  writes and 0 lost; what is left is a latency spike (about 0.15 s on a switchover, about 5 s on a crash).
+- **Kafka was a real Warp bug, fixed here.** Before this change the default producer failed 3 writes in each scenario: kafkawire reported a
+  store failure as `UNKNOWN_SERVER_ERROR`, which the Kafka client does not retry. It now reports `LEADER_NOT_AVAILABLE` (retriable;
+  the client refreshes metadata and tries again), and the group-heartbeat path still maps a store failure to `COORDINATOR_NOT_AVAILABLE`.
+  Re-run: 0 failed writes in both scenarios. A producer with retries turned off still sees the error, now as `LeaderNotAvailableException`.
+- **Azure Blob: a 4 s gap even on a 150 ms switchover.** No write failed, but the longest gap was about 4.0 s in both scenarios, which
+  is consistent with the SDK's default retry back-off of about 4 s after one failed attempt (I did not isolate that further).
+- **Lettuce does not retry a command the server rejects**, so it sees the same failures as the raw client (3 and 5 failed writes; on a
+  crash 4 failed reads as `LOADING`). Its reconnect logic only helps if the connection drops.
+- Test setup: Lettuce and the AWS Secrets Manager SDK were added as test dependencies from the local Maven repository (Lettuce with Netty
+  and reactor-core excluded, because the older reactor-core the Azure SDK needs is already on the classpath; without that exclusion the
+  Azure SDK failed with `NoSuchMethodError`). The harness now counts a `LinkageError` from a client as a failed operation instead of
+  letting it end the worker silently, which is how that mistake first showed up as 0 writes and 0 failures.
+- Single runs on localhost, as before. The AWS SDK's retry mode is the SDK's own default, not tuned.
+
 ## Not covered yet
 
 Not benchmarked: **A2A** (needs an LLM and writes nothing). KMS and STS were skipped on purpose. AMQP 1.0 is

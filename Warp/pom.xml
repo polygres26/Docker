@@ -125,6 +125,31 @@
   </dependencyManagement>
 
   <dependencies>
+    <!-- Real client libraries for the brownout measurements (test only): Redis and AWS Secrets Manager clients that retry and
+         reconnect on their own, to compare with the raw clients in the same harness. -->
+    <dependency>
+      <groupId>io.lettuce</groupId>
+      <artifactId>lettuce-core</artifactId>
+      <version>6.3.2.RELEASE</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>io.netty</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+        <exclusion>
+          <!-- the Azure SDK on this classpath needs the older reactor-core it already resolves; Lettuce's sync API does not need its own -->
+          <groupId>io.projectreactor</groupId>
+          <artifactId>reactor-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>secretsmanager</artifactId>
+      <version>${awssdk.version}</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <!-- TranslationCache's fallback LLM translator's HTTP client, and the rollup config's/access
            policy's JSON bits — Apache-2.0. -->

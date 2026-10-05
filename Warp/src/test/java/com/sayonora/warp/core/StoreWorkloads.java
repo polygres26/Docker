@@ -47,6 +47,15 @@ final class StoreWorkloads {
     // ---- DynamoDB ----------------------------------------------------------------------------------------
 
     private static DynamoDbClient dynamo(int port) {
+        return dynamo(port, false);
+    }
+
+    /** {@code sdkDefaults}: leave the SDK's own retry policy and timeouts alone, as an application normally would. */
+    private static DynamoDbClient dynamo(int port, boolean sdkDefaults) {
+        if (sdkDefaults) {
+            return DynamoDbClient.builder().endpointOverride(URI.create("http://localhost:" + port)).region(Region.US_EAST_1)
+                    .credentialsProvider(AWS_CREDS).build();
+        }
         return DynamoDbClient.builder().endpointOverride(URI.create("http://localhost:" + port)).region(Region.US_EAST_1)
                 .credentialsProvider(AWS_CREDS)
                 .overrideConfiguration(o -> o.retryPolicy(RetryPolicy.builder().numRetries(0).build())
@@ -55,10 +64,14 @@ final class StoreWorkloads {
     }
 
     static Workload dynamodb() {
+        return dynamodb(false);
+    }
+
+    static Workload dynamodb(boolean sdkDefaults) {
         return new Workload() {
             @Override
             public String name() {
-                return "dynamowire";
+                return sdkDefaults ? "dynamowire-sdk-defaults" : "dynamowire";
             }
 
             @Override
@@ -69,7 +82,7 @@ final class StoreWorkloads {
 
             @Override
             public void prepare(WarpProcess warp) {
-                try (DynamoDbClient d = dynamo(warp.port("dynamowire"))) {
+                try (DynamoDbClient d = dynamo(warp.port("dynamowire"), sdkDefaults)) {
                     d.createTable(CreateTableRequest.builder().tableName("bo_items")
                             .attributeDefinitions(AttributeDefinition.builder().attributeName("id").attributeType(ScalarAttributeType.S).build())
                             .keySchema(KeySchemaElement.builder().attributeName("id").keyType(KeyType.HASH).build())
@@ -79,7 +92,7 @@ final class StoreWorkloads {
 
             @Override
             public Client open(WarpProcess warp) {
-                DynamoDbClient d = dynamo(warp.port("dynamowire"));
+                DynamoDbClient d = dynamo(warp.port("dynamowire"), sdkDefaults);
                 return new Client() {
                     @Override
                     public void write(long id) {
@@ -102,7 +115,7 @@ final class StoreWorkloads {
             @Override
             public Set<Long> presentIds(WarpProcess warp) {
                 Set<Long> ids = new HashSet<>();
-                try (DynamoDbClient d = dynamo(warp.port("dynamowire"))) {
+                try (DynamoDbClient d = dynamo(warp.port("dynamowire"), sdkDefaults)) {
                     d.scanPaginator(b -> b.tableName("bo_items")).items().forEach(i -> ids.add(Long.parseLong(i.get("id").s())));
                 }
                 return ids;
@@ -315,23 +328,33 @@ final class StoreWorkloads {
         return p;
     }
 
-    private static org.apache.kafka.clients.producer.KafkaProducer<String, String> kafkaProducer(int port) {
-        java.util.Properties p = kafkaProps(port);
-        p.put("acks", "all");
-        p.put("retries", "0");
-        p.put("max.block.ms", "5000");
-        p.put("delivery.timeout.ms", "15000");
-        p.put("enable.idempotence", "false");
+    private static org.apache.kafka.clients.producer.KafkaProducer<String, String> kafkaProducer(int port, boolean sdkDefaults) {
+        java.util.Properties p = new java.util.Properties();
+        p.put("bootstrap.servers", "localhost:" + port);
+        if (!sdkDefaults) {
+            p = kafkaProps(port);
+            p.put("acks", "all");
+            p.put("retries", "0");
+            p.put("max.block.ms", "5000");
+            p.put("delivery.timeout.ms", "15000");
+            p.put("enable.idempotence", "false");
+        }
         p.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
         p.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
         return new org.apache.kafka.clients.producer.KafkaProducer<>(p);
     }
 
     static Workload kafka() {
+        return kafka(false);
+    }
+
+    /** {@code sdkDefaults}: a producer with only the bootstrap address set (retries, idempotence and the 120 s delivery
+     * timeout are the client's own defaults), and writes that wait for the send to finish. */
+    static Workload kafka(boolean sdkDefaults) {
         return new Workload() {
             @Override
             public String name() {
-                return "kafkawire";
+                return sdkDefaults ? "kafkawire-sdk-defaults" : "kafkawire";
             }
 
             @Override
@@ -349,13 +372,13 @@ final class StoreWorkloads {
 
             @Override
             public Client open(WarpProcess warp) {
-                var producer = kafkaProducer(warp.port("kafkawire"));
+                var producer = kafkaProducer(warp.port("kafkawire"), sdkDefaults);
                 var admin = org.apache.kafka.clients.admin.AdminClient.create(kafkaProps(warp.port("kafkawire")));
                 return new Client() {
                     @Override
                     public void write(long id) throws Exception {
                         producer.send(new org.apache.kafka.clients.producer.ProducerRecord<>("bo-topic", String.valueOf(id), "v"))
-                                .get(15, java.util.concurrent.TimeUnit.SECONDS);
+                                .get(sdkDefaults ? 130 : 15, java.util.concurrent.TimeUnit.SECONDS);
                     }
 
                     @Override

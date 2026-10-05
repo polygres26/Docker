@@ -59,9 +59,20 @@ final class KafkaError extends RuntimeException {
     static final int GROUP_MAX_SIZE_REACHED = 81;
 
     final int code;
+    /** True when the Postgres store behind the broker failed (a failover, a lost connection): a condition that clears on its own. */
+    final boolean store;
 
     KafkaError(int code, String message) {
+        this(code, message, false);
+    }
+
+    KafkaError(int code, String message, boolean store) {
         super(message, null, false, false);
         this.code = code;
+        this.store = store;
+    }
+
+    static boolean isStore(Throwable t) {
+        return t instanceof KafkaError k && k.store;
     }
 }

@@ -951,7 +951,7 @@ final class KafkaBroker {
             try {
                 err = groups.heartbeat(group, gen, member == null ? "" : member, instance);
             } catch (RuntimeException e) {
-                err = codeOf(e) == KafkaError.UNKNOWN_SERVER_ERROR ? KafkaError.COORDINATOR_NOT_AVAILABLE : codeOf(e);
+                err = codeOf(e) == KafkaError.UNKNOWN_SERVER_ERROR || KafkaError.isStore(e) ? KafkaError.COORDINATOR_NOT_AVAILABLE : codeOf(e);
             }
         }
         KWriter w = new KWriter(ver >= 4);
