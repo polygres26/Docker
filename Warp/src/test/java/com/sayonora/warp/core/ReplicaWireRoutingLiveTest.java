@@ -16,6 +16,15 @@ import org.junit.jupiter.api.Test;
  */
 class ReplicaWireRoutingLiveTest {
 
+    /** Warp keeps its configuration in warp_config on the primary and only seeds it from WARP_BACKENDS /
+     * WARP_REPLICAS when it does not exist yet, so a config left by an earlier Warp would silently win. */
+    private static void resetWarpConfig(String primaryPort) throws Exception {
+        try (Connection c = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + primaryPort + "/postgres",
+                "warp", "secret"); var st = c.createStatement()) {
+            st.execute("drop table if exists warp_config cascade");
+        }
+    }
+
     private static int freePort() throws java.io.IOException {
         try (var s = new java.net.ServerSocket(0)) {
             return s.getLocalPort();
@@ -36,6 +45,7 @@ class ReplicaWireRoutingLiveTest {
         String[] p = ports.split(",");
         int primaryPort = Integer.parseInt(p[0]);
         int replicaPort = Integer.parseInt(p[1]);
+        resetWarpConfig(p[0]);
         String spec = "pg=jdbc:postgresql://127.0.0.1:" + p[0] + "/postgres|warp|secret||jdbc:postgresql://127.0.0.1:"
                 + p[1] + "/postgres~10|follow";
         try (WarpProcess warp = WarpProcess.builder()
@@ -77,6 +87,47 @@ class ReplicaWireRoutingLiveTest {
                     java.net.URI.create("http://localhost:" + warp.metricsPort() + "/metrics")).build(),
                     java.net.http.HttpResponse.BodyHandlers.ofString()).body();
             assertTrue(body.contains("warp_replica_reads_routed_total{backend=\"pg\""), body);
+        }
+    }
+
+    /** The implicit WARP_* backend (no WARP_BACKENDS at all) with WARP_REPLICAS. */
+    @Test
+    void theImplicitDefaultBackendGetsReplicaReadsWhenWarpReplicasIsSet() throws Exception {
+        String ports = System.getenv("WARP_TEST_WIRE_PG_PORTS");
+        Assumptions.assumeTrue(ports != null);
+        String[] p = ports.split(",");
+        int primaryPort = Integer.parseInt(p[0]);
+        int replicaPort = Integer.parseInt(p[1]);
+        resetWarpConfig(p[0]);
+        try (WarpProcess warp = WarpProcess.builder()
+                .pgBackend("127.0.0.1", primaryPort, "postgres", "warp", "secret")
+                .frontend("pgwire", "WARP_PGWIRE_PORT")
+                .env("WARP_REPLICAS", "jdbc:postgresql://127.0.0.1:" + p[1] + "/postgres~10")
+                .env("WARP_REPLICA_LAG_CHECK_SECONDS", "1")
+                .env("WARP_READ_AFTER_WRITE_WINDOW_MS", "1500")
+                .env("WARP_GRPC_PORT", String.valueOf(freePort()))
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start()) {
+            String url = "jdbc:postgresql://localhost:" + warp.port("pgwire") + "/postgres";
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret")) {
+                c.setAutoCommit(true);
+                Thread.sleep(3500);
+                assertEquals(replicaPort, serverPort(c), "a plain read on the default connection goes to the replica");
+
+                c.createStatement().execute("insert into t values (777002, 'default-conn')");
+                assertEquals(primaryPort, serverPort(c), "right after a write: primary");
+                Thread.sleep(2200);
+                assertEquals(replicaPort, serverPort(c), "back to the replica after the window");
+
+                c.createStatement().execute("set application_name = 'pinned'"); // connection-bound state
+                Thread.sleep(2200);
+                assertEquals(primaryPort, serverPort(c), "a session holding SET state never reads from a replica");
+            }
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret")) {
+                c.setAutoCommit(false);
+                assertEquals(primaryPort, serverPort(c), "inside a transaction: primary");
+                c.rollback();
+            }
         }
     }
 }

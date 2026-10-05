@@ -230,7 +230,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
                 // backend that connection belongs to, never unconditionally on Postgres.
                 BackendTarget defaultTarget = registry.resolveForRouting(defaultExecutorBackendName);
                 if (defaultTarget != null) {
-                    return executeOnFreshConnection(defaultTarget, statement);
+                    return executeOnFreshConnection(defaultTarget, statement, true);
                 }
             }
             if (transactionConnections == null && !registry.isEmpty()) {
@@ -456,12 +456,19 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             "true".equalsIgnoreCase(System.getenv("WARP_READ_ROUTING_ENABLED"));
 
     private ExecutionResult executeOnFreshConnection(BackendTarget target, Statement statement) throws SQLException {
+        return executeOnFreshConnection(target, statement, false);
+    }
+
+    /** {@code sessionBound}: the statement belongs to a session that also has a supplied connection, so a
+     * replica read must first pass the session-state check (see {@link #tryReplicaRead}). */
+    private ExecutionResult executeOnFreshConnection(BackendTarget target, Statement statement, boolean sessionBound)
+            throws SQLException {
         // Only single, autocommit, read-classified statements are eligible -- this method is
         // only ever called when transactionConnections == null (see execute()), so "not inside a
         // transaction" is already guaranteed by the caller; the remaining condition is purely
         // "would sending this to a standby be safe", which for a WRITE or an unclassifiable
         // statement it is not.
-        ExecutionResult viaReplica = tryReplicaRead(target.name(), statement, false);
+        ExecutionResult viaReplica = tryReplicaRead(target.name(), statement, sessionBound);
         if (viaReplica != null) {
             return viaReplica;
         }
@@ -492,7 +499,10 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             router.record(primaryName, ReplicaRouter.Reason.NOT_READ_SAFE);
             return null;
         }
-        if (needsSessionStateCheck && (sessionHasState == null || sessionHasState.getAsBoolean())) {
+        if (needsSessionStateCheck && (sessionHasState == null || sessionHasState.getAsBoolean()
+                // a real per-user identity means the supplied connection carries that user's role / RLS
+                // settings, which a fresh replica connection would not have
+                || (statement.accessContext() != null && !statement.accessContext().isAnonymous()))) {
             router.record(primaryName, ReplicaRouter.Reason.SESSION_STATE);
             return null;
         }
