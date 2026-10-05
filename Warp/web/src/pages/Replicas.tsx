@@ -16,7 +16,9 @@ const POLL_MS = 5_000
 
 /** Engines with replica probes (Postgres, MySQL, Oracle, SQL Server) and the subset Warp can promote itself. */
 const REPLICA_DIALECTS = new Set(['POSTGRES', 'MYSQL', 'ORACLE', 'SQL_SERVER'])
-const PROMOTE_DIALECTS = new Set(['POSTGRES', 'MYSQL'])
+const PROMOTE_DIALECTS = new Set(['POSTGRES', 'MYSQL', 'SQL_SERVER'])
+/** Planned switchover (the Make primary button) is only built for these. */
+const SWITCHOVER_DIALECTS = new Set(['POSTGRES', 'MYSQL'])
 
 const REASONS: Array<[keyof ReplicaGroupStatus['decisions'], string, Tone]> = [
   ['not_read_safe', 'Not a plain read', 'muted'],
@@ -191,7 +193,7 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
 }) {
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState<string | null>(null)
-  const canSwitch = backend.failoverMode !== 'off' && backend.dialect !== null && PROMOTE_DIALECTS.has(backend.dialect)
+  const canSwitch = backend.failoverMode !== 'off' && backend.dialect !== null && SWITCHOVER_DIALECTS.has(backend.dialect)
   const primaryNode: FailoverNode | undefined = failover?.nodes.find((n) => n.configuredRole === 'primary')
   const primaryState = roleState(primaryNode?.observedRole ?? null)
   const decisions = status?.decisions ?? {}

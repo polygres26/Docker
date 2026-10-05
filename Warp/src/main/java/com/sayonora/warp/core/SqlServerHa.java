@@ -23,8 +23,17 @@ import java.util.Properties;
  * {@code VIEW SERVER STATE} (for {@code sys.dm_hadr_database_replica_states}) and can connect to the
  * database. {@code ;} inside a URL is written {@code %3B} in the {@code WARP_BACKENDS} spec.
  *
- * <p>Like Oracle, Warp only <b>follows</b> a failover run elsewhere (the cluster's automatic failover,
- * or {@code ALTER AVAILABILITY GROUP ... FAILOVER} by a DBA); it never performs one. A non-readable
+ * <p>Failover. In {@code follow} mode Warp only <b>follows</b> a failover run elsewhere (the cluster's
+ * automatic failover, or {@code ALTER AVAILABILITY GROUP ... FAILOVER} by a DBA). In {@code promote}
+ * mode Warp performs one itself, but <b>only for an availability group with
+ * {@code CLUSTER_TYPE = NONE}</b> (a read-scale AG with no cluster manager), by running
+ * {@code FORCE_FAILOVER_ALLOW_DATA_LOSS} on the chosen secondary -- the only failover such an AG has when
+ * the primary is gone. An AG that a cluster manager (WSFC / Pacemaker) owns is refused: forcing it behind
+ * the cluster's back is how you get two primaries. Data loss is inherent to a forced failover; Warp's
+ * promote safeguards (majority, lease, WAL ranking via {@code last_hardened_lsn}, lag gate) apply first.
+ * Not done: re-resuming the other secondaries and re-attaching the old primary (both need
+ * {@code ALTER AVAILABILITY GROUP ... SET (ROLE = SECONDARY)} / {@code SET HADR RESUME} steps that were not
+ * built), so after a promotion those nodes need a DBA. A non-readable
  * secondary rejects ordinary connections (error 978) so it is invisible to the probes until it
  * becomes the primary and starts accepting them.
  */
@@ -33,11 +42,6 @@ final class SqlServerHa implements EngineHa {
     static final SqlServerHa INSTANCE = new SqlServerHa();
 
     private SqlServerHa() {
-    }
-
-    @Override
-    public boolean supportsPromote() {
-        return false;
     }
 
     // ---- pure logic ---------------------------------------------------------------------------
@@ -167,15 +171,65 @@ final class SqlServerHa implements EngineHa {
         }
     }
 
+    /** {@code last_hardened_lsn} of the local secondary database. The LSN is a 25-digit decimal (VLF sequence,
+     * block offset, slot), which can exceed a long; the 5-digit slot is dropped and, if it still would not fit,
+     * further low digits, which keeps the ordering that ranking needs. */
     @Override
-    public OptionalLong walPosition(BackendTarget replica) {
-        return OptionalLong.empty();
+    public OptionalLong walPosition(BackendTarget replica) throws SQLException {
+        try (Connection c = connect(replica); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT TOP 1 CAST(last_hardened_lsn AS decimal(25,0)) "
+                        + "FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND database_id = DB_ID()")) {
+            if (!rs.next() || rs.getBigDecimal(1) == null) {
+                return OptionalLong.empty();
+            }
+            java.math.BigInteger v = rs.getBigDecimal(1).toBigInteger().divide(java.math.BigInteger.valueOf(100_000));
+            while (v.bitLength() > 62) {
+                v = v.divide(java.math.BigInteger.TEN);
+            }
+            return OptionalLong.of(v.longValue());
+        }
     }
 
     @Override
-    public void promote(BackendTarget replica) {
-        throw new UnsupportedOperationException("Warp does not fail over SQL Server Availability Groups: use the "
-                + "cluster's automatic failover or `ALTER AVAILABILITY GROUP ... FAILOVER`; Warp follows once the "
-                + "new primary accepts connections");
+    public void promote(BackendTarget replica) throws SQLException {
+        String group;
+        try (Connection c = connect(replica); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)), "
+                        + "sys.fn_hadr_is_primary_replica(DB_NAME()) FROM sys.availability_groups ag "
+                        + "JOIN sys.dm_hadr_database_replica_states drs ON drs.group_id = ag.group_id "
+                        + "WHERE drs.is_local = 1 AND drs.database_id = DB_ID()")) {
+            if (!rs.next()) {
+                throw new SQLException("the database is not in an availability group on this server");
+            }
+            group = rs.getString(1);
+            String clusterType = rs.getString(2);
+            int primary = rs.getInt(3);
+            if (rs.next()) {
+                throw new SQLException("the database is in more than one availability group; refusing to guess which to fail over");
+            }
+            if (!"NONE".equalsIgnoreCase(clusterType)) {
+                throw new SQLException("availability group '" + group + "' is managed by a cluster manager ("
+                        + clusterType + "); fail it over with the cluster's own tooling, not behind its back");
+            }
+            if (primary == 1) {
+                throw new SQLException("this replica is already the primary");
+            }
+            // ALTER AVAILABILITY GROUP must run from master
+            c.setCatalog("master");
+            st.execute("ALTER AVAILABILITY GROUP [" + group.replace("]", "]]") + "] FORCE_FAILOVER_ALLOW_DATA_LOSS");
+        }
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (role(replica) != FailoverMonitor.NodeRole.WRITABLE) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new SQLException("forced failover of '" + group + "' ran but the database did not become "
+                        + "writable within 60s");
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SQLException("interrupted", e);
+            }
+        }
     }
 }

@@ -71,17 +71,15 @@ class SqlServerHaTest {
     }
 
     @Test
-    void sqlServerIsSupportedButNeverFailedOverByWarp() {
+    void sqlServerIsSupportedAndCanBePromotedByWarp() {
         EngineHa ha = EngineHa.forDialect(SourceDialect.SQL_SERVER);
         assertTrue(ha != null);
-        assertFalse(ha.supportsPromote());
-        assertThrows(UnsupportedOperationException.class,
-                () -> ha.promote(new BackendTarget("s", "jdbc:sqlserver://h:1433", "u", "p")));
+        assertTrue(ha.supportsPromote());
         assertEquals(null, EngineHa.forDialect(SourceDialect.SYNAPSE), "Synapse has no availability groups");
     }
 
     @Test
-    void semicolonsInSqlServerUrlsSurviveTheSpecRoundTripAndPromoteIsRefused() {
+    void semicolonsInSqlServerUrlsSurviveTheSpecRoundTripAndPromoteModeIsAccepted() {
         String spec = "s=jdbc:sqlserver://p:1433%3BdatabaseName=d|u|pw||jdbc:sqlserver://r:1433%3BdatabaseName=d%3BapplicationIntent=ReadOnly~3";
         BackendRegistry reg = BackendRegistry.fromConfig(spec, null);
         assertEquals("jdbc:sqlserver://p:1433;databaseName=d", reg.get("s").jdbcUrl());
@@ -90,9 +88,8 @@ class SqlServerHaTest {
         BackendSetModel m = BackendSetModel.from(WarpConfig.fromEnvDefaults()
                 .withBackendModel(spec, null, null, null, null, null), null);
         assertEquals(spec, m.applyTo(WarpConfig.fromEnvDefaults()).backends());
-        ModelException e = assertThrows(ModelException.class,
-                () -> m.patchBackend("s", null, null, null, false, null, null, null, "promote"));
-        assertEquals(400, e.status());
+        // promote mode is accepted for SQL Server now (it is refused only for engines Warp cannot promote)
+        m.patchBackend("s", null, null, null, false, null, null, null, "promote");
     }
 
     private final Map<String, NodeRole> cluster = new HashMap<>();
