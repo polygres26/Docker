@@ -1,4 +1,4 @@
-# Postgres-backed protocols under switchover and failover (phases 1-3: DynamoDB, SQS, MongoDB, S3, Kafka, CQL, Bolt, InfluxDB, OpenSearch, Redis, GCS, Azure Blob, Pub/Sub, Firestore, Datastore, Cosmos)
+# Postgres-backed protocols under switchover and failover (phases 1-4: 25 protocols, listed per phase below)
 
 Measured on 2026-10-05 with `StoreFailoverBrownoutLiveTest`. Warp serves the protocol over its Postgres backend (the data
 lives in Postgres tables, enabled per backend with `WARP_BACKEND_STORES`), the backend has one streaming replica and
@@ -113,10 +113,40 @@ traffic can differ in headers, retries and request shapes, so treat these as pro
   characters, Cosmos results read only up to the first page (which looked like 991 lost writes until the page size was raised),
   and Azure needing `WARP_AZURE_DEV_ACCOUNT=true` (Warp refuses to serve unauthenticated).
 
+## Phase 4: Azure Queue and Table, Kinesis, SSM, Secrets Manager, SNS
+
+Driven like phase 3 with my own HTTP clients following each public API (Azure Queue/Table with the static bearer token, AWS JSON 1.1
+for Kinesis, SSM and Secrets Manager, the Query protocol for SNS; no SigV4 signing since Warp does not require it unless
+`WARP_AWS_IAM_CREDENTIALS` is set). Secrets Manager needs `WARP_KMS_INSECURE_DEV_KEY=true` to seal its values.
+
+| protocol | scenario | writes ok | writes failed | steady max gap ms | max gap around event ms | failed window | reads ok | reads failed | acked | lost | extra |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| azqueuewire | switchover | 4509 | 3 | 39 | 142 | 15 ms (recovered +23) | 2981 | 1 | 4509 | 0 | 0 |
+| azqueuewire | failover | 6370 | 2 | 27 | 5033 | 5009 ms (recovered +5016) | 4134 | 1 | 6370 | 0 | 0 |
+| aztablewire | switchover | 4530 | 3 | 33 | 144 | 11 ms (recovered +28) | 3055 | 0 | 4530 | 0 | 0 |
+| aztablewire | failover | 6391 | 3 | 27 | 5176 | 5 ms (recovered +41) | 4302 | 2 | 6391 | 0 | 0 |
+| kinesiswire | switchover | 4542 | 3 | 26 | 152 | 4 ms (recovered +27) | 3060 | 2 | 4542 | 0 | 0 |
+| kinesiswire | failover | 6358 | 6 | 26 | 5286 | 5148 ms (recovered +5174) | 4286 | 4 | 6358 | 0 | 0 |
+| ssmwire | switchover | 4519 | 3 | 32 | 135 | 14 ms (recovered +26) | 3072 | 2 | 4519 | 0 | 0 |
+| ssmwire | failover | 6344 | 6 | 27 | 5282 | 5139 ms (recovered +5164) | 4310 | 3 | 6344 | 0 | 0 |
+| secretswire | switchover | 4514 | 3 | 27 | 154 | 1 ms (recovered +28) | 3076 | 1 | 4514 | 0 | 0 |
+| secretswire | failover | 6317 | 6 | 53 | 5302 | 5143 ms (recovered +5178) | 4308 | 4 | 6317 | 0 | 0 |
+| snswire | switchover | 4586 | 3 | 26 | 150 | 1 ms (recovered +22) | 3079 | 1 | 4586 | 0 | 0 |
+| snswire | failover | 6420 | 5 | 26 | 5171 | 5138 ms (recovered +5158) | 4299 | 4 | 6420 | 0 | 0 |
+
+- **All six follow the failover on their own and lost nothing**, same shape as before: ~135-155 ms on a switchover, ~5.0-5.3 s on a crash.
+- **The three Azure frontends (Blob, Queue, Table) share the "hold, don't fail" behaviour on a crash**: they fail only 2-3 writes
+  (against 5-6 for the rest) yet stall for the full 5 s, i.e. requests wait for the new primary. Azure Table's failed window was
+  5 ms with a 5.2 s gap, the clearest case.
+- Mistake in my first Azure Table version (not Warp): it read back only the first page of 1,000 entities and reported 107 writes as
+  lost; it now follows the `x-ms-continuation-*` headers.
+- Not benchmarked, deliberately: KMS and STS (no data worth losing: KMS is exercised through Secrets Manager's sealing, STS is
+  stateless).
+
 ## Not covered yet
 
-The remaining Postgres-backed protocols: Azure Queue and Table, the AWS JSON services (SNS, Kinesis, KMS, SSM, STS, secrets),
-AMQP, Gremlin, Bigtable, and Warp's own gRPC, MCP and A2A APIs. Many of them have only unit tests, no
+The remaining Postgres-backed protocols: AMQP, Gremlin, Bigtable, and Warp's own gRPC, MCP and A2A APIs (all need a custom or
+generated client rather than plain HTTP). Many of them have only unit tests, no
 end-to-end test with a real client at all, so their workloads are being added in groups. Same caveats as the SQL results:
 single runs, localhost, one replica, one Warp instance, no partitions.
 

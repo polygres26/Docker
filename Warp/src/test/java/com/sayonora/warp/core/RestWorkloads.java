@@ -36,7 +36,8 @@ final class RestWorkloads {
     }
 
     static List<Workload> all() {
-        return List.of(redis(), gcs(), azblob(), pubsub(), firestore(), datastore(), cosmos());
+        return List.of(redis(), gcs(), azblob(), pubsub(), firestore(), datastore(), cosmos(), azqueue(), aztable(), kinesis(), ssm(),
+                secrets(), sns());
     }
 
     // ---- tiny HTTP helper --------------------------------------------------------------------------------
@@ -68,6 +69,22 @@ final class RestWorkloads {
 
         String call(String method, String path, String body) throws Exception {
             return call(method, path, body, null);
+        }
+
+        /** As {@link #call} but returns the whole response, for services that page through response headers. */
+        HttpResponse<String> callFull(String method, String path, Map<String, String> extra) throws Exception {
+            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).timeout(Duration.ofSeconds(10));
+            headers.forEach(b::header);
+            if (extra != null) {
+                extra.forEach(b::header);
+            }
+            b.method(method, HttpRequest.BodyPublishers.noBody());
+            HttpResponse<String> r = client.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() >= 300) {
+                String text = r.body() == null ? "" : r.body().replaceAll("\\s+", " ");
+                throw new IOException("HTTP " + r.statusCode() + " " + (text.length() > 160 ? text.substring(0, 160) : text));
+            }
+            return r;
         }
     }
 
@@ -572,6 +589,360 @@ final class RestWorkloads {
                         Map.of("x-ms-documentdb-isquery", "true", "Content-Type", "application/query+json",
                                 "x-ms-documentdb-query-enablecrosspartition", "true", "x-ms-max-item-count", "100000"));
                 all(body, "\"id\"\\s*:\\s*\"(\\d+)\"").forEach(n -> ids.add(Long.parseLong(n)));
+                return ids;
+            }
+        };
+    }
+
+    // ---- Azure Queue Storage -----------------------------------------------------------------------------
+
+    static Workload azqueue() {
+        Map<String, String> auth = Map.of("Authorization", "Bearer az-token", "x-ms-version", "2021-08-06");
+        return new Workload() {
+            @Override
+            public String name() {
+                return "azqueuewire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("azqueue", "WARP_AZQUEUEWIRE_PORT").env("WARP_AZURE_BEARER_TOKEN", "az-token")
+                        .env("WARP_AZURE_DEV_ACCOUNT", "true");
+                stores.enable("azqueue");
+            }
+
+            @Override
+            public void prepare(WarpProcess warp) throws Exception {
+                new Http(warp.port("azqueue"), auth).call("PUT", "/devstoreaccount1/bo-queue", null);
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("azqueue"), auth);
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/devstoreaccount1/bo-queue/messages", "<QueueMessage><MessageText>" + id + "</MessageText></QueueMessage>",
+                                Map.of("Content-Type", "application/xml"));
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        h.call("GET", "/devstoreaccount1/bo-queue/messages?peekonly=true", null);
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("azqueue"), auth);
+                Set<Long> ids = new HashSet<>();
+                int empty = 0;
+                while (empty < 3) {
+                    List<String> got = all(h.call("GET", "/devstoreaccount1/bo-queue/messages?numofmessages=32&visibilitytimeout=3000", null),
+                            "<MessageText>(\\d+)</MessageText>");
+                    if (got.isEmpty()) {
+                        empty++;
+                    }
+                    got.forEach(n -> ids.add(Long.parseLong(n)));
+                }
+                return ids;
+            }
+        };
+    }
+
+    // ---- Azure Table Storage -----------------------------------------------------------------------------
+
+    static Workload aztable() {
+        Map<String, String> auth = Map.of("Authorization", "Bearer az-token", "x-ms-version", "2021-08-06", "DataServiceVersion", "3.0",
+                "Accept", "application/json;odata=nometadata", "Content-Type", "application/json");
+        return new Workload() {
+            @Override
+            public String name() {
+                return "aztablewire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("aztable", "WARP_AZTABLEWIRE_PORT").env("WARP_AZURE_BEARER_TOKEN", "az-token")
+                        .env("WARP_AZURE_DEV_ACCOUNT", "true");
+                stores.enable("aztable");
+            }
+
+            @Override
+            public void prepare(WarpProcess warp) throws Exception {
+                new Http(warp.port("aztable"), auth).call("POST", "/devstoreaccount1/Tables", "{\"TableName\":\"botable\"}");
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("aztable"), auth);
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/devstoreaccount1/botable", "{\"PartitionKey\":\"p\",\"RowKey\":\"" + id + "\",\"n\":1}");
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        try {
+                            h.call("GET", "/devstoreaccount1/botable(PartitionKey='p',RowKey='" + id + "')", null);
+                        } catch (IOException e) {
+                            if (!e.getMessage().startsWith("HTTP 404")) {
+                                throw e;
+                            }
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("aztable"), auth);
+                Set<Long> ids = new HashSet<>();
+                String nextPk = null;
+                String nextRk = null;
+                do { // Azure Table returns at most 1000 entities a page and continues through response headers
+                    String q = "/devstoreaccount1/botable()?$top=1000" + (nextPk == null ? ""
+                            : "&NextPartitionKey=" + nextPk + (nextRk == null ? "" : "&NextRowKey=" + nextRk));
+                    HttpResponse<String> r = h.callFull("GET", q, null);
+                    all(r.body(), "\"RowKey\"\\s*:\\s*\"(\\d+)\"").forEach(n -> ids.add(Long.parseLong(n)));
+                    nextPk = r.headers().firstValue("x-ms-continuation-NextPartitionKey").orElse(null);
+                    nextRk = r.headers().firstValue("x-ms-continuation-NextRowKey").orElse(null);
+                } while (nextPk != null);
+                return ids;
+            }
+        };
+    }
+
+    // ---- AWS JSON 1.1 services (Kinesis, SSM, Secrets Manager) -------------------------------------------
+
+    private static Map<String, String> aws(String target) {
+        return Map.of("Content-Type", "application/x-amz-json-1.1", "X-Amz-Target", target);
+    }
+
+    static Workload kinesis() {
+        return new Workload() {
+            @Override
+            public String name() {
+                return "kinesiswire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("kinesis", "WARP_KINESISWIRE_PORT");
+                stores.enable("kinesis");
+            }
+
+            @Override
+            public void prepare(WarpProcess warp) throws Exception {
+                new Http(warp.port("kinesis"), Map.of()).call("POST", "/", "{\"StreamName\":\"bo-stream\",\"ShardCount\":1}",
+                        aws("Kinesis_20131202.CreateStream"));
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("kinesis"), Map.of());
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/", "{\"StreamName\":\"bo-stream\",\"PartitionKey\":\"k\",\"Data\":\""
+                                + Base64.getEncoder().encodeToString(String.valueOf(id).getBytes(StandardCharsets.UTF_8)) + "\"}",
+                                aws("Kinesis_20131202.PutRecord"));
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        h.call("POST", "/", "{\"StreamName\":\"bo-stream\"}", aws("Kinesis_20131202.DescribeStreamSummary"));
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("kinesis"), Map.of());
+                Set<Long> ids = new HashSet<>();
+                String shards = h.call("POST", "/", "{\"StreamName\":\"bo-stream\"}", aws("Kinesis_20131202.ListShards"));
+                for (String shardId : all(shards, "\"ShardId\"\\s*:\\s*\"([^\"]+)\"")) {
+                    String it = all(h.call("POST", "/", "{\"StreamName\":\"bo-stream\",\"ShardId\":\"" + shardId
+                            + "\",\"ShardIteratorType\":\"TRIM_HORIZON\"}", aws("Kinesis_20131202.GetShardIterator")),
+                            "\"ShardIterator\"\\s*:\\s*\"([^\"]+)\"").get(0);
+                    int empty = 0;
+                    while (empty < 3) {
+                        String body = h.call("POST", "/", "{\"ShardIterator\":\"" + it + "\",\"Limit\":10000}",
+                                aws("Kinesis_20131202.GetRecords"));
+                        List<String> data = all(body, "\"Data\"\\s*:\\s*\"([^\"]+)\"");
+                        if (data.isEmpty()) {
+                            empty++;
+                        } else {
+                            empty = 0;
+                        }
+                        data.forEach(d -> ids.add(Long.parseLong(new String(Base64.getDecoder().decode(d), StandardCharsets.UTF_8))));
+                        List<String> next = all(body, "\"NextShardIterator\"\\s*:\\s*\"([^\"]+)\"");
+                        if (next.isEmpty()) {
+                            break;
+                        }
+                        it = next.get(0);
+                    }
+                }
+                return ids;
+            }
+        };
+    }
+
+    static Workload ssm() {
+        return new Workload() {
+            @Override
+            public String name() {
+                return "ssmwire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("ssm", "WARP_SSMWIRE_PORT");
+                stores.enable("awsparams");
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("ssm"), Map.of());
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/", "{\"Name\":\"/bo/" + id + "\",\"Value\":\"v\",\"Type\":\"String\"}", aws("AmazonSSM.PutParameter"));
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        try {
+                            h.call("POST", "/", "{\"Name\":\"/bo/" + id + "\"}", aws("AmazonSSM.GetParameter"));
+                        } catch (IOException e) {
+                            if (!e.getMessage().contains("ParameterNotFound")) {
+                                throw e;
+                            }
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("ssm"), Map.of());
+                Set<Long> ids = new HashSet<>();
+                String token = null;
+                do {
+                    String body = h.call("POST", "/", "{\"Path\":\"/bo\",\"Recursive\":true,\"MaxResults\":10"
+                            + (token == null ? "" : ",\"NextToken\":\"" + token + "\"") + "}", aws("AmazonSSM.GetParametersByPath"));
+                    all(body, "\"Name\"\\s*:\\s*\"/bo/(\\d+)\"").forEach(n -> ids.add(Long.parseLong(n)));
+                    List<String> next = all(body, "\"NextToken\"\\s*:\\s*\"([^\"]+)\"");
+                    token = next.isEmpty() ? null : next.get(0);
+                } while (token != null);
+                return ids;
+            }
+        };
+    }
+
+    static Workload secrets() {
+        return new Workload() {
+            @Override
+            public String name() {
+                return "secretswire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("secrets", "WARP_SECRETSWIRE_PORT").env("WARP_KMS_INSECURE_DEV_KEY", "true");
+                stores.enable("awsparams");
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("secrets"), Map.of());
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/", "{\"Name\":\"bo-" + id + "\",\"SecretString\":\"v\"}", aws("secretsmanager.CreateSecret"));
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        try {
+                            h.call("POST", "/", "{\"SecretId\":\"bo-" + id + "\"}", aws("secretsmanager.DescribeSecret"));
+                        } catch (IOException e) {
+                            if (!e.getMessage().contains("ResourceNotFound")) {
+                                throw e;
+                            }
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("secrets"), Map.of());
+                Set<Long> ids = new HashSet<>();
+                String token = null;
+                do {
+                    String body = h.call("POST", "/", "{\"MaxResults\":100"
+                            + (token == null ? "" : ",\"NextToken\":\"" + token + "\"") + "}", aws("secretsmanager.ListSecrets"));
+                    all(body, "\"Name\"\\s*:\\s*\"bo-(\\d+)\"").forEach(n -> ids.add(Long.parseLong(n)));
+                    List<String> next = all(body, "\"NextToken\"\\s*:\\s*\"([^\"]+)\"");
+                    token = next.isEmpty() ? null : next.get(0);
+                } while (token != null);
+                return ids;
+            }
+        };
+    }
+
+    // ---- SNS (Query protocol) ----------------------------------------------------------------------------
+
+    static Workload sns() {
+        Map<String, String> form = Map.of("Content-Type", "application/x-www-form-urlencoded");
+        return new Workload() {
+            @Override
+            public String name() {
+                return "snswire";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                warp.frontend("sns", "WARP_SNSWIRE_PORT");
+                stores.enable("sns");
+            }
+
+            @Override
+            public Client open(WarpProcess warp) {
+                Http h = new Http(warp.port("sns"), form);
+                return new RestClient() {
+                    @Override
+                    public void write(long id) throws Exception {
+                        h.call("POST", "/", "Action=CreateTopic&Name=bo-" + id + "&Version=2010-03-31");
+                    }
+
+                    @Override
+                    public void read(long id) throws Exception {
+                        try {
+                            h.call("POST", "/", "Action=GetTopicAttributes&TopicArn=arn:aws:sns:us-east-1:000000000000:bo-" + id + "&Version=2010-03-31");
+                        } catch (IOException e) {
+                            if (!e.getMessage().contains("NotFound")) {
+                                throw e;
+                            }
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                Http h = new Http(warp.port("sns"), form);
+                Set<Long> ids = new HashSet<>();
+                String token = null;
+                do {
+                    String body = h.call("POST", "/", "Action=ListTopics&Version=2010-03-31" + (token == null ? "" : "&NextToken=" + token));
+                    all(body, ":bo-(\\d+)</TopicArn>").forEach(n -> ids.add(Long.parseLong(n)));
+                    List<String> next = all(body, "<NextToken>([^<]+)</NextToken>");
+                    token = next.isEmpty() ? null : next.get(0);
+                } while (token != null);
                 return ids;
             }
         };
