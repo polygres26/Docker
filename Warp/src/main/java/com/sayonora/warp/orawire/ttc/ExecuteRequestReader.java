@@ -186,13 +186,30 @@ public final class ExecuteRequestReader {
         return params;
     }
 
+    /**
+     * An Oracle NUMBER bind that holds a whole number that fits a long is handed to the backend as a Long, not as the
+     * BigDecimal the codec returns. A BigDecimal reaches Postgres as {@code numeric}, and {@code bigint_col = numeric}
+     * is planned as {@code id::numeric = $1}, which cannot use the column's index: a primary-key lookup with a bind
+     * variable became a sequential scan (7.3 ms against 0.37 ms for the same lookup with a literal on a 300,000-row
+     * table, found by the statement-style benchmark). A Long gives {@code bigint = bigint}, or another integer type
+     * with an index-usable cross-type operator, and for numeric columns the parameter is simply cast. Fractions and
+     * numbers beyond a long stay BigDecimal.
+     */
+    static Object narrowIntegral(java.math.BigDecimal value) {
+        try {
+            return value.longValueExact();
+        } catch (ArithmeticException notAWholeLong) {
+            return value;
+        }
+    }
+
     private static Object decodeBindValue(int oraTypeNum, byte[] bytes) {
         if (bytes == null) {
             return null;
         }
         return switch (oraTypeNum) {
             case TtcConstants.ORA_TYPE_NUM_VARCHAR -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-            case TtcConstants.ORA_TYPE_NUM_NUMBER -> OracleNumberCodec.decode(bytes);
+            case TtcConstants.ORA_TYPE_NUM_NUMBER -> narrowIntegral(OracleNumberCodec.decode(bytes));
             case TtcConstants.ORA_TYPE_NUM_DATE, TtcConstants.ORA_TYPE_NUM_TIMESTAMP -> OracleDateCodec.decode(bytes);
             case TtcConstants.ORA_TYPE_NUM_TIMESTAMP_WITH_TIME_ZONE -> OracleDateCodec.decodeWithTimeZone(bytes);
 
