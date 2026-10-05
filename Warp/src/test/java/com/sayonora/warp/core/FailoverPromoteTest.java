@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,7 @@ class FailoverPromoteTest {
     private boolean fenceResult = true;
     private boolean promoterFails;
     private boolean promoteMakesWritable = true;
+    private final Map<String, OptionalDouble> heardFromPrimary = new HashMap<>();
     private final List<String> repointed = new ArrayList<>();
     private String repointFailsFor;
 
@@ -131,7 +133,14 @@ class FailoverPromoteTest {
                 (backend, oldUrl, newUrl, replicas) -> {
                     persisted.add(backend + ":" + oldUrl + "->" + newUrl);
                     return reg.applyFailoverLocally(backend, oldUrl, newUrl, replicas);
-                }, null, clock::get, 3, 60, 5).withPromoteHooks(hooks).withRepointer((replica, newPrimary) -> {
+                }, null, clock::get, 3, 60, 5).withPromoteHooks(hooks)
+                .withStandbyCheck((replica, primary) -> {
+                    OptionalDouble h = heardFromPrimary.getOrDefault(replica.jdbcUrl(), OptionalDouble.empty());
+                    if (h.isPresent() && h.getAsDouble() < 0) {
+                        throw new java.sql.SQLException("cannot query the replica");
+                    }
+                    return h;
+                }).withRepointer((replica, newPrimary) -> {
                     if (replica.jdbcUrl().equals(repointFailsFor)) {
                         throw new java.sql.SQLException("not streaming");
                     }
@@ -369,5 +378,37 @@ class FailoverPromoteTest {
         cluster.put(R2, NodeRole.READ_ONLY);
         passes(5);
         assertTrue(promoted.isEmpty());
+    }
+
+    @Test
+    void aReplicaThatStillHearsFromThePrimaryBlocksPromotionBeforeAnythingIsFenced() {
+        setUp(30, true);
+        healthyThenPrimaryDies(1.0, 2.0);
+        heardFromPrimary.put(R1, OptionalDouble.of(5)); // Warp lost the primary, the replica did not
+        passes(3);
+        assertTrue(promoted.isEmpty(), "the primary is alive; promoting would make a second writer");
+        assertTrue(fenced.isEmpty(), "the fence (which can power the primary off) must not run");
+        assertEquals(P, reg.get("pg").jdbcUrl());
+        assertTrue(blockedFor("heard from the primary"));
+        assertEquals(1, leaseReleases);
+    }
+
+    @Test
+    void aReplicaThatLastHeardLongAgoDoesNotBlockPromotion() {
+        setUp(30, true);
+        healthyThenPrimaryDies(1.0, 2.0);
+        heardFromPrimary.put(R1, OptionalDouble.of(95));
+        heardFromPrimary.put(R2, OptionalDouble.of(120));
+        passes(3);
+        assertEquals(List.of(R2), promoted);
+    }
+
+    @Test
+    void aReplicaCheckThatFailsIsNoEvidenceNotAVeto() {
+        setUp(30, true);
+        healthyThenPrimaryDies(1.0, 2.0);
+        heardFromPrimary.put(R1, OptionalDouble.of(-1)); // the test double throws for a negative value
+        passes(3);
+        assertEquals(List.of(R2), promoted);
     }
 }

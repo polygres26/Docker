@@ -23,6 +23,7 @@ class FailoverRejoinTest {
     private final Map<String, NodeRole> cluster = new HashMap<>();
     private final AtomicLong clock = new AtomicLong(1_000_000);
     private final List<String> attempts = new ArrayList<>();
+    private final List<String> fenced = new ArrayList<>();
     private RejoinResult result = RejoinResult.of(RejoinOutcome.REJOINED, "now replicates");
     private BackendRegistry reg;
     private FailoverMonitor monitor;
@@ -34,6 +35,7 @@ class FailoverRejoinTest {
         monitor = new FailoverMonitor(reg, node -> cluster.getOrDefault(node.jdbcUrl(), NodeRole.UNREACHABLE),
                 (b, o, n, r) -> reg.applyFailoverLocally(b, o, n, r), null, clock::get, 3, 60, 5)
                 .withRejoinExecutor(Runnable::run)
+                .withStaleWriterFence(node -> fenced.add(node.jdbcUrl()))
                 .withRejoiner((node, primary) -> {
                     attempts.add(node.jdbcUrl() + "->" + primary.jdbcUrl());
                     if (result.outcome() == RejoinOutcome.REJOINED) {
@@ -125,5 +127,64 @@ class FailoverRejoinTest {
             Thread.sleep(20);
         }
         assertTrue(has("rejoined"));
+    }
+
+    @Test
+    void aStaleWritableNodeIsFrozenOnceItHasBeenWritableForTheConfirmationWindow() {
+        setUp();
+        monitor.withRejoiner(null); // the freeze does not depend on a rejoin being configured
+        monitor.evaluateOnce(false);
+        monitor.evaluateOnce(false);
+        assertTrue(fenced.isEmpty(), "two probes are not enough to call it stale");
+        monitor.evaluateOnce(false);
+        assertEquals(List.of(OLD), fenced);
+        assertTrue(has("stale-writer-frozen"));
+        monitor.evaluateOnce(false);
+        assertEquals(1, fenced.size(), "once per cooldown, not once per probe");
+        clock.addAndGet(61_000);
+        monitor.evaluateOnce(false);
+        assertEquals(2, fenced.size(), "frozen again after the cooldown, in case a session set it writable again");
+        assertEquals(1, monitor.recentEvents().stream().filter(e -> e.kind().equals("stale-writer-frozen")).count(),
+                "announced once");
+    }
+
+    @Test
+    void anEngineThatCannotFreezeSaysSoInsteadOfFailing() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withStaleWriterFence(node -> {
+            throw new UnsupportedOperationException("no safe SQL for it");
+        });
+        passes3();
+        assertTrue(has("stale-writer-unfenced"));
+    }
+
+    @Test
+    void aFreezeThatFailsIsReportedNotThrown() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withStaleWriterFence(node -> {
+            throw new java.sql.SQLException("access denied");
+        });
+        passes3();
+        assertTrue(has("stale-writer-freeze-failed"));
+    }
+
+    @Test
+    void freezingCanBeSwitchedOffAndNeverTouchesAnOrdinaryReplica() {
+        setUp();
+        monitor.withStaleWriterFence(null);
+        passes3();
+        assertTrue(fenced.isEmpty());
+        setUp();
+        cluster.put(OLD, NodeRole.READ_ONLY);
+        passes3();
+        assertTrue(fenced.isEmpty(), "a replica in recovery is not a second writer");
+    }
+
+    private void passes3() {
+        for (int i = 0; i < 3; i++) {
+            monitor.evaluateOnce(false);
+        }
     }
 }
