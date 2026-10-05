@@ -180,5 +180,17 @@ class MySqlReplicaFailoverLiveTest {
         WarpConfig latest = store.readLatest().orElseThrow().payload();
         assertTrue(latest.backends().startsWith("my=" + r2Url), latest.backends());
         assertTrue(monitor.recentEvents().stream().anyMatch(e -> e.kind().equals("promoted")));
+
+        // the surviving replica was repointed at r2: it fetches what it had missed and the new write
+        assertTrue(monitor.recentEvents().stream().anyMatch(e -> e.kind().equals("repointed")), "repointed event");
+        waitUntil("r1 to follow the new primary", () -> scalar(r1Port, "select count(*) from w.t where id in (21, 30)") == 2);
+        try (Connection c = conn(r1Port); var st = c.createStatement(); var rs = st.executeQuery("show replica status")) {
+            assertTrue(rs.next());
+            assertEquals("127.0.0.1", rs.getString("Source_Host"));
+            assertEquals(Integer.parseInt(r2Port), rs.getInt("Source_Port"));
+            assertEquals("Yes", rs.getString("Replica_IO_Running"));
+            assertEquals("Yes", rs.getString("Replica_SQL_Running"));
+        }
+        assertEquals(1, scalar(r1Port, "select @@global.read_only"), "and it is still read-only");
     }
 }

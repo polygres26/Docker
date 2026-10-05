@@ -29,6 +29,20 @@ public interface EngineHa {
      * throw rather than risk losing data it already received. */
     void promote(BackendTarget replica) throws Exception;
 
+    /** True when {@link #repoint} is implemented. */
+    default boolean supportsRepoint() {
+        return false;
+    }
+
+    /**
+     * Points {@code replica}'s replication at {@code newPrimary} after a promotion, so it keeps serving
+     * reads. Must verify that replication is actually running from the new primary before returning, and
+     * throw (with a useful message) when it cannot be repointed or does not start streaming.
+     */
+    default void repoint(BackendTarget replica, BackendTarget newPrimary) throws Exception {
+        throw new UnsupportedOperationException("repointing replicas is not supported for " + replica.dialect());
+    }
+
     /** False for engines where Warp will follow a promotion made elsewhere but never perform one. */
     default boolean supportsPromote() {
         return true;

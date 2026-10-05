@@ -83,4 +83,95 @@ final class PostgresHa implements EngineHa {
             }
         }
     }
+
+    @Override
+    public boolean supportsRepoint() {
+        return true;
+    }
+
+    private static final long STREAM_WAIT_SECONDS = Long.parseLong(
+            System.getenv().getOrDefault("WARP_FAILOVER_REPOINT_WAIT_SECONDS", "30"));
+
+    /**
+     * Rewrites the replica's {@code primary_conninfo} to name the new primary's host and port (every
+     * other setting -- replication user, password, sslmode -- is kept), reloads, and waits for the WAL
+     * receiver to stream from it. If it does not, the old setting is restored and this throws.
+     *
+     * <p>Needs a superuser (or ALTER SYSTEM + pg_reload_conf privileges plus pg_read_all_settings) on the
+     * replica. If {@code primary_slot_name} is set, the slot is created on the new primary when missing.
+     * The host/port come from the new primary's JDBC URL, so the replica must be able to reach that same
+     * address. A replica that is ahead of the new primary (it received WAL the promoted node did not)
+     * cannot follow it; that surfaces as "not streaming" and the replica is left as it was.
+     */
+    @Override
+    public void repoint(BackendTarget replica, BackendTarget newPrimary) throws Exception {
+        JdbcHostPort hp = JdbcHostPort.parse(newPrimary.jdbcUrl(), 5432);
+        try (Connection c = connect(replica)) {
+            c.setAutoCommit(true);
+            String oldInfo = setting(c, "primary_conninfo");
+            if (oldInfo == null || oldInfo.isBlank()) {
+                throw new SQLException("replica has no primary_conninfo (not a streaming standby, or the Warp "
+                        + "user cannot read the setting)");
+            }
+            String slot = setting(c, "primary_slot_name");
+            if (slot != null && !slot.isBlank()) {
+                ensureSlot(newPrimary, slot);
+            }
+            String newInfo = PgConninfo.withHostPort(oldInfo, hp.host(), hp.port());
+            alterConninfo(c, newInfo);
+            if (!waitStreaming(c, hp.host())) {
+                alterConninfo(c, oldInfo);
+                throw new SQLException("replica did not start streaming from " + hp.host() + ":" + hp.port()
+                        + " within " + STREAM_WAIT_SECONDS + "s (it may be ahead of the new primary); "
+                        + "primary_conninfo restored");
+            }
+        }
+    }
+
+    private static String setting(Connection c, String name) throws SQLException {
+        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("show " + name)) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
+    private static void alterConninfo(Connection c, String conninfo) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            st.execute("alter system set primary_conninfo = '" + conninfo.replace("'", "''") + "'");
+            st.execute("select pg_reload_conf()");
+        }
+    }
+
+    private static void ensureSlot(BackendTarget newPrimary, String slot) throws SQLException {
+        try (Connection c = connect(newPrimary);
+                java.sql.PreparedStatement ps = c.prepareStatement(
+                        "select pg_create_physical_replication_slot(?) where not exists "
+                                + "(select 1 from pg_replication_slots where slot_name = ?)")) {
+            ps.setString(1, slot);
+            ps.setString(2, slot);
+            ps.execute();
+        }
+    }
+
+    private static boolean waitStreaming(Connection c, String host) throws SQLException {
+        long deadline = System.currentTimeMillis() + STREAM_WAIT_SECONDS * 1000;
+        while (System.currentTimeMillis() < deadline) {
+            try (Statement st = c.createStatement();
+                    ResultSet rs = st.executeQuery("select status, conninfo from pg_stat_wal_receiver")) {
+                if (rs.next() && "streaming".equals(rs.getString(1))) {
+                    String ci = rs.getString(2);
+                    if (ci != null && PgConninfo.parse(ci).stream()
+                            .anyMatch(kv -> kv[0].equals("host") && kv[1].equals(host))) {
+                        return true;
+                    }
+                }
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
 }

@@ -64,6 +64,8 @@ class FailoverPromoteTest {
     private boolean fenceResult = true;
     private boolean promoterFails;
     private boolean promoteMakesWritable = true;
+    private final List<String> repointed = new ArrayList<>();
+    private String repointFailsFor;
 
     private final FailoverCoordination coordination = new FailoverCoordination() {
         @Override
@@ -129,7 +131,12 @@ class FailoverPromoteTest {
                 (backend, oldUrl, newUrl, replicas) -> {
                     persisted.add(backend + ":" + oldUrl + "->" + newUrl);
                     return reg.applyFailoverLocally(backend, oldUrl, newUrl, replicas);
-                }, null, clock::get, 3, 60, 5).withPromoteHooks(hooks);
+                }, null, clock::get, 3, 60, 5).withPromoteHooks(hooks).withRepointer((replica, newPrimary) -> {
+                    if (replica.jdbcUrl().equals(repointFailsFor)) {
+                        throw new java.sql.SQLException("not streaming");
+                    }
+                    repointed.add(replica.jdbcUrl() + "->" + newPrimary.jdbcUrl());
+                });
     }
 
     /** One healthy pass (so lag-while-primary-up is recorded), then the primary dies. */
@@ -170,6 +177,37 @@ class FailoverPromoteTest {
         // the old primary takes the promoted node's slot (same 7s allowance), R1 untouched
         assertEquals(P, reg.replicaSpecsOf("pg").get(1).url());
         assertEquals(7.0, reg.replicaSpecsOf("pg").get(1).maxLagSeconds());
+    }
+
+    @Test
+    void survivingReplicasAreRepointedAtTheNewPrimary() {
+        setUp(30, false);
+        healthyThenPrimaryDies(1.0, 2.0);
+        passes(3);
+        assertEquals(List.of(R1 + "->" + R2), repointed, "R1 follows the promoted R2; the dead primary is not touched");
+        assertTrue(monitor.recentEvents().stream().anyMatch(e -> e.kind().equals("repointed")));
+    }
+
+    @Test
+    void aReplicaThatCannotBeRepointedIsReportedAndDoesNotUndoThePromotion() {
+        setUp(30, false);
+        repointFailsFor = R1;
+        healthyThenPrimaryDies(1.0, 2.0);
+        passes(3);
+        assertTrue(repointed.isEmpty());
+        assertEquals(R2, reg.get("pg").jdbcUrl(), "the switch stands");
+        assertTrue(monitor.recentEvents().stream()
+                .anyMatch(e -> e.kind().equals("repoint-failed") && e.detail().contains("not streaming")));
+    }
+
+    @Test
+    void anUnreachableSurvivorIsSkippedNotRepointed() {
+        setUp(30, false);
+        healthyThenPrimaryDies(1.0, 2.0);
+        cluster.put(R1, NodeRole.UNREACHABLE);
+        passes(3);
+        assertTrue(repointed.isEmpty());
+        assertTrue(monitor.recentEvents().stream().anyMatch(e -> e.kind().equals("repoint-skipped")));
     }
 
     @Test

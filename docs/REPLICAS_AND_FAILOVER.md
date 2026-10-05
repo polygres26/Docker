@@ -105,8 +105,9 @@ grammar; add `allowPublicKeyRetrieval`/SSL options to the URL as your authentica
   rather than drop received transactions), `STOP/RESET REPLICA ALL`, `super_read_only` and `read_only`
   off. Candidate ranking is by transactions received (executed + retrieved-but-unapplied GTIDs; binlog
   file/position without GTIDs).
-- Warp does not repoint the remaining replicas (`CHANGE REPLICATION SOURCE`); they leave the read pool
-  until their lag probe passes again.
+- Remaining replicas are repointed after a promotion: see "Repointing the other replicas" below. Only
+  replicas using GTID auto-positioning are repointed; a replica on binlog file/offset coordinates is
+  refused (Warp cannot know the matching position on the new primary) and left as it was.
 
 ## Oracle Data Guard (follow only, unverified)
 
@@ -186,10 +187,32 @@ mode (one `warp_config` version, old primary takes the promoted node's replica s
 lease. If the config database is unreachable the majority and the lease cannot be established, so
 **Warp does not promote**; there is deliberately no fallback decider.
 
-Warp does not repoint the *other* replicas at the new primary (that needs replication-source changes
-on those servers, i.e. your HA tooling); until that is done their lag probe fails and they are not used
-for reads. When the old primary comes back writable while the new one is writable, Warp reports a
+When the old primary comes back writable while the new one is writable, Warp reports a
 suspected split brain and changes nothing.
+
+### Repointing the other replicas
+
+After Warp promotes a replica, the others still follow the dead primary, so their lag probe fails and they
+drop out of the read pool. Warp therefore repoints each remaining reachable read-only replica at the new
+primary, one at a time; a failure on one never affects the others or undoes the promotion. Each outcome is
+an event (`repointed`, `repoint-failed`, `repoint-skipped`) and `repointed`/`repoint-failed` are audited.
+`WARP_FAILOVER_REPOINT=false` turns it off (replicas then wait for your HA tooling). It applies only to
+promotions Warp performs; in `follow` mode whoever promoted is responsible for the other replicas.
+
+- **Postgres:** reads the replica's `primary_conninfo`, replaces only `host` and `port` (replication user,
+  password, sslmode... are kept), `ALTER SYSTEM`s it, reloads, and waits (`WARP_FAILOVER_REPOINT_WAIT_SECONDS`,
+  30) until `pg_stat_wal_receiver` shows `streaming` from the new host. If it does not, the old setting is
+  restored. If the replica has a `primary_slot_name`, that slot is created on the new primary when missing.
+  Needs a superuser (or equivalent `ALTER SYSTEM` / `pg_read_all_settings` rights) on each replica.
+- **MySQL:** `STOP REPLICA; CHANGE REPLICATION SOURCE TO SOURCE_HOST, SOURCE_PORT, SOURCE_AUTO_POSITION=1;
+  START REPLICA` (stored replication user, password and TLS settings are kept), then waits for both threads
+  running against the new host; otherwise restores the old source. Needs `REPLICATION_SLAVE_ADMIN`.
+- **Limits:** the new host and port are taken from the new primary's JDBC URL, so replicas must be able to
+  reach that same address (a JDBC address that differs from the replication-network address is not
+  translated). A Postgres replica that is *ahead* of the promoted node (it received WAL the promoted one
+  did not) cannot follow it; it is reported `repoint-failed` and needs a rebuild (`pg_rewind`/re-basebackup).
+  The old primary is not repointed; it must be rebuilt as a replica before it can rejoin. Oracle and SQL
+  Server are follow-only and never repointed by Warp.
 
 Without external fencing the majority rule is the only protection against promoting while the old
 primary is merely partitioned away from Warp but still serving others. Configure

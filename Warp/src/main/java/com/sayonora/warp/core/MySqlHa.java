@@ -233,6 +233,87 @@ final class MySqlHa implements EngineHa {
         }
     }
 
+    @Override
+    public boolean supportsRepoint() {
+        return true;
+    }
+
+    /**
+     * Points the replica at the new primary with {@code CHANGE REPLICATION SOURCE TO SOURCE_HOST,
+     * SOURCE_PORT} (the replication user, password and TLS settings already stored on the replica are
+     * kept) and restarts replication, then waits for both threads to run against the new host.
+     *
+     * <p>GTID auto-positioning only: a replica using binary-log file/offset coordinates has no way to
+     * find the matching position on the new primary, so it is refused rather than guessed. Needs
+     * {@code REPLICATION_SLAVE_ADMIN}. If replication does not come up, the old source is restored.
+     */
+    @Override
+    public void repoint(BackendTarget replica, BackendTarget newPrimary) throws SQLException {
+        JdbcHostPort hp = JdbcHostPort.parse(newPrimary.jdbcUrl(), 3306);
+        try (Connection c = connect(replica, 5000, 60000); Statement st = c.createStatement()) {
+            Map<String, String> row = replicaStatus(c).orElseThrow(
+                    () -> new SQLException("not configured as a replica of anything"));
+            String autoPos = col(row, "Auto_Position");
+            if (!"1".equals(autoPos)) {
+                throw new SQLException("replica uses binary-log coordinates, not GTID auto-positioning; "
+                        + "cannot work out the matching position on the new primary");
+            }
+            String oldHost = col(row, "Source_Host", "Master_Host");
+            String oldPort = col(row, "Source_Port", "Master_Port");
+            execLegacy(st, "STOP REPLICA", "STOP SLAVE");
+            changeSource(st, hp.host(), hp.port());
+            execLegacy(st, "START REPLICA", "START SLAVE");
+            if (!waitRunning(c, hp.host())) {
+                String why;
+                try {
+                    Map<String, String> now = replicaStatus(c).orElse(Map.of());
+                    why = col(now, "Last_IO_Error", "Last_SQL_Error", "Last_Error");
+                } catch (SQLException e) {
+                    why = e.getMessage();
+                }
+                execLegacy(st, "STOP REPLICA", "STOP SLAVE");
+                if (oldHost != null && oldPort != null) {
+                    changeSource(st, oldHost, Integer.parseInt(oldPort));
+                    execLegacy(st, "START REPLICA", "START SLAVE");
+                }
+                throw new SQLException("replication did not start from " + hp.host() + ":" + hp.port()
+                        + (why == null || why.isBlank() ? "" : " (" + why + ")") + "; old source restored");
+            }
+        }
+    }
+
+    private static void changeSource(Statement st, String host, int port) throws SQLException {
+        String h = host.replace("\\", "\\\\").replace("'", "''");
+        try {
+            st.execute("CHANGE REPLICATION SOURCE TO SOURCE_HOST='" + h + "', SOURCE_PORT=" + port
+                    + ", SOURCE_AUTO_POSITION=1");
+        } catch (SQLException e) {
+            if (e.getErrorCode() != 1064) {
+                throw e;
+            }
+            st.execute("CHANGE MASTER TO MASTER_HOST='" + h + "', MASTER_PORT=" + port + ", MASTER_AUTO_POSITION=1");
+        }
+    }
+
+    private static boolean waitRunning(Connection c, String host) throws SQLException {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            Map<String, String> row = replicaStatus(c).orElse(null);
+            if (row != null && "Yes".equalsIgnoreCase(col(row, "Replica_IO_Running", "Slave_IO_Running"))
+                    && "Yes".equalsIgnoreCase(col(row, "Replica_SQL_Running", "Slave_SQL_Running"))
+                    && host.equalsIgnoreCase(col(row, "Source_Host", "Master_Host"))) {
+                return true;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
     /** True when the SQL thread has applied everything the I/O thread fetched. */
     static boolean fullyApplied(Map<String, String> row) {
         String state = col(row, "Replica_SQL_Running_State", "Slave_SQL_Running_State");
