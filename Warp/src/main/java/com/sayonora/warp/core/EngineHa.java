@@ -43,6 +43,7 @@ public interface EngineHa {
             case POSTGRES -> PostgresHa.INSTANCE;
             case MYSQL -> MySqlHa.INSTANCE;
             case ORACLE -> OracleHa.INSTANCE;
+            case SQL_SERVER -> SqlServerHa.INSTANCE;
             default -> null;
         };
     }

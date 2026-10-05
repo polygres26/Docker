@@ -128,8 +128,8 @@ class ReplicaRouterTest {
 
     @Test
     void unsupportedEngineReplicasAreNeverEligible() {
-        BackendTarget mssql = new BackendTarget("s#1", "jdbc:sqlserver://r:1433", "u", "p");
-        LagSample s = ReplicaRouter.probeByEngine(mssql, 1);
+        BackendTarget db2t = new BackendTarget("s#1", "jdbc:db2://r:50000/d", "u", "p");
+        LagSample s = ReplicaRouter.probeByEngine(db2t, 1);
         assertFalse(s.ok());
     }
 

@@ -239,14 +239,14 @@ class FailoverMonitorTest {
         assertEquals(P, off.get("pg").jdbcUrl());
 
         BackendRegistry oracle = BackendRegistry.fromConfig(
-                "o=jdbc:sqlserver://p:1433|u|pw||jdbc:sqlserver://r:1433", null);
+                "o=jdbc:db2://p:50000/d|u|pw||jdbc:db2://r:50000/d", null);
         FailoverMonitor mm = monitor(oracle, applyingPersister(oracle));
-        cluster.put("jdbc:sqlserver://p:1433", NodeRole.UNREACHABLE);
-        cluster.put("jdbc:sqlserver://r:1433", NodeRole.WRITABLE);
+        cluster.put("jdbc:db2://p:50000/d", NodeRole.UNREACHABLE);
+        cluster.put("jdbc:db2://r:50000/d", NodeRole.WRITABLE);
         for (int i = 0; i < 5; i++) {
             mm.evaluateOnce(false);
         }
-        assertEquals("jdbc:sqlserver://p:1433", oracle.get("o").jdbcUrl(),
+        assertEquals("jdbc:db2://p:50000/d", oracle.get("o").jdbcUrl(),
                 "an engine with no EngineHa is never failed over, whatever the probes say");
     }
 

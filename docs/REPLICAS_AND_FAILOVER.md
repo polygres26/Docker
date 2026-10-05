@@ -117,6 +117,29 @@ tried it in your environment.
   `failoverMode=promote` is rejected by the API for Oracle, and a `promote` entry in `WARP_BACKENDS`
   is monitored but recorded as blocked.
 
+## SQL Server Availability Groups (follow only, unverified)
+
+**Verification status:** written to Microsoft's documentation; no Availability Group can be run in this
+project's tests, so only the decision logic is unit-tested. Treat it as untested until you have tried
+it in your environment.
+
+- **Topology:** the backend URL names the availability-group database (`databaseName=...`); replica
+  URLs point at **readable secondaries** and should carry `applicationIntent=ReadOnly`. Write `;` as
+  `%3B` inside the `WARP_BACKENDS` spec. The Warp user needs `VIEW SERVER STATE` and connect rights on
+  the database.
+- **Role:** writable iff the database is `READ_WRITE` and, if it is in an AG, this replica is its
+  primary (`sys.fn_hadr_is_primary_replica`). A non-readable secondary rejects ordinary logins, so it
+  is invisible to the probes until it becomes the primary and starts accepting connections.
+- **Lag** (from the secondary's local row of `sys.dm_hadr_database_replica_states`): `SYNCHRONIZED` is
+  0; else the server's `secondary_lag_seconds` when present; else redo backlog ÷ redo rate (an empty
+  backlog is 0). A suspended, unhealthy or otherwise unmeasurable database is never eligible, and is
+  never reported as 0. A secondary cannot see log the primary has not yet shipped to it, so this can
+  under-report on a slow link: keep `maxLagSeconds` conservative.
+- **Failover:** follow only, exactly as for Oracle -- Warp does not perform AG failovers
+  (`failoverMode=promote` is rejected). Use the cluster's automatic failover or
+  `ALTER AVAILABILITY GROUP ... FAILOVER`; Warp repoints the backend once the new primary accepts
+  writes. Azure Synapse is not supported.
+
 ## Promote mode
 
 `failoverMode=promote` does everything `follow` does, and additionally promotes a replica when the
