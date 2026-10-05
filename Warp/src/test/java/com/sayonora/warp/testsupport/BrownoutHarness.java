@@ -205,7 +205,8 @@ public final class BrownoutHarness {
                         c.read(1_000_000_000L + (seq % 50));
                     }
                     ok = true;
-                } catch (Exception e) {
+                } catch (Exception | LinkageError e) {
+                    // a LinkageError (a client library on the wrong classpath) must count as a failed op, not silently end the worker
                     errors.computeIfAbsent((writer ? "write: " : "read: ") + abbreviate(e), k -> new AtomicLong()).incrementAndGet();
                     try {
                         if (c != null) {

@@ -141,7 +141,9 @@ public final class KafkaStore implements GroupStore {
 
     static KafkaError storage(SQLException e) {
         log.error("kafkawire: Postgres store error", e);
-        return new KafkaError(KafkaError.UNKNOWN_SERVER_ERROR, "The store is currently unavailable (" + e.getMessage() + ")");
+        // LEADER_NOT_AVAILABLE is a retriable error: a producer or consumer refreshes metadata and tries again, which is what rides out a
+        // failover. UNKNOWN_SERVER_ERROR is not retriable, so the client failed the send straight away.
+        return new KafkaError(KafkaError.LEADER_NOT_AVAILABLE, "The store is currently unavailable (" + e.getMessage() + ")", true);
     }
 
     <T> T home(SqlFn<T> fn) {
