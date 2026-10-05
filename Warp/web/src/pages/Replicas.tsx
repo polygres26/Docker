@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
 import {
-  MAX_REPLICA_LAG_SECONDS, evaluateFailover, getFailover, getReplicas, listBackendSets, updateBackendReplicas,
+  MAX_REPLICA_LAG_SECONDS, evaluateFailover, getFailover, getReplicas, listBackendSets, switchoverPrimary, updateBackendReplicas,
   type FailoverEvent, type FailoverGroup, type FailoverMode, type FailoverNode, type ObservedRole, type ReplicaConfig,
   type ReplicaGroupStatus, type ReplicaStatus, type SetBackend,
 } from '../api/client'
@@ -67,6 +67,12 @@ const EVENT_LABEL: Record<string, { tone: Tone; label: string }> = {
   'no-writable-node': { tone: 'bad', label: 'No writable node' },
   'switch-suppressed': { tone: 'muted', label: 'Switch held back' },
   unsupported: { tone: 'muted', label: 'Not monitored' },
+  switchover: { tone: 'ok', label: 'Planned switchover' },
+  'switchover-aborted': { tone: 'warn', label: 'Switchover aborted' },
+  'switchover-failed': { tone: 'bad', label: 'Switchover failed' },
+  repointed: { tone: 'ok', label: 'Replica repointed' },
+  'repoint-failed': { tone: 'bad', label: 'Repoint failed' },
+  'repoint-skipped': { tone: 'muted', label: 'Repoint skipped' },
 }
 
 /**
@@ -180,6 +186,8 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
   editing: boolean; onEdit: () => void; onSaved: (text: string) => void; onNotice: (tone: 'ok' | 'bad' | 'warn', text: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const canSwitch = backend.failoverMode !== 'off' && backend.dialect !== null && PROMOTE_DIALECTS.has(backend.dialect)
   const primaryNode: FailoverNode | undefined = failover?.nodes.find((n) => n.configuredRole === 'primary')
   const primaryState = roleState(primaryNode?.observedRole ?? null)
   const decisions = status?.decisions ?? {}
@@ -196,6 +204,19 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
     }
   }
 
+  const switchover = async (target: string) => {
+    setBusy(true)
+    try {
+      const r = await switchoverPrimary(backend.name, target)
+      onNotice('ok', `${backend.name}: ${r.message}`)
+    } catch (e) {
+      onNotice('bad', `${backend.name}: ${errorText(e)}`)
+    } finally {
+      setConfirming(null)
+      setBusy(false)
+    }
+  }
+
   return (
     <Section title={backend.name}
       meta={`${backend.type} · set ${set} · failover ${backend.failoverMode}`}
@@ -207,7 +228,7 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
         <Button onClick={onEdit}>{editing ? 'Close editor' : 'Edit replicas'}</Button>
       </div>
       <DataTable caption={`Nodes of ${backend.name}`} minWidth={640}>
-        <thead><tr><th>Node</th><th>Role</th><th>Lag vs allowance</th><th>Reads served</th><th>State</th></tr></thead>
+        <thead><tr><th>Node</th><th>Role</th><th>Lag vs allowance</th><th>Reads served</th><th>State</th>{canSwitch && <th>Action</th>}</tr></thead>
         <tbody>
           <tr>
             <td className={styles.mono}>{targetOf(backend.url)}</td>
@@ -215,6 +236,7 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
             <td className={styles.sub}>n/a</td>
             <td className={styles.num}>—</td>
             <td><StatusPill tone={primaryState.tone}>{primaryState.label}</StatusPill></td>
+            {canSwitch && <td />}
           </tr>
           {(status?.replicas ?? backend.replicas.map((r): ReplicaStatus => ({
             id: r.url, url: r.url, maxLagSeconds: r.maxLagSeconds, sample: null, eligible: false, quarantined: false, routedReads: 0,
@@ -237,6 +259,28 @@ function GroupCard({ set, backend, status, failover, events, failoverConfig, edi
                   <StatusPill tone={st.tone}>{st.label}</StatusPill>
                   {st.note && <div className={styles.sub}>{st.note}</div>}
                 </td>
+                {canSwitch && (
+                  <td>
+                    {confirming === r.url ? (
+                      <div role="group" aria-label={`Confirm switchover to ${targetOf(r.url)}`}>
+                        <div className={styles.sub}>
+                          Writes fail for a few seconds while {targetOf(r.url)} catches up and takes over.
+                          {backend.dialect === 'POSTGRES'
+                            ? ' The old primary is left read-only and must be rebuilt as a standby.'
+                            : ' The old primary becomes a replica of the new one.'}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                          <Button variant="primary" disabled={busy} onClick={() => switchover(r.url)}>
+                            {busy ? 'Switching…' : 'Switch now'}
+                          </Button>
+                          <Button disabled={busy} onClick={() => setConfirming(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button disabled={busy || confirming !== null} onClick={() => setConfirming(r.url)}>Make primary</Button>
+                    )}
+                  </td>
+                )}
               </tr>
             )
           })}

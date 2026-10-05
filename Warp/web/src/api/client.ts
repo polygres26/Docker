@@ -710,6 +710,14 @@ export async function evaluateFailover(backend: string): Promise<{ backend: stri
   return api(`/api/failover/${encodeURIComponent(backend)}/evaluate`, { method: 'POST' })
 }
 
+/** Planned zero-loss primary swap to `target` (a replica URL as listed). Resolves with the server's message;
+ * a refused or aborted switchover rejects (HTTP 409) with its reason. */
+export async function switchoverPrimary(backend: string, target: string): Promise<{ ok: boolean; message: string }> {
+  return api(`/api/failover/${encodeURIComponent(backend)}/switchover`, {
+    method: 'POST', body: JSON.stringify({ target }),
+  })
+}
+
 /** Replace a backend's replicas and/or failover mode (live, no restart). An empty `replicas` removes them all. */
 export async function updateBackendReplicas(set: string, name: string,
   patch: { replicas?: ReplicaConfig[]; failoverMode?: FailoverMode | null }): Promise<BackendWriteResult> {
