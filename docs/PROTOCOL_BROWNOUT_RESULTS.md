@@ -56,7 +56,10 @@ until it is promoted.
 
 ## Problems found (not fixed here)
 
-1. **orawire throws `ArrayIndexOutOfBoundsException` after the event.** `TtcReader.readUint8` overruns while parsing a
+1. **FIXED (see the orawire fix PR): orawire threw `ArrayIndexOutOfBoundsException` after the event.** Root cause found afterwards:
+   it was not the failover at all. A long-lived Oracle connection died once its cursor ids reached 773 (bytes `03 05`),
+   which the close-cursors boundary scan mistook for a Fetch call; the delayed failures at ~19 s / ~43 s were simply
+   connections reaching that id. The original description follows. `TtcReader.readUint8` overruns while parsing a
    fetch request (`FetchRequest.read` <- `RequestLoop.handleData`), surfacing to the client as ORA-00600. It hit 2-3
    reads and 3-6 writes in both scenarios (the other protocols had no equivalent), and one orawire failure came about
    19 s (switchover) and 43 s (failover) after the event: a session desynchronizes and fails later. Not diagnosed;
