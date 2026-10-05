@@ -173,6 +173,8 @@ public final class PgWireSessionHandler implements Runnable {
                 com.sayonora.warp.core.RouterStage.shardRulesIn(sharedStages), com.sayonora.warp.core.RouterStage.tableShardRulesIn(sharedStages))
                 .withFederationSupport(com.sayonora.warp.core.RouterStage.statisticsStoreIn(sharedStages),
                         com.sayonora.warp.core.RouterStage.planStoreIn(sharedStages));
+        this.routingExecutor.withSessionStatePredicate(
+                () -> lease.hasSettings() || lease.isPinned() || lease.inTransaction());
         this.pipeline = new StatementPipeline(sharedStages, routingExecutor);
         this.sqlMetrics = com.sayonora.warp.core.StatsCollectorStage.findIn(sharedStages);
         this.failedStatementLog = new FailedStatementLog(options);

@@ -41,15 +41,37 @@ public final class BackendSetModel {
         }
     }
 
+    /** {@code replicas}: the backend's read replicas in {@link ReplicaSpec#format} form, or
+     * {@code null}/empty for none. */
     public record Backend(String name, String url, String user, String password, String fallback,
-            String description, List<StoreType> stores, String set) {
+            String description, List<StoreType> stores, String set, String replicas, String failoverMode) {
 
         Backend with(String url, String user, String password, String description, List<StoreType> stores) {
-            return new Backend(name, url, user, password, fallback, description, stores, set);
+            return new Backend(name, url, user, password, fallback, description, stores, set, replicas, failoverMode);
         }
 
         Backend inSet(String newSet) {
-            return new Backend(name, url, user, password, fallback, description, stores, newSet);
+            return new Backend(name, url, user, password, fallback, description, stores, newSet, replicas, failoverMode);
+        }
+
+        Backend withReplicas(String newReplicas) {
+            return new Backend(name, url, user, password, fallback, description, stores, set, newReplicas, failoverMode);
+        }
+
+        Backend withFailoverMode(String mode) {
+            return new Backend(name, url, user, password, fallback, description, stores, set, replicas, mode);
+        }
+
+        /** The mode actually in force: "off" without replicas, else the configured one (default "follow"). */
+        public String effectiveFailoverMode() {
+            if (replicas == null || replicas.isBlank()) {
+                return "off";
+            }
+            return failoverMode == null ? "follow" : failoverMode;
+        }
+
+        public List<ReplicaSpec> replicaSpecs() {
+            return ReplicaSpec.parseList(replicas);
         }
 
         public SourceDialect dialect() {
@@ -120,7 +142,7 @@ public final class BackendSetModel {
                         implicitDefault.jdbcUrl(), implicitDefault.user(), implicitDefault.password(), null,
                         descriptions.get(BackendRegistry.DEFAULT_BACKEND_NAME),
                         stores.getOrDefault(BackendRegistry.DEFAULT_BACKEND_NAME, List.of()),
-                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME))));
+                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME)), null, null));
             }
         } else {
             for (String entry : spec.split(";")) {
@@ -137,8 +159,10 @@ public final class BackendSetModel {
                 String user = parts.length > 1 ? parts[1] : null;
                 String password = parts.length > 2 ? parts[2] : null;
                 String fallback = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
+                String replicas = parts.length > 4 && !parts[4].isBlank() ? parts[4].trim() : null;
+                String failoverMode = parts.length > 5 && !parts[5].isBlank() ? parts[5].trim() : null;
                 m.backends.put(name, new Backend(name, url, user, password, fallback, descriptions.get(name),
-                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name))));
+                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name)), replicas, failoverMode));
             }
         }
 
@@ -293,8 +317,103 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
+    /** Replica URLs are shown masked ({@link #maskUrl}); a client that sends one back unchanged must not
+     * overwrite the real URL with asterisks. Any URL containing {@code ****} is replaced by the existing
+     * replica whose masked form it equals; if there is none the request is rejected. */
+    private static String restoreMaskedReplicaUrls(String replicas, List<ReplicaSpec> existing) {
+        if (replicas == null || !replicas.contains("****")) {
+            return replicas;
+        }
+        List<ReplicaSpec> incoming;
+        try {
+            incoming = ReplicaSpec.parseList(replicas);
+        } catch (IllegalArgumentException e) {
+            throw new ModelException(400, "invalid replicas: " + e.getMessage());
+        }
+        List<ReplicaSpec> out = new ArrayList<>();
+        for (ReplicaSpec r : incoming) {
+            if (!r.url().contains("****")) {
+                out.add(r);
+                continue;
+            }
+            ReplicaSpec real = null;
+            for (ReplicaSpec e : existing) {
+                if (maskUrl(e.url()).equals(r.url())) {
+                    real = e;
+                    break;
+                }
+            }
+            if (real == null) {
+                throw new ModelException(400, "replica URL " + r.url() + " is masked and matches no existing "
+                        + "replica -- enter the full URL");
+            }
+            out.add(new ReplicaSpec(real.url(), r.maxLagSeconds()));
+        }
+        return ReplicaSpec.format(out);
+    }
+
+    /** Rejects {@code promote} for an engine Warp can only follow (e.g. Oracle Data Guard). */
+    private static void checkPromoteSupported(String mode, String url) {
+        if (!"promote".equals(mode) || url == null) {
+            return;
+        }
+        EngineHa ha = EngineHa.forDialect(new BackendTarget("x", url, null, null).dialect());
+        if (ha == null || !ha.supportsPromote()) {
+            throw new ModelException(400, "failoverMode 'promote' is not available for this engine: Warp can "
+                    + "follow its failover (mode 'follow') but does not perform it");
+        }
+    }
+
+    /** {@code follow} (default), {@code promote} or {@code off}. */
+    private static String normalizeFailoverMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return "";
+        }
+        String m = mode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!BackendRegistry.FAILOVER_MODES.contains(m)) {
+            throw new ModelException(400, "failoverMode must be one of " + BackendRegistry.FAILOVER_MODES);
+        }
+        return m;
+    }
+
+    /** Validates a replicas field (each URL on a trusted host, lag values numeric) and returns its
+     * canonical {@link ReplicaSpec#format} form; blank/null normalizes to the empty string. */
+    private static String normalizeReplicas(String replicas) {
+        if (replicas == null || replicas.isBlank()) {
+            return "";
+        }
+        List<ReplicaSpec> parsed;
+        try {
+            parsed = ReplicaSpec.parseList(replicas);
+        } catch (IllegalArgumentException e) {
+            throw new ModelException(400, "invalid replicas: " + e.getMessage());
+        }
+        TrustedBackendHosts trusted = TrustedBackendHosts.fromEnv();
+        for (ReplicaSpec r : parsed) {
+            if (!trusted.isTrusted(r.url())) {
+                throw new ModelException(400, "the host of replica " + r.url()
+                        + " is not in WARP_TRUSTED_BACKEND_HOSTS");
+            }
+            checkSpecSafe("replica url", r.url().replace(";", ""));
+        }
+        return ReplicaSpec.format(parsed);
+    }
+
     public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
             String description, List<StoreType> stores) {
+        return addBackend(set, name, url, user, password, fallback, description, stores, null);
+    }
+
+    public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
+            String description, List<StoreType> stores, String replicas) {
+        return addBackend(set, name, url, user, password, fallback, description, stores, replicas, null);
+    }
+
+    public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
+            String description, List<StoreType> stores, String replicas, String failoverMode) {
+        String normalizedReplicas = normalizeReplicas(replicas);
+        String normalizedMode = normalizeFailoverMode(failoverMode);
+        checkPromoteSupported(normalizedMode, url);
         if (set == null || set.isBlank()) {
             throw new ModelException(400, "a backend must be added to a backend set -- 'set' is required");
         }
@@ -328,7 +447,8 @@ public final class BackendSetModel {
                     + backends.size() + " already configured) -- remove one or use an Enterprise license");
         }
         Backend b = new Backend(name, url.trim(), user, password, fallback == null || fallback.isBlank() ? null
-                : fallback.trim(), blankToNull(description), List.copyOf(stores == null ? List.of() : stores), set);
+                : fallback.trim(), blankToNull(description), List.copyOf(stores == null ? List.of() : stores), set,
+                normalizedReplicas, normalizedMode.isEmpty() ? null : normalizedMode);
         backends.put(name, b);
         try {
             validateStores();
@@ -342,7 +462,24 @@ public final class BackendSetModel {
     /** Fields passed as {@code null} are left unchanged; pass {@code stores} to replace the list. */
     public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
             String description, List<StoreType> stores) {
+        return patchBackend(name, url, user, password, hasDescription, description, stores, null);
+    }
+
+    /** As above, plus {@code replicas}: {@code null} leaves the replicas unchanged, a blank string
+     * clears them, anything else replaces them (validated). */
+    public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
+            String description, List<StoreType> stores, String replicas) {
+        return patchBackend(name, url, user, password, hasDescription, description, stores, replicas, null);
+    }
+
+    /** As above, plus {@code failoverMode}: {@code null} unchanged, blank clears (back to the
+     * default), otherwise {@code follow} or {@code off}. */
+    public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
+            String description, List<StoreType> stores, String replicas, String failoverMode) {
         Backend b = backends.get(name);
+        String newReplicas = replicas == null ? null
+                : normalizeReplicas(b == null ? replicas : restoreMaskedReplicaUrls(replicas, b.replicaSpecs()));
+        String newMode = failoverMode == null ? null : normalizeFailoverMode(failoverMode);
         if (b == null) {
             throw new ModelException(404, "backend '" + name + "' does not exist");
         }
@@ -361,6 +498,13 @@ public final class BackendSetModel {
                 password != null ? password : b.password(),
                 hasDescription ? blankToNull(description) : b.description(),
                 stores != null ? List.copyOf(stores) : b.stores());
+        if (newReplicas != null) {
+            updated = updated.withReplicas(newReplicas.isEmpty() ? null : newReplicas);
+        }
+        if (newMode != null) {
+            updated = updated.withFailoverMode(newMode.isEmpty() ? null : newMode);
+        }
+        checkPromoteSupported(updated.failoverMode(), updated.url());
         backends.put(name, updated);
         try {
             validateStores();
@@ -421,17 +565,25 @@ public final class BackendSetModel {
                     sb.append(';');
                 }
                 sb.append(b.name()).append('=').append(b.url().replace(";", "%3B"));
+                boolean hasMode = b.failoverMode() != null && !b.failoverMode().isBlank();
+                boolean hasReplicas = hasMode || (b.replicas() != null && !b.replicas().isBlank());
                 boolean hasFallback = b.fallback() != null;
                 boolean hasPassword = b.password() != null;
                 boolean hasUser = b.user() != null;
-                if (hasUser || hasPassword || hasFallback) {
+                if (hasUser || hasPassword || hasFallback || hasReplicas) {
                     sb.append('|').append(b.user() == null ? "" : b.user());
                 }
-                if (hasPassword || hasFallback) {
+                if (hasPassword || hasFallback || hasReplicas) {
                     sb.append('|').append(b.password() == null ? "" : b.password());
                 }
-                if (hasFallback) {
-                    sb.append('|').append(b.fallback());
+                if (hasFallback || hasReplicas) {
+                    sb.append('|').append(b.fallback() == null ? "" : b.fallback());
+                }
+                if (hasReplicas) {
+                    sb.append('|').append(b.replicas() == null ? "" : b.replicas());
+                }
+                if (hasMode) {
+                    sb.append('|').append(b.failoverMode());
                 }
             }
             spec = sb.length() == 0 ? null : sb.toString();

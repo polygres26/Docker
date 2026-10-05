@@ -220,6 +220,9 @@ export interface WireConfig {
   oauthUserIdClaim: string | null
   oauthRolesClaim: string | null
   awsIamCredentials: string | null
+  /** Row-filter/column-masking policy YAML for AccessControlStage -- see
+   * com.sayonora.warp.core.access.AccessPolicyYamlConfig's column_grants/row_filters shape. */
+  accessPolicy: string | null
 }
 
 export async function getWireConfig(): Promise<WireConfig> {
@@ -419,6 +422,17 @@ export interface StoreInfo {
   frontendSetOverride: string | null
 }
 
+export type FailoverMode = 'off' | 'follow' | 'promote'
+
+export interface ReplicaConfig {
+  url: string
+  /** Largest replication lag, in seconds, at which this replica may still serve reads. */
+  maxLagSeconds: number
+}
+
+/** Upper bound the server enforces for a replica's lag allowance (one hour). */
+export const MAX_REPLICA_LAG_SECONDS = 3600
+
 export interface SetBackend {
   name: string
   set: string
@@ -429,6 +443,10 @@ export interface SetBackend {
   user: string | null
   description: string | null
   fallback: string | null
+  /** Read replicas of this backend (URLs are masked); empty when none. */
+  replicas: ReplicaConfig[]
+  /** Effective failover mode: 'off' whenever there are no replicas. */
+  failoverMode: FailoverMode
   isDefault: boolean
   /** The exact database / service name a client connects with to reach ONLY this backend. */
   connectAs: string
@@ -645,6 +663,79 @@ export async function listQueues(): Promise<QueueInfo[]> {
 
 export async function deleteQueue(name: string): Promise<void> {
   await api(`/api/queues/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+// --- Read replicas and failover: /api/replicas, /api/failover ---
+
+export interface ReplicaLagSample { ok: boolean; isReplica: boolean; lagSeconds: number; message: string | null; ageSeconds: number }
+
+export interface ReplicaStatus {
+  id: string
+  url: string
+  maxLagSeconds: number
+  sample: ReplicaLagSample | null
+  eligible: boolean
+  quarantined: boolean
+  routedReads: number
+}
+
+export interface ReplicaGroupStatus {
+  primary: string
+  replicas: ReplicaStatus[]
+  /** Reads that stayed on the primary (or went to a replica), by reason, since this process started. */
+  decisions: Partial<Record<'routed_to_replica' | 'not_read_safe' | 'recent_write' | 'session_state'
+    | 'no_eligible_replica' | 'replica_retried_on_primary', number>>
+}
+
+export interface ReplicasResponse { enabled: boolean; lagCheckSeconds: number; primaries: ReplicaGroupStatus[] }
+
+export type ObservedRole = 'WRITABLE' | 'READ_ONLY' | 'UNREACHABLE'
+
+export interface FailoverNode {
+  configuredRole: 'primary' | 'replica'
+  url: string
+  observedRole: ObservedRole | null
+  badStreak: number
+  writableStreak: number
+  lastLagWhilePrimaryUp: number | null
+}
+
+export interface FailoverGroup {
+  backend: string
+  mode: FailoverMode
+  nodes: FailoverNode[]
+  lastSwitchAt: string | null
+  lastDecision: string | null
+}
+
+export interface FailoverEvent { at: string; backend: string; kind: string; detail: string }
+
+export interface FailoverResponse {
+  probeSeconds: number
+  confirmProbes: number
+  cooldownSeconds: number
+  promoteAvailable: boolean
+  groups: FailoverGroup[]
+  events: FailoverEvent[]
+}
+
+export async function getReplicas(): Promise<ReplicasResponse> {
+  return api('/api/replicas')
+}
+
+export async function getFailover(): Promise<FailoverResponse> {
+  return api('/api/failover')
+}
+
+/** Manual trigger: one observation instead of the confirmation window; every safety rule still applies. */
+export async function evaluateFailover(backend: string): Promise<{ backend: string; action: string; reason: string }> {
+  return api(`/api/failover/${encodeURIComponent(backend)}/evaluate`, { method: 'POST' })
+}
+
+/** Replace a backend's replicas and/or failover mode (live, no restart). An empty `replicas` removes them all. */
+export async function updateBackendReplicas(set: string, name: string,
+  patch: { replicas?: ReplicaConfig[]; failoverMode?: FailoverMode | null }): Promise<BackendWriteResult> {
+  return api(backendPath(set, name), { method: 'PATCH', body: JSON.stringify(patch) })
 }
 
 // --- LLM (SQL-dialect-translation) fallback configuration: /api/llm-config ---

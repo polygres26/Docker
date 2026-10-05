@@ -70,6 +70,7 @@ public final class MetricsServer {
     private static final Pattern BACKEND_COLUMNS_PATH = Pattern.compile("^/api/backends/([^/]+)/tables/([^/]+)/([^/]+)/columns$");
     private static final Pattern BACKEND_QUERY_PATH = Pattern.compile("^/api/backends/([^/]+)/query$");
     private static final Pattern BACKEND_TEST_NAMED_PATH = Pattern.compile("^/api/backends/([^/]+)/test$");
+    private static final Pattern FAILOVER_EVALUATE_PATH = Pattern.compile("^/api/failover/([^/]+)/evaluate$");
     private static final Pattern BACKEND_DRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/drain$");
     private static final Pattern BACKEND_UNDRAIN_PATH = Pattern.compile("^/api/backends/([^/]+)/undrain$");
 
@@ -848,6 +849,57 @@ public final class MetricsServer {
                         return;
                     }
                     handleQueues(target, request, response, queueStore);
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (backendRegistry != null && backendRegistry.failoverMonitor() != null
+                        && target.startsWith("/api/failover")) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setContentType("application/json; charset=utf-8");
+                    Matcher evaluate = FAILOVER_EVALUATE_PATH.matcher(target);
+                    if ("/api/failover".equals(target) && "GET".equals(request.getMethod())) {
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(backendRegistry.failoverMonitor().toJson().toString());
+                    } else if (evaluate.matches() && "POST".equals(request.getMethod())) {
+                        // Manual trigger: one observation is enough (instead of the confirmation
+                        // window), every other safety rule still applies. Role was already checked
+                        // as admin by authorized() for a POST.
+                        String backend = java.net.URLDecoder.decode(evaluate.group(1), java.nio.charset.StandardCharsets.UTF_8);
+                        var d = backendRegistry.failoverMonitor().evaluateNow(backend);
+                        JsonObject out = new JsonObject();
+                        out.addProperty("backend", backend);
+                        out.addProperty("action", d.action().name());
+                        out.addProperty("reason", d.reason());
+                        response.setStatus(HttpServletResponse.SC_OK);
+                        response.getWriter().write(out.toString());
+                    } else {
+                        response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                        response.getWriter().write("{\"error\":\"no such route\"}");
+                    }
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (backendRegistry != null && "/api/replicas".equals(target) && "GET".equals(request.getMethod())) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setStatus(HttpServletResponse.SC_OK);
+                    response.setContentType("application/json; charset=utf-8");
+                    response.getWriter().write(backendRegistry.replicaRouter().toJson().toString());
                     baseRequest.setHandled(true);
                     return;
                 }
@@ -1673,11 +1725,15 @@ public final class MetricsServer {
                         field(body, "mcpUpstreams", current.mcpUpstreams()),
                         field(body, "storeFrontendSets", current.storeFrontendSets()),
                         field(body, "otlpExportOverride", current.otlpExportOverride()),
-                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()));
+                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()),
+                        field(body, "accessPolicy", current.accessPolicy()));
                 // Validate the pieces that have a real parser before committing a new version --
                 // fail loud on the request instead of publishing a version every listener chokes on.
                 com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
                 com.sayonora.warp.core.ConnectionRouter.parse(updated.connectionRoutes());
+                if (updated.accessPolicy() != null && !updated.accessPolicy().isBlank()) {
+                    com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(updated.accessPolicy());
+                }
                 // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
                 // the backend-set admin API, so the raw config route cannot bypass them
                 com.sayonora.warp.core.BackendSetModel.from(updated, null).validateStores();
@@ -1775,7 +1831,7 @@ public final class MetricsServer {
                         current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
                         current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                         current.mcpUpstreams(), current.storeFrontendSets(),
-                        current.otlpExportOverride(), current.prometheusScrapeOverride());
+                        current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
                 long version = configStore.write(updated);
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
@@ -2422,7 +2478,7 @@ public final class MetricsServer {
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                 current.mcpUpstreams(), current.storeFrontendSets(),
-                current.otlpExportOverride(), current.prometheusScrapeOverride());
+                current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
         configStore.write(updated);
     }
 
