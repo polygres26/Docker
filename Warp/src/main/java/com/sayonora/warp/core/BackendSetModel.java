@@ -41,15 +41,25 @@ public final class BackendSetModel {
         }
     }
 
+    /** {@code replicas}: the backend's read replicas in {@link ReplicaSpec#format} form, or
+     * {@code null}/empty for none. */
     public record Backend(String name, String url, String user, String password, String fallback,
-            String description, List<StoreType> stores, String set) {
+            String description, List<StoreType> stores, String set, String replicas) {
 
         Backend with(String url, String user, String password, String description, List<StoreType> stores) {
-            return new Backend(name, url, user, password, fallback, description, stores, set);
+            return new Backend(name, url, user, password, fallback, description, stores, set, replicas);
         }
 
         Backend inSet(String newSet) {
-            return new Backend(name, url, user, password, fallback, description, stores, newSet);
+            return new Backend(name, url, user, password, fallback, description, stores, newSet, replicas);
+        }
+
+        Backend withReplicas(String newReplicas) {
+            return new Backend(name, url, user, password, fallback, description, stores, set, newReplicas);
+        }
+
+        public List<ReplicaSpec> replicaSpecs() {
+            return ReplicaSpec.parseList(replicas);
         }
 
         public SourceDialect dialect() {
@@ -120,7 +130,7 @@ public final class BackendSetModel {
                         implicitDefault.jdbcUrl(), implicitDefault.user(), implicitDefault.password(), null,
                         descriptions.get(BackendRegistry.DEFAULT_BACKEND_NAME),
                         stores.getOrDefault(BackendRegistry.DEFAULT_BACKEND_NAME, List.of()),
-                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME))));
+                        setName(groupOf.get(BackendRegistry.DEFAULT_BACKEND_NAME)), null));
             }
         } else {
             for (String entry : spec.split(";")) {
@@ -137,8 +147,9 @@ public final class BackendSetModel {
                 String user = parts.length > 1 ? parts[1] : null;
                 String password = parts.length > 2 ? parts[2] : null;
                 String fallback = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
+                String replicas = parts.length > 4 && !parts[4].isBlank() ? parts[4].trim() : null;
                 m.backends.put(name, new Backend(name, url, user, password, fallback, descriptions.get(name),
-                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name))));
+                        stores.getOrDefault(name, List.of()), setName(groupOf.get(name)), replicas));
             }
         }
 
@@ -293,8 +304,37 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
+    /** Validates a replicas field (each URL on a trusted host, lag values numeric) and returns its
+     * canonical {@link ReplicaSpec#format} form; blank/null normalizes to the empty string. */
+    private static String normalizeReplicas(String replicas) {
+        if (replicas == null || replicas.isBlank()) {
+            return "";
+        }
+        List<ReplicaSpec> parsed;
+        try {
+            parsed = ReplicaSpec.parseList(replicas);
+        } catch (IllegalArgumentException e) {
+            throw new ModelException(400, "invalid replicas: " + e.getMessage());
+        }
+        TrustedBackendHosts trusted = TrustedBackendHosts.fromEnv();
+        for (ReplicaSpec r : parsed) {
+            if (!trusted.isTrusted(r.url())) {
+                throw new ModelException(400, "the host of replica " + r.url()
+                        + " is not in WARP_TRUSTED_BACKEND_HOSTS");
+            }
+            checkSpecSafe("replica url", r.url().replace(";", ""));
+        }
+        return ReplicaSpec.format(parsed);
+    }
+
     public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
             String description, List<StoreType> stores) {
+        return addBackend(set, name, url, user, password, fallback, description, stores, null);
+    }
+
+    public Backend addBackend(String set, String name, String url, String user, String password, String fallback,
+            String description, List<StoreType> stores, String replicas) {
+        String normalizedReplicas = normalizeReplicas(replicas);
         if (set == null || set.isBlank()) {
             throw new ModelException(400, "a backend must be added to a backend set -- 'set' is required");
         }
@@ -328,7 +368,8 @@ public final class BackendSetModel {
                     + backends.size() + " already configured) -- remove one or use an Enterprise license");
         }
         Backend b = new Backend(name, url.trim(), user, password, fallback == null || fallback.isBlank() ? null
-                : fallback.trim(), blankToNull(description), List.copyOf(stores == null ? List.of() : stores), set);
+                : fallback.trim(), blankToNull(description), List.copyOf(stores == null ? List.of() : stores), set,
+                normalizedReplicas);
         backends.put(name, b);
         try {
             validateStores();
@@ -342,6 +383,14 @@ public final class BackendSetModel {
     /** Fields passed as {@code null} are left unchanged; pass {@code stores} to replace the list. */
     public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
             String description, List<StoreType> stores) {
+        return patchBackend(name, url, user, password, hasDescription, description, stores, null);
+    }
+
+    /** As above, plus {@code replicas}: {@code null} leaves the replicas unchanged, a blank string
+     * clears them, anything else replaces them (validated). */
+    public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
+            String description, List<StoreType> stores, String replicas) {
+        String newReplicas = replicas == null ? null : normalizeReplicas(replicas);
         Backend b = backends.get(name);
         if (b == null) {
             throw new ModelException(404, "backend '" + name + "' does not exist");
@@ -361,6 +410,9 @@ public final class BackendSetModel {
                 password != null ? password : b.password(),
                 hasDescription ? blankToNull(description) : b.description(),
                 stores != null ? List.copyOf(stores) : b.stores());
+        if (newReplicas != null) {
+            updated = updated.withReplicas(newReplicas.isEmpty() ? null : newReplicas);
+        }
         backends.put(name, updated);
         try {
             validateStores();
@@ -421,17 +473,21 @@ public final class BackendSetModel {
                     sb.append(';');
                 }
                 sb.append(b.name()).append('=').append(b.url().replace(";", "%3B"));
+                boolean hasReplicas = b.replicas() != null && !b.replicas().isBlank();
                 boolean hasFallback = b.fallback() != null;
                 boolean hasPassword = b.password() != null;
                 boolean hasUser = b.user() != null;
-                if (hasUser || hasPassword || hasFallback) {
+                if (hasUser || hasPassword || hasFallback || hasReplicas) {
                     sb.append('|').append(b.user() == null ? "" : b.user());
                 }
-                if (hasPassword || hasFallback) {
+                if (hasPassword || hasFallback || hasReplicas) {
                     sb.append('|').append(b.password() == null ? "" : b.password());
                 }
-                if (hasFallback) {
-                    sb.append('|').append(b.fallback());
+                if (hasFallback || hasReplicas) {
+                    sb.append('|').append(b.fallback() == null ? "" : b.fallback());
+                }
+                if (hasReplicas) {
+                    sb.append('|').append(b.replicas());
                 }
             }
             spec = sb.length() == 0 ? null : sb.toString();

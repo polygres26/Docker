@@ -16,6 +16,7 @@ import com.sayonora.warp.core.BackendSetModel.BackendSet;
 import com.sayonora.warp.core.BackendSetModel.ModelException;
 import com.sayonora.warp.core.BackendTarget;
 import com.sayonora.warp.core.ConnectionRouter;
+import com.sayonora.warp.core.ReplicaSpec;
 import com.sayonora.warp.core.StoreBootstrap;
 import com.sayonora.warp.core.StoreType;
 import com.sayonora.warp.mcp.BackendTypes;
@@ -306,6 +307,14 @@ public final class BackendSetsApi {
         o.addProperty("user", b.user());
         o.addProperty("description", b.description());
         o.addProperty("fallback", b.fallback());
+        JsonArray replicaArr = new JsonArray();
+        for (ReplicaSpec r : b.replicaSpecs()) {
+            JsonObject ro = new JsonObject();
+            ro.addProperty("url", BackendSetModel.maskUrl(r.url()));
+            ro.addProperty("maxLagSeconds", r.maxLagSeconds());
+            replicaArr.add(ro);
+        }
+        o.add("replicas", replicaArr);
         o.addProperty("isDefault", BackendRegistry.DEFAULT_BACKEND_NAME.equals(b.name()));
         o.addProperty("connectAs", b.name());
         List<String> ids = new ArrayList<>();
@@ -467,7 +476,7 @@ public final class BackendSetsApi {
             BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
             Backend b = model.addBackend(set, str(body, "name"), firstNonNull(str(body, "url"), str(body, "jdbcUrl")),
                     str(body, "user"), str(body, "password"), str(body, "fallback"), str(body, "description"),
-                    stores(body));
+                    stores(body), body.has("replicas") ? replicasField(body) : null);
             List<String> warnings = new ArrayList<>();
             boolean specBlank = before.backends() == null || before.backends().isBlank();
             String standby = System.getenv("WARP_STANDBY_HOST");
@@ -496,7 +505,8 @@ public final class BackendSetsApi {
                     // blank password keeps the stored one (the API never returns it, so clients cannot resend it)
                     body.has("password") && !str(body, "password").isBlank() ? str(body, "password") : null,
                     body.has("description"), str(body, "description"),
-                    body.has("enabledStores") ? stores(body) : null);
+                    body.has("enabledStores") ? stores(body) : null,
+                    body.has("replicas") ? replicasField(body) : null);
             if (body.has("set") && str(body, "set") != null && !set.equals(str(body, "set"))) {
                 b = model.moveBackend(name, str(body, "set"));
             }
@@ -778,6 +788,41 @@ public final class BackendSetsApi {
     private static String str(JsonObject body, String key) {
         JsonElement e = body.get(key);
         return e == null || e.isJsonNull() ? null : e.getAsString();
+    }
+
+    /** The {@code replicas} body field as a {@link ReplicaSpec#format} string. Accepts either a JSON
+     * array of {@code {url, maxLagSeconds?}} objects (the API shape; an empty array or null clears
+     * the replicas) or an already-formatted string. */
+    private static String replicasField(JsonObject body) {
+        JsonElement e = body.get("replicas");
+        if (e == null || e.isJsonNull()) {
+            return "";
+        }
+        if (e.isJsonPrimitive()) {
+            return e.getAsString();
+        }
+        if (!e.isJsonArray()) {
+            throw new ModelException(400, "replicas must be an array of {url, maxLagSeconds} objects");
+        }
+        List<ReplicaSpec> out = new ArrayList<>();
+        for (JsonElement item : e.getAsJsonArray()) {
+            if (!item.isJsonObject()) {
+                throw new ModelException(400, "each replica must be an object {url, maxLagSeconds?}");
+            }
+            JsonObject o = item.getAsJsonObject();
+            String url = str(o, "url");
+            if (url == null || url.isBlank()) {
+                throw new ModelException(400, "each replica needs a url");
+            }
+            double lag = o.has("maxLagSeconds") && !o.get("maxLagSeconds").isJsonNull()
+                    ? o.get("maxLagSeconds").getAsDouble() : ReplicaSpec.DEFAULT_MAX_LAG_SECONDS;
+            try {
+                out.add(new ReplicaSpec(url.trim(), lag));
+            } catch (IllegalArgumentException ex) {
+                throw new ModelException(400, ex.getMessage());
+            }
+        }
+        return ReplicaSpec.format(out);
     }
 
     private static String firstNonNull(String a, String b) {

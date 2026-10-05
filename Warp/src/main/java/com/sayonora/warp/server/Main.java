@@ -197,6 +197,9 @@ public final class Main {
         // schema of every store enabled on a Postgres backend, before any frontend starts serving
         com.sayonora.warp.core.StoreBootstrap.ensureAll(backendRegistry);
         logSchemaDiscoveryConflicts(backendRegistry);
+        // Lag sampling for read replicas configured on any backend (5th WARP_BACKENDS field); a no-op
+        // loop when none are configured, and disabled by WARP_REPLICA_LAG_CHECK_SECONDS=0.
+        backendRegistry.replicaRouter().start();
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it

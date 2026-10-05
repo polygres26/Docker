@@ -119,6 +119,25 @@ public final class BackendRegistry {
 
     private final BackendTarget defaultTarget;
 
+    // Read replicas per primary backend name (see ReplicaSpec). Replaced wholesale by reload().
+    private volatile Map<String, List<ReplicaSpec>> replicaSpecs = Map.of();
+    private final ReplicaRouter replicaRouter = new ReplicaRouter(this);
+
+    /** Replicas configured for {@code primaryName}; empty when none. */
+    public List<ReplicaSpec> replicaSpecsOf(String primaryName) {
+        List<ReplicaSpec> r = replicaSpecs.get(primaryName);
+        return r == null ? List.of() : r;
+    }
+
+    public Map<String, List<ReplicaSpec>> allReplicaSpecs() {
+        return replicaSpecs;
+    }
+
+    /** The lag-gated read-replica chooser for this registry's backends. */
+    public ReplicaRouter replicaRouter() {
+        return replicaRouter;
+    }
+
     // Native-backend-mode targets (mysql-native, mssql-native, ...), registered once at startup
     // from each protocol's own WARP_*_BACKEND env var, not from WARP_BACKENDS -- see Main.java.
     // Kept separate from the env-driven spec so a WARP_BACKENDS reload (reload() below) can't
@@ -205,6 +224,7 @@ public final class BackendRegistry {
 
         TrustedBackendHosts trustedHosts = TrustedBackendHosts.fromEnv();
         Map<String, BackendTarget> targets = new LinkedHashMap<>();
+        Map<String, List<ReplicaSpec>> replicaSpecs = new LinkedHashMap<>();
         if (spec != null && !spec.isBlank()) {
             for (String entry : spec.split(";")) {
                 if (entry.isBlank()) {
@@ -226,6 +246,18 @@ public final class BackendRegistry {
                 // later reload) -- resolveForRouting treats an unresolvable fallback name as "no
                 // fallback" rather than failing config parsing over it.
                 String fallbackName = parts.length > 3 && !parts[3].isBlank() ? parts[3].trim() : null;
+                // Optional 5th field: read replicas of this backend (see ReplicaSpec). They share
+                // this backend's credentials and are NOT registered backends, so they neither count
+                // against the license cap nor become routable targets. A malformed field drops that
+                // entry's replicas with a warning rather than failing the whole backend spec.
+                List<ReplicaSpec> entryReplicas = List.of();
+                if (parts.length > 4 && !parts[4].isBlank()) {
+                    try {
+                        entryReplicas = ReplicaSpec.parseList(parts[4]);
+                    } catch (IllegalArgumentException e) {
+                        log.warn("backend registry: ignoring replicas of '{}': {}", name, e.getMessage());
+                    }
+                }
                 if (!trustedHosts.isTrusted(url)) {
                     log.warn("backend registry: REFUSING to register backend '{}' ({}) -- its host is not in "
                             + "WARP_TRUSTED_BACKEND_HOSTS. This entry is skipped, not fatal; every other "
@@ -254,6 +286,29 @@ public final class BackendRegistry {
                 java.util.Map<String, Object> connectorOperand = probe.isFederationOnlyConnector()
                         ? com.sayonora.warp.core.connector.ConnectorOperands.parse(url, user, password) : null;
                 targets.put(name, new BackendTarget(name, url, user, password, null, fallbackName, connectorOperand));
+                if (!entryReplicas.isEmpty()) {
+                    boolean allTrusted = true;
+                    for (ReplicaSpec r : entryReplicas) {
+                        if (!trustedHosts.isTrusted(r.url())) {
+                            log.warn("backend registry: REFUSING replica of '{}' ({}) -- its host is not in "
+                                    + "WARP_TRUSTED_BACKEND_HOSTS.", name, r.url());
+                            allTrusted = false;
+                        }
+                    }
+                    if (allTrusted) {
+                        replicaSpecs.put(name, entryReplicas);
+                    } else {
+                        List<ReplicaSpec> kept = new java.util.ArrayList<>();
+                        for (ReplicaSpec r : entryReplicas) {
+                            if (trustedHosts.isTrusted(r.url())) {
+                                kept.add(r);
+                            }
+                        }
+                        if (!kept.isEmpty()) {
+                            replicaSpecs.put(name, List.copyOf(kept));
+                        }
+                    }
+                }
             }
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
@@ -271,6 +326,7 @@ public final class BackendRegistry {
         BackendRegistry built = new BackendRegistry(targets, shardGroup, defaultTarget, staticExtraTargets,
                 backendSets, parsedGroups.sharded(), parsedGroups.backendToGroupName());
         built.declarationOrder = declarationOrder;
+        built.replicaSpecs = Map.copyOf(replicaSpecs);
         return built;
     }
 
@@ -404,6 +460,7 @@ public final class BackendRegistry {
         this.backendGroupSharded = fresh.backendGroupSharded;
         this.backendToGroupName = fresh.backendToGroupName;
         this.declarationOrder = fresh.declarationOrder;
+        this.replicaSpecs = fresh.replicaSpecs;
         this.hostsCache = new java.util.concurrent.ConcurrentHashMap<>();
         touch();
     }
