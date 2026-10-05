@@ -100,6 +100,12 @@ public final class FailoverMonitor {
         void promote(BackendTarget replica) throws Exception;
     }
 
+    /** Points a surviving replica at the newly promoted primary; throws if it cannot (and leaves it as it was). */
+    @FunctionalInterface
+    public interface Repointer {
+        void repoint(BackendTarget replica, BackendTarget newPrimary) throws Exception;
+    }
+
     /** Makes sure the failed primary can no longer take writes (STONITH, firewall, cloud API...).
      * Return false or throw to abort the promotion. */
     @FunctionalInterface
@@ -140,6 +146,10 @@ public final class FailoverMonitor {
     private final Deque<Event> events = new ArrayDeque<>();
     private volatile ScheduledExecutorService scheduler;
     private volatile PromoteHooks promoteHooks;
+    // After Warp promotes a replica, the others still follow the dead primary; by default Warp repoints
+    // them (WARP_FAILOVER_REPOINT=false turns that off). Null = do not repoint.
+    private volatile Repointer repointer = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_REPOINT"))
+            ? FailoverMonitor::repointNode : null;
     // Last replication lag of each replica sampled WHILE its primary was still writable: once the
     // primary is gone the live probe's lag includes the outage itself and says nothing about what
     // the replica is missing, so the data-loss gate must use the last honest reading.
@@ -149,6 +159,12 @@ public final class FailoverMonitor {
      * is monitored but never promoted (recorded as blocked). */
     public FailoverMonitor withPromoteHooks(PromoteHooks hooks) {
         this.promoteHooks = hooks;
+        return this;
+    }
+
+    /** Fluent: replaces (or with null, disables) repointing of surviving replicas after a promotion. */
+    public FailoverMonitor withRepointer(Repointer r) {
+        this.repointer = r;
         return this;
     }
 
@@ -545,6 +561,39 @@ public final class FailoverMonitor {
         applySwitch(backend, oldPrimary, replicas, best, "no writable node for " + confirmProbes
                 + " probes; promoted the replica with the most WAL received (lag when last measured: "
                 + lagWhilePrimaryUp.get(candidate.key()) + "s)", true);
+        repointSurvivors(backend, candidate.target(), replicas, best, fresh);
+    }
+
+    /** Repoints every other reachable replica at the new primary, so reads keep scaling after the
+     * failover. Each replica is independent: one failing never stops the rest, and a failure leaves
+     * that replica as it was (it simply stays out of the read pool, as before this feature). */
+    private void repointSurvivors(String backend, BackendTarget newPrimary, List<ReplicaRouter.Replica> replicas,
+            int promotedIdx, Map<String, NodeRole> fresh) {
+        Repointer r = repointer;
+        if (r == null) {
+            return;
+        }
+        for (int i = 0; i < replicas.size(); i++) {
+            if (i == promotedIdx) {
+                continue;
+            }
+            BackendTarget replica = replicas.get(i).target();
+            String masked = BackendSetModel.maskUrl(replica.jdbcUrl());
+            if (fresh.getOrDefault(replica.jdbcUrl(), NodeRole.UNREACHABLE) != NodeRole.READ_ONLY) {
+                record(backend, "repoint-skipped", "replica " + masked + " was not a reachable read-only node", null);
+                continue;
+            }
+            try {
+                r.repoint(replica, newPrimary);
+                record(backend, "repointed", "replica " + masked + " now follows "
+                        + BackendSetModel.maskUrl(newPrimary.jdbcUrl()), AuditEvent.Type.BACKEND_FAILOVER);
+            } catch (Exception e) {
+                record(backend, "repoint-failed", "replica " + masked + " could not be repointed: " + e.getMessage()
+                        + " -- it stays out of the read pool until fixed by hand", AuditEvent.Type.BACKEND_FAILOVER);
+                log.error("failover: repointing {} at {} failed: {}", masked,
+                        BackendSetModel.maskUrl(newPrimary.jdbcUrl()), e.toString());
+            }
+        }
     }
 
     private Map<String, NodeRole> probeAll(List<BackendTarget> nodes) {
@@ -721,6 +770,14 @@ public final class FailoverMonitor {
             throw new IllegalStateException("promotion is not supported for " + n.dialect());
         }
         ha.promote(n);
+    }
+
+    static void repointNode(BackendTarget replica, BackendTarget newPrimary) throws Exception {
+        EngineHa ha = EngineHa.forDialect(replica.dialect());
+        if (ha == null || !ha.supportsRepoint()) {
+            throw new IllegalStateException("repointing is not supported for " + replica.dialect());
+        }
+        ha.repoint(replica, newPrimary);
     }
 
     private static boolean runFence(String command, String failedPrimaryUrl) throws Exception {

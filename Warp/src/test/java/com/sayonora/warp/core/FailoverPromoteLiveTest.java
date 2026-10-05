@@ -103,6 +103,24 @@ class FailoverPromoteLiveTest {
                 var rs = st.executeQuery("select expires_at < now() from warp_failover_lease where backend = 'pg'")) {
             assertTrue(rs.next() && rs.getBoolean(1), "lease released");
         }
+        // the surviving replica was repointed at the new primary and now replicates its writes
+        String survivorPort = r1Writable ? r2Port : r1Port;
+        long deadline = System.currentTimeMillis() + 30_000;
+        boolean replicated = false;
+        while (System.currentTimeMillis() < deadline && !replicated) {
+            try (Connection c = config(survivorPort); var st = c.createStatement();
+                    var rs = st.executeQuery("select count(*) from t where id = 424242")) {
+                rs.next();
+                replicated = rs.getInt(1) == 1;
+            }
+            if (!replicated) {
+                Thread.sleep(500);
+            }
+        }
+        assertTrue(replicated, "the survivor replicates from the new primary");
+        assertTrue(inRecovery(survivorPort), "and is still a read-only replica");
+        assertTrue(monitor.recentEvents().stream().anyMatch(e -> e.kind().equals("repointed")), "repointed event recorded");
+
         // a second pass changes nothing (the new primary is writable)
         monitor.evaluateOnce(false);
         assertEquals(newPrimaryUrl, registry.get("pg").jdbcUrl());
