@@ -17,6 +17,10 @@ public final class LocalPostgres {
         this.port = port;
     }
 
+    public Path dir() {
+        return dir;
+    }
+
     public int port() {
         return port;
     }
@@ -45,7 +49,7 @@ public final class LocalPostgres {
         run(bin + "/initdb", "-D", dir.toString(), "-U", "warp", "-A", "trust");
         Files.writeString(dir.resolve("postgresql.conf"), "\nport=" + port + "\nlisten_addresses='127.0.0.1'\n"
                 + "unix_socket_directories='" + sock + "'\nwal_level=replica\nmax_wal_senders=10\nhot_standby=on\n"
-                + "max_connections=300\n", java.nio.file.StandardOpenOption.APPEND);
+                + "max_connections=300\nwal_log_hints=on\nwal_keep_size=256MB\n", java.nio.file.StandardOpenOption.APPEND);
         Files.writeString(dir.resolve("pg_hba.conf"), "\nhost replication all 127.0.0.1/32 trust\n",
                 java.nio.file.StandardOpenOption.APPEND);
         LocalPostgres pg = new LocalPostgres(bin, dir, port);
