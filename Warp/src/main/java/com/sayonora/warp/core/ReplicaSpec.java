@@ -21,12 +21,16 @@ public record ReplicaSpec(String url, double maxLagSeconds) {
 
     public static final double DEFAULT_MAX_LAG_SECONDS = 5.0;
 
+    /** Upper bound for a replica's lag allowance (one hour): anything staler is never what an operator means. */
+    public static final double MAX_ALLOWED_LAG_SECONDS = 3600.0;
+
     public ReplicaSpec {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("replica url must not be blank");
         }
-        if (maxLagSeconds < 0 || Double.isNaN(maxLagSeconds)) {
-            throw new IllegalArgumentException("replica maxLagSeconds must be >= 0");
+        if (maxLagSeconds < 0 || Double.isNaN(maxLagSeconds) || maxLagSeconds > MAX_ALLOWED_LAG_SECONDS) {
+            throw new IllegalArgumentException("replica maxLagSeconds must be between 0 and "
+                    + (long) MAX_ALLOWED_LAG_SECONDS + " seconds");
         }
     }
 

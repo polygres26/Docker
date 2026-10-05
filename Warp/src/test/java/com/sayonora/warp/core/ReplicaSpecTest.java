@@ -45,4 +45,12 @@ class ReplicaSpecTest {
         assertThrows(IllegalArgumentException.class, () -> ReplicaSpec.parseList("jdbc:postgresql://r1/db~abc"));
         assertThrows(IllegalArgumentException.class, () -> new ReplicaSpec("jdbc:postgresql://r1/db", -1));
     }
+
+    @Test
+    void lagAllowanceIsCappedAtOneHour() {
+        assertEquals(3600.0, new ReplicaSpec("jdbc:postgresql://r/db", 3600).maxLagSeconds());
+        assertThrows(IllegalArgumentException.class, () -> new ReplicaSpec("jdbc:postgresql://r/db", 3600.5));
+        assertThrows(IllegalArgumentException.class, () -> ReplicaSpec.parseList("jdbc:postgresql://r/db~99999"));
+        assertEquals(0.5, ReplicaSpec.parseList("jdbc:postgresql://r/db~0.5").get(0).maxLagSeconds(), "decimals are fine");
+    }
 }

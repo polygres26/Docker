@@ -317,6 +317,41 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
+    /** Replica URLs are shown masked ({@link #maskUrl}); a client that sends one back unchanged must not
+     * overwrite the real URL with asterisks. Any URL containing {@code ****} is replaced by the existing
+     * replica whose masked form it equals; if there is none the request is rejected. */
+    private static String restoreMaskedReplicaUrls(String replicas, List<ReplicaSpec> existing) {
+        if (replicas == null || !replicas.contains("****")) {
+            return replicas;
+        }
+        List<ReplicaSpec> incoming;
+        try {
+            incoming = ReplicaSpec.parseList(replicas);
+        } catch (IllegalArgumentException e) {
+            throw new ModelException(400, "invalid replicas: " + e.getMessage());
+        }
+        List<ReplicaSpec> out = new ArrayList<>();
+        for (ReplicaSpec r : incoming) {
+            if (!r.url().contains("****")) {
+                out.add(r);
+                continue;
+            }
+            ReplicaSpec real = null;
+            for (ReplicaSpec e : existing) {
+                if (maskUrl(e.url()).equals(r.url())) {
+                    real = e;
+                    break;
+                }
+            }
+            if (real == null) {
+                throw new ModelException(400, "replica URL " + r.url() + " is masked and matches no existing "
+                        + "replica -- enter the full URL");
+            }
+            out.add(new ReplicaSpec(real.url(), r.maxLagSeconds()));
+        }
+        return ReplicaSpec.format(out);
+    }
+
     /** Rejects {@code promote} for an engine Warp can only follow (e.g. Oracle Data Guard). */
     private static void checkPromoteSupported(String mode, String url) {
         if (!"promote".equals(mode) || url == null) {
@@ -441,9 +476,10 @@ public final class BackendSetModel {
      * default), otherwise {@code follow} or {@code off}. */
     public Backend patchBackend(String name, String url, String user, String password, boolean hasDescription,
             String description, List<StoreType> stores, String replicas, String failoverMode) {
-        String newReplicas = replicas == null ? null : normalizeReplicas(replicas);
-        String newMode = failoverMode == null ? null : normalizeFailoverMode(failoverMode);
         Backend b = backends.get(name);
+        String newReplicas = replicas == null ? null
+                : normalizeReplicas(b == null ? replicas : restoreMaskedReplicaUrls(replicas, b.replicaSpecs()));
+        String newMode = failoverMode == null ? null : normalizeFailoverMode(failoverMode);
         if (b == null) {
             throw new ModelException(404, "backend '" + name + "' does not exist");
         }

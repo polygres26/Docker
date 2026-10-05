@@ -16,9 +16,23 @@ pg=jdbc:postgresql://p/db|app|secret||jdbc:postgresql://r1/db~5^jdbc:postgresql:
 ```
 
 - Replicas reuse the primary's user and password, are **not** registered backends, and do not count
-  against the Developer-tier backend cap. `maxLagSeconds` defaults to 5.
+  against the Developer-tier backend cap. The lag allowance is in **seconds** (decimals allowed, e.g.
+  `0.5`), defaults to 5, and must be between 0 and **3600**; the server rejects anything else. `0` means
+  "only when fully caught up". (Seconds, not milliseconds: MySQL, Oracle and SQL Server only report whole
+  seconds, so a sub-second limit would be false precision there.)
 - `failoverMode`: `follow` (default whenever replicas exist), `promote`, or `off`.
 - `~` and `^` separate lag and replicas; `;` inside a URL is written `%3B` as for the primary.
+
+## Admin UI
+
+Infrastructure -> **Replicas and failover** shows, per backend with replicas: each node's observed role,
+its lag against its allowance, why it is or is not eligible, reads served, the reasons reads stayed on
+the primary, failover mode/confirmation/cooldown/last switch, and recent failover events; it refreshes
+every 5 s. **Evaluate now** triggers a manual failover evaluation. **Edit replicas** (and **Add replicas**
+for a backend without any) edits replica URLs, each replica's max lag in seconds (0-3600, validated in the
+form and again by the server), and the failover mode; `promote` is greyed out for engines Warp does not
+promote. Saves go through the backend-sets API and apply live. Replica URLs are shown with any embedded
+credentials masked; saving a masked URL unchanged keeps the real one.
 
 ## Read routing
 

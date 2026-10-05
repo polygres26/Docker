@@ -84,4 +84,27 @@ class BackendSetModelReplicasTest {
         m.patchBackend("pg", null, null, null, false, null, null, null, "follow");
         assertEquals("off", m.backend("pg").effectiveFailoverMode());
     }
+
+    @Test
+    void aMaskedReplicaUrlSentBackUnchangedKeepsTheRealUrlAndAnUnknownMaskedOneIsRejected() {
+        String real = "jdbc:postgresql://r1/db?user=a&password=s3cret";
+        BackendSetModel m = BackendSetModel.from(cfg("pg=jdbc:postgresql://p/db|u|pw||" + real + "~4"), null);
+        String masked = BackendSetModel.maskUrl(real);
+        assertTrue(masked.contains("****"));
+        m.patchBackend("pg", null, null, null, false, null, null, masked + "~9");
+        assertEquals(real, m.backend("pg").replicaSpecs().get(0).url(), "the real URL survives a round trip of the masked one");
+        assertEquals(9.0, m.backend("pg").replicaSpecs().get(0).maxLagSeconds(), "while the new allowance applies");
+        ModelException e = assertThrows(ModelException.class, () -> m.patchBackend("pg", null, null, null, false, null,
+                null, "jdbc:postgresql://other/db?password=****~5"));
+        assertEquals(400, e.status());
+    }
+
+    @Test
+    void anAllowanceAboveAnHourIsRejectedWithA400() {
+        BackendSetModel m = BackendSetModel.from(cfg("pg=jdbc:postgresql://p/db"), null);
+        ModelException e = assertThrows(ModelException.class, () -> m.patchBackend("pg", null, null, null, false, null,
+                null, "jdbc:postgresql://r/db~7200"));
+        assertEquals(400, e.status());
+        assertTrue(e.getMessage().contains("3600"));
+    }
 }
