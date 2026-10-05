@@ -330,6 +330,9 @@ All live tests are opt-in and skipped unless their environment is set; they run 
   cannot start under QEMU emulation** (it aborts with an
   address-space error), which is what a default Colima/Docker on Apple silicon uses; use Docker Desktop with
   Rosetta, or a Colima profile started with `--vm-type vz --vz-rosetta`. Needs about 4 GB of Docker memory.
+- **SQL Server promote:** `SqlServerPromoteLiveTest` on a *fresh* AG (`ag.sh up`; it kills `sql1`), with
+  `WARP_TEST_MSSQL_PROMOTE=1`, `DOCKER_CONTEXT` set if needed, and a Postgres config database via
+  `WARP_HOST`/`WARP_PORT`/`WARP_USER`/`WARP_PASSWORD`.
 - **Oracle Data Guard:** `OracleDataGuardLiveTest` needs a real physical standby open read-only with apply
   (Active Data Guard, Enterprise Edition) and has **never been run** by this project's authors. Set
   `WARP_TEST_ORACLE_DG_PRIMARY_URL`, `_STANDBY_URL`, `_USER`, `_PASSWORD` (the user needs `SELECT` on
