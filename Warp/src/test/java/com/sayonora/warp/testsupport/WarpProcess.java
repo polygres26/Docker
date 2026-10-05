@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 /**
  * Launches a real {@code com.sayonora.warp.server.Main} as a subprocess, pointed at a real
@@ -121,11 +122,23 @@ public final class WarpProcess implements AutoCloseable {
 
             // Drain stdout/stderr on a daemon thread -- an unread pipe fills up and blocks the
             // child process once the OS buffer is full.
+            java.util.Deque<String> recent = new java.util.concurrent.ConcurrentLinkedDeque<>();
+            java.util.concurrent.atomic.AtomicReference<String> fatal = new java.util.concurrent.atomic.AtomicReference<>();
             Thread drain = new Thread(() -> {
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = r.readLine()) != null) {
                         System.out.println("[warp] " + line);
+                        if (!line.startsWith("\tat ")) {
+                            recent.addLast(line);
+                            while (recent.size() > 12) {
+                                recent.pollFirst();
+                            }
+                        }
+                        // Main's startup died (e.g. a port is already bound) but other threads keep the JVM alive
+                        if (line.startsWith("Exception in thread \"main\"")) {
+                            fatal.compareAndSet(null, line);
+                        }
                     }
                 } catch (IOException ignored) {
                     // process ended
@@ -138,14 +151,23 @@ public final class WarpProcess implements AutoCloseable {
             // minute) wait longer than the 30s default without editing tests.
             Duration startup = Duration.ofSeconds(Long.parseLong(
                     System.getenv().getOrDefault("WARP_TEST_STARTUP_SECONDS", "30")));
-            waitForHttpReady(metricsPort, startup, env.get("WARP_ADMIN_TOKEN"));
+            try {
+                BooleanSupplier healthy = () -> process.isAlive() && fatal.get() == null;
+                waitForHttpReady(metricsPort, startup, env.get("WARP_ADMIN_TOKEN"), healthy);
             // /metrics starts early in Main's setup, before every protocol listener thread has
             // necessarily started (each frontend binds on its own thread, in sequence) -- so it
             // alone isn't proof the frontend under test is actually accepting connections yet.
             // Found live: a real ojdbc11 client connecting to orawire (one of the later listeners
             // to start) got ORA-12541/connection-refused even though /metrics was already up.
-            for (int port : ports.values()) {
-                waitForTcpReady(port, startup);
+                for (int port : ports.values()) {
+                    waitForTcpReady(port, startup, healthy);
+                }
+            } catch (IllegalStateException | InterruptedException e) {
+                // Never leave a half-started Warp behind: it keeps its ports and CPU after the test is over.
+                process.destroyForcibly();
+                String why = fatal.get() != null ? " -- Warp's startup failed: " + fatal.get() : "";
+                throw new IllegalStateException(e.getMessage() + why + "\nlast Warp output:\n  "
+                        + String.join("\n  ", recent), e);
             }
             return new WarpProcess(process, metricsPort, Map.copyOf(ports));
         }
@@ -155,9 +177,13 @@ public final class WarpProcess implements AutoCloseable {
          * readiness probe itself -- {@code /metrics} sits behind {@code AccessContextResolver}
          * once an OAuth issuer is configured, and an unauthenticated probe would 401 forever
          * rather than ever observing real readiness. Null/blank for every other test, unchanged. */
-        private static void waitForHttpReady(int metricsPort, Duration timeout, String adminToken) throws InterruptedException {
+        private static void waitForHttpReady(int metricsPort, Duration timeout, String adminToken,
+                BooleanSupplier healthy) throws InterruptedException {
             Instant deadline = Instant.now().plus(timeout);
             while (Instant.now().isBefore(deadline)) {
+                if (!healthy.getAsBoolean()) {
+                    throw new IllegalStateException("Warp stopped or failed while starting");
+                }
                 try {
                     HttpURLConnection conn = (HttpURLConnection) URI.create("http://localhost:" + metricsPort + "/metrics")
                             .toURL().openConnection();
@@ -177,9 +203,12 @@ public final class WarpProcess implements AutoCloseable {
             throw new IllegalStateException("Warp did not become ready within " + timeout);
         }
 
-        private static void waitForTcpReady(int port, Duration timeout) throws InterruptedException {
+        private static void waitForTcpReady(int port, Duration timeout, BooleanSupplier healthy) throws InterruptedException {
             Instant deadline = Instant.now().plus(timeout);
             while (Instant.now().isBefore(deadline)) {
+                if (!healthy.getAsBoolean()) {
+                    throw new IllegalStateException("Warp stopped or failed while starting (frontend on port " + port + ")");
+                }
                 try (java.net.Socket socket = new java.net.Socket()) {
                     socket.connect(new java.net.InetSocketAddress("localhost", port), 500);
                     return;
