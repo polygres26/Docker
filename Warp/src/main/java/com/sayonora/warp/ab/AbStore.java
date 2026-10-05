@@ -48,13 +48,7 @@ public final class AbStore implements AutoCloseable {
         try (Connection c = PgConnections.open(options); Statement st = c.createStatement()) {
             st.execute("SELECT pg_advisory_lock(7351001)");
             try {
-                st.execute("CREATE TABLE IF NOT EXISTS warp_ab_routing (version bigserial PRIMARY KEY, "
-                        + "payload jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
-                st.execute("CREATE OR REPLACE FUNCTION warp_ab_routing_notify() RETURNS trigger AS $$ "
-                        + "BEGIN PERFORM pg_notify('" + CHANNEL + "', NEW.version::text); RETURN NEW; END; $$ LANGUAGE plpgsql");
-                st.execute("DROP TRIGGER IF EXISTS warp_ab_routing_notify_trigger ON warp_ab_routing");
-                st.execute("CREATE TRIGGER warp_ab_routing_notify_trigger AFTER INSERT ON warp_ab_routing "
-                        + "FOR EACH ROW EXECUTE FUNCTION warp_ab_routing_notify()");
+                com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_ab_routing", java.util.Map.of("channel", CHANNEL));
             } finally {
                 st.execute("SELECT pg_advisory_unlock(7351001)");
             }

@@ -29,15 +29,7 @@ public final class AuditLogStore {
         this.user = user;
         this.password = password;
         try (Connection connection = borrow(); Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE IF NOT EXISTS warp_audit_log ("
-                    + "seq_num BIGINT PRIMARY KEY, "
-                    + "ts TIMESTAMP, "
-                    + "event_type VARCHAR(64), "
-                    + "user_id VARCHAR(255), "
-                    + "summary TEXT, "
-                    + "details TEXT, "
-                    + "prev_hash VARCHAR(64), "
-                    + "row_hash VARCHAR(64) NOT NULL)");
+            com.sayonora.warp.core.DdlTemplates.runFor(statement, jdbcUrl, "warp_audit_log", java.util.Map.of());
         }
         try (Connection connection = borrow();
                 Statement statement = connection.createStatement();

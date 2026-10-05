@@ -28,13 +28,7 @@ public final class PgFailoverCoordination implements FailoverCoordination {
 
     public void ensureSchema() throws SQLException {
         try (Connection c = PgConnections.open(options); Statement st = c.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_failover_lease ("
-                    + "backend text PRIMARY KEY, holder text NOT NULL, term bigint NOT NULL, "
-                    + "expires_at timestamptz NOT NULL)");
-            st.execute("CREATE TABLE IF NOT EXISTS warp_failover_observation ("
-                    + "backend text NOT NULL, instance text NOT NULL, primary_url text NOT NULL, "
-                    + "down boolean NOT NULL, observed_at timestamptz NOT NULL DEFAULT now(), "
-                    + "PRIMARY KEY (backend, instance))");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_failover", java.util.Map.of());
         }
     }
 

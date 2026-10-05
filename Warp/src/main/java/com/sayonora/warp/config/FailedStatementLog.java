@@ -67,15 +67,7 @@ public final class FailedStatementLog {
 
     private void ensureSchemaNow() {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_failed_statements ("
-                    + "id bigserial PRIMARY KEY, "
-                    + "occurred_at timestamptz NOT NULL DEFAULT now(), "
-                    + "dialect text NOT NULL, "
-                    + "sql_text text NOT NULL, "
-                    + "failure_type text NOT NULL, "
-                    + "sql_state text, "
-                    + "native_error_returned integer, "
-                    + "message text)");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_failed_statements", java.util.Map.of());
             SCHEMA_ENSURED.add(backendKey());
         } catch (SQLException e) {
             log.warn("failed-statement log: could not ensure warp_failed_statements schema exists"

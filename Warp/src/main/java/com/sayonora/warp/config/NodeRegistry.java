@@ -118,18 +118,7 @@ public final class NodeRegistry {
 
     public static void ensureSchema(com.sayonora.warp.server.ServerOptions options) throws SQLException {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_nodes ("
-                    + "node_id uuid PRIMARY KEY, "
-                    + "host text NOT NULL, "
-                    + "admin_port int NOT NULL, "
-                    + "zone text, "
-                    + "version text, "
-                    + "started_at timestamptz NOT NULL, "
-                    + "last_heartbeat timestamptz NOT NULL)");
-            // Additive migration for Phase 1's remote-partition-join peer discovery -- see NodeRow's
-            // own javadoc. IF NOT EXISTS keeps this idempotent across every existing deployment's
-            // warp_nodes table, matching the CREATE TABLE above's own idempotency style.
-            st.execute("ALTER TABLE warp_nodes ADD COLUMN IF NOT EXISTS peer_grpc_port int NOT NULL DEFAULT 0");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "warp_nodes", java.util.Map.of());
         }
     }
 

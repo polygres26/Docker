@@ -53,8 +53,7 @@ public final class StoreBootstrap {
 
     private static void run(BackendTarget target, StoreType store) throws SQLException {
         try (Connection c = target.open(); Statement st = c.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS " + MARKER_TABLE + " ("
-                    + "store text PRIMARY KEY, enabled_at timestamptz NOT NULL DEFAULT now())");
+            DdlTemplates.run(st, "postgres", "warp_enabled_stores", Map.of("table", MARKER_TABLE));
             switch (store) {
                 case DYNAMODB -> exec(st, "dynamowire_catalog");
                 case SQS -> exec(st, "sqswire_catalog");
@@ -90,10 +89,7 @@ public final class StoreBootstrap {
     }
 
     private static void exec(Statement st, String template) throws SQLException {
-        List<String> statements = DdlTemplates.loadStatements("postgres", template, Map.of());
-        for (String s : statements) {
-            st.execute(s);
-        }
+        DdlTemplates.run(st, "postgres", template, Map.of());
     }
 
     /** Ensures every store currently enabled on a Postgres backend of {@code registry}. Errors are

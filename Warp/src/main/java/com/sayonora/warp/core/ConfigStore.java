@@ -24,11 +24,7 @@ public final class ConfigStore {
         this.user = user;
         this.password = password;
         try (Connection connection = borrow(); Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE IF NOT EXISTS warp_config ("
-                    + "config_key VARCHAR(255) PRIMARY KEY, "
-                    + "config_value TEXT, "
-                    + "updated_at TIMESTAMP, "
-                    + "updated_by VARCHAR(255))");
+            com.sayonora.warp.core.DdlTemplates.runFor(statement, jdbcUrl, "warp_kv_config", java.util.Map.of());
         }
     }
 
