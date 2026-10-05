@@ -124,6 +124,12 @@ public final class FailoverMonitor {
     public record SwitchoverResult(boolean ok, String message) {
     }
 
+    /** Rejoins a returned node as a replica of the current primary (see {@link EngineHa#rejoin}). */
+    @FunctionalInterface
+    public interface Rejoiner {
+        EngineHa.RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws Exception;
+    }
+
     /** Makes sure the failed primary can no longer take writes (STONITH, firewall, cloud API...).
      * Return false or throw to abort the promotion. */
     @FunctionalInterface
@@ -164,6 +170,10 @@ public final class FailoverMonitor {
     private final Deque<Event> events = new ArrayDeque<>();
     private volatile ScheduledExecutorService scheduler;
     private volatile PromoteHooks promoteHooks;
+    // A returned old primary is rejoined as a replica when that is provably safe; off with WARP_FAILOVER_AUTO_REJOIN=false.
+    private volatile Rejoiner rejoiner = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_AUTO_REJOIN"))
+            ? FailoverMonitor::rejoinNode : null;
+    private final Map<String, Long> lastRejoinAttempt = new ConcurrentHashMap<>();
     private volatile SwitchoverOps switchoverOps = new SwitchoverOps() {
         private EngineHa ha(BackendTarget t) {
             EngineHa h = EngineHa.forDialect(t.dialect());
@@ -212,6 +222,71 @@ public final class FailoverMonitor {
     public FailoverMonitor withPromoteHooks(PromoteHooks hooks) {
         this.promoteHooks = hooks;
         return this;
+    }
+
+    /** Fluent: replaces (or with null, disables) automatic rejoin of returned old primaries. */
+    public FailoverMonitor withRejoiner(Rejoiner r) {
+        this.rejoiner = r;
+        return this;
+    }
+
+    /**
+     * For each replica that is writable or reachable-but-not-replicating while the primary is writable, try
+     * to rejoin it as a replica. At most one attempt per node per cooldown. A rejoined node's state is
+     * updated in place so it is not then mistaken for a second writer.
+     */
+    private void rejoinStragglers(String backend, BackendTarget primary, List<ReplicaRouter.Replica> replicas,
+            List<NodeState> states) {
+        Rejoiner r = rejoiner;
+        if (r == null) {
+            return;
+        }
+        long now = clock.getAsLong();
+        for (int i = 0; i < replicas.size(); i++) {
+            ReplicaRouter.Replica rep = replicas.get(i);
+            ReplicaRouter.LagSample ls = registry.replicaRouter().samplesSnapshot().get(rep.key());
+            boolean notReplicating = ls != null && ls.ok() && !ls.isReplica();
+            if (states.get(i + 1).role() != NodeRole.WRITABLE && !notReplicating) {
+                continue;
+            }
+            if (states.get(i + 1).role() == NodeRole.UNREACHABLE) {
+                continue;
+            }
+            Long last = lastRejoinAttempt.get(rep.key());
+            if (last != null && now - last < cooldownMillis) {
+                continue;
+            }
+            lastRejoinAttempt.put(rep.key(), now);
+            String masked = BackendSetModel.maskUrl(rep.key());
+            try {
+                EngineHa.RejoinResult res = r.rejoin(rep.target(), primary);
+                switch (res.outcome()) {
+                    case REJOINED -> {
+                        record(backend, "rejoined", masked + ": " + res.detail(), AuditEvent.Type.BACKEND_FAILOVER);
+                        Streak s = streaks.get(backend + "|" + rep.key());
+                        if (s != null) {
+                            s.writable = 0;
+                            s.last = NodeRole.READ_ONLY;
+                        }
+                        states.set(i + 1, new NodeState(rep.key(), NodeRole.READ_ONLY, 0, 0));
+                    }
+                    case NEEDS_REBUILD -> note(backend, "rejoin-needed", masked + ": " + res.detail());
+                    default -> {
+                    }
+                }
+            } catch (Exception e) {
+                note(backend, "rejoin-failed", masked + ": " + e.getMessage());
+                log.error("failover: rejoining {} failed: {}", masked, e.toString());
+            }
+        }
+    }
+
+    static EngineHa.RejoinResult rejoinNode(BackendTarget node, BackendTarget currentPrimary) throws Exception {
+        EngineHa ha = EngineHa.forDialect(node.dialect());
+        if (ha == null) {
+            return EngineHa.RejoinResult.of(EngineHa.RejoinOutcome.UNSUPPORTED, "unsupported engine");
+        }
+        return ha.rejoin(node, currentPrimary);
     }
 
     /** Fluent, for tests: replaces the engine steps of a planned switchover. */
@@ -493,6 +568,7 @@ public final class FailoverMonitor {
             publishObservation(backend, primary.jdbcUrl(), states.get(0).role() != NodeRole.WRITABLE);
         }
         if (states.get(0).role() == NodeRole.WRITABLE) {
+            rejoinStragglers(backend, primary, replicas, states);
             for (ReplicaRouter.Replica r : replicas) {
                 ReplicaRouter.LagSample ls = registry.replicaRouter().samplesSnapshot().get(r.key());
                 if (ls != null && ls.ok() && ls.isReplica()) {

@@ -413,6 +413,90 @@ final class MySqlHa implements EngineHa {
         return true;
     }
 
+    /**
+     * Rejoins a returned old primary as a GTID replica of {@code currentPrimary}, but only when it holds
+     * no transaction the current primary lacks (checked with GTID_SUBSET, before and again after making it
+     * read-only so a write that slipped in cannot be silently kept). A node with such errant transactions
+     * is left untouched and reported as needing a rebuild: replicating it would either fail or spread them.
+     */
+    @Override
+    public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws SQLException {
+        String primaryGtids;
+        try (Connection pc = connect(currentPrimary, 5000, 30000)) {
+            primaryGtids = gtidExecuted(pc);
+        }
+        boolean wasWritable;
+        try (Connection c = connect(node, 5000, 60000); Statement st = c.createStatement()) {
+            Optional<Map<String, String>> status = replicaStatus(c);
+            if (status.isPresent()) {
+                return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already configured as a replica");
+            }
+            try (ResultSet rs = st.executeQuery("SELECT @@global.gtid_mode")) {
+                if (!rs.next() || !"ON".equalsIgnoreCase(rs.getString(1))) {
+                    return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "gtid_mode is not ON, so a safe position on the "
+                            + "current primary cannot be worked out");
+                }
+            }
+            String errant = errantGtids(c, primaryGtids);
+            if (!errant.isEmpty()) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it holds transactions the current primary does not "
+                        + "have (" + abbreviate(errant) + "); rejoining would spread or fail on them -- rebuild it");
+            }
+            try (ResultSet rs = st.executeQuery("SELECT @@global.read_only OR @@global.super_read_only")) {
+                rs.next();
+                wasWritable = rs.getInt(1) == 0;
+            }
+            try {
+                st.execute("SET GLOBAL read_only = ON");
+                st.execute("SET GLOBAL super_read_only = ON");
+            } catch (SQLException e) {
+                if (e.getErrorCode() != 1193) {
+                    throw e;
+                }
+            }
+            errant = errantGtids(c, gtidExecutedOf(currentPrimary));
+            if (!errant.isEmpty()) {
+                if (wasWritable) {
+                    st.execute("SET GLOBAL super_read_only = OFF");
+                    st.execute("SET GLOBAL read_only = OFF");
+                }
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "a transaction was committed on it while rejoining ("
+                        + abbreviate(errant) + "); left writable as it was -- rebuild it");
+            }
+        }
+        demoteToReplica(node, currentPrimary);
+        return RejoinResult.of(RejoinOutcome.REJOINED, "now replicates from " + BackendSetModel.maskUrl(currentPrimary.jdbcUrl()));
+    }
+
+    private static String gtidExecuted(Connection c) throws SQLException {
+        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT @@global.gtid_executed")) {
+            rs.next();
+            return rs.getString(1).replaceAll("\\s+", "");
+        }
+    }
+
+    private String gtidExecutedOf(BackendTarget t) throws SQLException {
+        try (Connection c = connect(t, 5000, 30000)) {
+            return gtidExecuted(c);
+        }
+    }
+
+    /** GTIDs executed on {@code c} that are not in {@code other} (empty = {@code c} is a subset). */
+    private static String errantGtids(Connection c, String other) throws SQLException {
+        try (java.sql.PreparedStatement ps = c.prepareStatement("SELECT GTID_SUBTRACT(@@global.gtid_executed, ?)")) {
+            ps.setString(1, other);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                String v = rs.getString(1);
+                return v == null ? "" : v.replaceAll("\\s+", "");
+            }
+        }
+    }
+
+    private static String abbreviate(String s) {
+        return s.length() > 80 ? s.substring(0, 77) + "..." : s;
+    }
+
     /** True when the SQL thread has applied everything the I/O thread fetched. */
     static boolean fullyApplied(Map<String, String> row) {
         String state = col(row, "Replica_SQL_Running_State", "Slave_SQL_Running_State");
