@@ -163,10 +163,11 @@ is whatever SQL they run against the Postgres backend, which is also what makes 
 
 - **All four follow the failover on their own and lost no acknowledged write**, same shape as everything else (~150 ms on a switchover,
   ~5.2-5.3 s on a crash).
-- **MCP error mapping, noted not fixed:** during a crash some failed calls came back as JSON-RPC error `-32602` ("invalid params") with the
-  message `jdbc:postgresql://...: Connection is not available, request timed out`. A transient backend connection problem is reported as a
-  malformed request, which a client would reasonably treat as non-retryable; the rest came back as tool results with `isError: true`
-  and the SQLSTATE (`57P01`, `25006`, `08006`), which is the better shape.
+- **MCP error mapping, fixed:** during a crash some failed calls used to come back as JSON-RPC error `-32602` ("invalid params") carrying a
+  JDBC pool-timeout message, i.e. a transient backend problem reported as a malformed request. A `SQLException` from the backend now
+  returns a tool result with `isError: true` and the SQLSTATE, like the rest. Re-run of the crash scenario: every failure is
+  `isError` with `08001`/`08006`, none are `-32602`, 0 acknowledged writes lost. (No Docker-free unit test for this path; it is covered
+  by that live run only.)
 - Mistake in my first MCP read-back (not Warp): its regex also matched the JSON-RPC envelope's own `"id":1`, so the paging loop never
   saw an empty page and the harness hung until I stopped it.
 - Not benchmarked, deliberately: **A2A** (its `message/send` turns plain English into a read-only SQL query through an LLM, so it needs

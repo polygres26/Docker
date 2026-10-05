@@ -1539,7 +1539,13 @@ public final class WarpMcpServer {
                 errorMessage = result.error();
                 writeResult(response, id, toolCallResult(result));
             }
-        } catch (RuntimeException | java.sql.SQLException e) {
+        } catch (java.sql.SQLException e) {
+            // A backend problem (pool timeout, connection lost mid-failover) is not a malformed request:
+            // report it as a tool error carrying the SQLSTATE so a client can tell it is worth retrying.
+            isError = true;
+            errorMessage = e.getMessage();
+            writeResult(response, id, toolCallResult(AdHocQueryRunner.Result.ofError(e)));
+        } catch (RuntimeException e) {
             errorMessage = e.getMessage();
             writeError(response, id, -32602, e.getMessage());
         } finally {
