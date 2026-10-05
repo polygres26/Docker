@@ -65,8 +65,10 @@ until it is promoted.
    19 s (switchover) and 43 s (failover) after the event: a session desynchronizes and fails later. Not diagnosed;
    likely a client request arriving on a session whose previous statement was interrupted by the backend connection
    being killed.
-2. **mywire rejected 2 reconnects with "Access denied for user 'warp'"** in the failover run (5-44 per run in an earlier,
-   rate-limited run). The credentials were right; the check in `MySqlWireSessionHandler` is deterministic, so this looks
+2. **FIXED (see the mywire handshake PR): mywire rejected 2 reconnects with "Access denied for user 'warp'"** in the failover run (5-44 per run in an earlier,
+   rate-limited run). Root cause found afterwards: not the failover but a bug in the handshake. Warp's random login challenge
+   could contain a zero byte (7.5% of logins), which truncated it on the client; 218 of 3,000 correct-password logins failed
+   in isolation. The original description follows. The credentials were right; the check in `MySqlWireSessionHandler` is deterministic, so this looks
    like a race or stale state during reconnect. Not diagnosed.
 3. An earlier run at the harness's default admission limit (1,000 requests per second) was discarded: it showed
    hundreds of "rate limit exceeded" / cancelled statements per protocol that had nothing to do with failover. These
