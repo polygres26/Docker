@@ -1,8 +1,8 @@
 # Read replicas and failover-follow
 
-> Technical reference. Status: **Postgres only** so far. MySQL, Oracle and SQL Server replicas are
-> accepted in the config but never used for reads, and are not monitored for failover, until their
-> lag/role probes exist. Failover has two modes: `follow` (a promotion made by your database's own HA
+> Technical reference. Status: **Postgres and MySQL**. Oracle and SQL Server replicas are accepted in
+> the config but never used for reads, and are not monitored for failover, until their lag/role probes
+> exist. Failover has two modes: `follow` (a promotion made by your database's own HA
 > tooling is followed) and `promote` (Warp itself promotes a replica, behind the safeguards below).
 
 ## Configuring replicas
@@ -71,6 +71,28 @@ and re-applied across reloads until the config names the new primary.
 `POST /api/failover/{backend}/evaluate` forces an immediate evaluation (one observation instead of the
 confirmation window; every other rule still applies). Switches and suspected split brains are written
 to the audit log (`BACKEND_FAILOVER`, `BACKEND_SPLIT_BRAIN_SUSPECTED`).
+
+## MySQL
+
+Supported: asynchronous and semi-synchronous source/replica replication, with GTIDs or binary-log
+coordinates, MySQL 5.7 through 9.x (`SHOW REPLICA STATUS`, falling back to `SHOW SLAVE STATUS` and the
+legacy column names). The Warp user needs `REPLICATION CLIENT` for the probes and, for promote mode,
+`REPLICATION_SLAVE_ADMIN` + `SYSTEM_VARIABLES_ADMIN` (`SUPER` before 8.0). Replica URLs follow the same
+grammar; add `allowPublicKeyRetrieval`/SSL options to the URL as your authentication requires.
+
+- **Lag:** `Seconds_Behind_Source`, and only while **both** replication threads are running; a replica
+  with a stopped or connecting thread, or a NULL lag, is unmeasurable and never eligible. MySQL's
+  number only covers events the replica has already *retrieved*: transactions committed on the primary
+  but not yet fetched (a slow link) are invisible to it. Keep `maxLagSeconds` conservative.
+- **Role:** writable only if `read_only` is off **and** the server is not configured as a replica of
+  anything. A server still replicating is never called writable, even with `read_only` left off.
+- **Promotion** (promote mode): stop the I/O thread, wait for the SQL thread to apply **everything
+  already received** (`WARP_FAILOVER_MYSQL_APPLY_WAIT_SECONDS`, 60; if it cannot, Warp does not promote
+  rather than drop received transactions), `STOP/RESET REPLICA ALL`, `super_read_only` and `read_only`
+  off. Candidate ranking is by transactions received (executed + retrieved-but-unapplied GTIDs; binlog
+  file/position without GTIDs).
+- Warp does not repoint the remaining replicas (`CHANGE REPLICATION SOURCE`); they leave the read pool
+  until their lag probe passes again.
 
 ## Promote mode
 

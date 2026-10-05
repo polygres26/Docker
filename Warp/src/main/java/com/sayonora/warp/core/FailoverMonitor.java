@@ -257,7 +257,7 @@ public final class FailoverMonitor {
         if (primary == null) {
             return Decision.none("unknown backend");
         }
-        if (primary.dialect() != SourceDialect.POSTGRES) {
+        if (EngineHa.forDialect(primary.dialect()) == null) {
             note(backend, "unsupported", primary.dialect() + " backends are not monitored for failover yet");
             return Decision.none("unsupported engine");
         }
@@ -569,31 +569,10 @@ public final class FailoverMonitor {
         return out;
     }
 
-    /** Postgres role probe: reachable and {@code pg_is_in_recovery() = false} means writable. */
+    /** Role probe, dispatched by engine; an engine without an {@link EngineHa} is never reachable. */
     static NodeRole probeRole(BackendTarget node) {
-        Properties props = new Properties();
-        try {
-            if (node.user() != null) {
-                props.setProperty("user", node.user());
-                String pw = SecretResolver.resolve(node.password());
-                props.setProperty("password", pw == null ? "" : pw);
-            }
-        } catch (RuntimeException e) {
-            return NodeRole.UNREACHABLE;
-        }
-        props.setProperty("loginTimeout", "3");
-        props.setProperty("socketTimeout", "5");
-        props.setProperty("connectTimeout", "3");
-        try (Connection c = DriverManager.getConnection(node.jdbcUrl(), props);
-                Statement st = c.createStatement();
-                ResultSet rs = st.executeQuery("select pg_is_in_recovery()")) {
-            if (!rs.next()) {
-                return NodeRole.UNREACHABLE;
-            }
-            return rs.getBoolean(1) ? NodeRole.READ_ONLY : NodeRole.WRITABLE;
-        } catch (java.sql.SQLException e) {
-            return NodeRole.UNREACHABLE;
-        }
+        EngineHa ha = EngineHa.forDialect(node.dialect());
+        return ha == null ? NodeRole.UNREACHABLE : ha.role(node);
     }
 
     private void note(String backend, String kind, String detail) {
@@ -705,9 +684,9 @@ public final class FailoverMonitor {
 
     // ---- default (Postgres) promote hooks --------------------------------------------------------
 
-    /** Default hooks on Postgres: {@code pg_promote()} (needs PG 12+ and EXECUTE on it for the Warp
-     * user, i.e. superuser or an explicit grant), WAL position from {@code pg_last_wal_*_lsn()}, and an
-     * optional fencing command from {@code WARP_FAILOVER_FENCE_COMMAND} run with
+    /** Default hooks, dispatched per engine through {@link EngineHa} (Postgres: {@code pg_promote()}
+     * and {@code pg_last_wal_*_lsn()}; MySQL: apply the relay log, {@code RESET REPLICA ALL},
+     * {@code read_only=OFF}, GTID/binlog position), plus an optional fencing command from {@code WARP_FAILOVER_FENCE_COMMAND} run with
      * {@code FAILED_PRIMARY_URL} in its environment (exit 0 = fenced). */
     public static PromoteHooks defaultHooks(FailoverCoordination coordination) {
         String fenceCmd = System.getenv("WARP_FAILOVER_FENCE_COMMAND");
@@ -721,40 +700,21 @@ public final class FailoverMonitor {
                 // keep the default
             }
         }
-        return new PromoteHooks(coordination, FailoverMonitor::postgresReceivedLsn, FailoverMonitor::postgresPromote,
+        return new PromoteHooks(coordination, FailoverMonitor::receivedLsn, FailoverMonitor::promoteNode,
                 fencer, maxLag, longEnv("WARP_FAILOVER_LEASE_SECONDS", 120), longEnv("WARP_FAILOVER_VOTE_FRESH_SECONDS", 30));
     }
 
-    private static Connection connect(BackendTarget n) throws java.sql.SQLException {
-        Properties props = new Properties();
-        if (n.user() != null) {
-            props.setProperty("user", n.user());
-            String pw = SecretResolver.resolve(n.password());
-            props.setProperty("password", pw == null ? "" : pw);
-        }
-        props.setProperty("loginTimeout", "5");
-        props.setProperty("socketTimeout", "90");
-        return DriverManager.getConnection(n.jdbcUrl(), props);
+    static java.util.OptionalLong receivedLsn(BackendTarget n) throws Exception {
+        EngineHa ha = EngineHa.forDialect(n.dialect());
+        return ha == null ? java.util.OptionalLong.empty() : ha.walPosition(n);
     }
 
-    static java.util.OptionalLong postgresReceivedLsn(BackendTarget n) throws java.sql.SQLException {
-        try (Connection c = connect(n); Statement st = c.createStatement();
-                ResultSet rs = st.executeQuery("select pg_wal_lsn_diff(greatest(pg_last_wal_receive_lsn(), "
-                        + "pg_last_wal_replay_lsn()), '0/0')")) {
-            if (rs.next() && rs.getBigDecimal(1) != null) {
-                return java.util.OptionalLong.of(rs.getBigDecimal(1).longValue());
-            }
-            return java.util.OptionalLong.empty();
+    static void promoteNode(BackendTarget n) throws Exception {
+        EngineHa ha = EngineHa.forDialect(n.dialect());
+        if (ha == null) {
+            throw new IllegalStateException("promotion is not supported for " + n.dialect());
         }
-    }
-
-    static void postgresPromote(BackendTarget n) throws java.sql.SQLException {
-        try (Connection c = connect(n); Statement st = c.createStatement();
-                ResultSet rs = st.executeQuery("select pg_promote(true, 60)")) {
-            if (!rs.next() || !rs.getBoolean(1)) {
-                throw new java.sql.SQLException("pg_promote() did not complete within 60s");
-            }
-        }
+        ha.promote(n);
     }
 
     private static boolean runFence(String command, String failedPrimaryUrl) throws Exception {

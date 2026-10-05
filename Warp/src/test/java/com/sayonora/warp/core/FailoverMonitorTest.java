@@ -238,12 +238,16 @@ class FailoverMonitorTest {
         }
         assertEquals(P, off.get("pg").jdbcUrl());
 
-        BackendRegistry mysql = BackendRegistry.fromConfig("m=jdbc:mysql://p/db|u|pw||jdbc:mysql://r/db", null);
-        FailoverMonitor mm = monitor(mysql, applyingPersister(mysql));
+        BackendRegistry oracle = BackendRegistry.fromConfig(
+                "o=jdbc:oracle:thin:@//p:1521/svc|u|pw||jdbc:oracle:thin:@//r:1521/svc", null);
+        FailoverMonitor mm = monitor(oracle, applyingPersister(oracle));
+        cluster.put("jdbc:oracle:thin:@//p:1521/svc", NodeRole.UNREACHABLE);
+        cluster.put("jdbc:oracle:thin:@//r:1521/svc", NodeRole.WRITABLE);
         for (int i = 0; i < 5; i++) {
             mm.evaluateOnce(false);
         }
-        assertEquals("jdbc:mysql://p/db", mysql.get("m").jdbcUrl());
+        assertEquals("jdbc:oracle:thin:@//p:1521/svc", oracle.get("o").jdbcUrl(),
+                "an engine with no EngineHa is never failed over, whatever the probes say");
     }
 
     @Test

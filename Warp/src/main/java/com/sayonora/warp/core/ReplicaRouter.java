@@ -254,13 +254,13 @@ public final class ReplicaRouter {
         }
     }
 
-    /** Engine dispatch. Postgres only for now; every other engine yields an {@code ok=false}
-     * sample, so its replicas are never eligible (reads stay on the primary) instead of being
-     * routed on an unmeasured lag. */
+    /** Engine dispatch. Engines without an {@link EngineHa} yield an {@code ok=false} sample, so their
+     * replicas are never eligible (reads stay on the primary) instead of being routed on an
+     * unmeasured lag. */
     static LagSample probeByEngine(BackendTarget replica, long nowMillis) {
-        if (replica.dialect() == SourceDialect.POSTGRES) {
-            ReplicationLag.Result r = ReplicationLag.check(replica);
-            return new LagSample(r.ok(), r.isReplica(), r.lagSeconds(), r.message(), nowMillis);
+        EngineHa ha = EngineHa.forDialect(replica.dialect());
+        if (ha != null) {
+            return ha.lag(replica, nowMillis);
         }
         return new LagSample(false, false, 0,
                 "no replication-lag probe for " + replica.dialect() + " yet -- replica not used for reads", nowMillis);

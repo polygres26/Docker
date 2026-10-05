@@ -128,8 +128,8 @@ class ReplicaRouterTest {
 
     @Test
     void unsupportedEngineReplicasAreNeverEligible() {
-        BackendTarget mysql = new BackendTarget("m#1", "jdbc:mysql://r/db", "u", "p");
-        LagSample s = ReplicaRouter.probeByEngine(mysql, 1);
+        BackendTarget oracle = new BackendTarget("o#1", "jdbc:oracle:thin:@//r:1521/svc", "u", "p");
+        LagSample s = ReplicaRouter.probeByEngine(oracle, 1);
         assertFalse(s.ok());
     }
 
