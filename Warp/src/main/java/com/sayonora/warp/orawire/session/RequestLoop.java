@@ -1056,7 +1056,7 @@ public final class RequestLoop {
             // recognizable boundary is found, so a genuinely standalone close-cursors call (the
             // common case this branch was originally written for) is unaffected.
             byte[] rest = r.readRemaining();
-            int boundary = findNextMessageBoundary(rest);
+            int boundary = closeCursorsBoundary(rest);
             if (boundary >= 0) {
                 r.skip(-(rest.length - boundary));
             } else {
@@ -1172,16 +1172,57 @@ public final class RequestLoop {
      */
     private static int findNextMessageBoundary(byte[] data) {
         for (int i = 0; i < data.length - 1; i++) {
-            int tag = data[i] & 0xFF;
-            int code = data[i + 1] & 0xFF;
-            if (tag == TtcConstants.MSG_TYPE_FUNCTION && KNOWN_RESUMABLE_FUNCTION_CODES.contains(code)) {
-                return i;
-            }
-            if (tag == TtcConstants.MSG_TYPE_PIGGYBACK && KNOWN_RESUMABLE_PIGGYBACK_CODES.contains(code)) {
+            if (isMessageBoundary(data, i)) {
                 return i;
             }
         }
         return -1;
+    }
+
+    private static boolean isMessageBoundary(byte[] data, int i) {
+        if (i < 0 || i >= data.length - 1) {
+            return false;
+        }
+        int tag = data[i] & 0xFF;
+        int code = data[i + 1] & 0xFF;
+        return (tag == TtcConstants.MSG_TYPE_FUNCTION && KNOWN_RESUMABLE_FUNCTION_CODES.contains(code))
+                || (tag == TtcConstants.MSG_TYPE_PIGGYBACK && KNOWN_RESUMABLE_PIGGYBACK_CODES.contains(code));
+    }
+
+    /**
+     * Where the message that follows a close-cursors piggyback starts in {@code rest} (the bytes after the
+     * piggyback's function code, sequence number and UB8), or -1 if it cannot be told.
+     *
+     * <p>Real bug, found by the brownout run: this used to scan {@code rest} for the first byte pair that
+     * looks like a message boundary. The piggyback's own body is a pointer byte, a count and then the cursor
+     * ids, and a cursor id is just a number: once a connection has used cursor id 773 (bytes {@code 03 05}) the
+     * scan mistook it for a FUNCTION tag followed by FUNC_FETCH, parsed the real call from the wrong offset and
+     * died with an ArrayIndexOutOfBoundsException (surfacing as ORA-00600). Any ojdbc connection that ran about
+     * 770 distinct statements hit it, whatever the backend was doing. Ids that happen to spell another known
+     * function code (for example 0x030e, FUNC_COMMIT) fail the same way.
+     *
+     * <p>So the body is parsed exactly first (pointer, count, ids); if that lands on a recognizable boundary, or
+     * on the end of the packet (a standalone close-cursors call), that is the answer. The scan stays as the fallback
+     * for the bundled native-OCI shape whose extra marker bytes the exact parse does not model.
+     */
+    static int closeCursorsBoundary(byte[] rest) {
+        try {
+            TtcReader t = new TtcReader(rest);
+            t.readUint8();
+            long numCursors = t.readUb4();
+            if (numCursors >= 0 && numCursors <= rest.length) {
+                for (long i = 0; i < numCursors; i++) {
+                    t.readUb4();
+                }
+                int end = t.position();
+                if (end == rest.length || isMessageBoundary(rest, end)) {
+                    return end;
+                }
+            }
+        } catch (RuntimeException e) {
+            // not the plain shape; fall through to the scan
+        }
+        return findNextMessageBoundary(rest);
     }
 
     // Function code of the "client banner request" piggyback -- see skipPiggyback's javadoc for

@@ -38,7 +38,14 @@ import org.junit.jupiter.api.Test;
 class ProtocolFailoverBrownoutLiveTest {
 
     private static final String TOKEN = "bench-token";
-    private static final String[] PROTOCOLS = {"pgwire", "mywire", "mssqlwire", "orawire"};
+    /** WARP_TEST_BROWNOUT_PROTOCOLS=orawire (comma list) narrows the run; default is all four. */
+    private static final String[] PROTOCOLS = System.getenv("WARP_TEST_BROWNOUT_PROTOCOLS") == null
+            ? new String[] {"pgwire", "mywire", "mssqlwire", "orawire"}
+            : System.getenv("WARP_TEST_BROWNOUT_PROTOCOLS").split(",");
+    /** WARP_TEST_BROWNOUT_SCENARIOS=switchover (comma list); default is both. */
+    private static final String[] SCENARIOS = System.getenv("WARP_TEST_BROWNOUT_SCENARIOS") == null
+            ? new String[] {"switchover", "failover"}
+            : System.getenv("WARP_TEST_BROWNOUT_SCENARIOS").split(",");
     private static final int WRITERS_PER_PROTOCOL = 3;
     private static final int READERS_PER_PROTOCOL = 2;
     /** Pause between operations of one thread: ~50 ops/s per thread, ~1000 ops/s in total across the four protocols. */
@@ -357,21 +364,21 @@ class ProtocolFailoverBrownoutLiveTest {
             Properties pgp = new Properties();
             pgp.setProperty("user", "warp");
             pgp.setProperty("password", "secret");
-            ConnFactory[] factories = {
-                () -> DriverManager.getConnection("jdbc:postgresql://localhost:" + warp.port("pgwire")
-                        + "/pg?connectTimeout=5&socketTimeout=10&loginTimeout=5", pgp),
-                () -> DriverManager.getConnection("jdbc:mysql://localhost:" + warp.port("mywire")
-                        + "/pg?useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=10000", "warp", "secret"),
-                () -> DriverManager.getConnection("jdbc:sqlserver://localhost:" + warp.port("mssqlwire")
-                        + ";databaseName=pg;encrypt=false;trustServerCertificate=true;loginTimeout=5;socketTimeout=10000", "warp", "secret"),
-                () -> {
-                    Properties p = new Properties();
-                    p.setProperty("user", "warp");
-                    p.setProperty("password", "secret");
-                    p.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
-                    p.setProperty("oracle.jdbc.ReadTimeout", "10000");
-                    return DriverManager.getConnection("jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/pg", p);
-                }};
+            Map<String, ConnFactory> factories = new java.util.HashMap<>();
+            factories.put("pgwire", () -> DriverManager.getConnection("jdbc:postgresql://localhost:" + warp.port("pgwire")
+                    + "/pg?connectTimeout=5&socketTimeout=10&loginTimeout=5", pgp));
+            factories.put("mywire", () -> DriverManager.getConnection("jdbc:mysql://localhost:" + warp.port("mywire")
+                    + "/pg?useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=10000", "warp", "secret"));
+            factories.put("mssqlwire", () -> DriverManager.getConnection("jdbc:sqlserver://localhost:" + warp.port("mssqlwire")
+                    + ";databaseName=pg;encrypt=false;trustServerCertificate=true;loginTimeout=5;socketTimeout=10000", "warp", "secret"));
+            factories.put("orawire", () -> {
+                Properties p = new Properties();
+                p.setProperty("user", "warp");
+                p.setProperty("password", "secret");
+                p.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
+                p.setProperty("oracle.jdbc.ReadTimeout", "10000");
+                return DriverManager.getConnection("jdbc:oracle:thin:@//localhost:" + warp.port("orawire") + "/pg", p);
+            });
 
             long startNanos = System.nanoTime();
             AtomicBoolean stop = new AtomicBoolean();
@@ -381,10 +388,10 @@ class ProtocolFailoverBrownoutLiveTest {
                 Stats s = new Stats(PROTOCOLS[i], startNanos);
                 stats.put(PROTOCOLS[i], s);
                 for (int w = 0; w < WRITERS_PER_PROTOCOL; w++) {
-                    threads.add(worker(PROTOCOLS[i] + "-w" + w, stop, factories[i], s, true, i, w, PROTOCOLS[i]));
+                    threads.add(worker(PROTOCOLS[i] + "-w" + w, stop, factories.get(PROTOCOLS[i]), s, true, i, w, PROTOCOLS[i]));
                 }
                 for (int r = 0; r < READERS_PER_PROTOCOL; r++) {
-                    threads.add(worker(PROTOCOLS[i] + "-r" + r, stop, factories[i], s, false, i, 100 + r, PROTOCOLS[i]));
+                    threads.add(worker(PROTOCOLS[i] + "-r" + r, stop, factories.get(PROTOCOLS[i]), s, false, i, 100 + r, PROTOCOLS[i]));
                 }
             }
             threads.forEach(Thread::start);
@@ -486,8 +493,9 @@ class ProtocolFailoverBrownoutLiveTest {
         Path base = Files.createTempDirectory("brownout");
         List<Result> results = new ArrayList<>();
         try {
-            results.add(runScenario(bin, base, "switchover"));
-            results.add(runScenario(bin, base, "failover"));
+            for (String scenario : SCENARIOS) {
+                results.add(runScenario(bin, base, scenario));
+            }
         } finally {
             String text = report(results);
             Files.createDirectories(Path.of("target"));
